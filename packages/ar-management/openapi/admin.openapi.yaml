@@ -12580,7 +12580,7 @@ paths:
       tags:
         - Field Mapping
       operationId: postApiAdminIdentityMappingExplain
-      summary: Explain, for a test user, why an app gets or does not get each claim.
+      summary: Explain OIDC or SAML release for a test user.
       description: >-
         Runs the release of claims the token endpoint (the code flow's ID token, no claims
         parameter) or UserInfo runs for the app, for one of the tenant's test users: the claims
@@ -12597,7 +12597,12 @@ paths:
         a fixed reason. A claim made from a persistent identifier is `not_evaluated` and its
         `released` is null. Only test users are explained: a real person is the investigations'
         entrance. Needs the settings read and the clients read permissions. Rate limited with the
-        strict profile.
+        strict profile. Alternatively, send `sp_entity_id` with the same test-user subject to
+        run the SAML SSO release pipeline. The response includes released attribute values,
+        NameID format/value or suppression/failure reasons, required/hidden policies, and the
+        consent screen items before approval versus release after approval. Persistent identifiers
+        are deferred before approval and suppressed after approval for test users; no identifier
+        stores, account evidence or secrets are read. These fixture values are never an assertion.
       requestBody:
         required: true
         content:
@@ -12651,7 +12656,11 @@ paths:
         the apps that use it and those that would see a change, and lists no apps; with
         `tenant_id` it lists that tenant's apps. `sample` is always null for now; when `sample` is
         asked for, `sample_unavailable` is `draft_not_compiled`. Needs the settings read and the
-        clients read permissions. Rate limited with the strict profile.
+        clients read permissions. For SAML, `protocol: saml` and `sps` report each bound provider
+        and changed attributes/NameID using the stored dependency graph. Hidden outputs and pinned
+        versions are held back. The shared reference count includes SAML SPs and OIDC clients.
+        Profile-change previews remain read-only; a save with existing referrers refuses the
+        profile change. Rate limited with the strict profile.
       parameters:
         - name: id
           in: path
@@ -12695,6 +12704,8 @@ paths:
         '403':
           $ref: '#/components/responses/Error'
         '404':
+          $ref: '#/components/responses/Error'
+        '409':
           $ref: '#/components/responses/Error'
         '429':
           $ref: '#/components/responses/Error'
@@ -13063,8 +13074,9 @@ paths:
         tenant's. The set is given a server-made ID (a set ID cannot be chosen). Answers 201.
         `?preview=true` writes nothing (see the PUT). A key already in use answers 409 `conflict`.
         If a step fails, the set is not left behind (see the PUT for `stage_failed`). A set that
-        releases into a Destination Profile that is not an OIDC one is refused with 400
-        `unsupported_destination`. `Idempotency-Key` is required (8 to 128 characters; not for a
+        releases into exactly one OIDC or SAML Destination Profile. Its protocol is derived from
+        the profile; every target must be in that profile and protocol. Other profile kinds are
+        refused with 400 `unsupported_destination`. `Idempotency-Key` is required (8 to 128 characters; not for a
         preview). Rate limited with the strict profile.
       parameters:
         - $ref: '#/components/parameters/RequiredIdempotencyKey'
@@ -13154,11 +13166,15 @@ paths:
         and last the version in use is replaced by it (`enabled`, true by default) in the control
         plane's one atomic switch, or, with `enabled: false`, the activation is ended. Every save
         makes a new version; the earlier ones are kept.
-        An activation written here is scoped to OIDC and the OP role (`{protocol: oidc, role: op}`;
-        a platform set is written with an empty scope, as the activation endpoint does). A set
-        that releases into a Destination Profile that is not an OIDC one, none, or more than one, is
-        refused with 400 `unsupported_destination` (or `invalid_request` for more than one OIDC
-        profile): use the field mapping version and activation endpoints for those.
+        The protocol is derived from the set's exactly one Destination Profile: OIDC targets
+        use `oidc.claim`, SAML targets use `saml.attribute` or `saml.nameid`. Every target must be
+        inside that profile. OIDC activates with `{protocol: oidc, role: op}` (platform OIDC sets
+        retain the empty scope); SAML activates with `{protocol: saml, role: idp}`, shared across
+        SP bindings without an SP-specific scope. SAML identifiers cannot use a sector audience.
+        NameID accepts a plain copy or a single persistent identifier with format plain.
+        Changing the protocol or profile while referrers exist returns 409 with `references`,
+        even with confirm_impact. GET returns protocol, destination_profile_id and the profile's
+        consent descriptor with its fields so the console can maintain destinationFieldPolicies.
         `If-Match` (optional) carries the `content_version` (or `ETag`) read last; another value is
         a 409 `conflict`, and so is a set that is saved by someone else while this save is built.
         While something names the set (an app, a default, a SAML provider, a credential profile,
@@ -65871,6 +65887,57 @@ components:
         - apps_truncated
         - sample
       properties:
+        protocol:
+          type: string
+          enum: [saml]
+        sps:
+          type: array
+          items:
+            type: object
+            required:
+              [tenant_id, provider_id, sp_entity_id, name, changes, held_back, pinned_version_id]
+            properties:
+              tenant_id:
+                type: string
+              provider_id:
+                type: string
+              sp_entity_id:
+                type: [string, 'null']
+              name:
+                type: string
+              changes:
+                type: array
+                items:
+                  $ref: '#/components/schemas/IdentityMappingClaimChange'
+              held_back:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    attribute:
+                      type: string
+                    reason:
+                      type: string
+                      enum: [pinned_version, hidden_or_not_listed]
+              pinned_version_id:
+                type: [string, 'null']
+        sps_truncated:
+          type: boolean
+        unresolved_sp_references:
+          description: Federation references whose automatically resolved SPs could not be enumerated. Nonempty means usage_complete is false.
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [tenant_id, trust_source_id, reason]
+            properties:
+              tenant_id:
+                type: [string, 'null']
+              trust_source_id:
+                type: [string, 'null']
+              reason:
+                type: string
+                enum: [federation_entities_not_enumerated]
         setId:
           type: string
         owner:
@@ -65961,11 +66028,13 @@ components:
             additionalProperties: false
             required:
               - tenant_id
-              - apps_using
-              - apps_changed
             properties:
               tenant_id:
                 type: string
+              sps_using:
+                type: integer
+              sps_changed:
+                type: integer
               apps_using:
                 type:
                   - integer
@@ -66516,6 +66585,34 @@ components:
             max_attributes:
               type: integer
     IdentityMappingExplainRequest:
+      oneOf:
+        - $ref: '#/components/schemas/IdentityMappingOidcExplainRequest'
+        - $ref: '#/components/schemas/IdentityMappingSamlExplainRequest'
+    IdentityMappingSamlExplainRequest:
+      type: object
+      additionalProperties: false
+      required: [sp_entity_id, subject]
+      properties:
+        sp_entity_id:
+          type: string
+          minLength: 1
+          maxLength: 2048
+        subject:
+          type: object
+          additionalProperties: false
+          required: [kind, id]
+          properties:
+            kind:
+              type: string
+              const: test_user
+            id:
+              type: string
+              maxLength: 64
+        consent:
+          type: string
+          enum: [all, none, required]
+          default: all
+    IdentityMappingOidcExplainRequest:
       type: object
       additionalProperties: false
       required:
@@ -66566,6 +66663,115 @@ components:
             type: string
           description: More claims to explain (one the app expects and the set may not give).
     IdentityMappingExplainResponse:
+      oneOf:
+        - $ref: '#/components/schemas/IdentityMappingOidcExplainResponse'
+        - $ref: '#/components/schemas/IdentityMappingSamlExplainResponse'
+    IdentityMappingSamlNameIdExplanation:
+      type: object
+      required: [format, status]
+      properties:
+        format:
+          type: string
+        status:
+          type: string
+          enum: [released, deferred, suppressed, failed]
+        value:
+          type: string
+        reasons:
+          type: array
+          items:
+            type: string
+    IdentityMappingSamlReleasePhase:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [released, failed, awaiting_consent]
+        attributes:
+          type: array
+          items:
+            type: object
+            required: [name, values]
+            properties:
+              name:
+                type: string
+              values:
+                type: array
+                items:
+                  type: string
+        items:
+          type: array
+          items:
+            type: object
+        deferred_attributes:
+          type: array
+          items:
+            type: string
+        nameid:
+          $ref: '#/components/schemas/IdentityMappingSamlNameIdExplanation'
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+            fields:
+              type: array
+              items:
+                type: string
+            reasons:
+              type: array
+              items:
+                type: string
+        optional_missing_attributes:
+          type: array
+          items:
+            type: string
+        withheld_scoped_values:
+          type: array
+          items:
+            type: object
+        identifier_evaluation:
+          type: string
+          const: suppressed_for_test_user
+    IdentityMappingSamlExplainResponse:
+      type: object
+      additionalProperties: false
+      required:
+        [protocol, tenantId, sp_entity_id, subject, consent, fields, before_consent, after_consent]
+      properties:
+        protocol:
+          type: string
+          const: saml
+        tenantId:
+          type: string
+        sp_entity_id:
+          type: string
+        subject:
+          type: object
+          properties:
+            kind:
+              type: string
+              const: test_user
+            user_id:
+              type: string
+        consent:
+          type: string
+          enum: [all, none, required]
+        fields:
+          type: array
+          items:
+            type: object
+            properties:
+              field:
+                type: string
+              policy:
+                type: string
+                enum: [required, optional, hidden]
+        before_consent:
+          $ref: '#/components/schemas/IdentityMappingSamlReleasePhase'
+        after_consent:
+          $ref: '#/components/schemas/IdentityMappingSamlReleasePhase'
+    IdentityMappingOidcExplainResponse:
       type: object
       additionalProperties: false
       required:
@@ -67540,17 +67746,14 @@ components:
         display_name:
           type: string
         description:
-          type: string
-          nullable: true
+          type: [string, 'null']
         enabled:
           type: boolean
           description: Whether an activation is in use.
         active_version_id:
-          type: string
-          nullable: true
+          type: [string, 'null']
         version_label:
-          type: string
-          nullable: true
+          type: [string, 'null']
           description: The label of the version the set is now (the one in use, else the last saved).
         content_version:
           type: string
@@ -67586,15 +67789,48 @@ components:
         - $ref: '#/components/schemas/MappingSetSummary'
         - type: object
           properties:
+            protocol:
+              type: [string, 'null']
+              enum: [oidc, saml, null]
+              description: Derived from the single Destination Profile; null for incomplete legacy sets.
+            destination_profile_id:
+              type: [string, 'null']
+            destination_profile:
+              type: [object, 'null']
+              description: Active consent descriptor including profileId, destinationType and fields.
+              properties:
+                profileId:
+                  type: string
+                destinationType:
+                  type: string
+                  enum: [oidc, saml]
+                nameId:
+                  type: object
+                  description: SAML protocol subject metadata, separate from the attribute policies.
+                  properties:
+                    format:
+                      type: [string, 'null']
+                    classification:
+                      type: string
+                fields:
+                  type: array
+                  items:
+                    type: object
+                    required: [key, classification]
+                    properties:
+                      key:
+                        type: string
+                      classification:
+                        type: string
             content:
-              allOf:
+              oneOf:
                 - $ref: '#/components/schemas/MappingSetContent'
-              nullable: true
+                - type: 'null'
               description: Null when the set has no version.
             references:
-              allOf:
+              oneOf:
                 - $ref: '#/components/schemas/MappingSetReferenceCount'
-              nullable: true
+                - type: 'null'
               description: Null when the references could not be counted.
     MappingSetContentSummary:
       type: object
