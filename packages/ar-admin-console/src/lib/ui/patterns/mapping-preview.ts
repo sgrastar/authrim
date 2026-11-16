@@ -85,7 +85,7 @@ const AT_RUN_TIME = new Set(['hash', 'persistent_identifier']);
 export function previewMapping(
 	mapping: Mapping,
 	sources: readonly MappingField[],
-	options: { runtimeContext?: Record<string, unknown> } = {}
+	options: { runtimeContext?: Record<string, unknown>; targetRef?: FieldRef } = {}
 ): SampleTrace | null {
 	const input = mapping.sources
 		.filter(Boolean)
@@ -94,22 +94,27 @@ export function previewMapping(
 
 	const graph: MappingRuleGraph = {
 		id: mapping.id,
-		targetRef: REF,
+		targetRef: options.targetRef ?? REF,
 		edges: [],
 		transforms: [],
 		output: { edgeIndex: 0 }
 	};
 	const sourceValues: SourceValueEnvelope[] = [];
 	const sourceSamples: MappingEvaluationValue[] = [];
-	const addSource = (value: unknown): MappingValueReference => {
+	const addSource = (value: unknown, field?: MappingField): MappingValueReference => {
 		const edgeIndex = graph.edges.length;
-		const sourceRef: FieldRef = { ...REF, side: 'source', path: `input${edgeIndex}` };
-		graph.edges.push({ id: `input${edgeIndex}`, sourceRef, targetRef: REF });
+		const sourceRef: FieldRef = field?.ref ?? { ...REF, side: 'source', path: `input${edgeIndex}` };
+		graph.edges.push({ id: `input${edgeIndex}`, sourceRef, targetRef: options.targetRef ?? REF });
 		sourceSamples.push(evaluationValue(value));
 		if (value !== undefined) sourceValues.push({ value, sourceRef });
 		return { edgeIndex };
 	};
-	let refs = input.map(addSource);
+	let refs = input.map((value, index) =>
+		addSource(
+			value,
+			sources.find((field) => field.key === mapping.sources.filter(Boolean)[index])
+		)
+	);
 	const inputSamples = input.map((value) => sampleValue(evaluationValue(value)));
 	const rows: (MappingValueReference[] | undefined)[] = [];
 	let atSignIn = false;
@@ -137,7 +142,10 @@ export function previewMapping(
 				if (condition)
 					for (const field of conditionFields(condition)) {
 						inputs.push({
-							...addSource(sources.find((source) => source.key === field)?.example),
+							...addSource(
+								sources.find((source) => source.key === field)?.example,
+								sources.find((source) => source.key === field)
+							),
 							name: `field:${field}`
 						});
 					}
@@ -160,7 +168,9 @@ export function previewMapping(
 				rule: { ...graph, output: refs[0] },
 				sourceValues,
 				evaluateAllSteps: true,
-				runtimeContext: options.runtimeContext
+				runtimeContext: options.runtimeContext,
+				// Persisted graph values use edge targets for JSON input naming.
+				edgeValueReferences: options.targetRef ? 'target' : 'source'
 			})
 		: undefined;
 	// Absence-consuming operations must run before deciding there is no sample to display.
