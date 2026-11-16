@@ -35,3 +35,21 @@ export type {
   CsvSourceProfileWarningCode,
 } from './source-profiles/csv';
 export { parseCsvSourceProfile } from './source-profiles/csv';
+
+export { evaluateMappingRule, evaluatePreparedMappingRule } from './core/graph-evaluator';
+export type { GraphEvaluationInput } from './core/graph-evaluator';
+export {
+  analyzeMappingDependencies,
+  withMappingGraph,
+  identifierGraphProblem,
+  IDENTIFIER_POST_TRANSFORM_OPERATIONS,
+} from './core/graph';
+
+export { validateMappingRuleGraph } from './core/graph-validation';
+export { readMappingReference } from './core/stored-graph';
+
+export { TRANSFORM_LIMITS, safeTransformPattern, safeRegexTest } from './core/transform-safety';
+export { asciiDigits, stripAccents } from './core/text-fold';
+export { toFullwidth, toHalfwidth } from './core/text-width';
+
+export { readMappingCondition, conditionFields } from './core/conditions';

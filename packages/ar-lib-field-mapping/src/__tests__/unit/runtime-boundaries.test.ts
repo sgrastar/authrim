@@ -1,3 +1,4 @@
+import { graphFixture } from '../../test-support/graph-fixture';
 import { describe, expect, it } from 'vitest';
 import { executeRuntimeMapping } from '../../core/runtime';
 import type { MappingInput } from '../../core/types';
@@ -9,7 +10,7 @@ describe('runtime field mapping identity boundaries', () => {
     source.sourceRef.catalogEntryId = 'field.csv.employee_number';
     const input = mappingInput([source]);
 
-    const result = executeRuntimeMapping(input);
+    const result = executeRuntimeMapping(graphFixture(input));
 
     expect(result.values).toEqual([]);
     expect(result.ruleTrace.map((item) => item.action)).not.toContain('mapped');
@@ -18,7 +19,7 @@ describe('runtime field mapping identity boundaries', () => {
 
   it('uses the source path when one side has no catalog identity', () => {
     const input = mappingInput([sourceValue('csv', 'email', 'user@example.test', 'pii')]);
-    const result = executeRuntimeMapping(input);
+    const result = executeRuntimeMapping(graphFixture(input));
 
     expect(result.values).toEqual([
       expect.objectContaining({ value: 'user@example.test', classificationHint: 'pii' }),
@@ -45,7 +46,7 @@ describe('runtime field mapping identity boundaries', () => {
       edges: [edge(sourceRef, unknownTarget)],
     };
 
-    const result = executeRuntimeMapping(input);
+    const result = executeRuntimeMapping(graphFixture(input));
 
     expect(result.reasons.map((item) => item.code)).toContain('catalog.invalid_entry');
     expect(result.values).toEqual([]);
@@ -63,10 +64,10 @@ describe('runtime field mapping identity boundaries', () => {
       },
     ];
 
-    const result = executeRuntimeMapping(input);
+    const result = executeRuntimeMapping(graphFixture(input));
 
     expect(result.values).toEqual([]);
-    expect(result.reasons.map((item) => item.code)).toContain('transform.missing_input');
+    expect(result.reasons).toEqual([]);
     expect(result.ruleTrace.map((item) => item.action)).not.toContain('mapped');
   });
 
@@ -83,7 +84,7 @@ describe('runtime field mapping identity boundaries', () => {
         },
       ];
 
-      const result = executeRuntimeMapping(input);
+      const result = executeRuntimeMapping(graphFixture(input));
 
       expect(result.status).toBe('failed');
       expect(result.reasons.map((item) => item.code)).toContain('transform.unsupported_operation');

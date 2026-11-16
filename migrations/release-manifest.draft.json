@@ -158,6 +158,10 @@
             {
               "path": "022_mapped_identifier_exceptions.sql",
               "checksum": "cb74b772581fc4c69f693fb64678c7ef42c483be9efa8a57b61cc9e6170fcdff"
+            },
+            {
+              "path": "023_mapping_rule_graph.sql",
+              "checksum": "2deaf4914d48c774ee0a8d31373c0d25dbc2cb66099e0a41d0b2d370654d36e6"
             }
           ]
         },
@@ -409,6 +413,10 @@
         {
           "path": "022_mapped_identifier_exceptions.sql",
           "checksum": "cb74b772581fc4c69f693fb64678c7ef42c483be9efa8a57b61cc9e6170fcdff"
+        },
+        {
+          "path": "023_mapping_rule_graph.sql",
+          "checksum": "2deaf4914d48c774ee0a8d31373c0d25dbc2cb66099e0a41d0b2d370654d36e6"
         }
       ]
     },

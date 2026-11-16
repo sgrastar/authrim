@@ -1,3 +1,4 @@
+import { withExplicitMappingGraphs } from '@authrim/ar-lib-field-mapping/test-support';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FieldCatalogBundle } from '@authrim/ar-lib-field-mapping/contract';
 import type { DatabaseAdapter } from '@authrim/ar-lib-core';
@@ -120,14 +121,17 @@ function mapping(
   edges: ReturnType<typeof edge>[],
   extra: Partial<SAMLIdentityMappingReleaseConfig> = {}
 ): SAMLIdentityMappingReleaseConfig {
-  return {
-    role: 'idp',
-    tenantId: EVIDENCE_TENANT,
-    localEntityId: 'https://idp.example.test',
-    catalog: catalog(),
-    edges,
-    ...extra,
-  };
+  return withExplicitMappingGraphs(
+    {
+      role: 'idp' satisfies import('../attributes').SAMLIdentityMappingRole,
+      tenantId: EVIDENCE_TENANT,
+      localEntityId: 'https://idp.example.test',
+      catalog: catalog(),
+      edges,
+      ...extra,
+    },
+    true
+  );
 }
 
 const MAPPING_CONTEXT = {

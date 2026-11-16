@@ -27,7 +27,7 @@
 	import { sameValue } from '../save/draft.svelte';
 	import { useChangeMark, useInvalidReport } from '../save/save-scope';
 	import { nextId } from './condition-model';
-	import { previewMapping, type SampleValue } from './mapping-preview';
+	import { previewMapping, sampleStateKey, type SampleValue } from './mapping-preview';
 	import {
 		TRANSFORMS,
 		outputType,
@@ -520,11 +520,14 @@
 		return typeof value === 'object' ? 'object' : typeof value;
 	}
 
-	function sampleText(sample: SampleValue): { text: string; quiet?: boolean } {
+	function sampleText(sample: SampleValue): { text: string; quiet?: boolean; failed?: boolean } {
+		const stateKey = sampleStateKey(sample);
+		if (stateKey) {
+			const failed = stateKey === 'map.sample.failed';
+			return { text: t(stateKey), quiet: !failed, failed };
+		}
 		if (!sample.known) return { text: t('map.sample.atSignIn'), quiet: true };
 		const value = sample.value;
-		if (value === null || value === undefined) return { text: t('map.sample.none'), quiet: true };
-		if (value === '') return { text: t('map.sample.empty'), quiet: true };
 		if (Array.isArray(value)) return { text: `[${value.map(String).join(', ')}]` };
 		if (typeof value === 'object') {
 			const json = JSON.stringify(value);
@@ -563,7 +566,9 @@
 			{@const shown = sampleText(sample)}
 			{#if v > 0}<span class="sample__plus" aria-hidden="true">＋</span>{/if}
 			{@const type = sample.known ? sampleType(sample.value) : undefined}
-			<span class="sample__v" class:is-quiet={shown.quiet}>{shown.text}</span>
+			<span class="sample__v" class:is-quiet={shown.quiet} class:is-failed={shown.failed}
+				>{shown.text}</span
+			>
 			{#if type}<TypeBadge size="sm">{type}</TypeBadge>{/if}
 		{/each}
 	</span>
@@ -740,7 +745,11 @@
 
 					<!-- The target again, with its name in words, why it needs attention, and the sample
 					     output: what the steps make of the source's sample values (see mapping-preview). -->
-					{@const trace = mapping ? previewMapping(mapping, sources) : null}
+					{@const trace = mapping
+						? previewMapping(mapping, sources, {
+								targetRef: targets.find((target) => target.key === mapping.target)?.ref
+							})
+						: null}
 					<div class="mrow__target-edit" transition:slide={{ duration: SLIDE_MS }}>
 						<span class="mrow__target" class:is-set={isSet} aria-hidden="true">
 							<code>{target.key}</code>
@@ -1283,6 +1292,11 @@
 
 	.sample__v.is-quiet {
 		color: var(--text-muted);
+		font-family: inherit;
+	}
+
+	.sample__v.is-failed {
+		color: var(--danger);
 		font-family: inherit;
 	}
 

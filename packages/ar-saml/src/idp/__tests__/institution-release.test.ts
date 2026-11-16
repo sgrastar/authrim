@@ -1,5 +1,10 @@
+import { withExplicitMappingGraphs } from '@authrim/ar-lib-field-mapping/test-support';
+import { createHmac } from 'node:crypto';
+import { deferredHashCases } from './helpers/deferred-hash-cases';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '@authrim/ar-lib-core';
+import { MAPPING_HASH_SECRET_REF } from '@authrim/ar-lib-core/services/mapping-hash';
+import type { MappingRuleGraph } from '@authrim/ar-lib-field-mapping/contract';
 
 const mocks = vi.hoisted(() => ({
   settings: {} as Record<string, unknown>,
@@ -30,6 +35,12 @@ import {
   releaseSAMLAttributesWithInstitution,
   withSAMLInstitutionAttributes,
 } from '../institution-release';
+import {
+  applySAMLReleaseApproval,
+  computeSAMLAttributeRelease,
+  samlApprovalNeedsIdentifiers,
+  samlReleaseItems,
+} from '../release-items';
 
 const env = {} as Env;
 const noError = () => {
@@ -216,20 +227,23 @@ describe('releaseSAMLAttributesWithInstitution', () => {
     },
     onError: (message: string, error: unknown) => void = noError
   ) {
-    const identityMapping = {
-      catalog: {
-        identity: { id: 'c', version: '1', contentHash: 'c', compatibilityRange: '*' },
-        entries: [
-          ...['principal', 'affiliation', 'eduPersonPrincipalName', 'mail'].map(entry),
-          // A value reaches a destination only when the catalog has an entry for it.
-          ...destinations(parts),
-        ],
+    const identityMapping = withExplicitMappingGraphs(
+      {
+        catalog: {
+          identity: { id: 'c', version: '1', contentHash: 'c', compatibilityRange: '*' },
+          entries: [
+            ...['principal', 'affiliation', 'eduPersonPrincipalName', 'mail'].map(entry),
+            // A value reaches a destination only when the catalog has an entry for it.
+            ...destinations(parts),
+          ],
+        },
+        edges: parts.edges,
+        transforms: parts.transforms ?? [],
+        attributeDescriptors: parts.descriptors,
+        destinationFieldPolicies: parts.policies,
       },
-      edges: parts.edges,
-      transforms: parts.transforms ?? [],
-      attributeDescriptors: parts.descriptors,
-      destinationFieldPolicies: parts.policies,
-    } as unknown as SAMLIdentityMappingFieldMappingBinding;
+      true
+    ) as unknown as SAMLIdentityMappingFieldMappingBinding;
     return releaseSAMLAttributesWithInstitution({
       env,
       tenantId: 'tenant-a',
@@ -252,24 +266,27 @@ describe('releaseSAMLAttributesWithInstitution', () => {
   it('applies the scopes to a principal name a transform makes, as to one an edge makes', async () => {
     // The edge brings the value to a field that is not scoped; the transform copies it to the
     // standard eduPersonPrincipalName, which no edge names.
-    const parts = {
-      edges: [edge('e1', 'principal', target('urn:oid:example:intermediate'))],
-      transforms: [
-        {
-          id: 't1',
-          inputEdgeIds: ['e1'],
-          operation: 'copy',
-          outputTargetRef: target(OID_EPPN),
-        },
-      ],
-    };
+    const parts = withExplicitMappingGraphs(
+      {
+        edges: [edge('e1', 'principal', target('urn:oid:example:intermediate'))],
+        transforms: [
+          {
+            id: 't1',
+            inputEdgeIds: ['e1'],
+            operation: 'copy',
+            outputTargetRef: target(OID_EPPN),
+          },
+        ],
+      },
+      true
+    );
 
     const attributes = await released(parts);
 
     expect(mocks.reads).toBe(1);
     expect(attributes[OID_EPPN]).toBeUndefined();
-    // The edge's own field is not scoped, and goes as it is.
-    expect(attributes['urn:oid:example:intermediate']).toEqual(['alice@rival.example']);
+    // Intermediate edge values are never released by a graph.
+    expect(attributes['urn:oid:example:intermediate']).toBeUndefined();
     const result = await release(parts);
     expect(result.withheldScopedValues).toEqual([
       expect.objectContaining({
@@ -295,25 +312,37 @@ describe('releaseSAMLAttributesWithInstitution', () => {
       { 'target.opaque': { name: 'uid', friendlyName: 'eduPersonPrincipalName' } },
     ],
   ])('applies the scopes to a principal name released as %s', async (_name, to, descriptors) => {
-    const attributes = await released({ edges: [edge('e1', 'principal', to)], descriptors });
+    const attributes = await released(
+      withExplicitMappingGraphs({ edges: [edge('e1', 'principal', to)], descriptors }, true)
+    );
 
     expect(mocks.reads).toBe(1);
     expect(JSON.stringify(attributes)).not.toContain('rival.example');
   });
 
   it('applies the scopes to a value read from a field that is a principal name, whatever it is released as', async () => {
-    const attributes = await released({
-      edges: [edge('e1', 'eduPersonPrincipalName', target('uid'))],
-    });
+    const attributes = await released(
+      withExplicitMappingGraphs(
+        {
+          edges: [edge('e1', 'eduPersonPrincipalName', target('uid'))],
+        },
+        true
+      )
+    );
 
     expect(mocks.reads).toBe(1);
     expect(attributes).toEqual({});
   });
 
   it('does the same for the scoped affiliation under another name', async () => {
-    const attributes = await released({
-      edges: [edge('e1', 'affiliation', target('epsa'))],
-    });
+    const attributes = await released(
+      withExplicitMappingGraphs(
+        {
+          edges: [edge('e1', 'affiliation', target('epsa'))],
+        },
+        true
+      )
+    );
 
     expect(mocks.reads).toBe(1);
     expect(attributes).toEqual({});
@@ -321,7 +350,9 @@ describe('releaseSAMLAttributesWithInstitution', () => {
 
   it('gives the default scope to a value with no scope, however the attribute is named', async () => {
     mocks.settings = { 'institution.scopes': 'example.ac.jp' };
-    const result = await release({ edges: [edge('e1', 'principal', target('eppn'))] });
+    const result = await release(
+      withExplicitMappingGraphs({ edges: [edge('e1', 'principal', target('eppn'))] }, true)
+    );
     expect(result.attributes).toEqual([]);
 
     const bare = await releaseSAMLAttributesWithInstitution({
@@ -331,16 +362,24 @@ describe('releaseSAMLAttributesWithInstitution', () => {
       releaseConfig: {
         entityId: 'https://sp.example.test',
         attributeMapping: {},
-        identityMapping: {
-          catalog: {
-            identity: { id: 'c', version: '1', contentHash: 'c', compatibilityRange: '*' },
-            entries: [
-              entry('principal'),
-              ...destinations({ edges: [edge('e1', 'principal', target('eppn'))] }),
-            ],
+        identityMapping: withExplicitMappingGraphs(
+          {
+            catalog: {
+              identity: { id: 'c', version: '1', contentHash: 'c', compatibilityRange: '*' },
+              entries: [
+                entry('principal'),
+                ...destinations(
+                  withExplicitMappingGraphs(
+                    { edges: [edge('e1', 'principal', target('eppn'))] },
+                    true
+                  )
+                ),
+              ],
+            },
+            edges: [edge('e1', 'principal', target('eppn'))],
           },
-          edges: [edge('e1', 'principal', target('eppn'))],
-        } as never,
+          true
+        ) as never,
       },
       onError: noError,
     });
@@ -350,9 +389,17 @@ describe('releaseSAMLAttributesWithInstitution', () => {
   });
 
   it('reads the settings once, and leaves every value alone, for a mapping that releases no scoped attribute', async () => {
-    const attributes = await released({
-      edges: [edge('e1', 'mail', target(OID_MAIL)), edge('e2', 'mail', target('urn:oid:other'))],
-    });
+    const attributes = await released(
+      withExplicitMappingGraphs(
+        {
+          edges: [
+            edge('e1', 'mail', target(OID_MAIL)),
+            edge('e2', 'mail', target('urn:oid:other')),
+          ],
+        },
+        true
+      )
+    );
 
     expect(mocks.reads).toBe(1);
     expect(attributes).toEqual({
@@ -366,7 +413,10 @@ describe('releaseSAMLAttributesWithInstitution', () => {
     const onError = vi.fn();
 
     const result = await release(
-      { edges: [edge('e1', 'principal', target('eppn')), edge('e2', 'mail', target(OID_MAIL))] },
+      withExplicitMappingGraphs(
+        { edges: [edge('e1', 'principal', target('eppn')), edge('e2', 'mail', target(OID_MAIL))] },
+        true
+      ),
       onError
     );
 
@@ -379,9 +429,17 @@ describe('releaseSAMLAttributesWithInstitution', () => {
 
   it('does not touch the scopes of a tenant that registered none', async () => {
     mocks.settings = {};
-    const attributes = await released({
-      edges: [edge('e1', 'principal', target('eppn')), edge('e2', 'affiliation', target(OID_EPSA))],
-    });
+    const attributes = await released(
+      withExplicitMappingGraphs(
+        {
+          edges: [
+            edge('e1', 'principal', target('eppn')),
+            edge('e2', 'affiliation', target(OID_EPSA)),
+          ],
+        },
+        true
+      )
+    );
 
     expect(attributes).toEqual({
       eppn: ['alice@rival.example'],
@@ -408,11 +466,14 @@ describe('releaseSAMLAttributesWithInstitution', () => {
   });
 
   it('knows a principal name that goes through a hidden intermediate field and a copy, and releases it as another name', async () => {
-    const parts = {
-      edges: [edge('e1', 'eduPersonPrincipalName', target('urn:oid:example:tmp'))],
-      transforms: [copy('t1', 'e1', target('uid'))],
-      policies: { 'urn:oid:example:tmp': 'hidden' as const },
-    };
+    const parts = withExplicitMappingGraphs(
+      {
+        edges: [edge('e1', 'eduPersonPrincipalName', target('urn:oid:example:tmp'))],
+        transforms: [copy('t1', 'e1', target('uid'))],
+        policies: { 'urn:oid:example:tmp': 'hidden' as const },
+      },
+      true
+    );
 
     const result = await release(parts);
 
@@ -429,18 +490,21 @@ describe('releaseSAMLAttributesWithInstitution', () => {
   it('does not take a public field for a principal name because a hidden one of another namespace has its name', async () => {
     // The principal name passes through a field called mail in the custom claims; the mail that is
     // released is the person's email, in the SAML attributes.
-    const parts = {
-      edges: [
-        edge('e1', 'eduPersonPrincipalName', {
-          side: 'destination' as const,
-          namespace: 'authrim.custom_claims',
-          path: 'mail',
-        }),
-        edge('e2', 'mail', target('mail')),
-      ],
-      transforms: [copy('t1', 'e1', target('uid'))],
-      policies: { mail: 'required' as const },
-    };
+    const parts = withExplicitMappingGraphs(
+      {
+        edges: [
+          edge('e1', 'eduPersonPrincipalName', {
+            side: 'destination' as const,
+            namespace: 'authrim.custom_claims',
+            path: 'mail',
+          }),
+          edge('e2', 'mail', target('mail')),
+        ],
+        transforms: [copy('t1', 'e1', target('uid'))],
+        policies: { mail: 'required' as const },
+      },
+      true
+    );
 
     const result = await release(parts);
 
@@ -463,13 +527,16 @@ describe('releaseSAMLAttributesWithInstitution', () => {
 
     it('does not let a tenant administrator name another institution from the person’s own data', async () => {
       withSubject({ homeDomain: 'rival.example', orgName: 'Rival University' });
-      const parts = {
-        edges: [
-          edge('e1', 'homeDomain', target(OID_SCHAC)),
-          edge('e2', 'orgName', target(OID_O)),
-          edge('e3', 'mail', target(OID_MAIL)),
-        ],
-      };
+      const parts = withExplicitMappingGraphs(
+        {
+          edges: [
+            edge('e1', 'homeDomain', target(OID_SCHAC)),
+            edge('e2', 'orgName', target(OID_O)),
+            edge('e3', 'mail', target(OID_MAIL)),
+          ],
+        },
+        true
+      );
 
       const result = await release(parts);
 
@@ -491,14 +558,19 @@ describe('releaseSAMLAttributesWithInstitution', () => {
     it('withholds them, and the scoped values, when only invalid names are saved', async () => {
       mocks.settings = { 'institution.display_names': 'broken' };
       withSubject({ homeDomain: 'rival.example', orgName: 'Rival University' });
-      const result = await release({
-        edges: [
-          edge('e1', 'homeDomain', target(OID_SCHAC)),
-          edge('e2', 'orgName', target(OID_O)),
-          edge('e3', 'principal', target(OID_EPPN_HERE)),
-          edge('e4', 'mail', target(OID_MAIL)),
-        ],
-      });
+      const result = await release(
+        withExplicitMappingGraphs(
+          {
+            edges: [
+              edge('e1', 'homeDomain', target(OID_SCHAC)),
+              edge('e2', 'orgName', target(OID_O)),
+              edge('e3', 'principal', target(OID_EPPN_HERE)),
+              edge('e4', 'mail', target(OID_MAIL)),
+            ],
+          },
+          true
+        )
+      );
 
       expect(result.attributes.map((attribute) => attribute.name)).toEqual([OID_MAIL]);
       expect(result.withheldScopedValues?.map((entry) => entry.reason)).toEqual([
@@ -510,54 +582,83 @@ describe('releaseSAMLAttributesWithInstitution', () => {
 
     it('holds a value released under the URN name of o, with no friendly name', async () => {
       withSubject({ orgName: 'Rival University' });
-      const result = await release({
-        edges: [edge('e1', 'orgName', target('urn:mace:dir:attribute-def:o'))],
-      });
+      const result = await release(
+        withExplicitMappingGraphs(
+          {
+            edges: [edge('e1', 'orgName', target('urn:mace:dir:attribute-def:o'))],
+          },
+          true
+        )
+      );
 
       expect(result.attributes).toEqual([]);
     });
 
     it('lets a person’s own value through when it is the registered one', async () => {
       withSubject({ homeDomain: 'med.example.ac.jp', orgName: '例大学' });
-      const attributes = await released({
-        edges: [edge('e1', 'homeDomain', target(OID_SCHAC)), edge('e2', 'orgName', target(OID_O))],
-      });
+      const attributes = await released(
+        withExplicitMappingGraphs(
+          {
+            edges: [
+              edge('e1', 'homeDomain', target(OID_SCHAC)),
+              edge('e2', 'orgName', target(OID_O)),
+            ],
+          },
+          true
+        )
+      );
 
       expect(attributes).toEqual({ [OID_SCHAC]: ['med.example.ac.jp'], [OID_O]: ['例大学'] });
     });
 
     it('holds a value that reaches them through a hidden intermediate field and a copy', async () => {
       withSubject({ homeDomain: 'rival.example' });
-      const parts = {
-        edges: [edge('e1', 'homeDomain', target('urn:oid:example:tmp'))],
-        transforms: [copy('t1', 'e1', target('schacHomeOrganization'))],
-        policies: { 'urn:oid:example:tmp': 'hidden' as const },
-      };
+      const parts = withExplicitMappingGraphs(
+        {
+          edges: [edge('e1', 'homeDomain', target('urn:oid:example:tmp'))],
+          transforms: [copy('t1', 'e1', target('schacHomeOrganization'))],
+          policies: { 'urn:oid:example:tmp': 'hidden' as const },
+        },
+        true
+      );
 
       expect((await release(parts)).attributes).toEqual([]);
     });
 
     it('holds a value read from a field called schac_home_organization, released as another name', async () => {
       withSubject({ schac_home_organization: 'rival.example' });
-      const result = await release({
-        edges: [edge('e1', 'schac_home_organization', target('homeDomain'))],
-      });
+      const result = await release(
+        withExplicitMappingGraphs(
+          {
+            edges: [edge('e1', 'schac_home_organization', target('homeDomain'))],
+          },
+          true
+        )
+      );
 
       expect(result.attributes).toEqual([]);
     });
 
     it('passes the values of the system sources, which are the registered ones', async () => {
-      const parts = {
-        edges: [
-          systemEdge(
-            'e1',
-            'schac_home_organization',
-            'system.identity.schac_home_organization',
-            target(OID_SCHAC)
-          ),
-          systemEdge('e2', 'organization_name', 'system.identity.organization_name', target(OID_O)),
-        ],
-      };
+      const parts = withExplicitMappingGraphs(
+        {
+          edges: [
+            systemEdge(
+              'e1',
+              'schac_home_organization',
+              'system.identity.schac_home_organization',
+              target(OID_SCHAC)
+            ),
+            systemEdge(
+              'e2',
+              'organization_name',
+              'system.identity.organization_name',
+              target(OID_O)
+            ),
+          ],
+        },
+        true
+      );
       const result = await releaseSAMLAttributesWithInstitution({
         env,
         tenantId: 'tenant-a',
@@ -565,13 +666,16 @@ describe('releaseSAMLAttributesWithInstitution', () => {
         releaseConfig: {
           entityId: 'https://sp.example.test',
           attributeMapping: {},
-          identityMapping: {
-            catalog: {
-              identity: { id: 'c', version: '1', contentHash: 'c', compatibilityRange: '*' },
-              entries: destinations(parts),
+          identityMapping: withExplicitMappingGraphs(
+            {
+              catalog: {
+                identity: { id: 'c', version: '1', contentHash: 'c', compatibilityRange: '*' },
+                entries: destinations(parts),
+              },
+              edges: parts.edges,
             },
-            edges: parts.edges,
-          } as never,
+            true
+          ) as never,
         },
         onError: noError,
       });
@@ -585,9 +689,17 @@ describe('releaseSAMLAttributesWithInstitution', () => {
 
     it('does not take other attributes for them by a part of their name', async () => {
       withSubject({ dept: 'Rival Department' });
-      const attributes = await released({
-        edges: [edge('e1', 'dept', target('ou')), edge('e2', 'dept', target('urn:oid:2.5.4.100'))],
-      });
+      const attributes = await released(
+        withExplicitMappingGraphs(
+          {
+            edges: [
+              edge('e1', 'dept', target('ou')),
+              edge('e2', 'dept', target('urn:oid:2.5.4.100')),
+            ],
+          },
+          true
+        )
+      );
 
       expect(attributes).toEqual({
         ou: ['Rival Department'],
@@ -597,7 +709,10 @@ describe('releaseSAMLAttributesWithInstitution', () => {
 
     it('withholds them when the settings cannot be read, and for a tenant that registered nothing', async () => {
       withSubject({ homeDomain: 'rival.example' });
-      const parts = { edges: [edge('e1', 'homeDomain', target(OID_SCHAC))] };
+      const parts = withExplicitMappingGraphs(
+        { edges: [edge('e1', 'homeDomain', target(OID_SCHAC))] },
+        true
+      );
 
       mocks.settingsError = new Error('kv down');
       const unavailable = await release(parts, () => undefined);
@@ -621,32 +736,40 @@ describe('releaseSAMLAttributesWithInstitution', () => {
   });
 
   it('releases the organization name through a hidden intermediate field and a copy, to a service provider that requires it', async () => {
-    const parts = {
-      edges: [
-        systemEdge(
-          'e1',
-          'organization_name',
-          'system.identity.organization_name',
-          target('urn:oid:example:tmp')
-        ),
-      ],
-      transforms: [copy('t1', 'e1', target('urn:oid:2.5.4.10'))],
-      policies: {
-        'urn:oid:example:tmp': 'hidden' as const,
-        'urn:oid:2.5.4.10': 'required' as const,
+    const parts = withExplicitMappingGraphs(
+      {
+        edges: [
+          systemEdge(
+            'e1',
+            'organization_name',
+            'system.identity.organization_name',
+            target('urn:oid:example:tmp')
+          ),
+        ],
+        transforms: [copy('t1', 'e1', target('urn:oid:2.5.4.10'))],
+        policies: {
+          'urn:oid:example:tmp': 'hidden' as const,
+          'urn:oid:2.5.4.10': 'required' as const,
+        },
       },
-    };
+      true
+    );
 
     expect(await released(parts)).toEqual({ 'urn:oid:2.5.4.10': ['Example University'] });
   });
 
   it('is not misled by an OID that continues the ones it knows', async () => {
-    const attributes = await released({
-      edges: [
-        edge('e1', 'principal', target('urn:oid:1.3.6.1.4.1.5923.1.1.1.6.1')),
-        edge('e2', 'affiliation', target('urn:oid:1.3.6.1.4.1.5923.1.1.1.9.4')),
-      ],
-    });
+    const attributes = await released(
+      withExplicitMappingGraphs(
+        {
+          edges: [
+            edge('e1', 'principal', target('urn:oid:1.3.6.1.4.1.5923.1.1.1.6.1')),
+            edge('e2', 'affiliation', target('urn:oid:1.3.6.1.4.1.5923.1.1.1.9.4')),
+          ],
+        },
+        true
+      )
+    );
 
     expect(attributes).toEqual({
       'urn:oid:1.3.6.1.4.1.5923.1.1.1.6.1': ['alice@rival.example'],
@@ -655,10 +778,13 @@ describe('releaseSAMLAttributesWithInstitution', () => {
   });
 
   it('reports a missing required attribute and a withheld scoped value together', async () => {
-    const parts = {
-      edges: [edge('e1', 'absent', target(OID_MAIL)), edge('e2', 'principal', target(OID_EPPN))],
-      policies: { [OID_MAIL]: 'required' as const, [OID_EPPN]: 'required' as const },
-    };
+    const parts = withExplicitMappingGraphs(
+      {
+        edges: [edge('e1', 'absent', target(OID_MAIL)), edge('e2', 'principal', target(OID_EPPN))],
+        policies: { [OID_MAIL]: 'required' as const, [OID_EPPN]: 'required' as const },
+      },
+      true
+    );
 
     const error = await release(parts).then(
       () => null,
@@ -676,9 +802,14 @@ describe('releaseSAMLAttributesWithInstitution', () => {
 
   it('releases a tenant that registered nothing exactly as it was, reading the settings once', async () => {
     mocks.settings = {};
-    const result = await release({
-      edges: [edge('e1', 'principal', target(OID_EPPN)), edge('e2', 'mail', target(OID_MAIL))],
-    });
+    const result = await release(
+      withExplicitMappingGraphs(
+        {
+          edges: [edge('e1', 'principal', target(OID_EPPN)), edge('e2', 'mail', target(OID_MAIL))],
+        },
+        true
+      )
+    );
 
     expect(mocks.reads).toBe(1);
     expect(result).toEqual({
@@ -688,5 +819,173 @@ describe('releaseSAMLAttributesWithInstitution', () => {
       ],
       optionalMissingAttributes: [],
     });
+  });
+});
+
+describe('SAML hash release across consent', () => {
+  it.each(deferredHashCases)('keeps $name deferred until approval', async (example) => {
+    const bytes = new Uint8Array(32).fill(1);
+    const existing = vi.fn().mockResolvedValue({
+      secretRef: MAPPING_HASH_SECRET_REF,
+      active: { value: btoa(String.fromCharCode(...bytes)).replace(/=+$/u, '') },
+    });
+    const provision = vi.fn();
+    const idFromName = vi.fn();
+    const get = vi.fn(() => ({
+      getExistingSecretRpc: existing,
+      provisionMappingHashKeyRpc: provision,
+    }));
+    // Only the KeyManager port is installed on the existing synthetic Env fixture.
+    Reflect.set(env, 'KEY_MANAGER', { idFromName, get });
+    try {
+      const rule: MappingRuleGraph = {
+        id: 'hash-attribute',
+        targetRef: { side: 'destination', namespace: 'saml.attribute', path: 'syntheticDigest' },
+        edges: [
+          {
+            id: 'input',
+            sourceRef: { side: 'source', namespace: 'authrim.custom_claims', path: 'synthetic' },
+            targetRef: {
+              side: 'destination',
+              namespace: 'saml.attribute',
+              path: 'syntheticDigest',
+            },
+          },
+        ],
+        transforms: [
+          { id: 'trim', operation: 'trim', inputs: [{ edgeIndex: 0 }] },
+          {
+            id: 'hash',
+            operation: 'hash',
+            parameters: { encoding: 'hex' },
+            inputs: [{ stepIndex: 0 }],
+          },
+        ],
+        output: { stepIndex: 1 },
+      };
+      rule.transforms.push(...example.transforms);
+      rule.output = { stepIndex: rule.transforms.length - 1 };
+      const identityMapping = {
+        destinationNamespace: 'saml.attribute',
+        catalog: {
+          identity: {
+            id: 'synthetic-catalog',
+            version: '1',
+            contentHash: 'synthetic',
+            compatibilityRange: '*',
+          },
+          entries: [
+            {
+              id: 'digest',
+              namespace: 'saml.attribute',
+              path: 'syntheticDigest',
+              valueType: example.valueType,
+              cardinality: example.cardinality,
+              classification: 'public',
+            },
+          ],
+        },
+        edges: rule.edges,
+        graphRules: [rule],
+        destinationFieldPolicies: { syntheticDigest: example.required ? 'required' : 'optional' },
+        validationRules: example.required
+          ? [{ id: 'required-output', kind: 'required', targetRef: rule.targetRef }]
+          : [],
+      } satisfies SAMLIdentityMappingFieldMappingBinding;
+      const nameIdFormat = 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress';
+      const input: Omit<Parameters<typeof computeSAMLAttributeRelease>[0], 'identifiers'> = {
+        env,
+        tenantId: 'tenant-a',
+        idpEntityId: 'https://idp.example.test',
+        spConfig: {
+          entityId: 'https://sp.example.test',
+          acsUrl: 'https://sp.example.test/acs',
+          nameIdFormat,
+          attributeMapping: {},
+          signAssertions: true,
+          signResponses: false,
+          allowedBindings: ['post'],
+          identityMapping,
+        },
+        userInfo: {
+          id: 'synthetic-user',
+          email: 'synthetic@example.test',
+          customClaims: { synthetic: ' synthetic ' },
+        },
+        userId: 'synthetic-user',
+        requestScope: {},
+        onError: noError,
+      };
+      const pending = await computeSAMLAttributeRelease({ ...input, identifiers: 'deferred' });
+      expect(pending.deferred).toEqual(new Set(['syntheticDigest']));
+      expect(pending.attributes).toEqual([
+        expect.objectContaining({
+          name: 'syntheticDigest',
+          values: [],
+        }),
+      ]);
+      const items = samlReleaseItems(pending, {
+        nameIdFormat,
+        userInfo: input.userInfo,
+        showValues: true,
+      });
+      expect(items.find((item) => item.kind === 'attribute')).toMatchObject({ deferred: true });
+      expect(items.find((item) => item.kind === 'attribute')).not.toHaveProperty('values');
+      const approved = items.map((item) => item.key);
+      expect(samlApprovalNeedsIdentifiers(pending, approved)).toBe(true);
+      expect(applySAMLReleaseApproval(pending, approved, nameIdFormat)).toEqual({
+        ok: false,
+        missing: ['syntheticDigest'],
+      });
+      expect(idFromName).not.toHaveBeenCalled();
+      expect(get).not.toHaveBeenCalled();
+      expect(existing).not.toHaveBeenCalled();
+      expect(provision).not.toHaveBeenCalled();
+
+      const digest = createHmac('sha256', bytes).update('synthetic').digest('hex');
+      const expected = example.expected(digest);
+      if (example.required && expected.length === 0) {
+        const missing: unknown = await computeSAMLAttributeRelease({
+          ...input,
+          identifiers: 'made',
+        }).catch((error: unknown) => error);
+        expect(missing).toHaveProperty(
+          'reasons',
+          expect.arrayContaining([expect.objectContaining({ code: 'validation.required_missing' })])
+        );
+      } else {
+        const made = await computeSAMLAttributeRelease({ ...input, identifiers: 'made' });
+        expect(made.attributes).toEqual(
+          expected.length
+            ? [expect.objectContaining({ name: 'syntheticDigest', values: expected })]
+            : []
+        );
+        expect(made.deferred.size).toBe(0);
+        expect(applySAMLReleaseApproval(made, approved, nameIdFormat)).toEqual({
+          ok: true,
+          attributes: made.attributes,
+        });
+      }
+      expect(idFromName).toHaveBeenCalledExactlyOnceWith('tenant-a-v3');
+      expect(existing).toHaveBeenCalledExactlyOnceWith(MAPPING_HASH_SECRET_REF);
+      expect(provision).not.toHaveBeenCalled();
+
+      existing.mockResolvedValue(null);
+      const failure: unknown = await computeSAMLAttributeRelease({
+        ...input,
+        identifiers: 'made',
+      }).catch((error: unknown) => error);
+      expect(failure).toMatchObject({ name: 'SAMLIdentityMappingRuntimeError' });
+      expect(failure).toHaveProperty(
+        'reasons',
+        expect.arrayContaining([
+          expect.objectContaining({ code: 'transform.hash_unavailable', severity: 'critical' }),
+        ])
+      );
+      expect(existing).toHaveBeenCalledTimes(2);
+      expect(provision).not.toHaveBeenCalled();
+    } finally {
+      Reflect.deleteProperty(env, 'KEY_MANAGER');
+    }
   });
 });

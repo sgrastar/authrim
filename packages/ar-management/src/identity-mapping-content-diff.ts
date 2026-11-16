@@ -26,6 +26,12 @@ import {
   normalizeDestinationProfileReference,
   type DatabaseAdapter,
 } from '@authrim/ar-lib-core';
+import { analyzeMappingDependencies } from '@authrim/ar-lib-field-mapping/authoring';
+import {
+  canonicalMappingRule,
+  ruleOutput,
+  transformInputs,
+} from './identity-mapping-graph-contract';
 import { findCatalogEntry } from '@authrim/ar-lib-field-mapping/runtime';
 import type { MappingSetContent } from './identity-mapping-set-facade-content';
 
@@ -146,12 +152,18 @@ export function claimShapes(
   content: Pick<MappingSetContent, 'rules'>,
   catalog: CatalogTypes
 ): Map<string, ClaimShape> {
+  const normalizedRules = content.rules.map(canonicalMappingRule);
   // An edge that names no profile is released through the set's one profile, as the runtime
   // resolves a set to exactly one.
   const profiles = new Set<string>();
-  for (const rule of content.rules) {
-    for (const edge of rule.edges ?? []) {
-      const profile = mappingReferenceProfileId(edge.targetRef);
+  for (const rule of normalizedRules) {
+    const targets = [
+      ...(rule.targetRef ? [rule.targetRef] : []),
+      ...(rule.edges ?? []).map((edge) => edge.targetRef),
+      ...(rule.transforms ?? []).flatMap((step) => (step.targetRef ? [step.targetRef] : [])),
+    ];
+    for (const target of targets) {
+      const profile = mappingReferenceProfileId(target);
       if (profile) profiles.add(normalizeDestinationProfileReference(profile));
     }
   }
@@ -169,17 +181,41 @@ export function claimShapes(
       sourceTypes: Map<string, string | null>;
     }
   >();
-  const rules = content.rules;
+  const rules = normalizedRules.map((rule) => {
+    const output = ruleOutput(rule);
+    if ((!rule.output && !rule.transforms?.some((step) => step.inputs !== undefined)) || !output)
+      return { rule };
+    const transforms = rule.transforms ?? [];
+    const dependencies = analyzeMappingDependencies({
+      edgeCount: rule.edges?.length ?? 0,
+      transforms: transforms.map((step) => ({ inputs: transformInputs(step) })),
+      output,
+    });
+    const targetRef =
+      rule.targetRef ??
+      ('edgeIndex' in output
+        ? rule.edges?.[output.edgeIndex]?.targetRef
+        : (transforms[output.stepIndex]?.targetRef ?? rule.edges?.[0]?.targetRef));
+    return { rule, dependencies, targetRef };
+  });
   // The edges in the order the runtime loads them: by rule priority, then by each edge's place in
   // its rule (rules saved together share their time, so theirs interleave), then as saved. Of
   // several edges into one claim, the last written wins.
-  const edges = rules.flatMap((rule, ruleIndex) =>
-    (rule.edges ?? []).map((edge, edgeIndex) => ({ rule, ruleIndex, edge, edgeIndex }))
+  const edges = rules.flatMap(({ rule, dependencies, targetRef }, ruleIndex) =>
+    (dependencies
+      ? [...dependencies.edgeIndexes]
+      : (rule.edges ?? []).map((_, index) => index)
+    ).flatMap((edgeIndex, edgeOrder) => {
+      const edge = rule.edges?.[edgeIndex];
+      return edge
+        ? [{ rule, ruleIndex, edge, edgeOrder, targetRef: targetRef ?? edge.targetRef }]
+        : [];
+    })
   );
   edges.sort(
     (a, b) =>
       (a.rule.priority ?? 0) - (b.rule.priority ?? 0) ||
-      a.edgeIndex - b.edgeIndex ||
+      a.edgeOrder - b.edgeOrder ||
       a.ruleIndex - b.ruleIndex
   );
   const shapeFor = (targetRef: Record<string, unknown>) => {
@@ -205,8 +241,8 @@ export function claimShapes(
   };
   // Where each edge is among its claim's edges, so a step is told by the edge it is on.
   const placeOf = new Map<unknown, { key: string; place: number }>();
-  for (const { edge } of edges) {
-    const found = shapeFor(edge.targetRef);
+  for (const { edge, targetRef } of edges) {
+    const found = shapeFor(targetRef);
     if (!found) continue;
     const { key, shape } = found;
     const source = sourceKey(edge.sourceRef, catalog);
@@ -218,8 +254,12 @@ export function claimShapes(
   // The steps in the order the runtime loads them: by rule priority, then by each step's place in
   // its rule (so the steps of rules of one priority interleave), then as saved. A step on no edge
   // of its rule is released nowhere.
-  const steps = rules.flatMap((rule, ruleIndex) =>
-    (rule.transforms ?? []).map((step, stepIndex) => ({ rule, ruleIndex, step, stepIndex }))
+  const steps = rules.flatMap(({ rule, dependencies, targetRef }, ruleIndex) =>
+    (rule.transforms ?? []).flatMap((step, stepIndex) =>
+      dependencies && !dependencies.stepIndexes.includes(stepIndex)
+        ? []
+        : [{ rule, ruleIndex, step, stepIndex, dependencies, targetRef }]
+    )
   );
   steps.sort(
     (a, b) =>
@@ -227,7 +267,26 @@ export function claimShapes(
       a.stepIndex - b.stepIndex ||
       a.ruleIndex - b.ruleIndex
   );
-  for (const { rule, step } of steps) {
+  for (const { rule, step, dependencies, targetRef } of steps) {
+    if (dependencies && targetRef) {
+      const found = shapeFor(targetRef);
+      if (!found) continue;
+      const inputs = transformInputs(step);
+      const first = inputs[0];
+      const edge = first && 'edgeIndex' in first ? rule.edges?.[first.edgeIndex] : undefined;
+      found.shape.transforms.push(
+        stable({
+          at: edge ? (placeOf.get(edge)?.place ?? -1) : -1,
+          operation: step.operation,
+          parameters: step.parameters ?? {},
+          ...(inputs.length > 1 ||
+          inputs.some((ref) => 'stepIndex' in ref || ref.name !== undefined)
+            ? { inputs }
+            : {}),
+        })
+      );
+      continue;
+    }
     // A step with no input edge (a persistent identifier) fills the claim it names itself: the
     // claim has no source, and the step's settings are what changes.
     if (step.targetRef) {
@@ -237,14 +296,6 @@ export function claimShapes(
       );
       continue;
     }
-    const edge = step.edgeIndex === undefined ? undefined : (rule.edges ?? [])[step.edgeIndex];
-    const at = edge ? placeOf.get(edge) : undefined;
-    if (!at) continue;
-    shapes
-      .get(at.key)
-      ?.transforms.push(
-        stable({ at: at.place, operation: step.operation, parameters: step.parameters ?? {} })
-      );
   }
   return new Map(
     [...shapes].map(([key, shape]) => {

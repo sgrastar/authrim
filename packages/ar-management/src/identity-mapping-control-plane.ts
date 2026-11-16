@@ -1,3 +1,15 @@
+import { provisionMappingHashKey } from '@authrim/ar-lib-core/services/mapping-hash';
+import { mappingGraphMaterialSql } from '@authrim/ar-lib-core/services/mapping-graph-snapshot';
+import { readMappingReference } from '@authrim/ar-lib-field-mapping/authoring';
+import {
+  canonicalMappingRule,
+  ruleOutput,
+  ruleTarget,
+  transformInputs,
+  assertMappingGraphContract,
+  MappingGraphContractError,
+} from './identity-mapping-graph-contract';
+import type { MappingValueReference } from '@authrim/ar-lib-field-mapping/contract';
 import {
   emitLogIcebergRow,
   prepareLogIcebergRowWrite,
@@ -30,6 +42,7 @@ import {
   findPlatformMappingVersionViolation,
   getTenantIdFromContext,
   isOutputGraphTarget,
+  loadRuntimeMappingGraph,
   mappingReferencePath,
   mappingReferenceProfileId,
   normalizePlatformActivationScope,
@@ -41,6 +54,7 @@ import {
   requireDedicatedAdminDatabaseAdapter,
   resolveSourceClassification,
   sensitiveClassificationRank,
+  sliceOutputGraph,
   toMappingSourceReference,
   validateExternalUrl,
   ADMIN_ROLES,
@@ -63,6 +77,8 @@ import {
   evaluateProvisioningAssignmentRule,
 } from './identity-provisioning-assignment';
 import {
+  TRANSFORM_LIMITS,
+  TRANSFORM_OPERATION_SCHEMAS,
   parseCsvSourceProfile,
   persistentIdentifierSettingsProblem,
   validateCatalogBundle,
@@ -111,21 +127,9 @@ const POLICY_SYMBOL_MAX_CHARS = 128;
 const POLICY_SYMBOL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:\-]{0,127}$/;
 const SAML_METADATA_POLLING_MIN_INTERVAL_SECONDS = 15 * 60;
 const SAML_METADATA_POLLING_MAX_INTERVAL_SECONDS = 7 * 24 * 60 * 60;
-const SUPPORTED_POLICY_TRANSFORM_OPERATIONS = new Set([
-  'copy',
-  'concat',
-  'fallback',
-  'normalize',
-  'case',
-  'trim',
-  'affix_text',
-  'persistent_identifier',
-  'text_to_boolean',
-  'json_build',
-  'json_extract_text',
-  'json_extract_boolean',
-  'json_extract_integer',
-]);
+const SUPPORTED_POLICY_TRANSFORM_OPERATIONS = new Set<string>(
+  TRANSFORM_OPERATION_SCHEMAS.map((schema) => schema.operation)
+);
 const DEFAULT_CANONICAL_CATALOG_ID = 'system_default_canonical_catalog';
 const DEFAULT_CANONICAL_CATALOG_KEY = 'authrim.default_canonical';
 const DEFAULT_CANONICAL_CATALOG_DISPLAY_NAME = 'Authrim Default Canonical Catalog';
@@ -474,6 +478,7 @@ interface FieldMappingVersionRow {
   version_label: string;
   lifecycle_state: LifecycleState;
   field_mapping_hash: string;
+  restore_id: string | null;
   compatibility_range: string | null;
   author_id: string | null;
   published_at: number | null;
@@ -498,6 +503,9 @@ interface FieldMappingRuleSummaryRow {
   scope_json: string | null;
   condition_json: string | null;
   metadata_json: string | null;
+  output_edge_id: string | null;
+  output_step_id: string | null;
+  rule_target_ref_json: string | null;
   edge_id: string | null;
   source_ref_json: string | null;
   target_ref_json: string | null;
@@ -509,7 +517,6 @@ interface FieldMappingTransformSummaryRow {
   field_mapping_version_id: string;
   rule_id: string;
   transform_id: string;
-  edge_id: string | null;
   step_order: number;
   operation: string;
   parameters_json: string | null;
@@ -549,6 +556,7 @@ interface FieldMappingConflictSummaryRow {
 }
 
 interface SensitiveReleaseMappingEdgeRow {
+  id: string;
   source_ref_json: string;
   target_ref_json: string;
 }
@@ -932,6 +940,8 @@ interface CreateAttributeFieldRequest {
 }
 
 export interface FieldMappingVersionRuleInput {
+  targetRef?: Record<string, unknown>;
+  output?: MappingValueReference;
   ruleKey: string;
   ruleKind: string;
   action: string;
@@ -945,7 +955,7 @@ export interface FieldMappingVersionRuleInput {
     edgeKind?: string;
   }>;
   transforms?: Array<{
-    edgeIndex?: number;
+    inputs?: MappingValueReference[];
     /**
      * Where a step that takes no input edge (the persistent_identifier step) writes its value;
      * every other step writes where its edge does.
@@ -3811,6 +3821,11 @@ export class IdentityMappingControlPlaneRepository {
       : [tenantId, fieldMappingSetId];
     const ruleIds = `SELECT id FROM mapping_rules WHERE tenant_id = ? AND field_mapping_version_id IN (${versionIds})`;
     const statements: Array<{ sql: string; params: unknown[] }> = [];
+    statements.push({
+      sql: `DELETE FROM mapping_transform_step_inputs WHERE tenant_id = ? AND step_id IN (
+        SELECT id FROM mapping_transform_steps WHERE tenant_id = ? AND rule_id IN (${ruleIds}))`,
+      params: [tenantId, tenantId, tenantId, ...versionParams],
+    });
     for (const table of [
       'mapping_transform_steps',
       'mapping_rule_edges',
@@ -3956,6 +3971,7 @@ export class IdentityMappingControlPlaneRepository {
               r.scope_json,
               r.condition_json,
               r.metadata_json,
+              r.output_edge_id, r.output_step_id, r.target_ref_json AS rule_target_ref_json,
               e.id AS edge_id,
               e.source_ref_json,
               e.target_ref_json,
@@ -3976,11 +3992,10 @@ export class IdentityMappingControlPlaneRepository {
       `SELECT v.id AS field_mapping_version_id,
               r.id AS rule_id,
               t.id AS transform_id,
-              t.edge_id,
               t.step_order,
               t.operation,
               t.parameters_json,
-              t.target_ref_json
+              r.target_ref_json
          FROM field_mapping_versions v
          JOIN mapping_rules r
            ON r.tenant_id = v.tenant_id
@@ -3990,6 +4005,21 @@ export class IdentityMappingControlPlaneRepository {
           AND t.rule_id = r.id
         WHERE v.tenant_id = ? AND v.field_mapping_set_id = ?${versionFilter}
         ORDER BY v.id, r.priority ASC, r.rowid ASC, t.step_order ASC`,
+      versionParams
+    );
+    const inputRows = await this.adapter.query<{
+      step_id: string;
+      position: number;
+      edge_id: string | null;
+      input_step_id: string | null;
+      name: string | null;
+    }>(
+      `SELECT i.* FROM mapping_transform_step_inputs i
+        JOIN mapping_transform_steps t ON t.tenant_id = i.tenant_id AND t.id = i.step_id
+        JOIN mapping_rules r ON r.tenant_id = t.tenant_id AND r.id = t.rule_id
+        JOIN field_mapping_versions v ON v.tenant_id = r.tenant_id AND v.id = r.field_mapping_version_id
+        WHERE v.tenant_id = ? AND v.field_mapping_set_id = ?${versionFilter}
+        ORDER BY i.step_id, i.position`,
       versionParams
     );
     const validationRows = await this.adapter.query<FieldMappingValidationSummaryRow>(
@@ -4059,6 +4089,10 @@ export class IdentityMappingControlPlaneRepository {
         rules: Map<
           string,
           {
+            output?: MappingValueReference;
+            targetRef?: Record<string, unknown>;
+            outputEdgeId: string | null;
+            outputStepId: string | null;
             id: string;
             ruleKey: string;
             ruleKind: string;
@@ -4075,8 +4109,8 @@ export class IdentityMappingControlPlaneRepository {
               displayOrder: number;
             }>;
             transforms: Array<{
+              inputs: MappingValueReference[];
               id: string;
-              edgeId: string | null;
               /** The step's own output target (a step with no input edge), else null. */
               targetRef: Record<string, unknown> | null;
               stepOrder: number;
@@ -4149,6 +4183,11 @@ export class IdentityMappingControlPlaneRepository {
       }
       const rule = summary.rules.get(row.rule_id) ?? {
         id: row.rule_id,
+        targetRef: row.rule_target_ref_json
+          ? parseJsonObject(row.rule_target_ref_json, {})
+          : undefined,
+        outputEdgeId: row.output_edge_id,
+        outputStepId: row.output_step_id,
         ruleKey: row.rule_key,
         ruleKind: row.rule_kind,
         action: row.action,
@@ -4188,7 +4227,7 @@ export class IdentityMappingControlPlaneRepository {
       }
       rule.transforms.push({
         id: row.transform_id,
-        edgeId: row.edge_id,
+        inputs: [],
         targetRef: row.target_ref_json ? parseJsonObject(row.target_ref_json, {}) : null,
         stepOrder: row.step_order,
         operation: row.operation,
@@ -4237,6 +4276,49 @@ export class IdentityMappingControlPlaneRepository {
         sourcePriority: parseJsonUnknownArray(row.source_priority_json),
         condition: parseJsonObject(row.condition_json ?? '{}', {}),
       });
+    }
+    for (const summary of summariesByVersion.values()) {
+      for (const rule of summary.rules.values()) {
+        const edgeIds = rule.edges.map((edge) => edge.id);
+        const stepIds = rule.transforms.map((step) => step.id);
+        if (rule.outputEdgeId !== null || rule.outputStepId !== null) {
+          rule.output = readMappingReference(
+            { edge_id: rule.outputEdgeId, input_step_id: rule.outputStepId },
+            edgeIds,
+            stepIds
+          );
+        } else if (edgeIds.length || stepIds.length) {
+          throw badRequest('invalid_reference: stored rule output is missing');
+        }
+        rule.transforms.forEach((step, index) => {
+          const refs = inputRows.filter((row) => row.step_id === step.id);
+          step.inputs = refs.map((ref, position) => {
+            if (ref.position !== position)
+              throw badRequest('invalid_reference: input positions must be contiguous');
+            return readMappingReference(ref, edgeIds, stepIds, index);
+          });
+        });
+        try {
+          assertMappingGraphContract(
+            {
+              ruleKey: rule.ruleKey,
+              ruleKind: rule.ruleKind,
+              action: rule.action,
+              targetRef: rule.targetRef,
+              edges: rule.edges,
+              transforms: rule.transforms.map(({ operation, parameters, inputs }) => ({
+                operation,
+                parameters,
+                inputs,
+              })),
+              output: rule.output,
+            },
+            'stored_rule'
+          );
+        } catch {
+          throw badRequest('invalid_transform: stored graph is invalid');
+        }
+      }
     }
     return rows.map((row) => ({
       id: row.id,
@@ -4294,6 +4376,9 @@ export class IdentityMappingControlPlaneRepository {
       throw conflict('field mapping version label already exists');
     }
 
+    if (input.rules.some((rule) => rule.transforms?.some((step) => step.operation === 'hash'))) {
+      await provisionMappingHashKey(this.requireLogEnvironment(), tenantId, input.rules);
+    }
     const now = this.now();
     const versionId = options.versionId ?? createId('field_mapping_version');
     const fieldMappingHash = await hashStableJson({
@@ -4364,7 +4449,7 @@ export class IdentityMappingControlPlaneRepository {
     if (tenantId === PLATFORM_MAPPING_TENANT_ID) {
       const violation = findPlatformMappingVersionViolation(input.rules, input.sourceProfileIds);
       if (violation) throw badRequest(violation);
-      await this.assertPlatformOidcDestinationProfile(
+      await this.assertPlatformReleaseDestinationProfile(
         tenantId,
         input.rules.flatMap((rule) => (rule.edges ?? []).map((edge) => edge.targetRef)),
         false
@@ -4486,10 +4571,12 @@ export class IdentityMappingControlPlaneRepository {
     input: CompileFieldMappingRequest
   ) {
     validateRequiredString(input.catalogVersionId, 'catalogVersionId');
-    const version = await this.getFieldMappingVersion(
-      tenantId,
-      fieldMappingSetId,
-      fieldMappingVersionId
+    // Read destination-owned restore provenance from the primary, never from uploaded snapshots.
+    const version = await this.adapter.queryOne<FieldMappingVersionRow>(
+      `SELECT * FROM field_mapping_versions
+        WHERE tenant_id = ? AND field_mapping_set_id = ? AND id = ?`,
+      [tenantId, fieldMappingSetId, fieldMappingVersionId],
+      { consistencyClass: 'primary_required' }
     );
     if (!version) {
       throw notFound('field mapping version not found');
@@ -4508,7 +4595,20 @@ export class IdentityMappingControlPlaneRepository {
     }
 
     const now = this.now();
+    const material = await this.adapter.queryOne<{ graph_json: string }>(
+      `${mappingGraphMaterialSql()} WHERE v.tenant_id = ? AND v.id = ?`,
+      [tenantId, fieldMappingVersionId]
+    );
+    const mappingGraph: unknown = JSON.parse(material?.graph_json ?? '[]');
+    // Imported authoring/catalog hashes cannot prove the original policy. Keep the restore
+    // boundary permanent for this version and issue a fresh pin on every subsequent compile.
+    const snapshotId = createId('mapping_snapshot');
+    const graphId = createId('dependency_graph');
     const dependencyGraph = {
+      ...(version.restore_id
+        ? { restoreId: version.restore_id, restoredCompilationId: snapshotId }
+        : {}),
+      mappingGraph,
       fieldMappingVersionId,
       fieldMappingHash: version.field_mapping_hash,
       catalogVersionId: catalogVersion.id,
@@ -4524,9 +4624,6 @@ export class IdentityMappingControlPlaneRepository {
         version.compatibility_range ??
         catalogVersion.compatibility_range,
     });
-    const snapshotId = createId('mapping_snapshot');
-    const graphId = createId('dependency_graph');
-
     await this.adapter.execute(
       `INSERT INTO dependency_graph_snapshots (
         id, tenant_id, field_mapping_version_id, snapshot_hash, graph_json, created_at
@@ -4556,6 +4653,7 @@ export class IdentityMappingControlPlaneRepository {
           ...(input.metadata ?? {}),
           dependencyGraphId: graphId,
           loadTimeHashVerified: true,
+          snapshotPinState: 'compiled',
         }),
       ]
     );
@@ -4727,8 +4825,15 @@ export class IdentityMappingControlPlaneRepository {
   ) {
     validateRequiredString(input.snapshotId, 'snapshotId');
     let activationScope = input.activationScope;
-    if (tenantId === PLATFORM_MAPPING_TENANT_ID) {
-      // Written empty, so it applies to every calling tenant (see normalizePlatformActivationScope).
+    const sharedSamlFacadeScope =
+      options.expectedActiveVersionId !== undefined &&
+      isRecord(activationScope) &&
+      Object.keys(activationScope).length === 2 &&
+      activationScope.protocol === 'saml' &&
+      activationScope.role === 'idp';
+    if (tenantId === PLATFORM_MAPPING_TENANT_ID && !sharedSamlFacadeScope) {
+      // Legacy platform OIDC activations stay empty. The facade's SAML scope still applies to
+      // every tenant and SP; only the protocol and release role are constrained.
       const normalized = normalizePlatformActivationScope(input.activationScope, tenantId);
       if ('violation' in normalized) throw badRequest(normalized.violation);
       activationScope = normalized.scope;
@@ -7823,7 +7928,7 @@ export class IdentityMappingControlPlaneRepository {
     catalogVersionId: string | null
   ): Promise<void> {
     const edgeRows = await this.adapter.query<SensitiveReleaseMappingEdgeRow>(
-      `SELECT e.source_ref_json, e.target_ref_json
+      `SELECT e.id, e.source_ref_json, e.target_ref_json
          FROM mapping_rules r
          JOIN mapping_rule_edges e
            ON e.tenant_id = r.tenant_id
@@ -7832,12 +7937,38 @@ export class IdentityMappingControlPlaneRepository {
           AND r.field_mapping_version_id = ?`,
       [tenantId, fieldMappingVersionId]
     );
+    const edges = edgeRows.map((row) => ({
+      id: row.id,
+      sourceRef: parseJsonObject(row.source_ref_json, {}),
+      targetRef: parseJsonObject(row.target_ref_json, {}),
+    }));
+    const needsSamlGraph =
+      tenantId !== PLATFORM_MAPPING_TENANT_ID &&
+      edges.some(
+        ({ targetRef }) =>
+          (targetRef.namespace === 'saml.attribute' || targetRef.namespace === 'saml.nameid') &&
+          !isOutputGraphTarget({ profileId: mappingReferenceProfileId(targetRef) })
+      );
+    const samlOutputEdgeIds = new Set<string>();
+    if (needsSamlGraph) {
+      // Read path/fieldKey/nodeId and catalog-entry aliases through the runtime resolver, then
+      // use its output cut. An edge in a rule for another destination is not a SAML release.
+      const graph = await loadRuntimeMappingGraph(this.adapter, tenantId, fieldMappingVersionId);
+      for (const destinationNamespace of ['saml.attribute', 'saml.nameid']) {
+        for (const edge of sliceOutputGraph({ ...graph, destinationNamespace }).edges) {
+          samlOutputEdgeIds.add(edge.id);
+        }
+      }
+    }
     await this.assertSensitiveEdgesReleaseSafety(
       tenantId,
-      edgeRows.map((row) => ({
-        sourceRef: parseJsonObject(row.source_ref_json, {}),
-        targetRef: parseJsonObject(row.target_ref_json, {}),
-      })),
+      edges.filter(
+        ({ id, targetRef }) =>
+          !needsSamlGraph ||
+          (targetRef.namespace !== 'saml.attribute' && targetRef.namespace !== 'saml.nameid') ||
+          isOutputGraphTarget({ profileId: mappingReferenceProfileId(targetRef) }) ||
+          samlOutputEdgeIds.has(id)
+      ),
       catalogVersionId
     );
   }
@@ -7855,17 +7986,20 @@ export class IdentityMappingControlPlaneRepository {
     }>,
     catalogVersionId: string | null
   ): Promise<void> {
-    const releaseEdges = edges.filter(({ targetRef }) =>
-      // The edges that release to a destination (the cut the SAML IdP runs); the rules that
-      // bring a source profile's fields into the canonical ones are not judged here.
-      isOutputGraphTarget({
-        namespace: readStringValue(targetRef.namespace) ?? undefined,
-        profileId: mappingReferenceProfileId(targetRef),
-      })
+    const releaseEdges = edges.filter(
+      ({ targetRef }) =>
+        // The edges that release to a destination (the cut the SAML IdP runs); the rules that
+        // bring a source profile's fields into the canonical ones are not judged here.
+        isOutputGraphTarget({
+          namespace: readStringValue(targetRef.namespace) ?? undefined,
+          profileId: mappingReferenceProfileId(targetRef),
+        }) ||
+        targetRef.namespace === 'saml.attribute' ||
+        targetRef.namespace === 'saml.nameid'
     );
     if (tenantId === PLATFORM_MAPPING_TENANT_ID) {
       // The runtime counts the profile of every edge, not only the ones judged below.
-      await this.assertPlatformOidcDestinationProfile(
+      await this.assertPlatformReleaseDestinationProfile(
         tenantId,
         edges.map((edge) => edge.targetRef),
         true
@@ -7969,7 +8103,8 @@ export class IdentityMappingControlPlaneRepository {
       const targetField = findDestinationProfileField(
         profile.destination_type,
         parseJsonObject(profile.schema_json, {}),
-        targetPath
+        targetPath,
+        readStringValue(targetRef.namespace) ?? undefined
       );
       if (!targetField) {
         throw badRequest(`sensitive destination profile field is unavailable: ${targetPath}`);
@@ -7998,7 +8133,7 @@ export class IdentityMappingControlPlaneRepository {
    * `profileId` or `profile_id`). While a version is being written the profile may not be active
    * yet; at activation it must be.
    */
-  private async assertPlatformOidcDestinationProfile(
+  private async assertPlatformReleaseDestinationProfile(
     platformTenantId: string,
     targetRefs: Array<Record<string, unknown>>,
     requireActive: boolean
@@ -8027,9 +8162,9 @@ export class IdentityMappingControlPlaneRepository {
         `platform mapping must reference ${requireActive ? 'an active ' : 'a '}platform-owned Destination Profile: ${profileRef}`
       );
     }
-    if (destinationType !== 'oidc') {
+    if (destinationType !== 'oidc' && destinationType !== 'saml') {
       throw badRequest(
-        `platform mapping must reference an OIDC Destination Profile: ${profileRef}`
+        `platform mapping must reference an OIDC or SAML Destination Profile: ${profileRef}`
       );
     }
   }
@@ -8105,7 +8240,7 @@ export class IdentityMappingControlPlaneRepository {
       }))
     );
     if (violation) throw badRequest(violation);
-    await this.assertPlatformOidcDestinationProfile(
+    await this.assertPlatformReleaseDestinationProfile(
       platformTenantId,
       mapping.edges.map((edge) => edge.targetRef),
       false
@@ -8213,11 +8348,16 @@ export class IdentityMappingControlPlaneRepository {
     validateRequiredString(rule.ruleKind, 'ruleKind');
     validateRequiredString(rule.action, 'action');
     const ruleId = createId('mapping_rule');
+    const edgeIds = (rule.edges ?? []).map(() => createId('mapping_edge'));
+    const stepIds = (rule.transforms ?? []).map(() => createId('mapping_transform'));
+    const output = ruleOutput(rule);
+    const target =
+      rule.targetRef ?? rule.edges?.[0]?.targetRef ?? rule.transforms?.at(-1)?.targetRef;
     await executor.execute(
       `INSERT INTO mapping_rules (
         id, tenant_id, field_mapping_version_id, rule_key, rule_kind, action, priority, scope_json,
-        condition_json, metadata_json, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        condition_json, metadata_json, created_at, updated_at, output_edge_id, output_step_id, target_ref_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         ruleId,
         tenantId,
@@ -8231,13 +8371,14 @@ export class IdentityMappingControlPlaneRepository {
         stableJson(rule.metadata ?? {}),
         now,
         now,
+        output && 'edgeIndex' in output ? edgeIds[output.edgeIndex] : null,
+        output && 'stepIndex' in output ? stepIds[output.stepIndex] : null,
+        target ? stableJson(target) : null,
       ]
     );
 
-    const edgeIds: string[] = [];
     for (const [index, edge] of (rule.edges ?? []).entries()) {
-      const edgeId = createId('mapping_edge');
-      edgeIds.push(edgeId);
+      const edgeId = edgeIds[index];
       await executor.execute(
         `INSERT INTO mapping_rule_edges (
           id, tenant_id, rule_id, source_ref_json, target_ref_json, edge_kind,
@@ -8260,22 +8401,33 @@ export class IdentityMappingControlPlaneRepository {
     for (const [index, transform] of (rule.transforms ?? []).entries()) {
       await executor.execute(
         `INSERT INTO mapping_transform_steps (
-          id, tenant_id, rule_id, edge_id, step_order, operation, parameters_json, target_ref_json,
-          created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          id, tenant_id, rule_id, step_order, operation, parameters_json, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         [
-          createId('mapping_transform'),
+          stepIds[index],
           tenantId,
           ruleId,
-          transform.edgeIndex === undefined ? null : (edgeIds[transform.edgeIndex] ?? null),
           index,
           transform.operation,
           stableJson(transform.parameters ?? {}),
-          transform.targetRef ? stableJson(transform.targetRef) : null,
           now,
           now,
         ]
       );
+      for (const [position, ref] of transformInputs(transform).entries()) {
+        await executor.execute(
+          `INSERT INTO mapping_transform_step_inputs
+          (tenant_id, step_id, position, edge_id, input_step_id, name) VALUES (?, ?, ?, ?, ?, ?)`,
+          [
+            tenantId,
+            stepIds[index],
+            position,
+            'edgeIndex' in ref ? edgeIds[ref.edgeIndex] : null,
+            'stepIndex' in ref ? stepIds[ref.stepIndex] : null,
+            ref.name ?? null,
+          ]
+        );
+      }
     }
 
     for (const validationRule of rule.validationRules ?? []) {
@@ -10168,8 +10320,12 @@ function normalizeDestinationProfileReference(profileId: string): string {
 function findDestinationProfileField(
   destinationType: string,
   schema: Record<string, unknown>,
-  path: string
+  path: string,
+  namespace?: string
 ): Record<string, unknown> | null {
+  if (destinationType === 'saml' && namespace === 'saml.nameid' && isRecord(schema.nameId)) {
+    return schema.nameId;
+  }
   const definitions =
     destinationType === 'saml'
       ? schema.attributes
@@ -10198,11 +10354,23 @@ function readStringArrayValue(value: unknown): string[] {
     : [];
 }
 
-function assertProfileSchemaBudget(value: unknown, path: string): void {
+function assertProfileSchemaBudget(value: unknown, path: string, allowMappingTables = false): void {
   const seen = new WeakSet<object>();
   let nodeCount = 0;
 
-  const visit = (item: unknown, currentPath: string, depth: number): void => {
+  const visit = (
+    item: unknown,
+    currentPath: string,
+    depth: number,
+    context?:
+      | 'mappingVersion'
+      | 'rules'
+      | 'rule'
+      | 'transforms'
+      | 'transform'
+      | 'valueMapParameters'
+      | 'valueMapEntries'
+  ): void => {
     nodeCount += 1;
     if (nodeCount > PROFILE_SCHEMA_MAX_NODES) {
       throw badRequest(`${path} must contain at most ${PROFILE_SCHEMA_MAX_NODES} JSON nodes`);
@@ -10210,7 +10378,14 @@ function assertProfileSchemaBudget(value: unknown, path: string): void {
     if (depth > PROFILE_SCHEMA_MAX_DEPTH) {
       throw badRequest(`${currentPath} exceeds maximum depth ${PROFILE_SCHEMA_MAX_DEPTH}`);
     }
-    if (typeof item === 'string' && item.length > PROFILE_SCHEMA_MAX_STRING_CHARS) {
+    if (typeof item === 'string' && context === 'valueMapEntries') {
+      if (
+        item.length > TRANSFORM_LIMITS.tableBytes ||
+        new TextEncoder().encode(item).byteLength > TRANSFORM_LIMITS.tableBytes
+      ) {
+        throw badRequest(`${currentPath} must be at most ${TRANSFORM_LIMITS.tableBytes} bytes`);
+      }
+    } else if (typeof item === 'string' && item.length > PROFILE_SCHEMA_MAX_STRING_CHARS) {
       throw badRequest(
         `${currentPath} string value must be at most ${PROFILE_SCHEMA_MAX_STRING_CHARS} characters`
       );
@@ -10229,7 +10404,11 @@ function assertProfileSchemaBudget(value: unknown, path: string): void {
           `${currentPath} array must contain at most ${PROFILE_SCHEMA_MAX_ARRAY_ITEMS} items`
         );
       }
-      item.forEach((child, index) => visit(child, `${currentPath}[${index}]`, depth + 1));
+      const childContext =
+        context === 'rules' ? 'rule' : context === 'transforms' ? 'transform' : undefined;
+      item.forEach((child, index) =>
+        visit(child, `${currentPath}[${index}]`, depth + 1, childContext)
+      );
       return;
     }
 
@@ -10239,10 +10418,24 @@ function assertProfileSchemaBudget(value: unknown, path: string): void {
         `${currentPath} object must contain at most ${PROFILE_SCHEMA_MAX_OBJECT_KEYS} keys`
       );
     }
-    entries.forEach(([key, child]) => visit(child, `${currentPath}.${key}`, depth + 1));
+    entries.forEach(([key, child]) => {
+      const childContext =
+        context === 'mappingVersion' && key === 'rules'
+          ? 'rules'
+          : context === 'rule' && key === 'transforms'
+            ? 'transforms'
+            : context === 'transform' &&
+                key === 'parameters' &&
+                ['value_map', 'conditional'].includes(String(Reflect.get(item, 'operation')))
+              ? 'valueMapParameters'
+              : context === 'valueMapParameters' && (key === 'entries' || key === 'condition')
+                ? 'valueMapEntries'
+                : undefined;
+      visit(child, `${currentPath}.${key}`, depth + 1, childContext);
+    });
   };
 
-  visit(value, path, 0);
+  visit(value, path, 0, allowMappingTables ? 'mappingVersion' : undefined);
   const bytes = new TextEncoder().encode(JSON.stringify(value)).length;
   if (bytes > PROFILE_SCHEMA_MAX_JSON_BYTES) {
     throw badRequest(`${path} JSON must be at most ${PROFILE_SCHEMA_MAX_JSON_BYTES} bytes`);
@@ -10250,7 +10443,11 @@ function assertProfileSchemaBudget(value: unknown, path: string): void {
 }
 
 function assertFieldMappingVersionRequestSafe(input: CreateFieldMappingVersionRequest): void {
-  assertProfileSchemaBudget(input, 'fieldMappingVersion');
+  assertProfileSchemaBudget(
+    { ...input, rules: input.rules.map(canonicalMappingRule) },
+    'fieldMappingVersion',
+    true
+  );
   assertNoSensitiveMetadata(input, 'fieldMappingVersion');
   if (input.rules.length > POLICY_VERSION_MAX_RULES) {
     throw badRequest(`rules must contain at most ${POLICY_VERSION_MAX_RULES} items`);
@@ -10266,24 +10463,18 @@ function assertFieldMappingVersionRequestSafe(input: CreateFieldMappingVersionRe
   // A persistent identifier's target is written by that step alone, across the rules of the set as
   // well: another rule writing it would put a second value there, which goes out when the
   // identifier is suppressed, or stands next to it.
-  const key = (target: { namespace?: unknown; path?: unknown } | undefined) =>
-    `${String(target?.namespace)}\u0000${String(target?.path)}`;
+  const key = (target: Record<string, unknown> | undefined) =>
+    `${String(target?.namespace)}\u0000${target ? mappingReferencePath(target) : ''}`;
   const writers = new Map<string, number>();
   input.rules.forEach((rule) => {
-    for (const edge of rule.edges ?? []) {
-      writers.set(key(edge.targetRef), (writers.get(key(edge.targetRef)) ?? 0) + 1);
-    }
-    for (const transform of rule.transforms ?? []) {
-      if (transform.targetRef) {
-        writers.set(key(transform.targetRef), (writers.get(key(transform.targetRef)) ?? 0) + 1);
-      }
-    }
+    const target = ruleTarget(rule);
+    if (target && ruleOutput(rule)) writers.set(key(target), (writers.get(key(target)) ?? 0) + 1);
   });
   input.rules.forEach((rule, ruleIndex) => {
     rule.transforms?.forEach((transform, index) => {
       if (
         transform.operation === 'persistent_identifier' &&
-        (writers.get(key(transform.targetRef)) ?? 0) > 1
+        (writers.get(key(ruleTarget(rule))) ?? 0) > 1
       ) {
         throw badRequest(
           `rules[${ruleIndex}].transforms[${index}] output is also written by another edge or step of the set`
@@ -10291,9 +10482,72 @@ function assertFieldMappingVersionRequestSafe(input: CreateFieldMappingVersionRe
       }
     });
   });
+  // Explicit conflict policies preserve ordered writers across separate rule outputs.
+  const targetOwners = new Map<string, number>();
+  for (const [index, rule] of input.rules.entries()) {
+    const targetRef = ruleTarget(rule);
+    const refs = targetRef && ruleOutput(rule) ? [targetRef] : [];
+    for (const ref of refs) {
+      const target = key(ref);
+      const owner = targetOwners.get(target);
+      if (
+        owner !== undefined &&
+        owner !== index &&
+        !input.rules.some((candidate) =>
+          candidate.conflictRules?.some((conflict) => key(conflict.targetRef) === target)
+        )
+      ) {
+        throw new IdentityMappingControlPlaneError(
+          'Several rules write one target',
+          400,
+          'duplicate_target'
+        );
+      }
+      targetOwners.set(target, index);
+    }
+  }
 }
 
 function assertFieldMappingRuleSafe(rule: FieldMappingVersionRuleInput, path: string): void {
+  try {
+    assertMappingGraphContract(rule, path);
+  } catch (error) {
+    if (error instanceof MappingGraphContractError) {
+      if (error.reason === 'identifier_post_transform_not_allowed') {
+        throw new IdentityMappingControlPlaneError(error.message, 400, error.reason);
+      }
+      throw badRequest(error.message);
+    }
+    throw error;
+  }
+  const outputTarget = ruleTarget(rule);
+  if (outputTarget) {
+    assertNonEmptyRecord(outputTarget, `${path}.targetRef`);
+    const namespace = readStringValue(outputTarget.namespace) ?? 'unknown';
+    if (
+      [outputTarget.path, outputTarget.fieldKey, outputTarget.nodeId].some(
+        (name) =>
+          typeof name === 'string' && isProtectedIdentityMappingDestinationClaim(namespace, name)
+      )
+    ) {
+      throw badRequest(`${path}.targetRef targets a claim reserved by the protocol envelope`);
+    }
+  }
+  if (outputTarget?.namespace === 'saml.nameid') {
+    const output = ruleOutput(rule);
+    const plainCopy = output && 'edgeIndex' in output && (rule.transforms?.length ?? 0) === 0;
+    const identifier =
+      output &&
+      'stepIndex' in output &&
+      rule.transforms?.length === 1 &&
+      rule.transforms[output.stepIndex]?.operation === 'persistent_identifier' &&
+      rule.transforms[output.stepIndex]?.parameters?.format === 'plain';
+    if (!plainCopy && !identifier) {
+      throw badRequest(
+        `${path}: saml.nameid requires a plain copy or a plain persistent identifier`
+      );
+    }
+  }
   validatePolicySymbol(rule.ruleKey, `${path}.ruleKey`);
   validatePolicySymbol(rule.ruleKind, `${path}.ruleKind`);
   validatePolicySymbol(rule.action, `${path}.action`);
@@ -10337,12 +10591,6 @@ function assertFieldMappingRuleSafe(rule: FieldMappingVersionRuleInput, path: st
     if (!SUPPORTED_POLICY_TRANSFORM_OPERATIONS.has(transform.operation)) {
       throw badRequest(`${path}.transforms[${index}].operation is not supported`);
     }
-    if (
-      transform.edgeIndex !== undefined &&
-      (!Number.isInteger(transform.edgeIndex) || transform.edgeIndex < 0)
-    ) {
-      throw badRequest(`${path}.transforms[${index}].edgeIndex must be a non-negative integer`);
-    }
     if (transform.operation !== 'persistent_identifier' && transform.targetRef !== undefined) {
       throw badRequest(`${path}.transforms[${index}].targetRef is only for persistent_identifier`);
     }
@@ -10350,10 +10598,10 @@ function assertFieldMappingRuleSafe(rule: FieldMappingVersionRuleInput, path: st
       // Takes no input edge: it is made from the account's ID or an identifier source, which the
       // runtime reads. It says itself where its value goes, and its settings are checked as the
       // runtime checks them, so a set that could never make an identifier is not saved.
-      if (transform.edgeIndex !== undefined) {
+      if (transformInputs(transform).length > 0) {
         throw badRequest(`${path}.transforms[${index}] takes no input edge`);
       }
-      const target = transform.targetRef;
+      const target = ruleTarget(rule);
       if (!target || typeof target !== 'object' || Array.isArray(target)) {
         throw badRequest(`${path}.transforms[${index}].targetRef is required`);
       }
@@ -10383,23 +10631,6 @@ function assertFieldMappingRuleSafe(rule: FieldMappingVersionRuleInput, path: st
         persistentIdentifierSettingsProblem(transform.parameters ?? undefined) !== null
       ) {
         throw badRequest(`${path}.transforms[${index}].parameters are not valid`);
-      }
-      // No other edge or identifier step may write into the identifier's own output.
-      const sameOutput =
-        rule.edges?.some(
-          (edge) =>
-            edge.targetRef?.namespace === target.namespace && edge.targetRef?.path === target.path
-        ) ||
-        rule.transforms?.some(
-          (other, otherIndex) =>
-            otherIndex !== index &&
-            other.targetRef?.namespace === target.namespace &&
-            other.targetRef?.path === target.path
-        );
-      if (sameOutput) {
-        throw badRequest(
-          `${path}.transforms[${index}] output is also written by another edge or step`
-        );
       }
       const namespace = typeof target.namespace === 'string' ? target.namespace : '';
       const parameters = transform.parameters ?? {};

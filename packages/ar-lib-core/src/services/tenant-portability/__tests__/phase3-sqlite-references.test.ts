@@ -1,3 +1,4 @@
+import { foreignKeyGroups } from './foreign-key-groups';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { inventoryBackupSchemas } from '../../../../../../scripts/tenant-backup/schema-inventory';
@@ -79,12 +80,23 @@ describe('Phase 3 installed SQL reference graph', () => {
       for (const table of stream.tables) {
         const from = registrations.get(`${family}:${table.name}`);
         if (!from) continue;
-        const grouped = Map.groupBy(table.foreignKeys, (foreignKey) => foreignKey.id);
-        for (const foreignKeys of grouped.values()) {
+        for (const foreignKeys of foreignKeyGroups(table.foreignKeys)) {
           const target = registrations.get(`${family}:${foreignKeys[0].parentTable}`);
           if (!target) continue;
+          const parent = stream.tables.find(
+            (candidate) => candidate.name === foreignKeys[0].parentTable
+          );
+          // Tenant ownership is validated separately. A redundant tenant column on an id-keyed
+          // parent does not become part of that dataset's record identity.
+          const tenantIsIdentity = parent?.columns.some(
+            (column) => column.name === 'tenant_id' && column.primaryKeyPosition > 0
+          );
           const localColumns = [...foreignKeys]
             .sort((left, right) => left.position - right.position)
+            .filter(
+              (key) =>
+                key.parentColumn !== 'tenant_id' || tenantIsIdentity || foreignKeys.length === 1
+            )
             .map((foreignKey) => foreignKey.column);
           expect(
             PHASE3_SQLITE_REFERENCE_RULES.some(
@@ -165,28 +177,33 @@ describe('Phase 3 installed SQL reference graph', () => {
     ).toThrow('backup_phase3_reference_null');
   });
 
-  it('accepts a transform step that reads no edge, and still checks one that does', () => {
+  it('validates graph inputs and refuses legacy step columns', () => {
     const identity = {
       module: 'identity-mapping',
-      collection: 'admin.mapping_transform_steps',
-      id: 'step',
+      collection: 'admin.mapping_transform_step_inputs',
+      id: 'input',
       tenantId: 'tenant-a',
     };
-    const targets = (edgeId: string | null) =>
+    const dependencies = inspectPhase3SqliteReferences(
+      identity.collection,
+      row({
+        tenant_id: 'tenant-a',
+        step_id: 'step',
+        edge_id: 'edge',
+        input_step_id: null,
+        name: null,
+      }),
+      identity
+    );
+    expect(dependencies.map(({ to }) => to.collection)).toContain('admin.mapping_rule_edges');
+    expect(dependencies.map(({ to }) => to.collection)).toContain('admin.mapping_transform_steps');
+    expect(() =>
       inspectPhase3SqliteReferences(
-        identity.collection,
-        row({
-          tenant_id: 'tenant-a',
-          edge_id: edgeId,
-          rule_id: 'rule-1',
-          target_ref_json: null,
-        }),
-        identity
-      ).map(({ to }) => to.collection);
-    // A persistent identifier step stores no edge: nothing to resolve, no failure.
-    expect(targets(null)).not.toContain('admin.mapping_rule_edges');
-    expect(targets(null)).toContain('admin.mapping_rules');
-    expect(targets('edge-1')).toContain('admin.mapping_rule_edges');
+        'admin.mapping_transform_steps',
+        row({ tenant_id: 'tenant-a', rule_id: 'rule', edge_id: null }),
+        { ...identity, collection: 'admin.mapping_transform_steps' }
+      )
+    ).toThrow('backup_mapping_graph_legacy_shape');
   });
 
   it('accepts only the bundle-only form of an OAuth client environment secret', () => {
@@ -576,9 +593,7 @@ describe('Phase 3 installed SQL reference graph', () => {
         ).toBe(true);
       }
       if (rule.restoreOrdering === 'validation-only') {
-        const matchingForeignKey = [
-          ...Map.groupBy(sourceTable?.foreignKeys ?? [], (foreignKey) => foreignKey.id).values(),
-        ].some(
+        const matchingForeignKey = foreignKeyGroups(sourceTable?.foreignKeys ?? []).some(
           (foreignKeys) =>
             foreignKeys[0]?.parentTable === targetTable?.name &&
             JSON.stringify(

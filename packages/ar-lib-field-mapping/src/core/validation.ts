@@ -1,3 +1,4 @@
+import { validateMappingRuleGraph } from './graph-validation';
 import { findCatalogEntry, validateCatalogBundle } from './catalog';
 import { buildTraceEntry } from './trace';
 import { reason } from './reason-registry';
@@ -16,6 +17,15 @@ export function validateMappingInput(input: MappingInput): ValidationResult {
   const catalogResult = validateCatalogBundle(input.catalog);
   const reasons: ReasonCode[] = [...catalogResult.reasons];
 
+  for (const rule of input.graphRules ?? []) {
+    reasons.push(...validateMappingRuleGraph(rule));
+    if (!findCatalogEntry(input.catalog, rule.targetRef))
+      reasons.push(reason('catalog.invalid_entry'));
+    for (const edge of rule.edges) {
+      if (!findCatalogEntry(input.catalog, edge.sourceRef))
+        reasons.push(reason('catalog.invalid_entry'));
+    }
+  }
   for (const edge of input.edges) {
     if (!findCatalogEntry(input.catalog, edge.sourceRef)) {
       reasons.push(reason('catalog.invalid_entry'));
@@ -193,7 +203,12 @@ function isSimpleEmail(value: string): boolean {
 }
 
 function isMissing(value: unknown): boolean {
-  return value === undefined || value === null || value === '';
+  return (
+    value === undefined ||
+    value === null ||
+    value === '' ||
+    (Array.isArray(value) && value.length === 0)
+  );
 }
 
 /**

@@ -1,4 +1,9 @@
-import { executeRuntimeMapping } from '@authrim/ar-lib-field-mapping/runtime';
+import { executeTenantMapping } from './mapping-hash';
+import {
+  analyzeMappingDependencies,
+  withMappingGraph,
+} from '@authrim/ar-lib-field-mapping/authoring';
+import { lastWriterMappingValues } from '@authrim/ar-lib-field-mapping/runtime';
 import type { FieldRef, SourceValueEnvelope } from '@authrim/ar-lib-field-mapping/contract';
 import {
   computeBuiltInPairwiseSubject,
@@ -229,6 +234,13 @@ async function builtInPairwiseSubject(
   });
 }
 
+function oidcMappingGraph(binding: RuntimeIdentityMappingBinding, pairwiseSubject: boolean) {
+  return withMappingGraph({
+    ...binding,
+    graphRules: binding.graphRules?.map((rule) => ({ ...rule, pairwiseSubject })),
+  });
+}
+
 export async function applyOIDCIdentityMapping(
   input: ApplyOIDCIdentityMappingInput & { subjectOnly?: boolean }
 ): Promise<ApplyOIDCIdentityMappingResult> {
@@ -268,7 +280,10 @@ export async function applyOIDCIdentityMapping(
     }
     throw toOidcIdentityMappingRuntimeError(error, { clientId: input.clientId });
   }
-  const { selection, binding } = resolution;
+  const { selection } = resolution;
+  let binding = resolution.binding
+    ? oidcMappingGraph(resolution.binding, input.subjectType === 'pairwise')
+    : null;
   if (input.failureContext && selection.kind === 'bound') {
     input.failureContext.tier = selection.tier;
     input.failureContext.setId = selection.setId;
@@ -396,13 +411,19 @@ export async function applyOIDCIdentityMapping(
       )(list, accountId, audience),
     placeholder,
   });
+  // Preparation awaits external reads. Rebuild the graph view from the selected binding so a
+  // settings replacement during that await is validated, never masked by a prepared identifier.
+  if (resolution.binding) {
+    binding = oidcMappingGraph(resolution.binding, input.subjectType === 'pairwise');
+  }
   if (input.fixedSubject !== undefined) {
     for (const step of binding.transforms ?? []) {
       if (isSubjectStep(step)) mappedIdentifiers.identifiers[step.id] = input.fixedSubject;
     }
   }
-  const runtimeResult = executeRuntimeMapping({
+  const runtimeResult = await executeTenantMapping(input.env, input.tenantId, {
     catalog: binding.catalog,
+    graphRules: binding.graphRules,
     sourceValues,
     edges: binding.edges,
     transforms: binding.transforms,
@@ -426,17 +447,22 @@ export async function applyOIDCIdentityMapping(
     // Suppressed by an exception: no identifier, and no value in its place (checked below).
     if (mappedIdentifiers.suppressed[step.id]) return false;
     const made = mappedIdentifiers.identifiers[step.id];
+    const graph = binding.graphRules?.find((rule) => {
+      const dependencies = analyzeMappingDependencies({ ...rule, edgeCount: rule.edges.length });
+      return dependencies.stepIndexes.some((index) => rule.transforms[index].id === step.id);
+    });
+    const target = graph?.targetRef ?? step.outputTargetRef;
     return (
       !made ||
       // A target without its side is read as a source by the runtime: never a release.
-      step.outputTargetRef.side !== 'destination' ||
-      step.outputTargetRef.namespace !== destinationNamespace ||
+      target.side !== 'destination' ||
+      target.namespace !== destinationNamespace ||
       !(runtimeResult.values ?? []).some(
         (value) =>
-          value.value === made &&
+          (graph !== undefined || value.value === made) &&
           value.sourceRef.side === 'destination' &&
-          value.sourceRef.namespace === step.outputTargetRef.namespace &&
-          value.sourceRef.path === step.outputTargetRef.path
+          value.sourceRef.namespace === target.namespace &&
+          value.sourceRef.path === target.path
       )
     );
   });
@@ -495,9 +521,9 @@ export async function applyOIDCIdentityMapping(
   }
 
   if (input.subjectOnly) {
-    // The last value wins, as issuance overwrites edge outputs with transform results.
+    // Graph rules emit only their final values; legacy conflict policies retain writer order.
     let subject: unknown = input.claims.sub;
-    for (const value of runtimeResult.values) {
+    for (const value of lastWriterMappingValues(runtimeResult.values)) {
       if (
         value.sourceRef.side === 'destination' &&
         value.sourceRef.namespace === destinationNamespace &&
@@ -511,6 +537,7 @@ export async function applyOIDCIdentityMapping(
     } else if (input.subjectType === 'pairwise') {
       subject =
         mappedPairwiseSubject({
+          graphRules: binding.graphRules,
           transforms: binding.transforms,
           identifiers: mappedIdentifiers.identifiers,
           destinationNamespace,
@@ -532,7 +559,7 @@ export async function applyOIDCIdentityMapping(
 
   const mappedClaims = { ...input.claims };
   const produced = new Set<string>();
-  for (const value of runtimeResult.values) {
+  for (const value of lastWriterMappingValues(runtimeResult.values)) {
     if (value.sourceRef.side !== 'destination') {
       continue;
     }
@@ -559,6 +586,7 @@ export async function applyOIDCIdentityMapping(
     // replaced by the built-in pairwise value.
     mappedClaims.sub =
       mappedPairwiseSubject({
+        graphRules: binding.graphRules,
         transforms: binding.transforms,
         identifiers: mappedIdentifiers.identifiers,
         destinationNamespace,
@@ -829,6 +857,15 @@ function traceMappingTargets(
     for (const edgeId of step.inputEdgeIds) {
       const source = edgeSources.get(edgeId);
       if (source) entry.sources.add(source);
+    }
+  }
+  for (const rule of binding.graphRules ?? []) {
+    if (!releases(rule.targetRef)) continue;
+    const entry = target(rule.targetRef.path);
+    const dependencies = analyzeMappingDependencies({ ...rule, edgeCount: rule.edges.length });
+    for (const index of dependencies.edgeIndexes) {
+      const ref = rule.edges[index].sourceRef;
+      if (ref.side === 'source') entry.sources.add(ref.path);
     }
   }
   return [...targets].map(([claim, entry]) => ({

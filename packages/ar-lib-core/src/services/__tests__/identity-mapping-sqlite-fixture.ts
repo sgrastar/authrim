@@ -27,6 +27,12 @@ export function openAdminDatabase(): DatabaseSync {
       '021_mapping_transform_step_target.sql'
     )
   );
+  db.exec(
+    readMigrationSource(
+      new URL('../../../../../migrations/admin/d1/', import.meta.url),
+      '023_mapping_rule_graph.sql'
+    )
+  );
   return db;
 }
 
@@ -121,12 +127,23 @@ export function seedMapping(db: DatabaseSync, input: SeedMappingInput): void {
     addEdge(db, owner, `rule-${id}`, `edge-${id}-${index}`, profileId);
   });
   run(
-    `INSERT INTO mapping_transform_steps (id, tenant_id, rule_id, edge_id, step_order, operation, parameters_json, created_at, updated_at)
-     VALUES (?, ?, ?, ?, 0, 'trim', '{}', 1, 1)`,
+    `INSERT INTO mapping_transform_steps (id, tenant_id, rule_id, step_order, operation, parameters_json, created_at, updated_at)
+     VALUES (?, ?, ?, 0, 'trim', '{}', 1, 1)`,
     `transform-${id}`,
     owner,
-    `rule-${id}`,
+    `rule-${id}`
+  );
+  run(
+    `INSERT INTO mapping_transform_step_inputs (tenant_id,step_id,position,edge_id) VALUES (?,?,0,?)`,
+    owner,
+    `transform-${id}`,
     `edge-${id}-0`
+  );
+  run(
+    `UPDATE mapping_rules SET output_edge_id=NULL,output_step_id=? WHERE tenant_id=? AND id=?`,
+    `transform-${id}`,
+    owner,
+    `rule-${id}`
   );
   run(
     `INSERT INTO mapping_validation_rules (id, tenant_id, rule_id, target_ref_json, validation_kind, severity, created_at, updated_at)
@@ -173,6 +190,10 @@ export function addEdge(
       path: 'email',
     })
   );
+  db.prepare(
+    `UPDATE mapping_rules SET output_edge_id=?,target_ref_json=(SELECT target_ref_json FROM mapping_rule_edges WHERE tenant_id=? AND id=?)
+    WHERE tenant_id=? AND id=? AND output_edge_id IS NULL AND output_step_id IS NULL`
+  ).run(edgeId, owner, edgeId, owner, ruleId);
 }
 
 export interface SeedDestinationProfileInput {

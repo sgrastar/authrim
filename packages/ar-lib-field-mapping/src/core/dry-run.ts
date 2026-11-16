@@ -1,68 +1,20 @@
 import { findCatalogEntry } from './catalog';
 import { createDeterministicId } from './ids';
-import { reason } from './reason-registry';
 import { statusFromReasons } from './result';
-import { buildTraceEntry } from './trace';
-import { dropSuppressedTargets, executeTransformStep, sharesConsumedInput } from './transforms';
-import { validateMappingInput } from './validation';
+import { executeRuntimeMapping } from './runtime';
 import type {
   BatchDryRunResult,
   BatchMappingInput,
   DryRunResult,
   MappingInput,
-  MappingRuleEdge,
-  ReasonCode,
-  RuleTraceEntry,
   RedactedValueSummary,
   SourceValueEnvelope,
 } from './types';
 
 export function dryRunMapping(input: MappingInput): DryRunResult {
-  const validation = validateMappingInput(input);
-  const edgeValues = new Map<string, SourceValueEnvelope>();
-  const mappedValues: SourceValueEnvelope[] = [];
-  const transformReasons: ReasonCode[] = [];
-  const transformTrace: RuleTraceEntry[] = [];
-  const mappingTrace: RuleTraceEntry[] = [];
-
-  for (const edge of input.edges) {
-    const sourceValue = findSourceValue(input.sourceValues, edge);
-    if (!sourceValue) {
-      continue;
-    }
-    const targetValue: SourceValueEnvelope = {
-      ...sourceValue,
-      sourceRef: edge.targetRef,
-    };
-    edgeValues.set(edge.id, targetValue);
-    mappedValues.push(targetValue);
-    mappingTrace.push(
-      buildTraceEntry({
-        reason: reason('trace.mapping_evaluated'),
-        action: 'mapped',
-        fieldRef: edge.targetRef,
-        edgeId: edge.id,
-      })
-    );
-  }
-
-  if (sharesConsumedInput(input.transforms, input.edges)) {
-    // What an identifier is made from would leave through the other step: nothing goes out.
-    transformReasons.push(reason('transform.identifier_unavailable'));
-  }
-  for (const step of input.transforms ?? []) {
-    const result = executeTransformStep({ step, edgeValues, runtimeContext: input.runtimeContext });
-    transformReasons.push(...result.reasons);
-    transformTrace.push(...result.trace);
-    if (result.value) {
-      mappedValues.push(result.value);
-    }
-  }
-
-  // What an exception suppressed leaves no value, in a dry run as at runtime.
-  const finalValues = dropSuppressedTargets(mappedValues, input.transforms, input.runtimeContext);
-
-  const reasons = [...validation.reasons, ...transformReasons];
+  const result = executeRuntimeMapping(input);
+  const finalValues = result.values;
+  const reasons = result.reasons;
   const redactedValueSummaries = [...input.sourceValues, ...finalValues].map((value) =>
     toRedactedValueSummary(input, value)
   );
@@ -82,7 +34,7 @@ export function dryRunMapping(input: MappingInput): DryRunResult {
       criticalCount: reasons.filter((item) => item.severity === 'critical').length,
     },
     reasons,
-    ruleTrace: [...validation.trace, ...mappingTrace, ...transformTrace],
+    ruleTrace: result.ruleTrace,
     redactedValueSummaries,
   };
 }
@@ -119,22 +71,6 @@ export function dryRunMappingBatch(input: BatchMappingInput): BatchDryRunResult 
     })),
     criticalCount,
   };
-}
-
-function findSourceValue(
-  sourceValues: SourceValueEnvelope[],
-  edge: MappingRuleEdge
-): SourceValueEnvelope | undefined {
-  return sourceValues.find((value) => {
-    if (value.sourceRef.catalogEntryId && edge.sourceRef.catalogEntryId) {
-      return value.sourceRef.catalogEntryId === edge.sourceRef.catalogEntryId;
-    }
-    return (
-      value.sourceRef.side === edge.sourceRef.side &&
-      value.sourceRef.namespace === edge.sourceRef.namespace &&
-      value.sourceRef.path === edge.sourceRef.path
-    );
-  });
 }
 
 function toRedactedValueSummary(

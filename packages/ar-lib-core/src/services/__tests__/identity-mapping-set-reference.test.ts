@@ -213,7 +213,7 @@ describe('validateOidcMappingSetReference', () => {
       'answers an app naming %s of the platform exactly as a set that does not exist',
       async (_name, sql) => {
         const { db, adapter } = seeded();
-        db.prepare(sql).run();
+        db.exec(sql);
         const platform = await validateOidcMappingSetReference(
           input(adapter, { scope: 'client', setId: 'set-plat' })
         );
@@ -441,7 +441,7 @@ describe('validateOidcMappingSetReference', () => {
       ],
       [
         'makes a persistent identifier',
-        "UPDATE mapping_transform_steps SET operation = 'persistent_identifier'",
+        `UPDATE mapping_transform_steps SET operation = 'persistent_identifier', parameters_json = '{"input":"account","format":"plain","algorithm":"authrim_sha256"}'; DELETE FROM mapping_transform_step_inputs;`,
         /persistent identifier/,
       ],
       [
@@ -451,7 +451,7 @@ describe('validateOidcMappingSetReference', () => {
       ],
     ])('refuses a platform set that %s', async (_name, sql, expected) => {
       const { db, adapter } = seeded();
-      db.prepare(sql).run();
+      db.exec(sql);
       for (const [scope, contextTenantId] of [
         ['platform', PLATFORM_MAPPING_TENANT_ID],
         ['tenant', 'tenant-a'],

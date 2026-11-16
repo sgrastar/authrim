@@ -1,3 +1,4 @@
+import { withExplicitMappingGraphs } from '@authrim/ar-lib-field-mapping/test-support';
 /**
  * Conditions Validation Tests
  *
@@ -87,35 +88,38 @@ function createTestSAMLInboundMappingBinding() {
     classification: 'pii',
     targetType,
   });
-  return {
-    id: 'test-saml-inbound-activation',
-    tenantId: 'default',
-    fieldMappingSetId: 'test-saml-inbound',
-    fieldMappingVersionId: 'test-saml-inbound-v1',
-    catalog: {
-      identity: {
-        id: 'test-saml-inbound-catalog',
-        version: '1',
-        contentHash: 'test-saml-inbound-catalog',
-        compatibilityRange: '^0.3.0',
+  return withExplicitMappingGraphs(
+    {
+      id: 'test-saml-inbound-activation',
+      tenantId: 'default',
+      fieldMappingSetId: 'test-saml-inbound',
+      fieldMappingVersionId: 'test-saml-inbound-v1',
+      catalog: {
+        identity: {
+          id: 'test-saml-inbound-catalog',
+          version: '1',
+          contentHash: 'test-saml-inbound-catalog',
+          compatibilityRange: '^0.3.0',
+        },
+        entries: [
+          entry('field.saml.subject.nameId', 'saml.subject', 'nameId', 'source'),
+          entry('field.profile.email', 'authrim.profile', 'email', 'canonical'),
+        ],
       },
-      entries: [
-        entry('field.saml.subject.nameId', 'saml.subject', 'nameId', 'source'),
-        entry('field.profile.email', 'authrim.profile', 'email', 'canonical'),
+      edges: [
+        {
+          id: 'edge.nameId.email',
+          sourceRef: { side: 'source', namespace: 'saml.subject', path: 'nameId' },
+          targetRef: { side: 'destination', namespace: 'authrim.profile', path: 'email' },
+          edgeKind: 'direct',
+        },
       ],
+      transforms: [],
+      validationRules: [],
+      fieldMappingSet: { id: 'test-saml-inbound-v1', rules: [] },
     },
-    edges: [
-      {
-        id: 'edge.nameId.email',
-        sourceRef: { side: 'source', namespace: 'saml.subject', path: 'nameId' },
-        targetRef: { side: 'destination', namespace: 'authrim.profile', path: 'email' },
-        edgeKind: 'direct',
-      },
-    ],
-    transforms: [],
-    validationRules: [],
-    fieldMappingSet: { id: 'test-saml-inbound-v1', rules: [] },
-  };
+    true
+  );
 }
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();

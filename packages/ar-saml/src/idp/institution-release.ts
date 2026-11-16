@@ -1,3 +1,4 @@
+import type { MappingEvaluationValue } from '@authrim/ar-lib-field-mapping/contract';
 /**
  * The tenant's institution in an assertion: the scope its scoped attributes must be under, and the
  * attributes a mapping may release about the institution itself (schacHomeOrganization and the
@@ -81,6 +82,8 @@ export async function releaseSAMLAttributesWithInstitution(input: {
   env: Env;
   tenantId: string;
   subject: SAMLAttributeSubject;
+  /** A release that already enriched its subject reuses the same institution snapshot. */
+  institution?: SAMLInstitutionRelease;
   /** The release config, without the institution. */
   releaseConfig: SAMLAttributeReleaseConfig;
   onError: (message: string, error: unknown) => void;
@@ -89,12 +92,16 @@ export async function releaseSAMLAttributesWithInstitution(input: {
    * institution's values): the same values the mapping reads.
    */
   prepareIdentifiers?: (subject: SAMLAttributeSubject) => Promise<{
+    preparedSteps?: ReadonlyMap<string, MappingEvaluationValue>;
+    allowDeferredOutputs?: boolean;
     identifiers: Record<string, string>;
     /** The steps an exception suppressed: no value for their targets. */
     suppressed: Record<string, true>;
   }>;
 }): Promise<SAMLAttributeReleaseResult> {
-  const institution = await loadSAMLInstitutionRelease(input.env, input.tenantId, input.onError);
+  const institution =
+    input.institution ??
+    (await loadSAMLInstitutionRelease(input.env, input.tenantId, input.onError));
   const subject = withSAMLInstitutionAttributes(input.subject, institution);
   const identityMapping = input.releaseConfig.identityMapping;
   const prepared =
@@ -109,6 +116,8 @@ export async function releaseSAMLAttributesWithInstitution(input: {
             ...identityMapping,
             runtimeContext: {
               ...identityMapping.runtimeContext,
+              mappingPreparedSteps: prepared.preparedSteps,
+              mappingAllowDeferredOutputs: prepared.allowDeferredOutputs === true,
               identifiers: prepared.identifiers,
               suppressedIdentifiers: prepared.suppressed,
             },

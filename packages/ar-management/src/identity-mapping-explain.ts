@@ -44,6 +44,7 @@ import {
   readSetFactsForTenants,
 } from './identity-mapping-effective';
 import { OIDC_CLAIM_NAME_PATTERN } from './identity-mapping-control-plane';
+import { explainSAMLRelease } from './identity-mapping-saml-explain';
 import { findTestUser, type TestUser } from './identity-mapping-test-users';
 
 type ExplainContext = Context<{ Bindings: Env }>;
@@ -317,6 +318,7 @@ export async function adminIdentityMappingExplainHandler(c: ExplainContext) {
   } catch {
     return c.json({ error: 'invalid_request', error_description: 'Invalid JSON body' }, 400);
   }
+  if (isRecord(body) && Object.hasOwn(body, 'sp_entity_id')) return explainSAMLRelease(c, body);
   const request = parseRequest(body);
   if (typeof request === 'string') {
     return c.json({ error: 'invalid_request', error_description: request }, 400);

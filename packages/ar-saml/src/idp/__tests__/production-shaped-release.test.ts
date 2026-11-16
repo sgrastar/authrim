@@ -1,3 +1,4 @@
+import { withExplicitMappingGraphs } from '@authrim/ar-lib-field-mapping/test-support';
 /**
  * The SSO endpoints release attributes for an SP whose mapping is in the shape a deployed tenant
  * has it (see __fixtures__/production-shaped-mapping.ts): the real attribute release, identity
@@ -53,7 +54,11 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     isShardedSessionId: vi.fn(() => true),
     resolveAuthCorePersistenceAdapterFromEnv: vi.fn(async () => mocks.core),
     requireAdminDatabaseAdapter: vi.fn(() => mocks.admin),
-    resolveRuntimeIdentityMappingBinding: vi.fn(async () => mocks.binding),
+    resolveRuntimeIdentityMappingBinding: vi.fn(async () =>
+      mocks.binding && typeof mocks.binding === 'object'
+        ? withExplicitMappingGraphs(Object.fromEntries(Object.entries(mocks.binding)), true)
+        : mocks.binding
+    ),
     resolveEffectiveSettings: vi.fn(async () => mocks.assuranceSettings),
     getLogger: () => ({
       module: () => ({ error: vi.fn(), warn: mocks.warn, info: vi.fn(), debug: vi.fn() }),
@@ -319,10 +324,13 @@ describe('attribute release for an SP with a deployed-tenant mapping', () => {
       });
 
     it('issues the assertion when the source profile’s rule asks for the same attribute the destination releases', async () => {
-      mocks.binding = {
-        ...productionBinding({ validationRules: [PRODUCTION_SAML_INPUT_REQUIRED_RULE] }),
-        edges: [PRODUCTION_SAML_INPUT_EDGE, ...PRODUCTION_EDGES],
-      };
+      mocks.binding = withExplicitMappingGraphs(
+        {
+          ...productionBinding({ validationRules: [PRODUCTION_SAML_INPUT_REQUIRED_RULE] }),
+          edges: [PRODUCTION_SAML_INPUT_EDGE, ...PRODUCTION_EDGES],
+        },
+        true
+      );
       const response = await run();
       expect(response.status).toBe(200);
       expect(mocks.buildErrorResponse).not.toHaveBeenCalled();
@@ -333,27 +341,30 @@ describe('attribute release for an SP with a deployed-tenant mapping', () => {
 
     it('does not mix the value of an edge that is not released into one that is (one id for two reads)', async () => {
       mocks.user = { id: 'user-a', email: 'user@example.test', locale: 'ja' };
-      mocks.binding = {
-        ...productionBinding(),
-        edges: [
-          edge(
-            {
-              namespace: 'authrim.profile',
-              path: 'email',
-              catalogEntryId: 'field.canonical.locale',
-            },
-            'urn:oid:intermediate'
-          ),
-          edge(
-            {
-              namespace: 'authrim.profile',
-              path: 'locale',
-              catalogEntryId: 'field.canonical.locale',
-            },
-            OID_EDU_PERSON_ASSURANCE
-          ),
-        ],
-      };
+      mocks.binding = withExplicitMappingGraphs(
+        {
+          ...productionBinding(),
+          edges: [
+            edge(
+              {
+                namespace: 'authrim.profile',
+                path: 'email',
+                catalogEntryId: 'field.canonical.locale',
+              },
+              'urn:oid:intermediate'
+            ),
+            edge(
+              {
+                namespace: 'authrim.profile',
+                path: 'locale',
+                catalogEntryId: 'field.canonical.locale',
+              },
+              OID_EDU_PERSON_ASSURANCE
+            ),
+          ],
+        },
+        true
+      );
       mocks.sp = requireAssuranceOnly();
       await run();
       expect(mocks.buildResponse).not.toHaveBeenCalled();
@@ -362,20 +373,23 @@ describe('attribute release for an SP with a deployed-tenant mapping', () => {
     });
 
     it('does not skip an edge whose source reference says it is a destination', async () => {
-      mocks.binding = {
-        ...productionBinding(),
-        edges: [
-          edge(
-            {
-              side: 'destination',
-              namespace: 'authrim.profile',
-              path: 'email',
-              catalogEntryId: 'field.canonical.locale',
-            },
-            OID_EDU_PERSON_ASSURANCE
-          ),
-        ],
-      };
+      mocks.binding = withExplicitMappingGraphs(
+        {
+          ...productionBinding(),
+          edges: [
+            edge(
+              {
+                side: 'destination',
+                namespace: 'authrim.profile',
+                path: 'email',
+                catalogEntryId: 'field.canonical.locale',
+              },
+              OID_EDU_PERSON_ASSURANCE
+            ),
+          ],
+        },
+        true
+      );
       mocks.sp = requireAssuranceOnly();
       await run();
       expect(mocks.buildResponse).not.toHaveBeenCalled();
@@ -386,20 +400,23 @@ describe('attribute release for an SP with a deployed-tenant mapping', () => {
     });
 
     it('does not release from a source whose classification is unknown, and says so in the audit log', async () => {
-      mocks.binding = {
-        ...productionBinding(),
-        edges: [
-          {
-            id: 'edge_unknown',
-            sourceRef: { side: 'source', namespace: 'authrim.claim', path: 'unlisted' },
-            targetRef: {
-              side: 'destination',
-              namespace: 'saml.attribute',
-              path: OID_EDU_PERSON_ASSURANCE,
+      mocks.binding = withExplicitMappingGraphs(
+        {
+          ...productionBinding(),
+          edges: [
+            {
+              id: 'edge_unknown',
+              sourceRef: { side: 'source', namespace: 'authrim.claim', path: 'unlisted' },
+              targetRef: {
+                side: 'destination',
+                namespace: 'saml.attribute',
+                path: OID_EDU_PERSON_ASSURANCE,
+              },
             },
-          },
-        ],
-      };
+          ],
+        },
+        true
+      );
       mocks.user = { id: 'user-a', email: 'user@example.test', unlisted: 'private-value' };
       mocks.sp = productionSpConfig({
         [OID_MAIL]: 'optional',

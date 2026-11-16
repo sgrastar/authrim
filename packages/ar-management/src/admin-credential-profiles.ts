@@ -1,3 +1,5 @@
+import { executeTenantMapping } from '@authrim/ar-lib-core/services/mapping-hash';
+import { hashCredentialProfileSnapshot } from '@authrim/ar-lib-core/services/credential-profile-snapshot';
 import type { Context } from 'hono';
 import type {
   AdminAuthContext,
@@ -20,7 +22,6 @@ import {
   executeServerFlow,
   ADMIN_CREDENTIAL_CONFIGURATION_ID,
 } from '@authrim/ar-lib-core';
-import { executeRuntimeMapping } from '@authrim/ar-lib-field-mapping/runtime';
 import type { SourceValueEnvelope } from '@authrim/ar-lib-field-mapping/contract';
 import { getCanonicalTenantBaseUrlAsync } from './request-issuer';
 
@@ -118,25 +119,6 @@ function normalizeClaims(value: unknown): string[] {
   const claims = [...new Set(value.map((item) => requireKey(item, 'claim_name')))].sort();
   if (claims.length === 0 || claims.length > 128) throw new Error('invalid_claim_allowlist');
   return claims;
-}
-
-function stableJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
-  if (value && typeof value === 'object') {
-    return `{${Object.entries(value as Record<string, unknown>)
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`)
-      .join(',')}}`;
-  }
-  return JSON.stringify(value);
-}
-
-async function hashSnapshot(value: unknown): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(stableJson(value)));
-  return btoa(String.fromCharCode(...new Uint8Array(digest)))
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/u, '');
 }
 
 async function signCredentialProfileContract(
@@ -488,7 +470,8 @@ export async function adminCredentialProfilePublishHandler(c: AdminContext) {
       credentialConfigurationId: version.credential_configuration_id,
       fieldMappingSetId: version.issuance_mapping_set_id,
     });
-    if (!issuance) throw new Error('issuance_mapping_not_active');
+    if (!issuance || issuance.mappingSnapshotPinTrusted === false)
+      throw new Error('issuance_mapping_not_active');
     const verification = version.verification_mapping_set_id
       ? await resolveRuntimeIdentityMappingBinding(adminDb(c), {
           tenantId: profile.tenant_id,
@@ -500,7 +483,10 @@ export async function adminCredentialProfilePublishHandler(c: AdminContext) {
           fieldMappingSetId: version.verification_mapping_set_id,
         })
       : null;
-    if (version.verification_mapping_set_id && !verification)
+    if (
+      version.verification_mapping_set_id &&
+      (!verification || verification.mappingSnapshotPinTrusted === false)
+    )
       throw new Error('verification_mapping_not_active');
     const claimAllowlist = normalizeClaims(JSON.parse(version.claim_allowlist_json));
     const destinationNamespace = `${VC_DESTINATION_PREFIX}${version.credential_configuration_id}`;
@@ -530,7 +516,7 @@ export async function adminCredentialProfilePublishHandler(c: AdminContext) {
       maximumAttributeAgeSeconds: version.maximum_attribute_age_seconds,
       transactionCodeRequired: version.transaction_code_required === 1,
     };
-    const snapshotHash = await hashSnapshot(snapshot);
+    const snapshotHash = await hashCredentialProfileSnapshot(snapshot);
     const now = Math.floor(Date.now() / 1000);
     await adminDb(c).transaction(async (tx) => {
       await tx.execute(
@@ -694,14 +680,19 @@ export async function adminCredentialOfferCreateHandler(c: AdminContext) {
       fieldMappingSetId: version.issuance_mapping_set_id,
       fieldMappingVersionId: version.issuance_mapping_version_id,
     });
-    if (!binding || binding.mappingSnapshotHash !== version.issuance_mapping_snapshot_hash)
+    if (
+      !binding ||
+      binding.mappingSnapshotPinTrusted === false ||
+      binding.mappingSnapshotHash !== version.issuance_mapping_snapshot_hash
+    )
       throw new Error('mapping_snapshot_changed');
     const canonicalClaims = canonicalProjectionToOIDCClaimsUser(projection) as unknown as Record<
       string,
       unknown
     >;
-    const mapped = executeRuntimeMapping({
+    const mapped = await executeTenantMapping(c.env, tenantId, {
       catalog: binding.catalog,
+      graphRules: binding.graphRules,
       sourceValues: sourceValues(binding, canonicalClaims),
       edges: binding.edges,
       transforms: binding.transforms,

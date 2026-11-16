@@ -1,5 +1,9 @@
+import { validateMappingRuleGraph } from '@authrim/ar-lib-field-mapping/authoring';
 import { persistentIdentifierSettingsProblem } from '@authrim/ar-lib-field-mapping/runtime';
-import type { MappingTransformStep } from '@authrim/ar-lib-field-mapping/contract';
+import type {
+  MappingTransformStep,
+  MappingRuleGraph,
+} from '@authrim/ar-lib-field-mapping/contract';
 import {
   computeIdentifier,
   IDENTIFIER_ALGORITHMS,
@@ -582,21 +586,32 @@ export async function computeBuiltInPairwiseSubject(input: {
  * final value of `sub` after the whole mapping. Anything else is replaced by the built-in value.
  */
 export function mappedPairwiseSubject(input: {
+  graphRules?: readonly MappingRuleGraph[];
   transforms?: readonly MappingTransformStep[];
   identifiers: Record<string, string>;
   destinationNamespace: string;
   finalSubject: unknown;
 }): string | null {
-  const writers = (input.transforms ?? []).filter(
-    (step) =>
-      step.outputTargetRef.side === 'destination' &&
-      step.outputTargetRef.namespace === input.destinationNamespace &&
-      step.outputTargetRef.path === 'sub'
+  const rules = input.graphRules?.filter(
+    (rule) =>
+      rule.targetRef.side === 'destination' &&
+      rule.targetRef.namespace === input.destinationNamespace &&
+      rule.targetRef.path === 'sub'
   );
-  if (writers.length !== 1) return null;
-  const [step] = writers;
-  if (step.operation !== 'persistent_identifier') return null;
-  if (step.parameters?.audience !== 'sector') return null;
-  const made = input.identifiers[step.id];
-  return made && input.finalSubject === made ? made : null;
+  if (rules?.length) {
+    if (rules.length !== 1) return null;
+    const [rule] = rules;
+    if (validateMappingRuleGraph({ ...rule, pairwiseSubject: true }).length) return null;
+    if (!('stepIndex' in rule.output)) return null;
+    const step = rule.transforms[rule.output.stepIndex];
+    if (
+      !step ||
+      step.operation !== 'persistent_identifier' ||
+      step.parameters?.audience !== 'sector'
+    )
+      return null;
+    const made = input.identifiers[step.id];
+    return made && input.finalSubject === made ? made : null;
+  }
+  return null;
 }

@@ -38,12 +38,16 @@ import {
   samlDestinationPolicyCoversProfile,
   findRenamedOutputAttributes,
   sliceOutputGraph,
+  PLATFORM_MAPPING_TENANT_ID,
   type DestinationProfileConsentField,
 } from '@authrim/ar-lib-core';
 import {
   SAMLIdentityMappingRuntimeError,
   type SAMLIdentityMappingReleaseConfig,
 } from './attributes';
+
+import { loadSAMLNameIdProfile } from './nameid-profile';
+import { resolveSAMLMappingSetOwner } from '../mapping-set-owner';
 
 const DEFAULT_DESTINATION_NAMESPACE = 'saml.attribute';
 
@@ -200,7 +204,8 @@ export function destinationCatalogEntries(input: {
   for (const key of new Set(input.policyKeys)) {
     const field = fieldsByKey.get(key);
     const alias = `${input.namespace}:${key}`;
-    const id = `dest.saml.${key}`;
+    const id =
+      input.namespace === SAML_NAMEID_NAMESPACE ? `dest.saml.nameid.${key}` : `dest.saml.${key}`;
     if (!field || known.has(alias) || knownIds.has(id)) continue;
     added.push({
       id,
@@ -279,8 +284,18 @@ async function compileSAMLRuntimeIdentityMappingFromAdapters(input: {
 }) {
   const { adminAdapter: adapter, tenantId, idpEntityId, spConfig } = input;
   const configured = spConfig.identityMapping as SAMLIdentityMappingReleaseConfig | undefined;
+  const ownerTenantId = configured?.fieldMappingSetId
+    ? await resolveSAMLMappingSetOwner(adapter, tenantId, configured.fieldMappingSetId)
+    : tenantId;
+  if (!ownerTenantId) {
+    throw new SAMLIdentityMappingRuntimeError([
+      { category: 'policy', code: 'policy.missing_identity_mapping_binding', severity: 'critical' },
+    ]);
+  }
   const binding = await resolveRuntimeIdentityMappingBinding(adapter, {
     tenantId,
+    ownerTenantId,
+    normalizeCatalogEntryIds: ownerTenantId === PLATFORM_MAPPING_TENANT_ID,
     protocol: 'saml',
     role: 'idp',
     fieldMappingSetId: configured?.fieldMappingSetId,
@@ -317,6 +332,7 @@ async function compileSAMLRuntimeIdentityMappingFromAdapters(input: {
   const outputGraph = sliceOutputGraph({
     edges: binding.edges,
     transforms: binding.transforms,
+    graphRules: binding.graphRules,
     validationRules: binding.validationRules,
     destinationNamespace: destinationNamespace ?? DEFAULT_DESTINATION_NAMESPACE,
   });
@@ -325,6 +341,7 @@ async function compileSAMLRuntimeIdentityMappingFromAdapters(input: {
   const nameIdGraph = sliceOutputGraph({
     edges: binding.edges,
     transforms: binding.transforms,
+    graphRules: binding.graphRules,
     validationRules: binding.validationRules,
     destinationNamespace: SAML_NAMEID_NAMESPACE,
   });
@@ -362,9 +379,30 @@ async function compileSAMLRuntimeIdentityMappingFromAdapters(input: {
   if (policyKeys.length > 0) {
     const descriptor = await loadDestinationProfileConsentDescriptor(
       adapter,
-      tenantId,
+      ownerTenantId,
       binding.destinationProfileId
     );
+    const nameIdFields = nameIdGraph.graphRules?.map((rule) => rule.targetRef.path) ?? [];
+    const nameIdProfile =
+      nameIdFields.length > 0
+        ? await loadSAMLNameIdProfile(adapter, ownerTenantId, binding.destinationProfileId)
+        : null;
+    const nameIdEntries = descriptor
+      ? destinationCatalogEntries({
+          namespace: SAML_NAMEID_NAMESPACE,
+          policyKeys: nameIdFields,
+          profileFields: nameIdProfile
+            ? nameIdFields.map((key) => ({
+                key,
+                classification: nameIdProfile.classification,
+                valueMultiplicity: 'single',
+              }))
+            : descriptor.fields,
+          existing: catalog.entries,
+        })
+      : [];
+    if (nameIdEntries.length > 0)
+      catalog = { ...catalog, entries: [...catalog.entries, ...nameIdEntries] };
     const added = descriptor
       ? destinationCatalogEntries({
           namespace: destinationNamespace ?? DEFAULT_DESTINATION_NAMESPACE,
@@ -381,10 +419,11 @@ async function compileSAMLRuntimeIdentityMappingFromAdapters(input: {
   const runtime: SAMLIdentityMappingReleaseConfig = {
     id: binding.id,
     role: 'idp',
-    tenantId: binding.tenantId,
+    tenantId,
     localEntityId: idpEntityId,
     partnerEntityId: spConfig.entityId,
     catalog,
+    graphRules: outputGraph.graphRules,
     edges: outputGraph.edges,
     transforms: outputGraph.transforms,
     validationRules: outputGraph.validationRules,
@@ -396,9 +435,10 @@ async function compileSAMLRuntimeIdentityMappingFromAdapters(input: {
     fieldMappingVersionId: binding.fieldMappingVersionId,
     sourceProfileId: configured?.sourceProfileId ?? binding.sourceProfileId,
     destinationProfileId: binding.destinationProfileId ?? configured?.destinationProfileId,
-    ...(nameIdGraph.transforms.length > 0
+    ...(nameIdGraph.transforms.length > 0 || nameIdGraph.edges.length > 0
       ? {
           nameId: {
+            graphRules: nameIdGraph.graphRules,
             edges: nameIdGraph.edges,
             transforms: nameIdGraph.transforms,
             validationRules: nameIdGraph.validationRules,
@@ -433,7 +473,7 @@ export async function compileSAMLImportedSPRelease(input: {
   if (!profileId) throw new Error('saml_idp_runtime_imported_release_invalid');
   const destinationProfile = await loadDestinationProfileConsentDescriptor(
     input.adminAdapter,
-    tenantId,
+    compiled.sourceBinding.tenantId,
     profileId
   );
   if (!destinationProfile) throw new Error('saml_idp_runtime_imported_release_invalid');

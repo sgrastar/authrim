@@ -11,7 +11,12 @@ import type { MappingSetContent } from '../identity-mapping-set-facade-content';
 
 /** The claims a content fills, and how one content's claims change into another's. */
 
-type Step = { edgeIndex?: number; operation: string; parameters?: Record<string, unknown> };
+type Step = {
+  inputs?: import('@authrim/ar-lib-field-mapping/contract').MappingValueReference[];
+  edgeIndex?: number;
+  operation: string;
+  parameters?: Record<string, unknown>;
+};
 type Rule = {
   priority?: number;
   ruleKey: string;
@@ -51,7 +56,14 @@ function rule(
         [options.profileField ?? 'profileId']: options.profile ?? 'profile-1',
       },
     })),
-    ...(options.transforms ? { transforms: options.transforms } : {}),
+    ...(options.transforms
+      ? {
+          transforms: options.transforms.map(({ edgeIndex, ...step }) => ({
+            ...step,
+            inputs: edgeIndex === undefined ? [] : [{ edgeIndex }],
+          })),
+        }
+      : {}),
   };
 }
 
@@ -215,12 +227,12 @@ describe('the changes of a content', () => {
         [rule('email', ['email'], { transforms: [{ edgeIndex: 0, ...lower }] })]
       )
     ).toEqual(changed);
-    // A step on no edge (none named, or one the rule does not have) is released nowhere.
-    for (const step of [lower, { edgeIndex: 5, ...lower }]) {
-      expect(
-        diff([rule('email', ['email'])], [rule('email', ['email'], { transforms: [step] })])
-      ).toEqual([]);
-    }
+    expect(() =>
+      diff(
+        [rule('email', ['email'])],
+        [rule('email', ['email'], { transforms: [{ edgeIndex: 5, ...lower }] })]
+      )
+    ).toThrow('invalid_reference');
     // The same steps with their parameters written in another order are the same.
     expect(
       diff(
@@ -320,7 +332,7 @@ describe('the changes of a content', () => {
     const two = (transforms: Step[]) => rule('name', ['given', 'family'], { transforms });
     const lower = { operation: 'case', parameters: { mode: 'lower' } };
     const trim = { operation: 'trim' };
-    const changed = [{ kind: 'transform_changed', claim: 'name', profile_id: 'profile-1' }];
+    const changed = [{ kind: 'source_changed', claim: 'name', profile_id: 'profile-1' }];
     expect(diff([two([{ edgeIndex: 0, ...lower }])], [two([{ edgeIndex: 1, ...lower }])])).toEqual(
       changed
     );
@@ -339,7 +351,7 @@ describe('the changes of a content', () => {
           ]),
         ]
       )
-    ).toEqual(changed);
+    ).toEqual([...changed, { kind: 'transform_changed', claim: 'name', profile_id: 'profile-1' }]);
   });
 
   it('order the edges of several rules as the runtime loads them, interleaved by priority', () => {

@@ -691,6 +691,23 @@ describe('a comparison of two sets', () => {
         );
     }
 
+    for (const id of ['a', 'a2']) {
+      t.db
+        .prepare(
+          `INSERT INTO mapping_transform_steps (id,tenant_id,rule_id,step_order,operation,parameters_json,created_at,updated_at)
+        VALUES (?, ?, ?, 0, 'concat', '{}', 1, 1)`
+        )
+        .run(`concat-${id}`, TENANT, `rule-${id}`);
+      t.db
+        .prepare(
+          `INSERT INTO mapping_transform_step_inputs (tenant_id,step_id,position,edge_id) VALUES (?, ?, 0, ?), (?, ?, 1, ?)`
+        )
+        .run(TENANT, `concat-${id}`, `edge-${id}-0`, TENANT, `concat-${id}`, `edge-nickname-${id}`);
+      t.db
+        .prepare(`UPDATE mapping_rules SET output_edge_id=NULL,output_step_id=? WHERE id=?`)
+        .run(`concat-${id}`, `rule-${id}`);
+    }
+
     const result = await compare(t, 'set-a', 'set-a2');
 
     expect(result.status).toBe(200);

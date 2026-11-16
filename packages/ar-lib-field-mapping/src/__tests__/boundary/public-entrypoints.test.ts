@@ -1,3 +1,4 @@
+import { graphFixture } from '../../test-support/graph-fixture';
 import { describe, expect, it } from 'vitest';
 import * as authoringPublic from '@authrim/ar-lib-field-mapping/authoring';
 import * as contractPublic from '@authrim/ar-lib-field-mapping/contract';
@@ -23,9 +24,11 @@ describe('public field-mapping entrypoints', () => {
     expect(Object.keys(runtimePublic).sort()).toEqual([
       'PERSISTENT_IDENTIFIER_ALGORITHMS',
       'PERSISTENT_IDENTIFIER_FORMATS',
+      'executePreparedRuntimeMapping',
       'executeRuntimeMapping',
       'findCatalogEntry',
       'findSourceValue',
+      'lastWriterMappingValues',
       'persistentIdentifierSettingsProblem',
     ]);
     expect(authoringPublic).not.toHaveProperty('executeRuntimeMapping');
@@ -37,11 +40,15 @@ describe('public field-mapping entrypoints', () => {
     const csv = 'email,name\nuser@example.test,Example User';
     const effectiveSetInput = { sets: [] };
 
-    expect(executeRuntimeMapping(input)).toEqual(executeRuntimeMappingImplementation(input));
+    expect(executeRuntimeMapping(graphFixture(input))).toEqual(
+      executeRuntimeMappingImplementation(graphFixture(input))
+    );
     expect(validateCatalogBundle(TEST_CATALOG)).toEqual(
       validateCatalogBundleImplementation(TEST_CATALOG)
     );
-    expect(dryRunMapping(input)).toEqual(dryRunMappingImplementation(input));
+    expect(dryRunMapping(graphFixture(input))).toEqual(
+      dryRunMappingImplementation(graphFixture(input))
+    );
     expect(resolveEffectiveFieldMappingSet(effectiveSetInput)).toEqual(
       resolveEffectiveFieldMappingSetImplementation(effectiveSetInput)
     );
@@ -52,7 +59,7 @@ describe('public field-mapping entrypoints', () => {
     const input: MappingInput = mappingInput([
       sourceValue('csv', 'email', 'user@example.test', 'pii'),
     ]);
-    const result = executeRuntimeMapping(input);
+    const result = executeRuntimeMapping(graphFixture(input));
 
     expect(result.status).toBe('success');
     expect(result.reasons).toEqual([]);
@@ -80,16 +87,18 @@ describe('public field-mapping entrypoints', () => {
 
   it('preserves fail-closed status and evidence for a required missing value', () => {
     const source: SourceValueEnvelope = sourceValue('csv', 'email', '', 'pii');
-    const result = executeRuntimeMapping({
-      ...mappingInput([source]),
-      validationRules: [
-        {
-          id: 'validation.email.required',
-          kind: 'required',
-          targetRef: source.sourceRef,
-        },
-      ],
-    });
+    const result = executeRuntimeMapping(
+      graphFixture({
+        ...mappingInput([source]),
+        validationRules: [
+          {
+            id: 'validation.email.required',
+            kind: 'required',
+            targetRef: source.sourceRef,
+          },
+        ],
+      })
+    );
 
     expect(result.status).toBe('failed');
     expect(result.reasons.map((reason) => reason.code)).toEqual(['validation.required_missing']);
@@ -99,8 +108,8 @@ describe('public field-mapping entrypoints', () => {
         reason: entry.reason.code,
       }))
     ).toEqual([
-      { action: undefined, reason: 'validation.required_missing' },
       { action: 'mapped', reason: 'trace.mapping_evaluated' },
+      { action: undefined, reason: 'validation.required_missing' },
     ]);
     expect(result.values).toEqual([
       expect.objectContaining({

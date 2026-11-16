@@ -1,3 +1,5 @@
+import { safeTransformPattern, safeRegexTest } from '@authrim/ar-lib-field-mapping/authoring';
+
 /**
  * Conditions built in the console: groups (all / any / none of) holding rules
  * (field · operator · value) and further groups. The model is the UI's; pages convert it to
@@ -167,13 +169,7 @@ export function ruleProblem(
 			return 'invalidValue';
 		}
 	}
-	if (rule.operator === 'regex') {
-		try {
-			new RegExp(String(value));
-		} catch {
-			return 'badPattern';
-		}
-	}
+	if (rule.operator === 'regex' && !safeTransformPattern(String(value))) return 'badPattern';
 	return null;
 }
 
@@ -282,13 +278,8 @@ function ruleHolds(rule: ConditionRule, record: Readonly<Record<string, unknown>
 			return !isBlank(actual);
 		case 'not_exists':
 			return isBlank(actual);
-		case 'regex': {
-			try {
-				return new RegExp(text(expected), 'u').test(text(actual));
-			} catch {
-				return false;
-			}
-		}
+		case 'regex':
+			return safeRegexTest(text(expected), text(actual));
 	}
 }
 

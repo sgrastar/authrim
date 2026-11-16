@@ -1,3 +1,4 @@
+import { mappingGraphMigrationSuffix } from './mapping-graph-migration.js';
 import { IcebergRestCatalog, prepareScheduledTable } from '@authrim/ar-lib-logging/iceberg';
 import {
   assertLogArchiveImplemented,
@@ -4345,9 +4346,16 @@ export async function executeD1Migration(
     onProgress?.(`  Executing migration: ${sqlFilePath}`);
     const { readFileSync } = await import('node:fs');
     const renderedSql = renderPortableMigrationSql(readFileSync(sqlFilePath, 'utf-8'), 'sqlite');
+    const graphSuffix =
+      basename(sqlFilePath) === '023_mapping_rule_graph.sql'
+        ? await mappingGraphMigrationSuffix(renderedSql, (sql) =>
+            queryD1Rows(dbName, sql, { target: options.target })
+          )
+        : '';
+    const migrationSql = `${renderedSql}\n${graphSuffix}`;
     const transactionSql = options.transactionSuffixSql
-      ? `${renderedSql.trimEnd()}\n\n${options.transactionSuffixSql}\n`
-      : renderedSql;
+      ? `${migrationSql.trimEnd()}\n\n${options.transactionSuffixSql}\n`
+      : migrationSql;
     if (options.target) {
       const target = options.target;
       return await withPrivateTemporaryTextFile(transactionSql, async (tempSqlPath) => {

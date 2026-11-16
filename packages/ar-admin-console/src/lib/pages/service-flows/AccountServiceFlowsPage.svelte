@@ -21,6 +21,9 @@
 	} from './account-flow-model';
 	import LeaveGuard from './LeaveGuard.svelte';
 	import { onMount } from 'svelte';
+	import { goto } from '$app/navigation';
+	import type { ClientOption } from '#lib/api/clients.js';
+	import type { SamlServiceProviderOption } from '#lib/api/saml-providers.js';
 	import {
 		buildRegistrationFlowEditor,
 		readRegistrationFlowEditor
@@ -44,7 +47,44 @@
 		readLoginFlowEditor
 	} from './login-flow-mapping';
 
-	/** The first live service-flow page: the two account flows from the Storybook mock. */
+	let { showConnections = false }: { showConnections?: boolean } = $props();
+	let clients = $state<ClientOption[]>([]);
+	let serviceProviders = $state<SamlServiceProviderOption[]>([]);
+	let connectionsFailed = $state(false);
+	let connectionsLoading = $state(false);
+	const resources = useFlowResources();
+	async function loadConnections() {
+		if (!showConnections) return;
+		connectionsLoading = true;
+		connectionsFailed = false;
+		try {
+			[clients, serviceProviders] = await Promise.all([
+				resources.clients.list(),
+				resources.samlProviders.listServiceProviders()
+			]);
+		} catch {
+			connectionsFailed = true;
+		} finally {
+			connectionsLoading = false;
+		}
+	}
+	onMount(() => void loadConnections());
+	const connections = $derived([
+		...clients.map((client) => ({
+			id: client.id,
+			kind: 'rp',
+			protocol: 'OIDC RP',
+			name: client.name
+		})),
+		...serviceProviders.map((provider) => ({
+			id: provider.id,
+			kind: 'sp',
+			protocol: 'SAML SP',
+			name: provider.name
+		}))
+	]);
+
+	/** Account flows keep their existing editor and navigation. */
 	const columns = $derived([
 		{ key: 'protocol', label: t('sf.mock.col.protocol'), width: '140px' },
 		{ key: 'kind', label: t('sf.mock.col.kind'), width: '100px' },
@@ -257,6 +297,31 @@
 						{/if}
 					{/snippet}
 				</DataTable>
+			</Card>
+		{/if}
+		{#if showConnections}
+			<Card title={t('cm.connections')} flush>
+				{#if connectionsLoading}<LoadingState label={t('common.loading')} />
+				{:else if connectionsFailed}<Callout tone="warning"
+						>{t('mc.loadFailed')}
+						<Button onclick={loadConnections}>{t('common.retry')}</Button></Callout
+					>
+				{:else}
+					<DataTable
+						columns={[
+							{ key: 'protocol', label: t('sf.mock.col.protocol'), width: '140px' },
+							{ key: 'name', label: t('sf.mock.col.name') }
+						]}
+						rows={connections}
+						rowKey={(row) => `${row.kind}:${row.id}`}
+						caption={t('cm.connections')}
+						onrowopen={(row) =>
+							goto(`/admin/applications/all/${row.kind}/${encodeURIComponent(row.id)}`)}
+						rowOpenLabel={(row) => t('sf.mock.open', { name: row.name })}
+					>
+						{#snippet cell(row, column)}{column.key === 'name' ? row.name : row.protocol}{/snippet}
+					</DataTable>
+				{/if}
 			</Card>
 		{/if}
 	{/if}

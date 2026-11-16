@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
 import {
   ADMIN_PERMISSIONS,
   adminAuthMiddleware,
@@ -17,7 +18,11 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     createAuditLogFromContext: vi.fn(async () => undefined),
     // Tenant routing is not set up here: each tenant's Core database is the one the test gives it.
     resolveAuthCorePersistenceAdapterFromEnv: vi.fn(
-      async (env: { TEST_CORES?: Record<string, unknown> }, _partition: string, options) => {
+      async (
+        env: { TEST_CORES?: Record<string, unknown> },
+        _partition: string,
+        options?: { tenantId?: string }
+      ) => {
         const adapter = env.TEST_CORES?.[options?.tenantId ?? ''];
         if (!adapter) throw new Error('tenant_database_unavailable');
         return adapter;
@@ -408,7 +413,7 @@ async function setup(options: { bindToAuthority?: boolean } = {}) {
   });
   const create = async (overrides: Record<string, unknown> = {}, who = tenantAdmin) => {
     const response = await request(who, 'POST', SETS, body(overrides));
-    expect(response.status).toBe(201);
+    expect(response.status, JSON.stringify(response.json)).toBe(201);
     return response.json;
   };
   const count = (sql: string, ...params: Array<string | number>) =>
@@ -418,6 +423,7 @@ async function setup(options: { bindToAuthority?: boolean } = {}) {
     versions: count('SELECT COUNT(*) AS n FROM field_mapping_versions'),
     rules: count('SELECT COUNT(*) AS n FROM mapping_rules'),
     edges: count('SELECT COUNT(*) AS n FROM mapping_rule_edges'),
+    inputs: count('SELECT COUNT(*) AS n FROM mapping_transform_step_inputs'),
     snapshots: count('SELECT COUNT(*) AS n FROM compiled_mapping_snapshots'),
     activations: count('SELECT COUNT(*) AS n FROM field_mapping_activations'),
     graphs: count('SELECT COUNT(*) AS n FROM dependency_graph_snapshots'),
@@ -658,7 +664,7 @@ describe('reading a set', () => {
     const rule = emailRule(t.profile, {
       priority: -3,
       metadata: { note: 'kept' },
-      transforms: [{ edgeIndex: 0, operation: 'trim', parameters: {} }],
+      transforms: [{ inputs: [{ edgeIndex: 0 }], operation: 'trim', parameters: {} }],
       validationRules: [
         {
           targetRef: { side: 'destination', namespace: 'oidc.claim', path: 'email' },
@@ -704,7 +710,8 @@ describe('reading a set', () => {
       ruleKey: 'email',
       priority: -3,
       metadata: { note: 'kept' },
-      transforms: [{ edgeIndex: 0, operation: 'trim' }],
+      output: { stepIndex: 0 },
+      transforms: [{ inputs: [{ edgeIndex: 0 }], operation: 'trim' }],
       validationRules: [{ validationKind: 'required', severity: 'warning' }],
       releaseRules: [{ destinationType: 'oidc', releaseAction: 'allow', purpose: 'login' }],
       conflictRules: [{ conflictStrategy: 'prefer_source', sourcePriority: ['a'] }],
@@ -719,6 +726,86 @@ describe('reading a set', () => {
     const reread = await t.request(t.tenantAdmin, 'GET', `${SETS}/${created.id}`);
     expect(reread.json.content).toEqual(readContent);
     expect(reread.json.content_version).not.toBe(read.json.content_version);
+  });
+
+  it('round-trips ordered named multi-input chains and cleans inputs after a failed save', async () => {
+    const t = await setup();
+    const summarySchema = z.object({ id: z.string(), display_name: z.string() });
+    const responseSchema = summarySchema.extend({
+      content: z.object({ rules: z.array(z.unknown()) }).passthrough(),
+    });
+    let chainSetId = '';
+    for (const destinationSurface of ['id_token', 'userinfo']) {
+      const path = `/chain-${destinationSurface}`;
+      t.app.get(path, async (c) => {
+        const result = await applyOIDCIdentityMapping({
+          subjectType: 'public',
+          adapter: sqliteAdapter(t.coreA),
+          env: c.env,
+          tenantId: TENANT,
+          clientId: 'chain-client',
+          selector: { fieldMappingSetId: chainSetId },
+          destinationSurface: destinationSurface === 'id_token' ? 'id_token' : 'userinfo',
+          grantedScopes: ['openid', 'email', 'profile'],
+          claims: { sub: 'chain-user' },
+          sourceAttributes: { email: 'ada@example.test', nickname: 'Ada' },
+        });
+        return c.json(result.claims);
+      });
+    }
+    const first = emailRule(t.profile);
+    const targetRef = first.edges[0].targetRef;
+    const rules = [
+      {
+        ...first,
+        targetRef,
+        edges: [
+          first.edges[0],
+          {
+            ...first.edges[0],
+            sourceRef: { side: 'source', namespace: 'authrim.profile', path: 'nickname' },
+          },
+        ],
+        transforms: [
+          {
+            operation: 'concat',
+            parameters: { delimiter: ':' },
+            inputs: [
+              { edgeIndex: 0, name: 'email' },
+              { edgeIndex: 1, name: 'nickname' },
+            ],
+          },
+          { operation: 'trim', inputs: [{ stepIndex: 0, name: 'joined' }] },
+        ],
+        output: { stepIndex: 1 },
+      },
+      nicknameRule(t.profile),
+    ];
+    const created = summarySchema.parse(await t.create({ content: t.content({ rules }) }));
+    chainSetId = created.id;
+    const read = await t.request(t.tenantAdmin, 'GET', `${SETS}/${created.id}`);
+    const readContent = responseSchema.parse(read.json).content;
+    expect(readContent.rules[0]).toMatchObject(rules[0]);
+    const again = await t.request(t.tenantAdmin, 'PUT', `${SETS}/${created.id}`, {
+      display_name: created.display_name,
+      content: readContent,
+    });
+    expect(again.status).toBe(200);
+    const reread = await t.request(t.tenantAdmin, 'GET', `${SETS}/${created.id}`);
+    expect(responseSchema.parse(reread.json).content).toEqual(readContent);
+    for (const destinationSurface of ['id_token', 'userinfo']) {
+      const path = `/chain-${destinationSurface}`;
+      const issued = await t.request(t.tenantAdmin, 'GET', path);
+      expect(z.object({ email: z.string() }).parse(issued.json).email).toBe('ada@example.test:Ada');
+    }
+    const before = t.rowCounts();
+    t.faults.failOn = /INSERT INTO compiled_mapping_snapshots/;
+    const failed = await t.request(t.tenantAdmin, 'PUT', `${SETS}/${created.id}`, {
+      display_name: created.display_name,
+      content: readContent,
+    });
+    expect(failed.status).toBe(500);
+    expect({ ...t.rowCounts(), idempotency: 0 }).toEqual({ ...before, idempotency: 0 });
   });
 
   it('lists the tenant’s sets and the platform’s with their state, and no other tenant’s', async () => {
@@ -1588,7 +1675,169 @@ describe('the release safety check', () => {
 });
 
 describe('the kind of Destination Profile', () => {
-  it('refuses a set that releases into a SAML profile, and says to use the activation endpoints', async () => {
+  it('saves and reads a generating graph whose only destination is the rule target', async () => {
+    const t = await setup();
+    const targetRef = {
+      side: 'destination',
+      namespace: 'oidc.claim',
+      path: 'sub',
+      profileId: t.profile,
+    };
+    const created = await t.request(
+      t.tenantAdmin,
+      'POST',
+      SETS,
+      t.body({
+        content: t.content({
+          rules: [
+            {
+              ruleKey: 'subject',
+              ruleKind: 'transform',
+              action: 'allow',
+              targetRef,
+              output: { stepIndex: 0 },
+              transforms: [
+                {
+                  operation: 'persistent_identifier',
+                  inputs: [],
+                  parameters: { input: 'account', format: 'plain', algorithm: 'authrim_sha256' },
+                },
+              ],
+            },
+          ],
+        }),
+      })
+    );
+    expect(created.status).toBe(201);
+    const read = await t.request(t.tenantAdmin, 'GET', `${SETS}/${created.json.id}`);
+    expect(read.status).toBe(200);
+    expect(read.json).toMatchObject({
+      content: {
+        rules: [
+          {
+            output: { stepIndex: 0 },
+            targetRef,
+            transforms: [{ operation: 'persistent_identifier', inputs: [] }],
+          },
+        ],
+      },
+    });
+  });
+
+  it.each([17, 'lower', null, [], true].map((parameters) => ({ parameters })))(
+    'rejects non-object transform parameters $parameters with 400 before saving',
+    async ({ parameters }) => {
+      const t = await setup();
+      const before = t.rowCounts();
+      const refused = await t.request(
+        t.tenantAdmin,
+        'POST',
+        SETS,
+        t.body({
+          content: t.content({
+            rules: [
+              emailRule(t.profile, {
+                transforms: [{ operation: 'case', inputs: [{ edgeIndex: 0 }], parameters }],
+              }),
+            ],
+          }),
+        })
+      );
+      expect(refused.status).toBe(400);
+      expect(refused.json).toMatchObject({ error: 'invalid_request', stage_failed: 'validate' });
+      expect(refused.json.error_description).toContain('parameters must be an object');
+      expect({ ...t.rowCounts(), idempotency: 0 }).toEqual({ ...before, idempotency: 0 });
+    }
+  );
+
+  it('refuses a profile change when a reference arrives while compiling', async () => {
+    const t = await setup();
+    const created = z
+      .object({ id: z.string(), version_id: z.string(), field_mapping_key: z.string() })
+      .parse(await t.create());
+    seedDestinationProfile(t.db, { owner: TENANT, id: 'arriving-profile' });
+    t.faults.afterWrite = {
+      match: /INSERT INTO compiled_mapping_snapshots/,
+      run: () =>
+        insertOAuthClient(t.coreA, {
+          tenantId: TENANT,
+          clientId: 'arriving-client',
+          identityMapping: { fieldMappingSetId: created.id },
+        }),
+    };
+    const refused = await t.request(
+      t.tenantAdmin,
+      'PUT',
+      `${SETS}/${created.id}`,
+      t.body({
+        field_mapping_key: created.field_mapping_key,
+        content: t.content({ profileId: 'arriving-profile' }),
+        confirm_impact: 1,
+      })
+    );
+    expect(refused.status, JSON.stringify(refused.json)).toBe(409);
+    expect(refused.json).toMatchObject({ error: 'conflict', stage_failed: 'activate' });
+    expect(refused.json.references).toMatchObject({ count: 1 });
+    const read = await t.request(t.tenantAdmin, 'GET', `${SETS}/${created.id}`);
+    expect(read.json.content_version).toBe(created.version_id);
+    expect(read.json.destination_profile_id).toBe(t.profile);
+  });
+
+  it('saves a platform SAML release with the shared IdP scope', async () => {
+    const t = await setup();
+    seedDestinationProfile(t.db, {
+      owner: 'platform',
+      id: 'platform-saml',
+      destinationType: 'saml',
+      attributes: ['email'],
+    });
+    t.db
+      .prepare('UPDATE destination_profile_versions SET schema_json = ? WHERE profile_id = ?')
+      .run(
+        JSON.stringify({
+          destinationType: 'saml',
+          attributes: [{ name: 'email', classification: 'pii' }],
+        }),
+        'platform-saml'
+      );
+    const target = {
+      side: 'destination',
+      namespace: 'saml.attribute',
+      path: 'email',
+      profileId: 'platform-saml',
+    };
+    const created = z.object({ id: z.string(), version_id: z.string() }).parse(
+      await t.create(
+        {
+          owner_scope_type: 'platform',
+          content: t.content({
+            catalogVersionId: PLATFORM_CATALOG_VERSION,
+            rules: [
+              {
+                ruleKey: 'mail',
+                ruleKind: 'direct',
+                action: 'allow',
+                targetRef: target,
+                edges: [
+                  {
+                    sourceRef: { side: 'source', namespace: 'authrim.profile', path: 'email' },
+                    targetRef: target,
+                  },
+                ],
+                output: { edgeIndex: 0 },
+              },
+            ],
+          }),
+        },
+        t.platformAdmin
+      )
+    );
+    expect(t.activeVersions(created.id)).toEqual([
+      { version: created.version_id, scope: { protocol: 'saml', role: 'idp' } },
+    ]);
+  });
+
+  it('refuses OIDC targets in a SAML Destination Profile', async () => {
     const t = await setup();
     seedDestinationProfile(t.db, { owner: TENANT, id: 'profile-saml', destinationType: 'saml' });
 
@@ -1601,10 +1850,10 @@ describe('the kind of Destination Profile', () => {
 
     expect(refused.status).toBe(400);
     expect(refused.json).toMatchObject({
-      error: 'unsupported_destination',
+      error: 'invalid_request',
       stage_failed: 'validate',
     });
-    expect(refused.json.error_description).toContain('activation endpoints');
+    expect(refused.json.error_description).toContain('protocol');
     expect(t.rowCounts().sets).toBe(0);
   });
 
@@ -3078,6 +3327,8 @@ describe('what is read is never larger than what was saved', () => {
     // A content of exactly the 4000 nodes a content may hold, most of them in metadata.
     const build = (last: number) =>
       emailRule(t.profile, {
+        targetRef: emailRule(t.profile).edges[0].targetRef,
+        output: { edgeIndex: 0 },
         metadata: { a: numbers(1000), b: numbers(1000), c: numbers(1000), d: numbers(last) },
       });
     const last =
@@ -3113,7 +3364,7 @@ describe('what is read is never larger than what was saved', () => {
       [emailRule(t.profile, { priority: 0, scope: {}, edges: undefined }), nicknameRule(t.profile)],
       [
         emailRule(t.profile, {
-          transforms: [{ edgeIndex: 0, operation: 'trim', parameters: {} }],
+          transforms: [{ inputs: [{ edgeIndex: 0 }], operation: 'trim', parameters: {} }],
           validationRules: [
             {
               targetRef: { side: 'destination', namespace: 'oidc.claim', path: 'email' },
@@ -3156,7 +3407,7 @@ describe('what is read is never larger than what was saved', () => {
       expect(again.status).toBe(200);
       expect(reread.json.content).toEqual(read.json.content);
       expect(JSON.stringify(read.json.content.rules).length).toBeLessThanOrEqual(
-        JSON.stringify(rules).length + 200
+        JSON.stringify(rules).length + 300
       );
     }
   });

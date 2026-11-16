@@ -1,17 +1,7 @@
 /**
- * Identity mapping (which Mapping Set an OIDC app releases claims through, and where that was
- * decided): the shapes of the Admin API's answers, and the client the mapping pages take.
- *
- * Two kinds of call are typed here:
- * - **existing** — the shape the Admin API returns today, read from its handlers
- *   (`identity-mapping-effective.ts`, `identity-mapping-usage.ts`, the set facade,
- *   `routes/settings-v2/bulk-apply.ts`, `admin-clients.ts`);
- * - **proposed** — what the pages need and the API does not provide yet. Each is marked
- *   `PROPOSED` with the route it is planned as; until it lands, only the in-memory client
- *   (`fake/identity-mapping-fake.ts`) answers it. The page stories carry the `api-pending` tag.
- *
- * Pages never work out which set applies or which claims are released: they show what these
- * calls return (the runtime's own selection and release), with where it was decided.
+ * Shared mapping response types and the authenticated Mapping Set facade client.
+ * The existing overview stories use IdentityMappingStoryClient, a presentation-only service;
+ * its draft/sample shapes are not HTTP payloads. Production facade contracts are in mapping-set.ts.
  */
 
 /** The levels of the order, the app's first. */
@@ -385,8 +375,8 @@ export interface SetChangePreview {
 	sample: { user_id: string; claims: SampleClaimValue[] } | null;
 }
 
-/** The draft content sent for a preview: the same mappings a save would send. */
-export interface SetContentDraft {
+/** Presentation fixture for the existing overview stories. HTTP saves use MappingSetContent. */
+export interface StoryMappingDraft {
 	/**
 	 * Each claim, the attributes it reads and the transforms on the way (opaque here: the editor's
 	 * own steps, kept as they are so an edit of a transform is a change too).
@@ -394,9 +384,9 @@ export interface SetContentDraft {
 	mappings: Array<{ target: string; sources: string[]; steps?: unknown[] }>;
 }
 
-export interface SetContent {
+export interface StoryMappingContent {
 	set: MappingSetSummary;
-	mappings: SetContentDraft['mappings'];
+	mappings: StoryMappingDraft['mappings'];
 	/** What a mapping may read (Authrim attributes) and fill (the claims the profile allows). */
 	attributes: Array<{ key: string; type: string }>;
 	claims: Array<{ key: string; type: string }>;
@@ -466,7 +456,7 @@ export interface RestorePreview {
 // The client the pages take
 // ---------------------------------------------------------------------------------------------
 
-export interface IdentityMappingClient {
+export interface IdentityMappingStoryClient {
 	/** existing: GET /api/admin/identity-mapping/sets (in the tenant's context, or the platform's). */
 	sets(tenantId: string): Promise<{ sets: MappingSetSummary[] }>;
 	/** existing: GET /api/admin/identity-mapping/effective */
@@ -501,7 +491,7 @@ export interface IdentityMappingClient {
 	previewSetChange(
 		tenantId: string,
 		setId: string,
-		draft: SetContentDraft,
+		draft: StoryMappingDraft,
 		sampleUserId?: string
 	): Promise<SetChangePreview>;
 	/**
@@ -509,7 +499,7 @@ export interface IdentityMappingClient {
 	 * attributes and the claims of its destination profile). Simplified: the facade returns the
 	 * whole content; the mock-up reads the mappings only.
 	 */
-	setContent(tenantId: string, setId: string): Promise<SetContent>;
+	setContent(tenantId: string, setId: string): Promise<StoryMappingContent>;
 	/**
 	 * existing: PUT /api/admin/identity-mapping/sets/{id} (the facade's whole content; the mock-up
 	 * sends the mappings only).
@@ -517,7 +507,7 @@ export interface IdentityMappingClient {
 	saveSet(
 		tenantId: string,
 		setId: string,
-		draft: SetContentDraft,
+		draft: StoryMappingDraft,
 		confirmImpact: number | null
 	): Promise<void>;
 	/** PROPOSED: GET /api/admin/identity-mapping/history */
@@ -526,4 +516,265 @@ export interface IdentityMappingClient {
 	previewRestore(tenantId: string, entryId: string): Promise<RestorePreview>;
 	/** PROPOSED: POST /api/admin/identity-mapping/history/{id}/restore */
 	restore(tenantId: string, entryId: string, expectedVersion: string): Promise<HistoryEntry>;
+}
+
+// Public HTTP client. Storybook's presentation service above is not a wire contract.
+export type {
+	MappingSetContent,
+	MappingSetRule,
+	MappingSetDetail,
+	MappingSetSaveRequest,
+	MappingSetSaved,
+	MappingSavePreview,
+	MappingMutationOutcome,
+	MappingWriteOptions,
+	MappingCatalog,
+	MappingDestinationProfile,
+	MappingSetChangePreview,
+	SAMLExplainRequest,
+	SAMLExplanation
+} from './mapping-set';
+import type {
+	MappingSetContent,
+	MappingSetDetail,
+	MappingSetSaveRequest,
+	MappingSetSaved,
+	MappingSavePreview,
+	MappingMutationOutcome,
+	MappingWriteOptions,
+	MappingCatalog,
+	MappingDestinationProfile,
+	MappingSetChangePreview,
+	SAMLExplainRequest,
+	SAMLExplanation
+} from './mapping-set';
+import { API_BASE_URL, adminFetch } from './admin-request';
+import { ApiError, errorFromResponse } from './api-error';
+
+export interface IdentityMappingClient {
+	sets(tenantId: string): Promise<{ sets: MappingSetSummary[] }>;
+	setContent(tenantId: string, setId: string): Promise<MappingSetDetail>;
+	createSet(
+		tenantId: string,
+		request: MappingSetSaveRequest & { field_mapping_key: string },
+		idempotencyKey: string
+	): Promise<MappingMutationOutcome<MappingSetSaved>>;
+	saveSet(
+		tenantId: string,
+		setId: string,
+		request: MappingSetSaveRequest,
+		options: MappingWriteOptions
+	): Promise<MappingMutationOutcome<MappingSetSaved>>;
+	deleteSet(
+		tenantId: string,
+		setId: string,
+		options: MappingWriteOptions
+	): Promise<MappingMutationOutcome<{ id: string; owner: 'tenant' | 'platform'; deleted: true }>>;
+	previewSave(
+		tenantId: string,
+		request: MappingSetSaveRequest,
+		target?: { setId: string; version: string }
+	): Promise<MappingSavePreview>;
+	previewSetChange(
+		tenantId: string,
+		setId: string,
+		content: MappingSetContent,
+		sampleUserId?: string
+	): Promise<MappingSetChangePreview>;
+	explain(tenantId: string, request: ExplainRequest): Promise<ClaimExplanation>;
+	explainSaml(tenantId: string, request: SAMLExplainRequest): Promise<SAMLExplanation>;
+	testUsers(tenantId: string): Promise<TestUsers>;
+	replaceTestUsers(
+		tenantId: string,
+		users: { user_id?: string; label: string; attributes: Record<string, unknown> }[],
+		idempotencyKey: string
+	): Promise<MappingMutationOutcome<TestUsers>>;
+	catalogs(tenantId: string): Promise<{ catalogs: MappingCatalog[] }>;
+	destinationProfiles(
+		tenantId: string
+	): Promise<{ destinationProfiles: MappingDestinationProfile[] }>;
+}
+const mappingBase = `${API_BASE_URL}/api/admin/identity-mapping`;
+const setPath = (id: string) => `${mappingBase}/sets/${encodeURIComponent(id)}`;
+const isObject = (value: unknown): value is Record<string, unknown> =>
+	value !== null && typeof value === 'object' && !Array.isArray(value);
+function versionHeader(version: string): string {
+	if (
+		typeof version !== 'string' ||
+		!version.trim() ||
+		version === '*' ||
+		version.startsWith('W/') ||
+		/[\r\n,]/.test(version) ||
+		(version.includes('"') && !/^"[^"]+"$/.test(version))
+	)
+		throw new Error('A current ETag or content_version is required');
+	return version.startsWith('"') ? version : `"${version}"`;
+}
+function mutationKey(key: string): string {
+	if (key.length < 8 || key.length > 128 || !key.trim())
+		throw new Error('Idempotency-Key must contain 8 to 128 characters');
+	return key;
+}
+async function readMappingJson<T>(response: Response): Promise<T> {
+	if (!response.ok) throw await errorFromResponse(response);
+	return response.json();
+}
+/** No application retry: adminFetch only replays an admitted placement-fence response with this same key. */
+async function mutateMapping<T>(
+	tenantId: string,
+	url: string,
+	method: string,
+	body: unknown,
+	key: string,
+	version?: string,
+	expected: 'save' | 'delete' | 'test_users' = 'save'
+): Promise<MappingMutationOutcome<T>> {
+	const headers = {
+		'Idempotency-Key': mutationKey(key),
+		...(version === undefined ? {} : { 'If-Match': versionHeader(version) })
+	};
+	let response: Response;
+	try {
+		response = await adminFetch(url, {
+			tenantId,
+			method,
+			headers,
+			...(body === undefined ? {} : { includeJsonContentType: true, body: JSON.stringify(body) })
+		});
+	} catch {
+		return { kind: 'outcome_unknown', idempotencyKey: key, body: { error: 'transport_error' } };
+	}
+	if (response.ok) {
+		try {
+			const value: T = await response.json();
+			const complete =
+				isObject(value) &&
+				!value.error &&
+				(expected === 'save'
+					? typeof value.id === 'string' &&
+						typeof value.content_version === 'string' &&
+						typeof value.snapshot_id === 'string' &&
+						typeof value.version_id === 'string' &&
+						typeof value.created === 'boolean'
+					: expected === 'delete'
+						? value.deleted === true
+						: Array.isArray(value.test_users));
+			if (!complete)
+				return { kind: 'outcome_unknown', idempotencyKey: key, body: isObject(value) ? value : {} };
+			return {
+				kind: 'success',
+				value:
+					isObject(value) && 'content_version' in value
+						? { ...value, etag: response.headers.get('ETag') }
+						: value
+			};
+		} catch {
+			return {
+				kind: 'outcome_unknown',
+				idempotencyKey: key,
+				body: { error: 'unreadable_response' }
+			};
+		}
+	}
+	const data: unknown = await response.json().catch(() => null);
+	const details = isObject(data) ? data : {};
+	if (details.error === 'outcome_unknown' || details.error === 'result_unknown')
+		return { kind: 'outcome_unknown', idempotencyKey: key, body: details };
+	if (details.error === 'impact_confirmation_required') {
+		const refs = details.references;
+		return {
+			kind: 'impact_confirmation_required',
+			references:
+				isObject(refs) && typeof refs.count === 'number' ? { ...refs, count: refs.count } : null,
+			body: details
+		};
+	}
+	if (typeof details.stage_failed === 'string')
+		return { kind: 'stage_failed', stage: details.stage_failed, body: details };
+	if (response.status >= 500)
+		return { kind: 'outcome_unknown', idempotencyKey: key, body: details };
+	if (response.status === 409 || response.status === 412 || response.status === 428)
+		return { kind: 'conflict', status: response.status, body: details };
+	throw new ApiError(
+		response.status,
+		typeof details.error === 'string' ? details.error : '',
+		typeof details.error_description === 'string' ? details.error_description : response.statusText,
+		details
+	);
+}
+export function httpIdentityMapping(): IdentityMappingClient {
+	const get = <T>(tenantId: string, url: string) =>
+		adminFetch(url, { tenantId }).then(readMappingJson<T>);
+	const post = <T>(
+		tenantId: string,
+		url: string,
+		body: unknown,
+		headers?: HeadersInit,
+		method = 'POST'
+	) =>
+		adminFetch(url, {
+			tenantId,
+			method,
+			headers,
+			includeJsonContentType: true,
+			body: JSON.stringify(body)
+		}).then(readMappingJson<T>);
+	return {
+		sets: (tenantId) => get(tenantId, `${mappingBase}/sets`),
+		async setContent(tenantId, setId) {
+			const response = await adminFetch(setPath(setId), { tenantId });
+			const detail = await readMappingJson<Omit<MappingSetDetail, 'etag'>>(response);
+			return { ...detail, etag: response.headers.get('ETag') };
+		},
+		createSet: (tenantId, request, key) =>
+			mutateMapping(tenantId, `${mappingBase}/sets`, 'POST', request, key),
+		saveSet: async (tenantId, setId, request, options) =>
+			mutateMapping(
+				tenantId,
+				setPath(setId),
+				'PUT',
+				request,
+				options.idempotencyKey,
+				versionHeader(options.version)
+			),
+		deleteSet: async (tenantId, setId, options) =>
+			mutateMapping(
+				tenantId,
+				setPath(setId),
+				'DELETE',
+				undefined,
+				options.idempotencyKey,
+				versionHeader(options.version),
+				'delete'
+			),
+		previewSave: (tenantId, request, target) =>
+			post(
+				tenantId,
+				`${target ? setPath(target.setId) : `${mappingBase}/sets`}?preview=true`,
+				request,
+				target ? { 'If-Match': versionHeader(target.version) } : undefined,
+				target ? 'PUT' : 'POST'
+			),
+		previewSetChange: (tenantId, setId, content, sampleUserId) =>
+			post(tenantId, `${setPath(setId)}/preview-change`, {
+				content,
+				...(sampleUserId ? { sample: { test_user_id: sampleUserId } } : {})
+			}),
+		explain: (tenantId, request) => post(tenantId, `${mappingBase}/explain`, request),
+		explainSaml: (tenantId, request) => post(tenantId, `${mappingBase}/explain`, request),
+		testUsers: (tenantId) => get(tenantId, `${mappingBase}/test-users`),
+		replaceTestUsers: (tenantId, users, key) =>
+			mutateMapping(
+				tenantId,
+				`${mappingBase}/test-users`,
+				'PUT',
+				{ test_users: users },
+				key,
+				undefined,
+				'test_users'
+			),
+		catalogs: (tenantId) => get(tenantId, `${API_BASE_URL}/api/admin/field-mapping/catalogs`),
+		destinationProfiles: (tenantId) =>
+			get(tenantId, `${API_BASE_URL}/api/admin/field-mapping/destination-profiles`)
+	};
 }

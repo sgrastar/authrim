@@ -354,7 +354,7 @@ export async function checkDestinationProfileUnreferenced(
        LEFT JOIN (
          SELECT tenant_id, rule_id, target_ref_json FROM mapping_rule_edges
          UNION ALL
-         SELECT tenant_id, rule_id, target_ref_json FROM mapping_transform_steps
+         SELECT tenant_id, id AS rule_id, target_ref_json FROM mapping_rules
           WHERE target_ref_json IS NOT NULL
        ) e ON e.tenant_id = r.tenant_id AND e.rule_id = r.id
       WHERE a.lifecycle_state = 'active'

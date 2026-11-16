@@ -59,6 +59,7 @@ function openAdminDatabase(): SQLiteDatabase {
     '001_0_5_0_admin_baseline.sql',
     '012_admin_groups.sql',
     '021_mapping_transform_step_target.sql',
+    '023_mapping_rule_graph.sql',
   ]) {
     db.exec(readRenderedMigrationSql(resolve(REPO_ROOT, 'migrations/admin/d1/'), file));
   }

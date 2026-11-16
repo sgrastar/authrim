@@ -25,7 +25,8 @@ vi.mock('../identity-mapping-resolution', () => ({
   },
 }));
 
-vi.mock('@authrim/ar-lib-field-mapping/runtime', () => ({
+vi.mock('@authrim/ar-lib-field-mapping/runtime', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@authrim/ar-lib-field-mapping/runtime')>()),
   executeRuntimeMapping: executeMapping,
 }));
 

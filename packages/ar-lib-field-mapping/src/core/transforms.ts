@@ -1,9 +1,27 @@
+import {
+  STRUCTURE_TRANSFORM_SCHEMAS,
+  structureSettingsProblem,
+  executeConditional,
+  buildArray,
+} from './structure-transforms';
+import { TEXT_TRANSFORM_SCHEMAS } from './text-transform-schemas';
+import { executeTextTransform, isTextTransform, textSettingsProblem } from './text-transforms';
+import {
+  chargeTransformInput,
+  measureTransformValue,
+  jsonBuildSourceKeys,
+  chargeTransformOutput,
+  TransformFailure,
+  TRANSFORM_LIMITS,
+} from './transform-safety';
+import { analyzeMappingDependencies } from './graph';
 import { buildTraceEntry } from './trace';
 import { reason } from './reason-registry';
 import { statusFromReasons } from './result';
 import type {
   FieldRef,
   MappingRuleEdge,
+  MappingRuleGraph,
   MappingTransformStep,
   ReasonCode,
   SourceValueEnvelope,
@@ -165,9 +183,12 @@ function sameTarget(a: FieldRef, b: FieldRef): boolean {
 }
 
 export const TRANSFORM_OPERATION_SCHEMAS: TransformOperationSchema[] = [
-  { operation: 'copy', parameters: [] },
+  ...TEXT_TRANSFORM_SCHEMAS,
+  ...STRUCTURE_TRANSFORM_SCHEMAS,
+  { operation: 'copy', inputArity: { min: 1, max: 1 }, parameters: [] },
   {
     operation: 'as_array',
+    inputArity: { min: 1, max: 1 },
     parameters: [
       { name: 'trimItems', kind: 'boolean', required: false },
       { name: 'omitEmpty', kind: 'boolean', required: false },
@@ -177,6 +198,7 @@ export const TRANSFORM_OPERATION_SCHEMAS: TransformOperationSchema[] = [
   },
   {
     operation: 'split',
+    inputArity: { min: 1, max: 1 },
     parameters: [
       { name: 'delimiter', kind: 'string', required: false },
       { name: 'trimItems', kind: 'boolean', required: false },
@@ -187,6 +209,7 @@ export const TRANSFORM_OPERATION_SCHEMAS: TransformOperationSchema[] = [
   },
   {
     operation: 'join',
+    inputArity: { min: 1 },
     parameters: [
       { name: 'delimiter', kind: 'string', required: false },
       { name: 'trimItems', kind: 'boolean', required: false },
@@ -198,6 +221,7 @@ export const TRANSFORM_OPERATION_SCHEMAS: TransformOperationSchema[] = [
   },
   {
     operation: 'first',
+    inputArity: { min: 1 },
     parameters: [
       { name: 'trimItems', kind: 'boolean', required: false },
       { name: 'omitEmpty', kind: 'boolean', required: false },
@@ -210,6 +234,7 @@ export const TRANSFORM_OPERATION_SCHEMAS: TransformOperationSchema[] = [
     // takes no input edge: it is made from the account's ID, or from a value an administrator
     // imported for the account (`input` and `source`), which the runtime reads, not the mapping.
     operation: 'persistent_identifier',
+    inputArity: { min: 0, max: 0 },
     parameters: [
       {
         name: 'input',
@@ -263,6 +288,7 @@ export const TRANSFORM_OPERATION_SCHEMAS: TransformOperationSchema[] = [
   },
   {
     operation: 'affix_text',
+    inputArity: { min: 1, max: 1 },
     parameters: [
       { name: 'prefix', kind: 'string', required: false },
       { name: 'suffix', kind: 'string', required: false },
@@ -272,13 +298,15 @@ export const TRANSFORM_OPERATION_SCHEMAS: TransformOperationSchema[] = [
   },
   {
     operation: 'concat',
+    inputArity: { min: 1 },
     parameters: [{ name: 'delimiter', kind: 'string', required: false }],
     outputValueType: 'string',
     outputCardinality: 'single',
   },
-  { operation: 'fallback', parameters: [] },
+  { operation: 'fallback', inputArity: { min: 1 }, parameters: [] },
   {
     operation: 'normalize',
+    inputArity: { min: 1, max: 1 },
     parameters: [
       {
         name: 'mode',
@@ -292,6 +320,7 @@ export const TRANSFORM_OPERATION_SCHEMAS: TransformOperationSchema[] = [
   },
   {
     operation: 'case',
+    inputArity: { min: 1, max: 1 },
     parameters: [
       {
         name: 'mode',
@@ -305,12 +334,14 @@ export const TRANSFORM_OPERATION_SCHEMAS: TransformOperationSchema[] = [
   },
   {
     operation: 'trim',
+    inputArity: { min: 1, max: 1 },
     parameters: [],
     outputValueType: 'string',
     outputCardinality: 'single',
   },
   {
     operation: 'text_to_boolean',
+    inputArity: { min: 1, max: 1 },
     parameters: [
       { name: 'trueValues', kind: 'string', required: false },
       { name: 'falseValues', kind: 'string', required: false },
@@ -321,6 +352,7 @@ export const TRANSFORM_OPERATION_SCHEMAS: TransformOperationSchema[] = [
   },
   {
     operation: 'json_build',
+    inputArity: { min: 1 },
     parameters: [
       { name: 'keyMap', kind: 'string', required: false },
       {
@@ -335,18 +367,21 @@ export const TRANSFORM_OPERATION_SCHEMAS: TransformOperationSchema[] = [
   },
   {
     operation: 'json_extract_text',
+    inputArity: { min: 1, max: 1 },
     parameters: [{ name: 'path', kind: 'string', required: true }],
     outputValueType: 'string',
     outputCardinality: 'single',
   },
   {
     operation: 'json_extract_boolean',
+    inputArity: { min: 1, max: 1 },
     parameters: [{ name: 'path', kind: 'string', required: true }],
     outputValueType: 'boolean',
     outputCardinality: 'single',
   },
   {
     operation: 'json_extract_integer',
+    inputArity: { min: 1, max: 1 },
     parameters: [{ name: 'path', kind: 'string', required: true }],
     outputValueType: 'number',
     outputCardinality: 'single',
@@ -359,10 +394,10 @@ const transformSchemas = new Map(
 
 const TRANSFORM_PARAMETER_MAX_CHARS = 2048;
 const TRANSFORM_KEY_MAP_MAX_CHARS = 4096;
-const TRANSFORM_JSON_MAX_BYTES = 32 * 1024;
-const TRANSFORM_JSON_MAX_DEPTH = 12;
-const TRANSFORM_JSON_MAX_NODES = 1000;
-const TRANSFORM_JSON_MAX_ARRAY_ITEMS = 500;
+const TRANSFORM_JSON_MAX_BYTES = TRANSFORM_LIMITS.valueBytes;
+const TRANSFORM_JSON_MAX_DEPTH = TRANSFORM_LIMITS.depth;
+const TRANSFORM_JSON_MAX_NODES = TRANSFORM_LIMITS.nodes;
+const TRANSFORM_JSON_MAX_ARRAY_ITEMS = TRANSFORM_LIMITS.arrayItems;
 const TRANSFORM_JSON_MAX_OBJECT_KEYS = 200;
 const TRANSFORM_JSON_PATH_MAX_CHARS = 512;
 const TRANSFORM_JSON_PATH_MAX_SEGMENTS = 32;
@@ -376,7 +411,17 @@ export function validateTransformStep(step: MappingTransformStep): ValidationRes
     return resultFromReasons(reasons);
   }
 
+  if (
+    step.inputEdgeIds.length < schema.inputArity.min ||
+    (schema.inputArity.max !== undefined && step.inputEdgeIds.length > schema.inputArity.max)
+  ) {
+    reasons.push(reason('transform.invalid_arity'));
+  }
   const parameters = step.parameters ?? {};
+  if (typeof parameters !== 'object' || Array.isArray(parameters)) {
+    reasons.push(reason('transform.invalid_parameter'));
+    return resultFromReasons(reasons);
+  }
   const schemaParameters = new Map(
     schema.parameters.map((parameter) => [parameter.name, parameter])
   );
@@ -400,6 +445,9 @@ export function validateTransformStep(step: MappingTransformStep): ValidationRes
     }
   }
 
+  if (structureSettingsProblem(step)) reasons.push(reason('transform.invalid_parameter'));
+  const problem = textSettingsProblem(step);
+  if (problem) reasons.push(reason(problem));
   return resultFromReasons(reasons);
 }
 
@@ -448,7 +496,23 @@ export function executeTransformStep(input: TransformExecutionInput): TransformE
   }
 
   const sourceValues = values.filter(Boolean) as SourceValueEnvelope[];
-  const output = executeOperation(input.step, sourceValues, input.runtimeContext);
+  let output: unknown;
+  try {
+    const budget = input.workBudget ?? { remaining: TRANSFORM_LIMITS.ruleWork };
+    chargeTransformInput(
+      input.step,
+      sourceValues.map((source) => source.value),
+      budget,
+      sourceValues
+    );
+    output = executeOperation(input.step, sourceValues, input.runtimeContext);
+    chargeTransformOutput(output, budget);
+  } catch (error) {
+    reasons.push(
+      reason(error instanceof TransformFailure ? error.code : 'transform.invalid_output')
+    );
+    return transformResult(input, reasons);
+  }
 
   if (!isTransformOutputValid(input.step.operation, output)) {
     reasons.push(reason('transform.invalid_output'));
@@ -514,7 +578,32 @@ function executeOperation(
 ): unknown {
   const rawValues = values.map((item) => item.value);
 
+  if (isTextTransform(step.operation)) return executeTextTransform(step, rawValues[0]);
+
   switch (step.operation) {
+    case 'constant_text':
+    case 'constant_boolean':
+    case 'constant_number':
+      return step.parameters?.value;
+    case 'conditional':
+      return executeConditional(step, rawValues);
+    case 'array_build':
+      return buildArray(rawValues, step.parameters);
+    case 'hash':
+      throw new TransformFailure('transform.hash_unavailable');
+    case 'json_extract_array': {
+      const found = extractJsonValue(rawValues[0], step.parameters?.path);
+      return Array.isArray(found) ? found : found === undefined ? undefined : null;
+    }
+    case 'json_extract_or': {
+      const found = extractJsonValue(rawValues[0], step.parameters?.path);
+      if (found === undefined || (found === null && step.parameters?.nullAsMissing === true))
+        return step.parameters?.defaultValue;
+      if (found === null) return null;
+      if (typeof found === 'string') return found;
+      if (typeof found === 'number' || typeof found === 'boolean') return String(found);
+      return JSON.stringify(found);
+    }
     case 'copy':
       return rawValues[0];
     case 'as_array':
@@ -522,9 +611,17 @@ function executeOperation(
     case 'split':
       return splitValue(rawValues[0], step.parameters);
     case 'join':
-      return normalizeArrayValue(rawValues, step.parameters).join(delimiter(step, ','));
+      return normalizeArrayValue(
+        rawValues.filter((value) => value !== undefined),
+        step.parameters
+      ).join(delimiter(step, ','));
     case 'first':
-      return normalizeArrayValue(rawValues, step.parameters)[0] ?? null;
+      return (
+        normalizeArrayValue(
+          rawValues.filter((value) => value !== undefined),
+          step.parameters
+        )[0] ?? null
+      );
     case 'persistent_identifier':
       return readPreparedIdentifier(step, runtimeContext);
     case 'affix_text':
@@ -762,7 +859,7 @@ function buildJsonValue(
   const seenKeys = new Set<string>();
   for (const source of values) {
     const rawValue = source.value;
-    if (!includeNulls && (rawValue === undefined || rawValue === null || rawValue === '')) {
+    if (rawValue === undefined || (!includeNulls && (rawValue === null || rawValue === ''))) {
       continue;
     }
     const key = uniqueJsonKey(jsonBuildKey(source, keyMap), seenKeys);
@@ -800,13 +897,7 @@ function parseKeyMap(value: unknown): Record<string, string> {
 }
 
 function jsonBuildKey(source: SourceValueEnvelope, keyMap: Record<string, string>): string {
-  const sourceKeys = [
-    source.sourceRef.catalogEntryId,
-    source.metadata?.columnName,
-    source.metadata?.csvHeaderName,
-    source.metadata?.fieldPath,
-    source.sourceRef.path,
-  ];
+  const sourceKeys = jsonBuildSourceKeys(source);
   for (const sourceKey of sourceKeys) {
     if (typeof sourceKey === 'string' && keyMap[sourceKey]) {
       return keyMap[sourceKey];
@@ -815,16 +906,20 @@ function jsonBuildKey(source: SourceValueEnvelope, keyMap: Record<string, string
   const fallback =
     typeof source.metadata?.columnName === 'string'
       ? source.metadata.columnName
-      : source.sourceRef.path.split('.').at(-1) || source.sourceRef.path;
+      : source.sourceRef.path.slice(source.sourceRef.path.lastIndexOf('.') + 1) ||
+        source.sourceRef.path;
   return sanitizeJsonKey(fallback);
 }
 
 function sanitizeJsonKey(value: string): string {
-  const normalized = value
-    .trim()
-    .replace(/[^A-Za-z0-9_$]+/g, '_')
-    .replace(/^_+|_+$/g, '');
-  return normalized || 'value';
+  const normalized = value.trim().replace(/[^A-Za-z0-9_$]+/g, '_');
+  // Anchored alternatives with a trailing greedy run can retry at every underscore. Scan the
+  // boundaries once instead, preserving interior underscores and the existing key semantics.
+  let start = 0;
+  let end = normalized.length;
+  while (start < end && normalized[start] === '_') start++;
+  while (end > start && normalized[end - 1] === '_') end--;
+  return normalized.slice(start, end) || 'value';
 }
 
 function uniqueJsonKey(key: string, seenKeys: Set<string>): string {
@@ -839,27 +934,24 @@ function uniqueJsonKey(key: string, seenKeys: Set<string>): string {
 }
 
 function parseJsonText(value: unknown): Record<string, unknown> | unknown[] | undefined {
-  if (value && typeof value === 'object') {
-    return isJsonWithinBudget(value) ? (value as Record<string, unknown> | unknown[]) : undefined;
+  if (isRecord(value) || Array.isArray(value)) {
+    measureTransformValue(value);
+    return value;
   }
-  if (typeof value !== 'string') {
-    return undefined;
-  }
+  if (typeof value !== 'string') return undefined;
   const trimmed = value.trim();
-  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) {
-    return undefined;
-  }
-  if (jsonByteLength(trimmed) > TRANSFORM_JSON_MAX_BYTES) {
-    return undefined;
-  }
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return undefined;
+  if (jsonByteLength(trimmed) > TRANSFORM_JSON_MAX_BYTES)
+    throw new TransformFailure('transform.limit_exceeded');
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(trimmed) as unknown;
-    return parsed && typeof parsed === 'object' && isJsonWithinBudget(parsed)
-      ? (parsed as Record<string, unknown> | unknown[])
-      : undefined;
+    parsed = JSON.parse(trimmed);
   } catch {
     return undefined;
   }
+  if (!isRecord(parsed) && !Array.isArray(parsed)) return undefined;
+  measureTransformValue(parsed);
+  return parsed;
 }
 
 function extractTextValue(value: unknown, path: unknown): string | null {
@@ -914,7 +1006,7 @@ function extractJsonValue(value: unknown, path: unknown): unknown {
     }
     current =
       typeof current === 'object' && !Array.isArray(current)
-        ? (current as Record<string, unknown>)[segment]
+        ? Object.getOwnPropertyDescriptor(current, segment)?.value
         : undefined;
   }
   return current;
@@ -925,14 +1017,21 @@ function parseJsonPath(path: string): Array<string | number> | null {
     return null;
   }
   const segments: Array<string | number> = [];
+  if (
+    !path.trim() ||
+    !/^(?:[^.[\]\s]+)?(?:\[\d+\])*(?:\.[^.[\]\s]+(?:\[\d+\])*)*$/u.test(path.trim())
+  )
+    return null;
   for (const part of path.trim().split('.')) {
-    const keyMatch = part.match(/^[^[]+/u);
-    if (keyMatch?.[0]) {
-      segments.push(keyMatch[0]);
+    const key = part.match(/^[^[]+/u)?.[0];
+    if (key) {
+      if (['__proto__', 'prototype', 'constructor'].includes(key)) return null;
+      segments.push(key);
     }
-    const indexMatches = part.matchAll(/\[(\d+)\]/gu);
-    for (const match of indexMatches) {
-      segments.push(Number.parseInt(match[1] ?? '0', 10));
+    for (const match of part.matchAll(/\[(\d+)\]/gu)) {
+      const index = Number(match[1]);
+      if (!Number.isSafeInteger(index) || index >= TRANSFORM_LIMITS.arrayItems) return null;
+      segments.push(index);
     }
   }
   return segments.length <= TRANSFORM_JSON_PATH_MAX_SEGMENTS ? segments : null;
@@ -985,6 +1084,9 @@ function isParameterValueValid(
       if (typeof value !== 'string') {
         return false;
       }
+      if (parameter.name === 'condition')
+        return new TextEncoder().encode(value).length <= TRANSFORM_LIMITS.tableBytes;
+      if (parameter.name === 'entries') return value.length <= TRANSFORM_LIMITS.tableBytes;
       if (parameter.name === 'path') {
         return value.length <= TRANSFORM_JSON_PATH_MAX_CHARS && parseJsonPath(value) !== null;
       }
@@ -993,7 +1095,11 @@ function isParameterValueValid(
       }
       return value.length <= TRANSFORM_PARAMETER_MAX_CHARS;
     case 'number':
-      return typeof value === 'number';
+      return (
+        typeof value === 'number' &&
+        Number.isFinite(value) &&
+        Math.abs(value) <= Number.MAX_SAFE_INTEGER
+      );
     case 'boolean':
       return typeof value === 'boolean';
     case 'string-array':
@@ -1056,7 +1162,8 @@ function jsonByteLength(value: unknown): number {
 export function dropSuppressedTargets(
   values: SourceValueEnvelope[],
   transforms: readonly MappingTransformStep[] | undefined,
-  runtimeContext: Record<string, unknown> | undefined
+  runtimeContext: Record<string, unknown> | undefined,
+  graphRules: readonly MappingRuleGraph[] = []
 ): SourceValueEnvelope[] {
   const suppressed = runtimeContext?.suppressedIdentifiers;
   if (typeof suppressed !== 'object' || suppressed === null) return values;
@@ -1064,14 +1171,32 @@ export function dropSuppressedTargets(
   const targets = (transforms ?? []).filter(
     (step) => step.operation === 'persistent_identifier' && flags[step.id] === true
   );
-  if (targets.length === 0) return values;
+  const graphTargets: FieldRef[] = [];
+  for (const rule of graphRules) {
+    try {
+      const dependencies = analyzeMappingDependencies({ ...rule, edgeCount: rule.edges.length });
+      if (
+        dependencies.stepIndexes.some(
+          (index) =>
+            rule.transforms[index].operation === 'persistent_identifier' &&
+            flags[rule.transforms[index].id] === true
+        )
+      ) {
+        graphTargets.push(rule.targetRef);
+      }
+    } catch {
+      // Invalid loaded graphs fail closed even when the context carries suppression flags.
+      return [];
+    }
+  }
+  if (targets.length === 0 && graphTargets.length === 0) return values;
   return values.filter(
     (value) =>
-      !targets.some(
-        (step) =>
-          step.outputTargetRef.side === value.sourceRef.side &&
-          step.outputTargetRef.namespace === value.sourceRef.namespace &&
-          step.outputTargetRef.path === value.sourceRef.path
+      ![...targets.map((step) => step.outputTargetRef), ...graphTargets].some(
+        (target) =>
+          target.side === value.sourceRef.side &&
+          target.namespace === value.sourceRef.namespace &&
+          target.path === value.sourceRef.path
       )
   );
 }

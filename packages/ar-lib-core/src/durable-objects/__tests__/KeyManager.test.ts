@@ -193,6 +193,65 @@ describe('KeyManager Durable Object', () => {
     keyManager = new KeyManager(state as unknown as DurableObjectState, env);
   });
 
+  describe('mapping hash key lifecycle', () => {
+    it('leaves a missing key missing on reads and rotation, then enrolls once', async () => {
+      expect(await keyManager.getExistingSecretRpc('field-mapping-hash')).toBeNull();
+      await keyManager.listImportedSecretsRpc();
+      await keyManager.getStatusRpc();
+      expect(await keyManager.getExistingSecretRpc('field-mapping-hash')).toBeNull();
+      await expect(keyManager.rotateMappingHashKeyRpc('missing')).rejects.toThrow(
+        'mapping_hash_key_missing'
+      );
+      expect(await keyManager.getExistingSecretRpc('field-mapping-hash')).toBeNull();
+      const first = await keyManager.provisionMappingHashKeyRpc();
+      const installed = await keyManager.getExistingSecretRpc('field-mapping-hash');
+      expect(installed?.active.value).toHaveLength(43);
+      expect(await keyManager.provisionMappingHashKeyRpc()).toEqual(first);
+      expect(await keyManager.getExistingSecretRpc('field-mapping-hash')).toEqual(installed);
+      await expect(keyManager.getOrCreateSecretRpc('field-mapping-hash')).rejects.toThrow(
+        'Invalid secret reference'
+      );
+      await expect(keyManager.rotateSecretRpc('field-mapping-hash')).rejects.toThrow(
+        'Invalid secret reference'
+      );
+      expect(first).toEqual({ kid: installed?.active.kid });
+    });
+
+    it('rotates with an idempotent kid precondition and preserves both versions in DR', async () => {
+      const snapshot = await createPortableSnapshot();
+      snapshot.rsa.secrets['field-mapping-hash'] = {
+        secretRef: 'field-mapping-hash',
+        active: { kid: 'restored-hash-key', value: 'A'.repeat(43), createdAt: 100 },
+        updatedAt: 100,
+      };
+      await keyManager.importTenantBackupStateRpc(snapshot);
+      expect(await keyManager.getExistingSecretRpc('field-mapping-hash')).toEqual(
+        snapshot.rsa.secrets['field-mapping-hash']
+      );
+      const rotated = await keyManager.rotateMappingHashKeyRpc('restored-hash-key');
+      expect(rotated.kid).not.toBe('restored-hash-key');
+      expect(await keyManager.rotateMappingHashKeyRpc('restored-hash-key')).toEqual(rotated);
+      await expect(keyManager.rotateMappingHashKeyRpc('unrelated-tenant-key')).rejects.toThrow(
+        'mapping_hash_key_conflict'
+      );
+      const exported = await keyManager.exportTenantBackupStateRpc();
+      expect(exported.rsa.secrets['field-mapping-hash']).toMatchObject({
+        active: { kid: rotated.kid },
+        previous: snapshot.rsa.secrets['field-mapping-hash'].active,
+      });
+      expect(await keyManager.verifyTenantBackupStateRpc(exported)).toBe(true);
+    });
+
+    it('rolls back failed enrollment without retaining a generated key in memory', async () => {
+      await keyManager.getExistingSecretRpc('field-mapping-hash');
+      vi.spyOn(state.storage, 'put').mockRejectedValueOnce(new Error('synthetic storage failure'));
+      await expect(keyManager.provisionMappingHashKeyRpc()).rejects.toThrow(
+        'synthetic storage failure'
+      );
+      expect(await keyManager.getExistingSecretRpc('field-mapping-hash')).toBeNull();
+    });
+  });
+
   it('atomically restores a complete tenant backup state only into an empty KeyManager', async () => {
     const snapshot = await createPortableSnapshot();
 

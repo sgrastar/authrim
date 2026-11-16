@@ -1,3 +1,9 @@
+import { withExplicitMappingGraphs } from '@authrim/ar-lib-field-mapping/test-support';
+
+// These runtime tests supply the binding directly; owner lookup is covered with real Admin rows.
+vi.mock('../../mapping-set-owner', () => ({
+  resolveSAMLMappingSetOwner: vi.fn(async (_adapter: unknown, tenantId: string) => tenantId),
+}));
 /**
  * The identity mapping of an SP as a deployed tenant has it: only the Field Mapping Set is named,
  * and the runtime catalog (the compiled snapshot's virtual canonical catalog) has no entry for the
@@ -98,30 +104,33 @@ function importedRelease(): SAMLRuntimeImportedSPRelease {
       destinationProfileId: 'profile-a',
       destinationProfileVersionId: 'profile-version-a',
     },
-    binding: {
-      id: 'activation-a',
-      role: 'idp',
-      tenantId: 'tenant-a',
-      localEntityId: 'https://tenant-a.example.test/saml/idp/metadata',
-      partnerEntityId: 'https://sp.example.test',
-      fieldMappingSetId: 'set-a',
-      fieldMappingVersionId: 'version-a',
-      mappingSnapshotHash: 'hash-a',
-      destinationProfileId: 'profile-a',
-      destinationProfileIds: ['profile-a'],
-      destinationFieldPolicies: selector.destinationFieldPolicies,
-      catalog: { identity: { id: 'catalog-a', contentHash: 'hash-a' }, entries: [] },
-      edges: [
-        {
-          id: 'edge-a',
-          sourceRef: { side: 'source', namespace: 'authrim.profile', path: 'email' },
-          targetRef: { side: 'destination', namespace: 'saml.attribute', path: field },
-        },
-      ],
-      transforms: [],
-      validationRules: [],
-      fieldMappingSet: { id: 'version-a', rules: [] },
-    },
+    binding: withExplicitMappingGraphs(
+      {
+        id: 'activation-a',
+        role: 'idp',
+        tenantId: 'tenant-a',
+        localEntityId: 'https://tenant-a.example.test/saml/idp/metadata',
+        partnerEntityId: 'https://sp.example.test',
+        fieldMappingSetId: 'set-a',
+        fieldMappingVersionId: 'version-a',
+        mappingSnapshotHash: 'hash-a',
+        destinationProfileId: 'profile-a',
+        destinationProfileIds: ['profile-a'],
+        destinationFieldPolicies: selector.destinationFieldPolicies,
+        catalog: { identity: { id: 'catalog-a', contentHash: 'hash-a' }, entries: [] },
+        edges: [
+          {
+            id: 'edge-a',
+            sourceRef: { side: 'source', namespace: 'authrim.profile', path: 'email' },
+            targetRef: { side: 'destination', namespace: 'saml.attribute', path: field },
+          },
+        ],
+        transforms: [],
+        validationRules: [],
+        fieldMappingSet: { id: 'version-a', rules: [] },
+      },
+      true
+    ),
     destinationProfile: {
       profileId: 'profile-a',
       profileVersionId: 'profile-version-a',
@@ -162,7 +171,10 @@ describe('portable imported SAML release boundary', () => {
 
     const nested = importedRelease();
     (nested.binding as Record<string, unknown>).bindings = [
-      { ...(nested.binding as Record<string, unknown>), edges: [] },
+      withExplicitMappingGraphs(
+        { ...(nested.binding as Record<string, unknown>), edges: [] },
+        true
+      ),
     ];
     expect(() =>
       assertSAMLImportedSPRelease(nested, {
@@ -187,7 +199,11 @@ describe('portable imported SAML release boundary', () => {
       const release = importedRelease();
       const binding = release.binding as Record<string, unknown>;
       if (place === 'transforms') binding.transforms = [step];
-      else binding[place] = { edges: [], transforms: [step], validationRules: [] };
+      else
+        binding[place] = withExplicitMappingGraphs(
+          { edges: [], transforms: [step], validationRules: [] },
+          true
+        );
       expect(
         () =>
           assertSAMLImportedSPRelease(release, {
@@ -349,7 +365,11 @@ describe('the identity mapping of an SP in a deployed tenant', () => {
     mocks.binding = productionBinding();
     mocks.admin = productionAdminAdapter();
     mocks.core = emptyCoreAdapter();
-    mocks.resolveBinding.mockImplementation(async () => mocks.binding);
+    mocks.resolveBinding.mockImplementation(async () => {
+      const value = mocks.binding;
+      if (!value || typeof value !== 'object') return null;
+      return withExplicitMappingGraphs(Object.fromEntries(Object.entries(value)), true);
+    });
     mocks.evidenceAdapter = evidence.adapter;
     mocks.getAdapter.mockImplementation(async () => mocks.evidenceAdapter);
     mocks.assuranceSettings = {
@@ -611,21 +631,24 @@ describe('the identity mapping of an SP in a deployed tenant', () => {
     });
 
     it('still refuses an edge that releases from a source it cannot classify', async () => {
-      mocks.binding = {
-        ...productionBinding({ withInputEdges: true }),
-        edges: [
-          ...PRODUCTION_INPUT_EDGES,
-          {
-            id: 'edge_unlisted',
-            sourceRef: { side: 'source', namespace: 'authrim.claim', path: 'unlisted' },
-            targetRef: {
-              side: 'destination',
-              namespace: 'saml.attribute',
-              path: OID_EDU_PERSON_ASSURANCE,
+      mocks.binding = withExplicitMappingGraphs(
+        {
+          ...productionBinding({ withInputEdges: true }),
+          edges: [
+            ...PRODUCTION_INPUT_EDGES,
+            {
+              id: 'edge_unlisted',
+              sourceRef: { side: 'source', namespace: 'authrim.claim', path: 'unlisted' },
+              targetRef: {
+                side: 'destination',
+                namespace: 'saml.attribute',
+                path: OID_EDU_PERSON_ASSURANCE,
+              },
             },
-          },
-        ],
-      };
+          ],
+        },
+        true
+      );
       await expect(
         release(
           productionSpConfig({
@@ -639,36 +662,39 @@ describe('the identity mapping of an SP in a deployed tenant', () => {
     });
 
     it('still refuses one catalog entry id for two reads among the edges that release', async () => {
-      mocks.binding = {
-        ...productionBinding({ withInputEdges: true }),
-        edges: [
-          ...PRODUCTION_INPUT_EDGES,
-          {
-            id: 'e1',
-            sourceRef: {
-              side: 'source',
-              namespace: 'authrim.profile',
-              path: 'email',
-              catalogEntryId: 'field.canonical.locale',
+      mocks.binding = withExplicitMappingGraphs(
+        {
+          ...productionBinding({ withInputEdges: true }),
+          edges: [
+            ...PRODUCTION_INPUT_EDGES,
+            {
+              id: 'e1',
+              sourceRef: {
+                side: 'source',
+                namespace: 'authrim.profile',
+                path: 'email',
+                catalogEntryId: 'field.canonical.locale',
+              },
+              targetRef: { side: 'destination', namespace: 'saml.attribute', path: 'urn:oid:x' },
             },
-            targetRef: { side: 'destination', namespace: 'saml.attribute', path: 'urn:oid:x' },
-          },
-          {
-            id: 'e2',
-            sourceRef: {
-              side: 'source',
-              namespace: 'authrim.profile',
-              path: 'locale',
-              catalogEntryId: 'field.canonical.locale',
+            {
+              id: 'e2',
+              sourceRef: {
+                side: 'source',
+                namespace: 'authrim.profile',
+                path: 'locale',
+                catalogEntryId: 'field.canonical.locale',
+              },
+              targetRef: {
+                side: 'destination',
+                namespace: 'saml.attribute',
+                path: OID_EDU_PERSON_ASSURANCE,
+              },
             },
-            targetRef: {
-              side: 'destination',
-              namespace: 'saml.attribute',
-              path: OID_EDU_PERSON_ASSURANCE,
-            },
-          },
-        ],
-      };
+          ],
+        },
+        true
+      );
       await expect(
         release(productionSpConfig(), { id: 'user-a', email: 'a@b.c', locale: 'ja' } as never)
       ).rejects.toMatchObject({ name: 'SAMLIdentityMappingRuntimeError' });
@@ -719,10 +745,13 @@ describe('the identity mapping of an SP in a deployed tenant', () => {
 
     it('does not mistake the destination attribute for the source attribute of the same name: the input rule’s validation stays out', async () => {
       evidence.addEvidence('ev-1', 'IAL2');
-      mocks.binding = {
-        ...productionBinding({ validationRules: [PRODUCTION_SAML_INPUT_REQUIRED_RULE] }),
-        edges: [PRODUCTION_SAML_INPUT_EDGE, ...PRODUCTION_EDGES],
-      };
+      mocks.binding = withExplicitMappingGraphs(
+        {
+          ...productionBinding({ validationRules: [PRODUCTION_SAML_INPUT_REQUIRED_RULE] }),
+          edges: [PRODUCTION_SAML_INPUT_EDGE, ...PRODUCTION_EDGES],
+        },
+        true
+      );
       expect((await resolve())?.validationRules).toEqual([]);
       // The subject has the email (and no saml.attribute source): the attribute is released.
       const attributes = await release();
@@ -766,38 +795,41 @@ describe('the identity mapping of an SP in a deployed tenant', () => {
     });
 
     it('as a destination field are named as they are, and are not taken for a renaming', async () => {
-      const identityMapping = {
-        role: 'idp' as const,
-        tenantId: 'tenant-a',
-        localEntityId: 'https://idp.example.test',
-        partnerEntityId: PRODUCTION_SP_ENTITY_ID,
-        catalog: {
-          identity: { id: 'c', version: '1', contentHash: 'h', compatibilityRange: '*' },
-          entries: [
+      const identityMapping = withExplicitMappingGraphs(
+        {
+          role: 'idp' as const,
+          tenantId: 'tenant-a',
+          localEntityId: 'https://idp.example.test',
+          partnerEntityId: PRODUCTION_SP_ENTITY_ID,
+          catalog: {
+            identity: { id: 'c', version: '1', contentHash: 'h', compatibilityRange: '*' },
+            entries: [
+              {
+                id: 'dest.constructor',
+                namespace: 'saml.attribute',
+                path: 'constructor',
+                valueType: 'string',
+                cardinality: 'single' as const,
+                classification: 'internal' as const,
+                targetType: 'destination-only' as const,
+              },
+            ],
+          },
+          edges: [
             {
-              id: 'dest.constructor',
-              namespace: 'saml.attribute',
-              path: 'constructor',
-              valueType: 'string',
-              cardinality: 'single' as const,
-              classification: 'internal' as const,
-              targetType: 'destination-only' as const,
+              id: 'e',
+              sourceRef: { side: 'source' as const, namespace: 'authrim.profile', path: 'email' },
+              targetRef: {
+                side: 'destination' as const,
+                namespace: 'saml.attribute',
+                path: 'constructor',
+              },
             },
           ],
+          attributeDescriptors: { [OID_MAIL]: { friendlyName: 'mail' } },
         },
-        edges: [
-          {
-            id: 'e',
-            sourceRef: { side: 'source' as const, namespace: 'authrim.profile', path: 'email' },
-            targetRef: {
-              side: 'destination' as const,
-              namespace: 'saml.attribute',
-              path: 'constructor',
-            },
-          },
-        ],
-        attributeDescriptors: { [OID_MAIL]: { friendlyName: 'mail' } },
-      };
+        true
+      );
       const { attributes } = buildSAMLAttributesForSPWithDiagnostics(
         { id: 'user-a', email: 'a@b.c' } as never,
         {
@@ -823,33 +855,36 @@ describe('the identity mapping of an SP in a deployed tenant', () => {
           tenantId: 'tenant-a',
           localEntityId: 'https://idp.example.test',
           entityId: PRODUCTION_SP_ENTITY_ID,
-          identityMapping: {
-            role: 'idp',
-            tenantId: 'tenant-a',
-            localEntityId: 'https://idp.example.test',
-            partnerEntityId: PRODUCTION_SP_ENTITY_ID,
-            catalog: {
-              identity: { id: 'c', version: '1', contentHash: 'h', compatibilityRange: '*' },
-              entries: [
+          identityMapping: withExplicitMappingGraphs(
+            {
+              role: 'idp',
+              tenantId: 'tenant-a',
+              localEntityId: 'https://idp.example.test',
+              partnerEntityId: PRODUCTION_SP_ENTITY_ID,
+              catalog: {
+                identity: { id: 'c', version: '1', contentHash: 'h', compatibilityRange: '*' },
+                entries: [
+                  {
+                    id: 'dest.x',
+                    namespace: 'saml.attribute',
+                    path: 'x',
+                    valueType: 'string',
+                    cardinality: 'single',
+                    classification: 'internal',
+                    targetType: 'destination-only',
+                  },
+                ],
+              },
+              edges: [
                 {
-                  id: 'dest.x',
-                  namespace: 'saml.attribute',
-                  path: 'x',
-                  valueType: 'string',
-                  cardinality: 'single',
-                  classification: 'internal',
-                  targetType: 'destination-only',
+                  id: 'e',
+                  sourceRef: { side: 'source', namespace: 'authrim.profile', path },
+                  targetRef: { side: 'destination', namespace: 'saml.attribute', path: 'x' },
                 },
               ],
             },
-            edges: [
-              {
-                id: 'e',
-                sourceRef: { side: 'source', namespace: 'authrim.profile', path },
-                targetRef: { side: 'destination', namespace: 'saml.attribute', path: 'x' },
-              },
-            ],
-          },
+            true
+          ),
         } as never).attributes;
       for (const path of ['constructor', '__proto__.polluted', 'toString', 'constructor.name']) {
         expect(read(path)).toEqual([]);
@@ -869,33 +904,36 @@ describe('the identity mapping of an SP in a deployed tenant', () => {
     });
 
     it('are one place: custom_claims.x under the profile is customClaims.x, and its classification is the stricter entry’s', async () => {
-      mocks.binding = {
-        ...productionBinding(),
-        catalog: {
-          ...productionBinding().catalog,
-          entries: [
-            ...seededCanonicalEntries(),
-            custom('entry.public', 'authrim.profile', 'custom_claims.entitlement', 'public'),
-            custom('entry.secret', 'authrim.custom_claims', 'entitlement', 'secret'),
+      mocks.binding = withExplicitMappingGraphs(
+        {
+          ...productionBinding(),
+          catalog: {
+            ...productionBinding().catalog,
+            entries: [
+              ...seededCanonicalEntries(),
+              custom('entry.public', 'authrim.profile', 'custom_claims.entitlement', 'public'),
+              custom('entry.secret', 'authrim.custom_claims', 'entitlement', 'secret'),
+            ],
+          },
+          edges: [
+            {
+              id: 'e',
+              sourceRef: {
+                side: 'source',
+                namespace: 'authrim.profile',
+                path: 'custom_claims.entitlement',
+                catalogEntryId: 'entry.public',
+              },
+              targetRef: {
+                side: 'destination',
+                namespace: 'saml.attribute',
+                path: OID_EDU_PERSON_ASSURANCE,
+              },
+            },
           ],
         },
-        edges: [
-          {
-            id: 'e',
-            sourceRef: {
-              side: 'source',
-              namespace: 'authrim.profile',
-              path: 'custom_claims.entitlement',
-              catalogEntryId: 'entry.public',
-            },
-            targetRef: {
-              side: 'destination',
-              namespace: 'saml.attribute',
-              path: OID_EDU_PERSON_ASSURANCE,
-            },
-          },
-        ],
-      };
+        true
+      );
       // The value released is customClaims.entitlement (the secret one).
       const user = { id: 'user-a', customClaims: { entitlement: 'confidential' } } as never;
       await expect(
@@ -916,33 +954,36 @@ describe('the identity mapping of an SP in a deployed tenant', () => {
 
     it('are read as one value: custom_claims.x, customClaims.x and the sub / user_id aliases', async () => {
       const read = async (path: string, user: Record<string, unknown>) => {
-        const identityMapping = {
-          role: 'idp' as const,
-          tenantId: 'tenant-a',
-          localEntityId: 'https://idp.example.test',
-          partnerEntityId: PRODUCTION_SP_ENTITY_ID,
-          catalog: {
-            identity: { id: 'c', version: '1', contentHash: 'h', compatibilityRange: '*' },
-            entries: [
+        const identityMapping = withExplicitMappingGraphs(
+          {
+            role: 'idp' as const,
+            tenantId: 'tenant-a',
+            localEntityId: 'https://idp.example.test',
+            partnerEntityId: PRODUCTION_SP_ENTITY_ID,
+            catalog: {
+              identity: { id: 'c', version: '1', contentHash: 'h', compatibilityRange: '*' },
+              entries: [
+                {
+                  id: 'dest.x',
+                  namespace: 'saml.attribute',
+                  path: 'x',
+                  valueType: 'string',
+                  cardinality: 'single' as const,
+                  classification: 'internal' as const,
+                  targetType: 'destination-only' as const,
+                },
+              ],
+            },
+            edges: [
               {
-                id: 'dest.x',
-                namespace: 'saml.attribute',
-                path: 'x',
-                valueType: 'string',
-                cardinality: 'single' as const,
-                classification: 'internal' as const,
-                targetType: 'destination-only' as const,
+                id: 'e',
+                sourceRef: { side: 'source' as const, namespace: 'authrim.profile', path },
+                targetRef: { side: 'destination' as const, namespace: 'saml.attribute', path: 'x' },
               },
             ],
           },
-          edges: [
-            {
-              id: 'e',
-              sourceRef: { side: 'source' as const, namespace: 'authrim.profile', path },
-              targetRef: { side: 'destination' as const, namespace: 'saml.attribute', path: 'x' },
-            },
-          ],
-        };
+          true
+        );
         return buildSAMLAttributesForSPWithDiagnostics(
           user as never,
           {
@@ -969,7 +1010,7 @@ describe('the identity mapping of an SP in a deployed tenant', () => {
       targetRef: { side: 'destination', namespace: 'saml.attribute', path: target },
     });
     const useEdges = (...edges: ReturnType<typeof edgeFrom>[]) => {
-      mocks.binding = { ...productionBinding(), edges };
+      mocks.binding = withExplicitMappingGraphs({ ...productionBinding(), edges }, true);
     };
     const required = (...keys: string[]) =>
       productionSpConfig(
@@ -1108,59 +1149,65 @@ describe('the identity mapping of an SP in a deployed tenant', () => {
       });
 
       it('is not another place’s: the same path under another namespace is judged by the namespace it reads', async () => {
-        mocks.binding = {
-          ...productionBinding(),
-          catalog: {
-            ...productionBinding().catalog,
-            entries: [
-              ...seededCanonicalEntries(),
-              {
-                id: 'entry.profile.entitlement',
-                namespace: 'authrim.profile',
-                path: 'entitlement',
-                valueType: 'string',
-                cardinality: 'single',
-                classification: 'public',
-                targetType: 'canonical',
-              },
-              {
-                id: 'entry.custom.entitlement',
-                namespace: 'authrim.custom_claims',
-                path: 'entitlement',
-                valueType: 'string',
-                cardinality: 'single',
-                classification: 'secret',
-                targetType: 'custom',
-              },
+        mocks.binding = withExplicitMappingGraphs(
+          {
+            ...productionBinding(),
+            catalog: {
+              ...productionBinding().catalog,
+              entries: [
+                ...seededCanonicalEntries(),
+                {
+                  id: 'entry.profile.entitlement',
+                  namespace: 'authrim.profile',
+                  path: 'entitlement',
+                  valueType: 'string',
+                  cardinality: 'single',
+                  classification: 'public',
+                  targetType: 'canonical',
+                },
+                {
+                  id: 'entry.custom.entitlement',
+                  namespace: 'authrim.custom_claims',
+                  path: 'entitlement',
+                  valueType: 'string',
+                  cardinality: 'single',
+                  classification: 'secret',
+                  targetType: 'custom',
+                },
+              ],
+            },
+            edges: [
+              // Reads customClaims.entitlement (secret), names the public profile entitlement entry.
+              edgeFrom(
+                {
+                  namespace: 'authrim.custom_claims',
+                  path: 'entitlement',
+                  catalogEntryId: 'entry.profile.entitlement',
+                },
+                OID_EDU_PERSON_ASSURANCE
+              ),
             ],
           },
-          edges: [
-            // Reads customClaims.entitlement (secret), names the public profile entitlement entry.
-            edgeFrom(
-              {
-                namespace: 'authrim.custom_claims',
-                path: 'entitlement',
-                catalogEntryId: 'entry.profile.entitlement',
-              },
-              OID_EDU_PERSON_ASSURANCE
-            ),
-          ],
-        };
+          true
+        );
         const user = { id: 'user-a', customClaims: { entitlement: 'confidential' } } as never;
         await expect(release(required(OID_EDU_PERSON_ASSURANCE), user)).rejects.toMatchObject(
           unknownSource
         );
 
         // Without the wrong id the secret entry is the one found, and it may not go to a public field.
-        mocks.binding = {
-          ...(mocks.binding as object),
-          edges: [
-            edgeFrom(
-              { namespace: 'authrim.custom_claims', path: 'entitlement' },
-              OID_EDU_PERSON_ASSURANCE
-            ),
-          ],
-        };
+        mocks.binding = withExplicitMappingGraphs(
+          {
+            ...(mocks.binding as object),
+            edges: [
+              edgeFrom(
+                { namespace: 'authrim.custom_claims', path: 'entitlement' },
+                OID_EDU_PERSON_ASSURANCE
+              ),
+            ],
+          },
+          true
+        );
         await expect(release(required(OID_EDU_PERSON_ASSURANCE), user)).rejects.toMatchObject({
           reason: 'classification_lowered',
         });
@@ -1244,34 +1291,37 @@ describe('the identity mapping of an SP in a deployed tenant', () => {
       it.each(['key_material', 'secret', 'credential', 'token', 'regulated'])(
         'keep a %s source from a public or internal attribute',
         async (classification) => {
-          mocks.binding = {
-            ...productionBinding(),
-            catalog: {
-              ...productionBinding().catalog,
-              entries: [
-                ...seededCanonicalEntries(),
-                {
-                  id: 'field.canonical.vault',
-                  namespace: 'authrim.canonical',
-                  path: 'vault',
-                  valueType: 'string',
-                  cardinality: 'single',
-                  classification,
-                  targetType: 'custom',
-                },
+          mocks.binding = withExplicitMappingGraphs(
+            {
+              ...productionBinding(),
+              catalog: {
+                ...productionBinding().catalog,
+                entries: [
+                  ...seededCanonicalEntries(),
+                  {
+                    id: 'field.canonical.vault',
+                    namespace: 'authrim.canonical',
+                    path: 'vault',
+                    valueType: 'string',
+                    cardinality: 'single',
+                    classification,
+                    targetType: 'custom',
+                  },
+                ],
+              },
+              edges: [
+                edgeFrom(
+                  {
+                    namespace: 'authrim.profile',
+                    path: 'vault',
+                    catalogEntryId: 'field.canonical.vault',
+                  },
+                  OID_EDU_PERSON_ASSURANCE
+                ),
               ],
             },
-            edges: [
-              edgeFrom(
-                {
-                  namespace: 'authrim.profile',
-                  path: 'vault',
-                  catalogEntryId: 'field.canonical.vault',
-                },
-                OID_EDU_PERSON_ASSURANCE
-              ),
-            ],
-          };
+            true
+          );
           await expect(
             release(required(OID_EDU_PERSON_ASSURANCE), { id: 'user-a', vault: 'x' } as never)
           ).rejects.toMatchObject({
@@ -1284,10 +1334,13 @@ describe('the identity mapping of an SP in a deployed tenant', () => {
   });
 
   it('returns a catalog an SP carries itself untouched', async () => {
-    const own = {
-      catalog: { identity: { id: 'c' }, entries: [] },
-      edges: [],
-    };
+    const own = withExplicitMappingGraphs(
+      {
+        catalog: { identity: { id: 'c' }, entries: [] },
+        edges: [],
+      },
+      true
+    );
     const spConfig = productionSpConfig(undefined, { identityMapping: own });
     expect(await resolve(spConfig)).toBe(own);
     expect(mocks.resolveBinding).not.toHaveBeenCalled();

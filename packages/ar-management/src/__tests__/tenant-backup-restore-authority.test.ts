@@ -58,6 +58,7 @@ function freshDatabase(family: 'core' | 'pii' | 'admin') {
           '020_identifier_source_values.sql',
           '021_mapping_transform_step_target.sql',
           '022_mapped_identifier_exceptions.sql',
+          '023_mapping_rule_graph.sql',
         ]
       : []),
     ...(family === 'core'

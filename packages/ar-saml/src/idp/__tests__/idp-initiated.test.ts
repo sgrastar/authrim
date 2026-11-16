@@ -1,4 +1,8 @@
+import { withExplicitMappingGraphs } from '@authrim/ar-lib-field-mapping/test-support';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+vi.mock('../../mapping-set-owner', () => ({
+  resolveSAMLMappingSetOwner: vi.fn(async (_adapter: unknown, tenantId: string) => tenantId),
+}));
 import { createEvidenceDb, type EvidenceDb } from './helpers/evidence-db';
 import { createSamlRequestStoreFake } from './helpers/saml-request-store-fake';
 import { createChallengeStoreFake } from './helpers/challenge-store-fake';
@@ -607,21 +611,24 @@ describe('IdP-initiated SSO', () => {
       headers: { 'Content-Type': 'application/json' },
     });
     mocks.user = { id: 'user-a', email: 'user@example.test' };
-    mocks.runtimeBinding = {
-      id: 'binding',
-      tenantId: 'tenant-a',
-      catalog: { entries: [] },
-      edges: [],
-      transforms: [],
-      validationRules: [],
-      fieldMappingSet: {},
-      fieldMappingSetId: 'set',
-      fieldMappingVersionId: 'version',
-      destinationNamespace: 'saml',
-      sourceProfileId: 'source',
-      destinationProfileId: 'destination',
-      destinationProfileIds: ['destination'],
-    };
+    mocks.runtimeBinding = withExplicitMappingGraphs(
+      {
+        id: 'binding',
+        tenantId: 'tenant-a',
+        catalog: { entries: [] },
+        edges: [],
+        transforms: [],
+        validationRules: [],
+        fieldMappingSet: {},
+        fieldMappingSetId: 'set',
+        fieldMappingVersionId: 'version',
+        destinationNamespace: 'saml',
+        sourceProfileId: 'source',
+        destinationProfileId: 'destination',
+        destinationProfileIds: ['destination'],
+      },
+      true
+    );
     mocks.sp = baseSp({
       signResponses: true,
       assertionValiditySeconds: 120,
@@ -681,26 +688,30 @@ describe('IdP-initiated SSO and identity assurance', () => {
   const auditedFailureKind = () =>
     (JSON.parse(mocks.audit.mock.calls[0]?.[1].metadata ?? '{}') as { failure_kind?: string })
       .failure_kind;
-  const eduMapping = () => ({
-    catalog: { entries: [] },
-    edges: [
+  const eduMapping = () =>
+    withExplicitMappingGraphs(
       {
-        id: 'edge.edu',
-        sourceRef: {
-          side: 'source',
-          namespace: 'authrim.profile',
-          path: 'edu_person_assurance',
-          catalogEntryId: 'system.identity.edu_person_assurance',
-        },
-        targetRef: {
-          side: 'destination',
-          namespace: 'saml.attribute',
-          path: EDU_PERSON_ASSURANCE,
-          catalogEntryId: 'field.saml.eduPersonAssurance',
-        },
+        catalog: { entries: [] },
+        edges: [
+          {
+            id: 'edge.edu',
+            sourceRef: {
+              side: 'source',
+              namespace: 'authrim.profile',
+              path: 'edu_person_assurance',
+              catalogEntryId: 'system.identity.edu_person_assurance',
+            },
+            targetRef: {
+              side: 'destination',
+              namespace: 'saml.attribute',
+              path: EDU_PERSON_ASSURANCE,
+              catalogEntryId: 'field.saml.eduPersonAssurance',
+            },
+          },
+        ],
       },
-    ],
-  });
+      true
+    );
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -1084,20 +1095,23 @@ describe('IdP-initiated SSO: the pending sign-in and the consent screen', () => 
     mocks.loginPolicy = 'ui_base_url';
     mocks.user = { id: 'user-a', email: 'user@example.test' };
     // A Destination Profile, so the filter says which attributes the SP requires.
-    mocks.runtimeBinding = {
-      id: 'binding',
-      tenantId: 'tenant-a',
-      catalog: { entries: [] },
-      edges: [],
-      transforms: [],
-      validationRules: [],
-      fieldMappingSet: {},
-      fieldMappingSetId: 'set',
-      fieldMappingVersionId: 'version',
-      destinationNamespace: 'saml',
-      destinationProfileId: 'destination',
-      destinationProfileIds: ['destination'],
-    };
+    mocks.runtimeBinding = withExplicitMappingGraphs(
+      {
+        id: 'binding',
+        tenantId: 'tenant-a',
+        catalog: { entries: [] },
+        edges: [],
+        transforms: [],
+        validationRules: [],
+        fieldMappingSet: {},
+        fieldMappingSetId: 'set',
+        fieldMappingVersionId: 'version',
+        destinationNamespace: 'saml',
+        destinationProfileId: 'destination',
+        destinationProfileIds: ['destination'],
+      },
+      true
+    );
     mocks.assuranceSettings = {};
     mocks.sharded = true;
     mocks.sessionThrows = false;

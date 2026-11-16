@@ -1,3 +1,5 @@
+import { executeTenantMapping } from '@authrim/ar-lib-core/services/mapping-hash';
+import { runtimeMappingSnapshotMatches } from '@authrim/ar-lib-core/services/mapping-snapshot-equivalence';
 /**
  * Attribute Verification Routes
  *
@@ -33,7 +35,6 @@ import {
   getActiveAccessTokenProtectedResourceContext,
 } from '@authrim/ar-lib-core';
 import type { FlowRuntimeContract } from '@authrim/ar-lib-core';
-import { executeRuntimeMapping } from '@authrim/ar-lib-field-mapping/runtime';
 import type { SourceValueEnvelope } from '@authrim/ar-lib-field-mapping/contract';
 import { getRequestIssuerUrl, getRequestVerifierIdentifier } from '../../request-identifiers';
 import {
@@ -124,7 +125,10 @@ async function buildMappedAttributePolicy(
       fieldMappingVersionId: request.verificationMappingVersionId,
     }
   );
-  if (!binding || binding.mappingSnapshotHash !== request.verificationMappingSnapshotHash) {
+  if (
+    !binding ||
+    !runtimeMappingSnapshotMatches(binding, request.verificationMappingSnapshotHash)
+  ) {
     throw new Error('vp_mapping_snapshot_unavailable');
   }
   const sourceRefs = new Map(
@@ -149,8 +153,9 @@ async function buildMappedAttributePolicy(
     }
     if (value !== undefined && value !== null) sourceValues.push({ value, sourceRef: ref });
   }
-  const mapped = executeRuntimeMapping({
+  const mapped = await executeTenantMapping(c.env, request.tenantId, {
     catalog: binding.catalog,
+    graphRules: binding.graphRules,
     sourceValues,
     edges: binding.edges,
     transforms: binding.transforms,
@@ -303,7 +308,10 @@ export async function initiateAttributeVerification(
         fieldMappingVersionId: profile.verification_mapping_version_id,
       }
     );
-    if (!mapping || mapping.mappingSnapshotHash !== profile.verification_mapping_snapshot_hash) {
+    if (
+      !mapping ||
+      !runtimeMappingSnapshotMatches(mapping, profile.verification_mapping_snapshot_hash)
+    ) {
       return c.json(
         { error: 'invalid_request', error_description: 'Verification mapping is unavailable' },
         409
@@ -715,7 +723,7 @@ export async function getAttributes(c: Context<{ Bindings: Env }>): Promise<Resp
           fieldMappingVersionId: verification.mapping_version_id,
         }
       ).catch(() => null);
-      if (!binding || binding.mappingSnapshotHash !== verification.mapping_snapshot_hash) {
+      if (!binding || !runtimeMappingSnapshotMatches(binding, verification.mapping_snapshot_hash)) {
         await verificationRepo.invalidateVerification(
           userInfo.tenantId,
           verification.id,

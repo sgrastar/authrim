@@ -31,25 +31,48 @@ describe('transform registry', () => {
     expect(executeTransformStep({ step, edgeValues: new Map() }).value).toBeUndefined();
   });
 
-  it('contains the PR1 operation set', () => {
+  it('contains the registered operation set', () => {
     expect(TRANSFORM_OPERATION_SCHEMAS.map((schema) => schema.operation).sort()).toEqual([
       'affix_text',
+      'array_build',
       'as_array',
+      'ascii_digits',
       'case',
       'concat',
+      'conditional',
+      'constant_boolean',
+      'constant_number',
+      'constant_text',
       'copy',
+      'date_format',
+      'default_if_empty',
       'fallback',
+      'filter_values',
       'first',
+      'has_value',
+      'hash',
       'join',
       'json_build',
+      'json_extract_array',
       'json_extract_boolean',
       'json_extract_integer',
+      'json_extract_or',
       'json_extract_text',
+      'keep_part',
       'normalize',
+      'normalize_empty',
       'persistent_identifier',
+      'regex_replace',
+      'remove_text',
+      'replace_text',
       'split',
+      'strip_accents',
       'text_to_boolean',
+      'text_to_number',
+      'to_fullwidth',
+      'to_halfwidth',
       'trim',
+      'value_map',
     ]);
   });
 
@@ -341,6 +364,6 @@ describe('transform registry', () => {
     });
 
     expect(result.value).toBeUndefined();
-    expect(result.reasons.map((item) => item.code)).toContain('transform.invalid_output');
+    expect(result.reasons.map((item) => item.code)).toContain('transform.limit_exceeded');
   });
 });

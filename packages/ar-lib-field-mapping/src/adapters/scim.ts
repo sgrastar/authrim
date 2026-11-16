@@ -50,6 +50,13 @@ export function adaptScimUser(input: ScimUserPreviewAdapterInput): AdapterResult
     input: {
       catalog: input.catalog,
       edges: input.edges,
+      graphRules: input.edges.map((edge) => ({
+        id: edge.id,
+        targetRef: edge.targetRef,
+        edges: [edge],
+        transforms: [],
+        output: { edgeIndex: 0 },
+      })),
       sourceValues,
     },
     reasons: [],

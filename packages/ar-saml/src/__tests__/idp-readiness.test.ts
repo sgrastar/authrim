@@ -1,3 +1,4 @@
+import { withExplicitMappingGraphs } from '@authrim/ar-lib-field-mapping/test-support';
 import { describe, expect, it, vi } from 'vitest';
 import type { DatabaseAdapter, Env } from '@authrim/ar-lib-core';
 import type { SAMLRuntimeImportedSPRelease } from '@authrim/ar-lib-core/types/saml-runtime-ports';
@@ -24,63 +25,66 @@ const RELEASE: SAMLRuntimeImportedSPRelease = {
     destinationProfileId: 'destination-a',
     destinationProfileVersionId: 'destination-version-a',
   },
-  binding: {
-    id: 'activation-a',
-    role: 'idp',
-    tenantId: TENANT_ID,
-    localEntityId: 'https://tenant-a.example.test/saml/idp/metadata',
-    partnerEntityId: SP,
-    fieldMappingSetId: 'mapping-set-a',
-    fieldMappingVersionId: 'mapping-version-a',
-    mappingSnapshotHash: 'snapshot-hash-a',
-    destinationProfileId: 'destination-a',
-    destinationProfileIds: ['destination-a'],
-    destinationFieldPolicies: SOURCE_SELECTOR.destinationFieldPolicies,
-    catalog: {
-      identity: { id: 'catalog-a', contentHash: 'catalog-hash-a' },
-      entries: [
+  binding: withExplicitMappingGraphs(
+    {
+      id: 'activation-a',
+      role: 'idp',
+      tenantId: TENANT_ID,
+      localEntityId: 'https://tenant-a.example.test/saml/idp/metadata',
+      partnerEntityId: SP,
+      fieldMappingSetId: 'mapping-set-a',
+      fieldMappingVersionId: 'mapping-version-a',
+      mappingSnapshotHash: 'snapshot-hash-a',
+      destinationProfileId: 'destination-a',
+      destinationProfileIds: ['destination-a'],
+      destinationFieldPolicies: SOURCE_SELECTOR.destinationFieldPolicies,
+      catalog: {
+        identity: { id: 'catalog-a', contentHash: 'catalog-hash-a' },
+        entries: [
+          {
+            id: 'source.email',
+            namespace: 'authrim.profile',
+            path: 'email',
+            valueType: 'string',
+            cardinality: 'single',
+            classification: 'pii',
+            targetType: 'canonical',
+          },
+          {
+            id: 'destination.mail',
+            namespace: 'saml.attribute',
+            path: MAIL,
+            valueType: 'string',
+            cardinality: 'single',
+            classification: 'pii',
+            targetType: 'destination-only',
+          },
+        ],
+      },
+      edges: [
         {
-          id: 'source.email',
-          namespace: 'authrim.profile',
-          path: 'email',
-          valueType: 'string',
-          cardinality: 'single',
-          classification: 'pii',
-          targetType: 'canonical',
-        },
-        {
-          id: 'destination.mail',
-          namespace: 'saml.attribute',
-          path: MAIL,
-          valueType: 'string',
-          cardinality: 'single',
-          classification: 'pii',
-          targetType: 'destination-only',
+          id: 'edge-mail',
+          sourceRef: {
+            side: 'source',
+            namespace: 'authrim.profile',
+            path: 'email',
+            catalogEntryId: 'source.email',
+          },
+          targetRef: {
+            side: 'destination',
+            namespace: 'saml.attribute',
+            path: MAIL,
+            catalogEntryId: 'destination.mail',
+          },
+          edgeKind: 'direct',
         },
       ],
+      transforms: [],
+      validationRules: [],
+      fieldMappingSet: { id: 'mapping-version-a', rules: [] },
     },
-    edges: [
-      {
-        id: 'edge-mail',
-        sourceRef: {
-          side: 'source',
-          namespace: 'authrim.profile',
-          path: 'email',
-          catalogEntryId: 'source.email',
-        },
-        targetRef: {
-          side: 'destination',
-          namespace: 'saml.attribute',
-          path: MAIL,
-          catalogEntryId: 'destination.mail',
-        },
-        edgeKind: 'direct',
-      },
-    ],
-    transforms: [],
-    validationRules: [],
-    fieldMappingSet: { id: 'mapping-version-a', rules: [] },
-  },
+    true
+  ),
   destinationProfile: {
     profileId: 'destination-a',
     profileVersionId: 'destination-version-a',

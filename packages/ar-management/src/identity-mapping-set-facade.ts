@@ -18,9 +18,11 @@
  * a set it created), and the answer says which step it was.
  */
 import type { Context } from 'hono';
+import { loadSAMLNameIdProfile } from '@authrim/ar-saml/release-explain';
 import {
   getTenantIdFromContext,
-  mappingDestinationProfileIds,
+  ensureAdminDatabaseAdapter,
+  loadDestinationProfileConsentDescriptor,
   PLATFORM_MAPPING_TENANT_ID,
   BodyLimitExceededError,
   createAuditLogFromContext,
@@ -67,6 +69,13 @@ import {
   summarizeForRequest,
 } from './identity-mapping-set-reference-guard';
 
+import {
+  assertMappingSetDestinationUnchanged,
+  mappingSetActivationScope,
+  mappingSetDestination,
+  readableMappingSetDestination,
+} from './identity-mapping-set-destination';
+
 const log = createLogger().module('IDENTITY_MAPPING_SET_FACADE');
 
 /** The context variable a save sets when it is about to write: from then on its key is held. */
@@ -79,9 +88,6 @@ const REQUEST_BODY_LIMIT_BYTES = MAPPING_SET_REQUEST_BODY_LIMIT_BYTES;
 const SET_ID_MAX_LENGTH = 200;
 /** What a set that has no version is called in `content_version`. */
 const NO_CONTENT_VERSION = 'none';
-
-/** What the activation of a set the facade saves is scoped to: OIDC, the OP role. */
-const OIDC_ACTIVATION_SCOPE = { protocol: 'oidc', role: 'op' } as const;
 
 export type MappingSetSaveStage =
   | 'validate'
@@ -277,7 +283,28 @@ export async function adminIdentityMappingSetGetHandler(c: AdminContext) {
       log.warn('The references of a Mapping Set could not be counted');
     }
     c.header('ETag', etag(contentVersionOf(state)));
-    return c.json({ ...setSummary(state), content, references });
+    const destination = await readableMappingSetDestination(repository, ownerTenantId, content);
+    const admin = ensureAdminDatabaseAdapter(c.env, 'identity-mapping-set-facade');
+    const profile =
+      destination && admin
+        ? await loadDestinationProfileConsentDescriptor(
+            admin,
+            ownerTenantId,
+            destination.destination_profile_id
+          )
+        : null;
+    const nameId =
+      destination?.protocol === 'saml' && admin
+        ? await loadSAMLNameIdProfile(admin, ownerTenantId, destination.destination_profile_id)
+        : null;
+    return c.json({
+      ...setSummary(state),
+      content,
+      references,
+      protocol: destination?.protocol ?? null,
+      destination_profile_id: destination?.destination_profile_id ?? null,
+      destination_profile: profile ? { ...profile, ...(nameId ? { nameId } : {}) } : null,
+    });
   } catch (error) {
     return controlPlaneErrorResponse(c, error);
   }
@@ -320,50 +347,6 @@ function errorBody(error: unknown): { status: 400 | 403 | 404 | 409 | 500; body:
   };
 }
 
-function unsupportedDestination(message: string): IdentityMappingControlPlaneError {
-  return new IdentityMappingControlPlaneError(
-    `${message}; use the field mapping version and activation endpoints for this set`,
-    400,
-    'unsupported_destination'
-  );
-}
-
-/**
- * The facade switches on sets that release OIDC claims. A set that releases into any other kind
- * of Destination Profile (SAML, a resource server, CSV) is for the activation endpoints, which
- * take the scope the protocol needs; a scope written here would be broader than a SAML provider,
- * a credential or SCIM expects.
- */
-async function assertOidcDestination(
-  repository: IdentityMappingControlPlaneRepository,
-  ownerTenantId: string,
-  content: MappingSetContent
-): Promise<void> {
-  const profileIds = mappingDestinationProfileIds(
-    content.rules.flatMap((rule) => [
-      ...(rule.edges ?? []).map((edge) => edge.targetRef),
-      // A step with no input edge (a persistent identifier) names its own output target.
-      ...(rule.transforms ?? []).flatMap((step) => (step.targetRef ? [step.targetRef] : [])),
-    ])
-  );
-  if (profileIds.length === 0) {
-    throw unsupportedDestination('The content releases into no OIDC Destination Profile');
-  }
-  const types = await repository.findDestinationProfileTypes(ownerTenantId, profileIds);
-  for (const profileId of profileIds) {
-    if (types.get(profileId) !== 'oidc') {
-      throw unsupportedDestination(
-        types.get(profileId)
-          ? 'The content releases into a Destination Profile that is not an OIDC one'
-          : `The Destination Profile the content releases into was not found: ${profileId}`
-      );
-    }
-  }
-  if (profileIds.length !== 1) {
-    throw badRequest('The content must release into exactly one OIDC Destination Profile');
-  }
-}
-
 /**
  * The checks a version goes through before it can be in use, run on the content before anything
  * is written: the version create's, the compile's and the activation's release safety.
@@ -375,7 +358,7 @@ export async function validateContent(
   /** Judged as the version create will see it, the author included (it counts toward the limits). */
   authorId?: string
 ): Promise<{ catalogVersionId: string }> {
-  await assertOidcDestination(repository, ownerTenantId, content);
+  await mappingSetDestination(repository, ownerTenantId, content);
   const input = toVersionInput(content, 'validation', authorId);
   await repository.assertFieldMappingVersionShape(ownerTenantId, input);
   const catalogVersion = await repository.getCatalogVersion(
@@ -504,6 +487,14 @@ async function runPreview(
   }
   const references = await loadReferences(c, target);
   const current = state ? await readCurrentContent(repository, ownerTenantId, state) : null;
+  await assertMappingSetDestinationUnchanged(
+    repository,
+    ownerTenantId,
+    current,
+    request.content,
+    references
+  );
+  const destination = await mappingSetDestination(repository, ownerTenantId, request.content);
   let deactivationRefusal: object | null = null;
   if (!request.enabled && state?.active_version_id) {
     const refused = await checkMappingVersionDeactivation(c, {
@@ -526,9 +517,9 @@ async function runPreview(
     compile: { ok: true, catalog_version_id: catalogVersionId },
     activation: {
       scope: request.enabled
-        ? ownerTenantId === PLATFORM_MAPPING_TENANT_ID
+        ? ownerTenantId === PLATFORM_MAPPING_TENANT_ID && destination.protocol === 'oidc'
           ? {}
-          : OIDC_ACTIVATION_SCOPE
+          : mappingSetActivationScope(destination)
         : null,
       // Whether the version can replace the one in use is judged when it has a compiled snapshot,
       // that is on the save; switching off is judged here.
@@ -546,7 +537,8 @@ async function writeSet(
   target: SaveTarget,
   request: MappingSetSaveRequest,
   references: MappingSetReferenceSummary | null,
-  catalogVersionId: string
+  catalogVersionId: string,
+  currentContent: MappingSetContent | null
 ) {
   const { ownerTenantId } = target;
   const previous = target.state;
@@ -556,7 +548,11 @@ async function writeSet(
   let stage: MappingSetSaveStage = 'create_version';
   const holderId = createId('activation_holder');
   let leaseTaken = false;
-  const scope = ownerTenantId === PLATFORM_MAPPING_TENANT_ID ? {} : { ...OIDC_ACTIVATION_SCOPE };
+  const destination = await mappingSetDestination(repository, ownerTenantId, request.content);
+  const scope =
+    ownerTenantId === PLATFORM_MAPPING_TENANT_ID && destination.protocol === 'oidc'
+      ? {}
+      : mappingSetActivationScope(destination);
 
   (c as unknown as { set(key: string, value: unknown): void }).set(MAPPING_SET_SAVE_STARTED, true);
   try {
@@ -618,7 +614,15 @@ async function writeSet(
       // What named the set when the number was confirmed is not necessarily what names it now:
       // the number has to hold at the moment of the switch. (An app that names the set after this
       // look cannot be excluded: the references live in other databases.)
-      assertImpactConfirmed(request, await loadReferences(c, target));
+      const latestReferences = await loadReferences(c, target);
+      await assertMappingSetDestinationUnchanged(
+        repository,
+        ownerTenantId,
+        currentContent,
+        request.content,
+        latestReferences
+      );
+      assertImpactConfirmed(request, latestReferences);
     }
     if (request.enabled) {
       refuseIfInUse(
@@ -787,10 +791,26 @@ async function executeSave(
 
   // What the caller saw of the use of the set has to be what there is now.
   const references = await loadReferences(c, target);
+  const current = state ? await readCurrentContent(repository, ownerTenantId, state) : null;
+  await assertMappingSetDestinationUnchanged(
+    repository,
+    ownerTenantId,
+    current,
+    request.content,
+    references
+  );
   assertImpactConfirmed(request, references);
 
   try {
-    const saved = await writeSet(c, repository, target, request, references, catalogVersionId);
+    const saved = await writeSet(
+      c,
+      repository,
+      target,
+      request,
+      references,
+      catalogVersionId,
+      current
+    );
     await recordSaveAudit(c, {
       setId: saved.setId,
       ownerTenantId,

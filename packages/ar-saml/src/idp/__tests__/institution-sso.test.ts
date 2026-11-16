@@ -1,3 +1,4 @@
+import { withExplicitMappingGraphs } from '@authrim/ar-lib-field-mapping/test-support';
 /**
  * The SSO endpoints for a tenant that has registered the institution it stands for: the scoped
  * attributes are released only under its scopes (checked in the assertion XML the SP would
@@ -63,7 +64,11 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     isShardedSessionId: vi.fn(() => true),
     resolveAuthCorePersistenceAdapterFromEnv: vi.fn(async () => mocks.core),
     requireAdminDatabaseAdapter: vi.fn(() => mocks.admin),
-    resolveRuntimeIdentityMappingBinding: vi.fn(async () => mocks.binding),
+    resolveRuntimeIdentityMappingBinding: vi.fn(async () =>
+      mocks.binding && typeof mocks.binding === 'object'
+        ? withExplicitMappingGraphs(Object.fromEntries(Object.entries(mocks.binding)), true)
+        : mocks.binding
+    ),
     resolveEffectiveSettings: vi.fn(async (_env: unknown, category: string) => {
       mocks.requestedSettings.push(category);
       if (mocks.settingsError) throw mocks.settingsError;

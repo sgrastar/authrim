@@ -1,3 +1,8 @@
+import {
+  restoreMappingSnapshotRow,
+  restoreMappingVersionRow,
+} from '../mapping-snapshot-equivalence.js';
+import { SqliteDatasetShapeRefusal } from './sqlite-dataset-inspector.js';
 import type { SqliteDatasetInspectionPolicy } from './sqlite-dataset-inspector.js';
 import type { PlannedInstalledSqliteDataset } from './installed-sqlite-datasets.js';
 import type { TenantPortabilityModuleId } from './module-contract.js';
@@ -181,10 +186,32 @@ export const PHASE3_SQLITE_REFERENCE_RULES: readonly Phase3SqliteReferenceRule[]
     'admin',
     'field_mapping_versions'
   ),
-  // Null for a step that reads no edge (a persistent identifier is made from the account).
-  relation('admin', 'mapping_transform_steps', ['edge_id'], 'admin', 'mapping_rule_edges', {
+  relation('admin', 'mapping_rules', ['output_edge_id'], 'admin', 'mapping_rule_edges', {
+    nullable: true,
+    restoreOrdering: 'validation-only',
+  }),
+  relation('admin', 'mapping_rules', ['output_step_id'], 'admin', 'mapping_transform_steps', {
+    nullable: true,
+    restoreOrdering: 'validation-only',
+  }),
+  relation(
+    'admin',
+    'mapping_transform_step_inputs',
+    ['step_id'],
+    'admin',
+    'mapping_transform_steps'
+  ),
+  relation('admin', 'mapping_transform_step_inputs', ['edge_id'], 'admin', 'mapping_rule_edges', {
     nullable: true,
   }),
+  relation(
+    'admin',
+    'mapping_transform_step_inputs',
+    ['input_step_id'],
+    'admin',
+    'mapping_transform_steps',
+    { nullable: true }
+  ),
   relation('admin', 'mapping_transform_steps', ['rule_id'], 'admin', 'mapping_rules'),
   relation('admin', 'mapping_validation_rules', ['rule_id'], 'admin', 'mapping_rules'),
   relation('admin', 'source_profile_versions', ['profile_id'], 'admin', 'source_profiles'),
@@ -444,6 +471,8 @@ function inspectStructuredReferences(
     return [];
   }
 
+  assertMappingGraphBackupShape(datasetId, row);
+
   const columns =
     datasetId === 'admin.mapping_rule_edges'
       ? ['source_ref_json', 'target_ref_json']
@@ -452,7 +481,7 @@ function inspectStructuredReferences(
         : datasetId === 'admin.mapping_conflict_rules' ||
             datasetId === 'admin.mapping_validation_rules'
           ? ['target_ref_json']
-          : datasetId === 'admin.mapping_transform_steps'
+          : datasetId === 'admin.mapping_rules'
             ? textValue(row, 'target_ref_json', { nullable: true }) === null
               ? []
               : ['target_ref_json']
@@ -463,6 +492,25 @@ function inspectStructuredReferences(
     const reference = profileReference(identity, jsonObject(row, column));
     return reference ? [reference] : [];
   });
+}
+
+export function assertMappingGraphBackupShape(datasetId: string, row: PortableSqliteRow): void {
+  if (
+    datasetId === 'admin.mapping_transform_steps' &&
+    ('edge_id' in row || 'target_ref_json' in row)
+  ) {
+    throw new SqliteDatasetShapeRefusal(
+      'backup_mapping_graph_legacy_shape: restore with the old release, run migration 023, then export again'
+    );
+  }
+  if (
+    datasetId === 'admin.mapping_rules' &&
+    (!('output_edge_id' in row) || !('output_step_id' in row) || !('target_ref_json' in row))
+  ) {
+    throw new SqliteDatasetShapeRefusal(
+      'backup_mapping_graph_legacy_shape: mapping rule outputs are required; run migration 023 before export'
+    );
+  }
 }
 
 function referenceId(row: PortableSqliteRow, rule: Phase3SqliteReferenceRule): string | null {
@@ -591,7 +639,19 @@ export function phase3SqliteRestoreTransform(
 ): SqliteDatasetInspectionPolicy['restoreTransform'] {
   if (!PHASE3_SQLITE_DATASET_REGISTRATIONS.some(({ dataset }) => dataset.id === datasetId))
     throw new Error('backup_phase3_reference_dataset');
-  return datasetId === 'core.organizations' ? ORGANIZATION_TYPE_RESTORE_TRANSFORM : undefined;
+  return datasetId === 'core.organizations'
+    ? ORGANIZATION_TYPE_RESTORE_TRANSFORM
+    : datasetId === 'admin.compiled_mapping_snapshots'
+      ? {
+          id: 'mapping-snapshot-local-authority-v2',
+          transform: restoreMappingSnapshotRow,
+        }
+      : datasetId === 'admin.field_mapping_versions'
+        ? {
+            id: 'mapping-version-local-restore-id-v1',
+            transform: restoreMappingVersionRow,
+          }
+        : undefined;
 }
 
 /** Build import inspectors only from the sealed SQL plan and the installed Phase 3 registry. */
@@ -633,6 +693,15 @@ export function createPhase3SqliteInspectionPolicies(
       ...(verificationIgnoredColumns.length ? { verificationIgnoredColumns } : {}),
       ...(restoreTransform ? { restoreTransform } : {}),
       ...(entry.partitions ? { partitions: [...entry.partitions] } : {}),
+      ...(['admin.mapping_rules', 'admin.mapping_transform_steps'].includes(entry.dataset.id)
+        ? {
+            rowShape: {
+              id: 'mapping-graph-023',
+              assert: (row: PortableSqliteRow) =>
+                assertMappingGraphBackupShape(entry.dataset.id, row),
+            },
+          }
+        : {}),
       inspectRow: async (row, identity) =>
         inspectPhase3SqliteReferences(entry.dataset.id, row, identity),
     };

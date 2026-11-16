@@ -1,3 +1,4 @@
+import { withExplicitMappingGraphs } from '@authrim/ar-lib-field-mapping/test-support';
 /**
  * The SAML IdP SSO endpoint and the AAL a sign-in must have: the SP's minimum AAL and the AAL of
  * the AuthnContextClassRef a request asks for, the step-up to authenticate again, the class
@@ -104,20 +105,25 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       queryOne: async () => null,
     })),
     requireAdminDatabaseAdapter: vi.fn(() => ({ query: vi.fn(async () => []) })),
-    resolveRuntimeIdentityMappingBinding: vi.fn(async () => ({
-      id: 'binding',
-      tenantId: 'tenant-a',
-      catalog: { entries: [] },
-      edges: [],
-      transforms: [],
-      validationRules: [],
-      fieldMappingSet: {},
-      fieldMappingSetId: 'set',
-      fieldMappingVersionId: 'version',
-      destinationNamespace: 'saml',
-      destinationProfileId: 'destination-profile-saml',
-      destinationProfileIds: ['destination-profile-saml'],
-    })),
+    resolveRuntimeIdentityMappingBinding: vi.fn(async () =>
+      withExplicitMappingGraphs(
+        {
+          id: 'binding',
+          tenantId: 'tenant-a',
+          catalog: { entries: [] },
+          edges: [],
+          transforms: [],
+          validationRules: [],
+          fieldMappingSet: {},
+          fieldMappingSetId: 'set',
+          fieldMappingVersionId: 'version',
+          destinationNamespace: 'saml',
+          destinationProfileId: 'destination-profile-saml',
+          destinationProfileIds: ['destination-profile-saml'],
+        },
+        true
+      )
+    ),
     // The profile requires every attribute it is given.
     filterSamlAttributesByDestinationProfile: vi.fn(
       async (input: { attributes: Array<{ name: string }> }) => ({

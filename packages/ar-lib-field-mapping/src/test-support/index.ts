@@ -134,3 +134,14 @@ export function createTestFingerprintProvider(): FingerprintProvider {
     },
   };
 }
+
+export { withExplicitMappingGraphs } from './runtime-graph-fixture';
+
+export { TEXT_TRANSFORM_CASES } from './text-transform-cases';
+export type { TextTransformCase } from './text-transform-cases';
+
+export {
+  STRUCTURE_TRANSFORM_CASES,
+  SYNTHETIC_CONDITION,
+  CONDITIONAL_PARAMETERS,
+} from './structure-transform-cases';

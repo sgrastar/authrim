@@ -12,6 +12,29 @@ export type MappingDecisionAction =
   | 'transformed';
 
 export type TransformOperation =
+  | 'keep_part'
+  | 'remove_text'
+  | 'replace_text'
+  | 'regex_replace'
+  | 'to_halfwidth'
+  | 'to_fullwidth'
+  | 'strip_accents'
+  | 'ascii_digits'
+  | 'value_map'
+  | 'text_to_number'
+  | 'date_format'
+  | 'filter_values'
+  | 'normalize_empty'
+  | 'default_if_empty'
+  | 'has_value'
+  | 'json_extract_array'
+  | 'json_extract_or'
+  | 'array_build'
+  | 'conditional'
+  | 'constant_text'
+  | 'constant_boolean'
+  | 'constant_number'
+  | 'hash'
   | 'copy'
   | 'as_array'
   | 'split'
@@ -127,6 +150,8 @@ export interface SourceValueEnvelope {
   metadata?: Partial<Record<SafeMetadataKey, SafeMetadataValue>>;
   classificationHint?: RedactionClassification;
   provenanceHint?: ProvenanceHint;
+  /** Every dependency, retained by graph transforms rather than only input zero. */
+  provenanceHints?: ProvenanceHint[];
 }
 
 export interface FingerprintProvider {
@@ -177,18 +202,55 @@ export interface FieldCatalogBundle {
 }
 
 export interface MappingRuleEdge {
+  ruleId?: string;
   id: string;
   sourceRef: FieldRef;
   targetRef: FieldRef;
 }
 
 export interface MappingTransformStep {
+  ruleId?: string;
   id: string;
   inputEdgeIds: string[];
+  inputNames?: (string | undefined)[];
   operation: TransformOperation;
   parameters?: Record<string, unknown>;
   outputTargetRef: FieldRef;
 }
+
+/** Rule-local indexes; names reserve named inputs for conditional operations. */
+export type MappingValueReference =
+  | { edgeIndex: number; name?: string }
+  | { stepIndex: number; name?: string };
+
+export interface MappingGraphTransform {
+  id: string;
+  operation: TransformOperation;
+  parameters?: Record<string, unknown>;
+  inputs: MappingValueReference[];
+}
+
+/** Exactly one target is released, from the explicit output reference. */
+export interface MappingRuleGraph {
+  id: string;
+  targetRef: FieldRef;
+  edges: MappingRuleEdge[];
+  transforms: MappingGraphTransform[];
+  output: MappingValueReference;
+  /** Set by the caller from the recipient's subject type. */
+  pairwiseSubject?: boolean;
+  /** Runtime-only row order and input naming, loaded from persisted graphs. */
+  writerOrder?: number;
+  edgeValueReferences?: 'source' | 'target';
+}
+
+export type MappingEvaluationValue =
+  | { kind: 'value'; envelope: SourceValueEnvelope }
+  /** Trusted consent preparation: unknown until approved, never an operation input value. */
+  | { kind: 'deferred' }
+  | { kind: 'absent' }
+  | { kind: 'failed' }
+  | { kind: 'suppressed' };
 
 export interface TransformParameterSchema {
   name: string;
@@ -200,6 +262,7 @@ export interface TransformParameterSchema {
 export interface TransformOperationSchema {
   operation: TransformOperation;
   parameters: TransformParameterSchema[];
+  inputArity: { min: number; max?: number };
   outputValueType?: string;
   outputCardinality?: Cardinality;
 }
@@ -279,6 +342,8 @@ export interface RuleTraceEntry extends TraceBuilderInput {
 }
 
 export interface TransformExecutionInput {
+  /** Caller-owned per-rule budget, shared by dependent steps; omitted for a single step. */
+  workBudget?: { remaining: number };
   step: MappingTransformStep;
   edgeValues: Map<string, SourceValueEnvelope>;
   runtimeContext?: Record<string, unknown>;
@@ -326,6 +391,13 @@ export interface BatchDryRunResult {
 }
 
 export interface MappingInput {
+  /** Explicit persisted or authored rule graphs. */
+  graphRules?: MappingRuleGraph[];
+  /** Receivers with runtime-defined sources validate their source catalog before release. */
+  sourceCatalogValidation?: 'catalog' | 'receiver';
+  preparedSteps?: ReadonlyMap<string, MappingEvaluationValue>;
+  /** Consent-only receiver opt-in. Deferred targets have no values and await final validation. */
+  allowDeferredOutputs?: boolean;
   catalog: FieldCatalogBundle;
   sourceValues: SourceValueEnvelope[];
   edges: MappingRuleEdge[];
@@ -334,6 +406,8 @@ export interface MappingInput {
   fieldMappingSet?: FieldMappingSet;
   fingerprintProvider?: FingerprintProvider;
   runtimeContext?: Record<string, unknown>;
+  /** Receiver-specific aggregation for final-value validation; defaults to the last writer. */
+  resolveValidationValues?: (values: SourceValueEnvelope[]) => SourceValueEnvelope[];
 }
 
 export interface BatchMappingInput {

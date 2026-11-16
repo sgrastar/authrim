@@ -11,9 +11,11 @@ describe('a transform step that takes no input edge', () => {
     seedMapping(db, { owner: 'tenant-a', id: 'a' });
     const target = { side: 'destination', namespace: 'oidc.claim', path: 'sub' };
     db.prepare(
-      `INSERT INTO mapping_transform_steps (id, tenant_id, rule_id, edge_id, step_order, operation, parameters_json, target_ref_json, created_at, updated_at)
-       VALUES ('step-identifier', 'tenant-a', 'rule-a', NULL, 1, 'persistent_identifier', '{}', ?, 1, 1)`
+      `INSERT INTO mapping_rules (id,tenant_id,field_mapping_version_id,rule_key,rule_kind,action,created_at,updated_at,output_step_id,target_ref_json)
+      VALUES ('identifier-rule','tenant-a','ver-a','identifier','mapping','allow',1,1,'step-identifier',?)`
     ).run(JSON.stringify(target));
+    db.exec(`INSERT INTO mapping_transform_steps (id,tenant_id,rule_id,step_order,operation,parameters_json,created_at,updated_at)
+      VALUES ('step-identifier','tenant-a','identifier-rule',0,'persistent_identifier','{"input":"account","format":"plain","algorithm":"authrim_sha256"}',1,1)`);
 
     const graph = await loadRuntimeMappingGraph(sqliteAdapter(db), 'tenant-a', 'ver-a');
     const identifier = graph.transforms.find((step) => step.id === 'step-identifier');
@@ -32,18 +34,20 @@ describe('a transform step that takes no input edge', () => {
     const db = openAdminDatabase();
     seedMapping(db, { owner: 'tenant-a', id: 'a' });
     // The version's only output is the identifier step: no edge, no other step.
-    db.exec(`DELETE FROM mapping_transform_steps; DELETE FROM mapping_rule_edges;`);
-    db.prepare(
-      `INSERT INTO mapping_transform_steps (id, tenant_id, rule_id, edge_id, step_order, operation, parameters_json, target_ref_json, created_at, updated_at)
-       VALUES ('step-identifier', 'tenant-a', 'rule-a', NULL, 0, 'persistent_identifier', '{}', ?, 1, 1)`
-    ).run(
-      JSON.stringify({
-        side: 'destination',
-        profileId: 'profile-a',
-        namespace: 'oidc.claim',
-        path: 'sub',
-      })
+    db.exec(
+      `DELETE FROM mapping_transform_step_inputs; DELETE FROM mapping_transform_steps; DELETE FROM mapping_rule_edges;`
     );
+    const target = {
+      side: 'destination',
+      profileId: 'profile-a',
+      namespace: 'oidc.claim',
+      path: 'sub',
+    };
+    db.prepare(
+      `UPDATE mapping_rules SET output_edge_id=NULL,output_step_id='step-identifier',target_ref_json=? WHERE id='rule-a'`
+    ).run(JSON.stringify(target));
+    db.exec(`INSERT INTO mapping_transform_steps (id,tenant_id,rule_id,step_order,operation,parameters_json,created_at,updated_at)
+      VALUES ('step-identifier','tenant-a','rule-a',0,'persistent_identifier','{"input":"account","format":"plain","algorithm":"authrim_sha256"}',1,1)`);
     const adapter = sqliteAdapter(db);
     const base = { tenantId: 'tenant-a', protocol: 'oidc', role: 'op' } as const;
     // Found by the profile it releases into, and the profile is the one binding the release.
