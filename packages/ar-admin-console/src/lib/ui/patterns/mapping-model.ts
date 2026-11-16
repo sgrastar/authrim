@@ -19,20 +19,7 @@
  * outputs; later steps chain on its output. Positions on a canvas are not needed any more.
  * The sample output is computed by the engine itself (mapping-preview.ts), so the console
  * never shows a result the runtime would not produce.
- * TODO(runtime): the "Generate a value" steps (constant_text / _boolean / _number) have no
- * runtime operation yet. Add one `constant` operation to TRANSFORM_OPERATION_SCHEMAS —
- * parameters `value` and `valueType` (string | boolean | number), no input edges — and
- * compile these three to it. A mapping made only of such a step has no source edge.
- * TODO(runtime): json_extract_array, array_build, conditional, json_extract_or and hash
- * remain local to the console preview until the runtime supports them.
- * - hash is HMAC-SHA-256 with a per-tenant key (add it to scripts/setup-keys.sh), hex or
- *   base64url.
- * - Tables (value_map) are saved as JSON text: [["from", "to"], …].
- * - conditional saves its condition as the console's ConditionGroup (JSON text); the
- *   attributes it reads become extra input edges of the step, besides the value it changes.
- * Text shaping, regex safety and table validation are shared with the runtime engine.
- * TODO(api): boolean settings (trimItems, omitEmpty, unique) are saved as booleans, as the
- * runtime expects; the key map of "Build JSON" is JSON text ({"mail": "email"}).
+ * Structure, conditions and constants share the backend engine. Hash preview stays deferred.
  */
 
 /** Attribute types as the catalogs name them; "[]" marks multi-valued. */
@@ -40,6 +27,7 @@ export type MappingType = 'string' | 'string[]' | 'number' | 'boolean' | 'date' 
 
 import {
 	TRANSFORM_OPERATION_SCHEMAS,
+	readMappingCondition,
 	persistentIdentifierSettingsProblem,
 	safeTransformPattern,
 	TRANSFORM_LIMITS
@@ -53,7 +41,7 @@ export interface MappingField {
 	/** Receiving side: must be filled. */
 	required?: boolean;
 	/** Sending side: a sample value (a recent sign-in, a test user), for the sample output. */
-	example?: string | readonly string[];
+	example?: unknown;
 }
 
 /**
@@ -539,11 +527,6 @@ export function parseCondition(text: unknown): ConditionGroup | null {
 	}
 }
 
-/** Whether a condition has at least one rule on an attribute. */
-const conditionSet = (group: ConditionGroup | null): boolean =>
-	!!group &&
-	group.children.some((child) => (child.kind === 'rule' ? !!child.field : conditionSet(child)));
-
 /** The fixed value that suits a receiving attribute of this type. */
 export function generatorFor(type: MappingType | undefined): TransformId {
 	if (type === 'boolean') return 'constant_boolean';
@@ -757,8 +740,13 @@ export function mappingProblems(
 			const empty = param.pairs
 				? parsePairs(step.params[param.key]).length === 0
 				: param.condition
-					? !conditionSet(parseCondition(step.params[param.key]))
-					: !step.params[param.key];
+					? !readMappingCondition(step.params[param.key])
+					: step.transform.startsWith('constant_') && param.key === 'value'
+						? step.params.value === undefined ||
+							(step.transform === 'constant_number' &&
+								typeof step.params.value === 'string' &&
+								!step.params.value.trim())
+						: !step.params[param.key];
 			if (param.required && empty) {
 				found.push({ kind: 'missingParam', step: index + 1, param: param.key });
 			}
@@ -830,4 +818,26 @@ export function fixesFor(
 		default:
 			return [];
 	}
+}
+
+/** Console text controls become safe typed constant parameters at the API/engine seam. */
+export function runtimeTransformParams(step: TransformStep): Record<string, unknown> {
+	if (step.transform === 'persistent_identifier') return identifierRuntimeParams(step.params);
+	if (step.transform === 'constant_boolean')
+		return {
+			value:
+				step.params.value === true || step.params.value === 'true'
+					? true
+					: step.params.value === false || step.params.value === 'false'
+						? false
+						: undefined
+		};
+	if (step.transform === 'constant_number')
+		return {
+			value:
+				typeof step.params.value === 'string' && step.params.value.trim()
+					? Number(step.params.value)
+					: NaN
+		};
+	return step.params;
 }

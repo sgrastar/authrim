@@ -72,11 +72,26 @@ export function scimRuleOutputShape(
     ('edgeIndex' in reference ? edges[reference.edgeIndex] : steps[reference.stepIndex]) ??
     unknownShape;
   for (const step of rule.transforms) {
-    const input = mergeShapes(step.inputs.map(resolve));
+    const inputs =
+      step.operation === 'conditional'
+        ? step.inputs.filter((ref) => ref.name === 'value')
+        : step.inputs;
+    const input = mergeShapes(inputs.map(resolve));
+    const conditionalType =
+      step.operation === 'conditional'
+        ? step.parameters?.valueType === 'as_boolean'
+          ? 'boolean'
+          : step.parameters?.valueType === 'as_number'
+            ? 'number'
+            : 'string'
+        : undefined;
     const schema = operationSchemas.get(step.operation);
     steps.push({
-      valueType: schema?.outputValueType ?? input.valueType,
-      cardinality: schema?.outputCardinality ?? input.cardinality,
+      valueType: conditionalType ?? schema?.outputValueType ?? input.valueType,
+      cardinality:
+        step.operation === 'conditional' && step.parameters?.elseMode !== 'as_is'
+          ? 'single'
+          : (schema?.outputCardinality ?? input.cardinality),
     });
   }
   return resolve(rule.output);

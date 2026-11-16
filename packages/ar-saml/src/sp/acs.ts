@@ -1,3 +1,4 @@
+import { executeTenantMapping } from '@authrim/ar-lib-core/services/mapping-hash';
 /**
  * SAML SP Assertion Consumer Service (ACS) Endpoint
  *
@@ -58,10 +59,7 @@ import {
   releaseExternalSignupInvitation,
   type ExternalSignupInvitationRequirement,
 } from '@authrim/ar-lib-core/services/external-signup-invitation';
-import {
-  executeRuntimeMapping,
-  lastWriterMappingValues,
-} from '@authrim/ar-lib-field-mapping/runtime';
+import { lastWriterMappingValues } from '@authrim/ar-lib-field-mapping/runtime';
 import type { SourceValueEnvelope } from '@authrim/ar-lib-field-mapping/contract';
 import { resolveSAMLTenantIdFromContext } from '../common/tenant';
 import {
@@ -1761,7 +1759,7 @@ async function extractUserInfo(
     throw new SamlAttributeMappingError('SAML IdP Field Mapping Set is not active');
   }
 
-  const runtimeResult = executeRuntimeMapping({
+  const runtimeResult = await executeTenantMapping(env, tenantId, {
     catalog: binding.catalog,
     graphRules: binding.graphRules,
     sourceValues: buildSAMLInboundSourceValues(assertion),

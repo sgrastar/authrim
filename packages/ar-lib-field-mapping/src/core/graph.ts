@@ -38,7 +38,10 @@ export function analyzeMappingDependencies(graph: MappingDependencyGraph): {
     ) {
       throw new Error('invalid_reference');
     }
-    if (ref.name !== undefined && (typeof ref.name !== 'string' || !ref.name.trim())) {
+    if (
+      ref.name !== undefined &&
+      (typeof ref.name !== 'string' || !ref.name.trim() || ref.name.length > 518)
+    ) {
       throw new Error('invalid_reference');
     }
   };
@@ -110,6 +113,7 @@ export function withMappingGraph<
       const step = rule.transforms[index];
       transforms.set(step.id, {
         ...step,
+        inputNames: step.inputs.map((ref) => ref.name),
         outputTargetRef: rule.targetRef,
         inputEdgeIds: step.inputs.map((ref) =>
           'edgeIndex' in ref

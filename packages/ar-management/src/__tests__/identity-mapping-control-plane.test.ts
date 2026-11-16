@@ -1825,7 +1825,7 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
             edge_id: 'edge_2',
             step_order: 0,
             operation: 'trim',
-            parameters_json: JSON.stringify({ mode: 'whitespace' }),
+            parameters_json: JSON.stringify({}),
           },
         ],
         [
@@ -1923,7 +1923,7 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
               expect.objectContaining({
                 id: 'transform_1',
                 operation: 'trim',
-                parameters: { mode: 'whitespace' },
+                parameters: {},
               }),
             ],
           }),
@@ -3017,6 +3017,74 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
     expect(
       adapter.executes.some((item) => item.sql.includes('INSERT INTO field_mapping_versions'))
     ).toBe(true);
+  });
+
+  it('provisions a dedicated hash key only after complete authored-version validation', async () => {
+    const provision = vi.fn(async () => ({ kid: 'synthetic-hash-key' }));
+    const read = vi.fn();
+    const idFromName = vi.fn();
+    const environment = {
+      KEY_MANAGER: {
+        idFromName,
+        get: () => ({ provisionMappingHashKeyRpc: provision, getExistingSecretRpc: read }),
+      },
+    };
+    const targetRef = { side: 'destination', namespace: 'oidc.claim', path: 'name' };
+    const rules = [
+      {
+        ruleKey: 'hash',
+        ruleKind: 'mapping',
+        action: 'allow',
+        targetRef,
+        edges: [{ sourceRef: { side: 'source', namespace: 'csv', path: 'name' }, targetRef }],
+        transforms: [
+          { operation: 'hash', parameters: { encoding: 'hex' }, inputs: [{ edgeIndex: 0 }] },
+        ],
+        output: { stepIndex: 0 },
+      },
+    ];
+    for (const valid of [false, true]) {
+      const adapter = createAdapter({
+        queryOneRows: [
+          {
+            id: 'policy_1',
+            tenant_id: 'tenant_a',
+            field_mapping_key: 'default',
+            display_name: 'Default',
+            description: null,
+            lifecycle_state: 'draft',
+          },
+        ],
+      });
+      const app = new Hono<{ Bindings: Env }>();
+      app.post('/save', async (c) => {
+        const repository = new BaseRepository(adapter, () => 1000, undefined, undefined, c.env);
+        try {
+          return c.json(
+            await repository.createFieldMappingVersion('tenant_a', 'policy_1', {
+              versionLabel: 'v1',
+              rules: rules.map((rule) => ({
+                ...rule,
+                transforms: rule.transforms.map((step) => ({
+                  ...step,
+                  parameters: valid ? step.parameters : { encoding: 'plain-sha' },
+                })),
+              })),
+            })
+          );
+        } catch (error) {
+          return c.json({ error: error instanceof Error ? error.message : 'refused' }, 400);
+        }
+      });
+      const response = await app.request('/save', { method: 'POST' }, environment);
+      expect(response.status, await response.text()).toBe(valid ? 200 : 400);
+      expect(provision).toHaveBeenCalledTimes(valid ? 1 : 0);
+      expect(
+        adapter.executes.some((entry) => entry.sql.includes('INSERT INTO field_mapping_versions'))
+      ).toBe(valid);
+    }
+    expect(idFromName).toHaveBeenCalledWith('tenant_a-v3');
+    expect(read).not.toHaveBeenCalled();
   });
 
   describe('value_map table persistence bounds', () => {

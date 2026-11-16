@@ -1,3 +1,4 @@
+import type { MappingEvaluationValue } from '@authrim/ar-lib-field-mapping/contract';
 /**
  * The tenant's institution in an assertion: the scope its scoped attributes must be under, and the
  * attributes a mapping may release about the institution itself (schacHomeOrganization and the
@@ -89,6 +90,8 @@ export async function releaseSAMLAttributesWithInstitution(input: {
    * institution's values): the same values the mapping reads.
    */
   prepareIdentifiers?: (subject: SAMLAttributeSubject) => Promise<{
+    preparedSteps?: ReadonlyMap<string, MappingEvaluationValue>;
+    allowDeferredOutputs?: boolean;
     identifiers: Record<string, string>;
     /** The steps an exception suppressed: no value for their targets. */
     suppressed: Record<string, true>;
@@ -109,6 +112,8 @@ export async function releaseSAMLAttributesWithInstitution(input: {
             ...identityMapping,
             runtimeContext: {
               ...identityMapping.runtimeContext,
+              mappingPreparedSteps: prepared.preparedSteps,
+              mappingAllowDeferredOutputs: prepared.allowDeferredOutputs === true,
               identifiers: prepared.identifiers,
               suppressedIdentifiers: prepared.suppressed,
             },

@@ -1,3 +1,4 @@
+import { executeTenantMapping } from '@authrim/ar-lib-core/services/mapping-hash';
 import { runtimeMappingSnapshotMatches } from '@authrim/ar-lib-core/services/mapping-snapshot-equivalence';
 /**
  * Attribute Verification Routes
@@ -34,7 +35,6 @@ import {
   getActiveAccessTokenProtectedResourceContext,
 } from '@authrim/ar-lib-core';
 import type { FlowRuntimeContract } from '@authrim/ar-lib-core';
-import { executeRuntimeMapping } from '@authrim/ar-lib-field-mapping/runtime';
 import type { SourceValueEnvelope } from '@authrim/ar-lib-field-mapping/contract';
 import { getRequestIssuerUrl, getRequestVerifierIdentifier } from '../../request-identifiers';
 import {
@@ -153,7 +153,7 @@ async function buildMappedAttributePolicy(
     }
     if (value !== undefined && value !== null) sourceValues.push({ value, sourceRef: ref });
   }
-  const mapped = executeRuntimeMapping({
+  const mapped = await executeTenantMapping(c.env, request.tenantId, {
     catalog: binding.catalog,
     graphRules: binding.graphRules,
     sourceValues,

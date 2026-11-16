@@ -38,3 +38,5 @@ This file is the reviewed docs snapshot for the PR1 reason code registry.
 | `transform.limit_exceeded`                        | transform  | error    | stable    | Input, output or collection safety limit exceeded.                           |
 | `transform.work_limit_exceeded`                   | transform  | error    | stable    | Per-rule work budget exhausted.                                              |
 | `transform.unsafe_regex`                          | transform  | error    | stable    | Pattern is outside the bounded regex subset.                                 |
+| `transform.hash_unavailable`                      | transform  | critical | stable    | Tenant hash preparation failed or its dedicated key is missing.              |
+| `transform.deferred_output`                       | transform  | critical | stable    | Output still awaits consent preparation and cannot be released as a value.   |

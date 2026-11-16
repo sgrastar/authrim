@@ -1,6 +1,12 @@
 import { sameFieldRef } from './validation';
 export { findSourceValue } from './source-values';
-import { evaluateMappingRule, strongestMappingClassification } from './graph-evaluator';
+import {
+  evaluatePreparedMappingRule,
+  type GraphEvaluationResult,
+  type MappingStepPreparer,
+  evaluateMappingRule,
+  strongestMappingClassification,
+} from './graph-evaluator';
 import { findCatalogEntry } from './catalog';
 import { reason } from './reason-registry';
 import { statusFromReasons } from './result';
@@ -15,10 +21,13 @@ export {
 import { validateMappingInput } from './validation';
 import type {
   MappingInput,
+  MappingRuleGraph,
+  RedactionClassification,
   MappingResultStatus,
   ReasonCode,
   RuleTraceEntry,
   SourceValueEnvelope,
+  FieldRef,
 } from './types';
 
 export interface RuntimeMappingResult {
@@ -26,6 +35,8 @@ export interface RuntimeMappingResult {
   reasons: ReasonCode[];
   ruleTrace: RuleTraceEntry[];
   values: SourceValueEnvelope[];
+  /** Consent item identities only; never substitute values for these targets. */
+  deferredTargets?: FieldRef[];
 }
 
 /** OIDC and canonical projections assign each target in writer order: the last assignment wins. */
@@ -38,10 +49,68 @@ export function lastWriterMappingValues(values: SourceValueEnvelope[]): SourceVa
   return [...final.values()];
 }
 
+/** Async preparation uses the synchronous evaluator's continuation and shared work budget. */
+export async function executePreparedRuntimeMapping(
+  input: MappingInput,
+  prepare: MappingStepPreparer
+): Promise<RuntimeMappingResult> {
+  const evaluated = new Map<
+    NonNullable<MappingInput['graphRules']>[number],
+    GraphEvaluationResult
+  >();
+  for (const rule of input.graphRules ?? []) {
+    evaluated.set(
+      rule,
+      await evaluatePreparedMappingRule(
+        {
+          rule,
+          sourceValues: classifiedSources(input),
+          sourceClassifications: sourceClassifications(input, rule),
+          runtimeContext: input.runtimeContext,
+          preparedSteps: input.preparedSteps,
+          edgeValueReferences: rule.edgeValueReferences,
+        },
+        prepare
+      )
+    );
+  }
+  return executeRuntimeMappingResults(input, evaluated);
+}
+
+function sourceClassifications(
+  input: MappingInput,
+  rule: MappingRuleGraph
+): ReadonlyMap<number, RedactionClassification> {
+  const classifications = new Map<number, RedactionClassification>();
+  rule.edges.forEach((edge, index) => {
+    const classification = findCatalogEntry(input.catalog, edge.sourceRef)?.classification;
+    if (classification) classifications.set(index, classification);
+  });
+  return classifications;
+}
+
+function classifiedSources(input: MappingInput): SourceValueEnvelope[] {
+  return input.sourceValues.map((value) => ({
+    ...value,
+    classificationHint: strongestMappingClassification(
+      value.classificationHint,
+      findCatalogEntry(input.catalog, value.sourceRef)?.classification
+    ),
+  }));
+}
+
 export function executeRuntimeMapping(input: MappingInput): RuntimeMappingResult {
+  return executeRuntimeMappingResults(input);
+}
+
+function executeRuntimeMappingResults(
+  input: MappingInput,
+  evaluated?: ReadonlyMap<NonNullable<MappingInput['graphRules']>[number], GraphEvaluationResult>
+): RuntimeMappingResult {
   const values: SourceValueEnvelope[] = [];
   const reasons: ReasonCode[] = [];
   const ruleTrace: RuleTraceEntry[] = [];
+  const deferredTargets: FieldRef[] = [];
   if (!input.graphRules && (input.edges.length || input.transforms?.length)) {
     return {
       status: 'failed',
@@ -83,19 +152,16 @@ export function executeRuntimeMapping(input: MappingInput): RuntimeMappingResult
       return { status: 'failed', values: [], reasons, ruleTrace };
     }
     targets.add(target);
-    const result = evaluateMappingRule({
-      rule,
-      sourceValues: input.sourceValues.map((value) => ({
-        ...value,
-        classificationHint: strongestMappingClassification(
-          value.classificationHint,
-          findCatalogEntry(input.catalog, value.sourceRef)?.classification
-        ),
-      })),
-      runtimeContext: input.runtimeContext,
-      preparedSteps: input.preparedSteps,
-      edgeValueReferences: rule.edgeValueReferences,
-    });
+    const result =
+      evaluated?.get(rule) ??
+      evaluateMappingRule({
+        rule,
+        sourceValues: classifiedSources(input),
+        sourceClassifications: sourceClassifications(input, rule),
+        runtimeContext: input.runtimeContext,
+        preparedSteps: input.preparedSteps,
+        edgeValueReferences: rule.edgeValueReferences,
+      });
     reasons.push(...result.reasons);
     ruleTrace.push(...result.trace);
     if (
@@ -108,6 +174,9 @@ export function executeRuntimeMapping(input: MappingInput): RuntimeMappingResult
     }
     if (result.output.kind === 'value') {
       values.push(result.output.envelope);
+    } else if (result.output.kind === 'deferred') {
+      deferredTargets.push(rule.targetRef);
+      if (!input.allowDeferredOutputs) reasons.push(reason('transform.deferred_output'));
     }
   }
   const released = dropSuppressedTargets(
@@ -129,6 +198,9 @@ export function executeRuntimeMapping(input: MappingInput): RuntimeMappingResult
     graphRules: undefined,
     edges: [],
     transforms: [],
+    validationRules: input.validationRules?.filter(
+      (rule) => !deferredTargets.some((target) => sameFieldRef(target, rule.targetRef))
+    ),
     sourceValues: [
       ...input.sourceValues.filter(
         (source) => !outputTargets.some((target) => sameFieldRef(source.sourceRef, target))
@@ -143,5 +215,8 @@ export function executeRuntimeMapping(input: MappingInput): RuntimeMappingResult
     values: released,
     reasons,
     ruleTrace,
+    ...(deferredTargets.length > 0 ? { deferredTargets } : {}),
   };
 }
+
+export type { MappingStepPreparer, MappingStepPreparation } from './graph-evaluator';

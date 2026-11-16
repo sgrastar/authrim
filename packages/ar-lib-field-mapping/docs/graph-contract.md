@@ -1,13 +1,13 @@
 # Mapping graphs
 
 `MappingRuleGraph` has one target and one explicit output. Step inputs are ordered rule-local
-edge/step references; names are reserved for future conditional inputs. All references are checked,
+edge/step references; conditional inputs use the names described below. All references are checked,
 including unused steps. Steps can refer only to earlier steps. `analyzeMappingDependencies` walks
 from the output, returning evaluation order and every source dependency. Runtime and dry-run call
-the same evaluator; authoring exports it for console preview without changing console-only operations.
+the same evaluator; authoring exports it for console preview including structure and constant operations.
 
-Values use tagged states: absent, value (including null, empty string and empty array), failed and
-suppressed. Valid references to missing attributes produce absence, not missing_input. Suppression
+Values use tagged states: absent, value (including null, empty string and empty array), failed,
+suppressed and the trusted preparation-only state deferred. Valid references to missing attributes produce absence, not missing_input. Suppression
 and failure propagate through dependencies, including fallback. Only the explicit output is released.
 The final target is checked for required/type/cardinality; intermediate values are never candidates.
 All dependency classifications and provenance hints are retained, including input two and later.
@@ -23,10 +23,9 @@ writer even when a conflict policy is present, whether declared on the step or t
 
 Evaluation remains synchronous. Callers await an asynchronous pre-pass and pass a `preparedSteps`
 map of step IDs to tagged results, or the existing prepared identifier runtime context. Dependent
-steps still apply failure/suppression checks before reading prepared results. W2 can prepare tenant
-keyed hashes with this hook. No caller needs to become asynchronous just to execute a graph.
+steps still apply failure/suppression checks before reading prepared results. Tenant keyed hashes use this hook through the resumable evaluation driver. No caller needs to become asynchronous just to execute a graph.
 OIDC rebuilds its graph view from the selected binding after the pre-pass awaits external reads.
-Authoring previews can supply trusted synchronous `stepPreparers` for preview-only operations.
+Trusted callers may also supply synchronous `stepPreparers`.
 Each preparer receives already evaluated dependencies, runs once after input budget checks, and
 has its output checked against the same per-rule budget. Failure, suppression and absence are
 handled before invoking a preparer, just as for native operations. `evaluateAllSteps` additionally
@@ -206,3 +205,107 @@ The standalone step API uses the same budget, or accepts a caller-owned workBudg
 nor patterns appear in failure reasons. No new dependency, asynchronous operation or ambient state
 is required. Identifier post-transforms remain the data allow-list in graph.ts; value_map,
 default_if_empty and has_value are deliberately refused after a persistent identifier.
+
+## Structure, conditions, constants and tenant hashes (W2b)
+
+`json_extract_array` uses `path` and returns the found array without text conversion. Missing
+input/path or invalid JSON yields absence; present non-array values (including null) yield null.
+`json_extract_or` consumes absence: missing input/path or invalid JSON returns `defaultValue`.
+`nullAsMissing: true` also selects the default for null. Otherwise null remains null, scalar values
+become text and arrays/objects become JSON text. Empty strings and arrays are present values.
+Paths use dot keys and nonnegative bracket indexes, up to 512 characters and 32 segments. Indexes
+must be less than 500. Empty segments, malformed brackets and prototype keys are refused.
+
+`array_build` flattens one level in input order and always drops absence and null. `omitEmpty`
+also drops empty strings and empty nested arrays. `unique` compares JSON representations, keeping
+the first value and its type (objects with different key order remain distinct). Input and output
+collections are each capped at 500 entries, with the shared byte/node/depth limits.
+
+`constant_text`, `constant_boolean`, `constant_number` have no inputs and require `value` with the
+corresponding native JSON type. Text may be empty. Numbers may be fractional, must be finite and
+have magnitude at most Number.MAX_SAFE_INTEGER. Console text controls convert at
+`runtimeTransformParams`; malformed numeric text is refused rather than becoming zero.
+
+`conditional` retains the console parameters: `condition` (JSON text), `valueType`
+(as_text/as_boolean/as_number), `thenValue`/`thenBool`, `elseMode` (as_is/none/fixed) and
+`elseValue`/`elseBool`. Number branches require decimal text (optional minus, digits, optional fraction and surrounding
+whitespace), finite with safe magnitude; exponent, hexadecimal and leading-plus forms are refused,
+matching the console branch converter.
+boolean branch settings are the console strings true/false. `none` returns null. `as_is` preserves
+the value input's tagged absence, null, empty string or array. A matching branch may produce a
+fixed value even when the value input is absent. A missing condition attribute is undefined:
+exists/not_exists use the console's blank definition (absent, null, empty string, empty array),
+text comparisons use console string coercion and numeric comparisons treat blank as NaN.
+
+Every conditional must have exactly one input named `value` and one named `field:<field>` for
+each distinct rule field in its condition. These names resolve rule-owned edge/earlier-step
+references, never ambient subject fields. Missing, extra or duplicated names fail shared save/load
+validation. Group nodes use kind=group, match=all/any/none, children; leaves use kind=rule,
+field/operator/value. Groups must be nonempty. Conditions allow three group levels and 64 nodes;
+JSON text is at most 16 KiB. Operators match the console condition builder. Regexes use W2a's
+bounded subset and input cap, with every regex charged against the rule budget before execution.
+All condition dependencies contribute to analysis, source reads, classification, provenance and
+release safety, including fields only used in a false condition. Catalog classifications also taint a result when
+a condition field is absent, because its presence itself can be sensitive. Any failed/suppressed dependency
+fails/suppresses the entire conditional; a fixed branch never replaces those states.
+
+`hash` accepts one string, including the empty string. Null passes through; absence, failure and
+suppression propagate. Other input types fail; convert them explicitly before hashing. Output is
+HMAC-SHA-256 over UTF-8 text, encoded as lowercase hex or unpadded base64url. There is no plain
+SHA mode or public/default key. The key is the authenticated runtime tenant's KeyManager secret
+`field-mapping-hash`, never a tenant id supplied by the graph or a subject value. Runtime reads
+only the installed active secret; unavailable bindings/keys or preparation exceptions produce a
+failed step and critical `transform.hash_unavailable`, stopping release. The console preview and demo say decided at sign-in.
+Actual hashing uses the runtime/explain boundary; explain retains its synthetic test-user guard
+and does not expose secrets or add a new value-disclosure surface.
+
+The evaluator remains synchronous. Its internal continuation yields only hash requests after
+cached dependencies and input budget checks. The async driver awaits a tenant preparer and resumes
+the same evaluation; every upstream step runs once and all steps share the same 8 Mi work budget.
+The async runtime wrapper reuses those rule results during final validation. SAML's synchronous
+attribute receiver consumes a preparedSteps map from one pre-pass per rule. Before consent it
+prepares string hashes as `{ kind: 'deferred' }` without reading or provisioning a key. Null remains
+null; absent, failed and suppressed dependencies retain their states. Deferred is not a string or
+an envelope value. Every dependent step propagates it without executing, including conditions
+(all named condition dependencies), conversions, deletion/filtering and another hash. Suppression
+and failure take precedence. Persistent identifier consent preparation uses the same state, with
+its text allow-list and explicit suppression unchanged.
+
+The consent-only in-memory `allowDeferredOutputs` option exposes pending `deferredTargets` separately
+from runtime `values`. Pending targets defer their final-value validation until actual preparation;
+other targets are validated normally. Without this explicit opt-in, any pending output produces
+critical `transform.deferred_output`. These options/states are not saved graph parameters, API
+request fields or queue data. The SAML adapter retains pending attribute identities with no values,
+then applies destination visibility and required-item policies. It never runs institution value
+checks against provisional data. Consent items remain present even when a condition or filter might
+remove their actual output. Every approved pending item requires fresh computation; required,
+type, cardinality, institution and destination checks then run on actual values. If actual output
+is missing for a required item, release fails. A declined optional pending item contributes no
+value. Approval uses pending-item metadata, never substring matching of attribute values. Key
+acquisition failure during the approved computation fails release, even if a downstream step
+could otherwise produce a constant or remove the value. OIDC (ID token and
+UserInfo), introspection, SAML attributes, ACS, SCIM, VC verification and credential issuance use
+this preparation. SAML NameID retains its single persistent_identifier-only rule. Identifier
+post-processing remains the existing text allow-list: no conditional, constant, fallback extraction,
+array build, hash or other unapproved structure operation can follow an identifier; pairwise sub
+and SAML NameID still allow no post-step.
+
+### Key lifecycle and disaster recovery
+
+After all graph/source/version validation on an authorized Mapping Set version creation, the
+management repository calls `provisionMappingHashKeyRpc` idempotently if the version authors hash.
+No list/get/load/preview/explain/runtime path provisions the secret. A subsequent settings database
+failure can leave the newly enrolled key installed; retry reuses it. No SQL migration is needed.
+Generic KeyManager create/rotate routes refuse this dedicated reference. Platform-owned graphs
+never authorize use of the platform's key for tenant data: each consuming tenant needs its own
+key enrolled through an authorized hash authoring mutation; without it runtime fails closed.
+
+The owning Admin OpenAPI contract exposes GET `/api/admin/field-mapping/hash-key` (settings read,
+installed/kid metadata only) and POST `/api/admin/field-mapping/hash-key/rotate` (settings write,
+audit record, expectedKid precondition). Rotation changes every subsequent output immediately.
+Retrying the previous kid returns the completed rotation; another stale kid conflicts. Rotation
+never creates a missing key. Enrollment and rotation use the existing DR mutation admission and
+persist in the existing KeyManager secret map. Tenant export/restore preserves active and previous
+versions unchanged; restoring the same active key preserves hash outputs. No key is placed in a
+mapping row, trace, response, queue schema or new DR dataset. Release migration/baseline/manifests
+remain owner-controlled and are unchanged.

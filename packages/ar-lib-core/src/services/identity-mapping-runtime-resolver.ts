@@ -1,6 +1,7 @@
 import { equivalentMappingSnapshotHashes } from './mapping-snapshot-equivalence';
 import {
   readMappingReference,
+  validateMappingRuleGraph,
   TRANSFORM_OPERATION_SCHEMAS,
   analyzeMappingDependencies,
   withMappingGraph,
@@ -436,6 +437,8 @@ export async function resolveRuntimeIdentityMappingBinding(
     edges,
     transforms
   );
+  if (storedGraphs.some((rule) => validateMappingRuleGraph(rule).length > 0))
+    throw new Error('invalid_transform: stored graph is invalid');
   const graph = withMappingGraph({
     edges: [],
     transforms: [],
@@ -1009,6 +1012,8 @@ export async function loadRuntimeMappingGraph(
     edges,
     transforms
   );
+  if (graphRules.some((rule) => validateMappingRuleGraph(rule).length > 0))
+    throw new Error('invalid_transform: stored graph is invalid');
   return withMappingGraph({ edges: [], transforms: [], graphRules });
 }
 

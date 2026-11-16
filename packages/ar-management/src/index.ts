@@ -1,4 +1,8 @@
 import {
+  adminMappingHashKeyGetHandler,
+  adminMappingHashKeyRotateHandler,
+} from './mapping-hash-key';
+import {
   environmentReplicationGrantsRouter,
   environmentReplicationMachineRouter,
   isEnvironmentReplicationControlRequest,
@@ -3072,6 +3076,16 @@ app.post(
   '/api/admin/field-mapping/identifier-exceptions/:name/import',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
   adminIdentifierExceptionsImportHandler
+);
+app.get(
+  '/api/admin/field-mapping/hash-key',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
+  adminMappingHashKeyGetHandler
+);
+app.post(
+  '/api/admin/field-mapping/hash-key/rotate',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminMappingHashKeyRotateHandler
 );
 app.get(
   '/api/admin/field-mapping/identifier-salts',

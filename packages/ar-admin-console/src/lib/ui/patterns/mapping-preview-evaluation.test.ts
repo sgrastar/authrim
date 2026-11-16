@@ -30,7 +30,7 @@ describe('single-pass mapping preview', () => {
 		expect(trace?.output).toEqual({ known: true, value: 'e'.repeat(15000) });
 	});
 
-	it('reuses evaluated inputs across multiple preview-only operation boundaries', () => {
+	it('reuses evaluated inputs across multiple structure operation boundaries', () => {
 		const nested = JSON.stringify({ nested: JSON.stringify({ label: 'é' }) });
 		const trace = preview(` ${nested} `, [
 			step('trim'),
@@ -74,8 +74,8 @@ describe('single-pass mapping preview', () => {
 		]);
 	});
 
-	it('shares the work budget across native and preview-only operations', () => {
-		const value = 'e'.repeat(15000);
+	it('shares the work budget across native and structure operations', () => {
+		const value = 'e'.repeat(1500);
 		const trace = preview(
 			value,
 			Array.from({ length: 160 }, (_, index) =>
