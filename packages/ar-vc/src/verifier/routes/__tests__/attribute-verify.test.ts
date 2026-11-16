@@ -1,3 +1,7 @@
+import {
+  equivalentMappingSnapshotHashes,
+  restoreMappingSnapshotMetadata,
+} from '@authrim/ar-lib-core/services/mapping-snapshot-equivalence';
 import { storedVCGraphBinding } from '@authrim/ar-lib-core/test-support/mapping-graph';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Context } from 'hono';
@@ -335,16 +339,29 @@ describe('attribute verification initiation', () => {
     }
   );
 
-  it.each([[null], [{ ...mappingBinding, mappingSnapshotHash: 'changed' }]])(
-    'rejects an unavailable or changed mapping snapshot %#',
-    async (mapping) => {
-      mocks.resolveMapping.mockResolvedValue(mapping);
-      const response = await initiateAttributeVerification(
-        createContext({ json: { credential_profile_id: 'profile-1' } })
-      );
-      expect(response.status).toBe(409);
-    }
-  );
+  it.each([
+    [null],
+    [{ ...mappingBinding, mappingSnapshotHash: 'changed' }],
+    [{ ...mappingBinding, mappingSnapshotPinTrusted: false }],
+  ])('rejects an unavailable or changed mapping snapshot %#', async (mapping) => {
+    mocks.resolveMapping.mockResolvedValue(mapping);
+    const response = await initiateAttributeVerification(
+      createContext({ json: { credential_profile_id: 'profile-1' } })
+    );
+    expect(response.status).toBe(409);
+  });
+
+  it('uses the same migration equivalence check when initiating verification', async () => {
+    mocks.resolveMapping.mockResolvedValue({
+      ...mappingBinding,
+      mappingSnapshotHash: 'migrated',
+      equivalentMappingSnapshotHashes: ['snapshot-1'],
+    });
+    const response = await initiateAttributeVerification(
+      createContext({ json: { credential_profile_id: 'profile-1' } })
+    );
+    expect(response.status).toBe(200);
+  });
 
   it('returns a server error without an authorization request when persistence fails', async () => {
     const stub = createRequestStub(async () => new Response(null, { status: 503 }));
@@ -634,19 +651,20 @@ describe('attribute verification response', () => {
     }
   );
 
-  it.each([[null], [{ ...mappingBinding, mappingSnapshotHash: 'changed' }]])(
-    'rejects a deleted or replaced mapping snapshot during verification %#',
-    async (mapping) => {
-      mocks.resolveMapping.mockResolvedValue(mapping);
-      const stub = useRequestState(pendingRequest());
-      const response = await attributeVerifyResponse(
-        createContext({ json: { vp_token: 'vp', state: REQUEST_ID } })
-      );
-      expect(response.status).toBe(500);
-      expect(mocks.linkVerificationToUser).not.toHaveBeenCalled();
-      expect(await paths(stub)).toContain('/release');
-    }
-  );
+  it.each([
+    [null],
+    [{ ...mappingBinding, mappingSnapshotHash: 'changed' }],
+    [{ ...mappingBinding, mappingSnapshotPinTrusted: false }],
+  ])('rejects a deleted or replaced mapping snapshot during verification %#', async (mapping) => {
+    mocks.resolveMapping.mockResolvedValue(mapping);
+    const stub = useRequestState(pendingRequest());
+    const response = await attributeVerifyResponse(
+      createContext({ json: { vp_token: 'vp', state: REQUEST_ID } })
+    );
+    expect(response.status).toBe(500);
+    expect(mocks.linkVerificationToUser).not.toHaveBeenCalled();
+    expect(await paths(stub)).toContain('/release');
+  });
 
   it('rejects a mapping execution failure without committing raw claims', async () => {
     mocks.executeRuntimeMapping.mockReturnValue({ status: 'failed', values: [] });
@@ -909,6 +927,44 @@ describe('verified attribute reads', () => {
       'mapping_policy_changed'
     );
   });
+
+  it.each(['migrated', 'attacker-selected'])(
+    'rejects restored evidence pins even on direct hash equality: %s',
+    async (snapshotHash) => {
+      const metadata = restoreMappingSnapshotMetadata(
+        JSON.stringify({
+          dependencyGraphId: 'graph_023_forged',
+          graphMigration023: {
+            previousSnapshotHash: 'attacker-selected',
+            snapshotHash: 'migrated',
+          },
+        })
+      );
+      mocks.resolveMapping.mockResolvedValue({
+        ...mappingBinding,
+        mappingSnapshotHash: snapshotHash,
+        mappingSnapshotPinTrusted: false,
+        equivalentMappingSnapshotHashes: equivalentMappingSnapshotHashes(metadata, snapshotHash),
+      });
+      mocks.findVerificationsByUser.mockResolvedValue({
+        items: [
+          {
+            id: 'forged-evidence',
+            invalidated_at: null,
+            credential_profile_id: 'profile-1',
+            mapping_version_id: 'mapping-version-1',
+            mapping_snapshot_hash: 'attacker-selected',
+          },
+        ],
+      });
+      await getAttributes(createContext());
+      expect(mocks.invalidateVerification).toHaveBeenCalledExactlyOnceWith(
+        'tenant-1',
+        'forged-evidence',
+        'mapping_policy_changed'
+      );
+    }
+  );
 
   it('invalidates stale, untrusted, and mapping-changed evidence before returning attributes', async () => {
     mocks.findVerificationsByUser.mockResolvedValue({

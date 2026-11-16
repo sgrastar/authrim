@@ -161,7 +161,7 @@
             },
             {
               "path": "023_mapping_rule_graph.sql",
-              "checksum": "29bcf2d28423bc2667d3829d4480bfb7842c6406593f2d7108c0095902b2115e"
+              "checksum": "2deaf4914d48c774ee0a8d31373c0d25dbc2cb66099e0a41d0b2d370654d36e6"
             }
           ]
         },
@@ -416,7 +416,7 @@
         },
         {
           "path": "023_mapping_rule_graph.sql",
-          "checksum": "29bcf2d28423bc2667d3829d4480bfb7842c6406593f2d7108c0095902b2115e"
+          "checksum": "2deaf4914d48c774ee0a8d31373c0d25dbc2cb66099e0a41d0b2d370654d36e6"
         }
       ]
     },

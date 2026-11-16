@@ -470,7 +470,8 @@ export async function adminCredentialProfilePublishHandler(c: AdminContext) {
       credentialConfigurationId: version.credential_configuration_id,
       fieldMappingSetId: version.issuance_mapping_set_id,
     });
-    if (!issuance) throw new Error('issuance_mapping_not_active');
+    if (!issuance || issuance.mappingSnapshotPinTrusted === false)
+      throw new Error('issuance_mapping_not_active');
     const verification = version.verification_mapping_set_id
       ? await resolveRuntimeIdentityMappingBinding(adminDb(c), {
           tenantId: profile.tenant_id,
@@ -482,7 +483,10 @@ export async function adminCredentialProfilePublishHandler(c: AdminContext) {
           fieldMappingSetId: version.verification_mapping_set_id,
         })
       : null;
-    if (version.verification_mapping_set_id && !verification)
+    if (
+      version.verification_mapping_set_id &&
+      (!verification || verification.mappingSnapshotPinTrusted === false)
+    )
       throw new Error('verification_mapping_not_active');
     const claimAllowlist = normalizeClaims(JSON.parse(version.claim_allowlist_json));
     const destinationNamespace = `${VC_DESTINATION_PREFIX}${version.credential_configuration_id}`;
@@ -676,7 +680,11 @@ export async function adminCredentialOfferCreateHandler(c: AdminContext) {
       fieldMappingSetId: version.issuance_mapping_set_id,
       fieldMappingVersionId: version.issuance_mapping_version_id,
     });
-    if (!binding || binding.mappingSnapshotHash !== version.issuance_mapping_snapshot_hash)
+    if (
+      !binding ||
+      binding.mappingSnapshotPinTrusted === false ||
+      binding.mappingSnapshotHash !== version.issuance_mapping_snapshot_hash
+    )
       throw new Error('mapping_snapshot_changed');
     const canonicalClaims = canonicalProjectionToOIDCClaimsUser(projection) as unknown as Record<
       string,

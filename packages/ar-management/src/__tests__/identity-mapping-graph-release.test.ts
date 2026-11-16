@@ -1,3 +1,7 @@
+import {
+  restoreMappingSnapshotMetadata,
+  runtimeMappingSnapshotMatches,
+} from '@authrim/ar-lib-core/services/mapping-snapshot-equivalence';
 import { describe, expect, it } from 'vitest';
 import { resolveRuntimeIdentityMappingBinding } from '@authrim/ar-lib-core';
 import { executeRuntimeMapping } from '@authrim/ar-lib-field-mapping/runtime';
@@ -113,6 +117,7 @@ describe('saved competing graph outputs at SAML release', () => {
         });
         await repository.activateFieldMappingVersion(tenantId, set.id, version.id, {
           snapshotId: snapshot.id,
+          holderId: 'graph-test-holder',
           activationScope: { protocol: 'saml', role: 'idp' },
         });
         const binding = await resolveRuntimeIdentityMappingBinding(adapter, {
@@ -122,6 +127,52 @@ describe('saved competing graph outputs at SAML release', () => {
           role: 'idp',
         });
         if (!binding) throw new Error('Saved mapping was not loaded');
+        expect(runtimeMappingSnapshotMatches(binding, snapshot.snapshotHash)).toBe(true);
+        db.prepare('UPDATE compiled_mapping_snapshots SET metadata_json=? WHERE id=?').run(
+          restoreMappingSnapshotMetadata(null),
+          snapshot.id
+        );
+        db.prepare('UPDATE field_mapping_versions SET restore_id=? WHERE id=?').run(
+          'destination-restore',
+          version.id
+        );
+        const imported = await resolveRuntimeIdentityMappingBinding(adapter, {
+          tenantId,
+          fieldMappingSetId: set.id,
+          protocol: 'saml',
+          role: 'idp',
+        });
+        if (!imported) throw new Error('Restored graph was not loaded');
+        expect(imported.graphRules).toHaveLength(2);
+        expect(runtimeMappingSnapshotMatches(imported, snapshot.snapshotHash)).toBe(false);
+        const replacement = await repository.compileFieldMappingVersion(
+          tenantId,
+          set.id,
+          version.id,
+          {
+            catalogVersionId: catalog.activeVersion.id,
+            metadata: { snapshotPinState: 'requires_recompile' },
+          }
+        );
+        await repository.activateFieldMappingVersion(tenantId, set.id, version.id, {
+          snapshotId: replacement.id,
+          holderId: 'graph-test-holder',
+          activationScope: { protocol: 'saml', role: 'idp' },
+        });
+        const recompiled = await resolveRuntimeIdentityMappingBinding(adapter, {
+          tenantId,
+          fieldMappingSetId: set.id,
+          protocol: 'saml',
+          role: 'idp',
+        });
+        if (!recompiled) throw new Error('Recompiled graph was not loaded');
+        expect(runtimeMappingSnapshotMatches(recompiled, replacement.snapshotHash)).toBe(true);
+        expect(runtimeMappingSnapshotMatches(recompiled, snapshot.snapshotHash)).toBe(false);
+        const later = await repository.compileFieldMappingVersion(tenantId, set.id, version.id, {
+          catalogVersionId: catalog.activeVersion.id,
+        });
+        expect(later.snapshotHash).not.toBe(snapshot.snapshotHash);
+        expect(later.snapshotHash).not.toBe(replacement.snapshotHash);
         expect(binding.edges).toHaveLength(2);
         expect(binding.transforms).toHaveLength(4);
         const subject = {

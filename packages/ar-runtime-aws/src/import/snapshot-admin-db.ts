@@ -1,4 +1,5 @@
 import { createRequire } from 'node:module';
+import { randomUUID } from 'node:crypto';
 import type {
   DatabaseAdapter,
   ExecuteResult,
@@ -8,6 +9,7 @@ import type {
   TransactionContext,
 } from '@authrim/ar-lib-core/db/adapter';
 import type { PortableSqliteRow } from '@authrim/ar-lib-core/services/tenant-portability/sqlite-dataset-inspector';
+import { restoreMappingSnapshotMetadata } from '@authrim/ar-lib-core/services/mapping-snapshot-equivalence';
 import { rowSqliteValue, rowText } from './verified-rows';
 
 const require = createRequire(import.meta.url);
@@ -47,8 +49,12 @@ const MINIMUM_COLUMNS = {
     'version_label',
     'field_mapping_hash',
     'compatibility_range',
+    'restore_id',
   ],
   compiled_mapping_snapshots: [
+    'id',
+    'metadata_json',
+    'compiled_at',
     'tenant_id',
     'field_mapping_version_id',
     'catalog_version_id',
@@ -89,6 +95,9 @@ const MINIMUM_COLUMNS = {
     'action',
     'scope_json',
     'metadata_json',
+    'target_ref_json',
+    'output_edge_id',
+    'output_step_id',
   ],
   mapping_rule_edges: [
     'id',
@@ -103,12 +112,17 @@ const MINIMUM_COLUMNS = {
     'id',
     'tenant_id',
     'rule_id',
-    'edge_id',
     'step_order',
     'operation',
     'parameters_json',
-    // The step's own output target (a step with no input edge); null for a backup made before it.
-    'target_ref_json',
+  ],
+  mapping_transform_step_inputs: [
+    'tenant_id',
+    'step_id',
+    'position',
+    'edge_id',
+    'input_step_id',
+    'name',
   ],
   mapping_validation_rules: [
     'id',
@@ -140,6 +154,7 @@ const NUMERIC_COLUMNS = new Set([
   'created_at',
   'display_order',
   'priority',
+  'position',
   'step_order',
 ]);
 const SAFE_COLUMN = /^[a-z][a-z0-9_]{0,127}$/u;
@@ -204,6 +219,7 @@ export function createSnapshotAdminAdapter(input: {
 }): DatabaseAdapter {
   const module = require('node:sqlite') as SqliteModule;
   const db = new module.DatabaseSync(':memory:');
+  const restoreId = randomUUID();
   try {
     for (const table of SNAPSHOT_ADMIN_MAPPING_TABLES) {
       const tenantRows = input.rows[table];
@@ -240,7 +256,15 @@ export function createSnapshotAdminAdapter(input: {
         const identity = `${rowText(row, 'tenant_id')}\0${id ?? JSON.stringify(row)}`;
         if (seen.has(identity)) invalid();
         seen.add(identity);
-        statement.run(...names.map((name) => (row[name] ? rowSqliteValue(row, name) : null)));
+        statement.run(
+          ...names.map((name) => {
+            if (table === 'field_mapping_versions' && name === 'restore_id') return restoreId;
+            const value = row[name] ? rowSqliteValue(row, name) : null;
+            return table === 'compiled_mapping_snapshots' && name === 'metadata_json'
+              ? restoreMappingSnapshotMetadata(typeof value === 'string' ? value : null)
+              : value;
+          })
+        );
       }
     }
     return new SnapshotAdminAdapter(db);

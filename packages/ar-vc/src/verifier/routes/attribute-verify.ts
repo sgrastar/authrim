@@ -308,7 +308,10 @@ export async function initiateAttributeVerification(
         fieldMappingVersionId: profile.verification_mapping_version_id,
       }
     );
-    if (!mapping || mapping.mappingSnapshotHash !== profile.verification_mapping_snapshot_hash) {
+    if (
+      !mapping ||
+      !runtimeMappingSnapshotMatches(mapping, profile.verification_mapping_snapshot_hash)
+    ) {
       return c.json(
         { error: 'invalid_request', error_description: 'Verification mapping is unavailable' },
         409
