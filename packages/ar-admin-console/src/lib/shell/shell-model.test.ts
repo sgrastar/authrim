@@ -78,9 +78,9 @@ describe('shell model', () => {
 		expect(topNavEntries('tenant', t).some((entry) => entry.inherited)).toBe(false);
 		const platform = topNavEntries('platform', t);
 		expect(platform.filter((entry) => entry.inherited).map((entry) => entry.id)).toEqual([
+			'applications',
 			'users',
 			'access',
-			'applications',
 			'configure',
 			'operate'
 		]);
