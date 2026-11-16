@@ -15,6 +15,11 @@ export interface ClientsClient {
 	list(signal?: AbortSignal): Promise<ClientOption[]>;
 }
 
+export interface ClientMappingClient {
+	mapping(id: string): Promise<{ setId: string; pinned: boolean }>;
+	bindMapping(id: string, setId: string, idempotencyKey?: string): Promise<void>;
+}
+
 /** The most clients one page of the list gives (the API's own limit is higher). */
 const PAGE = 100;
 
@@ -36,7 +41,48 @@ export function clientFromRow(value: unknown): ClientOption | null {
 	};
 }
 
-export const httpClients: ClientsClient = {
+export const httpClients: ClientsClient & ClientMappingClient = {
+	async mapping(id) {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/clients/${encodeURIComponent(id)}`
+		);
+		if (!response.ok) throw await errorFromResponse(response);
+		const body = object(await response.json());
+		const choice = object(object(body.client).identity_mapping);
+		return {
+			setId: typeof choice.fieldMappingSetId === 'string' ? choice.fieldMappingSetId : '',
+			pinned: typeof choice.fieldMappingVersionId === 'string'
+		};
+	},
+	async bindMapping(id, setId, idempotencyKey) {
+		const currentResponse = await adminFetch(
+			`${API_BASE_URL}/api/admin/clients/${encodeURIComponent(id)}`
+		);
+		if (!currentResponse.ok) throw await errorFromResponse(currentResponse);
+		const current = object(object(object(await currentResponse.json()).client).identity_mapping);
+		if (current.fieldMappingVersionId) throw new Error('Pinned mappings are read-only');
+		if (current.fieldMappingSetId === setId) return;
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/clients/${encodeURIComponent(id)}`,
+			{
+				method: 'PUT',
+				...(idempotencyKey ? { headers: { 'Idempotency-Key': idempotencyKey } } : {}),
+				includeJsonContentType: true,
+				body: JSON.stringify({
+					identity_mapping: {
+						...(typeof current.destinationNamespace === 'string'
+							? { destinationNamespace: current.destinationNamespace }
+							: {}),
+						...(typeof current.sourceProfileId === 'string'
+							? { sourceProfileId: current.sourceProfileId }
+							: {}),
+						fieldMappingSetId: setId
+					}
+				})
+			}
+		);
+		if (!response.ok) throw await errorFromResponse(response);
+	},
 	async list(signal) {
 		const response = await adminFetch(`${API_BASE_URL}/api/admin/clients?limit=${PAGE}`, {
 			signal
