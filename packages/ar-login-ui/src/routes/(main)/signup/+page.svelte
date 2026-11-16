@@ -44,6 +44,7 @@
 	import {
 		MAX_RUNTIME_AUTO_ADVANCE_STEPS,
 		runtimeAutoSubmitHandle,
+		shouldRenderRuntimeStep,
 		runtimeStepWaitsForSignIn
 	} from '#lib/authrim/flow-runtime-steps.js';
 	import {
@@ -1128,10 +1129,6 @@
 		return policyReady && destinationReady;
 	}
 
-	function shouldRenderRuntimeStep(step: FlowRuntimeStep): boolean {
-		return !isRuntimeAuthStep(step) || Boolean(getRuntimeScreen(step));
-	}
-
 	function getRuntimeScreenContinueHandle(step: FlowRuntimeStep | null): string {
 		if (step?.component === 'consent_policy') return 'accepted';
 		if (step?.component === 'screen') return 'submitted';
@@ -1531,12 +1528,11 @@
 					getRuntimeStepSubmitInputForAuthenticatedAction()
 				);
 				if (!ok) return;
-				if (runtimeFlow?.interaction.state !== 'completed') {
-					pendingPostAuthRedirect = '/';
-					return;
-				}
+				if (runtimeFlow?.interaction.state !== 'completed') return;
+				consumeFlowRuntimeState(runtimeFlow.interaction.id);
 			}
-			window.location.href = '/';
+			// A completed sign-up goes where the server says (the Flow's destination), else home.
+			window.location.href = getCompletedSignupRedirect();
 		} catch (err) {
 			error = messageForCaughtError(err, $LL.error_unknown());
 		} finally {

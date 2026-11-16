@@ -24,6 +24,10 @@ import {
   isShardedSessionId,
   getChallengeStoreByChallengeId,
   createAccountAuthContextFromHono,
+  createAuthContextFromHono,
+  loadTenantLoginFlowCompletion,
+  resolvePostLoginRedirectUrl,
+  resolveRegistrationCompletionRedirectUrl,
   resolveAccountDataContextFromHono,
   createPIIContextFromHono,
   CanonicalRuntimeUserStore,
@@ -392,6 +396,32 @@ export async function sessionStatusHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
+    // Where a signed-in person who opens the sign-in page goes: the tenant's sign-in Flow's own
+    // destination, else the tenant's. Resolved here, with the checks the sign-in's own is, and
+    // only when asked for (`include=post_login`).
+    const includeDestination = (includeParam ?? '')
+      .split(',')
+      .map((item) => item.trim().toLowerCase())
+      .includes('post_login');
+    let postLoginRedirect: string | undefined;
+    if (includeDestination) {
+      try {
+        const tenantId = getTenantIdFromContext(c);
+        const completion = await loadTenantLoginFlowCompletion(
+          createAuthContextFromHono(c, tenantId).coreAdapter,
+          tenantId
+        );
+        postLoginRedirect = completion
+          ? (await resolveRegistrationCompletionRedirectUrl(c.env, tenantId, completion))
+              .redirectUrl
+          : (await resolvePostLoginRedirectUrl(c.env, tenantId)).redirectUrl;
+      } catch {
+        log.warn('Failed to resolve the post sign-in destination', {
+          action: 'resolve_post_login',
+        });
+      }
+    }
+
     // Fetch user email from the canonical runtime user store.
     let userEmail: string | undefined;
     let userName: string | undefined;
@@ -434,6 +464,7 @@ export async function sessionStatusHandler(c: Context<{ Bindings: Env }>) {
           : Math.floor(session.createdAt / 1000),
       ...(typeof session.data?.acr === 'string' && { acr: session.data.acr }),
       ...(Array.isArray(session.data?.amr) && { amr: session.data.amr }),
+      ...(postLoginRedirect && { post_login_redirect: postLoginRedirect }),
     });
   } catch (error) {
     log.error('Session status error', { action: 'status' }, error as Error);

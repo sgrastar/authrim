@@ -213,3 +213,27 @@ export async function loadAssignedLoginFlowProfileRefs(
   const runtime = row ? readPublishedRuntime(row.runtime_snapshot_json) : null;
   return runtime ? flowProfileRefsOfRuntime(runtime) : null;
 }
+
+/**
+ * The destination the tenant's own sign-in Flow (the one assigned to the tenant, published) sets
+ * once someone is signed in, or null when it sets none or there is no such Flow (then the
+ * tenant's post-sign-in destination holds). For a person who is already signed in when they open
+ * the sign-in page: there is no interaction to read it from.
+ */
+export async function loadTenantLoginFlowCompletion(
+  db: DatabaseAdapter,
+  tenantId: string
+): Promise<RegistrationCompletion | null> {
+  const row = await db.queryOne<{ runtime_snapshot_json: string | null }>(
+    `SELECT v.runtime_snapshot_json AS runtime_snapshot_json
+       FROM flow_assignments a
+       JOIN flows f ON f.id = a.flow_id AND f.tenant_id = a.tenant_id
+       JOIN flow_versions v ON v.id = f.published_version_id AND v.tenant_id = f.tenant_id
+      WHERE a.tenant_id = ? AND a.flow_kind = 'login' AND a.enabled = TRUE
+        AND f.status = 'published' AND f.deleted_at IS NULL
+        AND a.target_type = 'tenant' AND a.target_id IS NULL`,
+    [tenantId]
+  );
+  const runtime = row ? readPublishedRuntime(row.runtime_snapshot_json) : null;
+  return runtime ? loginCompletionOfRuntime(runtime) : null;
+}

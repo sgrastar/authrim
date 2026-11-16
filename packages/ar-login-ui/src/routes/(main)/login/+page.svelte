@@ -50,6 +50,7 @@
 	import {
 		MAX_RUNTIME_AUTO_ADVANCE_STEPS,
 		runtimeAutoSubmitHandle,
+		shouldRenderRuntimeStep,
 		runtimeStepWaitsForSignIn,
 		runtimeContinuationString,
 		runtimeSamlContinuationPath
@@ -2207,10 +2208,6 @@
 				(field) => !field.required || runtimeDestinationFieldDecisions[field.key] === true
 			);
 		return policyReady && destinationReady;
-	}
-
-	function shouldRenderRuntimeStep(step: FlowRuntimeStep): boolean {
-		return !isRuntimeAuthStep(step) || Boolean(getRuntimeScreen(step));
 	}
 
 	function getRuntimeScreenContinueHandle(step: FlowRuntimeStep | null): string {
