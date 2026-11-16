@@ -3,7 +3,7 @@
 		AppSummary,
 		ClientMappingChoice,
 		EffectiveMapping,
-		IdentityMappingClient,
+		IdentityMappingStoryClient,
 		MappingSetSummary
 	} from '#lib/api/identity-mapping.js';
 	import { t } from '#lib/i18n/i18n.svelte.js';
@@ -28,7 +28,7 @@
 	 */
 	interface Props {
 		onstate?: (state: { dirty: boolean; saving: boolean }) => void;
-		client: IdentityMappingClient;
+		client: IdentityMappingStoryClient;
 		tenantId: string;
 		clientId: string;
 		onset?: (setId: string) => void;

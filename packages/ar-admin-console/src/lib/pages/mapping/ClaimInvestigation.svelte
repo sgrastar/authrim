@@ -6,7 +6,7 @@
 		ExplainConsent,
 		ExplainedClaim,
 		ExplainSurface,
-		IdentityMappingClient,
+		IdentityMappingStoryClient,
 		TestUser
 	} from '#lib/api/identity-mapping.js';
 	import { t } from '#lib/i18n/i18n.svelte.js';
@@ -32,7 +32,7 @@
 	 */
 	interface Props {
 		onmapping?: () => void;
-		client: IdentityMappingClient;
+		client: IdentityMappingStoryClient;
 		tenantId: string;
 		/** Preselected app and user, and whether to investigate at once (links, stories). */
 		clientId: string;

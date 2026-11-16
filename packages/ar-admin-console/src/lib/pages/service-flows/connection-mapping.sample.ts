@@ -6,7 +6,6 @@ import type { ConnectionKind } from './connection-model.js';
  * direction: a provider's (OP, IdP) flow takes what it sends into Authrim's attributes; an
  * app's (RP, SP) flow makes what the app receives from Authrim's attributes. What Authrim then
  * passes on is the other flows' business. Attribute names are data, so they are not translated.
- * TODO(api): read and write through the field-mapping API, one mapping per connection.
  */
 export interface ConnectionMapping {
 	direction: 'inbound' | 'outbound';

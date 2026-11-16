@@ -82,6 +82,8 @@ export async function releaseSAMLAttributesWithInstitution(input: {
   env: Env;
   tenantId: string;
   subject: SAMLAttributeSubject;
+  /** A release that already enriched its subject reuses the same institution snapshot. */
+  institution?: SAMLInstitutionRelease;
   /** The release config, without the institution. */
   releaseConfig: SAMLAttributeReleaseConfig;
   onError: (message: string, error: unknown) => void;
@@ -97,7 +99,9 @@ export async function releaseSAMLAttributesWithInstitution(input: {
     suppressed: Record<string, true>;
   }>;
 }): Promise<SAMLAttributeReleaseResult> {
-  const institution = await loadSAMLInstitutionRelease(input.env, input.tenantId, input.onError);
+  const institution =
+    input.institution ??
+    (await loadSAMLInstitutionRelease(input.env, input.tenantId, input.onError));
   const subject = withSAMLInstitutionAttributes(input.subject, institution);
   const identityMapping = input.releaseConfig.identityMapping;
   const prepared =

@@ -1,9 +1,9 @@
 <script lang="ts">
 	import type {
-		IdentityMappingClient,
+		IdentityMappingStoryClient,
 		SetChangePreview,
-		SetContent,
-		SetContentDraft,
+		StoryMappingContent,
+		StoryMappingDraft,
 		TestUser
 	} from '#lib/api/identity-mapping.js';
 	import { ApiError } from '#lib/api/api-error.js';
@@ -36,11 +36,11 @@
 	interface Props {
 		onstate?: (state: { dirty: boolean; saving: boolean }) => void;
 		onchanged?: () => void;
-		client: IdentityMappingClient;
+		client: IdentityMappingStoryClient;
 		tenantId: string;
 		setId: string;
 		/** Start with these unsaved edits (stories, or a link from another screen). */
-		edits?: SetContentDraft;
+		edits?: StoryMappingDraft;
 		/** Compare with this test user's values from the start. */
 		sampleUserId?: string;
 	}
@@ -51,7 +51,7 @@
 		mappings: Mapping[];
 	}
 
-	let content = $state<SetContent | null>(null);
+	let content = $state<StoryMappingContent | null>(null);
 	let users = $state<TestUser[]>([]);
 	/** Apps using the set: listed in a tenant, counted per tenant for a platform set. */
 	let usedByCount = $state(0);
@@ -72,14 +72,14 @@
 	let generation = 0;
 
 	// The editor's transforms go to the API as they are, so a transform edit is a change too.
-	const toMappings = (list: SetContentDraft['mappings']): Mapping[] =>
+	const toMappings = (list: StoryMappingDraft['mappings']): Mapping[] =>
 		list.map((m, index) => ({
 			id: `m${index}`,
 			target: m.target,
 			sources: [...m.sources],
 			steps: structuredClone((m.steps ?? []) as Mapping['steps'])
 		}));
-	const toDraft = (list: Mapping[]): SetContentDraft => ({
+	const toDraft = (list: Mapping[]): StoryMappingDraft => ({
 		mappings: list.map((m) => ({
 			target: m.target,
 			sources: [...m.sources],

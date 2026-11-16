@@ -12,11 +12,8 @@
  * Operations, parameter names and defaults follow the runtime engine
  * (@authrim/ar-lib-field-mapping, core/transforms.ts), which evaluates what is saved here.
  *
- * TODO(api): read and write through the field-mapping versions API. The runtime runs
- * `transforms: MappingTransformStep[]`, each step reading `inputEdgeIds` (source values or
- * earlier steps' outputs). Compile these steps into that graph: a step before the combining
- * step becomes one runtime step per source edge; the combining step reads all of their
- * outputs; later steps chain on its output. Positions on a canvas are not needed any more.
+ * The Mapping Set facade reads/writes persisted rules through mapping-codec.ts. A step before
+ * combining expands per source; combining reads those ordered outputs; later steps chain.
  * The sample output is computed by the engine itself (mapping-preview.ts), so the console
  * never shows a result the runtime would not produce.
  * Structure, conditions and constants share the backend engine. Hash preview stays deferred.
@@ -33,8 +30,11 @@ import {
 	TRANSFORM_LIMITS
 } from '@authrim/ar-lib-field-mapping/authoring';
 import type { ConditionGroup } from './condition-model';
+import type { FieldRef } from '@authrim/ar-lib-field-mapping/contract';
 
 export interface MappingField {
+	/** Persisted field identity supplied by the HTTP editor adapter. Stories may use keys alone. */
+	ref?: FieldRef & { profileId?: string };
 	key: string;
 	label?: string;
 	type: MappingType;
@@ -575,11 +575,8 @@ export function newStep(transform: TransformId, id: string): TransformStep {
  * not apply to it (a digest for an algorithm that has none, a store with stored off), so this is
  * what the console checks with `persistentIdentifierSettingsProblem` today.
  *
- * SERIALIZATION SEAM: the console's editor does not yet compile to the runtime's steps and
- * edges (see the TODO(api) at the top). When it does, a step's `parameters` must be built from
- * this function, never from `step.params` as they are: the editor keeps what was typed for a
- * setting that has stopped applying (the digest of a former algorithm), and it must not be sent.
- * The step has no input edge (it is made from the account's ID or an identifier source).
+ * mapping-codec.ts uses this function when compiling both parameters and owned editor metadata.
+ * The step has no input edge: it is made from the account ID or an identifier source.
  */
 export function identifierRuntimeParams(params: TransformStep['params']): Record<string, string> {
 	const def = transformDef('persistent_identifier');
