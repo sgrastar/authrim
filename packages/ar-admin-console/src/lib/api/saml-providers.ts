@@ -1,4 +1,5 @@
 import { API_BASE_URL, adminFetch } from './admin-request';
+import { stepUpHeaders, withStepUp } from './admin-step-up';
 import { errorFromResponse } from './api-error';
 import type { MappingSetDetail } from './mapping-set';
 
@@ -17,6 +18,55 @@ export interface SamlServiceProviderOption {
 
 export interface SamlProvidersClient {
 	listServiceProviders(signal?: AbortSignal): Promise<SamlServiceProviderOption[]>;
+}
+
+export interface CreateServiceProviderInput {
+	name: string;
+	providerType: 'saml_sp';
+	enabled: false;
+	config: {
+		entityId: string;
+		acsUrl: string;
+		allowedBindings: ['post'];
+		signAssertions: true;
+		signResponses: true;
+	};
+}
+export interface SamlCreationClient {
+	createServiceProvider(input: CreateServiceProviderInput): Promise<{ id: string }>;
+}
+
+export interface SamlIdentityProvider {
+	id: string;
+	name: string;
+	enabled: boolean;
+	updatedAt: string;
+	entityId: string;
+	ssoUrl: string;
+	certificate: string;
+}
+export interface IdentityProviderConfig {
+	entityId: string;
+	ssoUrl: string;
+	certificate: string;
+}
+export interface CreateIdentityProviderInput {
+	name: string;
+	providerType: 'saml_idp';
+	enabled: false;
+	config: IdentityProviderConfig & {
+		jitEmailLinkingPolicy: 'disabled';
+		allowSyntheticEmailFallback: false;
+	};
+}
+export interface SamlIdentityProvidersClient {
+	listIdentityProviders(): Promise<SamlIdentityProvider[]>;
+	getIdentityProvider(id: string): Promise<SamlIdentityProvider>;
+	createIdentityProvider(input: CreateIdentityProviderInput): Promise<{ id: string }>;
+	updateIdentityProvider(
+		id: string,
+		input: { name: string; expectedUpdatedAt: string; config: IdentityProviderConfig }
+	): Promise<SamlIdentityProvider>;
 }
 
 export interface SamlMappingClient {
@@ -50,7 +100,88 @@ async function readProvider(id: string) {
 	return object(await response.json());
 }
 
-export const httpSamlProviders: SamlProvidersClient & SamlMappingClient = {
+/** Freeze the serialized payload before meeting the backend's trust-update step-up. */
+function writeProvider(
+	path: string,
+	method: 'POST' | 'PUT',
+	body: string,
+	idempotencyKey?: string
+) {
+	return withStepUp(async (receipt) => {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/saml-providers${path}`, {
+			method,
+			headers: {
+				...stepUpHeaders(receipt),
+				...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {})
+			},
+			includeJsonContentType: true,
+			body
+		});
+		if (!response.ok) throw await errorFromResponse(response);
+		return response;
+	});
+}
+
+function identityProviderFromRow(value: unknown): SamlIdentityProvider {
+	const row = object(value);
+	const config = object(row.config);
+	if (
+		typeof row.id !== 'string' ||
+		!row.id ||
+		row.providerType !== 'saml_idp' ||
+		typeof row.updatedAt !== 'string'
+	)
+		throw new Error('Invalid SAML IdP response');
+	return {
+		id: row.id,
+		name: typeof row.name === 'string' ? row.name : row.id,
+		enabled: row.enabled === true,
+		updatedAt: row.updatedAt,
+		entityId: typeof config.entityId === 'string' ? config.entityId : '',
+		ssoUrl: typeof config.ssoUrl === 'string' ? config.ssoUrl : '',
+		certificate: typeof config.certificate === 'string' ? config.certificate : ''
+	};
+}
+
+export const httpSamlProviders: SamlProvidersClient &
+	SamlMappingClient &
+	SamlCreationClient &
+	SamlIdentityProvidersClient = {
+	async listIdentityProviders() {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/saml-providers`);
+		if (!response.ok) throw await errorFromResponse(response);
+		const body = object(await response.json());
+		return Array.isArray(body.providers)
+			? body.providers
+					.filter((row) => object(row).providerType === 'saml_idp')
+					.map(identityProviderFromRow)
+			: [];
+	},
+	async getIdentityProvider(id) {
+		return identityProviderFromRow(await readProvider(id));
+	},
+	async createIdentityProvider(input) {
+		const response = await writeProvider('', 'POST', JSON.stringify(input));
+		const row = object(await response.json());
+		if (typeof row.id !== 'string' || !row.id)
+			throw new Error('Invalid SAML IdP creation response');
+		return { id: row.id };
+	},
+	async updateIdentityProvider(id, input) {
+		const response = await writeProvider(
+			`/${encodeURIComponent(id)}`,
+			'PUT',
+			JSON.stringify(input)
+		);
+		return identityProviderFromRow(await response.json());
+	},
+	async createServiceProvider(input) {
+		const response = await writeProvider('', 'POST', JSON.stringify(input));
+		const provider = object(await response.json());
+		if (typeof provider.id !== 'string' || !provider.id)
+			throw new Error('Invalid service provider creation response');
+		return { id: provider.id };
+	},
 	async mapping(id) {
 		const provider = await readProvider(id);
 		const choice = object(object(provider.config).identityMapping);
@@ -80,38 +211,30 @@ export const httpSamlProviders: SamlProvidersClient & SamlMappingClient = {
 		)
 			return;
 		const { destinationProfileId: _profile, ...identityMapping } = current;
-		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/saml-providers/${encodeURIComponent(id)}`,
-			{
-				method: 'PUT',
-				...(idempotencyKey ? { headers: { 'Idempotency-Key': idempotencyKey } } : {}),
-				includeJsonContentType: true,
-				body: JSON.stringify({
-					expectedUpdatedAt: provider.updatedAt,
-					config: {
-						identityMapping: {
-							...identityMapping,
-							fieldMappingSetId: set.id,
-							destinationNamespace: 'saml.attribute',
-							destinationFieldPolicies: Object.fromEntries(
-								descriptor.fields.map((field) => {
-									const policy = policies[field.key];
-									return [
-										field.key,
-										policy === 'required' || policy === 'hidden' || policy === 'optional'
-											? policy
-											: field.required
-												? 'required'
-												: 'optional'
-									];
-								})
-							)
-						}
-					}
-				})
+		const body = JSON.stringify({
+			expectedUpdatedAt: provider.updatedAt,
+			config: {
+				identityMapping: {
+					...identityMapping,
+					fieldMappingSetId: set.id,
+					destinationNamespace: 'saml.attribute',
+					destinationFieldPolicies: Object.fromEntries(
+						descriptor.fields.map((field) => {
+							const policy = policies[field.key];
+							return [
+								field.key,
+								policy === 'required' || policy === 'hidden' || policy === 'optional'
+									? policy
+									: field.required
+										? 'required'
+										: 'optional'
+							];
+						})
+					)
+				}
 			}
-		);
-		if (!response.ok) throw await errorFromResponse(response);
+		});
+		await writeProvider(`/${encodeURIComponent(id)}`, 'PUT', body, idempotencyKey);
 	},
 	async listServiceProviders(signal) {
 		const response = await adminFetch(`${API_BASE_URL}/api/admin/saml-providers`, { signal });

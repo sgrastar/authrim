@@ -1,4 +1,8 @@
 <script lang="ts">
+	import { hasPermission, isCapabilityDisabled } from '#lib/access/access.js';
+	import { adminAccess } from '#lib/access/admin-access.svelte.js';
+	import { httpExternalProviders } from '#lib/api/external-providers.js';
+	import UpstreamConnectionPage from '#lib/pages/service-flows/UpstreamConnectionPage.svelte';
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 	import { httpClients } from '#lib/api/clients.js';
@@ -29,6 +33,7 @@
 		const kind = page.params.kind;
 		const id = page.params.id;
 		const tenantId = tenantScope.tenantId;
+		if (kind === 'op' || kind === 'idp') return;
 		try {
 			if (!id || !tenantId || (kind !== 'rp' && kind !== 'sp'))
 				throw new Error('Invalid connection');
@@ -77,16 +82,38 @@
 </script>
 
 <svelte:head><title>{t('cm.connections')} — {t('app.brand')}</title></svelte:head>
-<Page withFlow>
-	{#if failed}<Callout tone="warning"
-			>{t('mc.loadFailed')} <Button onclick={load}>{t('common.retry')}</Button></Callout
-		>
-	{:else if answers && resources}
-		<ServiceFlowDetail
-			bind:answers
-			mappingResources={resources}
+{#if page.params.kind === 'op' || page.params.kind === 'idp'}
+	{#key `${tenantScope.tenantId}:${page.params.kind}:${page.params.id}`}
+		<UpstreamConnectionPage
+			kind={page.params.kind}
+			id={page.params.id ?? ''}
+			externalProviders={httpExternalProviders}
+			samlProviders={httpSamlProviders}
+			canRead={hasPermission(
+				adminAccess.current,
+				page.params.kind === 'op' ? 'admin:external_providers:read' : 'admin:saml_providers:read'
+			)}
+			canEdit={hasPermission(
+				adminAccess.current,
+				page.params.kind === 'op' ? 'admin:external_providers:write' : 'admin:saml_providers:update'
+			) &&
+				(page.params.kind !== 'op' ||
+					!isCapabilityDisabled(adminAccess.current, 'external_identity_providers'))}
 			onback={() => goto('/admin/applications/all')}
-			focusTitle
 		/>
-	{:else}<LoadingState label={t('common.loading')} />{/if}
-</Page>
+	{/key}
+{:else}
+	<Page withFlow>
+		{#if failed}<Callout tone="warning"
+				>{t('mc.loadFailed')} <Button onclick={load}>{t('common.retry')}</Button></Callout
+			>
+		{:else if answers && resources}
+			<ServiceFlowDetail
+				bind:answers
+				mappingResources={resources}
+				onback={() => goto('/admin/applications/all')}
+				focusTitle
+			/>
+		{:else}<LoadingState label={t('common.loading')} />{/if}
+	</Page>
+{/if}

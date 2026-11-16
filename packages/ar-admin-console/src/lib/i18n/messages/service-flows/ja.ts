@@ -4,6 +4,28 @@
  * their usual abbreviations (RP, SP, OP, IdP). Spread into `../ja.ts`.
  */
 export const jaServiceFlows = {
+	'sf.live.accountOptions': 'アカウント設定',
+	'sf.live.requireVerified': '検証済みのメールアドレスを必須にする',
+	'sf.live.issuerMismatch': '取得したIssuerが入力したIssuerと一致しません。',
+	'sf.live.discoveryFailed': 'プロバイダー設定を取得できませんでした。もう一度お試しください。',
+	'sf.live.inboundMapping':
+		'この画面では上流の基本設定だけを編集できます。新しいSAML IdPは無効のまま保存します。上流のマッピングと有効化はこの画面では設定できません。',
+	'sf.live.enabled': '有効',
+	'sf.live.disabled': '無効',
+	'sf.live.saved': '変更を保存しました。',
+	'sf.live.settings': 'プロバイダー設定',
+
+	'sf.create.invalid': '入力内容を確認してください。',
+	'sf.create.unavailable': 'この接続を作成する権限がありません。',
+	'sf.create.failed':
+		'接続を作成できませんでした。入力内容を保持しています。もう一度お試しください。',
+	'sf.create.navigationFailed':
+		'接続は保存されました。設定画面を開く操作をもう一度お試しください。',
+	'sf.create.saved': '接続を保存しました',
+	'sf.create.save': '保存して設定へ進む',
+	'sf.create.spDraft':
+		'無効な状態で保存します。続く設定画面でマッピングを設定してください。NameIDはテナントの既定値を使います。',
+
 	'cm.releaseFailed': '同意後の送信条件を満たさないため、SAMLレスポンスは発行されません。',
 	'cm.otherConnections': 'このセットを使用中のほかの接続: {names}。',
 	'cm.connections': 'アプリとサービス',

@@ -1,6 +1,20 @@
 <script lang="ts">
-	import { untrack } from 'svelte';
+	import { tick, untrack } from 'svelte';
+	import { StepUpCancelledError } from '#lib/api/admin-step-up.js';
 	import { t } from '#lib/i18n/i18n.svelte.js';
+	import { provideBusy } from '#lib/ui/busy/busy.js';
+	import Button from '#lib/ui/primitives/Button.svelte';
+	import SecretField from '#lib/ui/primitives/SecretField.svelte';
+	import Callout from '#lib/ui/patterns/Callout.svelte';
+	import {
+		opCreateInput,
+		idpCreateInput,
+		rpCreateInput,
+		rpRedirectsReady,
+		spCreateInput,
+		type CreatedConnection,
+		type LiveConnectionCreation
+	} from './connection-creation';
 	import BackLink from '#lib/ui/primitives/BackLink.svelte';
 	import ChoiceCards from '#lib/ui/patterns/ChoiceCards.svelte';
 	import ConfirmDialog from '#lib/ui/patterns/ConfirmDialog.svelte';
@@ -25,6 +39,7 @@
 	import ServiceFlowDetail from './ServiceFlowDetail.svelte';
 	import {
 		canProceed,
+		labelOf,
 		emptyAnswers,
 		isPristine,
 		kindProtocol,
@@ -40,14 +55,15 @@
 	import InSteps from './InSteps.svelte';
 	import RpSteps from './RpSteps.svelte';
 	import SpSteps from './SpSteps.svelte';
+	import OurDetails from './OurDetails.svelte';
 
 	/**
 	 * "Add service flow": the one place a new app, service or provider, or a sign-up or sign-in
 	 * flow, starts. It first asks what to add (a connection one way or the other, or how people
 	 * sign up and in), then which kind, then only what that kind cannot start without (a sign-up
 	 * or sign-in flow: its name and where it is used). "Continue to settings" ends the wizard and opens the connection's service
-	 * flow, where every other setting is reached from the flow. Everything here is dummy: nothing
-	 * is sent anywhere, and the words are copy for the mock.
+	 * flow. Without `live`, connections remain local prototype state. `live` restricts the
+	 * available protocols and saves through the supplied Admin API callback.
 	 *
 	 * For a story or the mock app to open part-way, `prefill` fills the answers of a kind
 	 * (`filled`: only what the wizard asks, or everything), `prefillAccount` those of a sign-up or
@@ -59,6 +75,8 @@
 	interface Props {
 		/** Only offer sign-up and sign-in flows (the first live service-flow slice). */
 		accountOnly?: boolean;
+		/** Explicit real outgoing creation; absent in prototype stories. */
+		live?: LiveConnectionCreation;
 		prefill?: ConnectionKind;
 		/** A sign-up, sign-in or sync flow to open with. */
 		prefillAccount?: FlowId;
@@ -75,6 +93,7 @@
 
 	let {
 		accountOnly = false,
+		live,
 		prefill,
 		prefillAccount,
 		filled = 'wizard',
@@ -87,8 +106,23 @@
 
 	// Where it opens is decided once; after that the person's answers are what move it.
 	let answers = $state<Answers>(
-		untrack(() => (prefill ? sampleAnswers(prefill, filled) : emptyAnswers()))
+		untrack(() => {
+			const initial = !live && prefill ? sampleAnswers(prefill, filled) : emptyAnswers();
+			if (live) {
+				Object.assign(initial.op, {
+					scopes: 'openid email profile',
+					link: 'manual',
+					requireEmailVerified: true,
+					trustEmail: false,
+					jitProvisioning: false
+				});
+				initial.idp.importMode = 'manual';
+				initial.idp.certificate = '';
+			}
+			return initial;
+		})
 	);
+	const initialAnswers = untrack(() => JSON.stringify(answers));
 	/** The sign-up or sign-in flow being added, when that is what was chosen. */
 	let account = $state<{ flow: FlowId | ''; form: AccountFlowState }>(
 		untrack(() =>
@@ -126,14 +160,68 @@
 	/** The answer is a flow defined by a table (sign-up, sign-in, CSV, SCIM), not a connection. */
 	const forAccount = $derived(where === 'account' || where === 'sync');
 	let current = $state(untrack(() => (accountOnly ? Math.max(0, step - 1) : step)));
-	let reviewing = $state(untrack(() => review));
+	let reviewing = $state(untrack(() => !live && review));
+	let serviceName = $state('');
+	let pending = $state(false);
+	let failure = $state('');
+	let created = $state<CreatedConnection | null>(null);
+	provideBusy(() => pending);
+
+	async function navigateCreated() {
+		if (!live || !created || pending) return;
+		pending = true;
+		failure = '';
+		try {
+			await tick();
+			await live.navigate(created);
+		} catch {
+			failure = t('sf.create.navigationFailed');
+		} finally {
+			pending = false;
+		}
+	}
+
+	async function finish() {
+		if (pending || created) return;
+		if (!live || forAccount) {
+			if (answers.kind === 'idp') settingsFromImport(answers.settings, answers.idp.importMode);
+			reviewing = true;
+			return;
+		}
+		pending = true;
+		failure = '';
+		try {
+			created = await live.create(answers, serviceName);
+		} catch (error) {
+			failure =
+				error instanceof StepUpCancelledError
+					? t('settings.stepUpCancelled')
+					: answers.kind === 'op' || answers.kind === 'idp'
+						? t('sf.create.failed')
+						: error instanceof Error
+							? error.message
+							: t('sf.create.failed');
+		} finally {
+			pending = false;
+		}
+		if (created && !created.clientSecret) await navigateCreated();
+	}
 
 	const steps = $derived(
 		accountOnly
 			? accountWizardSteps(account.flow).slice(1)
 			: forAccount
 				? accountWizardSteps(account.flow)
-				: stepsFor(answers)
+				: live && answers.kind === 'rp'
+					? ['where', 'kind', 'rp-app', 'rp-redirect', 'rp-signin'].map((id) => ({
+							id,
+							label: labelOf(id)
+						}))
+					: live && answers.kind === 'sp'
+						? ['where', 'kind', 'sp-import'].map((id) => ({ id, label: labelOf(id) }))
+						: live && answers.kind === 'op'
+							? ['where', 'kind', 'op-details'].map((id) => ({ id, label: labelOf(id) }))
+							: stepsFor(answers)
 	);
 	/** Both questions are answered, so the rest of the steps are known. */
 	const chosen = $derived(
@@ -145,15 +233,16 @@
 	const pristine = $derived(
 		accountOnly
 			? account.flow === '' && Object.keys(account.form.values).length === 0
-			: !forAccount && isPristine(answers)
+			: !forAccount && (live ? JSON.stringify(answers) === initialAnswers : isPristine(answers))
 	);
 
 	let asking = $state(false);
 	$effect(() => {
-		dirty = !reviewing && !pristine;
+		dirty = created ? !!created.clientSecret && !pending : !reviewing && !pristine;
 	});
 
 	function cancel() {
+		if (pending || created) return;
 		if (pristine) oncancel?.();
 		else asking = true;
 	}
@@ -186,7 +275,33 @@
 	}
 
 	function canNext(id: string): boolean {
-		if (id === 'where') return where !== '';
+		if (id === 'where')
+			return live
+				? where === 'account' ||
+						((where === 'out' || where === 'in') &&
+							live.kinds.some((kind) => KINDS_OF[where === 'in' ? 'in' : 'out'].includes(kind)))
+				: where !== '';
+		if (live && !forAccount) {
+			if (id === 'kind')
+				return (
+					!!answers.kind &&
+					live.kinds.includes(answers.kind) &&
+					!!answers.direction &&
+					KINDS_OF[answers.direction].includes(answers.kind)
+				);
+			if (id === 'rp-redirect') return rpRedirectsReady(answers.rp);
+			if (id === 'rp-signin' || id === 'sp-import' || id === 'op-details' || id === 'idp-import') {
+				try {
+					if (id === 'rp-signin') rpCreateInput(answers.rp);
+					else if (id === 'sp-import') spCreateInput(answers, serviceName);
+					else if (id === 'op-details') opCreateInput(answers.op);
+					else idpCreateInput(answers.idp);
+					return true;
+				} catch {
+					return false;
+				}
+			}
+		}
 		return forAccount ? canProceedAccount(id, account.flow, account.form) : canProceed(id, answers);
 	}
 
@@ -257,7 +372,19 @@
 	<BackLink onclick={cancel}>{t('sf.detail.back')}</BackLink>
 {/snippet}
 
-{#if reviewing && forAccount && account.flow}
+{#if created}
+	<PageHeader title={t('sf.create.saved')} />
+	{#if created.kind === 'rp'}
+		<OurDetails partner="app" items={[{ label: t('sf.row.clientId'), value: created.id }]} />
+	{/if}
+	{#if created.clientSecret}
+		<SecretField label={t('sf.in.clientSecret')} value={created.clientSecret} mode="show" once />
+	{/if}
+	{#if failure}<Callout tone="danger" live>{failure}</Callout>{/if}
+	<Button onclick={navigateCreated} disabled={pending} loading={pending}
+		>{t('sf.wizard.finish')}</Button
+	>
+{:else if reviewing && forAccount && account.flow}
 	<AccountFlowDetail
 		flow={account.flow}
 		bind:form={account.form}
@@ -272,7 +399,9 @@
 		description={t('sf.wizard.description')}
 		back={oncancel ? backToList : undefined}
 	/>
+	{#if failure}<Callout tone="danger" live>{failure}</Callout>{/if}
 	<Wizard
+		busy={pending}
 		{steps}
 		bind:current
 		canNext={canNext(stepId)}
@@ -283,11 +412,8 @@
 				: kindProtocol(answers.kind as ConnectionKind)
 			: undefined}
 		final={chosen ? undefined : false}
-		finishLabel={t('sf.wizard.finish')}
-		onfinish={() => {
-			if (answers.kind === 'idp') settingsFromImport(answers.settings, answers.idp.importMode);
-			reviewing = true;
-		}}
+		finishLabel={t(live && !forAccount ? 'sf.create.save' : 'sf.wizard.finish')}
+		onfinish={finish}
 		oncancel={oncancel ? cancel : undefined}
 	>
 		{#snippet children(stepInfo)}
@@ -298,7 +424,15 @@
 					columns={2}
 					bind:value={where}
 					onchange={chooseWhere}
-					options={directions}
+					options={live
+						? directions.filter(
+								(option) =>
+									option.value === 'account' ||
+									(option.value === 'out' &&
+										live.kinds.some((kind) => KINDS_OF.out.includes(kind))) ||
+									(option.value === 'in' && live.kinds.some((kind) => KINDS_OF.in.includes(kind)))
+							)
+						: directions}
 				/>
 			{:else if stepInfo.id === 'kind' && forAccount}
 				<ChoiceCards
@@ -316,14 +450,22 @@
 					hideLabel
 					columns={2}
 					bind:value={answers.kind}
-					options={KINDS_OF[answers.direction === 'in' ? 'in' : 'out'].map((kind) => kinds[kind])}
+					options={KINDS_OF[answers.direction === 'in' ? 'in' : 'out']
+						.filter((kind) => !live || live.kinds.includes(kind))
+						.map((kind) => kinds[kind])}
 				/>
 			{:else if stepInfo.id.startsWith('rp-')}
-				<RpSteps step={stepInfo.id} bind:form={answers.rp} />
+				<RpSteps live={!!live} step={stepInfo.id} bind:form={answers.rp} />
 			{:else if stepInfo.id.startsWith('sp-')}
-				<SpSteps step={stepInfo.id} bind:form={answers.sp} />
+				<SpSteps live={!!live} bind:serviceName step={stepInfo.id} bind:form={answers.sp} />
 			{:else}
-				<InSteps step={stepInfo.id} bind:op={answers.op} bind:idp={answers.idp} />
+				<InSteps
+					live={!!live}
+					discoverOidc={live?.discover}
+					step={stepInfo.id}
+					bind:op={answers.op}
+					bind:idp={answers.idp}
+				/>
 			{/if}
 		{/snippet}
 	</Wizard>

@@ -15,6 +15,21 @@ export interface ClientsClient {
 	list(signal?: AbortSignal): Promise<ClientOption[]>;
 }
 
+/** Creation is separate so list-only consumers and fakes need not implement writes. */
+export interface CreateClientInput {
+	client_name: string;
+	application_type: 'web' | 'spa' | 'native';
+	redirect_uris: string[];
+	grant_types: ['authorization_code'];
+	response_types: ['code'];
+	scope: 'openid';
+	token_endpoint_auth_method: 'client_secret_basic' | 'client_secret_post' | 'none';
+	require_pkce: boolean;
+}
+export interface ClientCreationClient {
+	create(input: CreateClientInput): Promise<{ id: string; clientSecret?: string }>;
+}
+
 export interface ClientMappingClient {
 	mapping(id: string): Promise<{ setId: string; pinned: boolean }>;
 	bindMapping(id: string, setId: string, idempotencyKey?: string): Promise<void>;
@@ -41,7 +56,24 @@ export function clientFromRow(value: unknown): ClientOption | null {
 	};
 }
 
-export const httpClients: ClientsClient & ClientMappingClient = {
+export const httpClients: ClientsClient & ClientMappingClient & ClientCreationClient = {
+	async create(input) {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/clients`, {
+			method: 'POST',
+			includeJsonContentType: true,
+			body: JSON.stringify(input)
+		});
+		if (!response.ok) throw await errorFromResponse(response);
+		const client = object(object(await response.json()).client);
+		if (typeof client.client_id !== 'string' || !client.client_id)
+			throw new Error('Invalid client creation response');
+		return {
+			id: client.client_id,
+			...(typeof client.client_secret === 'string' && client.client_secret
+				? { clientSecret: client.client_secret }
+				: {})
+		};
+	},
 	async mapping(id) {
 		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/clients/${encodeURIComponent(id)}`

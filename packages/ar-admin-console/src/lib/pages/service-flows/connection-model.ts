@@ -1,3 +1,4 @@
+import type { OidcDiscovery } from '#lib/api/external-providers.js';
 import { t, type MessageKey } from '#lib/i18n/i18n.svelte.js';
 import type { WizardStep } from '#lib/ui/patterns/WizardSteps.svelte';
 import {
@@ -80,6 +81,12 @@ export interface SpForm extends ImportForm {
 }
 
 export interface OpForm {
+	/** Live discovery response, never inferred endpoints. */
+	discovery?: OidcDiscovery;
+	scopes?: string;
+	requireEmailVerified?: boolean;
+	trustEmail?: boolean;
+	jitProvisioning?: boolean;
 	name: string;
 	issuer: string;
 	/** The discovery document at the issuer has been read (dummy). */
@@ -92,6 +99,7 @@ export interface OpForm {
 }
 
 export interface IdpForm extends ImportForm {
+	certificate?: string;
 	name: string;
 	attributePreset: string;
 	link: LinkRule;

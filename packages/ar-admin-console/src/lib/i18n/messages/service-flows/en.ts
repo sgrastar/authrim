@@ -1,6 +1,26 @@
 import type { jaServiceFlows } from './ja';
 
 export const enServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
+	'sf.live.accountOptions': 'Account options',
+	'sf.live.requireVerified': 'Require a verified email address',
+	'sf.live.issuerMismatch': 'The discovered issuer does not match the issuer you entered.',
+	'sf.live.discoveryFailed': 'Could not read the provider configuration. Try again.',
+	'sf.live.inboundMapping':
+		'This page edits basic inbound settings only. New SAML identity providers stay disabled; inbound mapping and activation are not available here.',
+	'sf.live.enabled': 'Enabled',
+	'sf.live.disabled': 'Disabled',
+	'sf.live.saved': 'Changes saved.',
+	'sf.live.settings': 'Provider settings',
+
+	'sf.create.invalid': 'Check the required connection fields.',
+	'sf.create.unavailable': 'You do not have permission to create this connection.',
+	'sf.create.failed': 'Could not create the connection. Your answers are kept. Try again.',
+	'sf.create.navigationFailed': 'The connection was saved. Try opening its settings again.',
+	'sf.create.saved': 'Connection saved',
+	'sf.create.save': 'Save and continue to settings',
+	'sf.create.spDraft':
+		'Saved disabled. Configure its mapping in the next screen. NameID uses the tenant defaults.',
+
 	'cm.releaseFailed': 'The release requirements were not met. No SAML response would be issued.',
 	'cm.otherConnections': 'Other connections using this set: {names}.',
 	'cm.connections': 'Apps and services',

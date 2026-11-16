@@ -1,5 +1,8 @@
 <script lang="ts">
 	import { t } from '#lib/i18n/i18n.svelte.js';
+	import TextRow from '#lib/ui/patterns/TextRow.svelte';
+	import Callout from '#lib/ui/patterns/Callout.svelte';
+	import { entityIdProblem, httpsUrlProblem } from './connection-model';
 	import SelectRow from '#lib/ui/patterns/SelectRow.svelte';
 	import ToggleRow from '#lib/ui/patterns/ToggleRow.svelte';
 	import ConnectionTest from './ConnectionTest.svelte';
@@ -14,13 +17,26 @@
 	interface Props {
 		step: string;
 		form: SpForm;
+		live?: boolean;
+		serviceName?: string;
 		/** What Authrim gives the service to register on its side (default: the sample values). */
 		ours?: { label: string; value: string }[];
 		/** What the test runs against (see `testBasis`). */
 		basis?: string;
 	}
 
-	let { step, form = $bindable(), ours, basis }: Props = $props();
+	let {
+		step,
+		form = $bindable(),
+		ours,
+		basis,
+		live = false,
+		serviceName = $bindable('')
+	}: Props = $props();
+
+	$effect(() => {
+		if (live) form.importMode = 'manual';
+	});
 
 	// Looked up when shown, so the labels follow a change of language.
 	const ourItems = $derived(
@@ -34,7 +50,22 @@
 	);
 </script>
 
-{#if step === 'sp-import'}
+{#if step === 'sp-import' && live}
+	<TextRow label={t('sf.row.name')} required bind:value={serviceName} />
+	<TextRow
+		label={t('sf.row.entityId')}
+		required
+		error={form.entityId ? entityIdProblem(form.entityId) : undefined}
+		bind:value={form.entityId}
+	/>
+	<TextRow
+		label={t('sf.ours.acsUrl')}
+		required
+		error={form.acsUrl ? httpsUrlProblem(form.acsUrl) : undefined}
+		bind:value={form.acsUrl}
+	/>
+	<Callout tone="info">{t('sf.create.spDraft')}</Callout>
+{:else if step === 'sp-import'}
 	<MetadataImport bind:form partner="service" />
 {:else if step === 'sp-share'}
 	<OurDetails items={ourItems} partner="service" download />

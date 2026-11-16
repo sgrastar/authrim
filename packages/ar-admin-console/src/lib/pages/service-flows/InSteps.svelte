@@ -1,5 +1,9 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
+	import type { OidcDiscovery } from '#lib/api/external-providers.js';
+	import Disclosure from '#lib/ui/patterns/Disclosure.svelte';
+	import TextArea from '#lib/ui/primitives/TextArea.svelte';
+	import { entityIdProblem } from './connection-model';
 	import { t } from '#lib/i18n/i18n.svelte.js';
 	import Callout from '#lib/ui/patterns/Callout.svelte';
 	import ChoiceCards from '#lib/ui/patterns/ChoiceCards.svelte';
@@ -25,6 +29,9 @@
 	 */
 	interface Props {
 		step: string;
+		live?: boolean;
+		hasSecret?: boolean;
+		discoverOidc?: (issuer: string, signal?: AbortSignal) => Promise<OidcDiscovery>;
 		op: OpForm;
 		idp: IdpForm;
 		/** What the test runs against (see `testBasis`). */
@@ -35,6 +42,9 @@
 
 	let {
 		step,
+		live = false,
+		hasSecret = false,
+		discoverOidc,
 		op = $bindable(),
 		idp = $bindable(),
 		basis,
@@ -42,15 +52,39 @@
 	}: Props = $props();
 
 	let reading = $state(false);
+	let discoveryError = $state('');
+	let controller: AbortController | undefined;
 
 	/** Which read is the current one: a read for an issuer that has since changed is dropped. */
 	let reads = 0;
 	let timer: ReturnType<typeof setTimeout> | undefined;
-	function discover() {
+	async function discover() {
+		if (reading) return;
 		const read = ++reads;
 		const issuer = op.issuer;
 		reading = true;
 		clearTimeout(timer);
+		discoveryError = '';
+		if (live) {
+			op.discovered = false;
+			op.discovery = undefined;
+			controller?.abort();
+			controller = new AbortController();
+			try {
+				if (!discoverOidc) throw new Error(t('sf.create.unavailable'));
+				const result = await discoverOidc(issuer.trim(), controller.signal);
+				if (read !== reads || op.issuer !== issuer) return;
+				if (result.issuer !== issuer.trim()) throw new Error(t('sf.live.issuerMismatch'));
+				op.discovery = result;
+				op.discovered = true;
+			} catch (error) {
+				if (read === reads && op.issuer === issuer)
+					discoveryError = error instanceof Error ? error.message : t('sf.live.discoveryFailed');
+			} finally {
+				if (read === reads) reading = false;
+			}
+			return;
+		}
 		timer = setTimeout(() => {
 			if (read !== reads || op.issuer !== issuer) return;
 			op.discovered = true;
@@ -68,12 +102,19 @@
 		// Whatever was being read belongs to the old issuer.
 		reads++;
 		clearTimeout(timer);
+		controller?.abort();
+		discoveryError = '';
+		op.discovery = undefined;
 		reading = false;
 		op.discovered = false;
 	});
 
 	// A read that is still waiting when this goes away is dropped with it.
-	$effect(() => () => clearTimeout(timer));
+	$effect(() => () => {
+		reads++;
+		controller?.abort();
+		clearTimeout(timer);
+	});
 
 	// The test passed for this provider and these credentials: others need a new one.
 	let lastCredentials = untrack(() => credentials());
@@ -135,12 +176,14 @@
 {#if step === 'op-details'}
 	<TextRow
 		label={t('sf.row.name')}
+		required={live}
 		hint={t('sf.in.nameHint')}
 		placeholder="Acme Directory"
 		bind:value={op.name}
 	/>
 	<TextRow
 		label={t('sf.in.issuer')}
+		required={live}
 		placeholder="https://login.provider.example"
 		hint={t('sf.in.issuerHint')}
 		error={op.issuer ? httpsUrlProblem(op.issuer) : undefined}
@@ -149,29 +192,68 @@
 	<div>
 		<Button
 			variant="secondary"
-			disabled={!op.issuer || !!httpsUrlProblem(op.issuer)}
+			disabled={reading || !op.issuer || !!httpsUrlProblem(op.issuer)}
 			loading={reading}
 			onclick={discover}>{t('sf.in.readConfig')}</Button
 		>
 	</div>
-	{#if op.discovered}
+	{#if discoveryError}<Callout tone="danger" live>{discoveryError}</Callout>{/if}
+	{#if op.discovered && (!live || op.discovery)}
 		<Callout tone="info" title={t('sf.import.found')}>
 			<DetailList columns={1} size="sm">
-				<DetailItem label={t('sf.ours.authorizeUrl')}>{op.issuer}/authorize</DetailItem>
-				<DetailItem label={t('sf.ours.tokenUrl')}>{op.issuer}/token</DetailItem>
-				<DetailItem label={t('sf.ours.keys')}>{op.issuer}/jwks</DetailItem>
+				<DetailItem label={t('sf.ours.authorizeUrl')}
+					>{live ? op.discovery?.authorization_endpoint : `${op.issuer}/authorize`}</DetailItem
+				>
+				<DetailItem label={t('sf.ours.tokenUrl')}
+					>{live ? op.discovery?.token_endpoint : `${op.issuer}/token`}</DetailItem
+				>
+				<DetailItem label={t('sf.ours.keys')}
+					>{live ? op.discovery?.jwks_uri : `${op.issuer}/jwks`}</DetailItem
+				>
 			</DetailList>
 		</Callout>
 	{/if}
-	<TextRow label={t('sf.row.clientId')} hint={t('sf.in.clientIdHint')} bind:value={op.clientId} />
+	<TextRow
+		required={live}
+		label={t('sf.row.clientId')}
+		hint={t('sf.in.clientIdHint')}
+		bind:value={op.clientId}
+	/>
 	<FieldRow label={t('sf.in.clientSecret')} plain>
 		<SecretField
 			label={t('sf.in.clientSecret')}
 			mode="enter"
+			stored={live && hasSecret}
+			required={live && !hasSecret}
 			hideLabel
 			bind:value={op.clientSecret}
 		/>
 	</FieldRow>
+	{#if live}
+		<Disclosure title={t('sf.live.accountOptions')}>
+			<TextRow label={t('sf.row.scopes')} required bind:value={op.scopes} />
+			<SelectRow
+				label={t('sf.link.label')}
+				value={op.link}
+				onchange={(value) => {
+					if (value === 'manual' || value === 'verified-email') op.link = value;
+				}}
+				options={linkOptions}
+			/>
+			<ToggleRow label={t('sf.live.requireVerified')} bind:checked={op.requireEmailVerified} />
+			<ToggleRow
+				label={t('cs.row.trustEmail')}
+				description={t('cs.desc.trustEmail')}
+				bind:checked={op.trustEmail}
+			/>
+			{#if op.trustEmail}<Callout tone="warning">{t('sf.link.trustWarn')}</Callout>{/if}
+			<ToggleRow
+				label={t('cs.row.jit')}
+				description={t('cs.desc.jit')}
+				bind:checked={op.jitProvisioning}
+			/>
+		</Disclosure>
+	{/if}
 {:else if step === 'op-share'}
 	<OurDetails items={opOurs} partner="provider" />
 {:else if step === 'op-attrs'}
@@ -202,6 +284,22 @@
 		{basis}
 		bind:tested={op.tested}
 	/>
+{:else if step === 'idp-import' && live}
+	<TextRow label={t('sf.row.name')} required bind:value={idp.name} />
+	<TextRow
+		label={t('sf.row.entityId')}
+		required
+		bind:value={idp.entityId}
+		error={idp.entityId ? entityIdProblem(idp.entityId) : undefined}
+	/>
+	<TextRow
+		label={t('sf.ours.ssoUrl')}
+		required
+		bind:value={idp.acsUrl}
+		error={idp.acsUrl ? httpsUrlProblem(idp.acsUrl) : undefined}
+	/>
+	<TextArea label={t('sf.ours.signingCert')} required mono bind:value={idp.certificate} />
+	<Callout tone="info">{t('sf.live.inboundMapping')}</Callout>
 {:else if step === 'idp-import'}
 	<TextRow
 		label={t('sf.row.name')}

@@ -24,9 +24,10 @@
 	interface Props {
 		step: string;
 		form: RpForm;
+		live?: boolean;
 	}
 
-	let { step, form = $bindable() }: Props = $props();
+	let { step, form = $bindable(), live = false }: Props = $props();
 
 	const secretless = $derived(form.appType !== 'web');
 
@@ -57,7 +58,12 @@
 </script>
 
 {#if step === 'rp-app'}
-	<TextRow label={t('sf.row.name')} hint={t('sf.rp.nameHint')} bind:value={form.name} />
+	<TextRow
+		required={live}
+		label={t('sf.row.name')}
+		hint={t('sf.rp.nameHint')}
+		bind:value={form.name}
+	/>
 	<SelectRow
 		label={t('sf.row.appType')}
 		value={form.appType}
@@ -106,7 +112,7 @@
 			{ value: 'client_secret_post', label: t('sf.rp.auth.post'), disabled: secretless },
 			{ value: 'private_key_jwt', label: t('sf.rp.auth.jwt'), disabled: secretless },
 			{ value: 'none', label: t('sf.rp.auth.none'), disabled: !secretless }
-		]}
+		].filter((option) => !live || option.value !== 'private_key_jwt')}
 	/>
 	{#if secretless}
 		<Callout tone="info">{t('sf.rp.pkceOnly')}</Callout>
