@@ -61,6 +61,44 @@
 </Story>
 
 <Story
+	name="Failed transform sample"
+	args={{
+		label: 'Mapping sample failure',
+		sources: [{ key: 'input', type: 'string', example: 'abc' }],
+		targets: [{ key: 'result', type: 'number' }],
+		mappings: [
+			{
+				id: 'failed',
+				sources: ['input'],
+				target: 'result',
+				steps: [
+					{ id: 'number', transform: 'text_to_number', params: {} },
+					{ id: 'default', transform: 'default_if_empty', params: { value: '42' } }
+				]
+			}
+		]
+	}}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(canvas.getByRole('button', { name: /^result/ }));
+		await canvas.findByText(t('map.sample.title'));
+		const sample = canvasElement.querySelector<HTMLElement>('.sample');
+		if (!sample) throw new Error('Expected the mapping sample');
+		const preview = within(sample);
+		await waitFor(() => expect(preview.getAllByText(t('map.sample.failed'))).toHaveLength(3));
+		for (const failure of preview.getAllByText(t('map.sample.failed')))
+			expect(failure).toHaveClass('is-failed');
+		for (const key of [
+			'map.sample.null',
+			'map.sample.absent',
+			'map.sample.suppressed'
+		] satisfies Array<'map.sample.null' | 'map.sample.absent' | 'map.sample.suppressed'>)
+			expect(preview.queryByText(t(key))).toBeNull();
+		expect(preview.queryByText('42')).toBeNull();
+	}}
+/>
+
+<Story
 	name="Outbound (to an app)"
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);

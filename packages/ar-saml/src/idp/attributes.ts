@@ -197,6 +197,8 @@ export type SAMLAttributeReleaseSource =
 
 export interface SAMLAttributeReleaseResult {
   attributes: SAMLAttribute[];
+  /** Pending consent item names, independent of attribute values and post-transform output. */
+  deferredAttributes?: string[];
   optionalMissingAttributes: MissingRequiredSAMLAttribute[];
   /** Scoped values the tenant's institution scopes did not allow (see institution-scope.ts). */
   withheldScopedValues?: SAMLWithheldScopedValues[];
@@ -288,6 +290,7 @@ function buildSAMLAttributesFromIdentityMapping(
   const binding = withMappingGraph(resolveSAMLIdentityMappingFieldMappingBinding(config, context));
   const destinationNamespace = binding.destinationNamespace ?? 'saml.attribute';
   const sourceValues = buildIdentityMappingSourceValues(subject, binding.edges);
+  const preparedSteps = (context.runtimeContext ?? binding.runtimeContext)?.mappingPreparedSteps;
   const result = executeRuntimeMapping({
     catalog: binding.catalog,
     graphRules: binding.graphRules,
@@ -298,12 +301,21 @@ function buildSAMLAttributesFromIdentityMapping(
     validationRules: binding.validationRules,
     fieldMappingSet: binding.fieldMappingSet,
     runtimeContext: context.runtimeContext ?? binding.runtimeContext,
+    preparedSteps: preparedSteps instanceof Map ? preparedSteps : undefined,
+    allowDeferredOutputs:
+      (context.runtimeContext ?? binding.runtimeContext)?.mappingAllowDeferredOutputs === true,
     resolveValidationValues: (values) => resolveSAMLValidationValues(values, binding),
   });
 
   if (result.status === 'failed') {
     throw new SAMLIdentityMappingRuntimeError(result.reasons);
   }
+
+  // Deferred outputs carry identity only. Do not run value validation or institution scope checks
+  // against a fabricated string; the approved release performs those checks on the actual output.
+  const deferredAttributes = (result.deferredTargets ?? [])
+    .filter((ref) => ref.namespace === destinationNamespace)
+    .map((ref) => ({ ...mappedAttributeShape(ref, binding), values: [] }));
 
   const mappedAttributes: Array<{
     attribute: SAMLAttribute;
@@ -333,9 +345,14 @@ function buildSAMLAttributesFromIdentityMapping(
   );
   // Before the required attributes are checked: a required scoped attribute none of whose values
   // is under a registered scope is missing, as any other that has no value.
-  const { attributes, withheld } = institutionScope
+  const { attributes: scopedAttributes, withheld } = institutionScope
     ? applySAMLInstitutionScopePolicy(mapped, institutionScope, kindOf, institutionNames)
     : { attributes: mapped, withheld: [] };
+  const pending = applyDestinationFieldReleasePolicy(
+    deferredAttributes,
+    binding.destinationFieldPolicies
+  );
+  const attributes = mergeSAMLAttributes([...scopedAttributes, ...pending]);
   const missingAttributes = findMissingRequiredMappedAttributes(
     attributes,
     binding,
@@ -349,6 +366,9 @@ function buildSAMLAttributesFromIdentityMapping(
   return {
     attributes,
     optionalMissingAttributes: [],
+    ...(pending.length > 0
+      ? { deferredAttributes: pending.map((attribute) => attribute.name) }
+      : {}),
     ...(withheld.length > 0 ? { withheldScopedValues: withheld } : {}),
   };
 }

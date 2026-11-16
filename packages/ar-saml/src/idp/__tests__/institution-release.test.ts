@@ -1,6 +1,10 @@
 import { withExplicitMappingGraphs } from '@authrim/ar-lib-field-mapping/test-support';
+import { createHmac } from 'node:crypto';
+import { deferredHashCases } from './helpers/deferred-hash-cases';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '@authrim/ar-lib-core';
+import { MAPPING_HASH_SECRET_REF } from '@authrim/ar-lib-core/services/mapping-hash';
+import type { MappingRuleGraph } from '@authrim/ar-lib-field-mapping/contract';
 
 const mocks = vi.hoisted(() => ({
   settings: {} as Record<string, unknown>,
@@ -31,6 +35,12 @@ import {
   releaseSAMLAttributesWithInstitution,
   withSAMLInstitutionAttributes,
 } from '../institution-release';
+import {
+  applySAMLReleaseApproval,
+  computeSAMLAttributeRelease,
+  samlApprovalNeedsIdentifiers,
+  samlReleaseItems,
+} from '../release-items';
 
 const env = {} as Env;
 const noError = () => {
@@ -809,5 +819,173 @@ describe('releaseSAMLAttributesWithInstitution', () => {
       ],
       optionalMissingAttributes: [],
     });
+  });
+});
+
+describe('SAML hash release across consent', () => {
+  it.each(deferredHashCases)('keeps $name deferred until approval', async (example) => {
+    const bytes = new Uint8Array(32).fill(1);
+    const existing = vi.fn().mockResolvedValue({
+      secretRef: MAPPING_HASH_SECRET_REF,
+      active: { value: btoa(String.fromCharCode(...bytes)).replace(/=+$/u, '') },
+    });
+    const provision = vi.fn();
+    const idFromName = vi.fn();
+    const get = vi.fn(() => ({
+      getExistingSecretRpc: existing,
+      provisionMappingHashKeyRpc: provision,
+    }));
+    // Only the KeyManager port is installed on the existing synthetic Env fixture.
+    Reflect.set(env, 'KEY_MANAGER', { idFromName, get });
+    try {
+      const rule: MappingRuleGraph = {
+        id: 'hash-attribute',
+        targetRef: { side: 'destination', namespace: 'saml.attribute', path: 'syntheticDigest' },
+        edges: [
+          {
+            id: 'input',
+            sourceRef: { side: 'source', namespace: 'authrim.custom_claims', path: 'synthetic' },
+            targetRef: {
+              side: 'destination',
+              namespace: 'saml.attribute',
+              path: 'syntheticDigest',
+            },
+          },
+        ],
+        transforms: [
+          { id: 'trim', operation: 'trim', inputs: [{ edgeIndex: 0 }] },
+          {
+            id: 'hash',
+            operation: 'hash',
+            parameters: { encoding: 'hex' },
+            inputs: [{ stepIndex: 0 }],
+          },
+        ],
+        output: { stepIndex: 1 },
+      };
+      rule.transforms.push(...example.transforms);
+      rule.output = { stepIndex: rule.transforms.length - 1 };
+      const identityMapping = {
+        destinationNamespace: 'saml.attribute',
+        catalog: {
+          identity: {
+            id: 'synthetic-catalog',
+            version: '1',
+            contentHash: 'synthetic',
+            compatibilityRange: '*',
+          },
+          entries: [
+            {
+              id: 'digest',
+              namespace: 'saml.attribute',
+              path: 'syntheticDigest',
+              valueType: example.valueType,
+              cardinality: example.cardinality,
+              classification: 'public',
+            },
+          ],
+        },
+        edges: rule.edges,
+        graphRules: [rule],
+        destinationFieldPolicies: { syntheticDigest: example.required ? 'required' : 'optional' },
+        validationRules: example.required
+          ? [{ id: 'required-output', kind: 'required', targetRef: rule.targetRef }]
+          : [],
+      } satisfies SAMLIdentityMappingFieldMappingBinding;
+      const nameIdFormat = 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress';
+      const input: Omit<Parameters<typeof computeSAMLAttributeRelease>[0], 'identifiers'> = {
+        env,
+        tenantId: 'tenant-a',
+        idpEntityId: 'https://idp.example.test',
+        spConfig: {
+          entityId: 'https://sp.example.test',
+          acsUrl: 'https://sp.example.test/acs',
+          nameIdFormat,
+          attributeMapping: {},
+          signAssertions: true,
+          signResponses: false,
+          allowedBindings: ['post'],
+          identityMapping,
+        },
+        userInfo: {
+          id: 'synthetic-user',
+          email: 'synthetic@example.test',
+          customClaims: { synthetic: ' synthetic ' },
+        },
+        userId: 'synthetic-user',
+        requestScope: {},
+        onError: noError,
+      };
+      const pending = await computeSAMLAttributeRelease({ ...input, identifiers: 'deferred' });
+      expect(pending.deferred).toEqual(new Set(['syntheticDigest']));
+      expect(pending.attributes).toEqual([
+        expect.objectContaining({
+          name: 'syntheticDigest',
+          values: [],
+        }),
+      ]);
+      const items = samlReleaseItems(pending, {
+        nameIdFormat,
+        userInfo: input.userInfo,
+        showValues: true,
+      });
+      expect(items.find((item) => item.kind === 'attribute')).toMatchObject({ deferred: true });
+      expect(items.find((item) => item.kind === 'attribute')).not.toHaveProperty('values');
+      const approved = items.map((item) => item.key);
+      expect(samlApprovalNeedsIdentifiers(pending, approved)).toBe(true);
+      expect(applySAMLReleaseApproval(pending, approved, nameIdFormat)).toEqual({
+        ok: false,
+        missing: ['syntheticDigest'],
+      });
+      expect(idFromName).not.toHaveBeenCalled();
+      expect(get).not.toHaveBeenCalled();
+      expect(existing).not.toHaveBeenCalled();
+      expect(provision).not.toHaveBeenCalled();
+
+      const digest = createHmac('sha256', bytes).update('synthetic').digest('hex');
+      const expected = example.expected(digest);
+      if (example.required && expected.length === 0) {
+        const missing: unknown = await computeSAMLAttributeRelease({
+          ...input,
+          identifiers: 'made',
+        }).catch((error: unknown) => error);
+        expect(missing).toHaveProperty(
+          'reasons',
+          expect.arrayContaining([expect.objectContaining({ code: 'validation.required_missing' })])
+        );
+      } else {
+        const made = await computeSAMLAttributeRelease({ ...input, identifiers: 'made' });
+        expect(made.attributes).toEqual(
+          expected.length
+            ? [expect.objectContaining({ name: 'syntheticDigest', values: expected })]
+            : []
+        );
+        expect(made.deferred.size).toBe(0);
+        expect(applySAMLReleaseApproval(made, approved, nameIdFormat)).toEqual({
+          ok: true,
+          attributes: made.attributes,
+        });
+      }
+      expect(idFromName).toHaveBeenCalledExactlyOnceWith('tenant-a-v3');
+      expect(existing).toHaveBeenCalledExactlyOnceWith(MAPPING_HASH_SECRET_REF);
+      expect(provision).not.toHaveBeenCalled();
+
+      existing.mockResolvedValue(null);
+      const failure: unknown = await computeSAMLAttributeRelease({
+        ...input,
+        identifiers: 'made',
+      }).catch((error: unknown) => error);
+      expect(failure).toMatchObject({ name: 'SAMLIdentityMappingRuntimeError' });
+      expect(failure).toHaveProperty(
+        'reasons',
+        expect.arrayContaining([
+          expect.objectContaining({ code: 'transform.hash_unavailable', severity: 'critical' }),
+        ])
+      );
+      expect(existing).toHaveBeenCalledTimes(2);
+      expect(provision).not.toHaveBeenCalled();
+    } finally {
+      Reflect.deleteProperty(env, 'KEY_MANAGER');
+    }
   });
 });

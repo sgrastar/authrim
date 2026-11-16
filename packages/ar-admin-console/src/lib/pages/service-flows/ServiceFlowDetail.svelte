@@ -55,6 +55,9 @@
 	import RpSteps from './RpSteps.svelte';
 	import SpSteps from './SpSteps.svelte';
 	import UnsavedChangesDialog from './UnsavedChangesDialog.svelte';
+	import type { ConnectionMappingResources } from './connection-mapping.svelte.js';
+	import DetailList from '#lib/ui/patterns/DetailList.svelte';
+	import DetailItem from '#lib/ui/patterns/DetailItem.svelte';
 
 	/**
 	 * A connection's service flow: the screen the wizard hands over to. The wizard only helped with
@@ -62,8 +65,8 @@
 	 * On the left are the parts of the flow, top to bottom (the other side of the connection at one
 	 * end, Authrim's own steps between, each with its settings and how far it has got); choosing
 	 * one shows that setting on the right, as a form. The flow can grow: the "+" between steps adds
-	 * an optional one (consent, an extra sign-in), and its × takes it away again. Dummy: nothing is
-	 * saved anywhere.
+	 * an optional one (consent, an extra sign-in), and its × takes it away again. Live RP/SP routes
+	 * use this layout for Mapping Sets; the prototype connection settings remain local to stories.
 	 */
 	interface Props {
 		answers: Answers;
@@ -71,9 +74,14 @@
 		onback?: () => void;
 		/** Move focus to the title when it appears (the wizard hands over to this screen). */
 		focusTitle?: boolean;
+		/** Live RP/SP mapping facade and the connection's existing binding client. */
+		mappingResources?: ConnectionMappingResources;
 	}
 
-	let { answers = $bindable(), onback, focusTitle = false }: Props = $props();
+	let { answers = $bindable(), onback, focusTitle = false, mappingResources }: Props = $props();
+	let mappingDirty = $state(false);
+	let mappingBound = $state('');
+	let mappingPanel = $state<HTMLElement>();
 
 	// What is on screen is a draft of the connection; `answers` (the saved one) changes only with
 	// Save. "Activate" is not a setting but an action, so it takes effect at once (see below).
@@ -85,7 +93,7 @@
 	let asking = $state(false);
 	/** Going back in place asks first when there are unsaved changes. */
 	function goBack() {
-		if (draft.dirty) asking = true;
+		if (draft.dirty || mappingDirty) asking = true;
 		else onback?.();
 	}
 
@@ -95,10 +103,14 @@
 	});
 
 	const kind = $derived(draft.value.kind as ConnectionKind);
-	const allGroups = $derived(FLOW_GROUPS[kind]);
-	const groups = $derived(visibleGroups(draft.value));
+	const allGroups = $derived(
+		mappingResources
+			? FLOW_GROUPS[kind].filter((group) => group.id === 'mapping')
+			: FLOW_GROUPS[kind]
+	);
+	const groups = $derived(mappingResources ? allGroups : visibleGroups(draft.value));
 	const incoming = $derived(KINDS_OF.in.includes(kind));
-	const name = $derived(nameOf(draft.value));
+	const name = $derived(mappingResources?.connectionName ?? nameOf(draft.value));
 
 	/** The connection's one mapping, in its own direction (sample data, not saved yet). */
 	let mapping = $state(untrack(() => sampleMapping(draft.value.kind as ConnectionKind)));
@@ -109,6 +121,10 @@
 
 	/** Opens a setting on the right, and brings the page up to it if the flow had scrolled away. */
 	async function select(id: string) {
+		if (mappingResources) {
+			mappingPanel?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+			return;
+		}
 		current = id;
 		await tick();
 		revealPanel(panel);
@@ -121,6 +137,11 @@
 	};
 
 	function statusOf(id: string): { text: string; state: PartState } {
+		if (mappingResources)
+			return {
+				state: mappingBound ? 'done' : 'todo',
+				text: t(mappingBound ? 'sf.status.done' : 'sf.status.todo')
+			};
 		const state = partState(id, draft.value);
 		if (id === 'activate')
 			return { text: t(state === 'done' ? 'sf.status.active' : 'sf.status.notActive'), state };
@@ -149,7 +170,8 @@
 	// holding (another provider, other credentials), takes the connection out of service until it
 	// is activated again, instead of leaving it marked Active.
 	$effect(() => {
-		if (draft.value.active && !canActivate(draft.value)) draft.value.active = false;
+		if (!mappingResources && draft.value.active && !canActivate(draft.value))
+			draft.value.active = false;
 	});
 
 	// A provider's metadata read here (not only in the wizard) brings its certificates with it:
@@ -255,9 +277,9 @@
 		{#snippet badges()}
 			<Badge>{KIND_MARK[kind]}</Badge>
 			<Badge tone="info">{role.badge}</Badge>
-			<Badge tone={draft.value.active ? 'success' : 'warning'} dot
-				>{t(draft.value.active ? 'sf.status.active' : 'sf.status.draft')}</Badge
-			>
+			{#if !mappingResources}<Badge tone={draft.value.active ? 'success' : 'warning'} dot
+					>{t(draft.value.active ? 'sf.status.active' : 'sf.status.draft')}</Badge
+				>{/if}
 		{/snippet}
 	</PageHeader>
 
@@ -294,7 +316,11 @@
 					>
 						{#snippet step(id, { exiting })}
 							{@const group = allGroups.find((candidate) => candidate.id === id)!}
-							{@const state = groupState(group, draft.value)}
+							{@const state = mappingResources
+								? mappingBound
+									? 'done'
+									: 'todo'
+								: groupState(group, draft.value)}
 							<FlowStepGroup
 								name={groupLabel(group)}
 								{state}
@@ -332,7 +358,28 @@
 		</div>
 
 		<div class="detail__side">
-			{#if current === ''}
+			{#if mappingResources}
+				<Card title={t('af.general')}>
+					<DetailList ruled>
+						<DetailItem label={t('sf.row.name')}>{name}</DetailItem>
+						<DetailItem label={t('sf.mock.col.protocol')}
+							>{KIND_MARK[kind]} · {role.badge}</DetailItem
+						>
+						<DetailItem label={t(kind === 'rp' ? 'sf.part.rp-redirect' : 'sf.row.entityId')}
+							>{kind === 'rp'
+								? draft.value.rp.redirectUris.join(', ')
+								: draft.value.sp.entityId}</DetailItem
+						>
+					</DetailList>
+				</Card>
+				<div bind:this={mappingPanel}>
+					<ConnectionMapping
+						resources={mappingResources}
+						bind:dirty={mappingDirty}
+						bind:bound={mappingBound}
+					/>
+				</div>
+			{:else if current === ''}
 				<!-- What the other side is does not belong to the flow: a frame of its own above. -->
 				<Card title={t('af.general')}>
 					<div class="detail__general">
@@ -394,7 +441,7 @@
 					</div>
 				</section>
 			{/if}
-			{#if current === ''}
+			{#if current === '' && !mappingResources}
 				<!-- How the connection itself behaves: closed sections, each with what it holds. -->
 				<Card title={t('cs.title')} description={t('cs.lead')}>
 					<div class="detail__settings">

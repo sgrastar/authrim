@@ -1,3 +1,4 @@
+import { provisionMappingHashKey } from '@authrim/ar-lib-core/services/mapping-hash';
 import { mappingGraphMaterialSql } from '@authrim/ar-lib-core/services/mapping-graph-snapshot';
 import { readMappingReference } from '@authrim/ar-lib-field-mapping/authoring';
 import {
@@ -76,6 +77,8 @@ import {
   evaluateProvisioningAssignmentRule,
 } from './identity-provisioning-assignment';
 import {
+  TRANSFORM_LIMITS,
+  TRANSFORM_OPERATION_SCHEMAS,
   parseCsvSourceProfile,
   persistentIdentifierSettingsProblem,
   validateCatalogBundle,
@@ -124,25 +127,9 @@ const POLICY_SYMBOL_MAX_CHARS = 128;
 const POLICY_SYMBOL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:\-]{0,127}$/;
 const SAML_METADATA_POLLING_MIN_INTERVAL_SECONDS = 15 * 60;
 const SAML_METADATA_POLLING_MAX_INTERVAL_SECONDS = 7 * 24 * 60 * 60;
-const SUPPORTED_POLICY_TRANSFORM_OPERATIONS = new Set([
-  'copy',
-  'as_array',
-  'split',
-  'join',
-  'first',
-  'concat',
-  'fallback',
-  'normalize',
-  'case',
-  'trim',
-  'affix_text',
-  'persistent_identifier',
-  'text_to_boolean',
-  'json_build',
-  'json_extract_text',
-  'json_extract_boolean',
-  'json_extract_integer',
-]);
+const SUPPORTED_POLICY_TRANSFORM_OPERATIONS = new Set<string>(
+  TRANSFORM_OPERATION_SCHEMAS.map((schema) => schema.operation)
+);
 const DEFAULT_CANONICAL_CATALOG_ID = 'system_default_canonical_catalog';
 const DEFAULT_CANONICAL_CATALOG_KEY = 'authrim.default_canonical';
 const DEFAULT_CANONICAL_CATALOG_DISPLAY_NAME = 'Authrim Default Canonical Catalog';
@@ -4311,6 +4298,26 @@ export class IdentityMappingControlPlaneRepository {
             return readMappingReference(ref, edgeIds, stepIds, index);
           });
         });
+        try {
+          assertMappingGraphContract(
+            {
+              ruleKey: rule.ruleKey,
+              ruleKind: rule.ruleKind,
+              action: rule.action,
+              targetRef: rule.targetRef,
+              edges: rule.edges,
+              transforms: rule.transforms.map(({ operation, parameters, inputs }) => ({
+                operation,
+                parameters,
+                inputs,
+              })),
+              output: rule.output,
+            },
+            'stored_rule'
+          );
+        } catch {
+          throw badRequest('invalid_transform: stored graph is invalid');
+        }
       }
     }
     return rows.map((row) => ({
@@ -4369,6 +4376,9 @@ export class IdentityMappingControlPlaneRepository {
       throw conflict('field mapping version label already exists');
     }
 
+    if (input.rules.some((rule) => rule.transforms?.some((step) => step.operation === 'hash'))) {
+      await provisionMappingHashKey(this.requireLogEnvironment(), tenantId, input.rules);
+    }
     const now = this.now();
     const versionId = options.versionId ?? createId('field_mapping_version');
     const fieldMappingHash = await hashStableJson({
@@ -10344,11 +10354,23 @@ function readStringArrayValue(value: unknown): string[] {
     : [];
 }
 
-function assertProfileSchemaBudget(value: unknown, path: string): void {
+function assertProfileSchemaBudget(value: unknown, path: string, allowMappingTables = false): void {
   const seen = new WeakSet<object>();
   let nodeCount = 0;
 
-  const visit = (item: unknown, currentPath: string, depth: number): void => {
+  const visit = (
+    item: unknown,
+    currentPath: string,
+    depth: number,
+    context?:
+      | 'mappingVersion'
+      | 'rules'
+      | 'rule'
+      | 'transforms'
+      | 'transform'
+      | 'valueMapParameters'
+      | 'valueMapEntries'
+  ): void => {
     nodeCount += 1;
     if (nodeCount > PROFILE_SCHEMA_MAX_NODES) {
       throw badRequest(`${path} must contain at most ${PROFILE_SCHEMA_MAX_NODES} JSON nodes`);
@@ -10356,7 +10378,14 @@ function assertProfileSchemaBudget(value: unknown, path: string): void {
     if (depth > PROFILE_SCHEMA_MAX_DEPTH) {
       throw badRequest(`${currentPath} exceeds maximum depth ${PROFILE_SCHEMA_MAX_DEPTH}`);
     }
-    if (typeof item === 'string' && item.length > PROFILE_SCHEMA_MAX_STRING_CHARS) {
+    if (typeof item === 'string' && context === 'valueMapEntries') {
+      if (
+        item.length > TRANSFORM_LIMITS.tableBytes ||
+        new TextEncoder().encode(item).byteLength > TRANSFORM_LIMITS.tableBytes
+      ) {
+        throw badRequest(`${currentPath} must be at most ${TRANSFORM_LIMITS.tableBytes} bytes`);
+      }
+    } else if (typeof item === 'string' && item.length > PROFILE_SCHEMA_MAX_STRING_CHARS) {
       throw badRequest(
         `${currentPath} string value must be at most ${PROFILE_SCHEMA_MAX_STRING_CHARS} characters`
       );
@@ -10375,7 +10404,11 @@ function assertProfileSchemaBudget(value: unknown, path: string): void {
           `${currentPath} array must contain at most ${PROFILE_SCHEMA_MAX_ARRAY_ITEMS} items`
         );
       }
-      item.forEach((child, index) => visit(child, `${currentPath}[${index}]`, depth + 1));
+      const childContext =
+        context === 'rules' ? 'rule' : context === 'transforms' ? 'transform' : undefined;
+      item.forEach((child, index) =>
+        visit(child, `${currentPath}[${index}]`, depth + 1, childContext)
+      );
       return;
     }
 
@@ -10385,10 +10418,24 @@ function assertProfileSchemaBudget(value: unknown, path: string): void {
         `${currentPath} object must contain at most ${PROFILE_SCHEMA_MAX_OBJECT_KEYS} keys`
       );
     }
-    entries.forEach(([key, child]) => visit(child, `${currentPath}.${key}`, depth + 1));
+    entries.forEach(([key, child]) => {
+      const childContext =
+        context === 'mappingVersion' && key === 'rules'
+          ? 'rules'
+          : context === 'rule' && key === 'transforms'
+            ? 'transforms'
+            : context === 'transform' &&
+                key === 'parameters' &&
+                ['value_map', 'conditional'].includes(String(Reflect.get(item, 'operation')))
+              ? 'valueMapParameters'
+              : context === 'valueMapParameters' && (key === 'entries' || key === 'condition')
+                ? 'valueMapEntries'
+                : undefined;
+      visit(child, `${currentPath}.${key}`, depth + 1, childContext);
+    });
   };
 
-  visit(value, path, 0);
+  visit(value, path, 0, allowMappingTables ? 'mappingVersion' : undefined);
   const bytes = new TextEncoder().encode(JSON.stringify(value)).length;
   if (bytes > PROFILE_SCHEMA_MAX_JSON_BYTES) {
     throw badRequest(`${path} JSON must be at most ${PROFILE_SCHEMA_MAX_JSON_BYTES} bytes`);
@@ -10398,7 +10445,8 @@ function assertProfileSchemaBudget(value: unknown, path: string): void {
 function assertFieldMappingVersionRequestSafe(input: CreateFieldMappingVersionRequest): void {
   assertProfileSchemaBudget(
     { ...input, rules: input.rules.map(canonicalMappingRule) },
-    'fieldMappingVersion'
+    'fieldMappingVersion',
+    true
   );
   assertNoSensitiveMetadata(input, 'fieldMappingVersion');
   if (input.rules.length > POLICY_VERSION_MAX_RULES) {

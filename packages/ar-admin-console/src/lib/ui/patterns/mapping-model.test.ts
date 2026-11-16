@@ -155,7 +155,7 @@ describe('operations', () => {
 		expect(mappingProblems(map('email', ['mail'], [bad]), sources, targets)).toEqual([
 			{ kind: 'badPattern', step: 1 }
 		]);
-		const good = step('regex_replace', { pattern: '^(.+)@.+$', replacement: '$1' });
+		const good = step('regex_replace', { pattern: '^(.+)@[Ee]xample[.]com$', replacement: '$1' });
 		expect(mappingProblems(map('email', ['mail'], [good]), sources, targets)).toEqual([]);
 	});
 

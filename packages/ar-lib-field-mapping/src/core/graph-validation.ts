@@ -24,6 +24,7 @@ export function validateMappingRuleGraph(rule: MappingRuleGraph): ReasonCode[] {
     (step) =>
       validateTransformStep({
         ...step,
+        inputNames: step.inputs.map((ref) => ref.name),
         inputEdgeIds: step.inputs.map((_, index) => String(index)),
         outputTargetRef: rule.targetRef,
       }).reasons

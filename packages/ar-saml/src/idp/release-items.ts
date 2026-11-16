@@ -1,3 +1,5 @@
+import { prepareTenantMappingHashes } from '@authrim/ar-lib-core/services/mapping-hash';
+import type { MappingEvaluationValue } from '@authrim/ar-lib-field-mapping/contract';
 import {
   analyzeMappingDependencies,
   withMappingGraph,
@@ -7,8 +9,8 @@ import {
  * made for a release the person has not approved:
  *
  * 1. `computeSAMLAttributeRelease` with identifiers deferred: the attributes the mapping, the
- *    institution and the Destination Profile release (with their checks), where a pairwise
- *    identifier (eduPersonTargetedID) stands as a placeholder, never made or shown. These are the
+ *    institution and the Destination Profile release, where hash/identifier-dependent items
+ *    have identities but no values until approved. These are the
  *    consent screen's items, with the NameID (`samlReleaseItems`).
  * 2. Once approved: the release again with identifiers made, only when an approved item needs
  *    one; then held to the approval (`applySAMLReleaseApproval`). The NameID and the session index
@@ -57,11 +59,6 @@ import {
 } from './runtime-identity-mapping';
 import { resolveSAMLPairwiseSecretForRef } from './subject';
 
-/**
- * What stands for a pairwise identifier before it is made. An attribute carrying it is an item
- * whose value is made only once approved.
- */
-const DEFERRED_IDENTIFIER = 'authrim-deferred-identifier';
 const EMPTY_CATALOG = {
   identity: { id: 'saml.nameid', version: '1', contentHash: 'none', compatibilityRange: '*' },
   entries: [],
@@ -197,9 +194,7 @@ export async function computeSAMLAttributeRelease(input: {
     labels,
     deferred: new Set(
       attributes
-        .filter((attribute) =>
-          attribute.values.some((value) => value.includes(DEFERRED_IDENTIFIER))
-        )
+        .filter((attribute) => release.deferredAttributes?.includes(attribute.name))
         .map((attribute) => attribute.name)
     ),
     withheldScopedValues: release.withheldScopedValues ?? [],
@@ -276,7 +271,7 @@ export function samlApprovalNeedsIdentifiers(
 
 /**
  * Hold the attributes to an approval: the approved ones (all, the required ones, or by key), and
- * none that still carries a placeholder. A required attribute left out, or the NameID not
+ * none whose value is still deferred. A required attribute left out, or the NameID not
  * approved, refuses the release (`missing`).
  */
 export function applySAMLReleaseApproval(
@@ -298,7 +293,7 @@ export function applySAMLReleaseApproval(
       all ||
       approved.has(samlAttributeItemKey(attribute)) ||
       (requiredOnly && isRequired(attribute.name));
-    if (take && !attribute.values.some((value) => value.includes(DEFERRED_IDENTIFIER))) {
+    if (take && !release.deferred.has(attribute.name)) {
       attributes.push(attribute);
     } else if (isRequired(attribute.name)) {
       missing.push(attribute.name);
@@ -309,7 +304,7 @@ export function applySAMLReleaseApproval(
 
 /**
  * The `persistent_identifier` steps' values for the binding the release uses, made from the
- * subject as released. Before consent they are placeholders: nothing is made for a release that
+ * subject as released. Before consent their prepared steps are deferred: nothing is made for a release that
  * may not happen. A step that cannot be made is left out, which fails the release.
  */
 async function prepareSAMLMappedIdentifiers(input: {
@@ -322,7 +317,12 @@ async function prepareSAMLMappedIdentifiers(input: {
   mappingContext: SAMLIdentityMappingRuntimeContext;
   deferIdentifiers: boolean;
   fixture?: boolean;
-}): Promise<{ identifiers: Record<string, string>; suppressed: Record<string, true> }> {
+}): Promise<{
+  identifiers: Record<string, string>;
+  suppressed: Record<string, true>;
+  preparedSteps?: ReadonlyMap<string, MappingEvaluationValue>;
+  allowDeferredOutputs: boolean;
+}> {
   let binding: SAMLIdentityMappingFieldMappingBinding;
   try {
     binding = withMappingGraph(
@@ -330,54 +330,91 @@ async function prepareSAMLMappedIdentifiers(input: {
     );
   } catch {
     // No binding applies: the release refuses for that reason, not for an identifier.
-    return { identifiers: {}, suppressed: {} };
+    return { identifiers: {}, suppressed: {}, allowDeferredOutputs: input.deferIdentifiers };
   }
-  if (!binding.transforms?.some((step) => step.operation === 'persistent_identifier')) {
-    return { identifiers: {}, suppressed: {} };
+  const deferredSteps = new Map<string, MappingEvaluationValue>();
+  if (input.deferIdentifiers) {
+    for (const step of binding.transforms ?? []) {
+      if (step.operation === 'persistent_identifier')
+        deferredSteps.set(step.id, { kind: 'deferred' });
+    }
   }
   if (input.fixture && !input.deferIdentifiers) {
     return {
       identifiers: {},
       suppressed: Object.fromEntries(
-        binding.transforms
+        (binding.transforms ?? [])
           .filter((step) => step.operation === 'persistent_identifier')
           .map((step) => [step.id, true])
       ),
+      preparedSteps: new Map(
+        (binding.transforms ?? [])
+          .filter((step) => step.operation === 'hash')
+          .map((step) => [step.id, { kind: 'failed' }])
+      ),
+      allowDeferredOutputs: false,
     };
   }
-  const prepared = await prepareMappedIdentifiers({
-    transforms: binding.transforms,
-    // The account's ID as the runtime holds it (the user ID), supplied directly: never read from
-    // the subject's attributes or custom claims.
-    accountId: input.subject.id || null,
-    recipient: { protocol: 'saml', spEntityId: input.spEntityId, idpEntityId: input.idpEntityId },
-    loadDefaultSalt: async () =>
-      (await resolveSAMLPairwiseSecretForRef(
-        input.env,
-        input.tenantId,
-        DEFAULT_IDENTIFIER_SALT_REF
-      )) ?? null,
-    // Read only, never made: an imported salt that is not there stops the release.
-    loadImportedSalt: (name) =>
-      readImportedIdentifierSalt(input.env.KEY_MANAGER, input.tenantId, name),
-    lookupStoredIdentifier: (store, audience, accountId) =>
-      createStoredIdentifierLookup(
-        requireAdminDatabaseAdapter(input.env, 'saml-mapped-identifier-store'),
-        input.tenantId
-      )(store, audience, accountId),
-    lookupSourceValue: (source, accountId) =>
-      createIdentifierSourceReader(
-        requireAdminDatabaseAdapter(input.env, 'saml-identifier-source-values'),
-        input.tenantId
-      )(source, accountId),
-    lookupException: (list, accountId, audience) =>
-      createIdentifierExceptionReader(
-        requireAdminDatabaseAdapter(input.env, 'saml-identifier-exceptions'),
-        input.tenantId
-      )(list, accountId, audience),
-    placeholder: input.deferIdentifiers ? DEFERRED_IDENTIFIER : null,
-  });
-  return { identifiers: prepared.identifiers, suppressed: prepared.suppressed };
+  const prepared = input.deferIdentifiers
+    ? { identifiers: {}, suppressed: {} }
+    : await prepareMappedIdentifiers({
+        transforms: binding.transforms ?? [],
+        // The account's ID as the runtime holds it (the user ID), supplied directly: never read from
+        // the subject's attributes or custom claims.
+        accountId: input.subject.id || null,
+        recipient: {
+          protocol: 'saml',
+          spEntityId: input.spEntityId,
+          idpEntityId: input.idpEntityId,
+        },
+        loadDefaultSalt: async () =>
+          (await resolveSAMLPairwiseSecretForRef(
+            input.env,
+            input.tenantId,
+            DEFAULT_IDENTIFIER_SALT_REF
+          )) ?? null,
+        // Read only, never made: an imported salt that is not there stops the release.
+        loadImportedSalt: (name) =>
+          readImportedIdentifierSalt(input.env.KEY_MANAGER, input.tenantId, name),
+        lookupStoredIdentifier: (store, audience, accountId) =>
+          createStoredIdentifierLookup(
+            requireAdminDatabaseAdapter(input.env, 'saml-mapped-identifier-store'),
+            input.tenantId
+          )(store, audience, accountId),
+        lookupSourceValue: (source, accountId) =>
+          createIdentifierSourceReader(
+            requireAdminDatabaseAdapter(input.env, 'saml-identifier-source-values'),
+            input.tenantId
+          )(source, accountId),
+        lookupException: (list, accountId, audience) =>
+          createIdentifierExceptionReader(
+            requireAdminDatabaseAdapter(input.env, 'saml-identifier-exceptions'),
+            input.tenantId
+          )(list, accountId, audience),
+      });
+  const hashes = await prepareTenantMappingHashes(
+    input.env,
+    input.tenantId,
+    binding.graphRules ?? [],
+    {
+      catalog: binding.catalog,
+      edges: binding.edges,
+      sourceValues: buildIdentityMappingSourceValues(input.subject, binding.edges),
+      runtimeContext: {
+        identifiers: prepared.identifiers,
+        suppressedIdentifiers: prepared.suppressed,
+      },
+      sourceCatalogValidation: 'receiver',
+      preparedSteps: deferredSteps,
+    },
+    input.deferIdentifiers
+  );
+  return {
+    identifiers: prepared.identifiers,
+    suppressed: prepared.suppressed,
+    preparedSteps: new Map([...deferredSteps, ...hashes]),
+    allowDeferredOutputs: input.deferIdentifiers,
+  };
 }
 
 /**

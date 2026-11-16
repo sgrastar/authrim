@@ -2,6 +2,41 @@ import type { ReasonCategory, ReasonCode, ReasonCodeName, ReasonRegistryEntry } 
 
 export const REASON_REGISTRY: ReasonRegistryEntry[] = [
   {
+    code: 'transform.deferred_output',
+    category: 'transform',
+    severity: 'critical',
+    stability: 'stable',
+    description: 'An output still awaits consent preparation and cannot be released as a value.',
+  },
+  {
+    code: 'transform.hash_unavailable',
+    category: 'transform',
+    severity: 'critical',
+    stability: 'stable',
+    description: 'Tenant hash preparation failed or its dedicated key is missing.',
+  },
+  {
+    code: 'transform.limit_exceeded',
+    description: 'Transform input, output or collection exceeds its safety limit.',
+    category: 'transform',
+    severity: 'error',
+    stability: 'stable',
+  },
+  {
+    code: 'transform.work_limit_exceeded',
+    description: 'The mapping rule exhausted its work budget.',
+    category: 'transform',
+    severity: 'error',
+    stability: 'stable',
+  },
+  {
+    code: 'transform.unsafe_regex',
+    description: 'Pattern is outside the bounded regular expression subset.',
+    category: 'transform',
+    severity: 'error',
+    stability: 'stable',
+  },
+  {
     code: 'transform.invalid_arity',
     category: 'transform',
     severity: 'error',

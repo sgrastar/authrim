@@ -13949,6 +13949,83 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
+  /api/admin/field-mapping/hash-key:
+    get:
+      tags: [Field Mapping]
+      operationId: getApiAdminFieldMappingHashKey
+      summary: Read tenant mapping hash key metadata
+      description: >-
+        Requires settings read permission. Returns only installation status and active kid;
+        never creates a secret. The dedicated tenant HMAC-SHA-256 secret is enrolled on the first
+        authorized Mapping Set version write containing hash, after shared graph validation.
+        Read, preview, explain and runtime paths never enroll missing keys. KeyManager's existing
+        tenant backup secret map preserves the active and previous versions on DR restore.
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+      responses:
+        '200':
+          description: Key metadata, with no key material.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [installed, kid]
+                properties:
+                  installed: { type: boolean }
+                  kid: { type: string, nullable: true }
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+  /api/admin/field-mapping/hash-key/rotate:
+    post:
+      tags: [Field Mapping]
+      operationId: postApiAdminFieldMappingHashKeyRotate
+      summary: Rotate an installed tenant mapping hash key
+      description: >-
+        Requires settings write permission. expectedKid must equal the active key id. Rotation
+        immediately changes all hash outputs. Repeating the previous kid returns the already
+        completed rotation; any other stale kid returns 409. A missing key returns 404 without
+        creation. The prior version remains in the existing encrypted tenant DR snapshot but is
+        never used for new outputs. No secret is returned or included in audit records.
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [expectedKid]
+              properties:
+                expectedKid: { type: string, minLength: 1, maxLength: 256 }
+      responses:
+        '200':
+          description: Active kid after rotation or retry.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [kid]
+                properties:
+                  kid: { type: string }
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
   /api/admin/field-mapping/identifier-salts:
     get:
       tags:
@@ -67544,6 +67621,7 @@ components:
             name:
               type: string
               minLength: 1
+              maxLength: 518
         - type: object
           additionalProperties: false
           required: [stepIndex]
@@ -67554,6 +67632,7 @@ components:
             name:
               type: string
               minLength: 1
+              maxLength: 518
     MappingGraphOutputReference:
       oneOf:
         - type: object
@@ -67577,7 +67656,30 @@ components:
       description: >-
         One output target per rule. Inputs are ordered and may only reference earlier steps of
         this rule. Ordered edge/step inputs, optional input names and the explicit output are
-        persisted without translation. Legacy transform edgeIndex is refused.
+        persisted without translation. Legacy transform edgeIndex is refused. Structure operations
+        json_extract_array, array_build, json_extract_or and conditional use the shared engine on
+        save, load, runtime and console preview. Conditional parameters.condition is bounded JSON
+        text in the console ConditionGroup format (all/any/none groups and rule field/operator/value).
+        Numeric branch text uses decimal notation with optional minus/fraction, without exponent or
+        hexadecimal forms. Its inputs require exactly one name value and exactly one field:<field> name per distinct
+        condition field. Only those graph inputs are read; all contribute to classification,
+        provenance and release safety. Conditions permit 3 group levels, 64 nodes and the shared
+        conservative regex subset (512 pattern characters, 1024 input characters). Constants
+        constant_text/constant_boolean/constant_number require zero inputs and a typed value
+        parameter; numbers must be finite with magnitude at most Number.MAX_SAFE_INTEGER.
+        json_extract_or returns defaultValue on absent input, missing path or invalid JSON, and
+        optionally on null with nullAsMissing; otherwise it returns text, serialized JSON or null.
+        json_extract_array returns absence for a missing path, null for a present non-array and
+        the original bounded array otherwise. array_build flattens one level, discards absence
+        and null, optionally omits empty values and removes duplicates without changing types.
+        hash requires one text input and encoding hex or base64url; null passes through. It uses
+        the authenticated tenant's dedicated HMAC-SHA-256 key, asynchronously prepared after
+        dependencies, with no fallback or read-path creation. Missing keys fail with
+        transform.hash_unavailable. Console hash values remain decided at sign-in. First authorized
+        hash authoring enrolls the tenant key idempotently; see hash-key metadata and rotation APIs.
+        All steps share 32 KiB input/output limits, 500 array entries and an 8 Mi work budget.
+        Failure and suppression propagate through all inputs, including condition-only inputs and
+        fallback. Structure operations, constants and hash cannot follow a persistent identifier.
       properties:
         ruleKey:
           type: string
@@ -67629,6 +67731,49 @@ components:
                   $ref: '#/components/schemas/MappingGraphReference'
               operation:
                 type: string
+                enum:
+                  [
+                    copy,
+                    as_array,
+                    split,
+                    join,
+                    first,
+                    persistent_identifier,
+                    affix_text,
+                    concat,
+                    fallback,
+                    normalize,
+                    case,
+                    trim,
+                    text_to_boolean,
+                    json_build,
+                    json_extract_text,
+                    json_extract_boolean,
+                    json_extract_integer,
+                    keep_part,
+                    remove_text,
+                    replace_text,
+                    regex_replace,
+                    to_halfwidth,
+                    to_fullwidth,
+                    strip_accents,
+                    ascii_digits,
+                    value_map,
+                    text_to_number,
+                    date_format,
+                    filter_values,
+                    normalize_empty,
+                    default_if_empty,
+                    has_value,
+                    json_extract_array,
+                    json_extract_or,
+                    array_build,
+                    conditional,
+                    constant_text,
+                    constant_boolean,
+                    constant_number,
+                    hash,
+                  ]
               parameters:
                 type: object
                 additionalProperties: true

@@ -4,6 +4,45 @@
  * their usual abbreviations (RP, SP, OP, IdP). Spread into `../ja.ts`.
  */
 export const jaServiceFlows = {
+	'cm.releaseFailed': '同意後の送信条件を満たさないため、SAMLレスポンスは発行されません。',
+	'cm.otherConnections': 'このセットを使用中のほかの接続: {names}。',
+	'cm.connections': 'アプリとサービス',
+	'cm.create': 'Mapping Setを作成',
+	'cm.options': 'Mapping Setの設定',
+	'cm.description': '説明',
+	'cm.profile': 'Destination Profile',
+	'cm.catalog': 'ソースカタログ',
+	'cm.saveBind': '保存してこの接続で使用',
+	'cm.saved': 'Mapping Setを保存し、この接続に適用しました。',
+	'cm.readonly':
+		'このセットまたは接続設定は、この画面で編集できません。プロトコル・プロファイル・保存済み設定が対応範囲外です。テストユーザーによる確認は利用できます。',
+	'cm.conflict':
+		'サーバー上でセットが変更されました。再読み込みしてから保存してください。編集中の内容は画面に残っています。',
+	'cm.reload': '保存済みセットを再読み込み',
+	'cm.stageFailed':
+		'セットの有効化が完了しませんでした（段階: {stage}）。接続への適用は行っていません。保存済みセットを再読み込みしてください。',
+	'cm.unknown':
+		'保存結果を確認できません。同じリクエストを再試行して結果を確認してください。接続への適用はまだ行っていません。',
+	'cm.bindingFailed':
+		'セットは保存済みですが、接続への適用に失敗しました。セットを再保存せず、適用だけを再試行できます。',
+	'cm.retryBinding': '接続への適用だけ再試行',
+	'cm.impactTitle': '共有Mapping Setを更新しますか？',
+	'cm.impact':
+		'このセットは接続や既定設定から{count}件参照されています。保存すると、使用中のほかの接続にも変更が適用されます。',
+	'cm.impactIncomplete':
+		'このセットは少なくとも{count}件参照されています。調査が未完了のため、ほかの接続にも影響する可能性があります。保存すると共有の内容を更新します。',
+	'cm.confirmImpact': '共有セットを更新',
+	'cm.discardTitle': 'マッピングの変更を破棄しますか？',
+	'cm.discardBody':
+		'切り替えや再読み込みを行うと、編集中の変更と接続への適用の再試行情報を破棄します。',
+	'cm.beforeConsent': '同意前',
+	'cm.afterConsent': '同意後',
+	'cm.deferred': 'サインイン時に評価',
+	'cm.explainSaved':
+		'この結果は保存済みの接続設定を使用しています。変更を保存した後、再実行してください。',
+	'cm.awaitingConsent': '属性の送信には同意が必要です。',
+	'cm.identifierDeferred':
+		'アカウント情報が必要な識別子は、テストユーザーでは生成しません。実際のサインインで同意後に評価します。',
 	// The parts of a connection's flow (and the wizard's steps).
 	'sf.part.where': '追加するもの',
 	'sf.part.kind': '種類',

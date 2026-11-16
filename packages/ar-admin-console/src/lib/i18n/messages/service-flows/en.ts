@@ -1,6 +1,45 @@
 import type { jaServiceFlows } from './ja';
 
 export const enServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
+	'cm.releaseFailed': 'The release requirements were not met. No SAML response would be issued.',
+	'cm.otherConnections': 'Other connections using this set: {names}.',
+	'cm.connections': 'Apps and services',
+	'cm.create': 'Create Mapping Set',
+	'cm.options': 'Mapping Set settings',
+	'cm.description': 'Description',
+	'cm.profile': 'Destination Profile',
+	'cm.catalog': 'Source catalog',
+	'cm.saveBind': 'Save and use for this connection',
+	'cm.saved': 'Mapping Set saved and bound to this connection.',
+	'cm.readonly':
+		'This set or binding cannot be edited here. Its protocol, profile or stored settings are unsupported. You can still inspect the saved connection with a test user.',
+	'cm.conflict':
+		'The set changed on the server. Reload it before saving again; your edits are still on this screen.',
+	'cm.reload': 'Reload saved set',
+	'cm.stageFailed':
+		'Set activation did not complete (stage: {stage}). The connection was not rebound. Reload the saved set to continue.',
+	'cm.unknown':
+		'The save result is unknown. Retry the same request to check its result. The connection has not been rebound.',
+	'cm.bindingFailed':
+		'The set is saved, but binding to this connection failed. Retry binding without saving the set again.',
+	'cm.retryBinding': 'Retry binding only',
+	'cm.impactTitle': 'Update a shared Mapping Set?',
+	'cm.impact':
+		'This set has {count} references, including connections and defaults. Saving changes its content for every connection using it.',
+	'cm.impactIncomplete':
+		'At least {count} references use this set. The scan is incomplete; more connections may be affected. Saving updates the shared content.',
+	'cm.confirmImpact': 'Update shared set',
+	'cm.discardTitle': 'Discard mapping changes?',
+	'cm.discardBody':
+		'Switching or reloading discards the current mapping edits and pending binding retry.',
+	'cm.beforeConsent': 'Before consent',
+	'cm.afterConsent': 'After consent',
+	'cm.deferred': 'Evaluated at sign-in',
+	'cm.explainSaved':
+		'This explanation uses the saved connection. Save and rerun to inspect your current changes.',
+	'cm.awaitingConsent': 'Release is waiting for consent.',
+	'cm.identifierDeferred':
+		'Identifiers that require account material are not generated for test users. The real sign-in evaluates them after consent.',
 	'sf.part.where': 'What to add',
 	'sf.part.kind': 'Kind',
 	'sf.part.rp-app': 'App details',

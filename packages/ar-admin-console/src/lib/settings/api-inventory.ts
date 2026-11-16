@@ -148,7 +148,7 @@ export const API_GROUPS: readonly ApiGroup[] = [
 		name: 'Support operations',
 		kind: 'actions',
 		page: 'users/support',
-		paths: [`${A}/support-ops`]
+		paths: [`${A}/support-ops`, `${A}/investigations`]
 	},
 	{
 		id: 'review-tasks',
@@ -253,9 +253,8 @@ export const API_GROUPS: readonly ApiGroup[] = [
 		page: 'access/mapping-sets',
 		paths: [
 			`${A}/field-mapping/field-mapping-sets`,
-			`${A}/identity-mapping/usage`,
-			`${A}/identity-mapping/effective`,
-			`${A}/identity-mapping/sets`,
+			`${A}/identity-mapping`,
+			`${A}/platform/identity-mapping`,
 			`${A}/field-mapping/templates`,
 			`${A}/field-mapping/preview`
 		]
@@ -281,6 +280,7 @@ export const API_GROUPS: readonly ApiGroup[] = [
 		page: 'access/mapping-sets',
 		paths: [
 			`${A}/field-mapping/key-registries`,
+			`${A}/field-mapping/hash-key`,
 			`${A}/field-mapping/identifier-salts`,
 			`${A}/field-mapping/identifier-sources`,
 			`${A}/field-mapping/identifier-stores`,
@@ -382,6 +382,20 @@ export const API_GROUPS: readonly ApiGroup[] = [
 	// -------------------------------------------------------------------------------------------
 	// Authentication
 	{
+		id: 'method-profiles',
+		name: 'Authentication method profiles',
+		kind: 'records',
+		page: 'authentication/methods',
+		paths: [`${A}/authentication-method-profiles`, `${A}/platform/authentication-method-profiles`]
+	},
+	{
+		id: 'session-profiles',
+		name: 'Session profiles',
+		kind: 'records',
+		page: 'authentication/session-profiles',
+		paths: [`${A}/session-profiles`, `${A}/platform/session-profiles`]
+	},
+	{
 		id: 'external-providers',
 		name: 'Social and OIDC providers',
 		kind: 'records',
@@ -465,7 +479,7 @@ export const API_GROUPS: readonly ApiGroup[] = [
 		name: 'Login UI themes',
 		kind: 'records',
 		page: 'customization/branding',
-		paths: [`${A}/login-ui/themes`],
+		paths: [`${A}/login-ui/themes`, `${A}/login-ui/lite-mode`],
 		note: 'Saved themes; applying one writes its values to the login-ui settings.'
 	},
 	{
@@ -803,7 +817,7 @@ export const API_GROUPS: readonly ApiGroup[] = [
 		name: 'Admin roles and assignments',
 		kind: 'records',
 		page: 'plat-admins/roles',
-		paths: [`${A}/admin-roles`]
+		paths: [`${A}/admin-roles`, `${A}/admin-groups`]
 	},
 	{
 		id: 'admin-attributes',
@@ -899,7 +913,10 @@ export const API_GROUPS: readonly ApiGroup[] = [
 		page: 'plat-infra/backup',
 		paths: [
 			`${A}/tenant-backups`,
+			`${A}/replication-backups`,
+			`/api/replication-backups`,
 			`${A}/platform/control-plane/tenant-recovery`,
+			`${A}/platform/last-resort-recovery`,
 			`${A}/tenants/{id}/runtime-registry`
 		]
 	},
@@ -955,7 +972,7 @@ export const API_GROUPS: readonly ApiGroup[] = [
 		name: 'Health, avatars and API root',
 		kind: 'outside',
 		page: 'outside',
-		paths: ['/health', '/api/health', '/api/avatars', '/api/v1']
+		paths: ['/health', '/api/health', '/api/avatars', '/api/v1', `${A}/platform/service-site`]
 	}
 ];
 

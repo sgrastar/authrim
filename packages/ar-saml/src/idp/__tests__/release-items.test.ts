@@ -135,6 +135,32 @@ describe('an approval applied to a SAML release', () => {
     expect(applied.ok && applied.attributes.map((attribute) => attribute.name)).toEqual(['mail']);
   });
 
+  it.each(['AUTHRIM-DEFERRED-IDENTIFIER', 'true', '42'])(
+    'holds a deferred item by metadata even if its values are %s',
+    (value) => {
+      const pending = release({
+        attributes: [release().attributes[0], { name: 'eptid', nameFormat: URI, values: [value] }],
+      });
+      expect(samlApprovalNeedsIdentifiers(pending, [nameId, mail, eptid])).toBe(true);
+      expect(applySAMLReleaseApproval(pending, [nameId, mail, eptid], PERSISTENT)).toEqual({
+        ok: true,
+        attributes: [release().attributes[0]],
+      });
+    }
+  );
+
+  it('does not mistake literal attribute text for a deferred state', () => {
+    const actual = release({
+      attributes: [{ name: 'mail', nameFormat: URI, values: ['authrim-deferred-identifier'] }],
+      deferred: new Set(),
+    });
+    expect(samlApprovalNeedsIdentifiers(actual, [nameId, mail])).toBe(false);
+    expect(applySAMLReleaseApproval(actual, [nameId, mail], PERSISTENT)).toEqual({
+      ok: true,
+      attributes: actual.attributes,
+    });
+  });
+
   it('releases everything for a trusted SP and the required items for one that does not ask', () => {
     const all = applySAMLReleaseApproval(release(), ['*'], PERSISTENT);
     // A value still standing as a placeholder is left out (identifiers are made first).

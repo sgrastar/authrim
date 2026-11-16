@@ -7,7 +7,7 @@
 		type BulkApplyResponse,
 		type BulkApplyResult,
 		type BulkPreviewResult,
-		type IdentityMappingClient,
+		type IdentityMappingStoryClient,
 		type MappingSetSummary,
 		type PlatformTenantsOverview
 	} from '#lib/api/identity-mapping.js';
@@ -35,7 +35,7 @@
 	 * ones not changed are retried. The source column is read again after running.
 	 */
 	interface Props {
-		client: IdentityMappingClient;
+		client: IdentityMappingStoryClient;
 		active?: boolean;
 		refresh?: number;
 		/** Opens the claim-change preview (MAP-05) for the chosen set. */

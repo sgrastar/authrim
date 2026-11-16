@@ -22,10 +22,10 @@ import type {
 	ExplainedClaim,
 	ExplainRequest,
 	HistoryEntry,
-	IdentityMappingClient,
+	IdentityMappingStoryClient,
 	LevelValue,
 	PlatformTenantRow,
-	SetContentDraft
+	StoryMappingDraft
 } from '../identity-mapping';
 import { IDENTITY_MAPPING_CATEGORY, OIDC_DEFAULT_SET_KEY } from '../identity-mapping';
 import {
@@ -72,7 +72,7 @@ const copy = <T>(value: T): T => structuredClone(value);
 
 export function createFakeIdentityMapping(
 	options: FakeIdentityMappingOptions = {}
-): IdentityMappingClient {
+): IdentityMappingStoryClient {
 	const sets = fakeSets();
 	if (options.inactiveTenantSet) {
 		const target = sets.find((s) => s.id === 'fms_aster')!;
@@ -674,7 +674,7 @@ export function createFakeIdentityMapping(
 	};
 
 	/** A mapping is kept when it fills a claim from something: attributes, or a step alone. */
-	const kept = (mappings: SetContentDraft['mappings']) =>
+	const kept = (mappings: StoryMappingDraft['mappings']) =>
 		mappings.filter((m) => m.target && (m.sources.length > 0 || (m.steps?.length ?? 0) > 0));
 
 	/** The places that name a set (the facade's count): defaults and apps, not the apps behind them. */
@@ -875,7 +875,7 @@ export function createFakeIdentityMapping(
 			appOf(clientId);
 			return copy({ ...select(tenantId, choice), clientId });
 		},
-		async previewSetChange(tenantId, setId, draft: SetContentDraft, sampleUserId) {
+		async previewSetChange(tenantId, setId, draft: StoryMappingDraft, sampleUserId) {
 			await pause();
 			const found = findSet(setId);
 			if (!found) throw new ApiError(404, 'not_found', 'field mapping set not found');
