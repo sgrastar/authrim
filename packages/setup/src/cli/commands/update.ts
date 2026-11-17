@@ -1,5 +1,6 @@
 import {
   prepareLogArchiveReadinessAttempt,
+  startLogArchiveReadiness,
   waitForLogArchiveReadiness,
 } from '../../core/log-archive-readiness.js';
 /**
@@ -10,7 +11,8 @@ import {
  */
 
 import chalk from 'chalk';
-import ora from 'ora';
+import ora from '../timed-ora.js';
+import { setPhaseTimingTarget } from '../../core/phase-timings.js';
 import { confirm } from '@inquirer/prompts';
 import { resolve, join } from 'node:path';
 import { existsSync } from 'node:fs';
@@ -910,117 +912,127 @@ async function deployReleaseUiWorkers(input: {
 
   let workingLock = input.lock;
   for (const component of input.components) {
-    let loginUiClientId: string | undefined;
-    if (component === 'ar-login-ui') {
-      loginUiClientId = await runEphemeralSetupMachineAccess({
-        env: input.env,
-        config: input.config,
-        keysDir: keysDirectory.path,
-        databaseIdentifier: adminDatabaseIdentifier,
-        action: async () => {
-          const client = await ensureLoginUiClient({
-            apiBaseUrl,
-            loginUiUrl: resolveLoginUiExecutionOrigin(input.config, { env: input.env }),
-            keysDir: keysDirectory.path,
-            tenantId: input.config.tenant.name,
-          });
-          if (!client.success || !client.clientId) {
-            throw new Error(`Login UI client update failed: ${client.error ?? 'unknown error'}`);
-          }
-          return client.clientId;
-        },
-      });
-    }
-
-    const settings = resolveUiDeploymentSettings({
-      component,
-      config: input.config,
-      apiBaseUrl,
-      loginUiClientId,
-    });
-    if (component === 'ar-login-ui' && loginUiClientId) {
-      await mergeAndSaveUiEnv(
-        getEnvironmentPaths({ baseDir: input.baseDir, env: input.env }).uiEnv,
-        settings.uiEnv
-      );
-    }
-    const adminUiBffSecrets =
-      component === 'ar-admin-ui'
-        ? await prepareAdminUiBffDeployment({
-            env: input.env,
-            config: input.config,
-            keysDir: keysDirectory.path,
-            databaseIdentifier: adminDatabaseIdentifier,
-          })
-        : undefined;
-    const result = await deployUiWorkerComponent(component, {
-      env: input.env,
-      rootDir: input.baseDir,
-      apiBaseUrl: settings.apiBaseUrl,
-      runtimeApiBackendUrl: settings.runtimeApiBackendUrl,
-      uiEnvConfig: settings.uiEnv,
-      serviceBindingName: settings.serviceBindingName,
-      workersDev: settings.workersDev,
-      routes: settings.routes,
-      sourcePackage: settings.sourcePackage,
-      adminUiBffSecrets,
-      skipBuild: input.skipBuild,
-      deployConfigLockProof: input.deployConfigLockProof,
-      workerScriptOwnership: input.workerScriptOwnership,
-    });
-    if (
-      !result.success ||
-      !result.deployedAt ||
-      !result.cloudflareVersionId ||
-      !result.cloudflareScriptTag
-    ) {
-      throw new Error(`${component} release deployment failed: ${result.error ?? 'unknown error'}`);
-    }
-    const visibility = await waitForWorkerDeploymentsReady({
-      targets: [
-        {
-          workerName: result.projectName,
-          deployedAt: result.deployedAt,
-          expectedVersionId: result.cloudflareVersionId,
-        },
-      ],
-    });
-    if (!visibility.ready) {
-      throw new Error(
-        `${component} release deployment did not become visible: ${visibility.error ?? 'unknown verification error'}`
-      );
-    }
-    const workersSubdomain = await getWorkersSubdomain();
-    const entryUrl =
-      component === 'ar-login-ui'
-        ? resolveLoginUiEntryUrl(input.config, { env: input.env, workersSubdomain })
-        : resolveAdminUiEntryUrl(input.config, { env: input.env, workersSubdomain });
-    const httpReadiness = await waitForWorkerHttpReady({
-      targets: [{ workerName: result.projectName, url: entryUrl, allowRedirectResponse: true }],
-    });
-    if (!httpReadiness.ready) {
-      throw new Error(
-        `${component} release deployment is not reachable: ${httpReadiness.error ?? entryUrl}`
-      );
-    }
-    workingLock = clearProvisionalWorkerScriptOwnership(
-      {
-        ...workingLock,
-        workers: {
-          ...workingLock.workers,
-          [component]: {
-            name: result.projectName,
-            deployedAt: result.deployedAt,
-            version: input.productVersion,
-            cloudflareVersionId: result.cloudflareVersionId,
-            cloudflareScriptTag: result.cloudflareScriptTag,
+    // Each UI Worker is said and timed: they deploy in about a minute each, with no other output.
+    const uiSpinner = ora(`Deploying ${component} (UI Worker)...`).start();
+    try {
+      let loginUiClientId: string | undefined;
+      if (component === 'ar-login-ui') {
+        loginUiClientId = await runEphemeralSetupMachineAccess({
+          env: input.env,
+          config: input.config,
+          keysDir: keysDirectory.path,
+          databaseIdentifier: adminDatabaseIdentifier,
+          action: async () => {
+            const client = await ensureLoginUiClient({
+              apiBaseUrl,
+              loginUiUrl: resolveLoginUiExecutionOrigin(input.config, { env: input.env }),
+              keysDir: keysDirectory.path,
+              tenantId: input.config.tenant.name,
+            });
+            if (!client.success || !client.clientId) {
+              throw new Error(`Login UI client update failed: ${client.error ?? 'unknown error'}`);
+            }
+            return client.clientId;
           },
+        });
+      }
+
+      const settings = resolveUiDeploymentSettings({
+        component,
+        config: input.config,
+        apiBaseUrl,
+        loginUiClientId,
+      });
+      if (component === 'ar-login-ui' && loginUiClientId) {
+        await mergeAndSaveUiEnv(
+          getEnvironmentPaths({ baseDir: input.baseDir, env: input.env }).uiEnv,
+          settings.uiEnv
+        );
+      }
+      const adminUiBffSecrets =
+        component === 'ar-admin-ui'
+          ? await prepareAdminUiBffDeployment({
+              env: input.env,
+              config: input.config,
+              keysDir: keysDirectory.path,
+              databaseIdentifier: adminDatabaseIdentifier,
+            })
+          : undefined;
+      const result = await deployUiWorkerComponent(component, {
+        env: input.env,
+        rootDir: input.baseDir,
+        apiBaseUrl: settings.apiBaseUrl,
+        runtimeApiBackendUrl: settings.runtimeApiBackendUrl,
+        uiEnvConfig: settings.uiEnv,
+        serviceBindingName: settings.serviceBindingName,
+        workersDev: settings.workersDev,
+        routes: settings.routes,
+        sourcePackage: settings.sourcePackage,
+        adminUiBffSecrets,
+        skipBuild: input.skipBuild,
+        deployConfigLockProof: input.deployConfigLockProof,
+        workerScriptOwnership: input.workerScriptOwnership,
+      });
+      if (
+        !result.success ||
+        !result.deployedAt ||
+        !result.cloudflareVersionId ||
+        !result.cloudflareScriptTag
+      ) {
+        throw new Error(
+          `${component} release deployment failed: ${result.error ?? 'unknown error'}`
+        );
+      }
+      const visibility = await waitForWorkerDeploymentsReady({
+        targets: [
+          {
+            workerName: result.projectName,
+            deployedAt: result.deployedAt,
+            expectedVersionId: result.cloudflareVersionId,
+          },
+        ],
+      });
+      if (!visibility.ready) {
+        throw new Error(
+          `${component} release deployment did not become visible: ${visibility.error ?? 'unknown verification error'}`
+        );
+      }
+      const workersSubdomain = await getWorkersSubdomain();
+      const entryUrl =
+        component === 'ar-login-ui'
+          ? resolveLoginUiEntryUrl(input.config, { env: input.env, workersSubdomain })
+          : resolveAdminUiEntryUrl(input.config, { env: input.env, workersSubdomain });
+      const httpReadiness = await waitForWorkerHttpReady({
+        targets: [{ workerName: result.projectName, url: entryUrl, allowRedirectResponse: true }],
+      });
+      if (!httpReadiness.ready) {
+        throw new Error(
+          `${component} release deployment is not reachable: ${httpReadiness.error ?? entryUrl}`
+        );
+      }
+      workingLock = clearProvisionalWorkerScriptOwnership(
+        {
+          ...workingLock,
+          workers: {
+            ...workingLock.workers,
+            [component]: {
+              name: result.projectName,
+              deployedAt: result.deployedAt,
+              version: input.productVersion,
+              cloudflareVersionId: result.cloudflareVersionId,
+              cloudflareScriptTag: result.cloudflareScriptTag,
+            },
+          },
+          updatedAt: new Date().toISOString(),
         },
-        updatedAt: new Date().toISOString(),
-      },
-      [component]
-    );
-    await saveLockFile(workingLock, input.lockPath);
+        [component]
+      );
+      await saveLockFile(workingLock, input.lockPath);
+      uiSpinner.succeed(`${component} deployed`);
+    } catch (error) {
+      uiSpinner.fail(`${component} deployment failed`);
+      throw error;
+    }
   }
   const controlDatabaseId = workingLock.d1.CONTROL_DB?.id;
   if (!controlDatabaseId) {
@@ -1062,6 +1074,7 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
     console.log('  authrim-setup update --env prod --dry-run  # Preview changes');
     process.exit(1);
   }
+  setPhaseTimingTarget({ env, baseDir });
 
   // Check prerequisites
   const spinner = ora('Checking prerequisites...').start();
@@ -1676,8 +1689,14 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
       throw new Error('release_manifest_changed_while_waiting_for_update_lock');
     }
 
-    const verifyUpdatedLogArchive = async () => {
-      if (options.databaseOnly || options.dryRun) return;
+    // The log archive check waits for the Pipeline to commit the probe row (up to ~5 min). It is
+    // started before the UI Workers deploy and waited for after them, so the two overlap.
+    let startedLogArchiveCheck: {
+      attempt: ReturnType<typeof prepareLogArchiveReadinessAttempt>;
+      sentAt: number;
+      proof: Awaited<ReturnType<typeof startLogArchiveReadiness>>;
+    } | null = null;
+    const logArchiveReadinessInput = async () => {
       const archive = lockedConfig.logging?.archive,
         owned = workingLock.logArchive,
         signing = workingLock.controlKeyState?.smokeRpc;
@@ -1692,17 +1711,53 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
       workingLock = { ...workingLock, logArchive: pending };
       await saveLockFile(workingLock, lockPath);
       const workersSubdomain = await getWorkersSubdomain();
-      const proof = await waitForLogArchiveReadiness({
-        apiBaseUrl: resolveIssuerUrl(lockedConfig, { env, workersSubdomain }),
-        environmentId: env,
-        keysDir: keys.path,
-        activeSlot: signing.activeSlot,
-        activeKeyId: signing.activeKeyId,
-        archive,
-        owned: pending,
+      return {
         attempt,
-        onProgress: (message) => console.log(chalk.gray(message)),
-      });
+        pending,
+        input: {
+          apiBaseUrl: resolveIssuerUrl(lockedConfig, { env, workersSubdomain }),
+          environmentId: env,
+          keysDir: keys.path,
+          activeSlot: signing.activeSlot,
+          activeKeyId: signing.activeKeyId,
+          archive,
+          owned: pending,
+          attempt,
+          onProgress: (message: string) => console.log(chalk.gray(message)),
+        },
+      };
+    };
+    const startUpdatedLogArchiveCheck = async () => {
+      if (options.databaseOnly || options.dryRun) return;
+      // The check after the UI Workers decides (it prepares and saves the attempt again); starting
+      // early only saves time, so nothing here may stop the UI deployment.
+      try {
+        const { attempt, input } = await logArchiveReadinessInput();
+        const sentAt = Date.now();
+        startedLogArchiveCheck = { attempt, sentAt, proof: await startLogArchiveReadiness(input) };
+      } catch (error) {
+        startedLogArchiveCheck = null;
+        console.log(
+          chalk.gray(
+            `Log archive check could not start early (${error instanceof Error ? error.message : String(error)}); it runs after the UI Workers.`
+          )
+        );
+      }
+    };
+    const verifyUpdatedLogArchive = async () => {
+      if (options.databaseOnly || options.dryRun) return;
+      const { attempt, pending, input } = await logArchiveReadinessInput();
+      const started =
+        startedLogArchiveCheck?.attempt.attemptId === attempt.attemptId
+          ? startedLogArchiveCheck
+          : null;
+      startedLogArchiveCheck = null;
+      const proof =
+        started?.proof ??
+        (await waitForLogArchiveReadiness({
+          ...input,
+          ...(started ? { probeSentAt: started.sentAt } : {}),
+        }));
       workingLock = {
         ...workingLock,
         logArchive: {
@@ -2390,6 +2445,7 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
         }
       }
       verificationSpinner.succeed('Existing Worker deployments are healthy');
+      await startUpdatedLogArchiveCheck();
       try {
         workingLock = await deployReleaseUiWorkers({
           env,
@@ -2782,6 +2838,7 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
       console.log(
         chalk.gray(`\n  Lock file updated after identity and health checks: ${lockPath}`)
       );
+      await startUpdatedLogArchiveCheck();
       try {
         workingLock = await deployReleaseUiWorkers({
           env,
@@ -2832,7 +2889,11 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
     console.log(chalk.bold('  Update Summary'));
     console.log(chalk.bold('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'));
 
-    console.log(chalk.green(`  ✅ ${summary.successCount} worker(s) updated successfully!`));
+    console.log(
+      chalk.green(
+        `  ✅ ${summary.successCount} API and ${uiComponentsToUpdate.length} UI worker(s) updated successfully!`
+      )
+    );
 
     console.log('');
   } finally {

@@ -22,6 +22,9 @@ import type {
 } from './provisioning-intent.js';
 
 /** Shared name contract for manual verification and automatic issuance. */
+/** How often the Pipeline sink commits a file to the Iceberg table (rows are readable after it). */
+export const LOG_ARCHIVE_SINK_ROLL_INTERVAL_SECONDS = 300;
+
 export const LOG_ARCHIVE_CATALOG_PERMISSION_PATTERNS = {
   catalogRead: /catalog.*read/iu,
   sqlRead: /sql.*read/iu,
@@ -81,7 +84,10 @@ export function planLogArchive(environment: string, archive: LogArchiveConfig): 
         bucket: archive.bucketName,
         namespace: archive.namespace,
         table_name: archive.tableName,
-        rolling_policy: { file_size_bytes: 100 * 1024 * 1024, interval_seconds: 300 },
+        rolling_policy: {
+          file_size_bytes: 100 * 1024 * 1024,
+          interval_seconds: LOG_ARCHIVE_SINK_ROLL_INTERVAL_SECONDS,
+        },
       },
     },
     pipelineBody: { name: pipeline, sql: `INSERT INTO ${sink} SELECT * FROM ${stream}` },
