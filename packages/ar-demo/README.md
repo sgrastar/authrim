@@ -131,52 +131,56 @@ the bare base domain answers "Tenant not found".
 
 ## Pages
 
-The photographic scene (a far view of a mountain causeway with a gatehouse at its end) fills the whole
-viewport on every page; there is no side panel. The text sits in one translucent dark window over it
-(`rgba(8,12,18,.78)` with a fine gold border and `backdrop-filter: blur` where supported). The wording
-is plain product language: the gate is only a visual metaphor and no text mentions it. Four languages,
-a language switcher in the window.
+A city drawn as an architect's model fills the whole viewport behind every page (an empty sheet
+with survey rings on the start and error pages, built step by step on the waiting page). The start
+page has no window: the name, the introduction and the notices stand on the sheet. The other pages
+use one small translucent window (`backdrop-filter: blur` where supported, solid without the city).
+The wording is the same in every language, with a language switcher on each page.
 
-| Page            | Route   | What it is                                                                                                                                                                            |
-| --------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Start           | `/`     | Centred window: heading, a two-sentence introduction, the three notices (demo environment, no real data, automatic deletion after the configured hours), Turnstile (dark), one button |
-| Gate            | `/wait` | Small window at the top (heading and one `role="status"` line, "skip the animation" once ready); the scene shows the progress; the button on the door opens the admin console         |
-| Error / refusal | any     | Centred window over the dark scene: one sentence and a link back                                                                                                                      |
+| Page            | Route   | What it is                                                                                                                                                                                                                                                                                        |
+| --------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Start           | `/`     | On the empty sheet: the name, a two-sentence introduction, the three notices (demo environment, no real data, automatic deletion after the configured hours), Turnstile (unseen unless it has to ask the visitor something; the button waits only while the check is still answering), one button |
+| Waiting         | `/wait` | Window at the bottom: heading, four progress segments, one `role="status"` line, "skip the animation" once ready, then the button that opens the admin console; the city shows the progress                                                                                                       |
+| Error / refusal | any     | Centred window over the empty sheet: one sentence and a link back                                                                                                                                                                                                                                 |
 
-The scene keeps the measured cover fit, except on tall screens (aspect below 4:5), where the far view
-is never magnified beyond 53 % visible width, so the fires stay in view and its top and bottom edges
-fade out; at the door the near view always covers the screen. Typefaces are system serif stacks only
-(Trajan Pro, Cinzel, Palatino and similar for Latin headings; Hiragino Mincho and Yu Mincho for
-Japanese; Geeza Pro and Noto Naskh Arabic for Arabic); capitals with wide letter-spacing only for
-en/de (set per `lang`). Japanese breaks only at hand-marked phrase boundaries (a zero width space, written `|` in `src/i18n.ts`) with `word-break: keep-all`, `overflow-wrap: anywhere` and `line-break: strict` (works in every browser, unlike `auto-phrase`); headings
-and status lines use `text-wrap: balance`, paragraphs `text-wrap: pretty`. One gold focus ring for
+Typefaces are system sans-serif stacks only (Hiragino Sans and Noto Sans JP for Japanese; Geeza Pro
+and Noto Sans Arabic for Arabic). Japanese breaks only at hand-marked phrase boundaries (a zero width space, written `|` in `src/i18n.ts`) with `word-break: keep-all`, `overflow-wrap: anywhere` and `line-break: strict` (works in every browser, unlike `auto-phrase`); headings
+and status lines use `text-wrap: balance`, paragraphs `text-wrap: pretty`. One focus ring for
 the whole site.
 
-The gate follows the server's real stages (`provisioning`, `inviting`, `ready` from `/status`). A
-stage sequence is always played in full and in order, so the picture may lag the real state but never
-runs ahead of it; the status text follows the real state at once; the door button appears only after a
-real `ready`. After `ready` a "skip the animation" control moves straight to the door. The press
+The waiting page follows the server's real stages (`provisioning`, `inviting`, `ready` from
+`/status`). Behind the words a city is built in four parts: the plan is drawn, detail is added, the
+surfaces rise, the lights come on. A part is always played in full and in order, so the picture may
+lag the real state but never runs ahead of it; the status text follows the real state at once; the
+open button appears only after a real `ready`. Detail goes on being added for as long as the real
+creation takes. The open button flies down onto the main avenue and along it into the light, then
+opens the console; a timer opens it anyway if the picture never finishes. After `ready` a "skip the animation" control moves straight to the finished city. The press
 deadline is `join_expires_in - 30` seconds (at most 300) counted from the moment `ready` was received;
 below 90 s the sequences are skipped automatically. On the gate page the language links are hidden
 while a run is in progress (a reload would lose the one-time join link); the script shows them only
 after an end state without a usable link (failed, lost, handed off, timeout, deadline expired).
 Without JavaScript they are offered inside `<noscript>`.
 
-Degradation, each step working on its own: full (canvas 2D, fires lit one by one through feathered
-masks, flame flipbook, camera moves) -> `prefers-reduced-motion` (no travel, states switch at once)
--> no canvas or failed composition images (four stacked photographs switched by `data-station`) ->
-text only (the texts, the door button and the retry link never depend on an image).
+Degradation, each step working on its own: full (WebGL city) -> `prefers-reduced-motion` (a still
+city, states switch at once, no flight) -> no WebGL, or the scene script is late or did not load (it is `async` and nothing waits for it: no city, a
+solid window on the plain background) -> no script at all (the texts, and the language links under
+`<noscript>`).
+
+Day or night: the pages follow the visitor's system setting; the sun and moon button (shown by the
+script) switches, and the choice is kept in `localStorage` (`authrim-theme`, `day` or `night`, on
+this origin only). The city can be turned left and right by dragging or with the arrow keys.
 
 The decision logic is in `src/gate-logic.ts` as plain JavaScript source that is shipped unchanged
-and unit-tested (`src/__tests__/gate-logic.test.ts`). The canvas renderer is `src/gate-render.ts`,
-the DOM code `src/gate-ui.ts`, the stylesheet `src/site-css.ts`, the geometry `src/gate-geometry.ts`
-(measured on the finished photographs).
+and unit-tested (`src/__tests__/gate-logic.test.ts`). The waiting page's DOM code is
+`src/gate-ui.ts`, the code every page runs (theme, creating the city) `src/scene-ui.ts`, the
+stylesheet `src/site-css.ts`. The city itself is `city/city.js` (three.js, everything procedural:
+no image or model file).
 
 ## Languages
 
-Exactly the languages of the admin console (`ar-admin-console/src/lib/i18n/locales.ts`), in its order:
-Japanese, English, German and Arabic (right-to-left: `dir="rtl"` on `<html>`, logical CSS for the
-window; the scene and the door button are never mirrored). The texts are one typed table
+Exactly the languages of the admin console (`ar-admin-console/src/lib/i18n/locales.ts`), with the
+default first in the language links: English, Japanese, German and Arabic (right-to-left: `dir="rtl"` on `<html>`, logical CSS for the
+window; the city and the progress segments' meaning are never mirrored). The texts are one typed table
 (`src/i18n.ts`; a missing key fails the typecheck). The language is chosen in this order: a valid
 `?lang=` (remembered in the cookie `demo_lang`, which only ever holds an allowlisted code), the
 cookie, `Accept-Language`, English; any other value (for example an old `fr` cookie) is ignored like
@@ -189,21 +193,23 @@ throughout.
 
 ## Static assets
 
-The photographs live in `public/assets/gate/` and are served by Workers Static Assets
+The city's script lives in `public/assets/city/` and is served by Workers Static Assets
 (`"assets": { "directory": "./public" }` in `wrangler.jsonc`): a request that matches a file there is
-answered by the platform before the Worker runs, every other path (including `/assets/site.css` and
-`/assets/wait.js`, which are generated by the Worker) reaches the Worker. Keep `public/` free of
-files that would shadow a Worker route (a test checks it). The file names carry a content hash, and
-`public/robots.txt` asks crawlers to stay away from the whole portal (the pages also carry
-`noindex`). `public/_headers` gives the photographs `Cache-Control: public, max-age=31536000, immutable`; the HTML stays
-`no-store`. The static files do not pass through the Worker, so they do not carry the page's
-security headers (they are images only).
+answered by the platform before the Worker runs, every other path (including `/assets/site.css`,
+`/assets/scene.js` and `/assets/wait.js`, which are generated by the Worker) reaches the Worker.
+Keep `public/` free of files that would shadow a Worker route (a test checks it). The file name
+carries a content hash, and `public/robots.txt` asks crawlers to stay away from the whole portal
+(the pages also carry `noindex`). `public/_headers` gives the script
+`Cache-Control: public, max-age=31536000, immutable` and `nosniff`; the HTML stays `no-store`. The
+Worker-made stylesheet and scripts are cached for five minutes; the pages ask for them with a
+mark of their content (`?v=`), so a page made after a release never runs the files of the one before.
 
-The images are original, generated photographs (no existing artwork). Only what the pages use is
-shipped: far and near view in dark and lit versions (AVIF and WebP, two sizes each), the two door
-leaves, the passage behind the door, the seal and the flame flipbook. The hashed names and the
-measured geometry are generated into `src/gate-assets.ts` and `src/gate-geometry.ts`
-(`scripts/sync-gate-assets.ts`); the pages and the script read only those two modules.
+`pnpm run build:city` bundles `city/entry.js` with three.js (a dev dependency, MIT, its notice is
+kept at the top of the file) into one minified classic script, names it after its content hash and
+writes the name into `src/city-assets.ts`. Both the script and that module are committed: run the
+build again after changing anything under `city/` (a test compares the name with the file's hash).
+The script is about 570 KiB, about 150 KiB as transferred (gzip); it makes no request, uses no
+`eval` and no worker, so the page policy is unchanged.
 
 ## Preview
 
@@ -212,7 +218,7 @@ measured geometry are generated into `src/gate-assets.ts` and `src/gate-geometry
 the preview files). Serve it with any static server, for example
 `python3 -m http.server 8811 --directory preview`, and open `/`. The index lists scenarios: normal run,
 instant ready, real timing (a 16 s creation request), slow, failure, early failure, deadline expiry,
-reduced motion, image-only (`&canvas=off`), 404, handed off and server errors.
+reduced motion, no WebGL (`&canvas=off`), 404, handed off and server errors.
 
 ## Manual operator steps
 

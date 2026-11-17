@@ -1,7 +1,7 @@
 import { dispatchScheduled } from './scheduled';
 import { loadConfig } from './config';
 import { handleStart, handleStartPage, handleStatus, handleWaitPage, langOf } from './handlers';
-import { SITE_CSS, WAIT_JS } from './html';
+import { SCENE_JS, SITE_CSS, WAIT_JS } from './html';
 import { logError } from './log';
 import { assetResponse, errorResponse, withSecurityHeaders } from './respond';
 import { createDeps, type Deps, type Env } from './types';
@@ -13,6 +13,7 @@ const ROUTES: Record<string, string[]> = {
   '/status': ['GET'],
   '/healthz': ['GET', 'HEAD'],
   '/assets/site.css': ['GET', 'HEAD'],
+  '/assets/scene.js': ['GET', 'HEAD'],
   '/assets/wait.js': ['GET', 'HEAD'],
 };
 
@@ -32,6 +33,9 @@ async function route(request: Request, env: Env, deps: Deps): Promise<Response> 
   }
   if (url.pathname === '/assets/site.css')
     return assetResponse(SITE_CSS, 'text/css; charset=utf-8');
+  if (url.pathname === '/assets/scene.js') {
+    return assetResponse(SCENE_JS, 'text/javascript; charset=utf-8');
+  }
   if (url.pathname === '/assets/wait.js') {
     return assetResponse(WAIT_JS, 'text/javascript; charset=utf-8');
   }

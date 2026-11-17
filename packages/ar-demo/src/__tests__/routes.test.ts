@@ -119,7 +119,7 @@ describe('routing', () => {
 
   it('serves the wait page with no inline script and the console origin in a meta tag', async () => {
     const html = await (await get('/wait')).text();
-    expect(html).toContain('<script src="/assets/wait.js" defer></script>');
+    expect(html).toMatch(/<script src="\/assets\/wait\.js\?v=[0-9a-f]{8}" defer><\/script>/);
     expect(html).toContain(`<meta name="console-origin" content="${CONSOLE}">`);
     // Every script element loads a file: none carries code of its own.
     const lower = html.toLowerCase();
