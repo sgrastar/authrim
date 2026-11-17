@@ -1,3 +1,4 @@
+import type { MetadataPreviewDraft } from './metadata-draft';
 import type { OidcDiscovery } from '#lib/api/external-providers.js';
 import { t, type MessageKey } from '#lib/i18n/i18n.svelte.js';
 import type { WizardStep } from '#lib/ui/patterns/WizardSteps.svelte';
@@ -49,6 +50,8 @@ export const KINDS_OF: Record<Direction, readonly ConnectionKind[]> = {
 
 /** What reading the other side's details needs, for a SAML partner in either direction. */
 export interface ImportForm {
+	/** Live, server-validated preview state; never prototype metadata. */
+	metadata?: MetadataPreviewDraft;
 	importMode: ImportMode;
 	metadataUrl: string;
 	/** The metadata at the URL has been read (dummy). */

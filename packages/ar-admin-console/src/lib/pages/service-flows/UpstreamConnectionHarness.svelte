@@ -1,4 +1,5 @@
 <script lang="ts">
+	import Button from '#lib/ui/primitives/Button.svelte';
 	import { untrack } from 'svelte';
 	import AccountServiceFlowsPage from './AccountServiceFlowsPage.svelte';
 	import { provideFlowResources, useFlowResources } from './flow-resources-context';
@@ -13,6 +14,7 @@
 		initial,
 		list = false,
 		canEdit = true,
+		switchSources = false,
 		onnavigate
 	}: {
 		resources: ConnectionCreationResources & {
@@ -22,6 +24,7 @@
 		initial?: { kind: 'op' | 'idp'; id: string };
 		list?: boolean;
 		canEdit?: boolean;
+		switchSources?: boolean;
 		onnavigate?: (path: string) => void;
 	} = $props();
 	provideFlowResources({ ...useFlowResources(), connectionCreation: untrack(() => resources) });
@@ -31,6 +34,15 @@
 {#if list}
 	<AccountServiceFlowsPage showConnections />
 {:else if opened}
+	{#if switchSources}
+		<Button onclick={() => (opened = { kind: 'idp', id: 'identity/pending' })}
+			>Open pending IdP</Button
+		>
+		<Button onclick={() => (opened = { kind: 'idp', id: 'identity/latest' })}
+			>Open latest IdP</Button
+		>
+		<Button onclick={() => (opened = { kind: 'op', id: 'directory/op' })}>Open OIDC source</Button>
+	{/if}
 	<UpstreamConnectionPage
 		kind={opened.kind}
 		id={opened.id}

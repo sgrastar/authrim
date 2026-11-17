@@ -2,13 +2,21 @@ import type { ClientDetail, ClientSettingsClient, ClientBasicUpdate } from '#lib
 import type {
 	SamlServiceProvider,
 	SamlSettingsClient,
+	SamlMetadataClient,
 	SamlActivationClient
 } from '#lib/api/saml-providers.js';
 import { emptyAnswers, type Answers } from './connection-model';
 
 export type ConnectionSettingsResources =
 	| { kind: 'rp'; detail: ClientDetail; client: ClientSettingsClient }
-	| { kind: 'sp'; detail: SamlServiceProvider; client: SamlSettingsClient & SamlActivationClient };
+	| {
+			kind: 'sp';
+			detail: SamlServiceProvider;
+			client: SamlSettingsClient & SamlActivationClient;
+			metadata?: SamlMetadataClient;
+			canPreviewMetadata?: boolean;
+			canImportMetadata?: boolean;
+	  };
 
 export function basicSettingsAnswers(resources: ConnectionSettingsResources): Answers {
 	const answers = emptyAnswers();

@@ -292,6 +292,26 @@ export const jaServiceFlows = {
 	'sf.ours.signOutRedirectUri': 'サインアウト後のリダイレクト URI',
 
 	// The other side's SAML details.
+	'sf.metadata.urlHint':
+		'サーバーでこのURLから取得し、検証します。確認した内容は保存またはインポートの確定後に保存されます。',
+	'sf.metadata.chooseFile': 'XMLメタデータファイルを選択してください。',
+	'sf.metadata.tooLarge': '接続ごとのメタデータは1 MiB以下にしてください。',
+	'sf.metadata.wrongRole': 'メタデータのロールがこの接続と一致しません。',
+	'sf.metadata.failed': 'メタデータを確認できませんでした。再試行してください。',
+	'sf.metadata.certificates': '公開署名証明書 {count} 件',
+	'sf.metadata.noCertificate': 'このメタデータには公開署名証明書がありません。',
+	'sf.metadata.previewOnly': '確認用の表示です。まだ保存していません。',
+	'sf.metadata.title': 'メタデータのインポート',
+	'sf.metadata.permissions':
+		'確認にはプロバイダーの作成権限が必要です。インポートにはメタデータのインポート権限も必要です。手入力の設定にはプロバイダーの更新権限を使用します。',
+	'sf.metadata.mappingDirty':
+		'メタデータをインポートする前に、Mappingの変更を保存または破棄してください。',
+	'sf.metadata.confirm': 'メタデータのインポートを確定',
+	'sf.metadata.confirmBody':
+		'確認したメタデータをこの接続にインポートしますか？保存済みのマッピングとカスタム設定は保持されます。',
+	'sf.metadata.dirtyConfirm':
+		'Generalの未保存の変更を破棄して、確認したメタデータをインポートしますか？保存済みのマッピングとカスタム設定は保持されます。',
+	'sf.metadata.discard': 'メタデータの確認結果を破棄',
 	'sf.import.how.service': 'サービスの情報を Authrim に渡す方法',
 	'sf.import.how.provider': 'プロバイダーの情報を Authrim に渡す方法',
 	'sf.import.mode.file': 'ファイルをアップロード',

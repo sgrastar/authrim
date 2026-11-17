@@ -1,3 +1,4 @@
+import { metadataInput } from './metadata-draft';
 import type { ClientCreationClient, CreateClientInput } from '#lib/api/clients.js';
 import type {
 	ExternalProvidersClient,
@@ -10,7 +11,8 @@ import type {
 	CreateIdentityProviderInput,
 	IdentityProviderConfig,
 	SamlCreationClient,
-	CreateServiceProviderInput
+	CreateServiceProviderInput,
+	SamlMetadataClient
 } from '#lib/api/saml-providers.js';
 import { t } from '#lib/i18n/i18n.svelte.js';
 import {
@@ -30,6 +32,7 @@ export interface CreatedConnection {
 	clientSecret?: string;
 }
 export interface ConnectionCreationResources {
+	previewMetadata?: SamlMetadataClient['preview'];
 	clients: ClientCreationClient;
 	samlProviders: SamlCreationClient;
 	externalProviders?: ExternalProvidersClient;
@@ -38,6 +41,7 @@ export interface ConnectionCreationResources {
 	canCreate: (kind: ConnectionKind) => boolean;
 }
 export interface LiveConnectionCreation {
+	previewMetadata?: SamlMetadataClient['preview'];
 	kinds: ConnectionKind[];
 	discover?: (issuer: string, signal?: AbortSignal) => Promise<OidcDiscovery>;
 	create: (answers: Answers, serviceName: string) => Promise<CreatedConnection>;
@@ -80,6 +84,12 @@ export function rpCreateInput(form: RpForm): CreateClientInput {
 
 export function spCreateInput(answers: Answers, name: string): CreateServiceProviderInput {
 	const form = answers.sp;
+	const metadata = metadataInput(form);
+	if (metadata) {
+		if (!name.trim() || form.metadata?.preview?.providerType !== 'saml_sp')
+			throw new Error(t('sf.create.invalid'));
+		return { name: name.trim(), providerType: 'saml_sp', enabled: false, ...metadata };
+	}
 	if (
 		!name.trim() ||
 		form.importMode !== 'manual' ||
@@ -162,6 +172,18 @@ export function idpConfig(form: IdpForm): IdentityProviderConfig {
 	};
 }
 export function idpCreateInput(form: IdpForm): CreateIdentityProviderInput {
+	const metadata = metadataInput(form);
+	if (metadata) {
+		if (!form.name.trim() || form.metadata?.preview?.providerType !== 'saml_idp')
+			throw new Error(t('sf.create.invalid'));
+		return {
+			name: form.name.trim(),
+			providerType: 'saml_idp',
+			enabled: false,
+			...metadata,
+			config: { jitEmailLinkingPolicy: 'disabled', allowSyntheticEmailFallback: false }
+		};
+	}
 	return {
 		name: form.name.trim(),
 		providerType: 'saml_idp',

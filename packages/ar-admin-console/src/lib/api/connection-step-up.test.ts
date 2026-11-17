@@ -11,6 +11,7 @@ import { startAuthentication } from '@simplewebauthn/browser';
 import { setStepUpPrompt, StepUpCancelledError } from './admin-step-up';
 import {
 	httpSamlProviders,
+	httpSamlMetadata,
 	type CreateIdentityProviderInput,
 	type CreateServiceProviderInput
 } from './saml-providers';
@@ -25,7 +26,7 @@ afterEach(() => {
 });
 const json = (body: unknown, status = 200) => Response.json(body, { status });
 const certificate = '-----BEGIN CERTIFICATE-----\nVEVTVA==\n-----END CERTIFICATE-----';
-const sp: CreateServiceProviderInput = {
+const sp = {
 	name: 'Service',
 	providerType: 'saml_sp',
 	enabled: false,
@@ -36,8 +37,8 @@ const sp: CreateServiceProviderInput = {
 		signAssertions: true,
 		signResponses: true
 	}
-};
-const idp: CreateIdentityProviderInput = {
+} satisfies CreateServiceProviderInput;
+const idp = {
 	name: 'Identity',
 	providerType: 'saml_idp',
 	enabled: false,
@@ -48,7 +49,7 @@ const idp: CreateIdentityProviderInput = {
 		jitEmailLinkingPolicy: 'disabled',
 		allowSyntheticEmailFallback: false
 	}
-};
+} satisfies CreateIdentityProviderInput;
 const oidc: ExternalProviderCreate = {
 	name: 'Directory',
 	provider_type: 'oidc',
@@ -95,6 +96,23 @@ const mutations: Mutation[] = [
 		method: 'POST',
 		success: { id: 'provider' },
 		run: () => httpSamlProviders.createServiceProvider(sp)
+	},
+	{
+		name: 'SAML metadata import',
+		path: '/api/admin/saml-providers/provider/import-metadata',
+		method: 'POST',
+		success: {
+			success: true,
+			providerType: 'saml_sp',
+			updatedAt: samlRow.updatedAt,
+			config: sp.config,
+			enabled: false
+		},
+		run: () =>
+			httpSamlMetadata.importMetadata('provider', {
+				expectedUpdatedAt: samlRow.updatedAt,
+				metadataXml: '<synthetic-metadata/>'
+			})
 	},
 	{
 		name: 'SAML IdP create',

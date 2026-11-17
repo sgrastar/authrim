@@ -122,6 +122,20 @@
 		};
 		return { resources, external, saml };
 	}
+	const lifecycle = fixture();
+	const lifecycleControl: { release?: (provider: SamlIdentityProvider) => void } = {};
+	const lifecycleRead = fn(async (id: string): Promise<SamlIdentityProvider> => {
+		if (id === 'identity/pending')
+			return new Promise((resolve) => {
+				lifecycleControl.release = resolve;
+			});
+		return {
+			...samlProvider,
+			id,
+			name: id === 'identity/latest' ? 'Latest identity' : 'Initial identity'
+		};
+	});
+	lifecycle.saml.getIdentityProvider = lifecycleRead;
 	const op = fixture();
 	const idp = fixture();
 	const edit = fixture();
@@ -459,5 +473,42 @@
 			enabled: true,
 			expectedUpdatedAt: samlProvider.updatedAt
 		});
+	}}
+/>
+
+<Story
+	name="Resource changes reload once and discard late responses without tracking render revisions"
+	args={{
+		resources: lifecycle.resources,
+		initial: { kind: 'idp', id: samlProvider.id },
+		switchSources: true
+	}}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findByRole('heading', { name: 'Initial identity' });
+		await expect(lifecycleRead).toHaveBeenCalledTimes(1);
+		await expect(lifecycleRead).toHaveBeenCalledWith(samlProvider.id);
+		const name = canvas.getByRole('textbox', { name: t('sf.row.name') });
+		await userEvent.clear(name);
+		await userEvent.type(name, 'Local draft renders');
+		await expect(lifecycleRead).toHaveBeenCalledTimes(1);
+		await userEvent.click(canvas.getByRole('button', { name: 'Open pending IdP' }));
+		await waitFor(() => expect(lifecycleRead).toHaveBeenCalledTimes(2));
+		await userEvent.click(canvas.getByRole('button', { name: 'Open latest IdP' }));
+		await canvas.findByRole('heading', { name: 'Latest identity' });
+		await expect(lifecycleRead).toHaveBeenNthCalledWith(3, 'identity/latest');
+		if (!lifecycleControl.release) throw new Error('Pending source did not start loading');
+		lifecycleControl.release({ ...samlProvider, name: 'Stale identity' });
+		await userEvent.type(canvas.getByRole('textbox', { name: t('sf.row.name') }), ' draft');
+		await expect(canvas.getByRole('textbox', { name: t('sf.row.name') })).toHaveValue(
+			'Latest identity draft'
+		);
+		await expect(canvas.queryByRole('heading', { name: 'Stale identity' })).toBeNull();
+		await expect(lifecycleRead).toHaveBeenCalledTimes(3);
+		await userEvent.click(canvas.getByRole('button', { name: 'Open OIDC source' }));
+		await canvas.findByRole('heading', { name: provider.name });
+		await expect(lifecycle.external.get).toHaveBeenCalledTimes(1);
+		await expect(lifecycle.external.get).toHaveBeenCalledWith(provider.id);
+		await expect(lifecycleRead).toHaveBeenCalledTimes(3);
 	}}
 />

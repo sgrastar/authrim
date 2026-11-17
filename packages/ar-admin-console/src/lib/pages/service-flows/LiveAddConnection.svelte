@@ -40,6 +40,7 @@
 						? resources.externalProviders.discover(issuer, signal)
 						: Promise.reject(new Error('Discovery unavailable'))
 			: undefined,
+		previewMetadata: resources.previewMetadata,
 		create: (answers, name) => createConnection(resources, answers, name),
 		navigate: (connection) => onnavigate(connectionPath(connection))
 	}}

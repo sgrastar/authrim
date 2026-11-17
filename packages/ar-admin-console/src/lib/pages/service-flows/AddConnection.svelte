@@ -116,6 +116,7 @@
 					trustEmail: false,
 					jitProvisioning: false
 				});
+				initial.sp.importMode = 'manual';
 				initial.idp.importMode = 'manual';
 				initial.idp.certificate = '';
 			}
@@ -457,9 +458,16 @@
 			{:else if stepInfo.id.startsWith('rp-')}
 				<RpSteps live={!!live} step={stepInfo.id} bind:form={answers.rp} />
 			{:else if stepInfo.id.startsWith('sp-')}
-				<SpSteps live={!!live} bind:serviceName step={stepInfo.id} bind:form={answers.sp} />
+				<SpSteps
+					previewMetadata={live?.previewMetadata}
+					live={!!live}
+					bind:serviceName
+					step={stepInfo.id}
+					bind:form={answers.sp}
+				/>
 			{:else}
 				<InSteps
+					previewMetadata={live?.previewMetadata}
 					live={!!live}
 					discoverOidc={live?.discover}
 					step={stepInfo.id}

@@ -412,6 +412,7 @@ export const API_GROUPS: readonly ApiGroup[] = [
 	{
 		id: 'saml-providers',
 		name: 'SAML providers and metadata',
+		note: 'Single connections also use applications/all: preview requires provider-create, import requires metadata-import and trust step-up; import uses the loaded expectedUpdatedAt and returns 409 on conflict. Preview never saves a provider.',
 		kind: 'records',
 		page: 'authentication/enterprise',
 		paths: [

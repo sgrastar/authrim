@@ -1,4 +1,6 @@
 <script lang="ts">
+	import LeaveGuard from './LeaveGuard.svelte';
+	import ConnectionMetadataImport from './ConnectionMetadataImport.svelte';
 	import { untrack } from 'svelte';
 	import { ApiError } from '#lib/api/api-error.js';
 	import { StepUpCancelledError } from '#lib/api/admin-step-up.js';
@@ -59,6 +61,8 @@
 	let client = $state<ClientDetail | null>(null);
 	let sp = $state<SamlServiceProvider | null>(null);
 	let status = $state<SamlProviderStatus | null>(null);
+	let metadataDirty = $state(false);
+	let metadataPending = $state(false);
 	let saving = $state(false);
 	let activating = $state(false);
 	let reloading = $state(false);
@@ -66,6 +70,7 @@
 	let failure = $state('');
 	let conflict = $state(false);
 	let saved = $state(false);
+	let metadataRevision = $state(0);
 
 	function accept(next: ConnectionSettingsResources) {
 		if (next.kind === 'rp') client = next.detail;
@@ -87,8 +92,8 @@
 		});
 	});
 	$effect(() => {
-		dirty = draft.dirty;
-		pending = saving || activating || reloading;
+		dirty = draft.dirty || metadataDirty;
+		pending = saving || activating || reloading || metadataPending;
 	});
 	const valid = $derived(
 		draft.value.rp.name.trim() !== '' &&
@@ -100,7 +105,8 @@
 	);
 
 	async function save(value: Answers) {
-		if (!canEdit || !valid || activating || reloading || mappingPending) throw new SaveStopped();
+		if (!canEdit || !valid || activating || reloading || mappingPending || metadataPending)
+			throw new SaveStopped();
 		failure = '';
 		conflict = false;
 		saved = false;
@@ -137,7 +143,7 @@
 	}
 	function requestReload() {
 		if (pending) return;
-		if (draft.dirty) askingReload = true;
+		if (draft.dirty || metadataDirty) askingReload = true;
 		else void reload();
 	}
 	async function reload() {
@@ -151,6 +157,7 @@
 					...resources,
 					detail: await resources.client.getServiceProvider(resources.detail.id)
 				});
+			metadataRevision++;
 			failure = '';
 			conflict = false;
 			saved = false;
@@ -166,6 +173,7 @@
 	}
 </script>
 
+<LeaveGuard dirty={guardNavigation && (metadataDirty || metadataPending)} />
 <SaveScope
 	{guardNavigation}
 	{draft}
@@ -251,9 +259,31 @@
 							failure = '';
 							conflict = false;
 						}}
-						disabled={!controls.dirty || pending}>{t('common.discard')}</Button
+						disabled={!controls.dirty || pending || mappingPending}>{t('common.discard')}</Button
 					>
 				</div>{/if}
+			{#if resources.kind === 'sp' && resources.metadata && sp}
+				{#key metadataRevision}
+					<ConnectionMetadataImport
+						client={resources.metadata}
+						id={sp.id}
+						kind="saml_sp"
+						updatedAt={sp.updatedAt}
+						metadataUrl={sp.metadataUrl}
+						canPreview={resources.canPreviewMetadata === true}
+						canImport={resources.canImportMetadata === true}
+						busy={saving || activating || reloading || mappingPending}
+						settingsDirty={draft.dirty}
+						{mappingDirty}
+						bind:dirty={metadataDirty}
+						bind:pending={metadataPending}
+						onimported={(result) => {
+							if (resources.kind === 'sp' && sp)
+								accept({ ...resources, detail: { ...sp, ...result, acsUrl: result.address } });
+						}}
+					/>
+				{/key}
+			{/if}
 			<div>
 				<Button variant="secondary" onclick={requestReload} disabled={pending || mappingPending}
 					>{t('sf.live.reload')}</Button
@@ -266,8 +296,8 @@
 	<SamlActivation
 		provider={status}
 		{canEdit}
-		dirty={draft.dirty || mappingDirty}
-		busy={saving || reloading || mappingPending}
+		dirty={draft.dirty || mappingDirty || metadataDirty}
+		busy={saving || reloading || mappingPending || metadataPending}
 		bind:pending={activating}
 		update={(input) =>
 			resources.kind === 'sp'

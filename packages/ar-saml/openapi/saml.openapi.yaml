@@ -403,6 +403,8 @@ paths:
         - SAML Admin
       summary: Preview SAML metadata import.
       description: >-
+        Requires admin:saml_providers:create. Optional providerType selects bounded single-connection
+        preview (1 MiB XML) and rejects wrong-role or aggregate metadata without persisting a provider.
         With a `metadataUrl` the request is refused while the `saml_metadata_url` capability is off; pasted `metadataXml` is not.
       security:
         - adminBearer: []
@@ -574,8 +576,18 @@ paths:
       summary: Import SAML provider metadata.
       description: Imports single-entity SAML metadata into an existing provider, preserving custom
         settings while updating metadata-derived configuration and refresh status.
+        Requires admin:saml_providers:metadata:import and the existing federation trust step-up.
+        expectedUpdatedAt is required and must equal the loaded provider version. A stale version,
+        including a concurrent change during fetch or step-up, returns 409 without updating the provider.
+        The success response includes the new updatedAt for subsequent mapping or activation operations.
+        Sending metadataXml with metadataUrl stores the reviewed XML snapshot and its validated URL provenance
+        without refetching; the URL capability gate still applies.
         With a `metadataUrl` the request is refused while the `saml_metadata_url` capability is off; pasted `metadataXml` is not.
       responses:
+        '400':
+          description: Missing expectedUpdatedAt, invalid metadata, role mismatch, or unsupported aggregate.
+        '409':
+          description: Provider changed since the supplied expectedUpdatedAt. Reload before retrying.
         '503':
           $ref: '#/components/responses/CapabilityUnavailable'
         '403':
@@ -1798,14 +1810,19 @@ components:
               additionalProperties: true
     SAMLMetadataInput:
       type: object
+      required:
+        - expectedUpdatedAt
       properties:
+        expectedUpdatedAt:
+          type: string
+          format: date-time
         metadataXml:
           type: string
           maxLength: 1048576
         metadataUrl:
           type: string
           format: uri
-          description: A different URL requires the provider-update permission before it is fetched.
+          description: Optional source URL; when XML is also supplied, retain URL provenance without refetching. URL capability checks apply.
         samlProfile:
           type: string
         attributePresetId:
@@ -1813,6 +1830,10 @@ components:
     SAMLAggregateMetadataInput:
       type: object
       properties:
+        providerType:
+          type: string
+          enum: [saml_sp, saml_idp]
+          description: Expected role for a single connection. Limits XML to 1 MiB and rejects aggregate or mismatched metadata.
         metadataXml:
           type: string
           maxLength: 10485760
@@ -1982,11 +2003,19 @@ components:
     SAMLMetadataImportResponse:
       type: object
       required:
+        - providerType
+        - updatedAt
         - success
         - config
         - enabled
         - metadataRefreshStatus
       properties:
+        providerType:
+          type: string
+          enum: [saml_sp, saml_idp]
+        updatedAt:
+          type: string
+          format: date-time
         success:
           type: boolean
           enum:

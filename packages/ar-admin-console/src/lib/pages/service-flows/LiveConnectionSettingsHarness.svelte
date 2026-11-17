@@ -1,7 +1,11 @@
 <script lang="ts">
 	import { onMount, untrack } from 'svelte';
 	import type { ClientSettingsClient } from '#lib/api/clients.js';
-	import type { SamlSettingsClient, SamlActivationClient } from '#lib/api/saml-providers.js';
+	import type {
+		SamlSettingsClient,
+		SamlActivationClient,
+		SamlMetadataClient
+	} from '#lib/api/saml-providers.js';
 	import Page from '#lib/ui/templates/Page.svelte';
 	import { provideIdentifierMaterials } from '#lib/ui/patterns/identifier-materials-context.js';
 	import { createFakeIdentifierMaterials } from '#lib/api/fake/identifier-materials-fake.js';
@@ -18,6 +22,9 @@
 		clients,
 		saml,
 		canEdit = true,
+		metadata,
+		canPreviewMetadata = false,
+		canImportMetadata = false,
 		mappingMissing = false,
 		onbind,
 		onback
@@ -26,6 +33,9 @@
 		clients: ClientSettingsClient;
 		saml: SamlSettingsClient & SamlActivationClient;
 		canEdit?: boolean;
+		metadata?: SamlMetadataClient;
+		canPreviewMetadata?: boolean;
+		canImportMetadata?: boolean;
 		mappingMissing?: boolean;
 		onbind?: () => void;
 		onback?: () => void;
@@ -39,7 +49,14 @@
 		await bind(set, key);
 		onbind?.();
 		if (kind === 'sp')
-			settings = { kind, detail: await saml.getServiceProvider('portal'), client: saml };
+			settings = {
+				kind,
+				detail: await saml.getServiceProvider('portal'),
+				client: saml,
+				metadata,
+				canPreviewMetadata,
+				canImportMetadata
+			};
 	};
 	if (untrack(() => mappingMissing))
 		fixture.resources.readBinding = async () => ({ setId: '', pinned: false });
@@ -50,7 +67,14 @@
 			const loaded: ConnectionSettingsResources =
 				kind === 'rp'
 					? { kind, detail: await clients.get('portal'), client: clients }
-					: { kind, detail: await saml.getServiceProvider('portal'), client: saml };
+					: {
+							kind,
+							detail: await saml.getServiceProvider('portal'),
+							client: saml,
+							metadata,
+							canPreviewMetadata,
+							canImportMetadata
+						};
 			settings = loaded;
 			answers = basicSettingsAnswers(loaded);
 		})();

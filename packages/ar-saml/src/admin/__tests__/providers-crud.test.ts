@@ -63,6 +63,7 @@ import {
   handleDeleteProvider,
   handleGetProvider,
   handleImportMetadata,
+  handlePreviewMetadata,
   handleListAttributePresets,
   handleListProviders,
   handleRefreshMetadata,
@@ -91,6 +92,7 @@ function createAdapter() {
 function context(
   options: {
     body?: unknown;
+    rawRequest?: Request;
     id?: string;
     permissions?: string[] | null;
     tenantId?: string;
@@ -110,6 +112,7 @@ function context(
         }
       : {},
     req: {
+      raw: options.rawRequest,
       json: vi.fn(async () => options.body),
       param: vi.fn((name: string) => (name === 'id' ? options.id : undefined)),
       header: vi.fn((name: string) =>
@@ -608,7 +611,10 @@ describe('SAML provider CRUD boundaries', () => {
       const response = await handleImportMetadata(
         context({
           id: 'provider-a',
-          body: { metadataXml: validSpMetadata() },
+          body: {
+            expectedUpdatedAt: new Date(1_700_000_001_000).toISOString(),
+            metadataXml: validSpMetadata(),
+          },
           federation: { 'federation.saml_nameid_format': 'unspecified' },
         })
       );
@@ -1811,7 +1817,10 @@ describe('SAML provider CRUD boundaries', () => {
     async (metadataUrl) => {
       mocks.adapter!.queryOne.mockResolvedValue(providerRow());
       const response = await handleImportMetadata(
-        context({ id: 'provider-a', body: { metadataUrl } })
+        context({
+          id: 'provider-a',
+          body: { expectedUpdatedAt: new Date(1_700_000_001_000).toISOString(), metadataUrl },
+        })
       );
       expect(response.status).toBe(400);
       expect(mocks.safeFetchText).not.toHaveBeenCalled();
@@ -1821,7 +1830,13 @@ describe('SAML provider CRUD boundaries', () => {
   it('imports inline SP metadata and preserves tenant-scoped custom configuration', async () => {
     mocks.adapter!.queryOne.mockResolvedValue(providerRow());
     const response = await handleImportMetadata(
-      context({ id: 'provider-a', body: { metadataXml: validSpMetadata() } })
+      context({
+        id: 'provider-a',
+        body: {
+          expectedUpdatedAt: new Date(1_700_000_001_000).toISOString(),
+          metadataXml: validSpMetadata(),
+        },
+      })
     );
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ success: true, enabled: true });
@@ -1835,7 +1850,10 @@ describe('SAML provider CRUD boundaries', () => {
     const response = await handleImportMetadata(
       context({
         id: 'provider-a',
-        body: { metadataUrl: 'https://metadata.example.test/sp.xml' },
+        body: {
+          expectedUpdatedAt: new Date(1_700_000_001_000).toISOString(),
+          metadataUrl: 'https://metadata.example.test/sp.xml',
+        },
       })
     );
     expect(response.status).toBe(200);
@@ -1855,7 +1873,10 @@ describe('SAML provider CRUD boundaries', () => {
   ])('rejects %s during metadata import', async (_name, metadataXml) => {
     mocks.adapter!.queryOne.mockResolvedValue(providerRow());
     const response = await handleImportMetadata(
-      context({ id: 'provider-a', body: { metadataXml } })
+      context({
+        id: 'provider-a',
+        body: { expectedUpdatedAt: new Date(1_700_000_001_000).toISOString(), metadataXml },
+      })
     );
     expect(response.status).toBe(400);
     expect(mocks.adapter!.execute).not.toHaveBeenCalled();
@@ -1865,9 +1886,266 @@ describe('SAML provider CRUD boundaries', () => {
     mocks.adapter!.queryOne.mockResolvedValue(providerRow());
     mocks.adapter!.execute.mockRejectedValue(new Error('database unavailable'));
     const response = await handleImportMetadata(
-      context({ id: 'provider-a', body: { metadataXml: validSpMetadata() } })
+      context({
+        id: 'provider-a',
+        body: {
+          expectedUpdatedAt: new Date(1_700_000_001_000).toISOString(),
+          metadataXml: validSpMetadata(),
+        },
+      })
     );
     expect(response.status).toBe(500);
+  });
+
+  describe('single-connection metadata contract', () => {
+    const updatedAt = new Date(1_700_000_001_000).toISOString();
+    it('rejects missing and stale loaded versions before fetch, trust step-up or persistence', async () => {
+      mocks.adapter?.queryOne.mockResolvedValue(providerRow());
+      for (const expectedUpdatedAt of [undefined, new Date(1).toISOString()]) {
+        const response = await handleImportMetadata(
+          context({
+            id: 'provider-a',
+            body: {
+              expectedUpdatedAt,
+              metadataUrl: 'https://metadata.example.test/sp.xml',
+            },
+          })
+        );
+        expect(response.status).toBe(expectedUpdatedAt ? 409 : 400);
+      }
+      expect(mocks.safeFetchText).not.toHaveBeenCalled();
+      expect(mocks.stepUp).not.toHaveBeenCalled();
+      expect(mocks.adapter?.execute).not.toHaveBeenCalled();
+    });
+
+    it('rejects an atomic update conflict after fetch and step-up without auditing success', async () => {
+      mocks.adapter?.queryOne.mockResolvedValue(providerRow());
+      mocks.safeFetchText.mockResolvedValue(validSpMetadata());
+      mocks.adapter?.execute.mockResolvedValueOnce({ rowsAffected: 0, insertId: undefined });
+      const response = await handleImportMetadata(
+        context({
+          id: 'provider-a',
+          body: {
+            expectedUpdatedAt: updatedAt,
+            metadataUrl: 'https://metadata.example.test/sp.xml',
+          },
+        })
+      );
+      expect(response.status).toBe(409);
+      expect(mocks.stepUp).toHaveBeenCalledTimes(1);
+      expect(mocks.adapter?.execute).toHaveBeenCalledWith(
+        expect.stringContaining('AND updated_at = ?'),
+        [expect.any(String), 1, expect.any(Number), 'provider-a', 'tenant-a', 1_700_000_001_000]
+      );
+      expect(mocks.audit).not.toHaveBeenCalled();
+    });
+
+    it('persists the reviewed URL snapshot without refetching and preserves mapping/version and advanced choices', async () => {
+      const identityMapping = {
+        fieldMappingSetId: 'saved-set',
+        fieldMappingVersionId: 'pinned-v7',
+        extension: 'keep',
+      };
+      const attributeMapping = { email: 'mail' };
+      mocks.adapter?.queryOne.mockResolvedValue(
+        providerRow({
+          enabled: 0,
+          config_json: JSON.stringify({
+            entityId: 'urn:old',
+            acsUrl: 'https://sp.example.test/old',
+            identityMapping,
+            attributeMapping,
+            nameIdFormat: 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent',
+            signAssertions: true,
+            signResponses: false,
+            authnRequestSignaturePolicy: 'required',
+            minimumAal: 'aal2',
+            minimumIal: 'ial2',
+            custom_extension: { keep: true },
+          }),
+        })
+      );
+      const response = await handleImportMetadata(
+        context({
+          id: 'provider-a',
+          body: {
+            expectedUpdatedAt: updatedAt,
+            metadataXml: validSpMetadata(),
+            metadataUrl: 'https://metadata.example.test/sp.xml',
+          },
+        })
+      );
+      expect(response.status).toBe(200);
+      const body = await responseBody<{
+        updatedAt: string;
+        enabled: boolean;
+        config: Record<string, unknown>;
+      }>(response);
+      expect(body.enabled).toBe(false);
+      expect(Date.parse(body.updatedAt)).toBeGreaterThan(Date.parse(updatedAt));
+      expect(body.config).toMatchObject({
+        metadataXml: validSpMetadata(),
+        metadataUrl: 'https://metadata.example.test/sp.xml',
+        identityMapping,
+        attributeMapping,
+        signAssertions: true,
+        signResponses: false,
+        authnRequestSignaturePolicy: 'required',
+        minimumAal: 'aal2',
+        minimumIal: 'ial2',
+        custom_extension: { keep: true },
+      });
+      expect(mocks.safeFetchText).not.toHaveBeenCalled();
+      expect(mocks.stepUp.mock.calls[0]?.[1]).toMatchObject({
+        params: {
+          expectedUpdatedAt: updatedAt,
+          metadataUrl: 'https://metadata.example.test/sp.xml',
+        },
+      });
+      expect(JSON.stringify(mocks.stepUp.mock.calls[0]?.[1])).toMatch(
+        /"metadata_sha256":"[a-f0-9]{64}"/
+      );
+    });
+
+    it('preserves IdP mapping, custom logo and JIT settings when importing new SSO details', async () => {
+      const identityMapping = {
+        fieldMappingSetId: 'inbound-set',
+        fieldMappingVersionId: 'inbound-version',
+      };
+      const metadataXml = `<md:EntityDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata" xmlns:ds="http://www.w3.org/2000/09/xmldsig#" entityID="urn:synthetic:idp">
+        <md:IDPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
+          <md:KeyDescriptor use="signing"><ds:KeyInfo><ds:X509Data><ds:X509Certificate>VEVTVA==</ds:X509Certificate></ds:X509Data></ds:KeyInfo></md:KeyDescriptor>
+          <md:SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST" Location="https://idp.example.test/new-sso" />
+        </md:IDPSSODescriptor></md:EntityDescriptor>`;
+      mocks.adapter?.queryOne.mockResolvedValue(
+        providerRow({
+          provider_type: 'saml_idp',
+          enabled: 0,
+          config_json: JSON.stringify({
+            entityId: 'urn:old:idp',
+            ssoUrl: 'https://idp.example.test/old-sso',
+            certificate: 'old-public-test-cert',
+            identityMapping,
+            attributeMapping: { email: 'mail' },
+            logoUrl: 'https://idp.example.test/custom-logo.svg',
+            jitEmailLinkingPolicy: 'disabled',
+            allowSyntheticEmailFallback: false,
+          }),
+        })
+      );
+      const response = await handleImportMetadata(
+        context({ id: 'provider-a', body: { expectedUpdatedAt: updatedAt, metadataXml } })
+      );
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        enabled: false,
+        providerType: 'saml_idp',
+        config: {
+          entityId: 'urn:synthetic:idp',
+          ssoUrl: 'https://idp.example.test/new-sso',
+          metadataXml,
+          identityMapping,
+          attributeMapping: { email: 'mail' },
+          logoUrl: 'https://idp.example.test/custom-logo.svg',
+          jitEmailLinkingPolicy: 'disabled',
+          allowSyntheticEmailFallback: false,
+        },
+      });
+    });
+
+    it('keeps preview/create and import permissions separate', async () => {
+      const input = { providerType: 'saml_sp', metadataXml: validSpMetadata() };
+      expect(
+        (
+          await handlePreviewMetadata(
+            context({
+              body: input,
+              permissions: [ADMIN_PERMISSIONS.SAML_PROVIDERS_METADATA_IMPORT],
+            })
+          )
+        ).status
+      ).toBe(403);
+      expect(
+        (
+          await handleImportMetadata(
+            context({
+              id: 'provider-a',
+              body: { ...input, expectedUpdatedAt: updatedAt },
+              permissions: [ADMIN_PERMISSIONS.SAML_PROVIDERS_CREATE],
+            })
+          )
+        ).status
+      ).toBe(403);
+      expect(mocks.adapter?.execute).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['wrong role', { providerType: 'saml_idp', metadataXml: validSpMetadata() }],
+      ['unknown role', { providerType: 'unknown', metadataXml: validSpMetadata() }],
+      ['malformed', { providerType: 'saml_sp', metadataXml: '<EntityDescriptor' }],
+      [
+        'XXE',
+        {
+          providerType: 'saml_sp',
+          metadataXml: '<!DOCTYPE x [<!ENTITY x SYSTEM "file:///synthetic">]><x>&x;</x>',
+        },
+      ],
+      ['aggregate', { providerType: 'saml_sp', metadataXml: aggregateMetadata() }],
+      [
+        'oversize',
+        { providerType: 'saml_sp', metadataXml: validSpMetadata() + ' '.repeat(1024 * 1024) },
+      ],
+    ])('rejects %s single-connection HTTP preview bodies without saving', async (_label, body) => {
+      const rawRequest = new Request(
+        'https://authrim.example.test/api/admin/saml-metadata/preview',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        }
+      );
+      const response = await handlePreviewMetadata(context({ rawRequest }));
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({ error: 'invalid_request' });
+      expect(mocks.adapter?.execute).not.toHaveBeenCalled();
+    });
+
+    it('previews a bounded URL with its expected role and saves a disabled provider from that exact snapshot', async () => {
+      mocks.safeFetchText.mockResolvedValue(validSpMetadata());
+      const preview = await handlePreviewMetadata(
+        context({
+          body: { providerType: 'saml_sp', metadataUrl: 'https://metadata.example.test/sp.xml' },
+        })
+      );
+      expect(preview.status).toBe(200);
+      const result = await responseBody<{
+        kind: string;
+        config: { metadataXml: string; metadataUrl: string };
+      }>(preview);
+      expect(result.kind).toBe('single');
+      expect(mocks.adapter?.execute).not.toHaveBeenCalled();
+      expect(mocks.safeFetchText).toHaveBeenCalledWith('https://metadata.example.test/sp.xml', {
+        timeoutMs: 10000,
+        maxResponseSize: 1024 * 1024,
+      });
+      const created = await handleCreateProvider(
+        context({
+          body: {
+            name: 'From reviewed snapshot',
+            providerType: 'saml_sp',
+            enabled: false,
+            metadataXml: result.config.metadataXml,
+            metadataUrl: result.config.metadataUrl,
+          },
+        })
+      );
+      expect(created.status).toBe(201);
+      expect(mocks.safeFetchText).toHaveBeenCalledTimes(1);
+      expect(persistedConfig()).toMatchObject({
+        metadataXml: validSpMetadata(),
+        metadataUrl: 'https://metadata.example.test/sp.xml',
+      });
+    });
   });
 
   it('requires an existing provider and configured URL for refresh', async () => {
@@ -2478,7 +2756,13 @@ describe('SAML trust changes need a step-up', () => {
       mocks.adapter!.queryOne.mockResolvedValue(providerRow());
       mocks.stepUp.mockResolvedValueOnce(refusal());
       const response = await handleImportMetadata(
-        context({ id: 'provider-a', body: { metadataXml: validSpMetadata() } })
+        context({
+          id: 'provider-a',
+          body: {
+            expectedUpdatedAt: new Date(1_700_000_001_000).toISOString(),
+            metadataXml: validSpMetadata(),
+          },
+        })
       );
       expect(response.status).toBe(403);
       expect(mocks.adapter!.execute).not.toHaveBeenCalled();
@@ -2487,7 +2771,13 @@ describe('SAML trust changes need a step-up', () => {
     it('goes ahead when the gate lets it, with the metadata as a digest', async () => {
       mocks.adapter!.queryOne.mockResolvedValue(providerRow());
       const response = await handleImportMetadata(
-        context({ id: 'provider-a', body: { metadataXml: validSpMetadata() } })
+        context({
+          id: 'provider-a',
+          body: {
+            expectedUpdatedAt: new Date(1_700_000_001_000).toISOString(),
+            metadataXml: validSpMetadata(),
+          },
+        })
       );
       expect(response.status).toBe(200);
       expect(mocks.adapter!.execute).toHaveBeenCalledTimes(1);
@@ -2505,7 +2795,13 @@ describe('SAML trust changes need a step-up', () => {
       mocks.adapter!.queryOne.mockResolvedValue(providerRow());
       mocks.safeFetchText.mockResolvedValue(validSpMetadata());
       const response = await handleImportMetadata(
-        context({ id: 'provider-a', body: { metadataUrl: 'https://metadata.example.test/sp.xml' } })
+        context({
+          id: 'provider-a',
+          body: {
+            expectedUpdatedAt: new Date(1_700_000_001_000).toISOString(),
+            metadataUrl: 'https://metadata.example.test/sp.xml',
+          },
+        })
       );
       expect(response.status).toBe(200);
       const descriptor = mocks.stepUp.mock.calls[0]?.[1] as { params: Record<string, unknown> };
@@ -2517,7 +2813,13 @@ describe('SAML trust changes need a step-up', () => {
     it('does not call the gate for invalid metadata', async () => {
       mocks.adapter!.queryOne.mockResolvedValue(providerRow());
       const response = await handleImportMetadata(
-        context({ id: 'provider-a', body: { metadataXml: '<not-metadata/>' } })
+        context({
+          id: 'provider-a',
+          body: {
+            expectedUpdatedAt: new Date(1_700_000_001_000).toISOString(),
+            metadataXml: '<not-metadata/>',
+          },
+        })
       );
       expect(response.status).toBeGreaterThanOrEqual(400);
       expect(mocks.stepUp).not.toHaveBeenCalled();

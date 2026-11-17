@@ -1,4 +1,7 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
+	import ConnectionMetadataImport from './ConnectionMetadataImport.svelte';
+	import type { SamlMetadataClient } from '#lib/api/saml-providers.js';
 	import { ApiError } from '#lib/api/api-error.js';
 	import SamlActivation from './SamlActivation.svelte';
 	import ConfirmDialog from '#lib/ui/patterns/ConfirmDialog.svelte';
@@ -30,6 +33,9 @@
 		externalProviders,
 		samlProviders,
 		canRead,
+		metadata,
+		canPreviewMetadata = false,
+		canImportMetadata = false,
 		canEdit,
 		onback
 	}: {
@@ -38,6 +44,9 @@
 		externalProviders: ExternalProvidersClient;
 		samlProviders: SamlIdentityProvidersClient;
 		canRead: boolean;
+		metadata?: SamlMetadataClient;
+		canPreviewMetadata?: boolean;
+		canImportMetadata?: boolean;
 		canEdit: boolean;
 		onback: () => void;
 	} = $props();
@@ -48,6 +57,9 @@
 	let original = $state('');
 	let ready = $state(false);
 	let loadFailed = $state(false);
+	let metadataDirty = $state(false);
+	let metadataPending = $state(false);
+	let metadataRevision = $state(0);
 	let saving = $state(false);
 	let saveFailed = $state('');
 	let saved = $state(false);
@@ -112,19 +124,20 @@
 		revision++;
 		original = snapshot();
 	}
-	async function load() {
+	async function load(source = { kind, id, canRead, externalProviders, samlProviders }) {
 		const turn = ++generation;
 		ready = false;
 		loadFailed = false;
 		saved = false;
+		metadataRevision++;
 		try {
-			if (!canRead) throw new Error('Unavailable');
-			if (kind === 'op') {
-				const provider = await externalProviders.get(id);
+			if (!source.canRead) throw new Error('Unavailable');
+			if (source.kind === 'op') {
+				const provider = await source.externalProviders.get(source.id);
 				if (turn !== generation) return;
 				showOidc(provider);
 			} else {
-				const provider = await samlProviders.getIdentityProvider(id);
+				const provider = await source.samlProviders.getIdentityProvider(source.id);
 				if (turn !== generation) return;
 				showSaml(provider);
 			}
@@ -133,15 +146,19 @@
 			if (turn === generation) loadFailed = true;
 		}
 	}
-	$effect(() => {
-		void load();
+	$effect.pre(() => {
+		const source = { kind, id, canRead, externalProviders, samlProviders };
+		// Clear readiness before a new source renders. Only resource inputs trigger loading.
+		untrack(() => {
+			void load(source);
+		});
 	});
 	$effect(() => () => {
 		generation++;
 	});
 
 	async function save() {
-		if (!canEdit || !ready || !valid || saving || activating) return;
+		if (!canEdit || !ready || !valid || saving || activating || metadataPending) return;
 		saving = true;
 		saveFailed = '';
 		conflict = false;
@@ -181,7 +198,7 @@
 	}
 </script>
 
-<LeaveGuard dirty={dirty || saving || activating} />
+<LeaveGuard dirty={dirty || metadataDirty || saving || activating || metadataPending} />
 <Page>
 	<PageHeader
 		title={kind === 'op' ? oidc?.name || kindProtocol(kind) : saml?.name || kindProtocol(kind)}
@@ -194,7 +211,7 @@
 	</PageHeader>
 	{#if loadFailed}
 		<Callout tone="warning"
-			>{t('mc.loadFailed')} <Button onclick={load}>{t('common.retry')}</Button></Callout
+			>{t('mc.loadFailed')} <Button onclick={() => load()}>{t('common.retry')}</Button></Callout
 		>
 	{:else if !ready}<LoadingState label={t('common.loading')} />
 	{:else}
@@ -207,7 +224,10 @@
 			>{/if}
 		{#if saved}<Callout tone="info" live>{t('sf.live.saved')}</Callout>{/if}
 		<Card title={t('sf.live.settings')}>
-			<fieldset class="provider-fields" disabled={!canEdit || saving || activating}>
+			<fieldset
+				class="provider-fields"
+				disabled={!canEdit || saving || activating || metadataPending}
+			>
 				<legend class="sr-only">{t('sf.live.settings')}</legend>
 				{#key revision}
 					<InSteps
@@ -221,17 +241,39 @@
 				{/key}
 				{#if kind === 'op'}<ToggleRow label={t('sf.live.enabled')} bind:checked={enabled} />{/if}
 			</fieldset>
-			{#if canEdit}<Button onclick={save} loading={saving} disabled={!dirty || !valid || saving}
-					>{t('common.save')}</Button
+			{#if canEdit}<Button
+					onclick={save}
+					loading={saving}
+					disabled={!dirty || !valid || saving || metadataPending}>{t('common.save')}</Button
 				>{/if}
 		</Card>
+		{#if kind === 'idp' && saml && metadata}
+			{#key metadataRevision}
+				<ConnectionMetadataImport
+					client={metadata}
+					{id}
+					kind="saml_idp"
+					updatedAt={saml.updatedAt}
+					metadataUrl={saml.metadataUrl}
+					canPreview={canPreviewMetadata}
+					canImport={canImportMetadata}
+					busy={saving || activating}
+					settingsDirty={dirty}
+					bind:dirty={metadataDirty}
+					bind:pending={metadataPending}
+					onimported={(result) => {
+						if (saml) showSaml({ ...saml, ...result, ssoUrl: result.address });
+					}}
+				/>
+			{/key}
+		{/if}
 		{#if kind === 'idp' && saml}
 			<SamlActivation
 				showStatus={false}
 				provider={saml}
 				{canEdit}
-				{dirty}
-				busy={saving}
+				dirty={dirty || metadataDirty}
+				busy={saving || metadataPending}
 				bind:pending={activating}
 				update={(input) => samlProviders.setEnabled(id, input)}
 				onupdated={(status) => {
@@ -239,7 +281,7 @@
 					// The action preserves the current settings draft, including invalid inputs.
 				}}
 				onreload={() => {
-					if (dirty) askingReload = true;
+					if (dirty || metadataDirty) askingReload = true;
 					else void load();
 				}}
 			/>
