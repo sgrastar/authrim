@@ -298,6 +298,8 @@ function sanitizeProvider<
       : {};
   const hasPrivateKey = typeof quirks.privateKeyEncrypted === 'string';
   delete quirks.privateKeyEncrypted;
+  // The incoming graph selector is authored through its connection API only.
+  delete quirks.inboundIdentityMapping;
   const dynamicRegistration = quirks.dynamicClientRegistration;
   if (
     dynamicRegistration &&
@@ -418,6 +420,11 @@ export async function handleAdminCreateProvider(c: AdminProviderContext): Promis
       public_key_jwk?: Record<string, unknown>;
     }>();
 
+    if (body.provider_quirks && Object.hasOwn(body.provider_quirks, 'inboundIdentityMapping')) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: { field: 'provider_quirks.inboundIdentityMapping' },
+      });
+    }
     // Validate required fields
     if (!body.name || !body.client_id || !body.client_secret) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {

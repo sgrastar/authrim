@@ -69,6 +69,7 @@
 		mappings?: Mapping[];
 		/** Which way data flows; sets the column names unless given. */
 		direction?: 'inbound' | 'outbound';
+		allowIdentifiers?: boolean;
 		/** Column names, e.g. "SAML attribute" (left) and "Authrim attribute" (right). */
 		sourceLabel?: string;
 		targetLabel?: string;
@@ -82,6 +83,7 @@
 		targets,
 		mappings = $bindable([]),
 		direction = 'inbound',
+		allowIdentifiers = true,
 		sourceLabel = direction === 'outbound' ? t('map.out.source') : t('map.in.source'),
 		targetLabel = direction === 'outbound' ? t('map.out.target') : t('map.in.target'),
 		invalid = $bindable(false),
@@ -194,7 +196,10 @@
 			label: t(`map.c.${category}`),
 			icon: CATEGORY_ICONS[category],
 			empty: category === 'plugin' ? t('map.c.pluginEmpty') : undefined,
-			items: TRANSFORMS.filter((def) => def.category === category).map((def) => ({
+			items: TRANSFORMS.filter(
+				(def) =>
+					def.category === category && (allowIdentifiers || def.id !== 'persistent_identifier')
+			).map((def) => ({
 				value: def.id,
 				label: t(`map.t.${def.id}`),
 				description: t(`map.d.${def.id}`),
@@ -598,377 +603,414 @@
 		{/if}
 	</div>
 
-	<div class="mapping__head" aria-hidden="true">
-		<span>{sourceLabel}</span><span class="mapping__head-flow">{t('map.transform')}</span><span
-			>{targetLabel}</span
-		>
-	</div>
-
-	{#if shown.length === 0}
-		<p class="mapping__note">{t('map.nothing')}</p>
-	{/if}
-	<ul class="mapping__list">
-		{#each shown as target (target.key)}
-			{@const mapping = mappingFor(target.key)}
-			{@const problems = problemsFor(target.key)}
-			{@const isOpen = open === target.key}
-			{@const attentionHere = needsAttention(target)}
-			<!-- Set: a source chosen, or a value made by a step (a fixed value). -->
-			{@const isSet = !!mapping && (mapping.sources.some(Boolean) || generates(mapping))}
-			<li class="mrow" class:is-open={isOpen} class:is-changed={rowChanged(target.key)}>
-				<button
-					type="button"
-					id="{uid}-{target.key}-line"
-					class="mrow__summary"
-					aria-expanded={isOpen}
-					aria-controls="{uid}-{target.key}-source {uid}-{target.key}"
-					aria-label={rowLabel(target, mapping, attentionHere)}
-					aria-describedby={attentionHere ? `${uid}-${target.key}-why` : undefined}
-					onclick={() => toggle(target.key)}
-					onfocus={(event) => {
-						if (attentionHere && event.currentTarget.matches(':focus-visible'))
-							showWhy(event.currentTarget.querySelector('.mrow__warn'), target.key);
-					}}
-					onblur={() => hideWhy(target.key)}
+	<div class="mapping__scroll">
+		<div class="mapping__table">
+			<div class="mapping__head" aria-hidden="true">
+				<span>{sourceLabel}</span><span class="mapping__head-flow">{t('map.transform')}</span><span
+					>{targetLabel}</span
 				>
-					<span class="mrow__source">
-						{#if !isOpen && isSet && mapping}
-							<!-- Each source attribute with its type, as on the receiving side. -->
-							{#each mapping.sources.filter(Boolean) as key, k (k)}
-								{@const type = sources.find((f) => f.key === key)?.type}
-								{#if k > 0}<span class="mrow__plus" aria-hidden="true">+</span>{/if}
-								<span class="mrow__name"
-									><code>{key}</code>{#if type}<TypeBadge>{type}</TypeBadge>{/if}</span
-								>
-							{/each}
-						{/if}
-					</span>
-					<!-- One thin line from source to target; a transform sits on it. Dotted while unset. -->
-					<span class="mrow__flow" class:is-unset={!isSet}>
-						<span class="flow__line" aria-hidden="true"></span>
-						{#if isSet && mapping && mapping.steps.length}
-							<span class="mrow__transform">{stepsSummary(mapping)}</span>
-							<span class="flow__line" aria-hidden="true"></span>
-						{/if}
-						<svg class="flow__head" viewBox="0 0 6 10" aria-hidden="true" focusable="false"
-							><path d="M1 1 L5 5 L1 9" /></svg
+			</div>
+
+			<ul class="mapping__list">
+				{#each shown as target (target.key)}
+					{@const mapping = mappingFor(target.key)}
+					{@const problems = problemsFor(target.key)}
+					{@const isOpen = open === target.key}
+					{@const attentionHere = needsAttention(target)}
+					<!-- Set: a source chosen, or a value made by a step (a fixed value). -->
+					{@const isSet = !!mapping && (mapping.sources.some(Boolean) || generates(mapping))}
+					<li class="mrow" class:is-open={isOpen} class:is-changed={rowChanged(target.key)}>
+						<button
+							type="button"
+							id="{uid}-{target.key}-line"
+							class="mrow__summary"
+							aria-expanded={isOpen}
+							aria-controls="{uid}-{target.key}-source {uid}-{target.key}"
+							aria-label={rowLabel(target, mapping, attentionHere)}
+							aria-describedby={attentionHere ? `${uid}-${target.key}-why` : undefined}
+							onclick={() => toggle(target.key)}
+							onfocus={(event) => {
+								if (attentionHere && event.currentTarget.matches(':focus-visible'))
+									showWhy(event.currentTarget.querySelector('.mrow__warn'), target.key);
+							}}
+							onblur={() => hideWhy(target.key)}
 						>
-					</span>
-					<span class="mrow__target" class:is-set={isSet}>
-						<code>{target.key}</code>
-						<TypeBadge>{target.type}</TypeBadge>
-						{#if target.required}<RequiredBadge />{/if}
-					</span>
-					<span class="mrow__status">
-						{#if attentionHere}
-							<!-- Hover the sign for the reason; the line's button also reads it out. -->
-							<span
-								class="mrow__warn"
-								role="presentation"
-								onpointerenter={(event) => showWhy(event.currentTarget, target.key)}
-								onpointerleave={() => hideWhy(target.key)}><Icon name="warning" /></span
-							>
-							<span class="mrow__why" id="{uid}-{target.key}-why" role="tooltip" popover="manual">
-								{#each reasons(target) as reason, r (r)}<span>{reason}</span>{/each}
+							<span class="mrow__source">
+								{#if !isOpen && isSet && mapping}
+									<!-- Each source attribute with its type, as on the receiving side. -->
+									{#each mapping.sources.filter(Boolean) as key, k (k)}
+										{@const type = sources.find((f) => f.key === key)?.type}
+										{#if k > 0}<span class="mrow__plus" aria-hidden="true">+</span>{/if}
+										<span class="mrow__name"
+											><code>{key}</code>{#if type}<TypeBadge>{type}</TypeBadge>{/if}</span
+										>
+									{/each}
+								{/if}
 							</span>
-						{/if}
-						<span class="mrow__chev" aria-hidden="true"><Icon name="caret" /></span>
-					</span>
-				</button>
-				{#if isOpen}
-					<!-- While open, the source is chosen in place: over the line's source cell. -->
-					<div
-						class="mrow__source-edit"
-						transition:slide={{ duration: SLIDE_MS }}
-						id="{uid}-{target.key}-source"
-					>
-						{#each mapping?.sources ?? [''] as source, s (s)}
-							<div class="ed__source-line">
-								<SelectMenu
-									label="{sourceLabel}{(mapping?.sources.length ?? 1) > 1 ? ` ${s + 1}` : ''}"
-									hideLabel
-									size="sm"
-									autoOpen={!mapping}
-									placeholder={t('map.pickSource')}
-									options={sourceOptions}
-									value={source}
-									onchange={(key) => setSource(target.key, s, key)}
-								/>
-								<!-- With one source, taking it away removes the mapping. -->
-								{#if mapping && mapping.sources.length > 1}
-									{@const name = source || String(s + 1)}
-									<IconButton
-										icon="arrowUp"
-										size="sm"
-										id="{uid}-{target.key}-src-{s}-up"
-										label={t('map.sourceUp', { name })}
-										disabled={busy() || s === 0}
-										onclick={() => moveSource(target.key, s, -1)}
-									/>
-									<IconButton
-										icon="arrowDown"
-										size="sm"
-										id="{uid}-{target.key}-src-{s}-down"
-										label={t('map.sourceDown', { name })}
-										disabled={busy() || s === mapping.sources.length - 1}
-										onclick={() => moveSource(target.key, s, 1)}
-									/>
-									<IconButton
-										icon="close"
-										label={t('picker.remove', { name: source || String(s + 1) })}
+							<!-- One thin line from source to target; a transform sits on it. Dotted while unset. -->
+							<span class="mrow__flow" class:is-unset={!isSet}>
+								<span class="flow__line" aria-hidden="true"></span>
+								{#if isSet && mapping && mapping.steps.length}
+									<span class="mrow__transform">{stepsSummary(mapping)}</span>
+									<span class="flow__line" aria-hidden="true"></span>
+								{/if}
+								<svg class="flow__head" viewBox="0 0 6 10" aria-hidden="true" focusable="false"
+									><path d="M1 1 L5 5 L1 9" /></svg
+								>
+							</span>
+							<span class="mrow__target" class:is-set={isSet}>
+								<code>{target.key}</code>
+								<TypeBadge>{target.type}</TypeBadge>
+								{#if target.required}<RequiredBadge />{/if}
+							</span>
+							<span class="mrow__status">
+								{#if attentionHere}
+									<!-- Hover the sign for the reason; the line's button also reads it out. -->
+									<span
+										class="mrow__warn"
+										role="presentation"
+										onpointerenter={(event) => showWhy(event.currentTarget, target.key)}
+										onpointerleave={() => hideWhy(target.key)}><Icon name="warning" /></span
+									>
+									<span
+										class="mrow__why"
+										id="{uid}-{target.key}-why"
+										role="tooltip"
+										popover="manual"
+									>
+										{#each reasons(target) as reason, r (r)}<span>{reason}</span>{/each}
+									</span>
+								{/if}
+								<span class="mrow__chev" aria-hidden="true"><Icon name="caret" /></span>
+							</span>
+						</button>
+						{#if isOpen}
+							<!-- While open, the source is chosen in place: over the line's source cell. -->
+							<div
+								class="mrow__source-edit"
+								transition:slide={{ duration: SLIDE_MS }}
+								id="{uid}-{target.key}-source"
+							>
+								{#each mapping?.sources ?? [''] as source, s (s)}
+									<div class="ed__source-line">
+										<SelectMenu
+											label="{sourceLabel}{(mapping?.sources.length ?? 1) > 1 ? ` ${s + 1}` : ''}"
+											hideLabel
+											size="sm"
+											autoOpen={!mapping}
+											placeholder={t('map.pickSource')}
+											options={sourceOptions}
+											value={source}
+											onchange={(key) => setSource(target.key, s, key)}
+										/>
+										<!-- With one source, taking it away removes the mapping. -->
+										{#if mapping && mapping.sources.length > 1}
+											{@const name = source || String(s + 1)}
+											<IconButton
+												icon="arrowUp"
+												size="sm"
+												id="{uid}-{target.key}-src-{s}-up"
+												label={t('map.sourceUp', { name })}
+												disabled={busy() || s === 0}
+												onclick={() => moveSource(target.key, s, -1)}
+											/>
+											<IconButton
+												icon="arrowDown"
+												size="sm"
+												id="{uid}-{target.key}-src-{s}-down"
+												label={t('map.sourceDown', { name })}
+												disabled={busy() || s === mapping.sources.length - 1}
+												onclick={() => moveSource(target.key, s, 1)}
+											/>
+											<IconButton
+												icon="close"
+												label={t('picker.remove', { name: source || String(s + 1) })}
+												disabled={busy()}
+												onclick={() =>
+													update(target.key, {
+														sources: mapping.sources.filter((_, i) => i !== s)
+													})}
+											/>
+										{:else}
+											<IconButton
+												icon="close"
+												label={t('map.unassign')}
+												disabled={busy() || !mapping}
+												onclick={() => unassign(target.key)}
+											/>
+										{/if}
+									</div>
+								{/each}
+								{#if mapping && mapping.sources.length < MAX_SOURCES}
+									<button
+										type="button"
+										class="src__add"
 										disabled={busy()}
-										onclick={() =>
-											update(target.key, {
-												sources: mapping.sources.filter((_, i) => i !== s)
-											})}
-									/>
-								{:else}
-									<IconButton
-										icon="close"
-										label={t('map.unassign')}
-										disabled={busy() || !mapping}
-										onclick={() => unassign(target.key)}
-									/>
+										onclick={() => update(target.key, { sources: [...mapping.sources, ''] })}
+										><Icon name="plus" />{t('map.addSource')}</button
+									>
 								{/if}
 							</div>
-						{/each}
-						{#if mapping && mapping.sources.length < MAX_SOURCES}
-							<button
-								type="button"
-								class="src__add"
-								disabled={busy()}
-								onclick={() => update(target.key, { sources: [...mapping.sources, ''] })}
-								><Icon name="plus" />{t('map.addSource')}</button
-							>
-						{/if}
-					</div>
 
-					<!-- The target again, with its name in words, why it needs attention, and the sample
+							<!-- The target again, with its name in words, why it needs attention, and the sample
 					     output: what the steps make of the source's sample values (see mapping-preview). -->
-					{@const trace = mapping
-						? previewMapping(mapping, sources, {
-								targetRef: targets.find((target) => target.key === mapping.target)?.ref
-							})
-						: null}
-					<div class="mrow__target-edit" transition:slide={{ duration: SLIDE_MS }}>
-						<span class="mrow__target" class:is-set={isSet} aria-hidden="true">
-							<code>{target.key}</code>
-							<TypeBadge>{target.type}</TypeBadge>
-							{#if target.required}<RequiredBadge />{/if}
-						</span>
-						{#if target.label}<span class="mrow__tlabel">{target.label}</span>{/if}
-						{#if target.required && !mapping}
-							<!-- About the attribute itself, so under it rather than under the arrow. -->
-							<span class="mrow__tnote"><Icon name="warning" />{t('map.x.requiredUnset')}</span>
-						{/if}
-						{#if trace}
-							<div class="sample" role="group" aria-labelledby="{uid}-{target.key}-sample">
-								<p class="sample__title" id="{uid}-{target.key}-sample">{t('map.sample.title')}</p>
-								<ol class="sample__rows">
-									{#if trace.input.length}
-										<li>
-											<span class="sample__n">{t('map.sample.in')}</span>
-											{@render values(trace.input)}
-										</li>
-									{/if}
-									{#each trace.steps as after, i (i)}
-										<li>
-											<span class="sample__n">{i + 1}</span>
-											{@render values(after)}
-										</li>
-									{/each}
-								</ol>
-								<p class="sample__out">
-									<span class="sample__n">{t('map.sample.out')}</span>
-									{@render values([trace.output])}
-								</p>
+							{@const trace = mapping
+								? previewMapping(mapping, sources, {
+										targetRef: targets.find((target) => target.key === mapping.target)?.ref
+									})
+								: null}
+							<div class="mrow__target-edit" transition:slide={{ duration: SLIDE_MS }}>
+								<span class="mrow__target" class:is-set={isSet} aria-hidden="true">
+									<code>{target.key}</code>
+									<TypeBadge>{target.type}</TypeBadge>
+									{#if target.required}<RequiredBadge />{/if}
+								</span>
+								{#if target.label}<span class="mrow__tlabel">{target.label}</span>{/if}
+								{#if target.required && !mapping}
+									<!-- About the attribute itself, so under it rather than under the arrow. -->
+									<span class="mrow__tnote"><Icon name="warning" />{t('map.x.requiredUnset')}</span>
+								{/if}
+								{#if trace}
+									<div class="sample" role="group" aria-labelledby="{uid}-{target.key}-sample">
+										<p class="sample__title" id="{uid}-{target.key}-sample">
+											{t('map.sample.title')}
+										</p>
+										<ol class="sample__rows">
+											{#if trace.input.length}
+												<li>
+													<span class="sample__n">{t('map.sample.in')}</span>
+													{@render values(trace.input)}
+												</li>
+											{/if}
+											{#each trace.steps as after, i (i)}
+												<li>
+													<span class="sample__n">{i + 1}</span>
+													{@render values(after)}
+												</li>
+											{/each}
+										</ol>
+										<p class="sample__out">
+											<span class="sample__n">{t('map.sample.out')}</span>
+											{@render values([trace.output])}
+										</p>
+									</div>
+								{/if}
 							</div>
-						{/if}
-					</div>
 
-					<!-- The transforms, drawn as the way the value goes: in from the source on the
+							<!-- The transforms, drawn as the way the value goes: in from the source on the
 					     left, through each step in turn, out to the target on the right. Without
 					     steps, "Add a transform" sits on the plain line. What is wrong shows under. -->
-					<div
-						class="mrow__mid"
-						transition:slide={{ duration: SLIDE_MS }}
-						id="{uid}-{target.key}"
-						role="group"
-						aria-label={t('map.editRow', { name: target.key })}
-					>
-						{#if mapping && mapping.steps.length}
-							<div class="chain">
-								<ol class="chain__steps">
-									{#each mapping.steps as step, index (step.id)}
-										{@const def = transformDef(step.transform)}
-										{@const n = index + 1}
-										{@const last = index === mapping.steps.length - 1}
-										<li class="slot" class:is-first={index === 0} class:is-last={last}>
+							<div
+								class="mrow__mid"
+								transition:slide={{ duration: SLIDE_MS }}
+								id="{uid}-{target.key}"
+								role="group"
+								aria-label={t('map.editRow', { name: target.key })}
+							>
+								{#if mapping && mapping.steps.length}
+									<div class="chain">
+										<ol class="chain__steps">
+											{#each mapping.steps as step, index (step.id)}
+												{@const def = transformDef(step.transform)}
+												{@const n = index + 1}
+												{@const last = index === mapping.steps.length - 1}
+												<li class="slot" class:is-first={index === 0} class:is-last={last}>
+													<span class="bus bus--in" aria-hidden="true"
+														><span class="bus__tick"></span></span
+													>
+													<span class="slot__n" aria-hidden="true">{n}</span>
+													<div class="card">
+														<div class="card__name">
+															<button
+																type="button"
+																class="step-choice"
+																id="{uid}-{target.key}-{step.id}-choice"
+																aria-haspopup="dialog"
+																aria-label="{t('map.step', { n })}: {t(`map.t.${step.transform}`)}"
+																disabled={busy()}
+																onclick={() => (picking = { key: target.key, index })}
+															>
+																<span class="step-choice__label"
+																	>{t(`map.t.${step.transform}`)}</span
+																>
+																<span class="step-choice__caret" aria-hidden="true"
+																	><Icon name="caret" /></span
+																>
+															</button>
+														</div>
+														<div class="card__box">
+															<span class="card__menu">
+																<ActionMenu
+																	id="{uid}-{target.key}-{step.id}-menu"
+																	label={t('map.stepMenu', { n })}
+																	size="sm"
+																	framed
+																	actions={[
+																		{
+																			label: t('map.runEarlier'),
+																			icon: 'arrowUp',
+																			disabled: index === 0,
+																			onselect: () => moveStep(target.key, index, -1)
+																		},
+																		{
+																			label: t('map.runLater'),
+																			icon: 'arrowDown',
+																			disabled: last,
+																			onselect: () => moveStep(target.key, index, 1)
+																		},
+																		{
+																			label: t('map.removeStep'),
+																			icon: 'trash',
+																			danger: true,
+																			onselect: () => removeStep(target.key, index)
+																		}
+																	]}
+																/>
+															</span>
+															{#if step.transform === 'persistent_identifier'}
+																<PersistentIdentifierParams
+																	{step}
+																	onchange={(name, value) =>
+																		setParam(target.key, index, step, name, value)}
+																/>
+															{:else}
+																{#each def.params.filter( (param) => paramApplies(param, step.params) ) as param (param.key)}
+																	{#if param.condition}
+																		<ConditionBuilder
+																			label={t(`map.p.${param.key}` as MessageKey)}
+																			fields={conditionFields}
+																			maxDepth={2}
+																			bind:value={
+																				() => conditionOf(step.params[param.key]),
+																				(group) =>
+																					setParam(
+																						target.key,
+																						index,
+																						step,
+																						param.key,
+																						JSON.stringify(group)
+																					)
+																			}
+																		/>
+																	{:else if param.zone}
+																		<Select
+																			label={t(`map.p.${param.key}` as MessageKey)}
+																			size="sm"
+																			value={String(step.params[param.key] || 'UTC')}
+																			options={timeZones}
+																			onchange={(v) =>
+																				setParam(target.key, index, step, param.key, v)}
+																		/>
+																	{:else if param.pairs}
+																		<KeyValueField
+																			label={t(`map.p.${param.key}` as MessageKey)}
+																			keyLabel={t('map.p.entryFrom')}
+																			valueLabel={t('map.p.entryTo')}
+																			bind:entries={
+																				() => pairsOf(step.params[param.key]),
+																				(list) =>
+																					setParam(
+																						target.key,
+																						index,
+																						step,
+																						param.key,
+																						pairsText(list)
+																					)
+																			}
+																		/>
+																	{:else if param.options}
+																		<Select
+																			label={t(`map.p.${param.key}` as MessageKey)}
+																			size="sm"
+																			value={String(step.params[param.key] ?? param.options[0])}
+																			options={param.options.map((o) => ({
+																				value: o,
+																				label: t(`map.p.${o}` as MessageKey)
+																			}))}
+																			onchange={(v) =>
+																				setParam(target.key, index, step, param.key, v)}
+																		/>
+																	{:else if param.flag}
+																		<Checkbox
+																			checked={step.params[param.key] === true}
+																			onchange={(event) =>
+																				setParam(
+																					target.key,
+																					index,
+																					step,
+																					param.key,
+																					event.currentTarget.checked
+																				)}>{t(`map.p.${param.key}` as MessageKey)}</Checkbox
+																		>
+																	{:else}
+																		<label class="ed__param">
+																			<span>{t(`map.p.${param.key}` as MessageKey)}</span>
+																			{#if param.list || PARAM_HINTS[param.key]}<small
+																					class="ed__param-hint"
+																					>{t(PARAM_HINTS[param.key] ?? 'map.p.listHint')}</small
+																				>{/if}
+																			<input
+																				class:is-code={param.code}
+																				dir={param.code ? 'ltr' : undefined}
+																				value={String(step.params[param.key] ?? '')}
+																				spellcheck="false"
+																				autocomplete="off"
+																				readonly={busy()}
+																				oninput={(event) =>
+																					setParam(
+																						target.key,
+																						index,
+																						step,
+																						param.key,
+																						event.currentTarget.value
+																					)}
+																			/>
+																		</label>
+																	{/if}
+																{/each}
+															{/if}
+															{#if last && mapping.steps.length > 1}
+																<p class="ed__hint">{t('map.stepsHint')}</p>
+															{/if}
+														</div>
+													</div>
+													<span class="bus bus--out" aria-hidden="true"
+														><span class="bus__tick"></span>{#if index === 0}<svg
+																class="flow__head"
+																viewBox="0 0 6 10"
+																focusable="false"><path d="M1 1 L5 5 L1 9" /></svg
+															>{/if}</span
+													>
+												</li>
+											{/each}
+										</ol>
+										<!-- The next place a step can go: dotted until used. -->
+										<div class="slot is-add">
 											<span class="bus bus--in" aria-hidden="true"
 												><span class="bus__tick"></span></span
 											>
-											<span class="slot__n" aria-hidden="true">{n}</span>
-											<div class="card">
-												<div class="card__name">
-													<button
-														type="button"
-														class="step-choice"
-														id="{uid}-{target.key}-{step.id}-choice"
-														aria-haspopup="dialog"
-														aria-label="{t('map.step', { n })}: {t(`map.t.${step.transform}`)}"
-														disabled={busy()}
-														onclick={() => (picking = { key: target.key, index })}
-													>
-														<span class="step-choice__label">{t(`map.t.${step.transform}`)}</span>
-														<span class="step-choice__caret" aria-hidden="true"
-															><Icon name="caret" /></span
-														>
-													</button>
-												</div>
-												<div class="card__box">
-													<span class="card__menu">
-														<ActionMenu
-															id="{uid}-{target.key}-{step.id}-menu"
-															label={t('map.stepMenu', { n })}
-															size="sm"
-															framed
-															actions={[
-																{
-																	label: t('map.runEarlier'),
-																	icon: 'arrowUp',
-																	disabled: index === 0,
-																	onselect: () => moveStep(target.key, index, -1)
-																},
-																{
-																	label: t('map.runLater'),
-																	icon: 'arrowDown',
-																	disabled: last,
-																	onselect: () => moveStep(target.key, index, 1)
-																},
-																{
-																	label: t('map.removeStep'),
-																	icon: 'trash',
-																	danger: true,
-																	onselect: () => removeStep(target.key, index)
-																}
-															]}
-														/>
-													</span>
-													{#if step.transform === 'persistent_identifier'}
-														<PersistentIdentifierParams
-															{step}
-															onchange={(name, value) =>
-																setParam(target.key, index, step, name, value)}
-														/>
-													{:else}
-														{#each def.params.filter( (param) => paramApplies(param, step.params) ) as param (param.key)}
-															{#if param.condition}
-																<ConditionBuilder
-																	label={t(`map.p.${param.key}` as MessageKey)}
-																	fields={conditionFields}
-																	maxDepth={2}
-																	bind:value={
-																		() => conditionOf(step.params[param.key]),
-																		(group) =>
-																			setParam(
-																				target.key,
-																				index,
-																				step,
-																				param.key,
-																				JSON.stringify(group)
-																			)
-																	}
-																/>
-															{:else if param.zone}
-																<Select
-																	label={t(`map.p.${param.key}` as MessageKey)}
-																	size="sm"
-																	value={String(step.params[param.key] || 'UTC')}
-																	options={timeZones}
-																	onchange={(v) => setParam(target.key, index, step, param.key, v)}
-																/>
-															{:else if param.pairs}
-																<KeyValueField
-																	label={t(`map.p.${param.key}` as MessageKey)}
-																	keyLabel={t('map.p.entryFrom')}
-																	valueLabel={t('map.p.entryTo')}
-																	bind:entries={
-																		() => pairsOf(step.params[param.key]),
-																		(list) =>
-																			setParam(target.key, index, step, param.key, pairsText(list))
-																	}
-																/>
-															{:else if param.options}
-																<Select
-																	label={t(`map.p.${param.key}` as MessageKey)}
-																	size="sm"
-																	value={String(step.params[param.key] ?? param.options[0])}
-																	options={param.options.map((o) => ({
-																		value: o,
-																		label: t(`map.p.${o}` as MessageKey)
-																	}))}
-																	onchange={(v) => setParam(target.key, index, step, param.key, v)}
-																/>
-															{:else if param.flag}
-																<Checkbox
-																	checked={step.params[param.key] === true}
-																	onchange={(event) =>
-																		setParam(
-																			target.key,
-																			index,
-																			step,
-																			param.key,
-																			event.currentTarget.checked
-																		)}>{t(`map.p.${param.key}` as MessageKey)}</Checkbox
-																>
-															{:else}
-																<label class="ed__param">
-																	<span>{t(`map.p.${param.key}` as MessageKey)}</span>
-																	{#if param.list || PARAM_HINTS[param.key]}<small
-																			class="ed__param-hint"
-																			>{t(PARAM_HINTS[param.key] ?? 'map.p.listHint')}</small
-																		>{/if}
-																	<input
-																		class:is-code={param.code}
-																		dir={param.code ? 'ltr' : undefined}
-																		value={String(step.params[param.key] ?? '')}
-																		spellcheck="false"
-																		autocomplete="off"
-																		readonly={busy()}
-																		oninput={(event) =>
-																			setParam(
-																				target.key,
-																				index,
-																				step,
-																				param.key,
-																				event.currentTarget.value
-																			)}
-																	/>
-																</label>
-															{/if}
-														{/each}
-													{/if}
-													{#if last && mapping.steps.length > 1}
-														<p class="ed__hint">{t('map.stepsHint')}</p>
-													{/if}
-												</div>
-											</div>
+											<span class="slot__n" aria-hidden="true">{mapping.steps.length + 1}</span>
+											<span class="slot__add">
+												<button
+													type="button"
+													class="flow__add"
+													id="{uid}-{target.key}-add"
+													disabled={busy()}
+													aria-haspopup="dialog"
+													onclick={() => (picking = { key: target.key, index: null })}
+													><Icon name="plus" /><span>{t('map.addStep')}</span></button
+												>
+												<span class="flow__line" aria-hidden="true"></span>
+											</span>
 											<span class="bus bus--out" aria-hidden="true"
-												><span class="bus__tick"></span>{#if index === 0}<svg
-														class="flow__head"
-														viewBox="0 0 6 10"
-														focusable="false"><path d="M1 1 L5 5 L1 9" /></svg
-													>{/if}</span
+												><span class="bus__tick"></span></span
 											>
-										</li>
-									{/each}
-								</ol>
-								<!-- The next place a step can go: dotted until used. -->
-								<div class="slot is-add">
-									<span class="bus bus--in" aria-hidden="true"><span class="bus__tick"></span></span
-									>
-									<span class="slot__n" aria-hidden="true">{mapping.steps.length + 1}</span>
-									<span class="slot__add">
+										</div>
+									</div>
+								{:else}
+									<div class="mrow__flow mrow__flow-edit" class:is-unset={!isSet}>
+										<span class="flow__line" aria-hidden="true"></span>
+										<!-- Also with no source: a step can make the value itself (a fixed value). -->
 										<button
 											type="button"
 											class="flow__add"
@@ -979,57 +1021,43 @@
 											><Icon name="plus" /><span>{t('map.addStep')}</span></button
 										>
 										<span class="flow__line" aria-hidden="true"></span>
-									</span>
-									<span class="bus bus--out" aria-hidden="true"
-										><span class="bus__tick"></span></span
-									>
-								</div>
-							</div>
-						{:else}
-							<div class="mrow__flow mrow__flow-edit" class:is-unset={!isSet}>
-								<span class="flow__line" aria-hidden="true"></span>
-								<!-- Also with no source: a step can make the value itself (a fixed value). -->
-								<button
-									type="button"
-									class="flow__add"
-									id="{uid}-{target.key}-add"
-									disabled={busy()}
-									aria-haspopup="dialog"
-									onclick={() => (picking = { key: target.key, index: null })}
-									><Icon name="plus" /><span>{t('map.addStep')}</span></button
-								>
-								<span class="flow__line" aria-hidden="true"></span>
-								<svg class="flow__head" viewBox="0 0 6 10" aria-hidden="true" focusable="false"
-									><path d="M1 1 L5 5 L1 9" /></svg
-								>
-							</div>
-						{/if}
-						{#each problems as problem, p (p)}
-							<div class="mrow__problem" role="status">
-								<p><Icon name="warning" />{message(problem)}</p>
-								{#if fixesFor(problem).length}
-									<div class="mrow__fixes">
-										{#each fixesFor(problem) as fix (fix.label)}
-											<Button
-												size="sm"
-												variant="secondary"
-												disabled={busy()}
-												onclick={() =>
-													setSteps(target.key, [
-														...(mapping?.steps ?? []),
-														{ id: nextId('step'), ...fix.step }
-													])}>{t(`map.fix.${fix.label}`)}</Button
-											>
-										{/each}
+										<svg class="flow__head" viewBox="0 0 6 10" aria-hidden="true" focusable="false"
+											><path d="M1 1 L5 5 L1 9" /></svg
+										>
 									</div>
 								{/if}
+								{#each problems as problem, p (p)}
+									<div class="mrow__problem" role="status">
+										<p><Icon name="warning" />{message(problem)}</p>
+										{#if fixesFor(problem).length}
+											<div class="mrow__fixes">
+												{#each fixesFor(problem) as fix (fix.label)}
+													<Button
+														size="sm"
+														variant="secondary"
+														disabled={busy()}
+														onclick={() =>
+															setSteps(target.key, [
+																...(mapping?.steps ?? []),
+																{ id: nextId('step'), ...fix.step }
+															])}>{t(`map.fix.${fix.label}`)}</Button
+													>
+												{/each}
+											</div>
+										{/if}
+									</div>
+								{/each}
 							</div>
-						{/each}
-					</div>
-				{/if}
-			</li>
-		{/each}
-	</ul>
+						{/if}
+					</li>
+				{/each}
+			</ul>
+		</div>
+	</div>
+
+	{#if shown.length === 0}
+		<p class="mapping__note">{t('map.nothing')}</p>
+	{/if}
 
 	{#if unused.length}
 		<p class="mapping__note">
@@ -1087,6 +1115,17 @@
 		flex: 1 1 12rem;
 		max-width: 18rem;
 		margin-inline-start: auto;
+	}
+
+	.mapping__scroll {
+		min-width: 0;
+		overflow-x: auto;
+	}
+
+	.mapping__table {
+		display: grid;
+		gap: var(--space-related);
+		min-width: 40rem;
 	}
 
 	/* Attribute ← source, the same columns in the heading and every line. */
@@ -1879,16 +1918,9 @@
 
 	.mapping__note {
 		margin: 0;
+		overflow-wrap: anywhere;
 		color: var(--text-muted);
 		font-size: var(--fs-caption);
-	}
-
-	/* Narrow screens: the same shares, the toggle column shrinks. */
-	@media (max-width: 720px) {
-		.mapping {
-			--map-cols: minmax(0, 1fr) minmax(7rem, 1.3fr) minmax(0, 1fr) 2rem;
-			--map-gap: 8px;
-		}
 	}
 
 	@media (prefers-reduced-motion: reduce) {

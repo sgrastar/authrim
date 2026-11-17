@@ -31,6 +31,18 @@ export const jaConnectionSettings = {
 	'cs.live.assertionSigningAlg': 'クライアントアサーションの署名アルゴリズム',
 	'cs.live.encryptionPolicy': 'XML暗号化アルゴリズムのポリシー',
 
+	'cm.in.legacy':
+		'従来の属性マッピングは、このグラフを保存するまで使われます。保存後はグラフだけを使います。',
+	'cm.in.schema': '受信元フィールド',
+	'cm.in.schemaHelp': '受信する属性名と値の数を設定します。分類はPIIとして扱います。',
+	'cm.in.source': '属性名',
+	'cm.in.multi': '複数の値を受信する',
+	'cm.in.add': 'フィールドを追加',
+	'cm.in.preview': 'サンプルで確認',
+	'cm.in.sample': '合成サンプル（JSON）',
+	'cm.in.evaluate': '変換を確認',
+	'cm.in.single': '単一の値',
+	'cm.in.multiple': '複数の値',
 	'cs.title': '接続詳細設定',
 	'cs.lead': 'どれも最初から使える値で始まります。変えたいものだけ開いて設定してください。',
 	'cs.part.rp-profile': 'アプリの公開情報',

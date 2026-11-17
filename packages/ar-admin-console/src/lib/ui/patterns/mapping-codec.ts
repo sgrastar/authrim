@@ -27,6 +27,7 @@ export interface MappingCodecField extends MappingField {
 }
 export interface MappingCodecContext {
 	protocol: 'oidc' | 'saml';
+	direction?: 'inbound' | 'outbound';
 	profileId: string;
 	sources: readonly MappingCodecField[];
 	targets: readonly MappingCodecField[];
@@ -82,7 +83,14 @@ function targetField(key: string, context: MappingCodecContext) {
 	const target = field(key, context.targets);
 	const ref = target.ref;
 	checkFieldRef(ref);
-	if (
+	if (context.direction === 'inbound') {
+		if (
+			ref.side !== 'destination' ||
+			ref.profileId !== undefined ||
+			!['authrim.profile', 'authrim.custom_claims'].includes(ref.namespace)
+		)
+			fail('Target must be a writable Authrim incoming attribute');
+	} else if (
 		ref.side !== 'destination' ||
 		ref.profileId !== context.profileId ||
 		(context.protocol === 'oidc'
@@ -181,7 +189,7 @@ export function compileMapping(mapping: Mapping, context: MappingCodecContext): 
 	return rule;
 }
 
-function runtimeGraph(rule: MappingSetRule, context: MappingCodecContext): MappingRuleGraph {
+export function runtimeGraph(rule: MappingSetRule, context: MappingCodecContext): MappingRuleGraph {
 	const target = context.targets.find((item) => equal(item.ref, rule.targetRef));
 	if (!target) return fail('Unknown or malformed target reference');
 	targetField(target.key, context);
@@ -227,6 +235,7 @@ function runtimeGraph(rule: MappingSetRule, context: MappingCodecContext): Mappi
 function validateGraph(rule: MappingSetRule, context: MappingCodecContext) {
 	for (const step of rule.transforms ?? []) {
 		if (step.operation !== 'persistent_identifier') continue;
+		if (context.direction === 'inbound') fail('Persistent identifiers are outgoing only');
 		const params = step.parameters ?? {};
 		if (
 			context.protocol === 'oidc'

@@ -1740,6 +1740,10 @@ components:
       required:
         - fieldMappingSetId
       properties:
+        inboundContract:
+          type: string
+          enum: [connection-v1]
+          description: Incoming IdP connection contract marker; authored by the incoming connection API and retained by partial General updates.
         fieldMappingSetId:
           type: string
         fieldMappingVersionId:

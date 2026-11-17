@@ -1,4 +1,8 @@
 import { samlAdvancedSettingsProblem } from './advanced-settings-validation';
+import {
+  assertInboundMappingGraph,
+  inboundProfileTargets,
+} from '@authrim/ar-lib-core/services/inbound-identity-mapping';
 import { emitLogIcebergRow } from '@authrim/ar-lib-core/services/log-iceberg-emitter';
 import { resolveSAMLMappingSetOwner } from '../mapping-set-owner';
 import { hasNonSAMLMappingOutput } from './mapping-output-validation';
@@ -616,6 +620,22 @@ async function validateSAMLIdPMappingConfig(
       fieldMappingVersionId: config.identityMapping?.fieldMappingVersionId,
       partnerEntityId: config.entityId,
     });
+    if (
+      config.identityMapping?.inboundContract === 'connection-v1' ||
+      binding?.activationScope?.inboundContract === 'connection-v1'
+    ) {
+      if (binding?.activationScope?.inboundContract !== 'connection-v1')
+        return { field: 'identityMapping.fieldMappingSetId' };
+      const core = await resolveAuthCorePersistenceAdapterFromEnv(env, 'saml-inbound-targets', {
+        tenantId,
+      });
+      assertInboundMappingGraph(
+        'saml',
+        binding.graphRules ?? [],
+        binding.catalog,
+        inboundProfileTargets(await loadCustomClaimSchemaCatalogEntries(core, tenantId))
+      );
+    }
     return binding ? null : { field: 'identityMapping.fieldMappingSetId' };
   } catch {
     return { field: 'identityMapping.fieldMappingSetId' };

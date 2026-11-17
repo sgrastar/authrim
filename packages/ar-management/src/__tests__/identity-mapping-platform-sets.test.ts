@@ -152,7 +152,8 @@ function createApp(adapter: DatabaseAdapter, useSessionAuth = false) {
         ...core,
         // Only the apps are read from it; there are no custom claim schemas in this test.
         query: async (sql: string, params?: unknown[]) => {
-          if (/oauth_clients|identity_providers/.test(sql)) return core.query(sql, params);
+          if (/oauth_clients|identity_providers|upstream_providers/.test(sql))
+            return core.query(sql, params);
           throw new Error('no custom claim schemas in this test');
         },
       },
