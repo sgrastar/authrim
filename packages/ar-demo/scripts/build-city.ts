@@ -20,6 +20,9 @@ const result = await build({
   format: 'iife',
   target: ['es2020'],
   legalComments: 'none',
+  // See city/random.js.
+  define: { 'Math.random': 'cityRandom' },
+  inject: [join(root, 'city', 'random.js')],
   write: false,
   logLevel: 'warning',
 });
