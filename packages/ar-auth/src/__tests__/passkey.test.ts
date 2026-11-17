@@ -406,6 +406,10 @@ function createMockSessionStore() {
   };
 }
 
+function mockSettingsGet(get: () => Promise<string | null | undefined>): Env['SETTINGS'] {
+  return { get: vi.fn(get) } as unknown as Env['SETTINGS'];
+}
+
 // Helper to create mock context
 function createMockContext(options: {
   method?: string;
@@ -493,9 +497,9 @@ function createMockContext(options: {
     _mockDBPII: mockDBPII, // For test assertions
     _challengeStore: challengeStore,
     _sessionStore: sessionStore,
-  } as any;
+  };
 
-  return c;
+  return c as typeof c & Parameters<typeof passkeyRegisterOptionsHandler>[0];
 }
 
 describe('Passkey Handlers', () => {
@@ -1631,7 +1635,7 @@ describe('Passkey Handlers', () => {
         authenticationMethods: { 'authentication-methods.passkey.login_enabled': false },
       });
       if (status === 503) {
-        context.env.SETTINGS = { get: vi.fn(async () => '{not json') };
+        context.env.SETTINGS = mockSettingsGet(async () => '{not json');
       }
       const response = await passkeyLoginVerifyHandler(context);
 
@@ -1699,7 +1703,7 @@ describe('Passkey Handlers', () => {
         challengeStore,
         sessionStore,
       });
-      context.env.SETTINGS = { get: vi.fn(async () => stored) };
+      context.env.SETTINGS = mockSettingsGet(async () => stored);
 
       const response = await passkeyLoginVerifyHandler(context);
 
@@ -2049,7 +2053,7 @@ describe('Passkey Handlers', () => {
         body: { email: 'new-user@example.com' },
         headers: { origin: 'https://example.com' },
       });
-      c.env.SETTINGS = { get: vi.fn(async () => '{not json') };
+      c.env.SETTINGS = mockSettingsGet(async () => '{not json');
 
       const response = await passkeyRegisterOptionsHandler(c);
 
@@ -2063,7 +2067,7 @@ describe('Passkey Handlers', () => {
         body: { email: 'new-user@example.com' },
         headers: { origin: 'https://example.com' },
       });
-      c.env.SETTINGS = { get: vi.fn(async () => '') };
+      c.env.SETTINGS = mockSettingsGet(async () => '');
 
       const response = await passkeyRegisterOptionsHandler(c);
 
@@ -2076,11 +2080,9 @@ describe('Passkey Handlers', () => {
         body: { email: 'new-user@example.com' },
         headers: { origin: 'https://example.com' },
       });
-      c.env.SETTINGS = {
-        get: vi.fn(async () => {
-          throw new Error('KV unavailable');
-        }),
-      };
+      c.env.SETTINGS = mockSettingsGet(async () => {
+        throw new Error('KV unavailable');
+      });
 
       const response = await passkeyRegisterOptionsHandler(c);
 
@@ -2129,7 +2131,7 @@ describe('Passkey Handlers', () => {
         body: registrationBody,
         headers: { origin: 'https://example.com' },
       });
-      c.env.SETTINGS = { get: vi.fn(async () => '[1,2]') };
+      c.env.SETTINGS = mockSettingsGet(async () => '[1,2]');
 
       const response = await passkeyRegisterVerifyHandler(c);
 

@@ -21,11 +21,11 @@ describe('deployment-owned audit delivery', () => {
   it('delivers the event with a digest instead of the live session credential', async () => {
     const append = vi.fn(async (_value: AuditLogEntry) => {});
     await createAuditLog({ AUDIT_RUNTIME_PORTS: { append } } as Env, entry);
-    expect(append).toHaveBeenCalledExactlyOnceWith({
-      ...entry,
-      resourceId: expect.stringMatching(/^sid_[0-9a-f]{64}$/u),
-    });
-    expect(append.mock.calls[0]?.[0].resourceId).not.toBe(entry.resourceId);
+    expect(append).toHaveBeenCalledOnce();
+    const stored = append.mock.calls[0]?.[0];
+    expect(stored).toEqual({ ...entry, resourceId: stored?.resourceId });
+    expect(stored?.resourceId).toMatch(/^sid_[0-9a-f]{64}$/u);
+    expect(stored?.resourceId).not.toBe(entry.resourceId);
   });
   it('preserves non-session resource IDs', async () => {
     const append = vi.fn(async (_value: AuditLogEntry) => {});

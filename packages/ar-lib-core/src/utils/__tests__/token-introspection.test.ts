@@ -6,7 +6,7 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { introspectToken, resolveIntrospectedAccountUserId } from '../token-introspection';
 import { createAccessToken } from '../jwt';
 import { calculateAccessTokenHash } from '../dpop';
-import { SignJWT, generateKeyPair, exportJWK, calculateJwkThumbprint } from 'jose';
+import { SignJWT, generateKeyPair, exportJWK, calculateJwkThumbprint, base64url } from 'jose';
 import type { Env } from '../../types/env';
 
 const TEST_TENANT_ID = 'tenant_test';
@@ -120,9 +120,9 @@ describe('Token Introspection Utility', () => {
     it('requires the Cloudflare-presented certificate for an mTLS-bound Bearer token', async () => {
       const certificateBytes = new TextEncoder().encode('resource-client-certificate');
       const certificate = btoa(String.fromCharCode(...certificateBytes));
-      const thumbprint = Buffer.from(
-        await crypto.subtle.digest('SHA-256', certificateBytes)
-      ).toString('base64url');
+      const thumbprint = base64url.encode(
+        new Uint8Array(await crypto.subtle.digest('SHA-256', certificateBytes))
+      );
       const tokenResult = await createAccessToken(
         {
           iss: mockEnv.ISSUER_URL,
@@ -252,9 +252,9 @@ describe('Token Introspection Utility', () => {
       const jkt = await calculateJwkThumbprint(publicJwk);
       const certificateBytes = new TextEncoder().encode('dual-bound-certificate');
       const certificate = btoa(String.fromCharCode(...certificateBytes));
-      const thumbprint = Buffer.from(
-        await crypto.subtle.digest('SHA-256', certificateBytes)
-      ).toString('base64url');
+      const thumbprint = base64url.encode(
+        new Uint8Array(await crypto.subtle.digest('SHA-256', certificateBytes))
+      );
       const token = (
         await createAccessToken(
           {
