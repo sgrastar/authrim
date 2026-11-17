@@ -27,6 +27,8 @@ const LOOKS = [
 function applyGlobals(globals: Record<string, unknown>): void {
 	const scheme = globals.scheme === 'dark' ? 'dark' : 'light';
 	const look = typeof globals.look === 'string' ? globals.look : 'standard';
+	// A prior story may have started a theme wash; keep its interpolated colors out of this story.
+	document.documentElement.classList.remove('theme-transitioning', 'theme-to-light');
 	applyThemeAttributes(document.documentElement, scheme, scheme, look);
 	// Look at the console as this kind of admin: navigation and pages follow its access.
 	adminAccess.setOverride(persona(globals.admin).access);
