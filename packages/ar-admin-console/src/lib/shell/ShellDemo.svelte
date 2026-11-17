@@ -16,6 +16,8 @@
 		notifications?: readonly ShellNotification[];
 		/** An administrator of one tenant only: the header shows a plain scope, not a switcher. */
 		singleScope?: boolean;
+		/** Enough tenants to exercise the switcher's scrolling list. */
+		manyScopes?: boolean;
 		/** The platform's environment notice, in the shell's banner slot (none by default). */
 		environmentBanner?: { text: string; textLocalizations?: Record<string, string> };
 		/** The addresses whose page is built; the rest are marked as under construction. */
@@ -26,6 +28,7 @@
 		path = '/admin/users/all',
 		notifications = [],
 		singleScope = false,
+		manyScopes = false,
 		environmentBanner,
 		built
 	}: Props = $props();
@@ -44,7 +47,22 @@
 		{ id: 'acme', kind: 'tenant', name: 'Acme Corporation', mark: 'A' },
 		{ id: 'globex', kind: 'tenant', name: 'Globex Inc.', mark: 'G' }
 	];
-	const scopes = $derived(singleScope ? allScopes.filter((s) => s.id === 'acme') : allScopes);
+	const manyTenantScopes: ScopeOption[] = [
+		...allScopes,
+		...Array.from({ length: 24 }, (_, index) => ({
+			id: `demo-${index + 1}`,
+			kind: 'tenant' as const,
+			name: `Demo tenant ${String(index + 1).padStart(2, '0')}`,
+			mark: 'D'
+		}))
+	];
+	const scopes = $derived(
+		singleScope
+			? allScopes.filter((s) => s.id === 'acme')
+			: manyScopes
+				? manyTenantScopes
+				: allScopes
+	);
 	let tenant = $state('acme');
 
 	function intercept(event: MouseEvent) {
