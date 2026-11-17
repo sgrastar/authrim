@@ -2,6 +2,8 @@ vi.mock('../core/log-archive-readiness.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../core/log-archive-readiness.js')>();
   return {
     ...actual,
+    // The early start finds the row not yet readable; the wait after the UI Workers proves it.
+    startLogArchiveReadiness: vi.fn(async () => null),
     waitForLogArchiveReadiness: vi.fn(
       async (input: Parameters<typeof actual.waitForLogArchiveReadiness>[0]) => ({
         ...input.attempt,

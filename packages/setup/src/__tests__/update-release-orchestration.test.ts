@@ -947,7 +947,7 @@ describe('release update orchestration', () => {
 describe('release update archive verification gate', () => {
   it('persists a fresh Worker-bound attempt and requires the signed roundtrip before either successful release completion', async () => {
     const source = await readFile(new URL('../cli/commands/update.ts', import.meta.url), 'utf8');
-    const start = source.indexOf('const verifyUpdatedLogArchive = async');
+    const start = source.indexOf('const logArchiveReadinessInput = async');
     const end = source.indexOf('// The migration plan addresses', start);
     const gate = source.slice(start, end).replace(/\s+/gu, '');
     expect(gate).toContain('options.databaseOnly||options.dryRun');
@@ -957,6 +957,15 @@ describe('release update archive verification gate', () => {
     );
     expect(gate).toContain('pendingRuntimeProbe:undefined,runtimeProof:proof');
     expect(source.match(/await verifyUpdatedLogArchive\(\);/g)).toHaveLength(2);
+    // Started before each UI Worker deployment, waited for after it (the two overlap).
+    expect(source.match(/await startUpdatedLogArchiveCheck\(\);/g)).toHaveLength(2);
+    for (const part of source.split('await startUpdatedLogArchiveCheck();').slice(1)) {
+      const ui = part.indexOf('await deployReleaseUiWorkers(');
+      expect(ui).toBeGreaterThanOrEqual(0);
+      expect(ui).toBeLessThan(part.indexOf('await verifyUpdatedLogArchive();'));
+    }
+    // Only a proof for the same attempt skips the wait.
+    expect(gate).toContain('startedLogArchiveCheck?.attempt.attemptId===attempt.attemptId');
     for (const part of source.split('await verifyUpdatedLogArchive();').slice(1))
       expect(part.indexOf('completeControlManagedReleaseRollout')).toBeLessThan(
         part.indexOf("phase: options.databaseOnly ? 'database_only_verified' : 'verified'") < 0

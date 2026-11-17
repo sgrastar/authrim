@@ -1,6 +1,7 @@
 import { confirm, select } from '@inquirer/prompts';
 import chalk from 'chalk';
-import ora from 'ora';
+import ora from '../timed-ora.js';
+import { setPhaseTimingTarget } from '../../core/phase-timings.js';
 import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
@@ -163,6 +164,7 @@ export async function controlProvisionCommand(
 ): Promise<void> {
   const env = options.env ?? 'prod';
   const baseDir = findAuthrimBaseDir(process.cwd());
+  setPhaseTimingTarget({ env, baseDir });
   const { lock } = await loadLockFileAuto(baseDir, env);
   const controlDatabase = lock?.d1.CONTROL_DB;
   if (!controlDatabase) throw new Error(`Control database is not configured for ${env}`);
