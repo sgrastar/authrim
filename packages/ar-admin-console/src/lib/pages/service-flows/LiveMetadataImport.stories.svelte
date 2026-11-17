@@ -1,4 +1,5 @@
 <script module lang="ts">
+	import { tick } from 'svelte';
 	import { defineMeta } from '@storybook/addon-svelte-csf';
 	import { expect, fn, userEvent, waitFor, within } from 'storybook/test';
 	import { t } from '#lib/i18n/i18n.svelte.js';
@@ -50,8 +51,14 @@
 		await userEvent.click(canvas.getByRole('button', { name: t('sf.import.read') }));
 	}
 	async function openImport(canvas: Canvas) {
-		await userEvent.click(
-			await canvas.findByText(t('sf.metadata.title'), { selector: 'summary *' })
+		const heading = await canvas.findByText(t('sf.metadata.title'), { selector: 'summary *' });
+		const details = heading.closest('details');
+		if (!details) throw new Error('Expected metadata import disclosure');
+		await userEvent.click(heading);
+		await tick();
+		await waitFor(() => expect(details).toHaveAttribute('open'));
+		await Promise.all(
+			details.getAnimations({ subtree: true }).map((animation: Animation) => animation.finished)
 		);
 	}
 	async function change(canvas: Canvas, label: string, value: string) {
