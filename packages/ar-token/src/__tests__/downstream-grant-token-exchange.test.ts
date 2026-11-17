@@ -2264,7 +2264,7 @@ describe('downstream elevation grant token exchange', () => {
                 request({}, { ...env, ...modeEnv }),
                 400,
                 'invalid_grant',
-                'Subject token is invalid or revoked'
+                'Subject token type does not match token purpose'
               );
               expect(mocks.mockResolveAccountDataContextFromHono).not.toHaveBeenCalled();
               expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
