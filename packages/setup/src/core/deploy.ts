@@ -80,6 +80,13 @@ import {
 } from './managed-worker-deploy.js';
 import { checkWranglerStatus } from './wrangler-sync.js';
 import { writePrivateFileAtomically } from './atomic-file.js';
+import { AsyncLocalStorage } from 'node:async_hooks';
+import {
+  beginPhase,
+  beginWorkerTiming,
+  formatDuration,
+  setWorkerTimingResult,
+} from './phase-timings.js';
 import {
   prepareManagedWorkerScriptOwnership,
   type WorkerScriptOwnershipGuard,
@@ -413,6 +420,8 @@ export interface DeploymentSummary {
   startedAt: string;
   completedAt: string;
   duration: number;
+  /** Each Worker's own time in its steps (not waiting for others), when it was measured. */
+  workerWorkMs?: Partial<Record<WorkerComponent, number>>;
 }
 
 async function ensureWorkerScriptOwnershipGuard(
@@ -1231,6 +1240,48 @@ interface DeploymentThrottle {
   transientFailures: number;
 }
 
+/**
+ * Each Worker's own time in one `deployAll`: the time while at least one of its own steps
+ * (upload, deploy, trigger, traffic read or change, authorisation) was running, whichever
+ * Worker's turn ran it, so neither waiting for others nor nested steps count twice.
+ */
+interface WorkerWorkClock {
+  totals: Map<WorkerComponent, number>;
+  running: Map<WorkerComponent, { depth: number; since: number }>;
+}
+
+const workerWorkClock = new AsyncLocalStorage<WorkerWorkClock>();
+
+/** A Worker step, counted in the Worker's own time when a `deployAll` is timing. */
+function workerStep<A extends [WorkerDeploymentContext, ...unknown[]], R>(
+  step: (...args: A) => Promise<R>
+): (...args: A) => Promise<R> {
+  return async (...args: A) => {
+    const clock = workerWorkClock.getStore();
+    if (!clock) return step(...args);
+    const component = args[0].component;
+    const entry = clock.running.get(component) ?? { depth: 0, since: 0 };
+    if (entry.depth === 0) entry.since = performance.now();
+    entry.depth++;
+    clock.running.set(component, entry);
+    // The command's report counts the step too, up to its end or to when the command stops.
+    const reported = beginWorkerTiming(component);
+    try {
+      return await step(...args);
+    } finally {
+      reported.end();
+      entry.depth--;
+      if (entry.depth === 0) {
+        clock.running.delete(component);
+        clock.totals.set(
+          component,
+          (clock.totals.get(component) ?? 0) + (performance.now() - entry.since)
+        );
+      }
+    }
+  };
+}
+
 interface WorkerDeploymentContext {
   component: WorkerComponent;
   workerName: string;
@@ -1580,7 +1631,10 @@ async function runWithAdaptiveRetry<T>(
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     throwIfDeploymentAborted(options);
     await waitForThrottle(throttle, options);
-    options.onProgress?.(`[${attempt}/${maxAttempts}] ${label}...`);
+    // The first try is just the step; only a retry says which attempt it is.
+    options.onProgress?.(
+      attempt === 1 ? `${label}...` : `${label}... (attempt ${attempt} of ${maxAttempts})`
+    );
 
     try {
       return await operation();
@@ -1925,7 +1979,9 @@ function deploymentFailure(context: WorkerDeploymentContext, error: unknown): De
   };
 }
 
-async function deployWorkerDirect(
+const deployWorkerDirect = workerStep(deployWorkerDirectUntimed);
+
+async function deployWorkerDirectUntimed(
   context: WorkerDeploymentContext,
   options: DeployOptions,
   throttle: DeploymentThrottle
@@ -2143,7 +2199,9 @@ async function readVersionIdFromStructuredOutput(
   return undefined;
 }
 
-async function uploadWorkerVersion(
+const uploadWorkerVersion = workerStep(uploadWorkerVersionUntimed);
+
+async function uploadWorkerVersionUntimed(
   context: WorkerDeploymentContext,
   options: DeployOptions,
   throttle: DeploymentThrottle
@@ -2222,7 +2280,9 @@ async function uploadWorkerVersion(
   }
 }
 
-async function validateWorkerTriggers(
+const validateWorkerTriggers = workerStep(validateWorkerTriggersUntimed);
+
+async function validateWorkerTriggersUntimed(
   context: WorkerDeploymentContext,
   options: DeployOptions,
   throttle: DeploymentThrottle
@@ -2250,7 +2310,9 @@ async function validateWorkerTriggers(
   );
 }
 
-async function applyWorkerTriggers(
+const applyWorkerTriggers = workerStep(applyWorkerTriggersUntimed);
+
+async function applyWorkerTriggersUntimed(
   context: WorkerDeploymentContext,
   options: DeployOptions,
   throttle: DeploymentThrottle
@@ -2353,7 +2415,9 @@ export async function reconcileWorkerCronTriggers(
   }
 }
 
-async function deployWorkerTraffic(
+const deployWorkerTraffic = workerStep(deployWorkerTrafficUntimed);
+
+async function deployWorkerTrafficUntimed(
   context: WorkerDeploymentContext,
   trafficSpecs: readonly string[],
   options: DeployOptions,
@@ -2417,7 +2481,9 @@ async function deployWorkerTraffic(
   }
 }
 
-async function promoteWorkerVersion(
+const promoteWorkerVersion = workerStep(promoteWorkerVersionUntimed);
+
+async function promoteWorkerVersionUntimed(
   context: WorkerDeploymentContext,
   cloudflareVersionId: string,
   options: DeployOptions,
@@ -2855,9 +2921,7 @@ async function deployWorkerWithoutLease(
   const strategy = resolveDeploymentStrategy(options, [component]);
   if (options.dryRun) {
     const effectiveStrategy = context.requiresDirectDeployment ? 'direct' : strategy;
-    options.onProgress?.(
-      `[1/${Math.max(1, options.maxRetries ?? 3)}] Deploying ${context.workerName}...`
-    );
+    options.onProgress?.(`Deploying ${context.workerName}...`);
     options.onProgress?.(
       `  [DRY RUN] Would ${effectiveStrategy === 'staged' ? 'upload and promote' : 'deploy'} ${component} with --env ${options.env}`
     );
@@ -2974,7 +3038,9 @@ function getTrafficVersionIds(specs: readonly string[]): Set<string> {
   return new Set(specs.map((spec) => spec.split('@')[0]));
 }
 
-async function assertWorkerTrafficUnchanged(
+const assertWorkerTrafficUnchanged = workerStep(assertWorkerTrafficUnchangedUntimed);
+
+async function assertWorkerTrafficUnchangedUntimed(
   context: WorkerDeploymentContext,
   expected: WorkerTrafficSnapshot,
   options: DeployOptions,
@@ -2988,7 +3054,9 @@ async function assertWorkerTrafficUnchanged(
   }
 }
 
-async function assertWorkerTrafficOwnedForRollback(
+const assertWorkerTrafficOwnedForRollback = workerStep(assertWorkerTrafficOwnedForRollbackUntimed);
+
+async function assertWorkerTrafficOwnedForRollbackUntimed(
   context: WorkerDeploymentContext,
   baseline: WorkerTrafficSnapshot,
   newVersionId: string,
@@ -3007,7 +3075,9 @@ async function assertWorkerTrafficOwnedForRollback(
   }
 }
 
-async function readWorkerTrafficSnapshot(
+const readWorkerTrafficSnapshot = workerStep(readWorkerTrafficSnapshotUntimed);
+
+async function readWorkerTrafficSnapshotUntimed(
   context: WorkerDeploymentContext,
   options: DeployOptions,
   throttle: DeploymentThrottle
@@ -3178,7 +3248,9 @@ async function closeWorkerDeploymentLeaseSession(
   return takenOver;
 }
 
-async function authorizeWorkerMutation(
+const authorizeWorkerMutation = workerStep(authorizeWorkerMutationUntimed);
+
+async function authorizeWorkerMutationUntimed(
   context: WorkerDeploymentContext,
   options: DeployOptions,
   throttle: DeploymentThrottle
@@ -3525,8 +3597,45 @@ export async function deployParallel(
   return (await deployAll(options, components)).results;
 }
 
-/** Deploy all selected workers with a bounded dependency DAG. */
+/**
+ * Deploy all selected workers with a bounded dependency DAG. Timed as one step of the running
+ * command, with each Worker's own time (see `phase-timings.ts`).
+ */
 export async function deployAll(
+  options: DeployOptions,
+  enabledComponents?: WorkerComponent[]
+): Promise<DeploymentSummary> {
+  const phase = beginPhase(
+    options.dryRun ? 'Planning Worker deployment (dry run)' : 'Deploying API Workers'
+  );
+  const clock: WorkerWorkClock = { totals: new Map(), running: new Map() };
+  try {
+    const summary = await workerWorkClock.run(clock, () =>
+      deployAllUntimed(options, enabledComponents)
+    );
+    summary.workerWorkMs = Object.fromEntries(clock.totals);
+    const timed = summary.results
+      .map((result) => ({ result, ms: clock.totals.get(result.component) }))
+      .filter((entry): entry is { result: DeployResult; ms: number } => entry.ms !== undefined)
+      .sort((a, b) => b.ms - a.ms);
+    if (timed.length > 0) {
+      options.onProgress?.('Time per Worker, its own steps (slowest first):');
+      for (const { result, ms } of timed) {
+        options.onProgress?.(
+          `  ${result.component}: ${formatDuration(ms)}${result.success ? '' : ' (failed)'}`
+        );
+      }
+    }
+    for (const result of summary.results) setWorkerTimingResult(result.component, result.success);
+    phase.end(summary.failedCount > 0 ? 'failed' : 'ok');
+    return summary;
+  } catch (error) {
+    phase.end('failed');
+    throw error;
+  }
+}
+
+async function deployAllUntimed(
   options: DeployOptions,
   enabledComponents?: WorkerComponent[]
 ): Promise<DeploymentSummary> {
@@ -4806,7 +4915,27 @@ export function assertLoginUiBuildClientId(uiDir: string, expectedClientId: stri
  *
  * Deploys AdminUI/LoginUI as Workers static assets.
  */
+/** Deploy one UI Worker, timed as one step of the running command (see `phase-timings.ts`). */
 export async function deployUiWorkerComponent(
+  component: UiWorkerComponent,
+  options: UiWorkerDeployOptions
+): Promise<UiWorkerDeployResult> {
+  const phase = beginPhase(`${options.dryRun ? 'Planning' : 'Deploying'} ${component}`);
+  // Counted as running from the start, so a command stopped part way still reports it.
+  const reported = beginWorkerTiming(component);
+  let success = false;
+  try {
+    const result = await deployUiWorkerComponentUntimed(component, options);
+    success = result.success;
+    return result;
+  } finally {
+    reported.end();
+    setWorkerTimingResult(component, success);
+    phase.end(success ? 'ok' : 'failed');
+  }
+}
+
+async function deployUiWorkerComponentUntimed(
   component: UiWorkerComponent,
   options: UiWorkerDeployOptions
 ): Promise<UiWorkerDeployResult> {

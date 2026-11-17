@@ -1,4 +1,10 @@
 import {
+  getConnectionInboundMapping,
+  putConnectionInboundMapping,
+  previewConnectionInboundMapping,
+  inboundMappingIdempotency,
+} from './connection-inbound-mapping';
+import {
   adminMappingHashKeyGetHandler,
   adminMappingHashKeyRotateHandler,
 } from './mapping-hash-key';
@@ -2415,6 +2421,22 @@ app.delete('/api/admin/iat-tokens/:tokenHash', requireSystemAdmin(), adminIATRev
 
 // Admin External IdP Provider Management endpoints (proxy to ar-bridge)
 // Enables Admin UI to manage external identity providers (Google, GitHub, etc.)
+// Incoming connection graphs have their own DTO and never enter the release facade.
+app.get('/api/admin/identity-mapping/inbound/op/:id', getConnectionInboundMapping);
+app.put(
+  '/api/admin/identity-mapping/inbound/op/:id',
+  inboundMappingIdempotency,
+  putConnectionInboundMapping
+);
+app.post('/api/admin/identity-mapping/inbound/op/:id/preview', previewConnectionInboundMapping);
+app.get('/api/admin/identity-mapping/inbound/idp/:id', getConnectionInboundMapping);
+app.put(
+  '/api/admin/identity-mapping/inbound/idp/:id',
+  inboundMappingIdempotency,
+  putConnectionInboundMapping
+);
+app.post('/api/admin/identity-mapping/inbound/idp/:id/preview', previewConnectionInboundMapping);
+
 app.get('/api/admin/external-providers', adminExternalProvidersListHandler);
 app.post('/api/admin/external-providers', adminExternalProvidersCreateHandler);
 

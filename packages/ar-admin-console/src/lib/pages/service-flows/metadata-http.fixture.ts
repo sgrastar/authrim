@@ -1,5 +1,6 @@
 import { fn } from 'storybook/test';
 import type { SamlProviderKind } from '#lib/api/saml-providers.js';
+import { inboundMappingFixture } from './inbound-mapping.fixture';
 
 /** Synthetic, public-only metadata for the story HTTP boundary. No external fetches. */
 export const metadataCertificate =
@@ -10,6 +11,7 @@ function object(value: unknown): value is Record<string, unknown> {
 	return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 export function metadataHttpFixture(kind: SamlProviderKind = 'saml_sp') {
+	const incoming = inboundMappingFixture('idp', true);
 	let version = 0;
 	const protectedConfig = {
 		identityMapping: { fieldMappingSetId: 'stored-set', fieldMappingVersionId: 'stored-version' },
@@ -75,6 +77,17 @@ export function metadataHttpFixture(kind: SamlProviderKind = 'saml_sp') {
 		const path = String(url);
 		const body: unknown = init.body ? JSON.parse(String(init.body)) : {};
 		if (!object(body)) throw new Error('Expected object request');
+		if (
+			kind === 'saml_idp' &&
+			path.endsWith('/identity-mapping/inbound/idp/portal') &&
+			(!init.method || init.method === 'GET')
+		)
+			return Response.json({
+				...incoming.document,
+				revision: `metadata-${row.updatedAt}`,
+				providerUpdatedAt: row.updatedAt,
+				enabled: row.enabled
+			});
 		if (path.endsWith('/saml-metadata/preview')) return preview(body);
 		if (!path.includes('/saml-providers'))
 			throw new Error(`Unexpected story HTTP request: ${path}`);

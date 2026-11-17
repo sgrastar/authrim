@@ -538,13 +538,14 @@ export const PLATFORM_AREAS: readonly NavArea[] = [
 				id: 'list',
 				label: 'nav.pt.list',
 				icon: 'building',
-				legacyRoutes: ['/admin/tenants', '/admin/tenants/[id]']
-			},
-			{
-				id: 'provisioning',
-				label: 'nav.pt.provisioning',
-				icon: 'plus',
-				legacyRoutes: ['/admin/tenants/new', '/admin/tenants/clone']
+				// Creating a tenant starts from the list; copying one from its page.
+				details: true,
+				legacyRoutes: [
+					'/admin/tenants',
+					'/admin/tenants/[id]',
+					'/admin/tenants/new',
+					'/admin/tenants/clone'
+				]
 			},
 			{
 				id: 'discovery',

@@ -18,6 +18,7 @@ import { jaAdminAudit } from './admin-audit/ja';
 import { jaUserAudit } from './user-audit/ja';
 import { jaTeam } from './team/ja';
 import { jaMachineAccess } from './machine-access/ja';
+import { jaTenants } from './tenants/ja';
 import { jaAuthMethods } from './auth-methods/ja';
 import { jaSessionProfiles } from './session-profiles/ja';
 import { jaProfileLayer } from './profile-layer/ja';
@@ -50,6 +51,7 @@ export const ja = {
 	...jaUserAudit,
 	...jaTeam,
 	...jaMachineAccess,
+	...jaTenants,
 	...jaAuthMethods,
 	...jaSessionProfiles,
 	...jaProfileLayer,
@@ -225,7 +227,6 @@ export const ja = {
 	'nav.platArea.infra': 'インフラ',
 	'nav.platArea.approvals': '承認',
 	'nav.pt.list': 'テナント一覧',
-	'nav.pt.provisioning': '作成・複製',
 	'nav.pt.domains': 'カスタムドメイン',
 	'nav.pt.invitations': 'テナント招待',
 	'nav.pa.users': '管理者ユーザー',

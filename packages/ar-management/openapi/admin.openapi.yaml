@@ -11284,6 +11284,9 @@ paths:
         nickname, profile, picture, website, gender, birthdate, zoneinfo and locale, each once;
         any other value is refused with 400.
         While the platform has the `external_identity_providers` capability off, this operation answers 403 `capability_disabled` (see `CapabilityDisabled`), and 503 `temporarily_unavailable` when the switch cannot be read; callers with global platform authority are exempt. Reading and deleting providers stay open, and providers already configured keep working.
+        Incoming graph selectors are reserved server-owned provider configuration. General updates
+        preserve the current selector atomically; GET/update responses omit it from providerQuirks.
+        Create cannot accept provider_quirks.inboundIdentityMapping. Use the incoming mapping API.
       responses:
         '200':
           $ref: '#/components/responses/ExternalProviderProxy'
@@ -13127,6 +13130,318 @@ paths:
           $ref: '#/components/responses/Error'
         '500':
           $ref: '#/components/responses/MappingSetSaveFailed'
+        '503':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  /api/admin/identity-mapping/inbound/op/{id}:
+    get:
+      tags: [Field Mapping]
+      operationId: getApiAdminInboundOPMapping
+      summary: Read an incoming OP connection mapping.
+      description: >-
+        Incoming OIDC RP attribute transformation into Authrim profile/custom claims.
+        Requires admin:settings:read and admin:external_providers:read.
+        Returns the bound active graph, exact source/destination schemas and provider revision.
+        Missing and foreign-tenant providers both return 404. Invalid configured mappings fail with
+        409, never fall back to legacy/raw attributes. Unsupported legacy graphs remain inspectable
+        with editable=false; no automatic conversion is performed.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, maxLength: 200 }
+      responses:
+        '200':
+          description: Incoming mapping and current provider revision.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InboundMappingDocument'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '413':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+    put:
+      tags: [Field Mapping]
+      operationId: putApiAdminInboundOPMapping
+      summary: Save an incoming OP connection mapping.
+      description: >-
+        Incoming OIDC RP attribute transformation into Authrim profile/custom claims.
+        Requires admin:settings:write and admin:external_providers:write.
+        Requires federation.trust.update step-up and a principal-bound Idempotency-Key.
+        Saves a new tenant-owned set/version/catalog, publishes, compiles and activates it, then
+        conditionally replaces only this connection binding. Existing shared sets are never changed.
+        The revision covers provider settings and update time. A stale revision or concurrent
+        provider edit returns 409 without replacing the current binding. Ambiguous write outcomes
+        retain the graph and require a read before a new operation key. Replays never rerun a save.
+        The external_identity_providers capability gates this write; reads/preview stay available.
+        Unconfigured OP providers continue to use legacy attribute_mapping. Saving a graph replaces
+        that projection at runtime; it never changes provider subject, JWT validation or email trust.
+      x-authrim-capability: external_identity_providers
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, maxLength: 200 }
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string, minLength: 8, maxLength: 128 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InboundMappingDraft'
+      responses:
+        '200':
+          description: Incoming mapping and current provider revision.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InboundMappingDocument'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '413':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+        '425':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  /api/admin/identity-mapping/inbound/op/{id}/preview:
+    post:
+      tags: [Field Mapping]
+      operationId: postApiAdminInboundOPMappingPreview
+      summary: Preview an incoming OP connection mapping.
+      description: >-
+        Incoming OIDC RP attribute transformation into Authrim profile/custom claims.
+        Requires admin:settings:read and admin:external_providers:read.
+        Takes synthetic sample data only and uses the same tenant evaluator and projection as
+        the receiver. Does not issue sessions, provision accounts, persist samples or execute JIT/link
+        policy. No step-up or idempotency key. Samples use direct OIDC claim names for OP, and
+        saml.subject/saml.attribute objects keyed by exact field names for IdP.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, maxLength: 200 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InboundMappingPreviewRequest'
+      responses:
+        '200':
+          description: Synthetic receiver projection.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InboundMappingProjection'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '413':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  /api/admin/identity-mapping/inbound/idp/{id}:
+    get:
+      tags: [Field Mapping]
+      operationId: getApiAdminInboundIDPMapping
+      summary: Read an incoming IDP connection mapping.
+      description: >-
+        Incoming SAML SP attribute transformation into Authrim profile/custom claims.
+        Requires admin:settings:read and admin:saml_providers:read.
+        Returns the bound active graph, exact source/destination schemas and provider revision.
+        Missing and foreign-tenant providers both return 404. Invalid configured mappings fail with
+        409, never fall back to legacy/raw attributes. Unsupported legacy graphs remain inspectable
+        with editable=false; no automatic conversion is performed.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, maxLength: 200 }
+      responses:
+        '200':
+          description: Incoming mapping and current provider revision.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InboundMappingDocument'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '413':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+    put:
+      tags: [Field Mapping]
+      operationId: putApiAdminInboundIDPMapping
+      summary: Save an incoming IDP connection mapping.
+      description: >-
+        Incoming SAML SP attribute transformation into Authrim profile/custom claims.
+        Requires admin:settings:write and admin:saml_providers:update.
+        Requires federation.trust.update step-up and a principal-bound Idempotency-Key.
+        Saves a new tenant-owned set/version/catalog, publishes, compiles and activates it, then
+        conditionally replaces only this connection binding. Existing shared sets are never changed.
+        The revision covers provider settings and update time. A stale revision or concurrent
+        provider edit returns 409 without replacing the current binding. Ambiguous write outcomes
+        retain the graph and require a read before a new operation key. Replays never rerun a save.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, maxLength: 200 }
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string, minLength: 8, maxLength: 128 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InboundMappingDraft'
+      responses:
+        '200':
+          description: Incoming mapping and current provider revision.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InboundMappingDocument'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '413':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+        '425':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  /api/admin/identity-mapping/inbound/idp/{id}/preview:
+    post:
+      tags: [Field Mapping]
+      operationId: postApiAdminInboundIDPMappingPreview
+      summary: Preview an incoming IDP connection mapping.
+      description: >-
+        Incoming SAML SP attribute transformation into Authrim profile/custom claims.
+        Requires admin:settings:read and admin:saml_providers:read.
+        Takes synthetic sample data only and uses the same tenant evaluator and projection as
+        the receiver. Does not issue sessions, provision accounts, persist samples or execute JIT/link
+        policy. No step-up or idempotency key. Samples use direct OIDC claim names for OP, and
+        saml.subject/saml.attribute objects keyed by exact field names for IdP.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, maxLength: 200 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InboundMappingPreviewRequest'
+      responses:
+        '200':
+          description: Synthetic receiver projection.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InboundMappingProjection'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '413':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
         '503':
           $ref: '#/components/responses/Error'
       security:
@@ -67861,6 +68176,122 @@ components:
           items:
             type: object
             additionalProperties: true
+    InboundMappingField:
+      type: object
+      required: [id, namespace, path, valueType, cardinality, classification]
+      properties:
+        id: { type: string }
+        namespace: { type: string }
+        path: { type: string }
+        valueType: { type: string }
+        cardinality: { type: string, enum: [single, multi] }
+        classification:
+          {
+            type: string,
+            enum: [public, internal, pii, secret, regulated, credential, token, key_material],
+          }
+        targetType:
+          { type: string, enum: [canonical, custom, derived, destination-only, review-only] }
+      description: Server-authored field schema. Legacy fields can be inspected without converting unsupported graphs.
+    InboundMappingSource:
+      type: object
+      additionalProperties: false
+      required: [namespace, path, cardinality]
+      properties:
+        namespace: { type: string, enum: [oidc.userinfo, saml.subject, saml.attribute] }
+        path: { type: string, minLength: 1, maxLength: 512 }
+        cardinality: { type: string, enum: [single, multi] }
+      description: >-
+        Names must match the connection protocol. saml.subject supports only nameId/nameIdFormat,
+        single-valued. Sources are strings, except the OIDC email_verified boolean. Classification
+        is server-owned PII. Prototype-path segments are refused. OIDC claim names and SAML attribute
+        names are literal, never implicit nested reads.
+    InboundMappingDraft:
+      type: object
+      additionalProperties: false
+      required: [revision, sources, rules]
+      properties:
+        revision: { type: string }
+        sources:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items: { $ref: '#/components/schemas/InboundMappingSource' }
+        rules:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items: { $ref: '#/components/schemas/MappingGraphRule' }
+      description: >-
+        Bounded to 128 KiB including JSON framing (the normal Admin body limit also applies).
+        Only explicit allow attribute graphs with direct/transform ruleKind are supported.
+        No source/destination profiles, release/consent/conflict policies, persistent_identifier,
+        scoped rules, alternate direction/protocol, caller-supplied binding IDs or schema classification.
+        Each rule has one unique writable Authrim target. Every edge/step/reference, type/cardinality
+        and source classification is checked, including disconnected graph content. Targets are
+        single strings in authrim.profile or active string/single tenant custom schemas in
+        authrim.custom_claims. sub, email_verified, account/provenance/tenant/role/permission fields
+        are not writable. Preview samples must be synthetic.
+    InboundMappingPreviewRequest:
+      type: object
+      additionalProperties: false
+      required: [revision, sources, rules, sample]
+      properties:
+        revision: { type: string }
+        sources:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items: { $ref: '#/components/schemas/InboundMappingSource' }
+        rules:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items: { $ref: '#/components/schemas/MappingGraphRule' }
+        sample:
+          type: object
+          additionalProperties: true
+          description: Synthetic values only; evaluated transiently without account/session writes.
+    InboundMappingProjection:
+      type: object
+      required: [profile, customClaims]
+      properties:
+        profile: { type: object, additionalProperties: { type: string } }
+        customClaims: { type: object, additionalProperties: { type: string } }
+    InboundMappingDocument:
+      type: object
+      required:
+        [
+          revision,
+          protocol,
+          role,
+          configured,
+          editable,
+          sources,
+          targets,
+          content,
+          providerUpdatedAt,
+          enabled,
+          legacyMappingPresent,
+        ]
+      properties:
+        revision: { type: string }
+        protocol: { type: string, enum: [oidc, saml] }
+        role: { type: string, enum: [rp, sp] }
+        configured: { type: boolean }
+        editable: { type: boolean }
+        legacyMappingPresent: { type: boolean }
+        sources:
+          type: array
+          items: { $ref: '#/components/schemas/InboundMappingField' }
+          description: Server-authored FieldCatalogEntry schema for each incoming field.
+        targets:
+          type: array
+          items: { $ref: '#/components/schemas/InboundMappingField' }
+          description: Writable Authrim profile and active tenant custom string fields with classifications.
+        content: { $ref: '#/components/schemas/MappingSetContent' }
+        providerUpdatedAt: { type: string, format: date-time }
+        enabled: { type: boolean }
     MappingSetContent:
       type: object
       additionalProperties: false

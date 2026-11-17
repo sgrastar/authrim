@@ -27,6 +27,19 @@ export const deConnectionSettings: Record<keyof typeof jaConnectionSettings, str
 	'cs.live.digestAlgorithms': 'Accepted digest algorithm URIs',
 	'cs.live.assertionSigningAlg': 'Client assertion signing algorithm',
 	'cs.live.encryptionPolicy': 'XML encryption algorithm policy',
+	'cm.in.legacy':
+		'Die bisherige Attributzuordnung gilt bis zum Speichern dieses Graphen. Danach gilt nur der Graph.',
+	'cm.in.schema': 'Quellfelder',
+	'cm.in.schemaHelp':
+		'Attributnamen und Kardinalität festlegen. Quellen werden als PII eingestuft.',
+	'cm.in.source': 'Attributname',
+	'cm.in.multi': 'Empfängt mehrere Werte',
+	'cm.in.add': 'Feld hinzufügen',
+	'cm.in.preview': 'Beispiel prüfen',
+	'cm.in.sample': 'Synthetisches Beispiel (JSON)',
+	'cm.in.evaluate': 'Zuordnung auswerten',
+	'cm.in.single': 'Einzelwert',
+	'cm.in.multiple': 'Mehrere Werte',
 	'cs.title': 'Verbindungsdetails',
 	'cs.lead':
 		'Alle beginnen mit einem funktionierenden Wert. Öffnen Sie nur, was Sie ändern möchten.',
