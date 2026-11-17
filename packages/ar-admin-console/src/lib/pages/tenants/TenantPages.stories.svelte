@@ -54,7 +54,7 @@
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		await canvas.findByText('Acme Corporation');
-		await expect(canvas.getByRole('button', { name: t('tn.create') })).toBeVisible();
+		await waitFor(() => expect(canvas.getByRole('button', { name: t('tn.create') })).toBeVisible());
 	}}
 >
 	{#snippet template()}
@@ -168,7 +168,10 @@
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		await canvas.findByRole('heading', { name: 'Acme Corporation' });
-		await expect(canvas.getByRole('button', { name: t('tn.copy.action') })).toBeVisible();
+		// The page header fades in (Page's entry reveal): read visibility once it has.
+		await waitFor(() =>
+			expect(canvas.getByRole('button', { name: t('tn.copy.action') })).toBeVisible()
+		);
 		await expect(canvas.getByRole('button', { name: t('tn.delete.action') })).toBeInTheDocument();
 	}}
 >
