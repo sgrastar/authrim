@@ -317,3 +317,105 @@ pnpm --filter @authrim/ar-demo run lint
 
 The tests run the registry against real SQLite (`node:sqlite`) behind a small D1-like adapter and
 replace Turnstile and the Admin API with in-process fakes.
+
+## Default end-user sweep
+
+The optional sweep deletes old **end users of `default` only** through the existing Admin API.
+It has no HTTP trigger and does not access any platform database directly. It is disabled by
+default; enabling it starts in **dry-run mode**, which reads and counts candidates without deleting.
+Platform administrators live separately in the Admin database and are not selected by this API.
+
+Use a **second machine principal**, for example `demo-default-janitor`, scoped to **only `default`**
+with exactly `admin:users:read` and `admin:users:delete`. Do not grant these permissions to the
+all-tenants portal principal, remove `default` from its excluded tenants, or reuse its credential.
+The sweep requests its own exact scope set and uses a separate token-cache entry. Separate principals
+limit the scope of an individually stolen key; a compromise of the Worker can expose both keys.
+The sweep key can read visitor PII and delete visitor accounts in `default`.
+
+### Sweep configuration
+
+| Variable                    | Default                      | Accepted values / purpose                                                                                                                      |
+| --------------------------- | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SWEEP_ENABLED`             | `false`                      | Exactly `true` or `false`.                                                                                                                     |
+| `SWEEP_DRY_RUN`             | `true`                       | Exactly `true` or `false`; only explicit `false` permits DELETE.                                                                               |
+| `DEFAULT_TENANT_ID`         | `default`                    | Only the literal `default` is accepted; another tenant disables the run.                                                                       |
+| `SWEEP_MIN_AGE_MINUTES`     | `30`                         | Integer 1–10080. Accounts at least this old are candidates.                                                                                    |
+| `SWEEP_KEEP_USER_IDS`       | Unset                        | Comma-separated end-user IDs to preserve, at most 1000. Explicitly set it before disabling dry run; an explicitly empty string preserves none. |
+| `SWEEP_MAX_DELETES_PER_RUN` | `5`                          | Integer 1–200; caps attempts, including failures and legal holds.                                                                              |
+| `SWEEP_MAX_PAGES`           | `10`                         | Integer 1–10; at most 100 users per page.                                                                                                      |
+| `SWEEP_MACHINE_CLIENT_ID`   | Required when enabled        | Client ID of the separate `default`-only principal. Must differ from `MACHINE_CLIENT_ID`.                                                      |
+| `SWEEP_MACHINE_KEY_ID`      | Required when enabled        | Key ID of its ES256 credential.                                                                                                                |
+| `SWEEP_MACHINE_PRIVATE_JWK` | Required secret when enabled | Private P-256 JWK; supply through the secret store, never a checked-in var.                                                                    |
+
+Malformed settings fail closed and logs name settings without their values. Protected IDs must match
+`[A-Za-z0-9_-]{1,256}`; surrounding spaces in the CSV are trimmed, duplicate entries are harmless,
+and empty entries inside a nonempty CSV are invalid. Invalid or foreign-tenant API rows abort the
+entire scan. Accounts whose creation time is unknown (`null`) are preserved.
+
+The scheduled handler dispatches on the **exact cron expression**. Keep the existing tenant cleanup
+and add the second expression in the operator's local `wrangler.jsonc`:
+
+```jsonc
+"triggers": { "crons": ["*/10 * * * *", "17 */6 * * *"] }
+```
+
+The sweep runs at 00:17, 06:17, 12:17 and 18:17 UTC (09:17, 15:17, 21:17 and 03:17 JST).
+Other expressions run neither task; changing the interval requires updating both the dispatch
+constant and the local trigger configuration. No redundant interval variable controls the cron.
+This change does not modify the deployment-specific `wrangler.jsonc` or add a database migration.
+
+### Bounded execution and recovery
+
+The sweep reads a complete bounded list before sending any DELETE, supporting both cursor and legacy
+page-number pagination. It immediately reduces each API row to ID and creation time; e-mails, names
+and other PII are not persisted or logged. It deduplicates IDs, preserves the keep list and recent
+accounts, sorts the remainder oldest first, and attempts at most the configured deletion limit with
+one request in flight. Each DELETE completes before the next starts.
+
+If the list needs more than the page limit, repeats a cursor, changes pagination mode, contains
+conflicting versions of one ID, or a page fails, **nothing is deleted**. `sweep_too_many` identifies
+an incomplete scan at the page limit or a repeated cursor. This deliberately avoids partially
+sweeping an unverified list; a backlog above 1000 accounts needs operator intervention rather than
+silently broadening the bounds. Reads are not a transactional snapshot: concurrent registrations
+may appear on a later run. The age floor prevents deleting those newly created accounts.
+
+A DELETE returning 200 is counted as deleted, 404 as already gone, and 409 `legal_hold_active` as
+protected. Other failures are counted and retried by a later scheduled run. A missing scope or any
+401/403 stops the run and logs `sweep_config_error`; no further DELETE is started.
+No inline retry expands the attempt budget. `sweep_run` logs only dry-run state, counts, and stop/limit
+flags, never user IDs, cursors, PII, keys or tokens. `limited` also means eligible accounts exceed the
+per-run attempt cap; `eligible` counts all eligible accounts in a complete scan, while `attempted`
+counts DELETE requests (zero during dry run).
+
+At the defaults a run makes at most 16 Authrim calls (one token, ten list pages and five DELETEs).
+Confirm the Worker's subrequest budget before enabling it; on a plan limited to 50 subrequests,
+set `SWEEP_MAX_DELETES_PER_RUN` to at most 20. Failed deletes and legal holds consume the attempt
+budget, so persistent oldest failures can delay newer candidates; investigate the summary rather
+than assuming every run clears the backlog.
+
+### Operator rollout (not performed by this implementation)
+
+1. Confirm which `default` end-user IDs must survive and set `SWEEP_KEEP_USER_IDS` explicitly.
+   Decide the retention age and deletion budget before enabling deletion.
+2. A human with L2 approval creates the separate principal/ES256 credential and grants the two exact
+   permissions for `default` only (`machine.permission.grant` and `machine.protected_grant`). Keep
+   the portal principal excluded from `default`. Do not bypass step-up with database writes.
+3. Supply the three sweep credential variables using the normal operator secret/var procedure.
+   Keep the private JWK in the secret store. Add the second cron locally, set `SWEEP_ENABLED=true`
+   and `SWEEP_DRY_RUN=true`, and deploy the portal manually. No core deployment or migration is needed.
+4. Inspect a scheduled dry-run summary, verify the keep list and expected candidate counts, then
+   explicitly set `SWEEP_DRY_RUN=false` and deploy. The run logs intentionally do not reveal candidate
+   IDs. Disable `SWEEP_ENABLED` for an immediate configuration rollback; deleting accounts cannot be
+   undone by rolling back the Worker.
+5. Verify with disposable visitor accounts that kept/recent accounts survive, old accounts disappear,
+   their sessions end through the existing deletion saga, and the same e-mail can register again.
+   These live acceptance checks require the human rollout above and are not unit-test evidence.
+
+Optional existing lifecycle settings on `default` are
+`account-lifecycle.registration.pending_ttl_hours=1`,
+`account-lifecycle.deletion.tombstone_retention_days=1` and
+`account-lifecycle.deletion.block_reregistration=false` (subject to the normal approval policy).
+Pending registrations are not swept by the end-user list; their TTL is handled by core. Tombstone
+retention affects subsequent deletions. Audit records, sign-in attempt hashes and TTL caches have
+separate retention and are **not cleared by this sweep**; do not describe this task as erasing every
+trace of a visitor. No additional session-revocation permission is needed for user deletion.

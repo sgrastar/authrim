@@ -31,7 +31,7 @@ function isLoopback(hostname: string): boolean {
 }
 
 /** An origin and nothing else: https (http only for loopback in development), no path, no credentials. */
-function parseOrigin(value: string | undefined, development: boolean): string | null {
+export function parseOrigin(value: string | undefined, development: boolean): string | null {
   if (!value) return null;
   try {
     const url = new URL(value);
@@ -61,7 +61,7 @@ function parseBounded(
   return Math.min(limit.max, Math.max(limit.min, Number(text)));
 }
 
-function parsePrivateJwk(value: string | undefined): JsonWebKey | null {
+export function parsePrivateJwk(value: string | undefined): JsonWebKey | null {
   if (!value) return null;
   try {
     const jwk = JSON.parse(value) as JsonWebKey;

@@ -14,6 +14,13 @@ export interface LogFields {
   foreign?: number;
   deleting?: number;
   errors?: number;
+  dryRun?: boolean;
+  scanned?: number;
+  eligible?: number;
+  attempted?: number;
+  skipped?: number;
+  stopped?: boolean;
+  limited?: boolean;
 }
 
 export function logEvent(event: string, fields: LogFields = {}): void {
