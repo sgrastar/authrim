@@ -25,11 +25,25 @@
 		step: string;
 		form: RpForm;
 		live?: boolean;
+		/** Saved settings never change application type or credential family. */
+		editing?: boolean;
+		storedAuthMethod?: string | null;
+		storedPkce?: boolean | null;
 	}
 
-	let { step, form = $bindable(), live = false }: Props = $props();
+	let {
+		step,
+		form = $bindable(),
+		live = false,
+		editing = false,
+		storedAuthMethod = null,
+		storedPkce = null
+	}: Props = $props();
 
-	const secretless = $derived(form.appType !== 'web');
+	const secretless = $derived(editing ? storedAuthMethod === 'none' : form.appType !== 'web');
+	const secretAuth = $derived(
+		storedAuthMethod === 'client_secret_basic' || storedAuthMethod === 'client_secret_post'
+	);
 
 	/** What the chosen way of proving itself means, under the dropdown. */
 	const AUTH_DESCRIPTION: Record<string, MessageKey> = {
@@ -57,24 +71,25 @@
 	}
 </script>
 
-{#if step === 'rp-app'}
+{#if step === 'rp-app' || step === 'rp-name'}
 	<TextRow
 		required={live}
 		label={t('sf.row.name')}
 		hint={t('sf.rp.nameHint')}
 		bind:value={form.name}
 	/>
-	<SelectRow
-		label={t('sf.row.appType')}
-		value={form.appType}
-		onchange={chooseAppType}
-		hint={appTypeDescription}
-		options={[
-			{ value: 'web', label: t(APP_TYPES.web) },
-			{ value: 'spa', label: t(APP_TYPES.spa) },
-			{ value: 'native', label: t(APP_TYPES.native) }
-		]}
-	/>
+	{#if step === 'rp-app'}<SelectRow
+			label={t('sf.row.appType')}
+			value={form.appType}
+			onchange={chooseAppType}
+			hint={appTypeDescription}
+			options={[
+				{ value: 'web', label: t(APP_TYPES.web) },
+				{ value: 'spa', label: t(APP_TYPES.spa) },
+				{ value: 'native', label: t(APP_TYPES.native) }
+			]}
+		/>
+	{/if}
 {:else if step === 'rp-share'}
 	<OurDetails
 		items={[
@@ -102,27 +117,37 @@
 		bind:values={form.redirectUris}
 	/>
 {:else if step === 'rp-signin'}
-	<SelectRow
-		label={t('sf.rp.authLabel')}
-		value={form.authMethod}
-		onchange={(value) => (form.authMethod = value)}
-		hint={authDescription}
-		options={[
-			{ value: 'client_secret_basic', label: t('sf.rp.auth.basic'), disabled: secretless },
-			{ value: 'client_secret_post', label: t('sf.rp.auth.post'), disabled: secretless },
-			{ value: 'private_key_jwt', label: t('sf.rp.auth.jwt'), disabled: secretless },
-			{ value: 'none', label: t('sf.rp.auth.none'), disabled: !secretless }
-		].filter((option) => !live || option.value !== 'private_key_jwt')}
-	/>
+	{#if editing && !secretAuth}
+		<Callout tone="info"
+			>{t('sf.live.authReadonly', { method: storedAuthMethod ?? t('sf.live.unset') })}</Callout
+		>
+	{:else}
+		<SelectRow
+			label={t('sf.rp.authLabel')}
+			value={form.authMethod}
+			onchange={(value) => (form.authMethod = value)}
+			hint={authDescription}
+			options={[
+				{ value: 'client_secret_basic', label: t('sf.rp.auth.basic'), disabled: secretless },
+				{ value: 'client_secret_post', label: t('sf.rp.auth.post'), disabled: secretless },
+				{ value: 'private_key_jwt', label: t('sf.rp.auth.jwt'), disabled: secretless },
+				{ value: 'none', label: t('sf.rp.auth.none'), disabled: !secretless }
+			].filter((option) =>
+				editing
+					? ['client_secret_basic', 'client_secret_post'].includes(option.value)
+					: !live || option.value !== 'private_key_jwt'
+			)}
+		/>
+	{/if}
 	{#if secretless}
 		<Callout tone="info">{t('sf.rp.pkceOnly')}</Callout>
 	{/if}
-	<ToggleRow
-		label={t('sf.rp.requirePkce')}
-		description={secretless ? t('sf.rp.pkceAlways') : t('sf.rp.pkceRecommended')}
-		bind:checked={form.pkce}
-		disabled={secretless}
-	/>
+	{#if !editing || storedPkce !== null}<ToggleRow
+			label={t('sf.rp.requirePkce')}
+			description={secretless ? t('sf.rp.pkceAlways') : t('sf.rp.pkceRecommended')}
+			bind:checked={form.pkce}
+			disabled={secretless && (!editing || form.pkce)}
+		/>{:else}<Callout tone="info">{t('sf.live.pkceUnset')}</Callout>{/if}
 {:else if step === 'rp-info'}
 	<CheckboxRow
 		label={t('sf.rp.scopesTitle')}

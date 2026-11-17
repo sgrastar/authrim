@@ -24,6 +24,14 @@
 
 	const inFlow = (root: HTMLElement, name: RegExp | string) =>
 		within(root.querySelector<HTMLElement>('.detail__flow')!).getByRole('button', { name });
+	async function openMapping(root: HTMLElement, part: 'schemas' | 'sets' = 'sets') {
+		const label = t(part === 'schemas' ? 'sf.part.mapping-schemas' : 'sf.part.mapping-sets');
+		await userEvent.click(inFlow(root, new RegExp(`^${label}`)));
+		await waitFor(() =>
+			expect(within(root).getByRole('heading', { name: label, level: 2 })).toBeVisible()
+		);
+	}
+
 	/** The page header, where the connection's own status is (the flow shows its steps' too). */
 	const inHeader = (root: HTMLElement) => within(root.querySelector<HTMLElement>('.page-head')!);
 	/** The panel on the right, where the back-to-general-settings button is. */
@@ -121,7 +129,9 @@
 	args={{ prefill: 'op', filled: 'complete', review: true }}
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
-		await expect(canvas.getByRole('heading', { name: t('sf.maps.in.title') })).toBeInTheDocument();
+		await expect(canvas.queryByRole('heading', { name: t('sf.maps.in.title') })).toBeNull();
+		await openMapping(canvasElement);
+		await expect(canvas.getByRole('heading', { name: t('sf.maps.in.title') })).toBeVisible();
 		await expect(canvas.getByText(t('sf.maps.in.label'))).toBeInTheDocument();
 		await expect(canvas.queryByRole('heading', { name: t('sf.maps.out.title') })).toBeNull();
 	}}
@@ -135,7 +145,9 @@
 	args={{ prefill: 'rp', filled: 'complete', review: true }}
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
-		await expect(canvas.getByRole('heading', { name: t('sf.maps.out.title') })).toBeInTheDocument();
+		await expect(canvas.queryByRole('heading', { name: t('sf.maps.out.title') })).toBeNull();
+		await openMapping(canvasElement);
+		await expect(canvas.getByRole('heading', { name: t('sf.maps.out.title') })).toBeVisible();
 		await expect(canvas.queryByRole('heading', { name: t('sf.maps.in.title') })).toBeNull();
 	}}
 >
@@ -266,8 +278,8 @@
 		await expect(
 			canvas.queryByRole('button', { name: t('flow.remove', { name: 'Mapping' }) })
 		).toBeNull();
-		await userEvent.click(inFlow(canvasElement, /^Input and output schemas/));
-		const input = canvas.getByRole('combobox', { name: 'Input schema' });
+		await openMapping(canvasElement, 'schemas');
+		const input = await canvas.findByRole('combobox', { name: 'Input schema' });
 		const output = canvas.getByRole('combobox', { name: 'Output schema' });
 		// Neither is chosen yet.
 		await expect(input).toHaveValue('');
@@ -277,9 +289,9 @@
 		await waitFor(() =>
 			expect(inFlow(canvasElement, /^Input and output schemas.*Configured/)).toBeInTheDocument()
 		);
-		await userEvent.click(inFlow(canvasElement, /^Mapping sets/));
+		await openMapping(canvasElement);
 		await userEvent.selectOptions(
-			canvas.getByRole('combobox', { name: 'Mapping set' }),
+			await canvas.findByRole('combobox', { name: 'Mapping set' }),
 			'tenant-default'
 		);
 		await waitFor(() =>
@@ -378,8 +390,8 @@
 		await expect(
 			await inHeader(canvasElement).findByText('Active', { selector: '.badge' })
 		).toBeInTheDocument();
-		await userEvent.click(inFlow(canvasElement, /^Mapping sets/));
-		await userEvent.selectOptions(canvas.getByRole('combobox', { name: 'Mapping set' }), '');
+		await openMapping(canvasElement);
+		await userEvent.selectOptions(await canvas.findByRole('combobox', { name: 'Mapping set' }), '');
 		// The set is gone, so the connection is a draft again and has to be activated once more.
 		await expect(
 			await inHeader(canvasElement).findByText('Draft', { selector: '.badge' })
@@ -406,8 +418,8 @@
 		// The steps of the flow and their settings, with how far each has got.
 		await expect(canvas.getByText('サインイン応答')).toBeInTheDocument();
 		await expect(inFlow(canvasElement, /^マッピングセット.*必須.*未設定/)).toBeInTheDocument();
-		await userEvent.click(inFlow(canvasElement, /^入力と出力のスキーマ/));
-		await expect(canvas.getByRole('combobox', { name: '入力スキーマ' })).toBeInTheDocument();
+		await openMapping(canvasElement, 'schemas');
+		await expect(await canvas.findByRole('combobox', { name: '入力スキーマ' })).toBeVisible();
 	}}
 >
 	{#snippet template(args)}{@render frame(args)}{/snippet}

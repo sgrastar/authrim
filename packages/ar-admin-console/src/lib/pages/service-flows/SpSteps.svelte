@@ -18,6 +18,7 @@
 		step: string;
 		form: SpForm;
 		live?: boolean;
+		editing?: boolean;
 		serviceName?: string;
 		/** What Authrim gives the service to register on its side (default: the sample values). */
 		ours?: { label: string; value: string }[];
@@ -31,6 +32,7 @@
 		ours,
 		basis,
 		live = false,
+		editing = false,
 		serviceName = $bindable('')
 	}: Props = $props();
 
@@ -64,7 +66,7 @@
 		error={form.acsUrl ? httpsUrlProblem(form.acsUrl) : undefined}
 		bind:value={form.acsUrl}
 	/>
-	<Callout tone="info">{t('sf.create.spDraft')}</Callout>
+	{#if !editing}<Callout tone="info">{t('sf.create.spDraft')}</Callout>{/if}
 {:else if step === 'sp-import'}
 	<MetadataImport bind:form partner="service" />
 {:else if step === 'sp-share'}

@@ -1,12 +1,33 @@
 import type { jaServiceFlows } from './ja';
 
 export const enServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
+	'sf.live.status': 'Connection status',
+	'sf.live.enable': 'Enable',
+	'sf.live.disable': 'Disable',
+	'sf.live.saveFirst': 'Save settings and mapping changes before enabling.',
+	'sf.live.mappingRequired': 'A saved, valid mapping is required to enable this connection.',
+	'sf.live.trustRequired':
+		'Check the certificate and metadata trust settings. The current configuration cannot be enabled.',
+	'sf.live.activationRejected':
+		'The server kept this connection disabled. Check its certificate and trust settings.',
+	'sf.live.activationFailed':
+		'Could not change the status. Check the saved mapping and trust settings, then retry.',
+	'sf.live.conflict':
+		'This connection changed on the server. Your input is kept. Reload to review the changes.',
+	'sf.live.reload': 'Reload saved connection',
+	'sf.live.reloadTitle': 'Reload saved settings?',
+	'sf.live.reloadBody':
+		'Discard unsaved changes in this settings form and load the server settings.',
+	'sf.live.authReadonly':
+		'Stored authentication method: {method}. It cannot be changed on this page.',
+	'sf.live.unset': 'Not set',
+	'sf.live.pkceUnset': 'PKCE is not set. This page preserves that value.',
 	'sf.live.accountOptions': 'Account options',
 	'sf.live.requireVerified': 'Require a verified email address',
 	'sf.live.issuerMismatch': 'The discovered issuer does not match the issuer you entered.',
 	'sf.live.discoveryFailed': 'Could not read the provider configuration. Try again.',
 	'sf.live.inboundMapping':
-		'This page edits basic inbound settings only. New SAML identity providers stay disabled; inbound mapping and activation are not available here.',
+		'This page edits basic inbound settings. Enabling requires an existing valid inbound mapping; inbound mapping editing is not available here.',
 	'sf.live.enabled': 'Enabled',
 	'sf.live.disabled': 'Disabled',
 	'sf.live.saved': 'Changes saved.',

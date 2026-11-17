@@ -1,4 +1,7 @@
 <script lang="ts">
+	import { ApiError } from '#lib/api/api-error.js';
+	import SamlActivation from './SamlActivation.svelte';
+	import ConfirmDialog from '#lib/ui/patterns/ConfirmDialog.svelte';
 	import { StepUpCancelledError } from '#lib/api/admin-step-up.js';
 	import type { ExternalProvider, ExternalProvidersClient } from '#lib/api/external-providers.js';
 	import type {
@@ -50,7 +53,10 @@
 	let saved = $state(false);
 	let revision = $state(0);
 	let generation = 0;
-	provideBusy(() => saving);
+	let activating = $state(false);
+	let askingReload = $state(false);
+	let conflict = $state(false);
+	provideBusy(() => saving || activating);
 	const snapshot = () => JSON.stringify({ answers, enabled });
 	const persistedEnabled = $derived(kind === 'op' ? oidc?.enabled : saml?.enabled);
 	const dirty = $derived(ready && snapshot() !== original);
@@ -135,9 +141,10 @@
 	});
 
 	async function save() {
-		if (!canEdit || !ready || !valid || saving) return;
+		if (!canEdit || !ready || !valid || saving || activating) return;
 		saving = true;
 		saveFailed = '';
+		conflict = false;
 		saved = false;
 		try {
 			if (kind === 'op' && oidc) {
@@ -160,8 +167,13 @@
 			saved = true;
 		} catch (error) {
 			// Never echo an API error that could contain a submitted credential.
+			conflict = error instanceof ApiError && error.status === 409;
 			saveFailed = t(
-				error instanceof StepUpCancelledError ? 'settings.stepUpCancelled' : 'common.saveFailed'
+				error instanceof StepUpCancelledError
+					? 'settings.stepUpCancelled'
+					: conflict
+						? 'sf.live.conflict'
+						: 'common.saveFailed'
 			);
 		} finally {
 			saving = false;
@@ -169,7 +181,7 @@
 	}
 </script>
 
-<LeaveGuard {dirty} />
+<LeaveGuard dirty={dirty || saving || activating} />
 <Page>
 	<PageHeader
 		title={kind === 'op' ? oidc?.name || kindProtocol(kind) : saml?.name || kindProtocol(kind)}
@@ -186,10 +198,16 @@
 		>
 	{:else if !ready}<LoadingState label={t('common.loading')} />
 	{:else}
-		{#if saveFailed}<Callout tone="danger" live>{saveFailed}</Callout>{/if}
+		{#if saveFailed}<Callout tone="danger" live
+				>{saveFailed}{#if conflict}<Button
+						onclick={() => {
+							askingReload = true;
+						}}>{t('sf.live.reload')}</Button
+					>{/if}</Callout
+			>{/if}
 		{#if saved}<Callout tone="info" live>{t('sf.live.saved')}</Callout>{/if}
 		<Card title={t('sf.live.settings')}>
-			<fieldset class="provider-fields" disabled={!canEdit || saving}>
+			<fieldset class="provider-fields" disabled={!canEdit || saving || activating}>
 				<legend class="sr-only">{t('sf.live.settings')}</legend>
 				{#key revision}
 					<InSteps
@@ -207,8 +225,38 @@
 					>{t('common.save')}</Button
 				>{/if}
 		</Card>
+		{#if kind === 'idp' && saml}
+			<SamlActivation
+				showStatus={false}
+				provider={saml}
+				{canEdit}
+				{dirty}
+				busy={saving}
+				bind:pending={activating}
+				update={(input) => samlProviders.setEnabled(id, input)}
+				onupdated={(status) => {
+					if (saml) saml = { ...saml, ...status };
+					// The action preserves the current settings draft, including invalid inputs.
+				}}
+				onreload={() => {
+					if (dirty) askingReload = true;
+					else void load();
+				}}
+			/>
+		{/if}
 	{/if}
 </Page>
+<ConfirmDialog
+	open={askingReload}
+	title={t('sf.live.reloadTitle')}
+	body={t('sf.live.reloadBody')}
+	confirmLabel={t('sf.live.reload')}
+	onconfirm={() => {
+		askingReload = false;
+		void load();
+	}}
+	oncancel={() => (askingReload = false)}
+/>
 
 <style>
 	.provider-fields {

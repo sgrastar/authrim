@@ -4,12 +4,31 @@
  * their usual abbreviations (RP, SP, OP, IdP). Spread into `../ja.ts`.
  */
 export const jaServiceFlows = {
+	'sf.live.status': '接続の状態',
+	'sf.live.enable': '有効にする',
+	'sf.live.disable': '無効にする',
+	'sf.live.saveFirst': '設定とマッピングの変更を保存してから有効にしてください。',
+	'sf.live.mappingRequired': '有効にするには保存済みの有効なマッピングが必要です。',
+	'sf.live.trustRequired':
+		'証明書またはメタデータの信頼設定を確認してください。現在の設定では有効にできません。',
+	'sf.live.activationRejected':
+		'サーバーは接続を無効のまま保存しました。証明書と信頼設定を確認してください。',
+	'sf.live.activationFailed':
+		'状態を変更できませんでした。保存済みのマッピングと信頼設定を確認して再試行してください。',
+	'sf.live.conflict':
+		'サーバーで接続が変更されました。入力は保持しています。再読み込みして変更を確認してください。',
+	'sf.live.reload': '保存済みの接続を再読み込み',
+	'sf.live.reloadTitle': '保存済みの設定を読み込みますか？',
+	'sf.live.reloadBody': 'この設定フォームの未保存の変更を破棄し、サーバーの設定を読み込みます。',
+	'sf.live.authReadonly': '保存済みの認証方式: {method}。この画面では認証方式を変更できません。',
+	'sf.live.unset': '未設定',
+	'sf.live.pkceUnset': 'PKCEは未設定です。この画面では変更せず保持します。',
 	'sf.live.accountOptions': 'アカウント設定',
 	'sf.live.requireVerified': '検証済みのメールアドレスを必須にする',
 	'sf.live.issuerMismatch': '取得したIssuerが入力したIssuerと一致しません。',
 	'sf.live.discoveryFailed': 'プロバイダー設定を取得できませんでした。もう一度お試しください。',
 	'sf.live.inboundMapping':
-		'この画面では上流の基本設定だけを編集できます。新しいSAML IdPは無効のまま保存します。上流のマッピングと有効化はこの画面では設定できません。',
+		'この画面では基本設定を編集できます。有効化には既存の有効な受信マッピングが必要です。受信マッピングの編集には対応していません。',
 	'sf.live.enabled': '有効',
 	'sf.live.disabled': '無効',
 	'sf.live.saved': '変更を保存しました。',
