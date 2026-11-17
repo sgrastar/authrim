@@ -7,6 +7,7 @@ import {
 	permissionLevel,
 	settingsLevel,
 	teamAccess,
+	tenantsAccess,
 	widest
 } from './access';
 import { persona } from './personas';
@@ -204,5 +205,23 @@ describe('the team pages, as the admin APIs decide them', () => {
 
 	it('shows nothing to an admin without the administrators read permission', () => {
 		expect(teamAccess(support)).toEqual(none);
+	});
+});
+
+describe('the tenant pages, as the tenant routes decide them', () => {
+	it('opens them to a platform super admin only', () => {
+		expect(tenantsAccess(platform)).toEqual({ read: true, manage: true, copy: true });
+		expect(tenantsAccess(tenant)).toEqual({ read: false, manage: false, copy: false });
+		expect(tenantsAccess(viewer)).toEqual({ read: false, manage: false, copy: false });
+	});
+
+	it('does not open them for a permission alone (the router asks for the role)', () => {
+		const reader = { platform: true, roles: [], permissions: ['admin:settings:read', '*'] };
+		expect(tenantsAccess(reader)).toEqual({ read: false, manage: false, copy: false });
+	});
+
+	it('needs a global assignment, whatever the tenant role holds', () => {
+		const tenantSuper = { platform: false, roles: ['ar_super_admin'], permissions: ['*'] };
+		expect(tenantsAccess(tenantSuper).read).toBe(false);
 	});
 });

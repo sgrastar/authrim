@@ -770,7 +770,7 @@ export const API_GROUPS: readonly ApiGroup[] = [
 		id: 'tenant-provisioning',
 		name: 'Provisioning, cloning and placement migration',
 		kind: 'actions',
-		page: 'plat-tenants/provisioning',
+		page: 'plat-tenants/list',
 		paths: [
 			`${A}/tenants/{id}/provisioning`,
 			`${A}/tenants/{id}/clone`,

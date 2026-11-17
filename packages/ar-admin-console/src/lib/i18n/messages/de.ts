@@ -19,6 +19,7 @@ import { deAdminAudit } from './admin-audit/de';
 import { deUserAudit } from './user-audit/de';
 import { deTeam } from './team/de';
 import { deMachineAccess } from './machine-access/de';
+import { deTenants } from './tenants/de';
 import { deAuthMethods } from './auth-methods/de';
 import { deSessionProfiles } from './session-profiles/de';
 import { deProfileLayer } from './profile-layer/de';
@@ -47,6 +48,7 @@ export const de = {
 	...deUserAudit,
 	...deTeam,
 	...deMachineAccess,
+	...deTenants,
 	...deAuthMethods,
 	...deSessionProfiles,
 	...deProfileLayer,
@@ -223,7 +225,6 @@ export const de = {
 	'nav.platArea.infra': 'Infrastruktur',
 	'nav.platArea.approvals': 'Genehmigungen',
 	'nav.pt.list': 'Alle Mandanten',
-	'nav.pt.provisioning': 'Anlegen / Klonen',
 	'nav.pt.domains': 'Eigene Domains',
 	'nav.pt.invitations': 'Mandanteneinladungen',
 	'nav.pa.users': 'Administratorbenutzer',
