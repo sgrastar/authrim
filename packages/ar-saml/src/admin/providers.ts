@@ -1,3 +1,8 @@
+import { samlAdvancedSettingsProblem } from './advanced-settings-validation';
+import {
+  assertInboundMappingGraph,
+  inboundProfileTargets,
+} from '@authrim/ar-lib-core/services/inbound-identity-mapping';
 import { emitLogIcebergRow } from '@authrim/ar-lib-core/services/log-iceberg-emitter';
 import { resolveSAMLMappingSetOwner } from '../mapping-set-owner';
 import { hasNonSAMLMappingOutput } from './mapping-output-validation';
@@ -615,6 +620,22 @@ async function validateSAMLIdPMappingConfig(
       fieldMappingVersionId: config.identityMapping?.fieldMappingVersionId,
       partnerEntityId: config.entityId,
     });
+    if (
+      config.identityMapping?.inboundContract === 'connection-v1' ||
+      binding?.activationScope?.inboundContract === 'connection-v1'
+    ) {
+      if (binding?.activationScope?.inboundContract !== 'connection-v1')
+        return { field: 'identityMapping.fieldMappingSetId' };
+      const core = await resolveAuthCorePersistenceAdapterFromEnv(env, 'saml-inbound-targets', {
+        tenantId,
+      });
+      assertInboundMappingGraph(
+        'saml',
+        binding.graphRules ?? [],
+        binding.catalog,
+        inboundProfileTargets(await loadCustomClaimSchemaCatalogEntries(core, tenantId))
+      );
+    }
     return binding ? null : { field: 'identityMapping.fieldMappingSetId' };
   } catch {
     return { field: 'identityMapping.fieldMappingSetId' };
@@ -1974,6 +1995,14 @@ export async function handleCreateProvider(c: AdminSAMLContext): Promise<Respons
         variables: { field: normalizedConfig.field },
       });
     }
+    const advancedProblem = await samlAdvancedSettingsProblem(
+      config,
+      body.providerType === 'saml_sp' && requestedEnabled ? normalizedConfig : undefined
+    );
+    if (advancedProblem)
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: { field: advancedProblem },
+      });
     const tenantId = resolveSAMLTenantIdFromContext(c);
     if (requestedEnabled && normalizedConfig.identityMapping?.fieldMappingSetId) {
       const mappingError =
@@ -2195,6 +2224,11 @@ export async function handleUpdateProvider(c: AdminSAMLContext): Promise<Respons
     if (body.expectedUpdatedAt !== new Date(existing.updated_at).toISOString()) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
     }
+    const advancedProblem = await samlAdvancedSettingsProblem(body.config);
+    if (advancedProblem)
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: { field: advancedProblem },
+      });
     const existingConfig = JSON.parse(existing.config_json) as SAMLIdPConfig | SAMLSPConfig;
     const requestedEnabled = body.enabled !== undefined ? body.enabled : existing.enabled === 1;
 
@@ -2205,9 +2239,16 @@ export async function handleUpdateProvider(c: AdminSAMLContext): Promise<Respons
         body.config.metadataUrl === undefined ||
         body.config.metadataUrl === existingConfig.metadataUrl
           ? {
-              ...existingConfig.metadataRefreshPolicy,
-              mode: body.config.metadataRefreshPolicy.mode,
-              intervalSeconds: body.config.metadataRefreshPolicy.intervalSeconds,
+              ...normalizeSAMLMetadataRefreshPolicy(
+                existingConfig.metadataRefreshPolicy,
+                existingConfig.metadataUrl
+              ),
+              ...(body.config.metadataRefreshPolicy.mode !== undefined
+                ? { mode: body.config.metadataRefreshPolicy.mode }
+                : {}),
+              ...(body.config.metadataRefreshPolicy.intervalSeconds !== undefined
+                ? { intervalSeconds: body.config.metadataRefreshPolicy.intervalSeconds }
+                : {}),
             }
           : {
               mode: body.config.metadataRefreshPolicy.mode,
@@ -2240,6 +2281,13 @@ export async function handleUpdateProvider(c: AdminSAMLContext): Promise<Respons
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
         variables: { field: newConfig.field },
       });
+    }
+    if (existing.provider_type === 'saml_sp' && requestedEnabled) {
+      const encryptionProblem = await samlAdvancedSettingsProblem(undefined, newConfig);
+      if (encryptionProblem)
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+          variables: { field: encryptionProblem },
+        });
     }
     if (
       await hasConflictingSAMLProviderEntityId(

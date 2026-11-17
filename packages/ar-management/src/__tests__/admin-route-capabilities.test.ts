@@ -231,6 +231,7 @@ describe('the route table', () => {
       'email_provider_config /api/admin/tenants/:tenantId/email-settings POST,PUT,PATCH',
       'external_identity_providers /api/admin/external-providers POST,PUT,PATCH',
       'external_identity_providers /api/admin/external-providers/* POST,PUT,PATCH',
+      'external_identity_providers /api/admin/identity-mapping/inbound/op/:id PUT',
       'external_plugins /api/admin/tenants/:tenantId/settings/plugin POST,PUT,PATCH,DELETE',
       'machine_credentials /api/admin/check-api-keys POST,PUT,PATCH',
       'machine_credentials /api/admin/check-api-keys/* POST,PUT,PATCH',

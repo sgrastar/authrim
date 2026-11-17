@@ -113,6 +113,20 @@
 				adminAccess.current,
 				page.params.kind === 'op' ? 'admin:external_providers:read' : 'admin:saml_providers:read'
 			)}
+			canReadMapping={hasPermission(adminAccess.current, 'admin:settings:read') &&
+				hasPermission(
+					adminAccess.current,
+					page.params.kind === 'op' ? 'admin:external_providers:read' : 'admin:saml_providers:read'
+				)}
+			canEditMapping={hasPermission(adminAccess.current, 'admin:settings:write') &&
+				hasPermission(
+					adminAccess.current,
+					page.params.kind === 'op'
+						? 'admin:external_providers:write'
+						: 'admin:saml_providers:update'
+				) &&
+				(page.params.kind !== 'op' ||
+					!isCapabilityDisabled(adminAccess.current, 'external_identity_providers'))}
 			canEdit={hasPermission(
 				adminAccess.current,
 				page.params.kind === 'op' ? 'admin:external_providers:write' : 'admin:saml_providers:update'

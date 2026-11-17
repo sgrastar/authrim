@@ -24,6 +24,7 @@ import {
   BodyLimitExceededError,
   createLogger,
   isUniqueConstraintError,
+  isResponseMarkedRetryable,
   readRequestBytesWithLimit,
   requireDedicatedAdminDatabaseAdapter,
   type AdminAuthContext,
@@ -283,6 +284,16 @@ export function createReplayIdempotency(options: ReplayIdempotencyOptions): Midd
           }
           if (existing.request_hash !== hash) return conflict(c);
           if (existing.status === 'unknown') return resultUnknown(c);
+          if (existing.status === 'retryable') {
+            const claimed = await adapter.execute(
+              `UPDATE idempotency_records SET id = ?, status = 'in_progress', updated_at = ?
+                WHERE id = ? AND status = 'retryable'`,
+              [id, now, existing.id]
+            );
+            if (claimed.rowsAffected !== 1) return inProgress(c);
+            reserved = true;
+            break;
+          }
           return replay(c, existing) ?? inProgress(c);
         } catch {
           return unavailable(c);
@@ -323,6 +334,19 @@ export function createReplayIdempotency(options: ReplayIdempotencyOptions): Midd
     }
 
     const response = c.res;
+    // Step-up can refuse before a write. Keep the body/key binding while allowing the same
+    // operation, with fresh evidence, to reserve it again; never rerun an uncertain mutation.
+    if (!started() && response.status >= 400 && isResponseMarkedRetryable(c)) {
+      try {
+        await adapter.execute(
+          `UPDATE idempotency_records SET status = 'retryable', response_ref = NULL, updated_at = ? WHERE id = ?`,
+          [Date.now(), id]
+        );
+      } catch {
+        log.warn(`A ${options.subject} step-up reservation could not be released`);
+      }
+      return;
+    }
     if (response.status >= 500) {
       if (started()) await markUnknown();
       else await release();

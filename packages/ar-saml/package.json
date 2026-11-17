@@ -8,6 +8,11 @@
     "./idp-app": "./src/idp-app.ts",
     "./idp-readiness": "./src/idp-readiness.ts",
     "./src/*": "./src/*.ts",
+    "./inbound-receiver": {
+      "types": "./src/inbound-receiver.d.ts",
+      "import": "./src/sp/acs.ts",
+      "default": "./src/sp/acs.ts"
+    },
     "./admin-providers": {
       "types": "./src/admin-providers.d.ts",
       "import": "./src/admin/providers.ts",

@@ -1,4 +1,10 @@
 import {
+  getConnectionInboundMapping,
+  putConnectionInboundMapping,
+  previewConnectionInboundMapping,
+  inboundMappingIdempotency,
+} from './connection-inbound-mapping';
+import {
   adminMappingHashKeyGetHandler,
   adminMappingHashKeyRotateHandler,
 } from './mapping-hash-key';
@@ -469,7 +475,10 @@ import {
   adminRoleDeleteHandler,
 } from './admin-rbac';
 import { registerAdminRbacPermissionMiddleware } from './admin-rbac-permissions';
-import { registerAdminResourcePermissionMiddleware } from './admin-resource-permissions';
+import {
+  requireClientManagementPermission,
+  registerAdminResourcePermissionMiddleware,
+} from './admin-resource-permissions';
 import {
   enforceDeclaredAdminRouteAccess,
   registerDeclaredAdminRouteAccessMiddleware,
@@ -1169,19 +1178,6 @@ import {
   updateDirectoryAuthRetentionPolicyHandler,
   updateDirectoryAuthTenantPolicyHandler,
 } from './routes/directory-auth';
-
-function requireClientManagementPermission() {
-  return async (c: Context<{ Bindings: Env }>, next: Next) => {
-    const method = c.req.method.toUpperCase();
-    const requiredPermissions =
-      method === 'GET'
-        ? [ADMIN_PERMISSIONS.CLIENTS_READ]
-        : method === 'DELETE'
-          ? [ADMIN_PERMISSIONS.CLIENTS_DELETE]
-          : [ADMIN_PERMISSIONS.CLIENTS_WRITE];
-    return requireAdminPermissions(requiredPermissions)(c, next);
-  };
-}
 
 // Create Hono app with Cloudflare Workers types
 export const app = new Hono<{ Bindings: Env }>();
@@ -2425,6 +2421,22 @@ app.delete('/api/admin/iat-tokens/:tokenHash', requireSystemAdmin(), adminIATRev
 
 // Admin External IdP Provider Management endpoints (proxy to ar-bridge)
 // Enables Admin UI to manage external identity providers (Google, GitHub, etc.)
+// Incoming connection graphs have their own DTO and never enter the release facade.
+app.get('/api/admin/identity-mapping/inbound/op/:id', getConnectionInboundMapping);
+app.put(
+  '/api/admin/identity-mapping/inbound/op/:id',
+  inboundMappingIdempotency,
+  putConnectionInboundMapping
+);
+app.post('/api/admin/identity-mapping/inbound/op/:id/preview', previewConnectionInboundMapping);
+app.get('/api/admin/identity-mapping/inbound/idp/:id', getConnectionInboundMapping);
+app.put(
+  '/api/admin/identity-mapping/inbound/idp/:id',
+  inboundMappingIdempotency,
+  putConnectionInboundMapping
+);
+app.post('/api/admin/identity-mapping/inbound/idp/:id/preview', previewConnectionInboundMapping);
+
 app.get('/api/admin/external-providers', adminExternalProvidersListHandler);
 app.post('/api/admin/external-providers', adminExternalProvidersCreateHandler);
 

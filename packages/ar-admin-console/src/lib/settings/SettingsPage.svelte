@@ -76,11 +76,13 @@
 		 * page that shows them as one of its tabs and has its own header.
 		 */
 		framed?: boolean;
+		/** A containing operation is pending; also blocks keyboard-triggered saves. */
+		disabled?: boolean;
 		/** Whether there are unsaved changes, and whether a save is running (for a page around it). */
 		onstate?: (state: { dirty: boolean; saving: boolean }) => void;
 	}
 
-	let { page, client, target, access, framed = true, onstate }: Props = $props();
+	let { page, client, target, access, framed = true, disabled = false, onstate }: Props = $props();
 
 	const who = $derived(access ?? adminAccess.current);
 	const parts = $derived(partsOf(page));
@@ -168,6 +170,7 @@
 	const partById = (id: string): SettingsPart => parts.find((part) => part.id === id)!;
 
 	async function save(screen: Values): Promise<void> {
+		if (disabled) throw new SaveStopped();
 		if (!draft) return;
 		refusals = {};
 		const plan = changes(page, draft.saved, screen);

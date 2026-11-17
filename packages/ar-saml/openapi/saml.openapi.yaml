@@ -1463,6 +1463,91 @@ components:
       type: object
       additionalProperties: true
       properties:
+        acsUrls:
+          type: array
+          maxItems: 30
+          items:
+            type: string
+            format: uri
+        sloUrl:
+          type: string
+          maxLength: 2048
+        sloBinding:
+          type: string
+          enum: [post, redirect]
+        allowedBindings:
+          type: array
+          minItems: 1
+          maxItems: 30
+          items:
+            type: string
+            enum: [post, redirect, artifact]
+        samlProfile:
+          type: string
+          enum: [baseline, strict, academic_publisher, legacy]
+        signResponses:
+          type: boolean
+        signAssertions:
+          type: boolean
+        authnRequestSignaturePolicy:
+          type: string
+          enum: [required, optional, disabled]
+        logoutRequestSignaturePolicy:
+          type: string
+          enum: [required, optional, disabled]
+        logoutResponseSignaturePolicy:
+          type: string
+          enum: [required, optional, disabled]
+        authnRequestLegacyAlgorithmPolicy:
+          type: string
+          enum: [disabled, explicit_opt_in]
+        logoutRequestLegacyAlgorithmPolicy:
+          type: string
+          enum: [disabled, explicit_opt_in]
+        encryptAssertions:
+          type: boolean
+        encryptNameID:
+          type: boolean
+        encryptionCertificate:
+          type: string
+          maxLength: 16384
+          description: Public X.509 certificate for XML encryption. Never a private key.
+        encryptionAlgorithmPolicy:
+          type: string
+          enum: [modern, legacy_opt_in]
+        assertionEncryptionAlgorithm:
+          type: string
+          enum: [aes256-gcm, aes256-cbc]
+        keyEncryptionAlgorithm:
+          type: string
+          enum: [rsa-oaep-256, rsa-oaep-sha1]
+        assertionValiditySeconds:
+          type: integer
+          minimum: 60
+          maximum: 86400
+        providerName:
+          type: string
+          maxLength: 256
+        authnContextPolicy:
+          type: object
+          additionalProperties: true
+          properties:
+            mode:
+              type: string
+              enum: [observe, require_any]
+            allowedClassRefs:
+              type: array
+              maxItems: 30
+              items:
+                type: string
+                maxLength: 2048
+          description: require_any needs at least one allowed class reference. Partial updates preserve policy extensions.
+        jitEmailLinkingPolicy:
+          type: string
+          enum: [disabled, jit_create_only, email_linking]
+          description: Existing inbound SAML first-login account linking and provisioning policy.
+        allowSyntheticEmailFallback:
+          type: boolean
         entityId:
           type: string
         ssoUrl:
@@ -1655,6 +1740,10 @@ components:
       required:
         - fieldMappingSetId
       properties:
+        inboundContract:
+          type: string
+          enum: [connection-v1]
+          description: Incoming IdP connection contract marker; authored by the incoming connection API and retained by partial General updates.
         fieldMappingSetId:
           type: string
         fieldMappingVersionId:
@@ -1708,7 +1797,7 @@ components:
         expectedUpdatedAt:
           type: string
           format: date-time
-          description: Current provider updatedAt value used for optimistic concurrency control.
+          description: Current provider updatedAt value used for optimistic concurrency control. config is a partial update; omitted mapping, certificates, key material and extensions are preserved. Advanced enums, booleans, endpoint URLs and integer bounds are validated; metadata refresh mode and interval are independently editable.
         name:
           type: string
         config:

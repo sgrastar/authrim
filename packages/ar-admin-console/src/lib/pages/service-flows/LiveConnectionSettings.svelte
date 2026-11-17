@@ -2,6 +2,12 @@
 	import LeaveGuard from './LeaveGuard.svelte';
 	import ConnectionMetadataImport from './ConnectionMetadataImport.svelte';
 	import { untrack } from 'svelte';
+	import CertificateSummary from './CertificateSummary.svelte';
+	import LiveAdvancedFields from './LiveAdvancedFields.svelte';
+	import ClientRuntimeSettings from './ClientRuntimeSettings.svelte';
+	import { advancedPatch, RP_FIELDS, SP_FIELDS } from './advanced-settings';
+	import { SETTINGS_PARTS, SETTINGS_LABELS } from './connection-settings';
+	import { publicKeyProblem } from './public-client-keys';
 	import { ApiError } from '#lib/api/api-error.js';
 	import { StepUpCancelledError } from '#lib/api/admin-step-up.js';
 	import type { ClientDetail } from '#lib/api/clients.js';
@@ -24,12 +30,7 @@
 	import RpSteps from './RpSteps.svelte';
 	import SpSteps from './SpSteps.svelte';
 	import SamlActivation from './SamlActivation.svelte';
-	import {
-		entityIdProblem,
-		httpsUrlProblem,
-		redirectUriProblem,
-		type Answers
-	} from './connection-model';
+	import { entityIdProblem, httpsUrlProblem, redirectUriProblem } from './connection-model';
 	import {
 		basicSettingsAnswers,
 		clientBasicUpdate,
@@ -92,33 +93,54 @@
 		});
 	});
 	$effect(() => {
-		dirty = draft.dirty || metadataDirty;
-		pending = saving || activating || reloading || metadataPending;
+		dirty = draft.dirty || metadataDirty || runtimeDirty;
+		pending = saving || activating || reloading || metadataPending || runtimePending;
 	});
+	let runtimeDirty = $state(false);
+	let runtimePending = $state(false);
+	const versionAvailable = $derived(
+		resources.kind !== 'rp' || typeof client?.updatedAt === 'number'
+	);
 	const valid = $derived(
 		draft.value.rp.name.trim() !== '' &&
 			(resources.kind === 'rp'
 				? draft.value.rp.redirectUris.length > 0 &&
 					draft.value.rp.redirectUris.every((uri) => !redirectUriProblem(uri)) &&
-					(client?.authMethod !== 'none' || draft.value.rp.pkce)
+					(client?.authMethod !== 'none' || draft.value.rp.pkce) &&
+					(draft.value.rp.authMethod !== 'private_key_jwt' || !publicKeyProblem(draft.value.rp))
 				: !entityIdProblem(draft.value.sp.entityId) && !httpsUrlProblem(draft.value.sp.acsUrl))
 	);
 
-	async function save(value: Answers) {
-		if (!canEdit || !valid || activating || reloading || mappingPending || metadataPending)
+	async function save(value: ReturnType<typeof basicSettingsAnswers>) {
+		if (
+			!canEdit ||
+			!versionAvailable ||
+			!valid ||
+			activating ||
+			reloading ||
+			mappingPending ||
+			metadataPending ||
+			runtimePending
+		)
 			throw new SaveStopped();
 		failure = '';
 		conflict = false;
 		saved = false;
 		try {
 			if (resources.kind === 'rp' && client) {
-				const detail = await resources.client.updateBasics(
-					client.id,
-					clientBasicUpdate(client, value)
-				);
+				const detail = await resources.client.updateBasics(client.id, {
+					...clientBasicUpdate(client, value),
+					...(Object.keys(advancedPatch(client.advanced, value.advanced, RP_FIELDS)).length
+						? { advanced: advancedPatch(client.advanced, value.advanced, RP_FIELDS) }
+						: {})
+				});
 				accept({ ...resources, detail });
 			} else if (resources.kind === 'sp' && sp) {
-				const config: NonNullable<ServiceProviderBasicUpdate['config']> = {};
+				const config: NonNullable<ServiceProviderBasicUpdate['config']> = advancedPatch(
+					sp.config,
+					value.advanced,
+					SP_FIELDS
+				);
 				if (value.sp.entityId.trim() !== sp.entityId) config.entityId = value.sp.entityId.trim();
 				if (value.sp.acsUrl.trim() !== sp.acsUrl) config.acsUrl = value.sp.acsUrl.trim();
 				const detail = await resources.client.updateServiceProvider(sp.id, {
@@ -189,8 +211,12 @@
 					>{failure}{#if conflict}<Button onclick={requestReload}>{t('sf.live.reload')}</Button
 						>{/if}</Callout
 				>{/if}
+			{#if !versionAvailable}<Callout tone="warning">{t('cs.live.versionMissing')}</Callout>{/if}
 			{#if saved && !draft.dirty}<Callout tone="info" live>{t('sf.live.saved')}</Callout>{/if}
-			<fieldset class="settings-fields" disabled={!canEdit || pending || mappingPending}>
+			<fieldset
+				class="settings-fields"
+				disabled={!canEdit || !versionAvailable || pending || mappingPending}
+			>
 				<legend class="sr-only">{t('af.general')}</legend>
 				{#if !canEdit}
 					<DetailList ruled>
@@ -244,12 +270,38 @@
 						bind:serviceName={draft.value.rp.name}
 					/>
 				{/if}
+				{#each SETTINGS_PARTS[resources.kind] as part (part)}
+					<Disclosure title={t(SETTINGS_LABELS[part])}>
+						<div class="settings-fields">
+							{#if part === 'sp-signing'}<CertificateSummary
+									summary={sp?.certificateValidation}
+								/>{/if}
+							{#if part === 'sp-metadata' && !sp?.hasMetadataUrl}<Callout tone="info"
+									>{t('cs.live.metadataSource')}</Callout
+								>{:else}
+								<LiveAdvancedFields
+									fields={(resources.kind === 'rp' ? RP_FIELDS : SP_FIELDS).filter(
+										(field) => field.part === part
+									)}
+									bind:values={draft.value.advanced}
+									readonly={!canEdit}
+									publicClient={resources.kind === 'rp' &&
+										(client?.authMethod === 'none' ||
+											client?.applicationType === 'spa' ||
+											client?.applicationType === 'native')}
+								/>{/if}
+							{#if resources.kind === 'rp' && part === 'rp-security'}<Callout tone="info"
+									>{t('cs.live.origins')}</Callout
+								>{/if}
+						</div>
+					</Disclosure>
+				{/each}
 			</fieldset>
 			{#if canEdit}<div>
 					<Button
 						onclick={controls.save}
 						loading={saving}
-						disabled={!controls.dirty || !valid || pending || mappingPending}
+						disabled={!controls.dirty || !versionAvailable || !valid || pending || mappingPending}
 						>{t('common.save')}</Button
 					>
 					<Button
@@ -292,12 +344,20 @@
 		</Card>
 	{/snippet}
 </SaveScope>
+{#if resources.kind === 'rp'}
+	<ClientRuntimeSettings
+		clientId={resources.detail.id}
+		disabled={saving || activating || reloading || mappingPending}
+		bind:dirty={runtimeDirty}
+		bind:pending={runtimePending}
+	/>
+{/if}
 {#if resources.kind === 'sp' && status}
 	<SamlActivation
 		provider={status}
 		{canEdit}
-		dirty={draft.dirty || mappingDirty || metadataDirty}
-		busy={saving || reloading || mappingPending || metadataPending}
+		dirty={draft.dirty || runtimeDirty || mappingDirty || metadataDirty}
+		busy={saving || reloading || mappingPending || metadataPending || runtimePending}
 		bind:pending={activating}
 		update={(input) =>
 			resources.kind === 'sp'

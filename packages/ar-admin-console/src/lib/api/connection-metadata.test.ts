@@ -68,6 +68,8 @@ describe('single connection metadata HTTP client', () => {
 					providerType: 'saml_sp',
 					config: {
 						...config,
+						assertionValiditySeconds: 480,
+						certificateValidation: { certificates: [{ fingerprintSha256: 'synthetic-summary' }] },
 						identityMapping: {
 							fieldMappingSetId: 'saved-set',
 							fieldMappingVersionId: 'saved-version'
@@ -117,8 +119,13 @@ describe('single connection metadata HTTP client', () => {
 			enabled: false,
 			updatedAt: '2026-11-17T00:00:01.000Z',
 			entityId: config.entityId,
-			address: config.acsUrl
+			address: config.acsUrl,
+			hasMetadataUrl: true,
+			config: { assertionValiditySeconds: 480 },
+			certificateValidation: { certificates: [{ fingerprintSha256: 'synthetic-summary' }] }
 		});
+		expect(result.config).not.toHaveProperty('identityMapping');
+		expect(result.config).not.toHaveProperty('metadataXml');
 	});
 
 	it('requires the current successful preview and refuses stale, pending and wrong-role creation without changing manual values', () => {

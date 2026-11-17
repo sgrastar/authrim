@@ -32,6 +32,7 @@
 		live?: boolean;
 		previewMetadata?: SamlMetadataClient['preview'];
 		hasSecret?: boolean;
+		discovering?: boolean;
 		discoverOidc?: (issuer: string, signal?: AbortSignal) => Promise<OidcDiscovery>;
 		op: OpForm;
 		idp: IdpForm;
@@ -46,6 +47,7 @@
 		live = false,
 		previewMetadata,
 		hasSecret = false,
+		discovering = $bindable(false),
 		discoverOidc,
 		op = $bindable(),
 		idp = $bindable(),
@@ -53,7 +55,6 @@
 		opSettings = $bindable()
 	}: Props = $props();
 
-	let reading = $state(false);
 	let discoveryError = $state('');
 	let controller: AbortController | undefined;
 
@@ -61,10 +62,10 @@
 	let reads = 0;
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	async function discover() {
-		if (reading) return;
+		if (discovering) return;
 		const read = ++reads;
 		const issuer = op.issuer;
-		reading = true;
+		discovering = true;
 		clearTimeout(timer);
 		discoveryError = '';
 		if (live) {
@@ -83,14 +84,14 @@
 				if (read === reads && op.issuer === issuer)
 					discoveryError = error instanceof Error ? error.message : t('sf.live.discoveryFailed');
 			} finally {
-				if (read === reads) reading = false;
+				if (read === reads) discovering = false;
 			}
 			return;
 		}
 		timer = setTimeout(() => {
 			if (read !== reads || op.issuer !== issuer) return;
 			op.discovered = true;
-			reading = false;
+			discovering = false;
 		}, 500);
 	}
 
@@ -107,7 +108,7 @@
 		controller?.abort();
 		discoveryError = '';
 		op.discovery = undefined;
-		reading = false;
+		discovering = false;
 		op.discovered = false;
 	});
 
@@ -194,8 +195,8 @@
 	<div>
 		<Button
 			variant="secondary"
-			disabled={reading || !op.issuer || !!httpsUrlProblem(op.issuer)}
-			loading={reading}
+			disabled={discovering || !op.issuer || !!httpsUrlProblem(op.issuer)}
+			loading={discovering}
 			onclick={discover}>{t('sf.in.readConfig')}</Button
 		>
 	</div>

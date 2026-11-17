@@ -298,6 +298,8 @@ function sanitizeProvider<
       : {};
   const hasPrivateKey = typeof quirks.privateKeyEncrypted === 'string';
   delete quirks.privateKeyEncrypted;
+  // The incoming graph selector is authored through its connection API only.
+  delete quirks.inboundIdentityMapping;
   const dynamicRegistration = quirks.dynamicClientRegistration;
   if (
     dynamicRegistration &&
@@ -418,6 +420,11 @@ export async function handleAdminCreateProvider(c: AdminProviderContext): Promis
       public_key_jwk?: Record<string, unknown>;
     }>();
 
+    if (body.provider_quirks && Object.hasOwn(body.provider_quirks, 'inboundIdentityMapping')) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: { field: 'provider_quirks.inboundIdentityMapping' },
+      });
+    }
     // Validate required fields
     if (!body.name || !body.client_id || !body.client_secret) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
@@ -780,6 +787,7 @@ export async function handleAdminUpdateProvider(c: AdminProviderContext): Promis
 
   try {
     const body = await c.req.json<{
+      expected_updated_at?: number;
       slug?: string;
       name?: string;
       provider_type?: 'oidc' | 'oauth2';
@@ -814,6 +822,18 @@ export async function handleAdminUpdateProvider(c: AdminProviderContext): Promis
       private_key_jwk?: Record<string, unknown>;
       public_key_jwk?: Record<string, unknown>;
     }>();
+
+    const advancedProblem = providerAdvancedProblem(body);
+    if (advancedProblem)
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: { field: advancedProblem },
+      });
+    if (body.expected_updated_at !== undefined) {
+      const current = await getProvider(c.env, getTenantIdFromContext(c), id);
+      if (!current) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+      if (current.updatedAt !== body.expected_updated_at)
+        return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
+    }
 
     // Build updates object
     const updates: Record<string, unknown> = {};
@@ -922,9 +942,17 @@ export async function handleAdminUpdateProvider(c: AdminProviderContext): Promis
     if (body.public_key_jwk !== undefined) updates.publicKeyJwk = body.public_key_jwk;
 
     const tenantId = getTenantIdFromContext(c);
-    const provider = await updateProvider(c.env, tenantId, id, updates);
+    const provider =
+      body.expected_updated_at === undefined
+        ? await updateProvider(c.env, tenantId, id, updates)
+        : await updateProvider(c.env, tenantId, id, updates, body.expected_updated_at);
     if (!provider) {
-      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+      return createErrorResponse(
+        c,
+        body.expected_updated_at !== undefined
+          ? AR_ERROR_CODES.ADMIN_CONFLICT
+          : AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND
+      );
     }
 
     // Remove secret from response
@@ -966,4 +994,38 @@ export async function handleAdminDeleteProvider(c: AdminProviderContext): Promis
     log.error('Failed to delete provider', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
+}
+
+/** Bounds for the live advanced editor; public field values only, never echoed on failure. */
+function providerAdvancedProblem(body: Record<string, unknown>): string | undefined {
+  for (const key of ['always_fetch_userinfo', 'enable_sso', 'jit_provisioning', 'trust_email']) {
+    if (body[key] !== undefined && typeof body[key] !== 'boolean') return key;
+  }
+  for (const key of ['priority', 'expected_updated_at']) {
+    const value = body[key];
+    if (
+      value !== undefined &&
+      (typeof value !== 'number' ||
+        !Number.isSafeInteger(value) ||
+        (key === 'priority' ? Math.abs(value) > 100000 : value < 0))
+    )
+      return key;
+  }
+  if (
+    body.token_endpoint_auth_method !== undefined &&
+    body.token_endpoint_auth_method !== 'client_secret_basic' &&
+    body.token_endpoint_auth_method !== 'client_secret_post'
+  )
+    return 'token_endpoint_auth_method';
+  if (
+    body.button_text !== undefined &&
+    (typeof body.button_text !== 'string' || body.button_text.length > 256)
+  )
+    return 'button_text';
+  if (
+    body.button_color !== undefined &&
+    (typeof body.button_color !== 'string' || !/^#[0-9a-fA-F]{6}$/.test(body.button_color))
+  )
+    return 'button_color';
+  return undefined;
 }

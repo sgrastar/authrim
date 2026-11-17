@@ -65,6 +65,9 @@ export interface ImportForm {
 }
 
 export interface RpForm {
+	keySource?: 'uri' | 'inline';
+	jwksUri?: string;
+	publicJwks?: string;
 	name: string;
 	appType: AppType;
 	redirectUris: string[];
@@ -179,13 +182,13 @@ function emptyImport(): ImportForm {
 	};
 }
 
-export function emptyAnswers(): Answers {
+export function emptyAnswers(live = false): Answers {
 	return {
 		direction: '',
 		kind: '',
 		active: false,
 		added: [],
-		settings: emptySettings(),
+		settings: emptySettings(live),
 		extras: {
 			inputSchema: '',
 			outputSchema: '',

@@ -3,6 +3,46 @@
  * certificate list part. Dummy copy for the mock. Spread into `../ja.ts`.
  */
 export const jaConnectionSettings = {
+	'cs.live.jitPolicy': '初回ログイン時のアカウント作成・メール照合',
+	'cs.live.versionMissing':
+		'APIから保存済みのバージョンが返されていません。再読み込みしてから編集してください。',
+	'cs.live.runtime': 'トークンの有効期間とセキュリティポリシー',
+	'cs.live.publicOnly':
+		'アプリの公開鍵だけを登録してください。秘密鍵はアプリ側で保管します。Authrimに秘密鍵を渡す必要はありません。',
+	'cs.live.keySource': '公開鍵の登録方法',
+	'cs.live.sourceUrl': 'HTTPSのJWKS URL',
+	'cs.live.sourceInline': '公開JWKSのJSON',
+	'cs.live.publicJwks': '公開JWKSのJSON',
+	'cs.live.listHint': '1行に1つ入力してください。空のリストは「指定なし」を明示します。',
+	'cs.live.useTenantProfile': 'テナントのプロフィール項目を使う',
+	'cs.live.locked': '変更不可',
+	'cs.live.origins':
+		'Webオリジンは専用レジストリで管理します。このフォームではレジストリを変更しません。',
+	'cs.live.metadataSource':
+		'自動更新には保存済みのメタデータURLが必要です。メタデータの取り込みは別の操作で行います。',
+	'cs.live.protocolGap':
+		'JAR、FAPI、ハイブリッドレスポンス、IDトークンの署名アルゴリズムを変更するには、対応する認証情報・プロトコルの設定操作が必要です。この画面では変更できません。',
+	'cs.live.certDetailsMissing': 'APIから証明書の検証結果が返されていません。',
+	'cs.live.certFingerprint': 'SHA-256フィンガープリント',
+	'cs.live.validFrom': '有効期間の開始',
+	'cs.live.validUntil': '有効期間の終了',
+	'cs.live.signatureAlgorithms': '受け付ける署名アルゴリズムのURI',
+	'cs.live.digestAlgorithms': '受け付けるダイジェストアルゴリズムのURI',
+	'cs.live.assertionSigningAlg': 'クライアントアサーションの署名アルゴリズム',
+	'cs.live.encryptionPolicy': 'XML暗号化アルゴリズムのポリシー',
+
+	'cm.in.legacy':
+		'従来の属性マッピングは、このグラフを保存するまで使われます。保存後はグラフだけを使います。',
+	'cm.in.schema': '受信元フィールド',
+	'cm.in.schemaHelp': '受信する属性名と値の数を設定します。分類はPIIとして扱います。',
+	'cm.in.source': '属性名',
+	'cm.in.multi': '複数の値を受信する',
+	'cm.in.add': 'フィールドを追加',
+	'cm.in.preview': 'サンプルで確認',
+	'cm.in.sample': '合成サンプル（JSON）',
+	'cm.in.evaluate': '変換を確認',
+	'cm.in.single': '単一の値',
+	'cm.in.multiple': '複数の値',
 	'cs.title': '接続詳細設定',
 	'cs.lead': 'どれも最初から使える値で始まります。変えたいものだけ開いて設定してください。',
 	'cs.part.rp-profile': 'アプリの公開情報',

@@ -1,4 +1,5 @@
 import { metadataInput } from './metadata-draft';
+import { publicKeyInput } from './public-client-keys';
 import type { ClientCreationClient, CreateClientInput } from '#lib/api/clients.js';
 import type {
 	ExternalProvidersClient,
@@ -64,8 +65,13 @@ export function rpCreateInput(form: RpForm): CreateClientInput {
 		!rpRedirectsReady(form) ||
 		(publicClient
 			? method !== 'none' || !form.pkce
-			: method !== 'client_secret_basic' && method !== 'client_secret_post') ||
-		(method !== 'none' && method !== 'client_secret_basic' && method !== 'client_secret_post')
+			: method !== 'client_secret_basic' &&
+				method !== 'client_secret_post' &&
+				method !== 'private_key_jwt') ||
+		(method !== 'none' &&
+			method !== 'client_secret_basic' &&
+			method !== 'client_secret_post' &&
+			method !== 'private_key_jwt')
 	) {
 		throw new Error(t('sf.create.invalid'));
 	}
@@ -78,7 +84,8 @@ export function rpCreateInput(form: RpForm): CreateClientInput {
 		response_types: ['code'],
 		scope: 'openid',
 		token_endpoint_auth_method: method,
-		require_pkce: form.pkce
+		require_pkce: form.pkce,
+		...(method === 'private_key_jwt' ? publicKeyInput(form) : {})
 	};
 }
 

@@ -108,6 +108,8 @@ export function executionContextsOf(
           partnerEntityId: reference.clientId,
         },
       ];
+    case 'upstream_provider':
+      return [{ tenantId, protocol: 'oidc', role: 'rp', providerId: reference.providerId }];
     case 'saml_provider':
       return [
         {
