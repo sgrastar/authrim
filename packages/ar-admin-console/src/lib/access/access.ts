@@ -268,3 +268,27 @@ export function machineAccess(access: AdminAccess): MachineAccess {
 		remove: read && hasPermission(access, 'admin:machine_access:delete')
 	};
 }
+
+/** What the admin can do on the tenant pages (Platform → Tenants), as the Admin API checks it. */
+export interface TenantsAccess {
+	/** See the tenants. */
+	read: boolean;
+	/** Create and delete tenants. */
+	manage: boolean;
+	/** Copy a tenant into a new one. */
+	copy: boolean;
+}
+
+/**
+ * Every route under `/api/admin/tenants` sits behind the router's system-admin guard: a person
+ * needs `ar_super_admin` through a global assignment (a permission alone does not open them;
+ * only machine tokens are let through by permission). The session says only that the admin
+ * holds some global assignment (`platform`) and which roles they have, so an admin whose
+ * `ar_super_admin` is for one tenant while another role is global is offered pages the API then
+ * refuses (403, shown as "no access"), as for `settingsLevel`.
+ */
+export function tenantsAccess(access: AdminAccess): TenantsAccess {
+	const superAdmin =
+		access.platform && access.roles.some((role) => SETTINGS_SUPER_ROLES.includes(role));
+	return { read: superAdmin, manage: superAdmin, copy: superAdmin };
+}

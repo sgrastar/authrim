@@ -32,7 +32,8 @@ import {
 
 import { input, select, confirm as inquirerConfirm, password } from '@inquirer/prompts';
 import chalk from 'chalk';
-import ora from 'ora';
+import ora from '../timed-ora.js';
+import { cancelPhaseTimings, setPhaseTimingTarget } from '../../core/phase-timings.js';
 import {
   initI18n,
   t,
@@ -1266,6 +1267,10 @@ export async function initCommand(options: InitOptions): Promise<void> {
     const config = parseConfig(JSON.parse(await readFile(resolve(options.config), 'utf-8')));
     if (options.env && options.env !== 'prod' && options.env !== config.environment.prefix)
       throw new Error('setup_config_environment_mismatch');
+    setPhaseTimingTarget({
+      env: config.environment.prefix,
+      baseDir: resolve(options.keep || '.'),
+    });
     if (options.dryRun) {
       console.log(
         JSON.stringify(
@@ -1408,6 +1413,8 @@ export async function initCommand(options: InitOptions): Promise<void> {
     console.log(chalk.cyan(`🌐 ${t('webUi.starting')}`));
     console.log('');
 
+    // The Web UI outlives this command: its setup is not timed as the command's steps.
+    cancelPhaseTimings();
     const { startWebServer } = await import('../../web/server.js');
     await startWebServer({ openBrowser: true, lang: getLocale() });
   }
@@ -2745,6 +2752,7 @@ async function executeSetup(
   const outputDir = resolve(keepPath || '.');
   assertLogArchiveImplemented(config.logging?.archive);
   const env = config.environment.prefix;
+  setPhaseTimingTarget({ env, baseDir: outputDir });
   let secrets: ReturnType<typeof generateAllSecrets> | null = null;
 
   console.log('');
