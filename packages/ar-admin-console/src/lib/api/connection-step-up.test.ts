@@ -4,9 +4,8 @@ vi.mock('@simplewebauthn/browser', () => ({
 	startAuthentication: vi.fn(async () => ({ id: 'test-credential' })),
 	WebAuthnAbortService: { cancelCeremony: vi.fn() }
 }));
-vi.mock('#lib/auth/tenant-scope.svelte.js', () => ({
-	tenantScope: { tenantId: 'connection-test' }
-}));
+const testTenant = vi.hoisted(() => ({ tenantId: 'connection-test' }));
+vi.mock('#lib/auth/tenant-scope.svelte.js', () => ({ tenantScope: testTenant }));
 
 import { startAuthentication } from '@simplewebauthn/browser';
 import { setStepUpPrompt, StepUpCancelledError } from './admin-step-up';
@@ -117,6 +116,31 @@ const mutations: Mutation[] = [
 			})
 	},
 	{
+		name: 'SAML SP basic settings',
+		path: '/api/admin/saml-providers/provider',
+		method: 'PUT',
+		success: { ...samlRow, providerType: 'saml_sp', config: sp.config },
+		run: () =>
+			httpSamlProviders.updateServiceProvider('provider', {
+				name: 'Changed service',
+				expectedUpdatedAt: samlRow.updatedAt,
+				config: { acsUrl: sp.config.acsUrl }
+			})
+	},
+	...['SAML SP enable', 'SAML IdP enable'].map(
+		(name): Mutation => ({
+			name,
+			path: '/api/admin/saml-providers/provider',
+			method: 'PUT',
+			success: { ...samlRow, enabled: true },
+			run: () =>
+				httpSamlProviders.setEnabled('provider', {
+					enabled: true,
+					expectedUpdatedAt: samlRow.updatedAt
+				})
+		})
+	),
+	{
 		name: 'OIDC OP create',
 		path: '/api/admin/external-providers',
 		method: 'POST',
@@ -196,6 +220,10 @@ describe('connection writes meet the existing federation trust step-up', () => {
 			expect(new Headers(writes[1].headers).get('authrim-step-up-receipt')).toBe('trust-receipt');
 			expect(typeof writes[0].body).toBe('string');
 			expect(writes[1].body).toBe(writes[0].body);
+			if (mutation.name.startsWith('SAML'))
+				expect(new Headers(writes[1].headers).get('Idempotency-Key')).toBe(
+					new Headers(writes[0].headers).get('Idempotency-Key')
+				);
 			expect(startAuthentication).toHaveBeenCalledTimes(2);
 			expect(paths).toEqual([
 				...(mutation.name === 'SAML mapping save' ? [mutation.path] : []),
@@ -216,6 +244,69 @@ describe('connection writes meet the existing federation trust step-up', () => {
 			}
 		}
 	);
+
+	it.each(
+		mutations.filter(
+			(item) => item.name === 'SAML SP basic settings' || item.name.endsWith(' enable')
+		)
+	)('$name cancellation sends no retry and keeps the operation rejected', async (mutation) => {
+		const { writes } = stubTrustStepUp(mutation);
+		const unregister = setStepUpPrompt(async () => false);
+		try {
+			await expect(mutation.run()).rejects.toBeInstanceOf(StepUpCancelledError);
+		} finally {
+			unregister();
+		}
+		expect(writes).toHaveLength(1);
+		expect(startAuthentication).not.toHaveBeenCalled();
+	});
+
+	it('freezes SAML settings and source version while the trust prompt is open', async () => {
+		const mutation = mutations.find((item) => item.name === 'SAML SP basic settings');
+		if (!mutation) throw new Error('Missing SP settings');
+		const { writes } = stubTrustStepUp(mutation);
+		const input = {
+			name: 'Submitted',
+			expectedUpdatedAt: samlRow.updatedAt,
+			config: { acsUrl: sp.config.acsUrl }
+		};
+		const serialized = JSON.stringify({
+			expectedUpdatedAt: input.expectedUpdatedAt,
+			name: input.name,
+			config: input.config
+		});
+		const unregister = setStepUpPrompt(async () => {
+			input.name = 'Later edit';
+			input.expectedUpdatedAt = 'later';
+			input.config.acsUrl = 'https://later.example/acs';
+			return true;
+		});
+		try {
+			await httpSamlProviders.updateServiceProvider('provider', input);
+		} finally {
+			unregister();
+		}
+		expect(writes.map((write) => write.body)).toEqual([serialized, serialized]);
+	});
+
+	it('never replays a SAML activation into a different tenant after the prompt', async () => {
+		const mutation = mutations.find((item) => item.name === 'SAML SP enable');
+		if (!mutation) throw new Error('Missing SAML activation');
+		const { writes } = stubTrustStepUp(mutation);
+		const originalTenant = testTenant.tenantId;
+		const unregister = setStepUpPrompt(async () => {
+			testTenant.tenantId = 'other-tenant';
+			return true;
+		});
+		try {
+			await expect(mutation.run()).rejects.toBeInstanceOf(StepUpCancelledError);
+		} finally {
+			testTenant.tenantId = originalTenant;
+			unregister();
+		}
+		expect(writes).toHaveLength(1);
+		expect(new Headers(writes[0].headers).get('X-Tenant-Id')).toBe(originalTenant);
+	});
 
 	it('freezes the submitted body even if the caller changes its object during the factor prompt', async () => {
 		const input = { ...oidc };

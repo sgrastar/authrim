@@ -178,6 +178,8 @@ describe('upstream provider HTTP contracts', () => {
 			id: samlRow.id,
 			name: samlRow.name,
 			enabled: false,
+			hasMapping: false,
+			trustBlocked: false,
 			updatedAt: samlRow.updatedAt,
 			...samlRow.config
 		});

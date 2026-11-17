@@ -25,6 +25,18 @@ describe('permissions', () => {
 		expect(hasPermission(NO_ACCESS, 'admin:users:read')).toBe(false);
 	});
 
+	it('does not grant client PUT/binding permission to an update-only role', () => {
+		const updateOnly = accessFromSession({
+			permissions: ['admin:clients:read', 'admin:clients:update', 'admin:settings:write']
+		});
+		expect(hasPermission(updateOnly, 'admin:clients:update')).toBe(true);
+		expect(hasPermission(updateOnly, 'admin:settings:write')).toBe(true);
+		expect(hasPermission(updateOnly, 'admin:clients:write')).toBe(false);
+		const writer = accessFromSession({ permissions: ['admin:clients:write'] });
+		expect(hasPermission(writer, 'admin:clients:write')).toBe(true);
+		expect(hasPermission(writer, 'admin:clients:update')).toBe(true);
+	});
+
 	it('gives one level for a kind of object', () => {
 		const users = (a = tenant) => permissionLevel(a, 'admin:users:read', 'admin:users:write');
 		expect(users(tenant)).toBe('edit');

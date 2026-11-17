@@ -2,13 +2,34 @@
 import type { jaServiceFlows } from './ja';
 
 export const deServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
+	'sf.live.status': 'Verbindungsstatus',
+	'sf.live.enable': 'Aktivieren',
+	'sf.live.disable': 'Deaktivieren',
+	'sf.live.saveFirst': 'Speichern Sie Einstellungen und Mapping vor dem Aktivieren.',
+	'sf.live.mappingRequired': 'Zum Aktivieren ist ein gespeichertes, gültiges Mapping erforderlich.',
+	'sf.live.trustRequired':
+		'Prüfen Sie Zertifikat und Metadatenvertrauen. Die aktuellen Einstellungen erlauben keine Aktivierung.',
+	'sf.live.activationRejected':
+		'Der Server hat die Verbindung deaktiviert gelassen. Prüfen Sie Zertifikat und Vertrauenseinstellungen.',
+	'sf.live.activationFailed':
+		'Der Status konnte nicht geändert werden. Prüfen Sie gespeichertes Mapping und Vertrauenseinstellungen und versuchen Sie es erneut.',
+	'sf.live.conflict':
+		'Die Verbindung wurde auf dem Server geändert. Ihre Eingaben bleiben erhalten. Laden Sie die Änderungen neu.',
+	'sf.live.reload': 'Gespeicherte Verbindung neu laden',
+	'sf.live.reloadTitle': 'Gespeicherte Einstellungen neu laden?',
+	'sf.live.reloadBody':
+		'Ungespeicherte Änderungen in diesem Formular verwerfen und die Servereinstellungen laden.',
+	'sf.live.authReadonly':
+		'Gespeicherte Authentifizierungsmethode: {method}. Sie kann hier nicht geändert werden.',
+	'sf.live.unset': 'Nicht festgelegt',
+	'sf.live.pkceUnset': 'PKCE ist nicht festgelegt. Dieser Wert wird beibehalten.',
 	'sf.live.accountOptions': 'Kontooptionen',
 	'sf.live.requireVerified': 'Verifizierte E-Mail-Adresse erforderlich',
 	'sf.live.issuerMismatch': 'Der ermittelte Issuer stimmt nicht mit Ihrer Eingabe überein.',
 	'sf.live.discoveryFailed':
 		'Die Anbieterkonfiguration konnte nicht gelesen werden. Versuchen Sie es erneut.',
 	'sf.live.inboundMapping':
-		'Diese Seite bearbeitet nur grundlegende eingehende Einstellungen. Neue SAML-Identitätsanbieter bleiben deaktiviert; eingehendes Mapping und Aktivierung sind hier nicht verfügbar.',
+		'Diese Seite bearbeitet grundlegende Eingangseinstellungen. Zur Aktivierung ist ein gültiges bestehendes Eingangs-Mapping erforderlich; es kann hier nicht bearbeitet werden.',
 	'sf.live.enabled': 'Aktiviert',
 	'sf.live.disabled': 'Deaktiviert',
 	'sf.live.saved': 'Änderungen gespeichert.',

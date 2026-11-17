@@ -45,6 +45,8 @@
 		'-----BEGIN CERTIFICATE-----\nVEVTVCBDRVJUSUZJQ0FURQ==\n-----END CERTIFICATE-----';
 	const samlProvider: SamlIdentityProvider = {
 		id: 'identity/idp',
+		hasMapping: false,
+		trustBlocked: false,
 		name: 'Identity',
 		entityId: 'urn:test:idp',
 		ssoUrl: 'https://identity.example/sso',
@@ -52,9 +54,13 @@
 		enabled: false,
 		updatedAt: '2026-11-16T00:00:00Z'
 	};
-	function fixture() {
+	function fixture(options: { enabled?: boolean; hasMapping?: boolean } = {}) {
 		let currentProvider = { ...provider };
-		let currentSaml = { ...samlProvider };
+		let currentSaml = {
+			...samlProvider,
+			enabled: options.enabled ?? false,
+			hasMapping: options.hasMapping ?? false
+		};
 		const external: ExternalProvidersClient = {
 			list: fn(async () => [currentProvider]),
 			get: fn(async () => ({ ...currentProvider })),
@@ -85,6 +91,14 @@
 			discover: fn(async (issuer) => ({ ...discovery, issuer }))
 		};
 		const saml: SamlIdentityProvidersClient = {
+			setEnabled: fn(async (_id, input) => {
+				currentSaml = {
+					...currentSaml,
+					enabled: input.enabled && currentSaml.hasMapping,
+					updatedAt: '2026-11-17T00:00:00Z'
+				};
+				return { ...currentSaml };
+			}),
 			listIdentityProviders: fn(async () => [currentSaml]),
 			getIdentityProvider: fn(async () => ({ ...currentSaml })),
 			createIdentityProvider: fn(async (input) => {
@@ -115,6 +129,8 @@
 	const listed = fixture();
 	const readOnly = fixture();
 	const navigate = fn();
+	const idpContainment = fixture({ enabled: true });
+	const idpActivation = fixture({ hasMapping: true });
 	type Canvas = ReturnType<typeof within>;
 	async function chooseInbound(canvas: Canvas, kind: 'op' | 'idp') {
 		await expect(
@@ -393,5 +409,55 @@
 		await expect(canvas.queryByRole('button', { name: t('common.save') })).toBeNull();
 		await expect(canvas.getByRole('button', { name: t('secret.replace') })).toBeDisabled();
 		await expect(readOnly.external.update).not.toHaveBeenCalled();
+	}}
+/>
+
+<Story
+	name="IdP missing mapping stays disabled without inbound editor"
+	args={{ resources: fixture().resources, initial: { kind: 'idp', id: samlProvider.id } }}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findByText(t('sf.live.mappingRequired'));
+		await expect(canvas.getByRole('button', { name: t('sf.live.enable') })).toBeDisabled();
+		await expect(canvas.queryByRole('combobox', { name: t('sf.row.mappingSet') })).toBeNull();
+		await waitFor(() =>
+			expect(canvas.getByText(t('sf.live.disabled'), { selector: '.badge' })).toBeVisible()
+		);
+	}}
+/>
+<Story
+	name="IdP disable uses minimal action while retaining invalid certificate draft"
+	args={{ resources: idpContainment.resources, initial: { kind: 'idp', id: samlProvider.id } }}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const cert = await canvas.findByRole('textbox', { name: t('sf.ours.signingCert') });
+		await userEvent.clear(cert);
+		await expect(canvas.getByRole('button', { name: t('common.save') })).toBeDisabled();
+		await userEvent.click(canvas.getByRole('button', { name: t('sf.live.disable') }));
+		await waitFor(() =>
+			expect(canvas.getByText(t('sf.live.disabled'), { selector: '.badge' })).toBeVisible()
+		);
+		await expect(cert).toHaveValue('');
+		await expect(idpContainment.saml.setEnabled).toHaveBeenCalledWith(samlProvider.id, {
+			enabled: false,
+			expectedUpdatedAt: samlProvider.updatedAt
+		});
+		await expect(idpContainment.saml.updateIdentityProvider).not.toHaveBeenCalled();
+	}}
+/>
+<Story
+	name="IdP existing mapping permits saved-only enable"
+	args={{ resources: idpActivation.resources, initial: { kind: 'idp', id: samlProvider.id } }}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findByRole('textbox', { name: t('sf.row.name') });
+		await userEvent.click(canvas.getByRole('button', { name: t('sf.live.enable') }));
+		await waitFor(() =>
+			expect(canvas.getByText(t('sf.live.enabled'), { selector: '.badge' })).toBeVisible()
+		);
+		await expect(idpActivation.saml.setEnabled).toHaveBeenCalledWith(samlProvider.id, {
+			enabled: true,
+			expectedUpdatedAt: samlProvider.updatedAt
+		});
 	}}
 />

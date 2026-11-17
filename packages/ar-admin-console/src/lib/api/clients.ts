@@ -15,6 +15,23 @@ export interface ClientsClient {
 	list(signal?: AbortSignal): Promise<ClientOption[]>;
 }
 
+/** Only basic settings are projected; credentials and extension settings never enter a draft. */
+export interface ClientDetail extends ClientOption {
+	applicationType: string | null;
+	authMethod: string | null;
+	pkce: boolean | null;
+}
+export interface ClientBasicUpdate {
+	client_name?: string;
+	redirect_uris?: string[];
+	token_endpoint_auth_method?: 'client_secret_basic' | 'client_secret_post';
+	require_pkce?: boolean;
+}
+export interface ClientSettingsClient {
+	get(id: string): Promise<ClientDetail>;
+	updateBasics(id: string, input: ClientBasicUpdate): Promise<ClientDetail>;
+}
+
 /** Creation is separate so list-only consumers and fakes need not implement writes. */
 export interface CreateClientInput {
 	client_name: string;
@@ -56,7 +73,64 @@ export function clientFromRow(value: unknown): ClientOption | null {
 	};
 }
 
-export const httpClients: ClientsClient & ClientMappingClient & ClientCreationClient = {
+function clientDetail(value: unknown): ClientDetail {
+	const row = object(object(value).client);
+	if (
+		typeof row.client_id !== 'string' ||
+		!Array.isArray(row.redirect_uris) ||
+		row.redirect_uris.some((uri) => typeof uri !== 'string') ||
+		(row.client_name != null && typeof row.client_name !== 'string')
+	)
+		throw new Error('Invalid client detail response');
+	return {
+		id: row.client_id,
+		name:
+			typeof row.client_name === 'string' && row.client_name.trim()
+				? row.client_name
+				: row.client_id,
+		redirectUris: row.redirect_uris.filter((uri): uri is string => typeof uri === 'string'),
+		applicationType: typeof row.application_type === 'string' ? row.application_type : null,
+		authMethod:
+			typeof row.token_endpoint_auth_method === 'string' ? row.token_endpoint_auth_method : null,
+		pkce:
+			typeof row.require_pkce === 'boolean'
+				? row.require_pkce
+				: row.require_pkce === 1
+					? true
+					: row.require_pkce === 0
+						? false
+						: null
+	};
+}
+
+export const httpClients: ClientsClient &
+	ClientMappingClient &
+	ClientCreationClient &
+	ClientSettingsClient = {
+	async get(id) {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/clients/${encodeURIComponent(id)}`
+		);
+		if (!response.ok) throw await errorFromResponse(response);
+		return clientDetail(await response.json());
+	},
+	async updateBasics(id, input) {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/clients/${encodeURIComponent(id)}`,
+			{
+				method: 'PUT',
+				includeJsonContentType: true,
+				body: JSON.stringify({
+					client_name: input.client_name,
+					redirect_uris: input.redirect_uris,
+					token_endpoint_auth_method: input.token_endpoint_auth_method,
+					require_pkce: input.require_pkce
+				})
+			}
+		);
+		if (!response.ok) throw await errorFromResponse(response);
+		return clientDetail(await response.json());
+	},
 	async create(input) {
 		const response = await adminFetch(`${API_BASE_URL}/api/admin/clients`, {
 			method: 'POST',
