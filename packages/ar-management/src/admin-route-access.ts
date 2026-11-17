@@ -313,7 +313,8 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     pattern: '/api/admin/clients/:id',
     methods: ['PUT', 'PATCH'],
     permissions: [ADMIN_PERMISSIONS.CLIENTS_UPDATE],
-    description: 'Update OAuth client',
+    description:
+      'Update OAuth client settings and public keys (the client management gate also requires clients:write)',
   }),
   rule({
     pattern: '/api/admin/clients/:id/regenerate-secret',

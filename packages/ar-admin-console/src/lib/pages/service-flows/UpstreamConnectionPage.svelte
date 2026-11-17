@@ -2,6 +2,11 @@
 	import { untrack } from 'svelte';
 	import ConnectionMetadataImport from './ConnectionMetadataImport.svelte';
 	import type { SamlMetadataClient } from '#lib/api/saml-providers.js';
+	import CertificateSummary from './CertificateSummary.svelte';
+	import LiveAdvancedFields from './LiveAdvancedFields.svelte';
+	import Disclosure from '#lib/ui/patterns/Disclosure.svelte';
+	import { advancedPatch, readAdvanced, record, OP_FIELDS, IDP_FIELDS } from './advanced-settings';
+	import { SETTINGS_PARTS, SETTINGS_LABELS } from './connection-settings';
 	import { ApiError } from '#lib/api/api-error.js';
 	import SamlActivation from './SamlActivation.svelte';
 	import ConfirmDialog from '#lib/ui/patterns/ConfirmDialog.svelte';
@@ -50,7 +55,8 @@
 		canEdit: boolean;
 		onback: () => void;
 	} = $props();
-	let answers = $state(emptyAnswers());
+	let answers = $state(emptyAnswers(true));
+	let advanced = $state<Record<string, unknown>>({});
 	let oidc = $state<ExternalProvider | null>(null);
 	let saml = $state<SamlIdentityProvider | null>(null);
 	let enabled = $state(false);
@@ -61,6 +67,7 @@
 	let metadataPending = $state(false);
 	let metadataRevision = $state(0);
 	let saving = $state(false);
+	let discovering = $state(false);
 	let saveFailed = $state('');
 	let saved = $state(false);
 	let revision = $state(0);
@@ -68,13 +75,14 @@
 	let activating = $state(false);
 	let askingReload = $state(false);
 	let conflict = $state(false);
-	provideBusy(() => saving || activating);
-	const snapshot = () => JSON.stringify({ answers, enabled });
+	provideBusy(() => saving || activating || discovering || metadataPending);
+	const snapshot = () => JSON.stringify({ answers, enabled, advanced });
 	const persistedEnabled = $derived(kind === 'op' ? oidc?.enabled : saml?.enabled);
 	const dirty = $derived(ready && snapshot() !== original);
 	const valid = $derived.by(() => {
 		try {
 			if (kind === 'op') {
+				if (typeof oidc?.updatedAt !== 'number') return false;
 				opWriteInput(answers.op, oidc?.hasSecret);
 				if (
 					answers.op.issuer !== oidc?.issuer &&
@@ -90,7 +98,8 @@
 
 	function showOidc(provider: ExternalProvider) {
 		oidc = provider;
-		answers = emptyAnswers();
+		advanced = readAdvanced(provider.advanced, OP_FIELDS);
+		answers = emptyAnswers(true);
 		answers.direction = 'in';
 		answers.kind = 'op';
 		Object.assign(answers.op, {
@@ -110,7 +119,8 @@
 	}
 	function showSaml(provider: SamlIdentityProvider) {
 		saml = provider;
-		answers = emptyAnswers();
+		advanced = readAdvanced(provider.config, IDP_FIELDS);
+		answers = emptyAnswers(true);
 		answers.direction = 'in';
 		answers.kind = 'idp';
 		Object.assign(answers.idp, {
@@ -157,18 +167,44 @@
 		generation++;
 	});
 
+	function oidcBasicSource(provider: ExternalProvider): Record<string, unknown> {
+		return {
+			name: provider.name,
+			issuer: provider.issuer,
+			client_id: provider.clientId,
+			scopes: provider.scopes,
+			auto_link_email: provider.autoLinkEmail,
+			jit_provisioning: provider.jitProvisioning,
+			require_email_verified: provider.requireEmailVerified,
+			trust_email: provider.trustEmail,
+			enabled: provider.enabled,
+			authorization_endpoint: provider.advanced?.authorizationEndpoint,
+			token_endpoint: provider.advanced?.tokenEndpoint,
+			userinfo_endpoint: provider.advanced?.userinfoEndpoint,
+			jwks_uri: provider.advanced?.jwksUri
+		};
+	}
 	async function save() {
-		if (!canEdit || !ready || !valid || saving || activating || metadataPending) return;
+		if (!canEdit || !ready || !valid || saving || activating || discovering || metadataPending)
+			return;
 		saving = true;
 		saveFailed = '';
 		conflict = false;
 		saved = false;
 		try {
 			if (kind === 'op' && oidc) {
+				const loaded = oidc;
+				const advancedUpdate = advancedPatch(oidc.advanced, advanced, OP_FIELDS);
 				showOidc(
 					await externalProviders.update(id, {
-						...opWriteInput(answers.op, oidc.hasSecret),
-						enabled
+						...Object.fromEntries(
+							Object.entries({ ...opWriteInput(answers.op, oidc.hasSecret), enabled }).filter(
+								([key, value]) =>
+									JSON.stringify(value) !== JSON.stringify(oidcBasicSource(loaded)[key])
+							)
+						),
+						expected_updated_at: oidc.updatedAt,
+						...(Object.keys(advancedUpdate).length ? { advanced: advancedUpdate } : {})
 					})
 				);
 			} else if (kind === 'idp' && saml) {
@@ -177,7 +213,22 @@
 					await samlProviders.updateIdentityProvider(id, {
 						name: answers.idp.name.trim(),
 						expectedUpdatedAt: saml.updatedAt,
-						config: idpConfig(answers.idp)
+						config: {
+							...Object.fromEntries(
+								Object.entries(idpConfig(answers.idp)).filter(
+									([key, value]) =>
+										JSON.stringify(value) !==
+										JSON.stringify(
+											record({
+												entityId: saml?.entityId,
+												ssoUrl: saml?.ssoUrl,
+												certificate: saml?.certificate
+											})[key]
+										)
+								)
+							),
+							...advancedPatch(saml.config, advanced, IDP_FIELDS)
+						}
 					})
 				);
 			}
@@ -198,7 +249,9 @@
 	}
 </script>
 
-<LeaveGuard dirty={dirty || metadataDirty || saving || activating || metadataPending} />
+<LeaveGuard
+	dirty={dirty || metadataDirty || saving || activating || discovering || metadataPending}
+/>
 <Page>
 	<PageHeader
 		title={kind === 'op' ? oidc?.name || kindProtocol(kind) : saml?.name || kindProtocol(kind)}
@@ -223,10 +276,13 @@
 					>{/if}</Callout
 			>{/if}
 		{#if saved}<Callout tone="info" live>{t('sf.live.saved')}</Callout>{/if}
+		{#if kind === 'op' && typeof oidc?.updatedAt !== 'number'}<Callout tone="warning"
+				>{t('cs.live.versionMissing')}</Callout
+			>{/if}
 		<Card title={t('sf.live.settings')}>
 			<fieldset
 				class="provider-fields"
-				disabled={!canEdit || saving || activating || metadataPending}
+				disabled={!canEdit || saving || activating || discovering || metadataPending}
 			>
 				<legend class="sr-only">{t('sf.live.settings')}</legend>
 				{#key revision}
@@ -236,15 +292,45 @@
 						bind:op={answers.op}
 						bind:idp={answers.idp}
 						hasSecret={oidc?.hasSecret ?? false}
+						bind:discovering
 						discoverOidc={(issuer, signal) => externalProviders.discover(issuer, signal)}
 					/>
 				{/key}
+				{#each SETTINGS_PARTS[kind] as part (part)}
+					<Disclosure title={t(SETTINGS_LABELS[part])}>
+						{#if part === 'idp-certs'}<CertificateSummary summary={saml?.certificateValidation} />
+						{:else if part === 'idp-metadata' && !saml?.hasMetadataUrl}<Callout tone="info"
+								>{t('cs.live.metadataSource')}</Callout
+							>
+						{:else}<div class="provider-fields">
+								<LiveAdvancedFields
+									fields={(kind === 'op' ? OP_FIELDS : IDP_FIELDS).filter(
+										(field) => field.part === part
+									)}
+									bind:values={advanced}
+									readonly={!canEdit}
+								/>
+							</div>{/if}
+						{#if part === 'op-request'}<Callout tone="info">{t('cs.live.protocolGap')}</Callout
+							>{/if}
+					</Disclosure>
+				{/each}
 				{#if kind === 'op'}<ToggleRow label={t('sf.live.enabled')} bind:checked={enabled} />{/if}
 			</fieldset>
 			{#if canEdit}<Button
 					onclick={save}
 					loading={saving}
-					disabled={!dirty || !valid || saving || metadataPending}>{t('common.save')}</Button
+					disabled={!dirty || !valid || saving || activating || discovering || metadataPending}
+					>{t('common.save')}</Button
+				><Button
+					variant="secondary"
+					disabled={!dirty || saving || activating || discovering || metadataPending}
+					onclick={() => {
+						if (kind === 'op' && oidc) showOidc(oidc);
+						else if (saml) showSaml(saml);
+						saveFailed = '';
+						conflict = false;
+					}}>{t('common.discard')}</Button
 				>{/if}
 		</Card>
 		{#if kind === 'idp' && saml && metadata}

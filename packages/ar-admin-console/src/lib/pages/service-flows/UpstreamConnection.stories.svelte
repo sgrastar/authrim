@@ -38,7 +38,13 @@
 		autoLinkEmail: false,
 		requireEmailVerified: true,
 		trustEmail: false,
-		jitProvisioning: false
+		jitProvisioning: false,
+		updatedAt: 1000,
+		advanced: {
+			priority: 9,
+			tokenEndpointAuthMethod: 'client_secret_post',
+			profileUpdateFields: ['picture']
+		}
 	};
 	// Synthetic public certificate text for deterministic API mocks; no real provider is contacted.
 	const certificate =
@@ -83,7 +89,9 @@
 			update: fn(async (_id, input) => {
 				currentProvider = {
 					...currentProvider,
-					name: input.name,
+					name: input.name ?? currentProvider.name,
+					advanced: { ...currentProvider.advanced, ...input.advanced },
+					updatedAt: (currentProvider.updatedAt ?? 0) + 1,
 					enabled: input.enabled ?? currentProvider.enabled
 				};
 				return { ...currentProvider };
@@ -308,7 +316,7 @@
 			expect(idp.saml.updateIdentityProvider).toHaveBeenCalledWith(samlProvider.id, {
 				name: 'Changed identity',
 				expectedUpdatedAt: samlProvider.updatedAt,
-				config: { entityId: samlProvider.entityId, ssoUrl: samlProvider.ssoUrl, certificate }
+				config: {}
 			})
 		);
 	}}
@@ -349,15 +357,9 @@
 			provider.id,
 			{
 				name: 'Changed directory',
-				issuer: provider.issuer,
-				client_id: provider.clientId,
 				client_secret: 'replacement-secret',
-				scopes: provider.scopes,
 				enabled: true,
-				auto_link_email: false,
-				require_email_verified: true,
-				trust_email: false,
-				jit_provisioning: false
+				expected_updated_at: provider.updatedAt
 			}
 		]);
 		await canvas.findByText(t('sf.live.saved'));

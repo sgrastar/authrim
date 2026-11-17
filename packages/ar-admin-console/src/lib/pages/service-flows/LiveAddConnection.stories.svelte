@@ -50,7 +50,9 @@
 		await userEvent.click(canvas.getByRole('button', { name: t('wizard.next') }));
 		const method = canvas.getByRole('combobox', { name: t('sf.rp.authLabel') });
 		await expect(method).toHaveValue(appType === 'web' ? 'client_secret_basic' : 'none');
-		await expect(within(method).queryByRole('option', { name: t('sf.rp.auth.jwt') })).toBeNull();
+		const jwtOption = within(method).getByRole('option', { name: t('sf.rp.auth.jwt') });
+		if (appType === 'web') await expect(jwtOption).toBeEnabled();
+		else await expect(jwtOption).toBeDisabled();
 		if (appType !== 'web') {
 			await expect(canvas.getByRole('switch')).toBeChecked();
 			await expect(canvas.getByRole('switch')).toBeDisabled();

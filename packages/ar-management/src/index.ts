@@ -469,7 +469,10 @@ import {
   adminRoleDeleteHandler,
 } from './admin-rbac';
 import { registerAdminRbacPermissionMiddleware } from './admin-rbac-permissions';
-import { registerAdminResourcePermissionMiddleware } from './admin-resource-permissions';
+import {
+  requireClientManagementPermission,
+  registerAdminResourcePermissionMiddleware,
+} from './admin-resource-permissions';
 import {
   enforceDeclaredAdminRouteAccess,
   registerDeclaredAdminRouteAccessMiddleware,
@@ -1169,19 +1172,6 @@ import {
   updateDirectoryAuthRetentionPolicyHandler,
   updateDirectoryAuthTenantPolicyHandler,
 } from './routes/directory-auth';
-
-function requireClientManagementPermission() {
-  return async (c: Context<{ Bindings: Env }>, next: Next) => {
-    const method = c.req.method.toUpperCase();
-    const requiredPermissions =
-      method === 'GET'
-        ? [ADMIN_PERMISSIONS.CLIENTS_READ]
-        : method === 'DELETE'
-          ? [ADMIN_PERMISSIONS.CLIENTS_DELETE]
-          : [ADMIN_PERMISSIONS.CLIENTS_WRITE];
-    return requireAdminPermissions(requiredPermissions)(c, next);
-  };
-}
 
 // Create Hono app with Cloudflare Workers types
 export const app = new Hono<{ Bindings: Env }>();

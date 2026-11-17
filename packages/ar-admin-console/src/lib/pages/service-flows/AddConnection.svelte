@@ -107,7 +107,7 @@
 	// Where it opens is decided once; after that the person's answers are what move it.
 	let answers = $state<Answers>(
 		untrack(() => {
-			const initial = !live && prefill ? sampleAnswers(prefill, filled) : emptyAnswers();
+			const initial = !live && prefill ? sampleAnswers(prefill, filled) : emptyAnswers(!!live);
 			if (live) {
 				Object.assign(initial.op, {
 					scopes: 'openid email profile',

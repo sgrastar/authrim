@@ -191,16 +191,18 @@ export async function updateProvider(
   env: Env,
   tenantId: string,
   id: string,
-  updates: Partial<Omit<UpstreamProvider, 'id' | 'createdAt' | 'updatedAt'>>
+  updates: Partial<Omit<UpstreamProvider, 'id' | 'createdAt' | 'updatedAt'>>,
+  expectedUpdatedAt?: number
 ): Promise<UpstreamProvider | null> {
   const existing = await getProvider(env, tenantId, id);
-  if (!existing) return null;
+  if (!existing || (expectedUpdatedAt !== undefined && existing.updatedAt !== expectedUpdatedAt))
+    return null;
 
-  const now = Date.now();
+  const now = Math.max(Date.now(), existing.updatedAt + 1);
   const updated = { ...existing, ...updates, updatedAt: now };
 
   const coreAdapter = await getCoreAdapter(env, 'bridge-provider-store:update', tenantId);
-  await coreAdapter.execute(
+  const result = await coreAdapter.execute(
     `UPDATE upstream_providers SET
       slug = ?, name = ?, provider_type = ?, enabled = ?, priority = ?,
       issuer = ?, client_id = ?, client_secret_encrypted = ?,
@@ -209,7 +211,7 @@ export async function updateProvider(
       provider_quirks = ?, icon_url = ?, icon_name = ?, button_color = ?, button_color_dark = ?, button_text = ?,
       use_request_object = ?, request_object_signing_alg = ?, private_key_jwk_encrypted = ?, public_key_jwk = ?,
       profile_update_fields = ?, updated_at = ?
-    WHERE id = ? AND tenant_id = ?`,
+    WHERE id = ? AND tenant_id = ? AND updated_at = ?`,
     [
       updated.slug || null,
       updated.name,
@@ -245,10 +247,11 @@ export async function updateProvider(
       now,
       id,
       tenantId,
+      existing.updatedAt,
     ]
   );
 
-  return updated;
+  return result.rowsAffected > 0 ? updated : null;
 }
 
 /**

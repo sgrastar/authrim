@@ -1,3 +1,4 @@
+import { publicClientJwksProblem } from '@authrim/ar-lib-core/utils/public-client-keys';
 /**
  * Contract Policy API
  *
@@ -1026,6 +1027,11 @@ policyRouter.put('/clients/:clientId/profile', async (c) => {
   const body = validateClientProfileUpdate(rawBody);
   if (!body) {
     return errorResponse(c, 'bad_request', 'Invalid request body format', 400);
+  }
+
+  if (body.profile?.encryption?.jwks !== undefined && body.profile.encryption.jwks !== null) {
+    const keyProblem = publicClientJwksProblem(body.profile.encryption.jwks);
+    if (keyProblem) return errorResponse(c, 'bad_request', keyProblem, 400);
   }
 
   // Security: ifMatch is REQUIRED to prevent version rollback attacks

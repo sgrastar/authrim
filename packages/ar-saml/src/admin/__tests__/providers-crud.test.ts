@@ -1,6 +1,9 @@
 import { withExplicitMappingGraphs } from '@authrim/ar-lib-field-mapping/test-support';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { ADMIN_PERMISSIONS } from '@authrim/ar-lib-core';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { exportJWK, exportPKCS8, generateKeyPair } from 'jose';
+import { generateSelfSignedCertificate } from '../../common/key-utils';
+import { applySAMLAssertionEncryptionPolicy } from '../../idp/encryption';
+import { ADMIN_PERMISSIONS, type SAMLSPConfig } from '@authrim/ar-lib-core';
 import { PRODUCTION_INPUT_EDGES } from '../../idp/__fixtures__/production-shaped-mapping';
 import type { FieldCatalogBundle } from '@authrim/ar-lib-field-mapping/contract';
 
@@ -1208,6 +1211,352 @@ describe('SAML provider CRUD boundaries', () => {
     expect(mocks.adapter!.execute).not.toHaveBeenCalled();
   });
 
+  describe('resulting SP encryption configuration', () => {
+    let certificate: string;
+    const config = {
+      entityId: 'https://sp.example.test',
+      acsUrl: 'https://sp.example.test/acs',
+      allowedBindings: ['post'],
+      identityMapping: {
+        fieldMappingSetId: 'saml-sp',
+        destinationFieldPolicies: {
+          mail: 'optional',
+          displayName: 'optional',
+          eduPersonAffiliation: 'optional',
+        },
+      },
+      extension: { preserve: true },
+    };
+    const expectedUpdatedAt = new Date(1_700_000_001_000).toISOString();
+    const assertionXml =
+      '<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion"><saml:Assertion><saml:Subject><saml:NameID>fixture</saml:NameID></saml:Subject></saml:Assertion></samlp:Response>';
+    beforeAll(async () => {
+      const keys = await generateKeyPair('RS256', { extractable: true });
+      certificate = await generateSelfSignedCertificate(
+        await exportJWK(keys.publicKey),
+        await exportPKCS8(keys.privateKey)
+      );
+    });
+    it.each(['encryptAssertions', 'encryptNameID'])(
+      'rejects enabling %s without a certificate in the merged state',
+      async (field) => {
+        const adapter = mocks.adapter;
+        if (!adapter) throw new Error('Missing test adapter');
+        adapter.queryOne.mockResolvedValue(providerRow({ config_json: JSON.stringify(config) }));
+        const response = await handleUpdateProvider(
+          context({
+            id: 'provider-a',
+            body: { expectedUpdatedAt, config: { [field]: true } },
+          })
+        );
+        expect(response.status).toBe(400);
+        expect(adapter.execute).not.toHaveBeenCalled();
+      }
+    );
+    it.each(
+      ['encryptionCertificate', 'encryptionCertificates'].flatMap((source) =>
+        ['encryptAssertions', 'encryptNameID'].map((field) => ({ source, field }))
+      )
+    )(
+      'uses stored/imported $source for $field during a partial update and actual encryption',
+      async ({ source, field }) => {
+        const adapter = mocks.adapter;
+        if (!adapter) throw new Error('Missing test adapter');
+        const encryption = {
+          [source]: source === 'encryptionCertificate' ? certificate : [certificate],
+        };
+        adapter.queryOne.mockResolvedValue(
+          providerRow({ config_json: JSON.stringify({ ...config, ...encryption }) })
+        );
+        const response = await handleUpdateProvider(
+          context({
+            id: 'provider-a',
+            body: { expectedUpdatedAt, config: { [field]: true } },
+          })
+        );
+        expect(response.status).toBe(200);
+        const saved = await responseBody<{ config: SAMLSPConfig }>(response);
+        expect(saved.config).toMatchObject({
+          ...encryption,
+          [field]: true,
+          extension: { preserve: true },
+        });
+        const encrypted = await applySAMLAssertionEncryptionPolicy(assertionXml, saved.config);
+        expect(encrypted).toContain(
+          field === 'encryptAssertions' ? 'EncryptedAssertion' : 'EncryptedID'
+        );
+      }
+    );
+    it.each([
+      { assertionEncryptionAlgorithm: 'aes256-cbc' },
+      { keyEncryptionAlgorithm: 'rsa-oaep-sha1' },
+    ])(
+      'requires explicit legacy opt-in for the resulting enabled configuration %j',
+      async (legacyAlgorithm) => {
+        const adapter = mocks.adapter;
+        if (!adapter) throw new Error('Missing test adapter');
+        const encryptedConfig = {
+          ...config,
+          encryptAssertions: true,
+          encryptionCertificate: certificate,
+        };
+        for (const policy of [{}, { encryptionAlgorithmPolicy: 'modern' }]) {
+          adapter.queryOne.mockResolvedValue(null);
+          const created = await handleCreateProvider(
+            context({
+              body: {
+                name: 'Encrypted SP',
+                providerType: 'saml_sp',
+                config: { ...encryptedConfig, ...policy, ...legacyAlgorithm },
+              },
+            })
+          );
+          expect(created.status).toBe(400);
+          adapter.queryOne.mockResolvedValue(
+            providerRow({ config_json: JSON.stringify({ ...encryptedConfig, ...policy }) })
+          );
+          const updated = await handleUpdateProvider(
+            context({
+              id: 'provider-a',
+              body: { expectedUpdatedAt, config: legacyAlgorithm },
+            })
+          );
+          expect(updated.status).toBe(400);
+          expect(adapter.execute).not.toHaveBeenCalled();
+        }
+        const draftConfig = {
+          ...encryptedConfig,
+          ...legacyAlgorithm,
+          encryptionAlgorithmPolicy: 'modern',
+        };
+        adapter.queryOne.mockResolvedValue(null);
+        expect(
+          (
+            await handleCreateProvider(
+              context({
+                body: {
+                  name: 'Disabled legacy draft',
+                  providerType: 'saml_sp',
+                  enabled: false,
+                  config: draftConfig,
+                },
+              })
+            )
+          ).status
+        ).toBe(201);
+        adapter.execute.mockClear();
+        adapter.queryOne.mockResolvedValue(
+          providerRow({ enabled: 0, config_json: JSON.stringify(draftConfig) })
+        );
+        expect(
+          (
+            await handleUpdateProvider(
+              context({
+                id: 'provider-a',
+                body: { expectedUpdatedAt, name: 'Disabled draft' },
+              })
+            )
+          ).status
+        ).toBe(200);
+        adapter.execute.mockClear();
+        expect(
+          (
+            await handleUpdateProvider(
+              context({
+                id: 'provider-a',
+                body: { expectedUpdatedAt, enabled: true },
+              })
+            )
+          ).status
+        ).toBe(400);
+        expect(adapter.execute).not.toHaveBeenCalled();
+        const enabled = await handleUpdateProvider(
+          context({
+            id: 'provider-a',
+            body: {
+              expectedUpdatedAt,
+              enabled: true,
+              config: { encryptionAlgorithmPolicy: 'legacy_opt_in' },
+            },
+          })
+        );
+        expect(enabled.status).toBe(200);
+        const saved = await responseBody<{ config: SAMLSPConfig; updatedAt: string }>(enabled);
+        expect(await applySAMLAssertionEncryptionPolicy(assertionXml, saved.config)).toContain(
+          'EncryptedAssertion'
+        );
+        adapter.queryOne.mockResolvedValue(
+          providerRow({
+            config_json: JSON.stringify(saved.config),
+            updated_at: Date.parse(saved.updatedAt),
+          })
+        );
+        adapter.execute.mockClear();
+        expect(
+          (
+            await handleUpdateProvider(
+              context({
+                id: 'provider-a',
+                body: {
+                  expectedUpdatedAt: saved.updatedAt,
+                  config: { encryptionAlgorithmPolicy: 'modern' },
+                },
+              })
+            )
+          ).status
+        ).toBe(400);
+        expect(adapter.execute).not.toHaveBeenCalled();
+        adapter.queryOne.mockResolvedValue(null);
+        expect(
+          (
+            await handleCreateProvider(
+              context({
+                body: {
+                  name: 'Legacy SP',
+                  providerType: 'saml_sp',
+                  config: {
+                    ...encryptedConfig,
+                    ...legacyAlgorithm,
+                    encryptionAlgorithmPolicy: 'legacy_opt_in',
+                  },
+                },
+              })
+            )
+          ).status
+        ).toBe(201);
+      }
+    );
+    it('creates usable explicit modern GCM/OAEP-256 encryption settings', async () => {
+      const created = await handleCreateProvider(
+        context({
+          body: {
+            name: 'Modern SP',
+            providerType: 'saml_sp',
+            config: {
+              ...config,
+              encryptAssertions: true,
+              encryptionCertificate: certificate,
+              encryptionAlgorithmPolicy: 'modern',
+              assertionEncryptionAlgorithm: 'aes256-gcm',
+              keyEncryptionAlgorithm: 'rsa-oaep-256',
+            },
+          },
+        })
+      );
+      expect(created.status).toBe(201);
+      const saved = await responseBody<{ config: SAMLSPConfig }>(created);
+      expect(await applySAMLAssertionEncryptionPolicy(assertionXml, saved.config)).toContain(
+        'EncryptedAssertion'
+      );
+    });
+    it('allows incomplete disabled drafts but checks the stored configuration on enable', async () => {
+      const adapter = mocks.adapter;
+      if (!adapter) throw new Error('Missing test adapter');
+      const draft = { ...config, encryptNameID: true };
+      adapter.queryOne.mockResolvedValue(
+        providerRow({ enabled: 0, config_json: JSON.stringify(draft) })
+      );
+      expect(
+        (
+          await handleUpdateProvider(
+            context({
+              id: 'provider-a',
+              body: { expectedUpdatedAt, name: 'Draft' },
+            })
+          )
+        ).status
+      ).toBe(200);
+      adapter.execute.mockClear();
+      expect(
+        (
+          await handleUpdateProvider(
+            context({
+              id: 'provider-a',
+              body: { expectedUpdatedAt, enabled: true },
+            })
+          )
+        ).status
+      ).toBe(400);
+      expect(adapter.execute).not.toHaveBeenCalled();
+      const enabled = await handleUpdateProvider(
+        context({
+          id: 'provider-a',
+          body: {
+            expectedUpdatedAt,
+            enabled: true,
+            config: { encryptionCertificates: [certificate] },
+          },
+        })
+      );
+      expect(enabled.status).toBe(200);
+      expect(await enabled.json()).toMatchObject({
+        enabled: true,
+        config: { encryptNameID: true, encryptionCertificates: [certificate] },
+      });
+    });
+    it('rejects removal of the active certificate and preserves emergency disabling', async () => {
+      const adapter = mocks.adapter;
+      if (!adapter) throw new Error('Missing test adapter');
+      adapter.queryOne.mockResolvedValue(
+        providerRow({
+          config_json: JSON.stringify({
+            ...config,
+            encryptAssertions: true,
+            encryptionCertificate: certificate,
+          }),
+        })
+      );
+      const patch = { encryptionCertificate: '', encryptionCertificates: [] };
+      expect(
+        (
+          await handleUpdateProvider(
+            context({
+              id: 'provider-a',
+              body: { expectedUpdatedAt, config: patch },
+            })
+          )
+        ).status
+      ).toBe(400);
+      expect(adapter.execute).not.toHaveBeenCalled();
+      expect(
+        (
+          await handleUpdateProvider(
+            context({
+              id: 'provider-a',
+              body: { expectedUpdatedAt, enabled: false, config: patch },
+            })
+          )
+        ).status
+      ).toBe(200);
+    });
+    it('checks enabled creation while permitting disabled drafts and valid encryption sources', async () => {
+      const adapter = mocks.adapter;
+      if (!adapter) throw new Error('Missing test adapter');
+      const body = {
+        name: 'Encrypted SP',
+        providerType: 'saml_sp',
+        config: { ...config, encryptAssertions: true },
+      };
+      expect((await handleCreateProvider(context({ body }))).status).toBe(400);
+      expect(adapter.execute).not.toHaveBeenCalled();
+      expect(
+        (await handleCreateProvider(context({ body: { ...body, enabled: false } }))).status
+      ).toBe(201);
+      for (const source of [
+        { encryptionCertificate: certificate },
+        { encryptionCertificates: [certificate] },
+      ]) {
+        expect(
+          (
+            await handleCreateProvider(
+              context({ body: { ...body, config: { ...body.config, ...source } } })
+            )
+          ).status
+        ).toBe(201);
+      }
+    });
+  });
+
   it('does not accept client replay of metadata lifecycle state during provider update', async () => {
     mocks.adapter!.queryOne.mockResolvedValue(
       providerRow({
@@ -1844,6 +2193,89 @@ describe('SAML provider CRUD boundaries', () => {
     expect(mocks.audit).toHaveBeenCalled();
   });
 
+  it('preserves reviewed metadata and advanced settings across import then partial settings save', async () => {
+    const adapter = mocks.adapter;
+    if (!adapter) throw new Error('Missing test adapter');
+    const source = 'https://metadata.example.test/sp.xml';
+    const identityMapping = {
+      fieldMappingSetId: 'saml-sp',
+      destinationFieldPolicies: {
+        mail: 'optional',
+        displayName: 'optional',
+        eduPersonAffiliation: 'optional',
+      },
+    };
+    const settings = {
+      entityId: 'https://sp.example.test',
+      acsUrl: 'https://sp.example.test/old-acs',
+      allowedBindings: ['post'],
+      identityMapping,
+      assertionValiditySeconds: 480,
+      signResponses: false,
+      signAssertions: true,
+      metadataUrl: source,
+      metadataRefreshPolicy: { mode: 'manual', intervalSeconds: 7200 },
+      extension: { preserve: true },
+    };
+    adapter.queryOne.mockResolvedValue(providerRow({ config_json: JSON.stringify(settings) }));
+    const metadataXml = validSpMetadata();
+    const importedResponse = await handleImportMetadata(
+      context({
+        id: 'provider-a',
+        body: {
+          expectedUpdatedAt: new Date(1_700_000_001_000).toISOString(),
+          metadataXml,
+          metadataUrl: source,
+        },
+      })
+    );
+    expect(importedResponse.status).toBe(200);
+    const imported = await responseBody<{ config: Record<string, unknown>; updatedAt: string }>(
+      importedResponse
+    );
+    expect(imported.config).toMatchObject({
+      assertionValiditySeconds: 480,
+      signResponses: false,
+      signAssertions: true,
+      identityMapping,
+      metadataXml,
+      metadataUrl: source,
+      metadataRefreshPolicy: { mode: 'manual', intervalSeconds: 7200 },
+      extension: { preserve: true },
+    });
+    expect(mocks.safeFetchText).not.toHaveBeenCalled();
+    adapter.queryOne.mockResolvedValue(
+      providerRow({
+        config_json: JSON.stringify(imported.config),
+        updated_at: Date.parse(imported.updatedAt),
+      })
+    );
+    const response = await handleUpdateProvider(
+      context({
+        id: 'provider-a',
+        body: {
+          expectedUpdatedAt: imported.updatedAt,
+          config: { assertionValiditySeconds: 600, metadataRefreshPolicy: { mode: 'automatic' } },
+        },
+      })
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      config: {
+        ...imported.config,
+        assertionValiditySeconds: 600,
+        metadataRefreshPolicy: {
+          mode: 'automatic',
+          intervalSeconds: 7200,
+        },
+      },
+    });
+    expect(String(adapter.execute.mock.calls.at(-1)?.[0])).toContain('AND updated_at = ?');
+    const parameters: unknown = adapter.execute.mock.calls.at(-1)?.[1];
+    if (!Array.isArray(parameters)) throw new Error('Missing update parameters');
+    expect(parameters.at(-1)).toBe(Date.parse(imported.updatedAt));
+  });
+
   it('fetches HTTPS metadata with a bounded response size', async () => {
     mocks.adapter!.queryOne.mockResolvedValue(providerRow());
     mocks.safeFetchText.mockResolvedValue(validSpMetadata());
@@ -2339,6 +2771,56 @@ describe('SAML provider CRUD boundaries', () => {
     expect(mocks.adapter!.execute).toHaveBeenCalledTimes(1);
     expect(String(mocks.adapter!.execute.mock.calls[0]?.[0])).toContain('AND updated_at = ?');
     expect(mocks.adapter!.execute.mock.calls[0]?.[1]?.at(-1)).toBe(1_700_000_001_000);
+  });
+
+  it('updates only refresh mode while preserving its stored interval and operational state', async () => {
+    const adapter = mocks.adapter;
+    if (!adapter) throw new Error('Expected adapter fixture');
+    adapter.queryOne.mockResolvedValue(
+      providerRow({
+        config_json: JSON.stringify({
+          entityId: 'https://sp.example.test',
+          acsUrl: 'https://sp.example.test/acs',
+          allowedBindings: ['post'],
+          identityMapping: {
+            fieldMappingSetId: 'saml-sp',
+            destinationFieldPolicies: {
+              mail: 'optional',
+              displayName: 'optional',
+              eduPersonAffiliation: 'optional',
+            },
+          },
+          metadataUrl: 'https://metadata.example.test/sp.xml',
+          metadataRefreshPolicy: {
+            mode: 'automatic',
+            intervalSeconds: 7200,
+            sourceState: 'healthy',
+            consecutiveFailures: 2,
+          },
+        }),
+      })
+    );
+    const response = await handleUpdateProvider(
+      context({
+        id: 'provider-a',
+        body: {
+          expectedUpdatedAt: new Date(1_700_000_001_000).toISOString(),
+          config: { metadataRefreshPolicy: { mode: 'manual' } },
+        },
+      })
+    );
+    const body: unknown = await response.json();
+    expect(response.status, JSON.stringify(body)).toBe(200);
+    expect(body).toMatchObject({
+      config: {
+        metadataRefreshPolicy: {
+          mode: 'manual',
+          intervalSeconds: 7200,
+          sourceState: 'healthy',
+          consecutiveFailures: 2,
+        },
+      },
+    });
   });
 
   it('keeps last-known-good metadata when a manual refresh returns expired metadata', async () => {

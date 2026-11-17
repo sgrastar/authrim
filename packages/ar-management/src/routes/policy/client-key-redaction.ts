@@ -2,8 +2,8 @@
  * What the policy API hands back of a client's keys.
  *
  * A client contract keeps the client's JWKS (`encryption.jwks`) for encrypting tokens to it. That is
- * a public key set, but the profile PUT does not refuse a private member (`d`, `k`…) or a symmetric
- * (`oct`) key inside it, so the responses that echo the contract take them out. Only the places
+ * a public key set, and profile PUT rejects private members (`d`, `k`…) and symmetric (`oct`) keys.
+ * Responses also remove them defensively from historical records. Only the places
  * that hold a key set are touched; the rest of the contract is returned as stored.
  */
 

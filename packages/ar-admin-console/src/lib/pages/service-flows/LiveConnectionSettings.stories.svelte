@@ -18,14 +18,27 @@
 		component: LiveConnectionSettingsHarness,
 		parameters: { layout: 'fullscreen' }
 	});
-	function fixture(options: { auth?: string; enabled?: boolean; mapping?: boolean } = {}) {
+	function fixture(
+		options: { auth?: string; enabled?: boolean; mapping?: boolean; advanced?: boolean } = {}
+	) {
 		let rp: ClientDetail = {
 			id: 'portal',
 			name: 'Staff portal',
 			redirectUris: ['https://portal.example.test/callback'],
 			applicationType: 'web',
 			authMethod: options.auth ?? 'client_secret_basic',
-			pkce: true
+			pkce: true,
+			updatedAt: 1000,
+			...(options.auth === 'private_key_jwt' ? { jwksUri: 'https://keys.example.test/jwks' } : {}),
+			...(options.advanced
+				? {
+						advanced: {
+							description: 'Stored note',
+							id_token_signed_response_alg: 'PS256',
+							default_audience: 'https://api.example.test'
+						}
+					}
+				: {})
 		};
 		let sp: SamlServiceProvider = {
 			id: 'portal',
@@ -35,7 +48,18 @@
 			enabled: options.enabled ?? false,
 			updatedAt: '2026-11-16T00:00:00.000Z',
 			hasMapping: options.mapping ?? true,
-			trustBlocked: false
+			trustBlocked: false,
+			...(options.advanced
+				? {
+						config: {
+							assertionValiditySeconds: 480,
+							authnContextClassRefMode: 'assurance',
+							signResponses: false,
+							signAssertions: true,
+							extension: 'preserve'
+						}
+					}
+				: {})
 		};
 		let version = 0;
 		const nextVersion = () => `2026-11-17T00:00:0${++version}.000Z`;
@@ -47,14 +71,25 @@
 					name: input.client_name ?? rp.name,
 					redirectUris: input.redirect_uris ?? rp.redirectUris,
 					authMethod: input.token_endpoint_auth_method ?? rp.authMethod,
-					pkce: input.require_pkce ?? rp.pkce
+					pkce: input.require_pkce ?? rp.pkce,
+					...(input.jwks_uri !== undefined ? { jwksUri: input.jwks_uri } : {}),
+					...(input.jwks !== undefined ? { jwks: input.jwks } : {}),
+					advanced: { ...rp.advanced, ...input.advanced },
+					...(rp.updatedAt !== undefined ? { updatedAt: rp.updatedAt + 1 } : {})
 				};
 				return { ...rp };
 			})
 		};
 		async function writeServiceProvider(_id: string, input: ServiceProviderBasicUpdate) {
 			if (input.expectedUpdatedAt !== sp.updatedAt) throw new ApiError(409, 'conflict', 'Conflict');
-			sp = { ...sp, name: input.name ?? sp.name, ...input.config, updatedAt: nextVersion() };
+			sp = {
+				...sp,
+				name: input.name ?? sp.name,
+				entityId: input.config?.entityId ?? sp.entityId,
+				acsUrl: input.config?.acsUrl ?? sp.acsUrl,
+				config: { ...sp.config, ...input.config },
+				updatedAt: nextVersion()
+			};
 			return { ...sp };
 		}
 
@@ -80,6 +115,9 @@
 	}
 	const rp = fixture();
 	const privateKey = fixture({ auth: 'private_key_jwt' });
+	const advanced = fixture({ advanced: true });
+	const advancedSp = fixture({ advanced: true });
+	const transition = fixture();
 	const publicClient = fixture({ auth: 'none' });
 	const sp = fixture();
 	const bind = fixture({ mapping: false });
@@ -141,7 +179,7 @@
 </script>
 
 <Story
-	name="RP actual values save and reload with secret reuse only"
+	name="RP actual values save and reload with secret reuse"
 	args={{ ...rp, onback: back }}
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
@@ -149,7 +187,7 @@
 		await authPanel(canvasElement);
 		await expect(canvas.queryByRole('combobox', { name: t('sf.row.appType') })).toBeNull();
 		const auth = canvas.getByRole('combobox', { name: t('sf.rp.authLabel') });
-		await expect(within(auth).queryByRole('option', { name: t('sf.rp.auth.jwt') })).toBeNull();
+		await expect(within(auth).getByRole('option', { name: t('sf.rp.auth.jwt') })).toBeEnabled();
 		await userEvent.selectOptions(auth, 'client_secret_post');
 		const redirect = canvas.getByRole('textbox', {
 			name: t('list.item', { label: t('sf.part.rp-redirect'), n: 1 })
@@ -160,6 +198,7 @@
 		await canvas.findByText(t('sf.live.saved'));
 		await expect(rp.clients.updateBasics).toHaveBeenCalledWith('portal', {
 			client_name: 'Renamed portal',
+			expected_updated_at: 1000,
 			redirect_uris: ['https://portal.example.test/new'],
 			token_endpoint_auth_method: 'client_secret_post'
 		});
@@ -190,20 +229,26 @@
 />
 
 <Story
-	name="Private key authentication remains read only and independent basic edit works"
+	name="Private key authentication and its public key URL remain editable"
 	args={{ ...privateKey }}
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		await rename(canvas, 'Key client renamed');
 		await authPanel(canvasElement);
-		await expect(
-			canvas.getByText(t('sf.live.authReadonly', { method: 'private_key_jwt' }))
-		).toBeVisible();
-		await expect(canvas.queryByRole('combobox', { name: t('sf.rp.authLabel') })).toBeNull();
+		await expect(canvas.getByRole('combobox', { name: t('sf.rp.authLabel') })).toHaveValue(
+			'private_key_jwt'
+		);
+		const uri = canvas.getByRole('textbox', { name: t('cs.row.jwksUri') });
+		await expect(uri).toHaveValue('https://keys.example.test/jwks');
+		await userEvent.clear(uri);
+		await userEvent.type(uri, 'https://rotated.example.test/jwks');
 		await userEvent.click(canvas.getByRole('button', { name: t('common.save') }));
 		await canvas.findByText(t('sf.live.saved'));
 		await expect(privateKey.clients.updateBasics).toHaveBeenCalledWith('portal', {
-			client_name: 'Key client renamed'
+			client_name: 'Key client renamed',
+			expected_updated_at: 1000,
+			jwks_uri: 'https://rotated.example.test/jwks',
+			jwks: null
 		});
 	}}
 />
@@ -448,5 +493,111 @@
 		await expect(canvas.queryByRole('button', { name: t('cm.saveBind') })).toBeNull();
 		await expect(canvas.queryByRole('button', { name: t('cm.create') })).toBeNull();
 		await expect(updateOnly.clients.updateBasics).not.toHaveBeenCalled();
+	}}
+/>
+
+<Story
+	name="Stored advanced values survive partial save discard and reopen"
+	args={{ ...advanced }}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findByRole('textbox', { name: t('sf.row.name') });
+		const profile = canvas.getByText(t('cs.part.rp-profile'), { selector: '.disclosure__title' });
+		await userEvent.click(profile);
+		const description = canvas.getByRole('textbox', { name: t('cs.row.description') });
+		await waitFor(() => expect(description).toBeVisible());
+		await expect(description).toHaveValue('Stored note');
+		await userEvent.clear(description);
+		await userEvent.type(description, 'Changed note');
+		await userEvent.click(canvas.getByRole('button', { name: t('common.discard') }));
+		await expect(description).toHaveValue('Stored note');
+		await userEvent.clear(description);
+		await userEvent.type(description, 'Saved note');
+		await userEvent.click(canvas.getByRole('button', { name: t('common.save') }));
+		await canvas.findByText(t('sf.live.saved'));
+		await expect(advanced.clients.updateBasics).toHaveBeenLastCalledWith('portal', {
+			expected_updated_at: 1000,
+			advanced: { description: 'Saved note' }
+		});
+		await userEvent.click(canvas.getByRole('button', { name: t('sf.live.reload') }));
+		await waitFor(() => expect(advanced.clients.get).toHaveBeenCalledTimes(2));
+		await expect(description).toHaveValue('Saved note');
+		await userEvent.click(
+			canvas.getByText(t('cs.part.rp-tokens'), { selector: '.disclosure__title' })
+		);
+		const alg = canvas.getByRole('combobox', { name: t('cs.row.idTokenAlg') });
+		await waitFor(() => expect(alg).toBeVisible());
+		await expect(alg).toHaveValue('PS256');
+		const details = alg.closest('details');
+		if (!details) throw new Error('Expected token disclosure');
+		await waitFor(() => expect(details.getAnimations({ subtree: true })).toHaveLength(0));
+		await noPrototype(canvas);
+	}}
+/>
+
+<Story
+	name="Key auth validates URI and keeps a pending or conflicting draft"
+	args={{ ...transition }}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findByRole('textbox', { name: t('sf.row.name') });
+		await authPanel(canvasElement);
+		const auth = canvas.getByRole('combobox', { name: t('sf.rp.authLabel') });
+		await userEvent.selectOptions(auth, 'private_key_jwt');
+		const uri = canvas.getByRole('textbox', { name: t('cs.row.jwksUri') });
+		const save = canvas.getByRole('button', { name: t('common.save') });
+		await expect(save).toBeDisabled();
+		await userEvent.type(uri, 'http://keys.example.test/jwks');
+		await expect(save).toBeDisabled();
+		await userEvent.clear(uri);
+		await userEvent.type(uri, 'https://keys.example.test/jwks');
+		let release: (() => void) | undefined;
+		transition.clients.updateBasics.mockImplementationOnce(async () => {
+			await new Promise<void>((resolve) => {
+				release = resolve;
+			});
+			throw new ApiError(409, 'conflict', 'Changed');
+		});
+		await userEvent.click(save);
+		await expect(uri).toBeDisabled();
+		await expect(save).toBeDisabled();
+		await expect(transition.clients.updateBasics).toHaveBeenCalledTimes(1);
+		if (!release) throw new Error('Expected pending update');
+		release();
+		await canvas.findByText(t('sf.live.conflict'));
+		await expect(auth).toHaveValue('private_key_jwt');
+		await expect(uri).toHaveValue('https://keys.example.test/jwks');
+		await expect(transition.clients.get).toHaveBeenCalledTimes(1);
+		await userEvent.click(canvas.getByRole('button', { name: t('common.discard') }));
+		await expect(auth).toHaveValue('client_secret_basic');
+	}}
+/>
+
+<Story
+	name="SAML assertion settings reopen their stored nondefault values"
+	args={{ kind: 'sp', ...advancedSp }}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findByRole('textbox', { name: t('sf.row.name') });
+		await userEvent.click(
+			canvas.getByText(t('cs.part.assertion'), { selector: '.disclosure__title' })
+		);
+		const lifetime = canvas.getByRole('textbox', { name: t('cs.row.assertionLifetime') });
+		await waitFor(() => expect(lifetime).toBeVisible());
+		await expect(lifetime).toHaveValue('480');
+		const context = canvas.getByRole('combobox', { name: t('cs.row.authnContextMode') });
+		await expect(context).toHaveValue('assurance');
+		await userEvent.clear(lifetime);
+		await userEvent.type(lifetime, '600');
+		await userEvent.click(canvas.getByRole('button', { name: t('common.save') }));
+		await canvas.findByText(t('sf.live.saved'));
+		await expect(advancedSp.saml.updateServiceProvider).toHaveBeenLastCalledWith('portal', {
+			expectedUpdatedAt: '2026-11-16T00:00:00.000Z',
+			config: { assertionValiditySeconds: 600 }
+		});
+		await userEvent.click(canvas.getByRole('button', { name: t('sf.live.reload') }));
+		await waitFor(() => expect(advancedSp.saml.getServiceProvider).toHaveBeenCalledTimes(2));
+		await expect(lifetime).toHaveValue('600');
+		await expect(context).toHaveValue('assurance');
 	}}
 />

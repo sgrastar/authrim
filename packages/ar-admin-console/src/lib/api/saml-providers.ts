@@ -1,3 +1,4 @@
+import { SP_FIELDS, IDP_FIELDS, record } from '#lib/pages/service-flows/advanced-settings.js';
 import { API_BASE_URL, adminFetch } from './admin-request';
 import { tenantScope } from '#lib/auth/tenant-scope.svelte.js';
 import { StepUpCancelledError, stepUpHeaders, withStepUp } from './admin-step-up';
@@ -43,6 +44,9 @@ export interface SamlMetadataImportResult extends SamlProviderStatus {
 	address: string;
 	certificate: string;
 	metadataUrl?: string;
+	config?: Record<string, unknown>;
+	hasMetadataUrl?: boolean;
+	certificateValidation?: Record<string, unknown>;
 }
 export interface SamlMetadataClient {
 	preview(
@@ -80,6 +84,9 @@ export interface SamlProviderStatus {
 	trustBlocked: boolean;
 }
 export interface SamlServiceProvider extends SamlProviderStatus {
+	config?: Record<string, unknown>;
+	hasMetadataUrl?: boolean;
+	certificateValidation?: Record<string, unknown>;
 	name: string;
 	entityId: string;
 	acsUrl: string;
@@ -88,7 +95,7 @@ export interface SamlServiceProvider extends SamlProviderStatus {
 export interface ServiceProviderBasicUpdate {
 	name?: string;
 	expectedUpdatedAt: string;
-	config?: { entityId?: string; acsUrl?: string };
+	config?: { entityId?: string; acsUrl?: string } & Record<string, unknown>;
 }
 export interface SamlSettingsClient {
 	getServiceProvider(id: string): Promise<SamlServiceProvider>;
@@ -105,6 +112,9 @@ export interface SamlActivationClient {
 }
 
 export interface SamlIdentityProvider extends SamlProviderStatus {
+	config?: Record<string, unknown>;
+	hasMetadataUrl?: boolean;
+	certificateValidation?: Record<string, unknown>;
 	id: string;
 	name: string;
 	enabled: boolean;
@@ -114,7 +124,7 @@ export interface SamlIdentityProvider extends SamlProviderStatus {
 	certificate: string;
 	metadataUrl?: string;
 }
-export interface IdentityProviderConfig {
+export interface IdentityProviderConfig extends Record<string, unknown> {
 	entityId: string;
 	ssoUrl: string;
 	certificate: string;
@@ -134,7 +144,7 @@ export interface SamlIdentityProvidersClient extends SamlActivationClient {
 	createIdentityProvider(input: CreateIdentityProviderInput): Promise<{ id: string }>;
 	updateIdentityProvider(
 		id: string,
-		input: { name: string; expectedUpdatedAt: string; config: IdentityProviderConfig }
+		input: { name: string; expectedUpdatedAt: string; config: Partial<IdentityProviderConfig> }
 	): Promise<SamlIdentityProvider>;
 }
 
@@ -233,7 +243,13 @@ function serviceProviderDetail(value: unknown): SamlServiceProvider {
 		name: row.name,
 		entityId: config.entityId,
 		acsUrl: config.acsUrl,
-		metadataUrl: typeof config.metadataUrl === 'string' ? config.metadataUrl : undefined
+		metadataUrl: typeof config.metadataUrl === 'string' ? config.metadataUrl : undefined,
+		hasMetadataUrl: typeof config.metadataUrl === 'string' && !!config.metadataUrl,
+		certificateValidation: record(config.certificateValidation),
+		config: projectConfig(
+			config,
+			SP_FIELDS.map(({ key }) => key)
+		)
 	};
 }
 
@@ -255,7 +271,13 @@ function identityProviderFromRow(value: unknown): SamlIdentityProvider {
 		entityId: typeof config.entityId === 'string' ? config.entityId : '',
 		ssoUrl: typeof config.ssoUrl === 'string' ? config.ssoUrl : '',
 		certificate: typeof config.certificate === 'string' ? config.certificate : '',
-		metadataUrl: typeof config.metadataUrl === 'string' ? config.metadataUrl : undefined
+		metadataUrl: typeof config.metadataUrl === 'string' ? config.metadataUrl : undefined,
+		hasMetadataUrl: typeof config.metadataUrl === 'string' && !!config.metadataUrl,
+		certificateValidation: record(config.certificateValidation),
+		config: projectConfig(
+			config,
+			IDP_FIELDS.map(({ key }) => key)
+		)
 	};
 }
 
@@ -275,7 +297,16 @@ export const httpSamlProviders: SamlProvidersClient &
 				expectedUpdatedAt: input.expectedUpdatedAt,
 				name: input.name,
 				...(input.config
-					? { config: { entityId: input.config.entityId, acsUrl: input.config.acsUrl } }
+					? {
+							config: {
+								...projectConfig(
+									input.config,
+									SP_FIELDS.map(({ key }) => key)
+								),
+								entityId: input.config.entityId,
+								acsUrl: input.config.acsUrl
+							}
+						}
 					: {})
 			})
 		);
@@ -467,7 +498,26 @@ export const httpSamlMetadata: SamlMetadataClient = {
 			entityId: config.entityId,
 			address,
 			certificate: typeof config.certificate === 'string' ? config.certificate : '',
-			metadataUrl: typeof config.metadataUrl === 'string' ? config.metadataUrl : undefined
+			metadataUrl: typeof config.metadataUrl === 'string' ? config.metadataUrl : undefined,
+			hasMetadataUrl: typeof config.metadataUrl === 'string' && !!config.metadataUrl,
+			certificateValidation: record(config.certificateValidation),
+			config: projectConfig(
+				config,
+				(row.providerType === 'saml_sp' ? SP_FIELDS : IDP_FIELDS).map(({ key }) => key)
+			)
 		};
 	}
 };
+/** Copy only public settings, including nested policy siblings for safe partial merges. */
+function projectConfig(config: Record<string, unknown>, paths: string[]): Record<string, unknown> {
+	return Object.fromEntries(
+		[...new Set(paths.map((key) => key.split('.')[0]))]
+			.filter((key) => key in config)
+			.map((key) => [
+				key,
+				key === 'metadataRefreshPolicy' || key === 'authnContextPolicy'
+					? record(config[key])
+					: config[key]
+			])
+	);
+}
