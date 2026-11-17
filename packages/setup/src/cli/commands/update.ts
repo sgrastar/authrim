@@ -12,7 +12,7 @@ import {
 
 import chalk from 'chalk';
 import ora from '../timed-ora.js';
-import { setPhaseTimingTarget } from '../../core/phase-timings.js';
+import { setPhaseTimingTarget, timePhase } from '../../core/phase-timings.js';
 import { confirm } from '@inquirer/prompts';
 import { resolve, join } from 'node:path';
 import { existsSync } from 'node:fs';
@@ -972,6 +972,8 @@ async function deployReleaseUiWorkers(input: {
         skipBuild: input.skipBuild,
         deployConfigLockProof: input.deployConfigLockProof,
         workerScriptOwnership: input.workerScriptOwnership,
+        // The spinner above times the whole UI Worker step, preparation and checks included.
+        timePhase: false,
       });
       if (
         !result.success ||
@@ -1734,7 +1736,13 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
       try {
         const { attempt, input } = await logArchiveReadinessInput();
         const sentAt = Date.now();
-        startedLogArchiveCheck = { attempt, sentAt, proof: await startLogArchiveReadiness(input) };
+        startedLogArchiveCheck = {
+          attempt,
+          sentAt,
+          proof: await timePhase('Starting the log archive check', () =>
+            startLogArchiveReadiness(input)
+          ),
+        };
       } catch (error) {
         startedLogArchiveCheck = null;
         console.log(
@@ -1746,30 +1754,33 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
     };
     const verifyUpdatedLogArchive = async () => {
       if (options.databaseOnly || options.dryRun) return;
-      const { attempt, pending, input } = await logArchiveReadinessInput();
-      const started =
-        startedLogArchiveCheck?.attempt.attemptId === attempt.attemptId
-          ? startedLogArchiveCheck
-          : null;
-      startedLogArchiveCheck = null;
-      const proof =
-        started?.proof ??
-        (await waitForLogArchiveReadiness({
-          ...input,
-          ...(started ? { probeSentAt: started.sentAt } : {}),
-        }));
-      workingLock = {
-        ...workingLock,
-        logArchive: {
-          ...pending,
-          activation: {
-            ...pending.activation,
-            pendingRuntimeProbe: undefined,
-            runtimeProof: proof,
+      // Timed as one step, so its wait (up to ~5 min) is not left outside the timed steps.
+      await timePhase('Waiting for the log archive check', async () => {
+        const { attempt, pending, input } = await logArchiveReadinessInput();
+        const started =
+          startedLogArchiveCheck?.attempt.attemptId === attempt.attemptId
+            ? startedLogArchiveCheck
+            : null;
+        startedLogArchiveCheck = null;
+        const proof =
+          started?.proof ??
+          (await waitForLogArchiveReadiness({
+            ...input,
+            ...(started ? { probeSentAt: started.sentAt } : {}),
+          }));
+        workingLock = {
+          ...workingLock,
+          logArchive: {
+            ...pending,
+            activation: {
+              ...pending.activation,
+              pendingRuntimeProbe: undefined,
+              runtimeProof: proof,
+            },
           },
-        },
-      };
-      await saveLockFile(workingLock, lockPath);
+        };
+        await saveLockFile(workingLock, lockPath);
+      });
     };
 
     // The migration plan addresses D1 targets by name, while the lock retains their immutable
