@@ -2536,6 +2536,11 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
       signupInvitation = started;
     }
     const emailVerifiedByInvitation = signupInvitation?.emailVerified === true;
+    if (normalizedEmail && !emailVerifiedByInvitation) {
+      return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS, {
+        extensions: { reason: 'signup_email_check_required' },
+      });
+    }
 
     if (!user) {
       // Create new user

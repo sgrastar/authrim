@@ -394,8 +394,8 @@ describe('ITP session token lifecycle', () => {
     expect(response.status).toBe(200);
     expect(body).toMatchObject({
       expires_in: 300,
-      session_id: '0_session_123',
     });
+    expect(body).not.toHaveProperty('session_id');
     expect(typeof body.token).toBe('string');
     expect(mocks.challengeStore.storeChallengeRpc).toHaveBeenCalledWith({
       id: `session_token:${body.token}`,
@@ -595,6 +595,31 @@ describe('ITP session token lifecycle', () => {
     });
     expect(mocks.sessionStore.getSessionRpc).not.toHaveBeenCalled();
     expect(mocks.sessionStore.createSessionRpc).not.toHaveBeenCalled();
+  });
+
+  it('never returns the OP session when RP session creation fails', async () => {
+    const context = createContext();
+    context.req.json = vi.fn(async () => ({
+      token: 'session-token-123',
+      rp_origin: 'https://rp.example.com',
+    }));
+    mocks.challengeStore.consumeChallengeRpc.mockResolvedValue({
+      challenge: 'session-token-123',
+      userId: 'user_123',
+      metadata: { sessionId: '0_session_123', rpOrigin: 'https://rp.example.com' },
+    });
+    mocks.sessionStore.getSessionRpc.mockResolvedValue({
+      id: '0_session_123',
+      userId: 'user_123',
+      expiresAt: 1700003600000,
+      data: {},
+    });
+    mocks.sessionStore.createSessionRpc.mockRejectedValue(new Error('storage unavailable'));
+    const { verifySessionTokenHandler } = await import('../session-management');
+
+    const response = await verifySessionTokenHandler(context as never);
+    expect(response.status).toBe(500);
+    expect(await response.json()).not.toHaveProperty('session_id');
   });
 
   it('refreshes a cookie session with the requested active TTL extension', async () => {

@@ -31,8 +31,6 @@
 	const single = $derived(options.length < 2);
 	const metaKey = (kind: ScopeKind) =>
 		kind === 'platform' ? 'scope.meta.platform' : 'scope.meta.tenant';
-	const hintKey = (kind: ScopeKind) =>
-		kind === 'platform' ? 'scope.hint.platform' : 'scope.hint.tenant';
 </script>
 
 {#snippet face(option: ScopeOption)}
@@ -59,7 +57,7 @@
 				<ul class="options">
 					{#each options as option, index (option.id)}
 						{#if index > 0 && options[index - 1].kind !== option.kind}
-							<li class="sep" role="presentation"></li>
+							<li class="sep" aria-hidden="true"></li>
 						{/if}
 						<li>
 							<button
@@ -77,7 +75,9 @@
 								>
 								<span class="option__body">
 									<span class="option__name">{option.name}</span>
-									<span class="option__hint">{t(hintKey(option.kind))}</span>
+									{#if option.kind === 'platform'}
+										<span class="option__hint">{t('scope.hint.platform')}</span>
+									{/if}
 								</span>
 								{#if option.id === current.id}
 									<span class="option__check"><Icon name="check" /></span>
@@ -171,6 +171,9 @@
 	.options {
 		margin: 0;
 		padding: 0;
+		max-height: min(420px, calc(100dvh - 120px));
+		overflow-y: auto;
+		overscroll-behavior: contain;
 		list-style: none;
 	}
 

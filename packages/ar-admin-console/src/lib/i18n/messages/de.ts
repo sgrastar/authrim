@@ -214,7 +214,6 @@ export const de = {
 	'scope.platform.name': 'Alle Mandanten (Plattform)',
 	'scope.meta.tenant': 'Mandant',
 	'scope.meta.platform': 'Alle Mandanten',
-	'scope.hint.tenant': 'Änderungen bleiben innerhalb dieses Mandanten.',
 	'scope.hint.platform':
 		'Änderungen betreffen die Administratoren und die Infrastruktur aller Mandanten.',
 	'scope.badge.platform': 'Plattform',

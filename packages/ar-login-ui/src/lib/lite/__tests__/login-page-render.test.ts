@@ -50,6 +50,8 @@ function page(
 		form?: unknown;
 		passkey?: unknown;
 		available?: unknown;
+		purpose?: 'login' | 'signup';
+		invitedEmail?: string | null;
 		backScreens?: string[];
 		cancelAvailable?: boolean;
 	} = {}
@@ -68,7 +70,8 @@ function page(
 				codeEntry: extra.codeEntry ?? null,
 				passkey: extra.passkey ?? null,
 				available: extra.available ?? { mailOtp: true, totp: true, passkey: true },
-				purpose: 'login',
+				purpose: extra.purpose ?? 'login',
+				invitedEmail: extra.invitedEmail ?? null,
 				backScreens: extra.backScreens ?? [],
 				cancelAvailable: extra.cancelAvailable ?? false,
 				pow,
@@ -324,6 +327,14 @@ describe('the lite sign-in page as drawn', () => {
 		);
 		expect(body).toMatch(/<button[^>]*formnovalidate[^>]*\/passkey_start"[^>]*>Use passkey/u);
 		expect(body).toMatch(/<button[^>]*\/totp_start"[^>]*>Use authenticator/u);
+	});
+
+	it('offers email-bearing passkey signup only with an invited mailbox proof flow', () => {
+		const fields = [field({ blockType: 'auth_widget', field: 'p', authMethod: 'passkey' })];
+		expect(page(fields, null, { purpose: 'signup' }).body).not.toContain('/passkey_start');
+		expect(
+			page(fields, null, { purpose: 'signup', invitedEmail: 'invited@example.com' }).body
+		).toContain('/passkey_start');
 	});
 
 	it('draws only the halves of the email-code-or-authenticator part that are on', () => {

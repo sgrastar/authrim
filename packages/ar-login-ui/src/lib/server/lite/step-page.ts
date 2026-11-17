@@ -556,7 +556,7 @@ export async function liteStepPage(event: RequestEvent) {
 		available: {
 			mailOtp: available('mail_otp'),
 			totp: available('totp'),
-			passkey: available('passkey')
+			passkey: available('passkey') && (purpose === 'login' || Boolean(keptInvite?.email))
 		},
 		// A sign-up held until its account exists: its Continue names the hold.
 		provisioning: held ? { id: held.id } : null,

@@ -4391,6 +4391,7 @@ describe('Authorization Handler', () => {
               'iat',
               'exp',
               'auth_time',
+              'token_use',
               'nonce',
               'authrim_consent_generation',
               // What the grant was approved to release (a trusted app: everything).

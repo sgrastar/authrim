@@ -40,6 +40,7 @@ import {
   resolveAuditClientId,
   resolveAuditSessionRef,
   resolveAuditSubjectUserId,
+  sessionDigest,
 } from './audit-log-subject';
 import {
   createLogIcebergPolicySnapshotObjectStore,
@@ -1184,7 +1185,17 @@ export async function createAuditLog(
   }
   if (env.AUDIT_RUNTIME_PORTS) {
     try {
-      await env.AUDIT_RUNTIME_PORTS.append({ ...entry, id, tenantId, createdAt: createdAtMs });
+      // A session resource ID is a live cookie credential. Keep only its correlatable digest
+      // before handing the entry to any deployment-owned audit writer.
+      const resourceId =
+        entry.resource === 'session' ? await sessionDigest(entry.resourceId) : entry.resourceId;
+      await env.AUDIT_RUNTIME_PORTS.append({
+        ...entry,
+        id,
+        tenantId,
+        createdAt: createdAtMs,
+        resourceId,
+      });
     } catch {
       throw new AuditLogDeliveryError('audit_log_runtime_write_failed', entry.action, tenantId);
     }

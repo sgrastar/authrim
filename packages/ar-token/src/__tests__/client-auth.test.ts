@@ -529,6 +529,8 @@ function resetAllMocks() {
       iss: 'https://service.example.com',
       sub: 'service-account',
       aud: 'https://auth.example.com/token',
+      scope: 'api:read',
+      resource: 'svc://service-api',
       exp: Math.floor(Date.now() / 1000) + 300,
       iat: Math.floor(Date.now() / 1000),
     },
@@ -6798,7 +6800,7 @@ describe('Client Authentication Tests', () => {
       );
       mocks.mockValidateJWTBearerAssertion.mockResolvedValueOnce({
         valid: true,
-        claims: { iss: 'service-a', sub: 'service-account' },
+        claims: { iss: 'service-a', sub: 'service-account', scope: 'api:read' },
       });
       const app = await requestJWTBearer();
       expect(app.response.status).toBe(400);
@@ -6818,6 +6820,10 @@ describe('Client Authentication Tests', () => {
 
     describe('identity assurance (IAL)', () => {
       it('issues a scope the map holds to a level when assurance is off, reading no evidence', async () => {
+        mocks.mockValidateJWTBearerAssertion.mockResolvedValueOnce({
+          valid: true,
+          claims: { iss: 'https://service.example.com', sub: 'service-account', scope: 'openid' },
+        });
         const evidence = useEvidenceAdapter(mocks.mockD1Adapter(), []);
         setAssuranceSettings({
           'assurance.scope_ial_requirements': JSON.stringify({ openid: 'IAL2' }),
@@ -6830,6 +6836,10 @@ describe('Client Authentication Tests', () => {
       });
 
       it('does not issue a scope the map holds to a level: the subject has no evidence here', async () => {
+        mocks.mockValidateJWTBearerAssertion.mockResolvedValueOnce({
+          valid: true,
+          claims: { iss: 'https://service.example.com', sub: 'service-account', scope: 'openid' },
+        });
         const evidence = useEvidenceAdapter(mocks.mockD1Adapter(), [evidenceRow('IAL3')]);
         setAssuranceSettings({
           'assurance.enabled': true,
@@ -6878,7 +6888,7 @@ describe('Client Authentication Tests', () => {
 
       mocks.mockValidateJWTBearerAssertion.mockResolvedValueOnce({
         valid: true,
-        claims: { iss: 'https://unknown.example.com', sub: 'service-account' },
+        claims: { iss: 'https://unknown.example.com', sub: 'service-account', scope: 'api:read' },
       });
       const unknown = await requestJWTBearer();
       expect(unknown.response.status).toBe(400);
@@ -6889,6 +6899,10 @@ describe('Client Authentication Tests', () => {
     });
 
     it('rejects scopes outside the trusted issuer policy', async () => {
+      mocks.mockValidateJWTBearerAssertion.mockResolvedValueOnce({
+        valid: true,
+        claims: { iss: 'https://service.example.com', sub: 'service-account', scope: 'api:write' },
+      });
       mocks.mockParseTrustedIssuers.mockReturnValueOnce(
         new Map([
           [
@@ -6930,6 +6944,32 @@ describe('Client Authentication Tests', () => {
       );
     });
 
+    it('rejects an assertion without a signed scope', async () => {
+      mocks.mockValidateJWTBearerAssertion.mockResolvedValueOnce({
+        valid: true,
+        claims: {
+          iss: 'https://service.example.com',
+          sub: 'service-account',
+          resource: 'svc://service-api',
+        },
+      });
+      const result = await requestJWTBearer();
+      expect(result.response.status).toBe(400);
+      expect(result.body).toMatchObject({ error: 'invalid_scope' });
+      expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+    });
+
+    it('rejects a requested resource absent from the signed assertion', async () => {
+      mocks.mockValidateJWTBearerAssertion.mockResolvedValueOnce({
+        valid: true,
+        claims: { iss: 'https://service.example.com', sub: 'service-account', scope: 'api:read' },
+      });
+      const result = await requestJWTBearer({ resource: 'svc://service-admin-api' });
+      expect(result.response.status).toBe(400);
+      expect(result.body).toMatchObject({ error: 'invalid_target' });
+      expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+    });
+
     it('fails closed when JWT bearer access token creation fails', async () => {
       mocks.mockCreateAccessToken.mockRejectedValueOnce(new Error('signing failed'));
       const result = await requestJWTBearer({ scope: 'api:read' });
@@ -6941,6 +6981,15 @@ describe('Client Authentication Tests', () => {
     });
 
     it('should issue JWT bearer access token for an explicit resource target', async () => {
+      mocks.mockValidateJWTBearerAssertion.mockResolvedValueOnce({
+        valid: true,
+        claims: {
+          iss: 'https://service.example.com',
+          sub: 'service-account',
+          scope: 'api:read',
+          resource: 'svc://service-admin-api',
+        },
+      });
       const response = await tokenHandler(
         createMockContext({
           method: 'POST',
@@ -6993,6 +7042,10 @@ describe('Client Authentication Tests', () => {
     });
 
     it('should reject JWT bearer when no request or trusted issuer target is configured', async () => {
+      mocks.mockValidateJWTBearerAssertion.mockResolvedValueOnce({
+        valid: true,
+        claims: { iss: 'https://service.example.com', sub: 'service-account', scope: 'api:read' },
+      });
       mocks.mockParseTrustedIssuers.mockReturnValue(
         new Map([
           [
@@ -7025,6 +7078,15 @@ describe('Client Authentication Tests', () => {
     });
 
     it('should reject JWT bearer resource outside trusted issuer allowed_resources', async () => {
+      mocks.mockValidateJWTBearerAssertion.mockResolvedValueOnce({
+        valid: true,
+        claims: {
+          iss: 'https://service.example.com',
+          sub: 'service-account',
+          scope: 'api:read',
+          resource: 'svc://other-api',
+        },
+      });
       const response = await tokenHandler(
         createMockContext({
           method: 'POST',

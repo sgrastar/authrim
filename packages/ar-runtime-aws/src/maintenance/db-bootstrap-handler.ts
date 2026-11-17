@@ -26,10 +26,16 @@ import { runSyntheticAwsAuthenticationRehearsal } from './authentication-rehears
 import { prepareBrowserSp } from './prepare-browser-sp';
 import { readBrowserRehearsalSnapshot } from './browser-rehearsal-snapshot';
 import { readCommittedMaintenanceActivation } from './inspect-restore';
+import {
+  countLegacyAuditSessionIds,
+  repairLegacyAuditSessionIds,
+} from '../storage/repair-audit-session-ids';
 import { normalizeAwsRuntimeUiConfig, type AwsRuntimeUiConfig } from '../ui/runtime-ui-config';
 import { normalizeAwsAuthStateConfig, type AwsAuthStateConfig } from '../storage/auth-state-config';
 import {
   countMaintenanceRows,
+  createMaintenanceSqlClient,
+  assertMaintenanceTls,
   DATABASE_FAMILIES,
   initializeMaintenanceDatabases,
   inspectMaintenanceTargets,
@@ -154,7 +160,9 @@ export function parseMaintenanceAction(event: unknown): {
     | 'inspect-restore'
     | 'verify'
     | 'authenticate'
-    | 'prepare-browser-sp';
+    | 'prepare-browser-sp'
+    | 'inspect-audit-session-ids'
+    | 'repair-audit-session-ids';
   evidence?: AwsRestoreActivationEvidence;
 } {
   if (!event || typeof event !== 'object' || Array.isArray(event)) invalid();
@@ -167,6 +175,8 @@ export function parseMaintenanceAction(event: unknown): {
       'verify',
       'authenticate',
       'prepare-browser-sp',
+      'inspect-audit-session-ids',
+      'repair-audit-session-ids',
     ].includes(String(input.action))
   )
     invalid();
@@ -182,7 +192,9 @@ export function parseMaintenanceAction(event: unknown): {
       | 'inspect-restore'
       | 'verify'
       | 'authenticate'
-      | 'prepare-browser-sp';
+      | 'prepare-browser-sp'
+      | 'inspect-audit-session-ids'
+      | 'repair-audit-session-ids';
     evidence?: AwsRestoreActivationEvidence;
   };
 }
@@ -450,6 +462,26 @@ export async function handler(event: unknown) {
           invalid();
       }
       const targets = databases(config, runtime);
+      if (
+        action.action === 'inspect-audit-session-ids' ||
+        action.action === 'repair-audit-session-ids'
+      ) {
+        stage = action.action;
+        const stateDb = createMaintenanceSqlClient(runtime.stateDatabaseUrl);
+        await stateDb.connect();
+        try {
+          await assertMaintenanceTls(stateDb);
+          const before = await countLegacyAuditSessionIds(stateDb);
+          if (action.action === 'inspect-audit-session-ids') {
+            return { status: 'audit-session-ids-inspected', before };
+          }
+          const result = await repairLegacyAuditSessionIds(stateDb);
+          if (result.remaining !== 0) throw new Error('aws_audit_repair_incomplete');
+          return { status: 'audit-session-ids-repaired', before, ...result };
+        } finally {
+          await stateDb.end();
+        }
+      }
       if (action.action === 'initialize') {
         stage = 'initialize_databases';
         const migrations = Object.fromEntries(

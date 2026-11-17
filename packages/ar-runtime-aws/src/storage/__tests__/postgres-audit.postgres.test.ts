@@ -1,12 +1,18 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { expect, it } from 'vitest';
 import { createPostgresAuditRuntimePorts } from '../postgres-audit';
-import type { PostgresQueryClient } from '../postgres-transient-state';
+import {
+  countLegacyAuditSessionIds,
+  repairLegacyAuditSessionIds,
+} from '../repair-audit-session-ids';
 
 type TestPgClient = {
   connect(): Promise<void>;
-  query(sql: string, values?: unknown[]): Promise<{ rows: unknown[]; rowCount: number | null }>;
+  query<T extends Record<string, unknown>>(
+    sql: string,
+    values?: readonly unknown[]
+  ): Promise<{ rows: T[]; rowCount: number | null }>;
   end(): Promise<void>;
 };
 
@@ -29,17 +35,14 @@ const databaseUrl = process.env.AUTHRIM_AWS_TEST_DATABASE_URL;
     schemaCreated = true;
     await client.query(`SET search_path TO "${schema}"`);
     await client.query(await readFile(new URL('../audit-schema.sql', import.meta.url), 'utf8'));
-    const audit = createPostgresAuditRuntimePorts(client as unknown as PostgresQueryClient, [
-      'tenant-a',
-      'tenant-b',
-    ]);
+    const audit = createPostgresAuditRuntimePorts(client, ['tenant-a', 'tenant-b']);
     const entry = {
       id: 'event-1',
       tenantId: 'tenant-a',
       userId: 'user-a',
       action: 'user.login',
       resource: 'session',
-      resourceId: 'opaque',
+      resourceId: `sid_${'a'.repeat(64)}`,
       ipAddress: '203.0.113.7',
       userAgent: 'test',
       metadata: JSON.stringify({ password: 'do-not-store', result: 'success' }),
@@ -65,6 +68,45 @@ const databaseUrl = process.env.AUTHRIM_AWS_TEST_DATABASE_URL;
       expect(payload).not.toContain('do-not-store');
       expect(payload).toContain('success');
     }
+
+    const legacyId = 'live-session-credential';
+    const legacyPayload = {
+      ...entry,
+      id: 'legacy-session',
+      resourceId: legacyId,
+      createdAt: Date.now() - 1000,
+    };
+    const nonSessionPayload = {
+      ...legacyPayload,
+      id: 'unrelated-client',
+      resource: 'client',
+    };
+    for (const payload of [legacyPayload, nonSessionPayload]) {
+      await client.query(
+        `INSERT INTO authrim_aws_audit_events
+           (tenant_id, id, created_at_ms, action, payload)
+         VALUES ($1, $2, $3, $4, $5::jsonb)`,
+        [payload.tenantId, payload.id, payload.createdAt, payload.action, JSON.stringify(payload)]
+      );
+    }
+    expect(await countLegacyAuditSessionIds(client)).toBe(1);
+    expect(await repairLegacyAuditSessionIds(client, 1)).toEqual({ updated: 1, remaining: 0 });
+    const repaired = await client.query(
+      `SELECT id, payload->>'resourceId' AS resource_id
+         FROM authrim_aws_audit_events
+        WHERE id IN ('legacy-session', 'unrelated-client') ORDER BY id`
+    );
+    const bytes = new TextEncoder();
+    const digest = createHash('sha256')
+      .update(
+        new Uint8Array([...bytes.encode('authrim:event_log:session'), 0, ...bytes.encode(legacyId)])
+      )
+      .digest('hex');
+    expect(repaired.rows).toEqual([
+      { id: 'legacy-session', resource_id: `sid_${digest}` },
+      { id: 'unrelated-client', resource_id: legacyId },
+    ]);
+    expect(await repairLegacyAuditSessionIds(client)).toEqual({ updated: 0, remaining: 0 });
   } finally {
     if (schemaCreated) {
       await client.query('SET search_path TO public');
