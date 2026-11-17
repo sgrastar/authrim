@@ -6,6 +6,7 @@
   "type": "module",
   "packageManager": "pnpm@9.0.0",
   "scripts": {
+    "audit:repair-aws-session-ids": "tsx packages/ar-runtime-aws/src/storage/repair-audit-session-ids-cli.ts",
     "build": "turbo run build",
     "build:api": "turbo run build --filter=!@authrim/ar-admin-ui --filter=!@authrim/ar-admin-console --filter=!@authrim/ar-login-ui",
     "build:admin-ui": "turbo run build --filter=@authrim/ar-admin-ui",

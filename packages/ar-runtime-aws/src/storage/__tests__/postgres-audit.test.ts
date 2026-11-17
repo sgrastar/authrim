@@ -8,7 +8,7 @@ const entry = {
   userId: 'user-a',
   action: 'user.login',
   resource: 'session',
-  resourceId: 'opaque',
+  resourceId: `sid_${'a'.repeat(64)}`,
   ipAddress: '203.0.113.7',
   userAgent: 'test',
   metadata: JSON.stringify({
@@ -47,6 +47,13 @@ describe('AWS durable local audit', () => {
     await expect(port.append({ ...entry, tenantId: 'tenant-b' })).rejects.toThrow('tenant_unknown');
     await expect(port.append({ ...entry, requireDurableFanout: true })).rejects.toThrow(
       'fanout_unsupported'
+    );
+    expect(query).not.toHaveBeenCalled();
+  });
+  it('rejects a live session credential before writing', async () => {
+    const { query, port } = setup();
+    await expect(port.append({ ...entry, resourceId: 'live-session-id' })).rejects.toThrow(
+      'session_reference_invalid'
     );
     expect(query).not.toHaveBeenCalled();
   });

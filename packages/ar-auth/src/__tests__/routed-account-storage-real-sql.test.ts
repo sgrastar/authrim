@@ -505,7 +505,7 @@ describe.each(['shared_pool', 'tenant_exclusive'] as const)(
       await seedAccount(databases);
     });
 
-    it('signs a new address up into the account databases', async () => {
+    it('does not create a passkey account for an unverified email address', async () => {
       // A row in the metadata database for the same user id must never be read as the account's.
       databases.metadata.raw
         .prepare(
@@ -529,26 +529,18 @@ describe.each(['shared_pool', 'tenant_exclusive'] as const)(
         executionCtx
       );
 
-      expect(response.status).toBe(200);
-      const body = (await response.json()) as {
-        userId: string;
-        options: { excludeCredentials?: unknown[] };
-      };
-      expect(body.userId).toBe(NEW_USER);
-      // The new account has no passkeys yet: the planted metadata row is not offered for exclusion.
-      expect(body.options.excludeCredentials ?? []).toEqual([]);
+      expect(response.status).toBe(403);
+      expect(await response.json()).toMatchObject({ reason: 'signup_email_check_required' });
       expect(
         count(
           databases.accountCore.raw,
           'SELECT COUNT(*) AS n FROM identity_accounts WHERE legacy_user_id = ?',
           NEW_USER
         )
-      ).toBe(1);
+      ).toBe(0);
       expect(count(databases.metadata.raw, 'SELECT COUNT(*) AS n FROM identity_accounts')).toBe(0);
-      expect(world.storedChallenges).toEqual([
-        expect.objectContaining({ id: `passkey_reg:${NEW_USER}`, userId: NEW_USER }),
-      ]);
-      // Unfinished until its passkey is registered: marked with the account, in its database.
+      expect(world.storedChallenges).toEqual([]);
+      // No pending registration is left for an address the caller has not proved.
       expect(
         count(
           databases.accountCore.raw,
@@ -556,7 +548,7 @@ describe.each(['shared_pool', 'tenant_exclusive'] as const)(
             WHERE user_id = ? AND flow = 'passkey' AND expires_at - created_at = 259200`,
           NEW_USER
         )
-      ).toBe(1);
+      ).toBe(0);
     });
 
     it('stores a registered passkey in the account database, not the metadata database', async () => {

@@ -214,7 +214,6 @@ export const en = {
 	'scope.platform.name': 'All tenants (platform)',
 	'scope.meta.tenant': 'Tenant',
 	'scope.meta.platform': 'All tenants',
-	'scope.hint.tenant': 'Changes stay inside this tenant.',
 	'scope.hint.platform': 'Changes reach every tenant’s admins and infrastructure.',
 	'scope.badge.platform': 'Platform',
 	'nav.platArea.overview': 'Overview',

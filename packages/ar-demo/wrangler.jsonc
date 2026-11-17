@@ -6,31 +6,38 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-07-01",
   "workers_dev": false,
+  "account_id": "98edc9b77724418e61ae577980a7369b",
+  // A zone route, not a custom domain: the router owns "*.authrim-demo.com/*", and only a more
+  // specific route takes this host away from it.
+  "routes": [{ "pattern": "start.authrim-demo.com/*", "zone_name": "authrim-demo.com" }],
   "observability": { "enabled": true },
+  // Static files (the gate photographs) are served from ./public before the Worker runs; every other path reaches the Worker.
+  "assets": { "directory": "./public" },
   // Cleanup of expired tenants (see src/cleanup.ts).
   "triggers": { "crons": ["*/10 * * * *"] },
   "vars": {
     // Origin of the Authrim API (token endpoint and Admin API). https, no path.
-    "ADMIN_API_ORIGIN": "https://api.example.invalid",
+    "ADMIN_API_ORIGIN": "https://default.authrim-demo.com",
     // Origin of the admin console the visitor is sent to (its /admin/join page).
-    "CONSOLE_ORIGIN": "https://console.example.invalid",
+    "CONSOLE_ORIGIN": "https://admin.authrim-demo.com",
     // Origin of this portal. The Origin header of POST /start must equal it.
-    "PORTAL_ORIGIN": "https://start.example.invalid",
+    "PORTAL_ORIGIN": "https://start.authrim-demo.com",
     // Cloudflare Turnstile site key (public).
-    "TURNSTILE_SITE_KEY": "0x0000000000000000000000",
+    "TURNSTILE_SITE_KEY": "0x4AAAAAAGBc4ptXKLZ6Lz10",
     "MAX_ACTIVE_TENANTS": "75",
-    "MAX_STARTS_PER_IP_PER_DAY": "3",
-    "TENANT_TTL_HOURS": "24",
+    "MAX_STARTS_PER_IP_PER_DAY": "300",
+    "TENANT_TTL_HOURS": "1",
     "ENVIRONMENT": "production",
   },
-  // Static files (the gate photographs) served before the Worker runs.
-  "assets": { "directory": "./public" },
+  // Authrim API through the router Worker (see README.md, "Service binding"). Remove for a plain fetch.
+  "services": [{ "binding": "AUTHRIM_API", "service": "demo-ar-router" }],
+
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "ar-demo-registry",
       // Placeholder: create the database and put its id here.
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_id": "61c47a7d-a07d-4158-bfee-95974b551960",
       "migrations_dir": "migrations",
     },
   ],

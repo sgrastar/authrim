@@ -1989,7 +1989,6 @@ describe('Direct Auth primary passkey and email-code flows', () => {
       createContext(
         {
           client_id: 'web-client',
-          email: 'new@example.com',
           display_name: 'New User',
           code_challenge: 'signup-pkce-challenge',
           code_challenge_method: 'S256',
@@ -2020,8 +2019,8 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     expect(mocks.userPII.createPII).toHaveBeenCalledWith(
       expect.objectContaining({
         id: 'user_new',
-        email: 'new@example.com',
-        preferred_username: 'new',
+        email: null,
+        preferred_username: undefined,
       })
     );
     expect(mocks.challengeStore.storeChallengeRpc).toHaveBeenCalledWith(
@@ -2045,6 +2044,27 @@ describe('Direct Auth primary passkey and email-code flows', () => {
         userId: 'user_new',
       })
     );
+  });
+
+  it('refuses email-bearing passkey signup without mailbox proof before creating an account', async () => {
+    const { directPasskeySignupStartHandler } = await import('../direct-auth');
+    const response = await directPasskeySignupStartHandler(
+      createContext(
+        {
+          client_id: 'web-client',
+          email: 'victim@example.com',
+          code_challenge: 'signup-pkce-challenge',
+          code_challenge_method: 'S256',
+          channel: 'browser',
+        },
+        webHeaders()
+      ) as never
+    );
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({ reason: 'signup_email_check_required' });
+    expect(mocks.userCore.createUser).not.toHaveBeenCalled();
+    expect(mocks.generateRegistrationOptions).not.toHaveBeenCalled();
   });
 
   it('starts passkey signup without email for a tenant-exclusive account', async () => {
@@ -2260,7 +2280,7 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     });
   });
 
-  it("goes on with a resumed sign-up's own account at its address, while it has no passkey", async () => {
+  it("does not attach a passkey to a resumed sign-up's unverified email account", async () => {
     mocks.getWebOriginRegistry.mockResolvedValue({
       origins: [{ origin: 'https://login.test.authrim.com', handoff_allowed: true }],
     });
@@ -2301,14 +2321,12 @@ describe('Direct Auth primary passkey and email-code flows', () => {
       user_type: 'end_user',
     }));
 
-    // The user its token names: that sign-up's account, gone on with (nothing made again).
+    // The server-issued resume token proves account continuity, not mailbox control.
     mocks.resolvePasskeyProvisioningResumeUserId.mockResolvedValueOnce('user_first');
-    expect((await start('user_first')).status).toBe(200);
+    expect((await start('user_first')).status).toBe(403);
     expect(mocks.provisionTenantD1EmailAccount).not.toHaveBeenCalled();
     expect(mocks.passkey.findByUserId).toHaveBeenCalledWith('user_first');
-    expect(
-      (mocks.generateRegistrationOptions.mock.calls.at(-1)?.[0] as { userName?: string })?.userName
-    ).toBe('new@example.com');
+    expect(mocks.generateRegistrationOptions).not.toHaveBeenCalled();
 
     // Its token names another user than the account at the address: in use.
     mocks.resolvePasskeyProvisioningResumeUserId.mockResolvedValueOnce('user_other');
@@ -2387,7 +2405,6 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     const context = createContext(
       {
         client_id: 'web-client',
-        email: 'new@example.com',
         display_name: 'New User',
         code_challenge: 'signup-pkce-challenge',
         code_challenge_method: 'S256',
@@ -2651,9 +2668,16 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     });
 
     it('reserves a use, held by the email, before the account exists and records it on the challenge', async () => {
+      mocks.findActiveInvitationByToken.mockResolvedValue({
+        ...anonymousInvitation,
+        invited_email: 'new@example.com',
+      });
+      mocks.challengeStore.getChallengeRpc.mockResolvedValue(storedProof());
       const { directPasskeySignupStartHandler } = await import('../direct-auth');
 
-      const response = await directPasskeySignupStartHandler(signupStartContext() as never);
+      const response = await directPasskeySignupStartHandler(
+        signupStartContext({ invitation_email_proof: proof }) as never
+      );
 
       expect(response.status).toBe(200);
       expect(mocks.findActiveInvitationByToken).toHaveBeenCalledWith(
@@ -2691,7 +2715,7 @@ describe('Direct Auth primary passkey and email-code flows', () => {
       expect(mocks.claimInvitationReservation).not.toHaveBeenCalled();
       expect(mocks.applyInvitationAssignments).not.toHaveBeenCalled();
       expect(mocks.userCore.createUser).toHaveBeenCalledWith(
-        expect.objectContaining({ email_verified: false })
+        expect.objectContaining({ email_verified: true })
       );
     });
 
@@ -2761,7 +2785,7 @@ describe('Direct Auth primary passkey and email-code flows', () => {
       expect(mocks.userCore.createUser).not.toHaveBeenCalled();
     });
 
-    it('accepts the email an invitation names, in any case, when the tenant does not require proof', async () => {
+    it('requires proof for the email an invitation names even when tenant policy is optional', async () => {
       mocks.findActiveInvitationByToken.mockResolvedValue({
         ...anonymousInvitation,
         invited_email: 'New@Example.com',
@@ -2770,10 +2794,11 @@ describe('Direct Auth primary passkey and email-code flows', () => {
 
       const response = await directPasskeySignupStartHandler(signupStartContext() as never);
 
-      expect(response.status).toBe(200);
-      expect(mocks.challengeStore.storeChallengeRpc).toHaveBeenCalledWith(
-        expect.objectContaining({ metadata: expect.objectContaining(reserved) })
-      );
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({
+        reason: 'invitation_email_verification_required',
+      });
+      expect(mocks.reserveInvitationUse).not.toHaveBeenCalled();
     });
 
     it('asks for the invited email to be proved when the tenant requires it', async () => {
@@ -2844,10 +2869,17 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     });
 
     it('gives the reserved use back when the account cannot be created', async () => {
+      mocks.findActiveInvitationByToken.mockResolvedValue({
+        ...anonymousInvitation,
+        invited_email: 'new@example.com',
+      });
+      mocks.challengeStore.getChallengeRpc.mockResolvedValue(storedProof());
       mocks.userCore.createUser.mockRejectedValueOnce(new Error('write failed'));
       const { directPasskeySignupStartHandler } = await import('../direct-auth');
 
-      const response = await directPasskeySignupStartHandler(signupStartContext() as never);
+      const response = await directPasskeySignupStartHandler(
+        signupStartContext({ invitation_email_proof: proof }) as never
+      );
 
       expect(response.status).toBe(500);
       expect(mocks.releaseInvitationReservation).toHaveBeenCalledWith(mocks.coreAdapter, {
@@ -3064,7 +3096,6 @@ describe('Direct Auth primary passkey and email-code flows', () => {
         createContext(
           {
             client_id: 'web-client',
-            email: 'new@example.com',
             code_challenge: 'signup-pkce-challenge',
             code_challenge_method: 'S256',
             channel: 'browser',

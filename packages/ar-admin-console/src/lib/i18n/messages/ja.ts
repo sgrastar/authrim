@@ -217,7 +217,6 @@ export const ja = {
 	'scope.platform.name': 'プラットフォーム全体',
 	'scope.meta.tenant': 'テナント',
 	'scope.meta.platform': '全テナント',
-	'scope.hint.tenant': 'このテナントの中だけに変更が及びます。',
 	'scope.hint.platform': '全テナントの管理者と基盤に変更が及びます。',
 	'scope.badge.platform': 'プラットフォーム',
 	'nav.platArea.overview': '概要',

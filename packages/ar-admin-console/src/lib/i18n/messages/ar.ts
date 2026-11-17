@@ -214,7 +214,6 @@ export const ar = {
 	'scope.platform.name': 'كل المستأجرين (المنصة)',
 	'scope.meta.tenant': 'مستأجر',
 	'scope.meta.platform': 'كل المستأجرين',
-	'scope.hint.tenant': 'التغييرات تبقى داخل هذا المستأجر.',
 	'scope.hint.platform': 'التغييرات تصل إلى مسؤولي كل المستأجرين والبنية التحتية.',
 	'scope.badge.platform': 'المنصة',
 	'nav.platArea.overview': 'نظرة عامة',

@@ -100,6 +100,21 @@
 	}}
 />
 
+<Story
+	name="Many tenant scopes"
+	args={{ path: '/admin/users/all', manyScopes: true }}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(canvas.getByRole('button', { name: /Acme Corporation/ }));
+		const list = canvasElement.querySelector<HTMLUListElement>('.options');
+		if (!list) throw new Error('Scope options list is missing');
+		await expect(list.scrollHeight).toBeGreaterThan(list.clientHeight);
+		await expect(
+			canvas.queryByText(/Changes stay inside this tenant|このテナントの中だけ/)
+		).toBeNull();
+	}}
+/>
+
 <!-- Pages not built yet carry a barricade at the end of their name in the left nav. -->
 <Story
 	name="Pages under construction"

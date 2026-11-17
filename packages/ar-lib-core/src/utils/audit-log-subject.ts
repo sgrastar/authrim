@@ -55,7 +55,7 @@ export function resolveAuditSubjectUserId(
 }
 
 /** `sid_` + SHA-256 hex of a session ID: correlates a session's events, unusable as a cookie. */
-async function sessionDigest(sessionId: string): Promise<string> {
+export async function sessionDigest(sessionId: string): Promise<string> {
   const digest = await crypto.subtle.digest(
     'SHA-256',
     new TextEncoder().encode(`authrim:event_log:session\u0000${sessionId}`)

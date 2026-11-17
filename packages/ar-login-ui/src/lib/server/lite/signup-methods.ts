@@ -142,7 +142,8 @@ export function readLitePasskeyCreationOptions(
 }
 
 /**
- * Starts a passkey's sign-up (`direct/passkey/signup/start`): the account (made now, unchecked),
+ * Starts a passkey's sign-up (`direct/passkey/signup/start`): the account (email-free or proved by
+ * an invitation),
  * the challenge to register and its creation options. `provisioning`: the account is still being
  * made (a routed tenant database), to be tried again.
  */
