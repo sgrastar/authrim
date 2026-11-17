@@ -1,9 +1,9 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
+	import type { SamlMetadataClient } from '#lib/api/saml-providers.js';
 	import type { OidcDiscovery } from '#lib/api/external-providers.js';
 	import Disclosure from '#lib/ui/patterns/Disclosure.svelte';
 	import TextArea from '#lib/ui/primitives/TextArea.svelte';
-	import { entityIdProblem } from './connection-model';
 	import { t } from '#lib/i18n/i18n.svelte.js';
 	import Callout from '#lib/ui/patterns/Callout.svelte';
 	import ChoiceCards from '#lib/ui/patterns/ChoiceCards.svelte';
@@ -30,7 +30,9 @@
 	interface Props {
 		step: string;
 		live?: boolean;
+		previewMetadata?: SamlMetadataClient['preview'];
 		hasSecret?: boolean;
+		discovering?: boolean;
 		discoverOidc?: (issuer: string, signal?: AbortSignal) => Promise<OidcDiscovery>;
 		op: OpForm;
 		idp: IdpForm;
@@ -43,7 +45,9 @@
 	let {
 		step,
 		live = false,
+		previewMetadata,
 		hasSecret = false,
+		discovering = $bindable(false),
 		discoverOidc,
 		op = $bindable(),
 		idp = $bindable(),
@@ -51,7 +55,6 @@
 		opSettings = $bindable()
 	}: Props = $props();
 
-	let reading = $state(false);
 	let discoveryError = $state('');
 	let controller: AbortController | undefined;
 
@@ -59,10 +62,10 @@
 	let reads = 0;
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	async function discover() {
-		if (reading) return;
+		if (discovering) return;
 		const read = ++reads;
 		const issuer = op.issuer;
-		reading = true;
+		discovering = true;
 		clearTimeout(timer);
 		discoveryError = '';
 		if (live) {
@@ -81,14 +84,14 @@
 				if (read === reads && op.issuer === issuer)
 					discoveryError = error instanceof Error ? error.message : t('sf.live.discoveryFailed');
 			} finally {
-				if (read === reads) reading = false;
+				if (read === reads) discovering = false;
 			}
 			return;
 		}
 		timer = setTimeout(() => {
 			if (read !== reads || op.issuer !== issuer) return;
 			op.discovered = true;
-			reading = false;
+			discovering = false;
 		}, 500);
 	}
 
@@ -105,7 +108,7 @@
 		controller?.abort();
 		discoveryError = '';
 		op.discovery = undefined;
-		reading = false;
+		discovering = false;
 		op.discovered = false;
 	});
 
@@ -192,8 +195,8 @@
 	<div>
 		<Button
 			variant="secondary"
-			disabled={reading || !op.issuer || !!httpsUrlProblem(op.issuer)}
-			loading={reading}
+			disabled={discovering || !op.issuer || !!httpsUrlProblem(op.issuer)}
+			loading={discovering}
 			onclick={discover}>{t('sf.in.readConfig')}</Button
 		>
 	</div>
@@ -286,20 +289,13 @@
 	/>
 {:else if step === 'idp-import' && live}
 	<TextRow label={t('sf.row.name')} required bind:value={idp.name} />
-	<TextRow
-		label={t('sf.row.entityId')}
-		required
-		bind:value={idp.entityId}
-		error={idp.entityId ? entityIdProblem(idp.entityId) : undefined}
-	/>
-	<TextRow
-		label={t('sf.ours.ssoUrl')}
-		required
-		bind:value={idp.acsUrl}
-		error={idp.acsUrl ? httpsUrlProblem(idp.acsUrl) : undefined}
-	/>
-	<TextArea label={t('sf.ours.signingCert')} required mono bind:value={idp.certificate} />
-	<Callout tone="info">{t('sf.live.inboundMapping')}</Callout>
+	<MetadataImport bind:form={idp} partner="provider" live preview={previewMetadata} />
+	{#if idp.importMode === 'manual'}<TextArea
+			label={t('sf.ours.signingCert')}
+			required
+			mono
+			bind:value={idp.certificate}
+		/>{/if}
 {:else if step === 'idp-import'}
 	<TextRow
 		label={t('sf.row.name')}

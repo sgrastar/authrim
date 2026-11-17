@@ -1,3 +1,8 @@
+import { samlAdvancedSettingsProblem } from './advanced-settings-validation';
+import {
+  assertInboundMappingGraph,
+  inboundProfileTargets,
+} from '@authrim/ar-lib-core/services/inbound-identity-mapping';
 import { emitLogIcebergRow } from '@authrim/ar-lib-core/services/log-iceberg-emitter';
 import { resolveSAMLMappingSetOwner } from '../mapping-set-owner';
 import { hasNonSAMLMappingOutput } from './mapping-output-validation';
@@ -615,6 +620,22 @@ async function validateSAMLIdPMappingConfig(
       fieldMappingVersionId: config.identityMapping?.fieldMappingVersionId,
       partnerEntityId: config.entityId,
     });
+    if (
+      config.identityMapping?.inboundContract === 'connection-v1' ||
+      binding?.activationScope?.inboundContract === 'connection-v1'
+    ) {
+      if (binding?.activationScope?.inboundContract !== 'connection-v1')
+        return { field: 'identityMapping.fieldMappingSetId' };
+      const core = await resolveAuthCorePersistenceAdapterFromEnv(env, 'saml-inbound-targets', {
+        tenantId,
+      });
+      assertInboundMappingGraph(
+        'saml',
+        binding.graphRules ?? [],
+        binding.catalog,
+        inboundProfileTargets(await loadCustomClaimSchemaCatalogEntries(core, tenantId))
+      );
+    }
     return binding ? null : { field: 'identityMapping.fieldMappingSetId' };
   } catch {
     return { field: 'identityMapping.fieldMappingSetId' };
@@ -1516,7 +1537,13 @@ function sanitizeSAMLDRBundleAdminErrorMessage(error: unknown): string {
   return redacted.slice(0, 280) || 'Unknown error';
 }
 
+export interface SAMLConnectionMetadataImportRequest extends MetadataImportRequest {
+  expectedUpdatedAt: string;
+}
+
 interface SAMLMetadataPreviewRequest extends MetadataImportRequest {
+  /** Supplying a role opts into bounded, single-connection preview. */
+  providerType?: 'saml_idp' | 'saml_sp';
   samlProfile?: SAMLSPProfile;
   attributePresetId?: SAMLAttributePresetId;
 }
@@ -1553,14 +1580,24 @@ export async function handlePreviewMetadata(c: AdminSAMLContext): Promise<Respon
       c,
       AGGREGATE_METADATA_REQUEST_LIMIT_BYTES
     );
+    if (body.providerType !== undefined && !['saml_idp', 'saml_sp'].includes(body.providerType)) {
+      throw new SAMLMetadataValidationError('Invalid expected SAML provider type');
+    }
     const resolvedMetadata = await resolveMetadataImportInput(c, body, {
-      maxResponseSize: AGGREGATE_METADATA_FETCH_LIMIT_BYTES,
+      maxResponseSize: body.providerType
+        ? SINGLE_METADATA_FETCH_LIMIT_BYTES
+        : AGGREGATE_METADATA_FETCH_LIMIT_BYTES,
     });
     if (resolvedMetadata instanceof Response) {
       return resolvedMetadata;
     }
 
     if (metadataIsAggregateOrThrow(resolvedMetadata.metadataXml)) {
+      if (body.providerType) {
+        throw new SAMLMetadataValidationError(
+          'This connection requires one EntityDescriptor. Use the federation metadata import path for aggregate metadata.'
+        );
+      }
       const tenantId = resolveSAMLTenantIdFromContext(c);
       const policy = resolveAggregateSignaturePolicy(c.env);
       const trustProfiles = await listFederationTrustProfiles(c.env, tenantId);
@@ -1596,6 +1633,11 @@ export async function handlePreviewMetadata(c: AdminSAMLContext): Promise<Respon
     let config: SAMLIdPConfig | SAMLSPConfig;
     try {
       providerType = detectSAMLMetadataProviderType(resolvedMetadata.metadataXml);
+      if (body.providerType && providerType !== body.providerType) {
+        throw new SAMLMetadataValidationError(
+          'Metadata role does not match the expected provider type'
+        );
+      }
       config = buildConfigFromMetadata(
         providerType,
         resolvedMetadata.metadataXml,
@@ -1606,6 +1648,7 @@ export async function handlePreviewMetadata(c: AdminSAMLContext): Promise<Respon
     } catch (error) {
       throw toSAMLMetadataValidationError(error);
     }
+    config = await withProviderCertificateValidation(config);
     const metadataAnalysis = analyzeSAMLMetadata(resolvedMetadata.metadataXml);
 
     return c.json({
@@ -1952,6 +1995,14 @@ export async function handleCreateProvider(c: AdminSAMLContext): Promise<Respons
         variables: { field: normalizedConfig.field },
       });
     }
+    const advancedProblem = await samlAdvancedSettingsProblem(
+      config,
+      body.providerType === 'saml_sp' && requestedEnabled ? normalizedConfig : undefined
+    );
+    if (advancedProblem)
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: { field: advancedProblem },
+      });
     const tenantId = resolveSAMLTenantIdFromContext(c);
     if (requestedEnabled && normalizedConfig.identityMapping?.fieldMappingSetId) {
       const mappingError =
@@ -2173,6 +2224,11 @@ export async function handleUpdateProvider(c: AdminSAMLContext): Promise<Respons
     if (body.expectedUpdatedAt !== new Date(existing.updated_at).toISOString()) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
     }
+    const advancedProblem = await samlAdvancedSettingsProblem(body.config);
+    if (advancedProblem)
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: { field: advancedProblem },
+      });
     const existingConfig = JSON.parse(existing.config_json) as SAMLIdPConfig | SAMLSPConfig;
     const requestedEnabled = body.enabled !== undefined ? body.enabled : existing.enabled === 1;
 
@@ -2183,9 +2239,16 @@ export async function handleUpdateProvider(c: AdminSAMLContext): Promise<Respons
         body.config.metadataUrl === undefined ||
         body.config.metadataUrl === existingConfig.metadataUrl
           ? {
-              ...existingConfig.metadataRefreshPolicy,
-              mode: body.config.metadataRefreshPolicy.mode,
-              intervalSeconds: body.config.metadataRefreshPolicy.intervalSeconds,
+              ...normalizeSAMLMetadataRefreshPolicy(
+                existingConfig.metadataRefreshPolicy,
+                existingConfig.metadataUrl
+              ),
+              ...(body.config.metadataRefreshPolicy.mode !== undefined
+                ? { mode: body.config.metadataRefreshPolicy.mode }
+                : {}),
+              ...(body.config.metadataRefreshPolicy.intervalSeconds !== undefined
+                ? { intervalSeconds: body.config.metadataRefreshPolicy.intervalSeconds }
+                : {}),
             }
           : {
               mode: body.config.metadataRefreshPolicy.mode,
@@ -2218,6 +2281,13 @@ export async function handleUpdateProvider(c: AdminSAMLContext): Promise<Respons
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
         variables: { field: newConfig.field },
       });
+    }
+    if (existing.provider_type === 'saml_sp' && requestedEnabled) {
+      const encryptionProblem = await samlAdvancedSettingsProblem(undefined, newConfig);
+      if (encryptionProblem)
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+          variables: { field: encryptionProblem },
+        });
     }
     if (
       await hasConflictingSAMLProviderEntityId(
@@ -2450,8 +2520,9 @@ export async function handleImportMetadata(c: AdminSAMLContext): Promise<Respons
       provider_type: string;
       config_json: string;
       enabled: number;
+      updated_at: number;
     }>(
-      `SELECT id, provider_type, config_json, enabled
+      `SELECT id, provider_type, config_json, enabled, updated_at
        FROM identity_providers
        WHERE id = ? AND tenant_id = ? AND provider_type IN ('saml_idp', 'saml_sp')`,
       [id, tenantId]
@@ -2461,10 +2532,19 @@ export async function handleImportMetadata(c: AdminSAMLContext): Promise<Respons
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
-    const body = await readSAMLAdminJsonWithLimit<MetadataImportRequest>(
+    const body = await readSAMLAdminJsonWithLimit<SAMLConnectionMetadataImportRequest>(
       c,
       SINGLE_METADATA_REQUEST_LIMIT_BYTES
     );
+
+    if (!body.expectedUpdatedAt) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+        variables: { field: 'expectedUpdatedAt' },
+      });
+    }
+    if (body.expectedUpdatedAt !== new Date(existing.updated_at).toISOString()) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
+    }
 
     const resolvedMetadata = await resolveMetadataImportInput(c, body, {
       maxResponseSize: SINGLE_METADATA_FETCH_LIMIT_BYTES,
@@ -2496,7 +2576,11 @@ export async function handleImportMetadata(c: AdminSAMLContext): Promise<Respons
         resolvedMetadata.metadataXml,
         body.samlProfile,
         body.attributePresetId,
-        await resolveSamlProvisioningDefaults(c.env, tenantId)
+        defaultsForRequestedBindings(
+          existing.provider_type,
+          existingConfig,
+          await resolveSamlProvisioningDefaults(c.env, tenantId)
+        )
       );
     } catch (error) {
       throw new SAMLMetadataValidationError(
@@ -2508,6 +2592,25 @@ export async function handleImportMetadata(c: AdminSAMLContext): Promise<Respons
     const mergedConfig = await withProviderCertificateValidation({
       ...existingConfig,
       ...newConfig,
+      // Parsed defaults must not erase the connection's custom mapping or local choices.
+      attributeMapping: existingConfig.attributeMapping ?? newConfig.attributeMapping,
+      ...('logoUrl' in existingConfig && 'logoUrl' in newConfig
+        ? { logoUrl: newConfig.logoUrl ?? existingConfig.logoUrl }
+        : {}),
+      nameIdFormat: body.samlProfile
+        ? newConfig.nameIdFormat
+        : (existingConfig.nameIdFormat ?? newConfig.nameIdFormat),
+      ...(!body.samlProfile &&
+      'authnRequestSignaturePolicy' in existingConfig &&
+      existingConfig.authnRequestSignaturePolicy === 'required'
+        ? { authnRequestSignaturePolicy: existingConfig.authnRequestSignaturePolicy }
+        : {}),
+      ...(!body.samlProfile && 'signResponses' in existingConfig
+        ? { signResponses: existingConfig.signResponses }
+        : {}),
+      ...(!body.samlProfile && 'signAssertions' in existingConfig && existingConfig.signAssertions
+        ? { signAssertions: true }
+        : {}),
       metadataXml: resolvedMetadata.metadataXml,
       ...(metadataUrl ? { metadataUrl } : {}),
       metadataHash: currentAnalysis.hash,
@@ -2529,13 +2632,14 @@ export async function handleImportMetadata(c: AdminSAMLContext): Promise<Respons
     const nextEnabled =
       existing.enabled === 1 && mergedConfig.certificateValidation?.allExpired !== true;
 
-    const now = Date.now();
+    const now = Math.max(Date.now(), existing.updated_at + 1);
 
     const refused = await requireSAMLTrustStepUp(c, {
       tenantId,
       targetIds: [existing.id],
       params: {
         action: 'provider.import_metadata',
+        expectedUpdatedAt: body.expectedUpdatedAt,
         // What the request supplied: the XML itself, or the URL to fetch it from. A fetched
         // document is not bound (it can change between the refused request and its repeat, as
         // signed and time-stamped metadata does); the URL the admin approved is.
@@ -2549,10 +2653,13 @@ export async function handleImportMetadata(c: AdminSAMLContext): Promise<Respons
     });
     if (refused) return refused;
 
-    await coreAdapter.execute(
-      'UPDATE identity_providers SET config_json = ?, enabled = ?, updated_at = ? WHERE id = ? AND tenant_id = ?',
-      [JSON.stringify(mergedConfig), nextEnabled ? 1 : 0, now, id, tenantId]
+    const update = await coreAdapter.execute(
+      'UPDATE identity_providers SET config_json = ?, enabled = ?, updated_at = ? WHERE id = ? AND tenant_id = ? AND updated_at = ?',
+      [JSON.stringify(mergedConfig), nextEnabled ? 1 : 0, now, id, tenantId, existing.updated_at]
     );
+    if (update.rowsAffected !== 1) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
+    }
     await createSAMLAdminAudit(c, {
       tenantId,
       action: 'saml.provider.metadata_imported',
@@ -2575,6 +2682,8 @@ export async function handleImportMetadata(c: AdminSAMLContext): Promise<Respons
 
     return c.json({
       success: true,
+      providerType: existing.provider_type,
+      updatedAt: new Date(now).toISOString(),
       config: mergedConfig,
       enabled: nextEnabled,
       metadataRefreshStatus: refreshStatus,
@@ -3858,7 +3967,21 @@ async function resolveMetadataImportInput(
     if (new TextEncoder().encode(input.metadataXml).byteLength > maxResponseSize) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
-    return { metadataXml: input.metadataXml };
+    if (input.metadataUrl) {
+      const refused = await refuseWhileSamlMetadataUrlOff(c);
+      if (refused) return refused;
+      const problem = validateExternalUrl(input.metadataUrl, {
+        requireHttps: true,
+        allowLocalhost: false,
+        errorType: 'invalid_request',
+        fieldName: 'metadataUrl',
+      });
+      if (problem) return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+    }
+    return {
+      metadataXml: input.metadataXml,
+      ...(input.metadataUrl ? { metadataUrl: input.metadataUrl } : {}),
+    };
   }
 
   if (!input.metadataUrl) {

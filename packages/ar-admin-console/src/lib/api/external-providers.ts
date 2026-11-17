@@ -1,5 +1,7 @@
+import { OP_FIELDS } from '#lib/pages/service-flows/advanced-settings.js';
 import { API_BASE_URL, adminFetch } from './admin-request';
-import { stepUpHeaders, withStepUp } from './admin-step-up';
+import { tenantScope } from '#lib/auth/tenant-scope.svelte.js';
+import { StepUpCancelledError, stepUpHeaders, withStepUp } from './admin-step-up';
 import { errorFromResponse } from './api-error';
 
 export interface OidcDiscovery {
@@ -10,6 +12,8 @@ export interface OidcDiscovery {
 	userinfo_endpoint?: string;
 }
 export interface ExternalProvider {
+	updatedAt?: number;
+	advanced?: Record<string, unknown>;
 	id: string;
 	name: string;
 	issuer: string;
@@ -23,6 +27,8 @@ export interface ExternalProvider {
 	trustEmail: boolean;
 }
 export interface ExternalProviderWrite {
+	expected_updated_at?: number;
+	advanced?: Record<string, unknown>;
 	name: string;
 	issuer: string;
 	client_id: string;
@@ -38,6 +44,7 @@ export interface ExternalProviderWrite {
 	jwks_uri?: string;
 	userinfo_endpoint?: string;
 }
+export type ExternalProviderUpdate = Partial<ExternalProviderWrite>;
 export interface ExternalProviderCreate extends ExternalProviderWrite {
 	provider_type: 'oidc';
 	client_secret: string;
@@ -46,7 +53,7 @@ export interface ExternalProvidersClient {
 	list(): Promise<ExternalProvider[]>;
 	get(id: string): Promise<ExternalProvider>;
 	create(input: ExternalProviderCreate): Promise<{ id: string }>;
-	update(id: string, input: ExternalProviderWrite): Promise<ExternalProvider>;
+	update(id: string, input: ExternalProviderUpdate): Promise<ExternalProvider>;
 	discover(issuer: string, signal?: AbortSignal): Promise<OidcDiscovery>;
 }
 
@@ -63,6 +70,8 @@ function providerFromRow(value: unknown): ExternalProvider {
 	// Deliberately copy only public fields. A saved credential is represented only by hasSecret.
 	return {
 		id: row.id,
+		updatedAt: typeof row.updatedAt === 'number' ? row.updatedAt : undefined,
+		advanced: Object.fromEntries(OP_FIELDS.map(({ key }) => [key, row[key] ?? null])),
 		name: string(row.name),
 		issuer: string(row.issuer),
 		clientId: string(row.clientId),
@@ -103,16 +112,19 @@ export const httpExternalProviders: ExternalProvidersClient = {
 		});
 	},
 	async update(id, input) {
-		const body = JSON.stringify(input);
-		return withStepUp(async (receipt) =>
-			providerFromRow(
+		const tenantId = tenantScope.tenantId;
+		const { advanced, ...basic } = input;
+		const body = JSON.stringify({ ...basic, ...providerAdvancedWrite(advanced ?? {}) });
+		return withStepUp(async (receipt) => {
+			if (tenantScope.tenantId !== tenantId) throw new StepUpCancelledError();
+			return providerFromRow(
 				await request(`/${encodeURIComponent(id)}`, {
 					method: 'PUT',
 					body,
 					headers: stepUpHeaders(receipt)
 				})
-			)
-		);
+			);
+		});
 	},
 	async discover(issuer, signal) {
 		const row = object(
@@ -140,3 +152,24 @@ export const httpExternalProviders: ExternalProvidersClient = {
 		};
 	}
 };
+
+const ADVANCED_WRITE_FIELDS: Record<string, string> = {
+	authorizationEndpoint: 'authorization_endpoint',
+	tokenEndpoint: 'token_endpoint',
+	userinfoEndpoint: 'userinfo_endpoint',
+	jwksUri: 'jwks_uri',
+	tokenEndpointAuthMethod: 'token_endpoint_auth_method',
+	alwaysFetchUserinfo: 'always_fetch_userinfo',
+	profileUpdateFields: 'profile_update_fields',
+	enableSso: 'enable_sso',
+	buttonText: 'button_text',
+	buttonColor: 'button_color',
+	priority: 'priority'
+};
+function providerAdvancedWrite(input: Record<string, unknown>): Record<string, unknown> {
+	return Object.fromEntries(
+		Object.entries(ADVANCED_WRITE_FIELDS)
+			.filter(([key]) => key in input)
+			.map(([key, wire]) => [wire, input[key]])
+	);
+}

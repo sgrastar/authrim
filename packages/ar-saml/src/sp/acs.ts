@@ -1,3 +1,9 @@
+import {
+  evaluateInboundMapping,
+  inboundProfileTargets,
+  samlInboundAttributeValue,
+} from '@authrim/ar-lib-core/services/inbound-identity-mapping';
+import { loadCustomClaimSchemaCatalogEntries } from '@authrim/ar-lib-core/services/identity-mapping-runtime-resolver';
 import { executeTenantMapping } from '@authrim/ar-lib-core/services/mapping-hash';
 /**
  * SAML SP Assertion Consumer Service (ACS) Endpoint
@@ -1715,7 +1721,7 @@ class SamlAttributeMappingError extends Error {
 /**
  * Extract user information from assertion using the configured Field Mapping Set.
  */
-async function extractUserInfo(
+export async function extractUserInfo(
   env: Env,
   tenantId: string,
   spEntityId: string,
@@ -1757,6 +1763,30 @@ async function extractUserInfo(
   });
   if (!binding) {
     throw new SamlAttributeMappingError('SAML IdP Field Mapping Set is not active');
+  }
+
+  if (
+    configured.inboundContract === 'connection-v1' ||
+    binding.activationScope?.inboundContract === 'connection-v1'
+  ) {
+    if (binding.activationScope?.inboundContract !== 'connection-v1')
+      throw new SamlAttributeMappingError('SAML IdP incoming mapping contract is invalid');
+    const core = await resolveAuthCorePersistenceAdapterFromEnv(env, 'saml-inbound-targets', {
+      tenantId,
+    });
+    const result = await evaluateInboundMapping({
+      env,
+      tenantId,
+      protocol: 'saml',
+      binding,
+      sources: buildSAMLInboundSourceValues(assertion),
+      targets: inboundProfileTargets(await loadCustomClaimSchemaCatalogEntries(core, tenantId)),
+    });
+    userInfo.email = result.profile.email;
+    userInfo.name = result.profile.name;
+    userInfo.profile = result.profile;
+    userInfo.customClaims = result.customClaims;
+    return userInfo;
   }
 
   const runtimeResult = await executeTenantMapping(env, tenantId, {
@@ -1808,7 +1838,7 @@ function buildSAMLInboundSourceValues(assertion: SAMLAssertion): SourceValueEnve
   ];
 
   for (const attribute of assertion.attributeStatement ?? []) {
-    const value = attribute.values.length === 1 ? attribute.values[0] : attribute.values;
+    const value = samlInboundAttributeValue(attribute.values);
     values.push({
       value,
       sourceRef: { side: 'source', namespace: 'saml.attribute', path: attribute.name },

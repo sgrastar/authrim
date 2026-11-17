@@ -1,3 +1,4 @@
+import { RP_FIELDS } from '#lib/pages/service-flows/advanced-settings.js';
 import { API_BASE_URL, adminFetch } from './admin-request';
 import { errorFromResponse } from './api-error';
 
@@ -15,16 +16,24 @@ export interface ClientsClient {
 	list(signal?: AbortSignal): Promise<ClientOption[]>;
 }
 
-/** Only basic settings are projected; credentials and extension settings never enter a draft. */
+/** Only allowlisted public connection settings are projected; secrets and unknown extensions never enter a draft. */
 export interface ClientDetail extends ClientOption {
 	applicationType: string | null;
 	authMethod: string | null;
 	pkce: boolean | null;
+	updatedAt?: number;
+	jwksUri?: string | null;
+	jwks?: Record<string, unknown> | null;
+	advanced?: Record<string, unknown>;
 }
 export interface ClientBasicUpdate {
 	client_name?: string;
 	redirect_uris?: string[];
-	token_endpoint_auth_method?: 'client_secret_basic' | 'client_secret_post';
+	token_endpoint_auth_method?: 'client_secret_basic' | 'client_secret_post' | 'private_key_jwt';
+	jwks_uri?: string | null;
+	jwks?: Record<string, unknown> | null;
+	expected_updated_at?: number;
+	advanced?: Record<string, unknown>;
 	require_pkce?: boolean;
 }
 export interface ClientSettingsClient {
@@ -40,7 +49,13 @@ export interface CreateClientInput {
 	grant_types: ['authorization_code'];
 	response_types: ['code'];
 	scope: 'openid';
-	token_endpoint_auth_method: 'client_secret_basic' | 'client_secret_post' | 'none';
+	token_endpoint_auth_method:
+		| 'client_secret_basic'
+		| 'client_secret_post'
+		| 'none'
+		| 'private_key_jwt';
+	jwks_uri?: string | null;
+	jwks?: Record<string, unknown> | null;
 	require_pkce: boolean;
 }
 export interface ClientCreationClient {
@@ -84,6 +99,13 @@ function clientDetail(value: unknown): ClientDetail {
 		throw new Error('Invalid client detail response');
 	return {
 		id: row.client_id,
+		updatedAt: typeof row.updated_at === 'number' ? row.updated_at : undefined,
+		jwksUri: typeof row.jwks_uri === 'string' ? row.jwks_uri : null,
+		jwks:
+			row.jwks && typeof row.jwks === 'object' && !Array.isArray(row.jwks)
+				? Object.fromEntries(Object.entries(row.jwks))
+				: null,
+		advanced: Object.fromEntries(RP_FIELDS.map(({ key }) => [key, row[key] ?? null])),
 		name:
 			typeof row.client_name === 'string' && row.client_name.trim()
 				? row.client_name
@@ -124,7 +146,15 @@ export const httpClients: ClientsClient &
 					client_name: input.client_name,
 					redirect_uris: input.redirect_uris,
 					token_endpoint_auth_method: input.token_endpoint_auth_method,
-					require_pkce: input.require_pkce
+					require_pkce: input.require_pkce,
+					expected_updated_at: input.expected_updated_at,
+					jwks_uri: input.jwks_uri,
+					jwks: input.jwks,
+					...Object.fromEntries(
+						RP_FIELDS.filter(({ key }) => input.advanced && key in input.advanced).map(
+							({ key }) => [key, input.advanced?.[key]]
+						)
+					)
 				})
 			}
 		);

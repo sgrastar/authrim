@@ -9,7 +9,7 @@
 	import { httpClients } from '#lib/api/clients.js';
 	import { httpConsentStatements } from '#lib/api/consent-statements.js';
 	import { httpFlows } from '#lib/api/flows.js';
-	import { httpSamlProviders } from '#lib/api/saml-providers.js';
+	import { httpSamlProviders, httpSamlMetadata } from '#lib/api/saml-providers.js';
 	import { httpSettings } from '#lib/api/settings.js';
 	import { tenantScope } from '#lib/auth/tenant-scope.svelte.js';
 	import { t } from '#lib/i18n/i18n.svelte.js';
@@ -21,6 +21,7 @@
 	// The flows choose from the tenant's screens and sign-in method profiles, and can add profiles.
 	provideFlowResources({
 		connectionCreation: {
+			previewMetadata: (input, kind, signal) => httpSamlMetadata.preview(input, kind, signal),
 			clients: httpClients,
 			samlProviders: httpSamlProviders,
 			externalProviders: httpExternalProviders,

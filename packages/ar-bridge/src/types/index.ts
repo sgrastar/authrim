@@ -283,6 +283,10 @@ export interface StitchingConfig {
 }
 
 export interface HandleIdentityParams {
+  /** Receiver-owned graph projection; never read from an upstream claim. */
+  mappedCustomClaims?: Record<string, string>;
+  /** Receiver-owned claims before graph projection, for policy evaluation and raw-claim storage. */
+  upstreamClaims?: UserInfo;
   provider: UpstreamProvider;
   userInfo: UserInfo;
   tokens: TokenResponse;

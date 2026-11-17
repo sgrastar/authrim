@@ -1,4 +1,7 @@
 <script lang="ts">
+	import Button from '#lib/ui/primitives/Button.svelte';
+	import { inboundMappingFixture } from './inbound-mapping.fixture';
+	import type { InboundMappingClient } from '#lib/api/inbound-mapping.js';
 	import { untrack } from 'svelte';
 	import AccountServiceFlowsPage from './AccountServiceFlowsPage.svelte';
 	import { provideFlowResources, useFlowResources } from './flow-resources-context';
@@ -13,6 +16,8 @@
 		initial,
 		list = false,
 		canEdit = true,
+		switchSources = false,
+		inboundMapping,
 		onnavigate
 	}: {
 		resources: ConnectionCreationResources & {
@@ -22,20 +27,34 @@
 		initial?: { kind: 'op' | 'idp'; id: string };
 		list?: boolean;
 		canEdit?: boolean;
+		switchSources?: boolean;
+		inboundMapping?: InboundMappingClient;
 		onnavigate?: (path: string) => void;
 	} = $props();
 	provideFlowResources({ ...useFlowResources(), connectionCreation: untrack(() => resources) });
+	const opMapping = inboundMappingFixture('op');
+	const idpMapping = inboundMappingFixture('idp');
 	let opened = $state(untrack(() => initial));
 </script>
 
 {#if list}
 	<AccountServiceFlowsPage showConnections />
 {:else if opened}
+	{#if switchSources}
+		<Button onclick={() => (opened = { kind: 'idp', id: 'identity/pending' })}
+			>Open pending IdP</Button
+		>
+		<Button onclick={() => (opened = { kind: 'idp', id: 'identity/latest' })}
+			>Open latest IdP</Button
+		>
+		<Button onclick={() => (opened = { kind: 'op', id: 'directory/op' })}>Open OIDC source</Button>
+	{/if}
 	<UpstreamConnectionPage
 		kind={opened.kind}
 		id={opened.id}
 		externalProviders={resources.externalProviders}
 		samlProviders={resources.samlIdentityProviders}
+		inboundMapping={inboundMapping ?? (opened.kind === 'op' ? opMapping.client : idpMapping.client)}
 		canRead
 		{canEdit}
 		onback={() => (opened = undefined)}

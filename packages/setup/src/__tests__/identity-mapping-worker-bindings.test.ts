@@ -38,6 +38,7 @@ const RESOLUTION_ENTRY_POINTS =
  */
 const RESOLVING_WORKERS = [
   'ar-auth',
+  'ar-bridge',
   'ar-management',
   'ar-saml',
   'ar-token',

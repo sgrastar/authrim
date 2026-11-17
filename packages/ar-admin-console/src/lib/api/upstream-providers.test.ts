@@ -19,6 +19,8 @@ const discovery = {
 };
 const oidcRow = {
 	id: 'oidc/provider',
+	updatedAt: 42,
+	priority: 17,
 	providerType: 'oidc',
 	name: 'Directory',
 	issuer: discovery.issuer,
@@ -56,7 +58,12 @@ describe('upstream provider HTTP contracts', () => {
 			.mockResolvedValueOnce(json(discovery))
 			.mockResolvedValueOnce(json(oidcRow, 201))
 			.mockResolvedValueOnce(
-				json({ ...oidcRow, client_secret: 'must-not-read', clientSecretEncrypted: 'must-not-read' })
+				json({
+					...oidcRow,
+					client_secret: 'must-not-read',
+					clientSecretEncrypted: 'must-not-read',
+					unknownExtension: 'must-not-project'
+				})
 			)
 			.mockResolvedValueOnce(
 				json({ providers: [oidcRow, { ...oidcRow, id: 'oauth2', providerType: 'oauth2' }] })
@@ -86,6 +93,20 @@ describe('upstream provider HTTP contracts', () => {
 		const reopened = await httpExternalProviders.get(oidcRow.id);
 		expect(reopened).toEqual({
 			id: oidcRow.id,
+			updatedAt: 42,
+			advanced: {
+				authorizationEndpoint: null,
+				tokenEndpoint: null,
+				userinfoEndpoint: null,
+				jwksUri: null,
+				tokenEndpointAuthMethod: null,
+				alwaysFetchUserinfo: null,
+				profileUpdateFields: null,
+				enableSso: null,
+				buttonText: null,
+				buttonColor: null,
+				priority: 17
+			},
 			name: 'Directory',
 			issuer: discovery.issuer,
 			clientId: 'registered-client',
@@ -153,7 +174,9 @@ describe('upstream provider HTTP contracts', () => {
 		const fetcher = vi
 			.fn()
 			.mockResolvedValueOnce(json(samlRow, 201))
-			.mockResolvedValueOnce(json(samlRow))
+			.mockResolvedValueOnce(
+				json({ ...samlRow, config: { ...samlRow.config, unknownExtension: 'must-not-project' } })
+			)
 			.mockResolvedValueOnce(
 				json({ providers: [samlRow, { ...samlRow, providerType: 'saml_sp' }] })
 			)
@@ -181,6 +204,10 @@ describe('upstream provider HTTP contracts', () => {
 			hasMapping: false,
 			trustBlocked: false,
 			updatedAt: samlRow.updatedAt,
+			metadataUrl: undefined,
+			hasMetadataUrl: false,
+			certificateValidation: {},
+			config: {},
 			...samlRow.config
 		});
 		expect(await httpSamlProviders.listIdentityProviders()).toEqual([read]);

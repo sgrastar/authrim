@@ -281,6 +281,25 @@ export const enServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 	'sf.ours.redirectUri': 'Redirect URI',
 	'sf.ours.signOutRedirectUri': 'Sign-out redirect URI',
 
+	'sf.metadata.urlHint':
+		'Authrim fetches and validates this URL on the server. Save or confirm import to store the reviewed snapshot.',
+	'sf.metadata.chooseFile': 'Choose an XML metadata file.',
+	'sf.metadata.tooLarge': 'Single-connection metadata must be no larger than 1 MiB.',
+	'sf.metadata.wrongRole': 'Metadata role does not match this connection.',
+	'sf.metadata.failed': 'Metadata could not be previewed. Try again.',
+	'sf.metadata.certificates': '{count} public signing certificate(s)',
+	'sf.metadata.noCertificate': 'No public signing certificate in this metadata.',
+	'sf.metadata.previewOnly': 'Preview only. Nothing has been saved.',
+	'sf.metadata.title': 'Import metadata',
+	'sf.metadata.permissions':
+		'Preview requires provider-create permission. Import also requires metadata-import permission. Manual settings use provider-update permission.',
+	'sf.metadata.mappingDirty': 'Save or discard pending Mapping changes before importing metadata.',
+	'sf.metadata.confirm': 'Confirm metadata import',
+	'sf.metadata.confirmBody':
+		'Import the reviewed metadata into this connection? Saved mapping and custom settings are preserved.',
+	'sf.metadata.dirtyConfirm':
+		'Discard unsaved General changes and import the reviewed metadata? Saved mapping and custom settings are preserved.',
+	'sf.metadata.discard': 'Discard metadata preview',
 	'sf.import.how.service': 'How to give Authrim the service’s details',
 	'sf.import.how.provider': 'How to give Authrim the provider’s details',
 	'sf.import.mode.file': 'Upload a file',

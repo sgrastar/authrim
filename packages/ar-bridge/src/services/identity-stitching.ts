@@ -247,6 +247,7 @@ export async function handleIdentity(
   params: HandleIdentityParams
 ): Promise<HandleIdentityResult> {
   const { provider, userInfo, tokens, linkingUserId, tenantId } = params;
+  const rawClaims = params.upstreamClaims ?? userInfo;
   const tenantD1 = true;
   const defaultUserStoreSources = await resolveTenantUserStoreSourcesFromEnv(env, tenantId);
 
@@ -313,7 +314,7 @@ export async function handleIdentity(
       providerEmail: userInfo.email,
       emailVerified: userInfo.email_verified,
       tokens,
-      rawClaims: userInfo,
+      rawClaims,
       tenantId,
     };
     const linkedIdentityId =
@@ -390,7 +391,7 @@ export async function handleIdentity(
     );
 
     // Update tokens and last login
-    const updates = { tokens, lastLoginAt: Date.now(), rawClaims: userInfo };
+    const updates = { tokens, lastLoginAt: Date.now(), rawClaims };
     if (externalRoute) {
       await updateLinkedIdentity(
         env,
@@ -446,7 +447,7 @@ export async function handleIdentity(
       {
         tokens,
         lastLoginAt: Date.now(),
-        rawClaims: userInfo,
+        rawClaims,
       },
       externalRoute.piiDb
     );
@@ -520,7 +521,7 @@ export async function handleIdentity(
         providerEmail: userInfo.email,
         emailVerified: userInfo.email_verified,
         tokens,
-        rawClaims: userInfo,
+        rawClaims,
         tenantId,
       };
       const linkedIdentityId =
@@ -673,9 +674,10 @@ export async function handleIdentity(
       locale: userInfo.locale,
       identityProviderId: provider.id,
       tenantId,
-      rawClaims: userInfo,
+      rawClaims,
       jitConfig,
-      customClaims: extractMappedCustomClaims(userInfo, provider.attributeMapping),
+      customClaims:
+        params.mappedCustomClaims ?? extractMappedCustomClaims(userInfo, provider.attributeMapping),
     };
     const jitResult = tenantD1
       ? await createTenantD1UserWithJITProvisioning(env, {
@@ -722,7 +724,7 @@ export async function handleIdentity(
           providerEmail: userInfo.email,
           emailVerified: userInfo.email_verified,
           tokens,
-          rawClaims: userInfo,
+          rawClaims,
           tenantId,
         },
         defaultUserStoreSources.piiDb

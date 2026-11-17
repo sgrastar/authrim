@@ -703,6 +703,8 @@ export interface SAMLIdentityMappingAttributeDescriptor {
 export type SAMLDestinationFieldReleaseMode = 'required' | 'optional' | 'hidden';
 
 export interface SAMLIdentityMappingFieldMappingSelector {
+  /** Strict incoming connection contract; retained across partial provider updates. */
+  inboundContract?: 'connection-v1';
   /** Active mapping policy set selected for this SP override. Empty falls back to tenant activation scope. */
   fieldMappingSetId?: string;
   /** Optional pinned policy version. Runtime still requires an active activation for the version. */

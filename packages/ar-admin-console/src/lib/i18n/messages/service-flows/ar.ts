@@ -281,6 +281,25 @@ export const arServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 	'sf.ours.redirectUri': 'Redirect URI',
 	'sf.ours.signOutRedirectUri': 'Sign-out redirect URI',
 
+	'sf.metadata.urlHint':
+		'يجلب Authrim هذا الرابط ويتحقق منه على الخادم. احفظ أو أكد الاستيراد لتخزين النسخة التي راجعتها.',
+	'sf.metadata.chooseFile': 'اختر ملف بيانات وصفية XML.',
+	'sf.metadata.tooLarge': 'يجب ألا تتجاوز بيانات الاتصال الوصفية 1 MiB.',
+	'sf.metadata.wrongRole': 'دور البيانات الوصفية لا يطابق هذا الاتصال.',
+	'sf.metadata.failed': 'تعذرت معاينة البيانات الوصفية. حاول مرة أخرى.',
+	'sf.metadata.certificates': '{count} شهادات توقيع عامة',
+	'sf.metadata.noCertificate': 'لا توجد شهادة توقيع عامة في هذه البيانات الوصفية.',
+	'sf.metadata.previewOnly': 'معاينة فقط. لم يتم حفظ أي شيء.',
+	'sf.metadata.title': 'استيراد البيانات الوصفية',
+	'sf.metadata.permissions':
+		'تتطلب المعاينة إذن إنشاء موفر. ويتطلب الاستيراد أيضًا إذن استيراد البيانات الوصفية. وتتطلب الإعدادات اليدوية إذن تحديث موفر.',
+	'sf.metadata.mappingDirty': 'احفظ تغييرات التعيين المعلقة أو تجاهلها قبل الاستيراد.',
+	'sf.metadata.confirm': 'تأكيد استيراد البيانات الوصفية',
+	'sf.metadata.confirmBody':
+		'هل تريد استيراد البيانات الوصفية التي راجعتها؟ يتم الاحتفاظ بالتعيين والإعدادات المخصصة المحفوظة.',
+	'sf.metadata.dirtyConfirm':
+		'هل تريد تجاهل التغييرات العامة غير المحفوظة واستيراد البيانات الوصفية؟ يتم الاحتفاظ بالتعيين والإعدادات المخصصة المحفوظة.',
+	'sf.metadata.discard': 'تجاهل معاينة البيانات الوصفية',
 	'sf.import.how.service': 'How to give Authrim the service’s details',
 	'sf.import.how.provider': 'How to give Authrim the provider’s details',
 	'sf.import.mode.file': 'Upload a file',

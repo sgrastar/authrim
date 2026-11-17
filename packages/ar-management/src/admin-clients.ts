@@ -1,3 +1,9 @@
+import {
+  adminClientAdvancedSchema,
+  adminClientUpdateEnvelopeSchema,
+  clientKeySettingsProblem,
+} from './admin-client-advanced';
+import { publicJwkSet } from './routes/policy/client-key-redaction';
 import { runLiteGuardedWrite } from './lite-mode-guard';
 import { validatePairwiseClientMetadata } from './pairwise-client-validation';
 import { samlDrAll } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
@@ -927,6 +933,15 @@ async function tokenExchangeCeilingWarnings(
 export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
   try {
     const body = await c.req.json<{
+      jwks?: Record<string, unknown> | null;
+      jwks_uri?: string | null;
+      token_endpoint_auth_signing_alg?: string | null;
+      post_logout_redirect_uris?: string[] | null;
+      frontchannel_logout_uri?: string | null;
+      backchannel_logout_uri?: string | null;
+      frontchannel_logout_session_required?: boolean;
+      backchannel_logout_session_required?: boolean;
+      tls_client_certificate_bound_access_tokens?: boolean;
       client_name: string;
       description?: string | null;
       redirect_uris: string[];
@@ -982,6 +997,13 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
       default_resource?: string | null;
     }>();
 
+    const advancedResult = adminClientAdvancedSchema.safeParse(body);
+    if (!advancedResult.success)
+      return c.json(
+        { error: 'invalid_request', error_description: advancedResult.error.issues[0]?.message },
+        400
+      );
+    const advanced = advancedResult.data;
     const unsupportedLegacyField = findUnsupportedLegacyClientField(body);
     if (unsupportedLegacyField) {
       if (unsupportedLegacyField === 'app_suite') {
@@ -1534,13 +1556,34 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
         400
       );
     }
-    const isPublicClient = tokenEndpointAuthMethodValidation.value === 'none';
+    if (
+      validatedTokenEndpointAuthMethod === 'none' &&
+      (validatedGrantTypes.includes(GRANT_TYPES.CLIENT_CREDENTIALS) ||
+        body.client_credentials_allowed === true)
+    )
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'Client credentials require a confidential client',
+        },
+        400
+      );
+    const keyError = await clientKeySettingsProblem(
+      advanced,
+      validatedTokenEndpointAuthMethod,
+      true
+    );
+    if (keyError) return c.json({ error: 'invalid_request', error_description: keyError }, 400);
+    const isPublicClient =
+      validatedTokenEndpointAuthMethod === 'none' ||
+      validatedTokenEndpointAuthMethod === 'private_key_jwt';
     const clientSecret = isPublicClient
       ? undefined
       : crypto.randomUUID().replace(/-/g, '') + crypto.randomUUID().replace(/-/g, '');
     const clientSecretHash = clientSecret ? await hashClientSecret(clientSecret) : undefined;
 
     const client = await authCtx.repositories.client.create({
+      ...advanced,
       client_name: body.client_name,
       description: descriptionValidation.value,
       client_secret_hash: clientSecretHash,
@@ -1663,6 +1706,8 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
         ? parseClientStringArray(client.post_logout_redirect_uris, [])
         : undefined,
       token_endpoint_auth_method: client.token_endpoint_auth_method,
+      token_endpoint_auth_signing_alg: client.token_endpoint_auth_signing_alg ?? undefined,
+      tls_client_certificate_bound_access_tokens: client.tls_client_certificate_bound_access_tokens,
       subject_type: client.subject_type ?? undefined,
       sector_identifier_uri: client.sector_identifier_uri ?? undefined,
       jwks: client.jwks ? JSON.parse(client.jwks) : undefined,
@@ -1781,6 +1826,14 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
           policy_uri: client.policy_uri,
           tos_uri: client.tos_uri,
           contacts: client.contacts ? parseClientStringArray(client.contacts, []) : [],
+          jwks: readPublicClientJwks(client.jwks),
+          jwks_uri: client.jwks_uri,
+          token_endpoint_auth_signing_alg: client.token_endpoint_auth_signing_alg,
+          post_logout_redirect_uris: parseClientStringArray(client.post_logout_redirect_uris, []),
+          frontchannel_logout_uri: client.frontchannel_logout_uri,
+          backchannel_logout_uri: client.backchannel_logout_uri,
+          frontchannel_logout_session_required: client.frontchannel_logout_session_required,
+          backchannel_logout_session_required: client.backchannel_logout_session_required,
           token_endpoint_auth_method: client.token_endpoint_auth_method,
           subject_type: client.subject_type,
           sector_identifier_uri: client.sector_identifier_uri,
@@ -1821,7 +1874,7 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
           require_pkce: client.require_pkce,
           minimum_ial: client.minimum_ial ?? null,
           created_at: client.created_at,
-          updated_at: client.updated_at,
+          updated_at: toMilliseconds(client.updated_at),
         },
         ...(tokenExchangeWarnings.length > 0 && { warnings: tokenExchangeWarnings }),
       },
@@ -1857,6 +1910,8 @@ export async function adminClientsListHandler(c: Context<{ Bindings: Env }>) {
       const { client_secret_hash: _excluded, ...clientWithoutHash } = client;
       return {
         ...clientWithoutHash,
+        jwks: readPublicClientJwks(client.jwks),
+        post_logout_redirect_uris: parseClientStringArray(client.post_logout_redirect_uris, []),
         redirect_uris: parseClientStringArray(client.redirect_uris, []),
         grant_types: parseClientStringArray(client.grant_types, ['authorization_code']),
         response_types: parseClientStringArray(client.response_types, ['code']),
@@ -1940,6 +1995,8 @@ export async function adminClientGetHandler(c: Context<{ Bindings: Env }>) {
     );
     const formattedClient = {
       ...clientWithoutHash,
+      jwks: readPublicClientJwks(client.jwks),
+      post_logout_redirect_uris: parseClientStringArray(client.post_logout_redirect_uris, []),
       redirect_uris: parseClientStringArray(client.redirect_uris, []),
       grant_types: parseClientStringArray(client.grant_types, ['authorization_code']),
       response_types: parseClientStringArray(client.response_types, ['code']),
@@ -2049,10 +2106,17 @@ async function executeAdminClientUpdate(
       );
     }
 
-    const body = internal.readBody ? await internal.readBody() : await c.req.json();
-    const unsupportedLegacyField = findUnsupportedLegacyClientField(
-      body as Record<string, unknown>
-    );
+    const rawBody: unknown = internal.readBody
+      ? await internal.readBody()
+      : await c.req.json<unknown>();
+    const envelope = adminClientUpdateEnvelopeSchema.safeParse(rawBody);
+    if (!envelope.success)
+      return c.json(
+        { error: 'invalid_request', error_description: envelope.error.issues[0]?.message },
+        400
+      );
+    const body = envelope.data;
+    const unsupportedLegacyField = findUnsupportedLegacyClientField(body);
     if (unsupportedLegacyField) {
       if (unsupportedLegacyField === 'app_suite') {
         return createCompatibilityErrorResponse('legacy_app_suite_not_supported', 400);
@@ -2067,6 +2131,32 @@ async function executeAdminClientUpdate(
       );
     }
 
+    const advancedResult = adminClientAdvancedSchema.safeParse(body);
+    if (!advancedResult.success)
+      return c.json(
+        { error: 'invalid_request', error_description: advancedResult.error.issues[0]?.message },
+        400
+      );
+    const advanced = advancedResult.data;
+    const requestedVersion: unknown = body.expected_updated_at;
+    if (
+      requestedVersion !== undefined &&
+      (!Number.isSafeInteger(requestedVersion) ||
+        typeof requestedVersion !== 'number' ||
+        requestedVersion < 0)
+    )
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'expected_updated_at must be an integer timestamp',
+        },
+        400
+      );
+    if (
+      requestedVersion !== undefined &&
+      requestedVersion !== toMilliseconds(existingClient.updated_at)
+    )
+      return c.json({ error: 'conflict', reason: 'version_conflict' }, 409);
     const {
       client_name,
       description,
@@ -2120,9 +2210,8 @@ async function executeAdminClientUpdate(
       id_token_signed_response_alg,
       userinfo_signed_response_alg,
     } = body;
-    const pairwiseFields = body as Record<string, unknown>;
-    const subject_type = pairwiseFields.subject_type;
-    const sector_identifier_uri = pairwiseFields.sector_identifier_uri;
+    const subject_type = body.subject_type;
+    const sector_identifier_uri = body.sector_identifier_uri;
 
     const idTokenSigningAlgorithmValidation = validateOptionalEnumField(
       id_token_signed_response_alg,
@@ -2378,6 +2467,79 @@ async function executeAdminClientUpdate(
         ? existingTokenEndpointAuthMethodValidation.value
         : undefined) ??
       'client_secret_basic';
+    if (
+      existingClient.token_endpoint_auth_method === 'none' &&
+      token_endpoint_auth_method !== undefined &&
+      effectiveTokenEndpointAuthMethod !== 'none'
+    )
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'Public clients cannot become confidential through this update',
+        },
+        400
+      );
+    if (
+      (effectiveTokenEndpointAuthMethod === 'client_secret_basic' ||
+        effectiveTokenEndpointAuthMethod === 'client_secret_post') &&
+      token_endpoint_auth_method !== undefined &&
+      existingClient.token_endpoint_auth_method !== 'client_secret_basic' &&
+      existingClient.token_endpoint_auth_method !== 'client_secret_post'
+    )
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'Changing to secret authentication requires the credential lifecycle',
+        },
+        400
+      );
+    if (
+      effectiveTokenEndpointAuthMethod === 'none' &&
+      (grant_types !== undefined ||
+        client_credentials_allowed !== undefined ||
+        token_endpoint_auth_method !== undefined) &&
+      (effectiveGrantTypes.includes(GRANT_TYPES.CLIENT_CREDENTIALS) ||
+        (client_credentials_allowed ?? existingClient.client_credentials_allowed))
+    )
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'Client credentials require a confidential client',
+        },
+        400
+      );
+    const keyChanged =
+      advanced.jwks !== undefined ||
+      advanced.jwks_uri !== undefined ||
+      advanced.token_endpoint_auth_signing_alg !== undefined ||
+      token_endpoint_auth_method !== undefined;
+    if (keyChanged) {
+      let storedJwks: unknown = null;
+      try {
+        storedJwks = existingClient.jwks ? JSON.parse(existingClient.jwks) : null;
+      } catch {
+        return c.json(
+          {
+            error: 'invalid_request',
+            error_description: 'Stored JWKS must be replaced explicitly',
+          },
+          400
+        );
+      }
+      const keyError = await clientKeySettingsProblem(
+        {
+          jwks: advanced.jwks !== undefined ? advanced.jwks : storedJwks,
+          jwks_uri: advanced.jwks_uri !== undefined ? advanced.jwks_uri : existingClient.jwks_uri,
+          token_endpoint_auth_signing_alg:
+            advanced.token_endpoint_auth_signing_alg !== undefined
+              ? advanced.token_endpoint_auth_signing_alg
+              : existingClient.token_endpoint_auth_signing_alg,
+        },
+        effectiveTokenEndpointAuthMethod,
+        true
+      );
+      if (keyError) return c.json({ error: 'invalid_request', error_description: keyError }, 400);
+    }
     const effectiveRequirePkce =
       requirePkceValidation.value ?? Boolean(existingClient.require_pkce);
     const pkcePolicyValidation = validatePkcePolicy(
@@ -2824,6 +2986,7 @@ async function executeAdminClientUpdate(
       userinfo_signed_response_alg,
       subject_type,
       sector_identifier_uri,
+      ...Object.values(advanced),
     ].some((v) => v !== undefined);
     const hasRegistryUpdate = webOriginRegistryPayload !== undefined;
     const hasUpdates = hasClientUpdates || hasRegistryUpdate;
@@ -2848,7 +3011,10 @@ async function executeAdminClientUpdate(
     const expectedUpdatedAt =
       internal.expectedUpdatedAt ??
       agentExpectedUpdatedAt ??
-      (identityMappingValidation.value !== undefined ? existingClient.updated_at : undefined);
+      (typeof requestedVersion === 'number' ? existingClient.updated_at : undefined) ??
+      (identityMappingValidation.value !== undefined || keyChanged
+        ? existingClient.updated_at
+        : undefined);
     if (
       internal.expectedUpdatedAt !== undefined &&
       existingClient.updated_at !== internal.expectedUpdatedAt
@@ -2927,6 +3093,7 @@ async function executeAdminClientUpdate(
         ? await authCtx.repositories.client.update(
             clientId,
             {
+              ...advanced,
               client_name,
               description: descriptionValidation.value,
               redirect_uris: redirectUrisValidation.value,
@@ -3094,6 +3261,7 @@ async function executeAdminClientUpdate(
     await createAuditLogFromContext(c, 'client.updated', 'client', clientId, {
       client_name: updatedClient?.client_name,
       ...minimumIalChange,
+      ...(Object.keys(advanced).length ? { advanced_fields: Object.keys(advanced) } : {}),
       ...(internal.restoreAudit
         ? {
             restored_from: internal.restoreAudit.restoredFrom,
@@ -3106,6 +3274,7 @@ async function executeAdminClientUpdate(
     scheduleAdminAuditLog(c, 'client.updated', clientId, 'success', {
       client_name: updatedClient?.client_name,
       ...minimumIalChange,
+      ...(Object.keys(advanced).length ? { advanced_fields: Object.keys(advanced) } : {}),
       ...(internal.restoreAudit
         ? {
             restored_from: internal.restoreAudit.restoredFrom,
@@ -3129,6 +3298,12 @@ async function executeAdminClientUpdate(
         ...(tokenExchangeWarnings.length > 0 && { warnings: tokenExchangeWarnings }),
         client: {
           ...clientWithoutHash,
+          updated_at: toMilliseconds(updatedClient.updated_at),
+          jwks: readPublicClientJwks(updatedClient.jwks),
+          post_logout_redirect_uris: parseClientStringArray(
+            updatedClient.post_logout_redirect_uris,
+            []
+          ),
           redirect_uris: parseClientStringArray(updatedClient.redirect_uris, []),
           grant_types: parseClientStringArray(updatedClient.grant_types, ['authorization_code']),
           response_types: parseClientStringArray(updatedClient.response_types, ['code']),
@@ -3446,5 +3621,15 @@ export async function adminClientRegenerateSecretHandler(c: Context<{ Bindings: 
   } catch (error) {
     logSanitizedError('Admin client regenerate secret error', error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+  }
+}
+
+/** Reads remain defensive for historical records; mutations reject rather than redact keys. */
+function readPublicClientJwks(value: string | null): Record<string, unknown> | null {
+  if (!value) return null;
+  try {
+    return publicJwkSet(JSON.parse(value)) ?? null;
+  } catch {
+    return null;
   }
 }

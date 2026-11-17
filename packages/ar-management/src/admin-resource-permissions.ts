@@ -223,3 +223,16 @@ export function registerAdminResourcePermissionMiddleware(app: Hono<any, any, an
   app.use('/api/admin/credential-profiles', vcProfilePermission);
   app.use('/api/admin/credential-profiles/*', vcProfilePermission);
 }
+
+export function requireClientManagementPermission() {
+  return async (c: Context<{ Bindings: Env }>, next: Next) => {
+    const method = c.req.method.toUpperCase();
+    const requiredPermissions =
+      method === 'GET'
+        ? [ADMIN_PERMISSIONS.CLIENTS_READ]
+        : method === 'DELETE'
+          ? [ADMIN_PERMISSIONS.CLIENTS_DELETE]
+          : [ADMIN_PERMISSIONS.CLIENTS_WRITE];
+    return requireAdminPermissions(requiredPermissions)(c, next);
+  };
+}

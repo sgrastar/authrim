@@ -6,7 +6,7 @@
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 	import { httpClients } from '#lib/api/clients.js';
-	import { httpSamlProviders } from '#lib/api/saml-providers.js';
+	import { httpSamlProviders, httpSamlMetadata } from '#lib/api/saml-providers.js';
 	import { httpIdentityMapping } from '#lib/api/identity-mapping.js';
 	import { identifierMaterialsClient } from '#lib/api/identifier-materials.js';
 	import { tenantScope } from '#lib/auth/tenant-scope.svelte.js';
@@ -56,6 +56,12 @@
 					: {
 							kind,
 							detail: await httpSamlProviders.getServiceProvider(id),
+							metadata: httpSamlMetadata,
+							canPreviewMetadata: hasPermission(adminAccess.current, 'admin:saml_providers:create'),
+							canImportMetadata: hasPermission(
+								adminAccess.current,
+								'admin:saml_providers:metadata:import'
+							),
 							client: httpSamlProviders
 						};
 			const next = basicSettingsAnswers(loaded);
@@ -78,7 +84,8 @@
 						await httpSamlProviders.bindMapping(id, set, key);
 						// Our own binding can advance updatedAt. Refresh activation without rebasing dirty settings.
 						const detail = await httpSamlProviders.getServiceProvider(id);
-						if (turn === generation) settings = { kind: 'sp', detail, client: httpSamlProviders };
+						if (turn === generation)
+							settings = { ...loaded, kind: 'sp', detail, client: httpSamlProviders };
 					}
 				}
 			};
@@ -99,10 +106,27 @@
 			id={page.params.id ?? ''}
 			externalProviders={httpExternalProviders}
 			samlProviders={httpSamlProviders}
+			metadata={httpSamlMetadata}
+			canPreviewMetadata={hasPermission(adminAccess.current, 'admin:saml_providers:create')}
+			canImportMetadata={hasPermission(adminAccess.current, 'admin:saml_providers:metadata:import')}
 			canRead={hasPermission(
 				adminAccess.current,
 				page.params.kind === 'op' ? 'admin:external_providers:read' : 'admin:saml_providers:read'
 			)}
+			canReadMapping={hasPermission(adminAccess.current, 'admin:settings:read') &&
+				hasPermission(
+					adminAccess.current,
+					page.params.kind === 'op' ? 'admin:external_providers:read' : 'admin:saml_providers:read'
+				)}
+			canEditMapping={hasPermission(adminAccess.current, 'admin:settings:write') &&
+				hasPermission(
+					adminAccess.current,
+					page.params.kind === 'op'
+						? 'admin:external_providers:write'
+						: 'admin:saml_providers:update'
+				) &&
+				(page.params.kind !== 'op' ||
+					!isCapabilityDisabled(adminAccess.current, 'external_identity_providers'))}
 			canEdit={hasPermission(
 				adminAccess.current,
 				page.params.kind === 'op' ? 'admin:external_providers:write' : 'admin:saml_providers:update'

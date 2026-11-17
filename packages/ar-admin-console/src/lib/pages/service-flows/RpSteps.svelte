@@ -7,6 +7,7 @@
 	import TextRow from '#lib/ui/patterns/TextRow.svelte';
 	import ToggleRow from '#lib/ui/patterns/ToggleRow.svelte';
 	import OurDetails from './OurDetails.svelte';
+	import PublicClientKeys from './PublicClientKeys.svelte';
 	import {
 		APP_TYPES,
 		defaultsForAppType,
@@ -117,7 +118,7 @@
 		bind:values={form.redirectUris}
 	/>
 {:else if step === 'rp-signin'}
-	{#if editing && !secretAuth}
+	{#if editing && !secretAuth && storedAuthMethod !== 'private_key_jwt'}
 		<Callout tone="info"
 			>{t('sf.live.authReadonly', { method: storedAuthMethod ?? t('sf.live.unset') })}</Callout
 		>
@@ -130,15 +131,22 @@
 			options={[
 				{ value: 'client_secret_basic', label: t('sf.rp.auth.basic'), disabled: secretless },
 				{ value: 'client_secret_post', label: t('sf.rp.auth.post'), disabled: secretless },
-				{ value: 'private_key_jwt', label: t('sf.rp.auth.jwt'), disabled: secretless },
+				{
+					value: 'private_key_jwt',
+					label: t('sf.rp.auth.jwt'),
+					disabled:
+						secretless || (live && form.appType !== 'web' && storedAuthMethod !== 'private_key_jwt')
+				},
 				{ value: 'none', label: t('sf.rp.auth.none'), disabled: !secretless }
 			].filter((option) =>
 				editing
-					? ['client_secret_basic', 'client_secret_post'].includes(option.value)
-					: !live || option.value !== 'private_key_jwt'
+					? option.value === 'private_key_jwt' ||
+						(secretAuth && ['client_secret_basic', 'client_secret_post'].includes(option.value))
+					: true
 			)}
 		/>
 	{/if}
+	{#if live && form.authMethod === 'private_key_jwt'}<PublicClientKeys bind:form />{/if}
 	{#if secretless}
 		<Callout tone="info">{t('sf.rp.pkceOnly')}</Callout>
 	{/if}

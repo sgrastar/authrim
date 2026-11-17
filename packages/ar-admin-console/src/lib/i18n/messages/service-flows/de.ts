@@ -292,6 +292,26 @@ export const deServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 	'sf.ours.redirectUri': 'Weiterleitungs-URI',
 	'sf.ours.signOutRedirectUri': 'Weiterleitungs-URI nach der Abmeldung',
 
+	'sf.metadata.urlHint':
+		'Authrim lädt und prüft diese URL auf dem Server. Erst Speichern oder Importieren übernimmt die geprüften Metadaten.',
+	'sf.metadata.chooseFile': 'Wählen Sie eine XML-Metadatendatei.',
+	'sf.metadata.tooLarge': 'Metadaten für eine Verbindung dürfen höchstens 1 MiB groß sein.',
+	'sf.metadata.wrongRole': 'Die Metadatenrolle passt nicht zu dieser Verbindung.',
+	'sf.metadata.failed': 'Die Metadaten konnten nicht geprüft werden. Versuchen Sie es erneut.',
+	'sf.metadata.certificates': '{count} öffentliche Signaturzertifikate',
+	'sf.metadata.noCertificate': 'Diese Metadaten enthalten kein öffentliches Signaturzertifikat.',
+	'sf.metadata.previewOnly': 'Nur Vorschau. Es wurde noch nichts gespeichert.',
+	'sf.metadata.title': 'Metadaten importieren',
+	'sf.metadata.permissions':
+		'Die Vorschau erfordert die Berechtigung zum Erstellen von Providern. Der Import erfordert zusätzlich die Metadaten-Importberechtigung. Manuelle Änderungen erfordern die Provider-Updateberechtigung.',
+	'sf.metadata.mappingDirty':
+		'Speichern oder verwerfen Sie ausstehende Mapping-Änderungen vor dem Import.',
+	'sf.metadata.confirm': 'Metadatenimport bestätigen',
+	'sf.metadata.confirmBody':
+		'Die geprüften Metadaten importieren? Gespeichertes Mapping und benutzerdefinierte Einstellungen bleiben erhalten.',
+	'sf.metadata.dirtyConfirm':
+		'Ungespeicherte allgemeine Änderungen verwerfen und die geprüften Metadaten importieren? Gespeichertes Mapping und benutzerdefinierte Einstellungen bleiben erhalten.',
+	'sf.metadata.discard': 'Metadatenvorschau verwerfen',
 	'sf.import.how.service': 'Wie Authrim die Angaben des Dienstes erhält',
 	'sf.import.how.provider': 'Wie Authrim die Angaben des Anbieters erhält',
 	'sf.import.mode.file': 'Datei hochladen',

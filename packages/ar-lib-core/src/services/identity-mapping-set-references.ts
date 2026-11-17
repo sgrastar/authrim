@@ -66,6 +66,7 @@ export type MappingSetReferenceKind =
   | 'tenant_default'
   | 'client'
   | 'saml_provider'
+  | 'upstream_provider'
   | 'credential_profile'
   | 'federation_trust_source'
   | 'scim';
@@ -118,6 +119,7 @@ export interface UnscannedMappingSetScope {
     | 'federation_trust_sources'
     | 'tenant_clients'
     | 'tenant_saml'
+    | 'tenant_upstream'
     | 'scim_settings'
     | 'tenant_directory'
     | 'tenant_limit'
@@ -472,6 +474,30 @@ async function scanTenant(
       }
     } catch (error) {
       unscanned.push(failureScope('tenant_clients', error, tenantId));
+    }
+    try {
+      const rows = await core.query<{ id: string; pinned: string | null }>(
+        `SELECT id,
+                CASE WHEN json_valid(provider_quirks)
+                     THEN json_extract(provider_quirks, '$.inboundIdentityMapping.fieldMappingVersionId') END AS pinned
+           FROM upstream_providers
+          WHERE tenant_id = ? AND provider_type = 'oidc'
+            AND CASE WHEN json_valid(provider_quirks)
+                     THEN json_extract(provider_quirks, '$.inboundIdentityMapping.fieldMappingSetId') END = ?
+          ORDER BY id LIMIT ${limit + 1}`,
+        [tenantId, input.setId]
+      );
+      truncated ||= rows.length > limit;
+      for (const row of rows.slice(0, limit)) {
+        references.push({
+          kind: 'upstream_provider',
+          tenantId,
+          providerId: row.id,
+          ...(typeof row.pinned === 'string' && row.pinned ? { pinnedVersionId: row.pinned } : {}),
+        });
+      }
+    } catch (error) {
+      unscanned.push(failureScope('tenant_upstream', error, tenantId));
     }
     try {
       const rows = await core.query<{

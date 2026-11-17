@@ -97,16 +97,21 @@
 	</div>
 
 	{#if rejected.length}
-		<ul class="drop__errors" role="alert">
-			{#each rejected as item (item.name)}
-				<li>
-					<Icon name="warningCircle" />
-					{item.reason === 'size'
-						? t('file.tooLarge', { name: item.name, max: formatBytes(maxBytes ?? 0, i18n.locale) })
-						: t('file.wrongType', { name: item.name })}
-				</li>
-			{/each}
-		</ul>
+		<div role="alert">
+			<ul class="drop__errors">
+				{#each rejected as item (item.name)}
+					<li>
+						<Icon name="warningCircle" />
+						{item.reason === 'size'
+							? t('file.tooLarge', {
+									name: item.name,
+									max: formatBytes(maxBytes ?? 0, i18n.locale)
+								})
+							: t('file.wrongType', { name: item.name })}
+					</li>
+				{/each}
+			</ul>
+		</div>
 	{/if}
 
 	{#if files.length}
