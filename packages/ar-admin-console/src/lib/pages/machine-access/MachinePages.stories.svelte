@@ -227,6 +227,7 @@
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		const body = within(canvasElement.ownerDocument.body);
+		toast.dismissAll();
 		await userEvent.click(await canvas.findByRole('button', { name: t('mc.key.add') }));
 		let dialog = await body.findByRole('dialog');
 		await userEvent.click(within(dialog).getByText(t('mc.advanced')));
@@ -247,6 +248,7 @@
 		await userEvent.paste('{"kty":"EC","crv":"P-256","x":"a","y":"b"}');
 		await userEvent.click(within(dialog).getByRole('button', { name: t('mc.key.new.submit') }));
 		await canvas.findByText('again');
+		await waitForSettledToasts();
 	}}
 >
 	{#snippet template()}
