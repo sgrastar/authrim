@@ -614,7 +614,7 @@ describe('deployWorker', () => {
 
     expect(result.success).toBe(true);
     expect(result.version).toBe('9.9.9');
-    expect(progressMessages).toContain('[1/3] Deploying test-ar-auth...');
+    expect(progressMessages).toContain('Deploying test-ar-auth...');
     expect(progressMessages).toContain('  [DRY RUN] Would deploy ar-auth with --env test');
   });
 

@@ -19,6 +19,7 @@ import { enAdminAudit } from './admin-audit/en';
 import { enUserAudit } from './user-audit/en';
 import { enTeam } from './team/en';
 import { enMachineAccess } from './machine-access/en';
+import { enTenants } from './tenants/en';
 import { enAuthMethods } from './auth-methods/en';
 import { enSessionProfiles } from './session-profiles/en';
 import { enProfileLayer } from './profile-layer/en';
@@ -47,6 +48,7 @@ export const en = {
 	...enUserAudit,
 	...enTeam,
 	...enMachineAccess,
+	...enTenants,
 	...enAuthMethods,
 	...enSessionProfiles,
 	...enProfileLayer,
@@ -222,7 +224,6 @@ export const en = {
 	'nav.platArea.infra': 'Infrastructure',
 	'nav.platArea.approvals': 'Approvals',
 	'nav.pt.list': 'All tenants',
-	'nav.pt.provisioning': 'Create / clone',
 	'nav.pt.domains': 'Custom domains',
 	'nav.pt.invitations': 'Tenant invitations',
 	'nav.pa.users': 'Admin users',

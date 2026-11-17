@@ -15,6 +15,8 @@ import {
   type LogArchiveConfig,
   type LogArchiveLock,
 } from './log-archive-config.js';
+import { LOG_ARCHIVE_SINK_ROLL_INTERVAL_SECONDS } from './log-archive.js';
+import { formatDuration } from './phase-timings.js';
 
 const ResultSchema = LogArchiveRuntimeProofSchema.extend({
   state: z.enum(['pending', 'ready']),
@@ -38,6 +40,8 @@ export interface LogArchiveReadinessOptions {
   onProgress?: (message: string) => void;
   wait?: (milliseconds: number) => Promise<void>;
   now?: () => number;
+  /** When `startLogArchiveReadiness` sent this attempt's probe (by `now`): said while waiting. */
+  probeSentAt?: number;
 }
 /** Version IDs come from the existing provider readback, never generated package names. */
 export function prepareLogArchiveReadinessAttempt(
@@ -61,6 +65,8 @@ export function prepareLogArchiveReadinessAttempt(
     ? { ...previous }
     : { attemptId: randomUUID(), startedAt: new Date().toISOString(), deploymentFingerprint };
 }
+/** How often the wait says it is still waiting (it checks every 5 s). */
+const LOG_ARCHIVE_READINESS_REPORT_EVERY_MS = 30_000;
 /** The Pipeline sink commits a file about every 300 s, so a probe written just after a roll needs
  * more than one interval before its row can be read; a limit equal to the interval is not enough. */
 export const LOG_ARCHIVE_READINESS_TIMEOUT_MS = 15 * 60_000;
@@ -68,6 +74,26 @@ export const LOG_ARCHIVE_READINESS_TIMEOUT_MS = 15 * 60_000;
 export async function waitForLogArchiveReadiness(
   input: LogArchiveReadinessOptions
 ): Promise<LogArchiveRuntimeProof> {
+  const proof = await runLogArchiveReadiness(input, false);
+  if (!proof) throw new Error('log_archive_readiness_not_confirmed_resume_setup');
+  return proof;
+}
+
+/**
+ * Sends the probe once, so that the row is written and the Pipeline's commit clock is already
+ * running while other work goes on (the UI Workers); `waitForLogArchiveReadiness` with the same
+ * attempt then waits for it to be readable. Returns the proof when it is already readable.
+ */
+export async function startLogArchiveReadiness(
+  input: LogArchiveReadinessOptions
+): Promise<LogArchiveRuntimeProof | null> {
+  return runLogArchiveReadiness(input, true);
+}
+
+async function runLogArchiveReadiness(
+  input: LogArchiveReadinessOptions,
+  startOnly: boolean
+): Promise<LogArchiveRuntimeProof | null> {
   input = {
     ...input,
     archive: structuredClone(input.archive),
@@ -98,6 +124,31 @@ export async function waitForLogArchiveReadiness(
   const wait =
     input.wait ??
     ((milliseconds) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds)));
+  // The row is readable only once the sink commits its file: the same line every 5 s says nothing,
+  // so say once why it takes time, then how long it has been, every 30 s.
+  const waitStarted = now();
+  const limitMs = deadline - waitStarted;
+  let checks = 0;
+  let nextReport = 0;
+  const reportWaiting = () => {
+    checks++;
+    const elapsed = now() - waitStarted;
+    if (checks === 1) {
+      const sent =
+        input.probeSentAt !== undefined
+          ? ` The probe was sent ${formatDuration(Math.max(0, now() - input.probeSentAt))} ago.`
+          : '';
+      input.onProgress?.(
+        `Waiting for the log archive check: the probe row becomes readable once Cloudflare Pipelines commits its next file to the Iceberg table (about every ${formatDuration(LOG_ARCHIVE_SINK_ROLL_INTERVAL_SECONDS * 1000)}). Usually up to about ${formatDuration(LOG_ARCHIVE_SINK_ROLL_INTERVAL_SECONDS * 1000)}; gives up after ${formatDuration(limitMs)}.${sent}`
+      );
+      nextReport = elapsed + LOG_ARCHIVE_READINESS_REPORT_EVERY_MS;
+    } else if (elapsed >= nextReport) {
+      input.onProgress?.(
+        `  Still waiting for the log archive check: ${formatDuration(elapsed)} of up to ${formatDuration(limitMs)} (checked ${checks} times)`
+      );
+      nextReport = elapsed + LOG_ARCHIVE_READINESS_REPORT_EVERY_MS;
+    }
+  };
   while (now() < deadline) {
     const proof = await signBootstrapAcceleratorProof({
       environmentId: input.environmentId,
@@ -125,6 +176,7 @@ export async function waitForLogArchiveReadiness(
       // 503 cannot be told apart from a missing binding, a Catalog failure or a Management error.
       const reason = response.headers?.get?.('x-authrim-error-code') ?? '';
       if (response.status === 503 && reason === 'runtime_smoke_log_archive_probe_failed') {
+        if (startOnly) return null;
         input.onProgress?.('Log archive probe was interrupted; retrying the pending attempt...');
         await wait(Math.min(5000, Math.max(0, deadline - now())));
         continue;
@@ -150,15 +202,25 @@ export async function waitForLogArchiveReadiness(
           `log_archive_probe_v1:${input.attempt.attemptId}:${input.archive.objectEncryptionKeyVersion}`
       )
         throw new Error('log_archive_readiness_identity_mismatch');
-      if (response.status === 200 && result.state === 'ready')
-        return LogArchiveRuntimeProofSchema.parse(result);
+      if (response.status === 200 && result.state === 'ready') {
+        const proof = LogArchiveRuntimeProofSchema.parse(result);
+        if (checks > 0)
+          input.onProgress?.(
+            `Log archive check passed after ${formatDuration(now() - waitStarted)}.`
+          );
+        return proof;
+      }
       if (response.status !== 202 || result.state !== 'pending')
         throw new Error('log_archive_readiness_response_invalid');
     } else if (response.status === 200) throw new Error('log_archive_readiness_response_invalid');
-    input.onProgress?.(
-      'Waiting for the non-PII log probe to become readable in the owned Iceberg table...'
-    );
+    if (startOnly) {
+      input.onProgress?.(
+        'Log archive check started: the probe row was sent; its readability is checked after the UI Workers are deployed.'
+      );
+      return null;
+    }
+    reportWaiting();
     await wait(Math.min(5000, Math.max(0, deadline - now())));
   }
-  throw new Error('log_archive_readiness_not_confirmed_resume_setup');
+  return null;
 }

@@ -19,6 +19,7 @@ import { arAdminAudit } from './admin-audit/ar';
 import { arUserAudit } from './user-audit/ar';
 import { arTeam } from './team/ar';
 import { arMachineAccess } from './machine-access/ar';
+import { arTenants } from './tenants/ar';
 import { arAuthMethods } from './auth-methods/ar';
 import { arSessionProfiles } from './session-profiles/ar';
 import { arProfileLayer } from './profile-layer/ar';
@@ -47,6 +48,7 @@ export const ar = {
 	...arUserAudit,
 	...arTeam,
 	...arMachineAccess,
+	...arTenants,
 	...arAuthMethods,
 	...arSessionProfiles,
 	...arProfileLayer,
@@ -222,7 +224,6 @@ export const ar = {
 	'nav.platArea.infra': 'البنية التحتية',
 	'nav.platArea.approvals': 'الموافقات',
 	'nav.pt.list': 'كل المستأجرين',
-	'nav.pt.provisioning': 'إنشاء / استنساخ',
 	'nav.pt.domains': 'النطاقات المخصصة',
 	'nav.pt.invitations': 'دعوات المستأجرين',
 	'nav.pa.users': 'مستخدمو الإدارة',
