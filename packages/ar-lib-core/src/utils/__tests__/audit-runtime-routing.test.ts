@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Env } from '../../types/env';
+import type { AuditLogEntry } from '../../types/admin';
 import { createAuditLog } from '../audit-log';
 
 const entry = {
@@ -17,10 +18,23 @@ const entry = {
 };
 
 describe('deployment-owned audit delivery', () => {
-  it('delivers the complete event without requiring Cloudflare bindings', async () => {
-    const append = vi.fn(async () => {});
+  it('delivers the event with a digest instead of the live session credential', async () => {
+    const append = vi.fn(async (_value: AuditLogEntry) => {});
     await createAuditLog({ AUDIT_RUNTIME_PORTS: { append } } as Env, entry);
-    expect(append).toHaveBeenCalledExactlyOnceWith(entry);
+    expect(append).toHaveBeenCalledExactlyOnceWith({
+      ...entry,
+      resourceId: expect.stringMatching(/^sid_[0-9a-f]{64}$/u),
+    });
+    expect(append.mock.calls[0]?.[0].resourceId).not.toBe(entry.resourceId);
+  });
+  it('preserves non-session resource IDs', async () => {
+    const append = vi.fn(async (_value: AuditLogEntry) => {});
+    await createAuditLog({ AUDIT_RUNTIME_PORTS: { append } } as Env, {
+      ...entry,
+      resource: 'client',
+      resourceId: 'client-a',
+    });
+    expect(append.mock.calls[0]?.[0].resourceId).toBe('client-a');
   });
   it('propagates delivery failure without exposing provider details', async () => {
     const append = vi.fn(async () => {

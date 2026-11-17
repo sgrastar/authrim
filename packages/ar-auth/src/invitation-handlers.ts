@@ -11,7 +11,7 @@
  * Using an invitation is not an endpoint: the sign-up that creates the account uses it and
  * assigns its role and organisation to that account (see invitation-redemption.ts). The email
  * verification step lets a passkey or authenticator-app sign-up prove it controls the email an
- * invitation names, which a tenant can require; the code only ever goes to that email.
+ * invitation names; the code only ever goes to that email.
  *
  * @packageDocumentation
  */
@@ -23,7 +23,6 @@ import {
   AR_ERROR_CODES,
   buildDOKey,
   produceNotificationDelivery,
-  resolveEffectiveSettings,
   resolveEmailSendLimit,
   resolveOptionalCoreAdapterFromHono,
   getLogger,
@@ -31,7 +30,6 @@ import {
 } from '@authrim/ar-lib-core';
 import {
   findActiveInvitationByToken,
-  invitationEmailVerificationPolicy,
   invitationHasUsesLeft,
   type TenantInvitationRecord,
 } from '@authrim/ar-lib-core/services/invitation-auth-core';
@@ -109,15 +107,9 @@ export async function validateInvitationHandler(c: Context<{ Bindings: Env }>) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
-    // Whether a sign-up that cannot verify the email itself (passkey, authenticator app) must
-    // first prove the invited email with the email-verification step.
-    const emailVerificationRequired = invitation.invited_email
-      ? invitationEmailVerificationPolicy(
-          await resolveEffectiveSettings(c.env, 'authentication-methods', {
-            tenantId: invitation.tenant_id,
-          })
-        ) === 'required'
-      : false;
+    // An email-restricted invitation always requires mailbox proof for a method that does not
+    // verify the address itself.
+    const emailVerificationRequired = Boolean(invitation.invited_email);
 
     return c.json({
       valid: true,

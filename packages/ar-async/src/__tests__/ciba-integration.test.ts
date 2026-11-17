@@ -450,6 +450,24 @@ describe('CIBA Integration', () => {
       expect(body.error_description).toContain('not authorized to request this scope');
     });
 
+    it('rejects scopes outside requestable_scopes before storing a CIBA request', async () => {
+      mockGetClient.mockResolvedValue(
+        createCIBAClientMetadata({ requestable_scopes: ['openid', 'profile'] })
+      );
+      const ctx = createMockContext(
+        withCIBAClientSecret({
+          client_id: 'ciba-client',
+          scope: 'openid admin:all',
+          login_hint: 'user@example.com',
+        })
+      ) as Parameters<typeof cibaAuthorizationHandler>[0];
+
+      const response = await cibaAuthorizationHandler(ctx);
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({ error: 'invalid_scope' });
+      expect(storedCIBARequests.size).toBe(0);
+    });
+
     describe('with an id_token_hint whose sub an identity mapping chose', () => {
       function hintContext() {
         return createMockContext(

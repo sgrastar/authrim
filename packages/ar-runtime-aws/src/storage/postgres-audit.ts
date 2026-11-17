@@ -16,6 +16,9 @@ export function createPostgresAuditRuntimePorts(
     async append(entry) {
       if (!allowed.has(entry.tenantId)) throw new Error('aws_audit_tenant_unknown');
       if (entry.requireDurableFanout) throw new Error('aws_audit_external_fanout_unsupported');
+      if (entry.resource === 'session' && !/^sid_[0-9a-f]{64}$/u.test(entry.resourceId)) {
+        throw new Error('aws_audit_session_reference_invalid');
+      }
       if (
         !/^[A-Za-z0-9._:-]{1,200}$/u.test(entry.id) ||
         !Number.isSafeInteger(entry.createdAt) ||

@@ -56,6 +56,7 @@ function app() {
 
 function metadata(overrides: Record<string, unknown> = {}) {
   return JSON.stringify({
+    tenantId: 'default',
     description: 'registration token',
     createdAt: '2026-07-14T00:00:00.000Z',
     expiresAt: '2026-08-13T00:00:00.000Z',
@@ -117,6 +118,22 @@ describe('initial access token security behavior', () => {
     expect(mocks.logError).toHaveBeenCalled();
   });
 
+  it('does not list or revoke tokens owned by another tenant', async () => {
+    const store = kv();
+    const hash = 'e'.repeat(64);
+    store.list.mockResolvedValue({ keys: [{ name: `iat:${hash}` }] });
+    store.get.mockResolvedValue(metadata({ tenantId: 'other' }));
+    const listed = await app().request('/tokens', {}, { INITIAL_ACCESS_TOKENS: store });
+    expect(await listed.json()).toMatchObject({ total: 0 });
+    const revoked = await app().request(
+      `/tokens/${hash}`,
+      { method: 'DELETE' },
+      { INITIAL_ACCESS_TOKENS: store }
+    );
+    expect(revoked.status).toBe(404);
+    expect(store.delete).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['not JSON', 'text/plain'],
     [JSON.stringify({ expiresInDays: '30' }), 'application/json'],
@@ -175,6 +192,7 @@ describe('initial access token security behavior', () => {
     expect(key).toBe(`iat:${'a'.repeat(64)}`);
     expect(storedValue).not.toContain(body.token);
     expect(JSON.parse(storedValue)).toEqual({
+      tenantId: 'default',
       description: 'device registration',
       createdAt: '2026-07-14T00:00:00.000Z',
       expiresAt: '2026-07-21T00:00:00.000Z',

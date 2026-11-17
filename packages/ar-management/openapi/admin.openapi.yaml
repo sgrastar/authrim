@@ -17080,7 +17080,8 @@ paths:
       operationId: getApiAdminIatTokens
       summary: List initial access tokens.
       description: >-
-        Lists Initial Access Token metadata stored in the INITIAL_ACCESS_TOKENS KV namespace.
+        Lists Initial Access Token metadata for the current tenant stored in the
+        INITIAL_ACCESS_TOKENS KV namespace.
         Plaintext token values are never returned; only token hashes, descriptions, timestamps, and
         single-use flags are exposed.
       responses:
@@ -17102,7 +17103,7 @@ paths:
       summary: Create an initial access token.
       description: >-
         Generates a new OAuth Dynamic Client Registration Initial Access Token, stores only its
-        SHA-256 hash, and returns the plaintext token once. The token expires according to
+        SHA-256 hash, binds it to the current tenant, and returns the plaintext token once. The token expires according to
         expiresInDays and may be marked single-use.
       responses:
         '201':
@@ -17128,7 +17129,7 @@ paths:
       summary: Revoke an initial access token.
       description: >-
         Deletes an Initial Access Token by its stored token hash and records an audit event. A
-        missing token hash returns not found.
+        missing token hash or a token from another tenant returns not found.
       responses:
         '200':
           $ref: '#/components/responses/IATTokenRevoke'

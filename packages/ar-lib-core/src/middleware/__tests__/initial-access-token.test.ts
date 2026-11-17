@@ -44,6 +44,7 @@ describe('initialAccessTokenMiddleware', () => {
     });
     const env = createEnv({
       tokenData: {
+        tenantId: 'default',
         single_use: true,
         expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
       },
@@ -76,7 +77,7 @@ describe('initialAccessTokenMiddleware', () => {
     const incrementRpc = vi.fn(async () => {
       throw new Error('Durable Object unavailable');
     });
-    const env = createEnv({ tokenData: { single_use: true }, incrementRpc });
+    const env = createEnv({ tokenData: { tenantId: 'default', single_use: true }, incrementRpc });
     const app = createApp();
 
     const response = await app.request(
@@ -86,6 +87,22 @@ describe('initialAccessTokenMiddleware', () => {
     );
 
     expect(response.status).toBe(500);
+    expect(env.INITIAL_ACCESS_TOKENS?.delete).not.toHaveBeenCalled();
+  });
+
+  it('rejects a token from another tenant before consuming it', async () => {
+    const incrementRpc = vi.fn();
+    const env = createEnv({ tokenData: { tenantId: 'other', single_use: true }, incrementRpc });
+    const response = await createApp().request(
+      '/register',
+      {
+        method: 'POST',
+        headers: { Authorization: 'Bearer other-tenant-token' },
+      },
+      env
+    );
+    expect(response.status).toBe(401);
+    expect(incrementRpc).not.toHaveBeenCalled();
     expect(env.INITIAL_ACCESS_TOKENS?.delete).not.toHaveBeenCalled();
   });
 });

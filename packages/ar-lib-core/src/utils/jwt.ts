@@ -57,6 +57,7 @@ export async function createIDToken(
 
   return await new SignJWT({
     ...claims,
+    token_use: 'id',
     iat: now,
     exp: now + expiresIn,
   })
@@ -94,6 +95,7 @@ export async function createSDJWTIDTokenFromClaims(
   // Add iat and exp to claims
   const fullClaims = {
     ...claims,
+    token_use: 'id',
     iat: now,
     exp: now + expiresIn,
   };

@@ -26,9 +26,17 @@ import { getPresentedClientCertificateThumbprint } from './mtls';
 import {
   pairwiseTokenLacksReference,
   resolveIssuedTokenAccount,
+  tokenRecordsUserGrant,
   tokenSubjectAccountSource,
 } from '../services/subject-reference';
 import { getClientCached } from './request-cache';
+import { createAccountAuthContextFromHono } from '../context/hono-context';
+import { resolveAccountDataContextFromHono } from '../services/runtime-data-context';
+import {
+  accessTokenConsentGrant,
+  findOAuthClientConsentRevocation,
+  isAccessTokenConsentWithdrawn,
+} from '../services/oauth-client-consent-revocation';
 
 const log = createLogger().module('TOKEN_INTROSPECTION');
 
@@ -636,23 +644,24 @@ export async function introspectToken(
         },
       };
     }
+  }
 
-    const mtlsConfirmation = tokenClaims.cnf as { 'x5t#S256'?: string } | undefined;
-    if (mtlsConfirmation?.['x5t#S256']) {
-      const presentedThumbprint = request.rawRequest
-        ? await getPresentedClientCertificateThumbprint(request.rawRequest)
-        : undefined;
-      if (!presentedThumbprint || presentedThumbprint !== mtlsConfirmation['x5t#S256']) {
-        return {
-          valid: false,
-          error: {
-            error: 'invalid_token',
-            error_description: 'Client certificate does not match access token binding',
-            wwwAuthenticate: 'Bearer error="invalid_token"',
-            statusCode: 401,
-          },
-        };
-      }
+  // A token can carry both DPoP and mTLS constraints; each presented sender must satisfy both.
+  const mtlsConfirmation = tokenClaims.cnf as { 'x5t#S256'?: string } | undefined;
+  if (mtlsConfirmation?.['x5t#S256']) {
+    const presentedThumbprint = request.rawRequest
+      ? await getPresentedClientCertificateThumbprint(request.rawRequest)
+      : undefined;
+    if (!presentedThumbprint || presentedThumbprint !== mtlsConfirmation['x5t#S256']) {
+      return {
+        valid: false,
+        error: {
+          error: 'invalid_token',
+          error_description: 'Client certificate does not match access token binding',
+          wwwAuthenticate: isDPoP ? 'DPoP error="invalid_token"' : 'Bearer error="invalid_token"',
+          statusCode: 401,
+        },
+      };
     }
   }
 
@@ -723,17 +732,61 @@ export async function introspectTokenFromContext(
     }
   }
 
-  return await introspectToken({
+  const tenantId = getTenantIdFromContext(c);
+  const result = await introspectToken({
     method: c.req.method,
     url: c.req.url,
     headers: c.req.raw.headers,
     rawRequest: c.req.raw,
     env: c.env,
     body,
-    tenantId: getTenantIdFromContext(c),
+    tenantId,
     audience: options.audience,
     allowSubjectReference: options.allowSubjectReference,
   });
+  if (!result.valid || !result.claims || !tokenRecordsUserGrant(result.claims)) return result;
+
+  const userId = result.accountUserId ?? result.claims.sub;
+  const consentClientId = accessTokenConsentGrant(result.claims).clientId;
+  if (!userId || !consentClientId) {
+    return {
+      valid: false,
+      error: {
+        error: 'invalid_token',
+        error_description: 'The access token is invalid',
+        wwwAuthenticate: 'Bearer error="invalid_token"',
+        statusCode: 401,
+      },
+    };
+  }
+  try {
+    await resolveAccountDataContextFromHono(c, userId);
+    const withdrawal = await findOAuthClientConsentRevocation(
+      createAccountAuthContextFromHono(c, tenantId).coreAdapter,
+      { tenantId, userId, clientId: consentClientId }
+    );
+    if (!isAccessTokenConsentWithdrawn(withdrawal, result.claims)) return result;
+  } catch (error) {
+    log.error('Failed to read access-token consent withdrawal', {}, error as Error);
+    return {
+      valid: false,
+      error: {
+        error: 'temporarily_unavailable',
+        error_description: 'Consent state is unavailable',
+        wwwAuthenticate: 'Bearer error="invalid_token"',
+        statusCode: 503,
+      },
+    };
+  }
+  return {
+    valid: false,
+    error: {
+      error: 'invalid_token',
+      error_description: 'The access token is invalid',
+      wwwAuthenticate: 'Bearer error="invalid_token"',
+      statusCode: 401,
+    },
+  };
 }
 
 /**

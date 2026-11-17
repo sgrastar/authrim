@@ -507,6 +507,26 @@ describe('the sign-up page', () => {
 		expect(calls.some((call) => call.path === '/api/v1/login/interactions/start')).toBe(false);
 	});
 
+	it('offers passkey signup only when an invited mailbox can be proved', async () => {
+		currentStep = {
+			...SIGNUP_STEP,
+			config: {
+				screen: {
+					fields: [
+						{ field: 'email', label: 'Email', required: true },
+						{ block_type: 'auth_widget', field: 'p', auth_method: 'passkey' }
+					]
+				}
+			}
+		};
+		tenantMethods = { passkey: { enabled: true, signupEnabled: true } };
+		expect(await view()).toMatchObject({ available: { passkey: false } });
+		expect(await view(`invite_token=${INVITE}`)).toMatchObject({
+			available: { passkey: true },
+			invitedEmail: 'invited@example.com'
+		});
+	});
+
 	it('signs up with a passkey: registers it with the profile, then makes the session', async () => {
 		currentStep = {
 			...SIGNUP_STEP,

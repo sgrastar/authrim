@@ -1372,6 +1372,28 @@ describe('downstream elevation grant token exchange', () => {
       );
     });
 
+    it('requires the subject token DPoP key during exchange', async () => {
+      const env = await createVerificationEnv();
+      mocks.mockParseToken.mockReturnValue({
+        sub: 'user-1',
+        token_use: 'access',
+        jti: 'subject-jti-1',
+        aud: 'service-client-1',
+        scope: 'openid',
+        cnf: { jkt: 'subject-key' },
+      });
+      mocks.mockExtractDPoPProof.mockReturnValue('dpop-proof');
+      mocks.mockValidateDPoPProof.mockResolvedValue({ valid: true, jkt: 'different-key' });
+
+      await expectOAuthError(
+        request({}, env),
+        400,
+        'invalid_grant',
+        'Subject token sender binding does not match'
+      );
+      expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+    });
+
     it.each([
       {
         name: 'the requested, subject, and client scope intersection is empty',
@@ -1417,6 +1439,55 @@ describe('downstream elevation grant token exchange', () => {
         expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
       }
     );
+
+    it('rejects a refresh token declared as an access token', async () => {
+      const env = await createVerificationEnv();
+      mocks.mockParseToken.mockReturnValue({
+        sub: 'user-1',
+        aud: 'service-client-1',
+        client_id: 'service-client-1',
+        scope: 'openid',
+        token_use: 'refresh',
+        rtv: 2,
+        jti: 'rt_family-1',
+      });
+
+      await expectOAuthError(
+        request({}, env),
+        400,
+        'invalid_grant',
+        'Subject token type does not match token purpose'
+      );
+      expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+    });
+
+    it('does not create access scopes from a scopeless ID token', async () => {
+      const env = await createVerificationEnv();
+      setSystemSettings({
+        oidc: { tokenExchange: { enabled: true, allowedSubjectTokenTypes: ['id_token'] } },
+      });
+      mocks.mockParseToken.mockReturnValue({
+        sub: 'user-1',
+        aud: 'service-client-1',
+        client_id: 'service-client-1',
+        token_use: 'id',
+        jti: 'id-1',
+      });
+
+      await expectOAuthError(
+        request(
+          {
+            subject_token_type: 'urn:ietf:params:oauth:token-type:id_token',
+            scope: 'openid profile_export',
+          },
+          env
+        ),
+        400,
+        'invalid_scope',
+        'Requested scope is not permitted for this token exchange'
+      );
+      expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+    });
 
     it('uses the subject scope as the ceiling when the client has no scope policy', async () => {
       const env = await createVerificationEnv();

@@ -5,7 +5,8 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { introspectToken, resolveIntrospectedAccountUserId } from '../token-introspection';
 import { createAccessToken } from '../jwt';
-import { SignJWT, generateKeyPair, exportJWK } from 'jose';
+import { calculateAccessTokenHash } from '../dpop';
+import { SignJWT, generateKeyPair, exportJWK, calculateJwkThumbprint } from 'jose';
 import type { Env } from '../../types/env';
 
 const TEST_TENANT_ID = 'tenant_test';
@@ -245,6 +246,73 @@ describe('Token Introspection Utility', () => {
   });
 
   describe('DPoP Token Validation', () => {
+    it('requires both proofs for an access token bound to DPoP and mTLS', async () => {
+      const dpopKeys = await generateKeyPair('ES256');
+      const publicJwk = await exportJWK(dpopKeys.publicKey);
+      const jkt = await calculateJwkThumbprint(publicJwk);
+      const certificateBytes = new TextEncoder().encode('dual-bound-certificate');
+      const certificate = btoa(String.fromCharCode(...certificateBytes));
+      const thumbprint = Buffer.from(
+        await crypto.subtle.digest('SHA-256', certificateBytes)
+      ).toString('base64url');
+      const token = (
+        await createAccessToken(
+          {
+            iss: mockEnv.ISSUER_URL,
+            sub: 'user123',
+            aud: mockEnv.ISSUER_URL,
+            scope: 'openid',
+            client_id: 'test-client',
+            cnf: { jkt, 'x5t#S256': thumbprint },
+          },
+          privateKey,
+          mockEnv.KEY_ID!,
+          3600
+        )
+      ).token;
+      const env = {
+        ...mockEnv,
+        AUTH_RUNTIME_PORTS: { replayGuard: { record: async () => 'recorded' } },
+      } as unknown as Env;
+      const makeRequest = async (jti: string, cert: string | undefined) => {
+        const proof = await new SignJWT({
+          jti,
+          htm: 'GET',
+          htu: 'https://test.example.com/userinfo',
+          iat: Math.floor(Date.now() / 1000),
+          ath: await calculateAccessTokenHash(token),
+        })
+          .setProtectedHeader({ typ: 'dpop+jwt', alg: 'ES256', jwk: publicJwk })
+          .sign(dpopKeys.privateKey);
+        const rawRequest = new Request('https://test.example.com/userinfo', {
+          headers: { Authorization: `DPoP ${token}`, DPoP: proof },
+        });
+        if (cert)
+          Object.defineProperty(rawRequest, 'cf', {
+            value: {
+              tlsClientAuth: {
+                certPresented: '1',
+                certRFC9440: `:${cert}:`,
+                certRFC9440TooLarge: '0',
+              },
+            },
+          });
+        return introspectToken({
+          method: 'GET',
+          url: rawRequest.url,
+          headers: rawRequest.headers,
+          rawRequest,
+          env,
+          tenantId: TEST_TENANT_ID,
+        });
+      };
+
+      expect((await makeRequest('dual-missing', undefined)).error?.error).toBe('invalid_token');
+      expect((await makeRequest('dual-wrong', btoa('wrong-certificate'))).error?.error).toBe(
+        'invalid_token'
+      );
+      expect((await makeRequest('dual-correct', certificate)).valid).toBe(true);
+    });
     it('should return error when DPoP token is used without DPoP proof', async () => {
       const claims = {
         iss: mockEnv.ISSUER_URL,

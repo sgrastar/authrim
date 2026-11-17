@@ -149,7 +149,6 @@ export async function issueSessionTokenHandler(c: Context<{ Bindings: Env }>) {
     return c.json({
       token,
       expires_in: 300, // 5 minutes in seconds
-      session_id: session.id,
     });
   } catch (error) {
     log.error('Issue session token error', { action: 'issue_token' }, error as Error);
@@ -257,62 +256,58 @@ export async function verifySessionTokenHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    // Create a new session for the RP domain (if rp_origin provided)
-    // This allows the RP to have its own session cookie
-    let rpSessionId = session.id;
-    let rpSessionExpiresAt = session.expiresAt;
+    // The RP must receive its own session, never the original OP session credential.
     const normalizedRpOrigin = normalizeSessionOrigin(rp_origin);
 
-    if (rp_origin) {
-      if (!normalizedRpOrigin) {
-        return c.json(
-          {
-            error: 'invalid_request',
-            error_description: 'rp_origin must be an http(s) origin',
-          },
-          400
-        );
-      }
-
-      const normalizedIssuedRpOrigin = normalizeSessionOrigin(issuedRpOrigin);
-      if (normalizedIssuedRpOrigin && normalizedRpOrigin !== normalizedIssuedRpOrigin) {
-        return c.json(
-          {
-            error: 'invalid_request',
-            error_description: 'rp_origin does not match the session token origin',
-          },
-          400
-        );
-      }
-
-      // Create new session linked to the same user via RPC
-      try {
-        const rpSessionTtl = await resolveSessionTtl(c.env, getTenantIdFromContext(c), 'default');
-        const newSession = (await sessionStore.createSessionRpc(
-          crypto.randomUUID(), // Generate new session ID
-          session.userId,
-          rpSessionTtl.seconds,
-          {
-            ...getSessionClientMetadata(c.req.raw),
-            rpOrigin: normalizedRpOrigin,
-            parentSessionId: session.id,
-          },
-          getTenantIdFromContext(c)
-        )) as Session;
-        rpSessionId = newSession.id;
-        rpSessionExpiresAt = newSession.expiresAt;
-      } catch (error) {
-        log.warn('Failed to create RP session', { action: 'create_rp_session' });
-        // Fall back to original session ID
-      }
+    if (!normalizedRpOrigin) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'rp_origin must be an http(s) origin',
+        },
+        400
+      );
     }
 
-    return c.json({
-      session_id: rpSessionId,
-      user_id: session.userId,
-      expires_at: rpSessionExpiresAt,
-      verified: true,
-    });
+    const normalizedIssuedRpOrigin = normalizeSessionOrigin(issuedRpOrigin);
+    if (normalizedIssuedRpOrigin && normalizedRpOrigin !== normalizedIssuedRpOrigin) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'rp_origin does not match the session token origin',
+        },
+        400
+      );
+    }
+
+    // Create new session linked to the same user via RPC
+    try {
+      const rpSessionTtl = await resolveSessionTtl(c.env, getTenantIdFromContext(c), 'default');
+      const newSession = (await sessionStore.createSessionRpc(
+        crypto.randomUUID(), // Generate new session ID
+        session.userId,
+        rpSessionTtl.seconds,
+        {
+          ...getSessionClientMetadata(c.req.raw),
+          rpOrigin: normalizedRpOrigin,
+          parentSessionId: session.id,
+        },
+        getTenantIdFromContext(c)
+      )) as Session;
+      if (newSession.id === session.id) throw new Error('RP session reused OP session');
+      return c.json({
+        session_id: newSession.id,
+        user_id: session.userId,
+        expires_at: newSession.expiresAt,
+        verified: true,
+      });
+    } catch {
+      log.warn('Failed to create RP session', { action: 'create_rp_session' });
+      return c.json(
+        { error: 'server_error', error_description: 'Failed to create RP session' },
+        500
+      );
+    }
   } catch (error) {
     log.error('Verify session token error', { action: 'verify_token' }, error as Error);
     return c.json(

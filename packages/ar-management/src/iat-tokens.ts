@@ -15,6 +15,7 @@ import {
   AR_ERROR_CODES,
   getLogger,
   createAuditLogFromContext,
+  getTenantIdFromContext,
 } from '@authrim/ar-lib-core';
 
 /**
@@ -32,6 +33,7 @@ const IAT_VALIDATION = {
  * Token metadata stored in KV
  */
 interface IATMetadata {
+  tenantId: string;
   description: string;
   createdAt: string;
   expiresAt: string | null;
@@ -146,6 +148,7 @@ export async function adminIATListHandler(c: Context<{ Bindings: Env }>) {
       const value = await c.env.INITIAL_ACCESS_TOKENS.get(key.name);
       if (value) {
         const tokenData = JSON.parse(value) as IATMetadata;
+        if (tokenData.tenantId !== getTenantIdFromContext(c)) continue;
         tokens.push({
           tokenHash: key.name.replace('iat:', ''),
           description: tokenData.description,
@@ -198,6 +201,7 @@ export async function adminIATCreateHandler(c: Context<{ Bindings: Env }>) {
     const expiresAt = new Date(Date.now() + expiresInDays * 24 * 60 * 60 * 1000).toISOString();
 
     const tokenData: IATMetadata = {
+      tenantId: getTenantIdFromContext(c),
       description,
       createdAt: new Date().toISOString(),
       expiresAt,
@@ -258,7 +262,7 @@ export async function adminIATRevokeHandler(c: Context<{ Bindings: Env }>) {
 
     // Check if token exists
     const existing = await c.env.INITIAL_ACCESS_TOKENS.get(`iat:${tokenHash}`);
-    if (!existing) {
+    if (!existing || (JSON.parse(existing) as IATMetadata).tenantId !== getTenantIdFromContext(c)) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 

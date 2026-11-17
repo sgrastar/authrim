@@ -24,7 +24,6 @@ import {
   createAuthContextFromHono,
   createErrorResponse,
   getChallengeStoreByChallengeId,
-  resolveEffectiveSettings,
 } from '@authrim/ar-lib-core';
 import {
   applyInvitationAssignments,
@@ -32,7 +31,6 @@ import {
   claimInvitationReservation,
   findActiveInvitationByToken,
   findInvitationById,
-  invitationEmailVerificationPolicy,
   releaseInvitationReservation,
   reserveInvitationUse,
   type TenantInvitationRecord,
@@ -143,9 +141,8 @@ async function emailProofMatches(
  * - The invitation must be active and of `tenantId`; another tenant's reads as not found, so the
  *   token reveals nothing about it.
  * - When it names an email, the sign-up must give that email. When the tenant requires the email
- *   to be verified (`authentication-methods.invitation.email_verification`), the sign-up must also
- *   prove it: either the method verifies it itself (`methodVerifiesEmail`, an email code) or the
- *   sign-up brings a proof from the invitation email-code step.
+ *   to be verified: either the method verifies it itself (an email code) or the sign-up brings
+ *   a proof from the invitation email-code step.
  * - `holder` names the sign-up, so one that restarts keeps its one use instead of taking another.
  *
  * Throws when settings or storage cannot be read: the caller fails closed.
@@ -183,16 +180,7 @@ export async function startSignupInvitation(
           invitationId: invitation.id,
           email: invitation.invited_email,
         })));
-    if (!emailVerified) {
-      const policy = invitationEmailVerificationPolicy(
-        await resolveEffectiveSettings(c.env, 'authentication-methods', {
-          tenantId: input.tenantId,
-        })
-      );
-      if (policy === 'required') {
-        return { ok: false, reason: 'email_verification_required' };
-      }
-    }
+    if (!emailVerified) return { ok: false, reason: 'email_verification_required' };
   }
 
   const reserved = await reserveInvitationUse(db, {

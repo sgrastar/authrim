@@ -16,6 +16,8 @@ import {
   determineDeliveryMode,
   parseLoginHint,
   getClientCached,
+  getClientAllowedScopes,
+  parseScopeList,
   createErrorResponse,
   AR_ERROR_CODES,
   getLogger,
@@ -243,8 +245,13 @@ export async function cibaAuthorizationHandler(c: Context<{ Bindings: Env }>) {
       return createErrorResponse(c, AR_ERROR_CODES.CLIENT_NOT_ALLOWED_GRANT);
     }
 
-    // Verify scope includes 'openid'
-    if (!scope?.split(/\s+/u).includes('openid')) {
+    // CIBA may only request scopes registered for this client.
+    const requestedScopes = parseScopeList(scope);
+    const allowedScopes = getClientAllowedScopes(clientMetadata);
+    if (
+      !requestedScopes.includes('openid') ||
+      requestedScopes.some((requested) => !allowedScopes.includes(requested))
+    ) {
       return createErrorResponse(c, AR_ERROR_CODES.CLIENT_NOT_ALLOWED_SCOPE);
     }
 
@@ -348,7 +355,7 @@ export async function cibaAuthorizationHandler(c: Context<{ Bindings: Env }>) {
       tenant_id: tenantId,
       auth_req_id: authReqId,
       client_id,
-      scope,
+      scope: requestedScopes.join(' '),
       login_hint,
       login_hint_token,
       id_token_hint,

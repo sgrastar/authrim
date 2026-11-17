@@ -463,6 +463,14 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
       };
     }
 
+    // This route has no mailbox proof. An unverified address must not acquire a passkey that
+    // survives when its real owner later signs in with an email code.
+    if (normalizedEmail) {
+      return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS, {
+        extensions: { reason: 'signup_email_check_required' },
+      });
+    }
+
     // If user doesn't exist, create a new canonical runtime user.
     if (!user) {
       const newUserId = resumedUserId ?? (await generateUserIdFromSettings(c.env, tenantId, c.env));

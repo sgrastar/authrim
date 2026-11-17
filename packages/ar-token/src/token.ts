@@ -77,6 +77,8 @@ import {
   updateRefreshTokenFamilyIndexExpiry,
   // Request-level caching (P0 KV Cache Optimization)
   getClientCached,
+  getClientAllowedScopes,
+  parseScopeList,
   loadTenantProfileCached,
   getProtocolSettingsCached,
   requireDedicatedAdminDatabaseAdapter,
@@ -118,6 +120,7 @@ import {
   type IDTokenClaimsCarried,
   FAPI2_MESSAGE_SIGNING_ALGS,
   validateClientCertificateBinding,
+  getPresentedClientCertificateThumbprint,
   setBoundedMapEntry,
   resolveAccountDataContextFromHono,
   recordDeviceSecretRouteHint,
@@ -626,6 +629,23 @@ function getMTLSCertificateThumbprintFromCnfClaim(
   if (!cnf || typeof cnf !== 'object' || Array.isArray(cnf)) return undefined;
   const thumbprint = (cnf as Record<string, unknown>)['x5t#S256'];
   return typeof thumbprint === 'string' && thumbprint.length > 0 ? thumbprint : undefined;
+}
+
+function tokenExchangeSenderBindingMatches(
+  payload: Record<string, unknown>,
+  dpopJkt: string | undefined,
+  certificateThumbprint: string | undefined
+): boolean {
+  if (payload.cnf === undefined) return true;
+  if (!payload.cnf || typeof payload.cnf !== 'object' || Array.isArray(payload.cnf)) return false;
+  const cnf = payload.cnf as Record<string, unknown>;
+  const jkt = getDPoPJktFromCnfClaim(payload);
+  const mtls = getMTLSCertificateThumbprintFromCnfClaim(payload);
+  if (('jkt' in cnf && !jkt) || ('x5t#S256' in cnf && !mtls)) return false;
+  if ((!jkt && !mtls) || Object.keys(cnf).some((key) => key !== 'jkt' && key !== 'x5t#S256')) {
+    return false;
+  }
+  return (!jkt || jkt === dpopJkt) && (!mtls || mtls === certificateThumbprint);
 }
 
 async function resolveBrowserPublicClientMode(
@@ -2427,6 +2447,15 @@ async function handleAuthorizationCodeGrant(
     return oauthError(c, 'invalid_client', 'Client authentication configuration is invalid', 401);
   }
 
+  let authorizationCodeMTLSThumbprint: string | undefined;
+  if (clientMetadata.tls_client_certificate_bound_access_tokens === true) {
+    const certificateBinding = await validateClientCertificateBinding(c.req.raw, clientMetadata);
+    if (!certificateBinding.valid || !certificateBinding.thumbprint) {
+      return oauthError(c, 'invalid_client', 'Client certificate authentication failed', 401);
+    }
+    authorizationCodeMTLSThumbprint = certificateBinding.thumbprint;
+  }
+
   // Authorization-code grants are created for the client's configured default target. A token
   // request may repeat that target, but it must not retarget the user's grant to another resource.
   const audienceResolution = resolveAccessTokenAudience(c, clientMetadata, {
@@ -2716,6 +2745,16 @@ async function handleAuthorizationCodeGrant(
       'redirect_uri does not match the one used in authorization request',
       400
     );
+  }
+
+  // A Direct Auth code bypasses /authorize; enforce the same client scope ceiling at redemption.
+  if (
+    redirect_uri === DIRECT_AUTH_GRANT_REDIRECT_URI &&
+    parseScopeList(authCodeData.scope).some(
+      (requested) => !getClientAllowedScopes(clientMetadata).includes(requested)
+    )
+  ) {
+    return oauthError(c, 'invalid_scope', 'Authorization grant scope is not allowed', 400);
   }
 
   // DPoP Authorization Code Binding verification (RFC 9449)
@@ -3131,7 +3170,7 @@ async function handleAuthorizationCodeGrant(
     client_id: string;
     claims?: string;
     claims_request_protected?: boolean;
-    cnf?: { jkt: string };
+    cnf?: { jkt?: string; 'x5t#S256'?: string };
     // Phase 1 RBAC claims
     authrim_roles?: string[];
     authrim_org_id?: string;
@@ -3186,8 +3225,11 @@ async function handleAuthorizationCodeGrant(
   }
 
   // Add DPoP confirmation (cnf) claim if DPoP is used
-  if (dpopJkt) {
-    accessTokenClaims.cnf = { jkt: dpopJkt };
+  if (dpopJkt || authorizationCodeMTLSThumbprint) {
+    accessTokenClaims.cnf = {
+      ...(dpopJkt ? { jkt: dpopJkt } : {}),
+      ...(authorizationCodeMTLSThumbprint ? { 'x5t#S256': authorizationCodeMTLSThumbprint } : {}),
+    };
   }
 
   // Assurance (include_in_access_token): how the user authenticated, as RFC 9068 carries it.
@@ -3698,7 +3740,16 @@ async function handleAuthorizationCodeGrant(
         scope: authCodeData.scope,
         client_id: client_id,
         resource_aud: audienceResolution.audience,
-        ...(dpopJkt ? { cnf: { jkt: dpopJkt } } : {}),
+        ...(dpopJkt || authorizationCodeMTLSThumbprint
+          ? {
+              cnf: {
+                ...(dpopJkt ? { jkt: dpopJkt } : {}),
+                ...(authorizationCodeMTLSThumbprint
+                  ? { 'x5t#S256': authorizationCodeMTLSThumbprint }
+                  : {}),
+              },
+            }
+          : {}),
       };
 
       // V2/V3: Register with RefreshTokenRotator first to get version
@@ -5153,8 +5204,16 @@ async function handleJWTBearerGrant(
 
   const claims = validation.claims;
 
-  // Determine scope: use requested scope or scope from assertion
-  let grantedScope = scope || claims.scope || 'openid';
+  // The signed assertion is the authority; request parameters may only narrow it.
+  const assertionScopes = parseScopeList(claims.scope);
+  const requestedScopes = parseScopeList(scope);
+  if (
+    assertionScopes.length === 0 ||
+    requestedScopes.some((requested) => !assertionScopes.includes(requested))
+  ) {
+    return oauthError(c, 'invalid_scope', 'Requested scope exceeds the JWT assertion', 400);
+  }
+  let grantedScope = requestedScopes.length ? requestedScopes.join(' ') : assertionScopes.join(' ');
 
   // Validate scope against allowed scopes for the issuer
   const trustedIssuer = trustedIssuers.get(claims.iss);
@@ -5191,6 +5250,19 @@ async function handleJWTBearerGrant(
     default_audience?: string;
     allowed_resources?: string[];
   };
+
+  const assertionResources =
+    typeof claims.resource === 'string'
+      ? [claims.resource]
+      : Array.isArray(claims.resource)
+        ? claims.resource
+        : [];
+  if (
+    (requestedResource && !assertionResources.includes(requestedResource)) ||
+    (requestedAudience && !assertionResources.includes(requestedAudience))
+  ) {
+    return oauthError(c, 'invalid_target', 'Requested target exceeds the JWT assertion', 400);
+  }
 
   if (trustedIssuer?.allowed_scopes) {
     const requestedScopes = grantedScope.split(' ');
@@ -5481,6 +5553,15 @@ async function handleDeviceCodeGrant(
     if (!authenticated.ok) {
       return oauthError(c, authenticated.error, authenticated.errorDescription, 401);
     }
+  }
+
+  let deviceMTLSThumbprint: string | undefined;
+  if (clientMetadata.tls_client_certificate_bound_access_tokens === true) {
+    const certificateBinding = await validateClientCertificateBinding(c.req.raw, clientMetadata);
+    if (!certificateBinding.valid || !certificateBinding.thumbprint) {
+      return oauthError(c, 'invalid_client', 'Client certificate authentication failed', 401);
+    }
+    deviceMTLSThumbprint = certificateBinding.thumbprint;
   }
 
   // Get device code metadata from DeviceCodeStore
@@ -5877,7 +5958,14 @@ async function handleDeviceCodeGrant(
     client_id,
     // Phase 2 RBAC: Add RBAC claims to access token
     ...accessTokenRBACClaims,
-    ...(dpopJkt ? { cnf: { jkt: dpopJkt } } : {}),
+    ...(dpopJkt || deviceMTLSThumbprint
+      ? {
+          cnf: {
+            ...(dpopJkt ? { jkt: dpopJkt } : {}),
+            ...(deviceMTLSThumbprint ? { 'x5t#S256': deviceMTLSThumbprint } : {}),
+          },
+        }
+      : {}),
     // The consent generation the device approval was granted under (checked current above).
     ...accessTokenConsentClaims({
       generation: metadata.consent_generation ?? deviceConsentWithdrawal.generation,
@@ -5993,7 +6081,14 @@ async function handleDeviceCodeGrant(
         aud: client_id,
         scope: metadata.scope,
         client_id,
-        ...(dpopJkt ? { cnf: { jkt: dpopJkt } } : {}),
+        ...(dpopJkt || deviceMTLSThumbprint
+          ? {
+              cnf: {
+                ...(dpopJkt ? { jkt: dpopJkt } : {}),
+                ...(deviceMTLSThumbprint ? { 'x5t#S256': deviceMTLSThumbprint } : {}),
+              },
+            }
+          : {}),
       };
       const result = await createRefreshToken(
         refreshTokenClaims,
@@ -7026,6 +7121,7 @@ async function handleTokenExchangeGrant(
   const subject_token = formData.subject_token;
   const subject_token_type = formData.subject_token_type as
     | TokenTypeURN
+    | 'urn:ietf:params:oauth:token-type:jwt'
     | typeof ELEVATION_GRANT_SUBJECT_TOKEN_TYPE
     | undefined;
   const actor_token = formData.actor_token;
@@ -7332,6 +7428,38 @@ async function handleTokenExchangeGrant(
     return oauthError(c, 'unauthorized_client', 'Client is not authorized for Token Exchange', 403);
   }
 
+  let exchangeMTLSThumbprint: string | undefined;
+  if (typedClient.tls_client_certificate_bound_access_tokens === true) {
+    const certificateBinding = await validateClientCertificateBinding(c.req.raw, typedClient);
+    if (!certificateBinding.valid || !certificateBinding.thumbprint) {
+      return oauthError(c, 'invalid_client', 'Client certificate authentication failed', 401);
+    }
+    exchangeMTLSThumbprint = certificateBinding.thumbprint;
+  }
+
+  let dpopJkt: string | undefined;
+  if (dpopProof && !isNativeSSORequest) {
+    const dpopValidation = await validateDPoPProof(
+      dpopProof,
+      c.req.method,
+      c.req.url,
+      undefined,
+      c.env,
+      client_id,
+      tenantId
+    );
+    if (!dpopValidation.valid) {
+      return dpopValidationErrorResponse(c, dpopValidation, {
+        fallbackDescription: 'DPoP validation failed',
+        clientMetadata: typedClient,
+        resources,
+      });
+    }
+    dpopJkt = dpopValidation.jkt;
+  }
+  const presentedCertificateThumbprint =
+    exchangeMTLSThumbprint ?? (await getPresentedClientCertificateThumbprint(c.req.raw));
+
   // Check delegation_mode. The tenant's ceiling comes first: an app's delegation_mode cannot
   // grant what the tenant has not allowed. (Native SSO swaps an ID token and a device secret,
   // issues no act claim and is not delegation or impersonation, so the ceilings do not apply.)
@@ -7590,6 +7718,36 @@ async function handleTokenExchangeGrant(
     );
   }
 
+  if (
+    !tokenExchangeSenderBindingMatches(subjectTokenPayload, dpopJkt, presentedCertificateThumbprint)
+  ) {
+    return oauthError(c, 'invalid_grant', 'Subject token sender binding does not match', 400);
+  }
+  let inheritedMTLSThumbprint = getMTLSCertificateThumbprintFromCnfClaim(subjectTokenPayload);
+
+  // The declared type must match the signed token purpose. Legacy access tokens without an
+  // explicit purpose are accepted only when they carry an access scope and no ID-token markers.
+  const legacyAccessToken =
+    subjectTokenPayload.token_use === undefined &&
+    typeof subjectTokenPayload.scope === 'string' &&
+    subjectTokenPayload.scope.length > 0 &&
+    subjectTokenPayload.nonce === undefined &&
+    subjectTokenPayload.at_hash === undefined &&
+    !(typeof subjectTokenPayload.jti === 'string' && subjectTokenPayload.jti.startsWith('rt_')) &&
+    subjectTokenPayload.authrim_subject_principal !== 'id_token';
+  if (
+    !isIdJagTokenRequest &&
+    subjectTokenPayload.token_use !== ELEVATION_GRANT_SUBJECT_TOKEN_USE &&
+    (((subject_token_type === 'urn:ietf:params:oauth:token-type:access_token' ||
+      subject_token_type === 'urn:ietf:params:oauth:token-type:jwt') &&
+      subjectTokenPayload.token_use !== 'access' &&
+      !legacyAccessToken) ||
+      subjectTokenPayload.token_use === 'refresh' ||
+      typeof subjectTokenPayload.rtv === 'number')
+  ) {
+    return oauthError(c, 'invalid_grant', 'Subject token type does not match token purpose', 400);
+  }
+
   // An elevation grant subject token is exchanged only as one. Declared as another type it would
   // skip the grant checks below and be honoured as the target user's own token.
   if (
@@ -7827,7 +7985,11 @@ async function handleTokenExchangeGrant(
     : subjectScopes.length > 0
       ? subjectScopes
       : ['openid'];
-  const allowedScopes = typedClient.allowed_scopes || [];
+  const hasExplicitScopePolicy =
+    Boolean(typedClient.requestable_scopes?.length) ||
+    Boolean(typedClient.allowed_scopes?.length) ||
+    Boolean(typedClient.scope);
+  const allowedScopes = hasExplicitScopePolicy ? getClientAllowedScopes(typedClient) : [];
 
   // Intersection: requested ∩ subject ∩ client.allowed_scopes
   // This ensures scope can only be downgraded, never escalated
@@ -7841,7 +8003,12 @@ async function handleTokenExchangeGrant(
 
   // An absent subject scope can be constrained by explicit client policy, but when both policy
   // bounds are absent there is no authority from which to grant caller-controlled scopes.
-  if ((subjectScopes.length === 0 && allowedScopes.length === 0) || grantedScopes.length === 0) {
+  if (
+    (subjectScopes.length === 0 &&
+      (subject_token_type === 'urn:ietf:params:oauth:token-type:id_token' ||
+        (allowedScopes.length === 0 && !isElevationGrantSubjectTokenRequest))) ||
+    grantedScopes.length === 0
+  ) {
     return c.json(
       {
         error: 'invalid_scope',
@@ -8044,6 +8211,19 @@ async function handleTokenExchangeGrant(
       }
 
       // Check actor_token expiration
+      if (
+        !tokenExchangeSenderBindingMatches(
+          actorTokenPayload,
+          dpopJkt,
+          presentedCertificateThumbprint
+        )
+      ) {
+        return oauthError(c, 'invalid_grant', 'Actor token sender binding does not match', 400);
+      }
+      inheritedMTLSThumbprint ??= getMTLSCertificateThumbprintFromCnfClaim(actorTokenPayload);
+      if (actorTokenPayload.token_use !== undefined && actorTokenPayload.token_use !== 'access') {
+        return oauthError(c, 'invalid_grant', 'Actor token is not an access token', 400);
+      }
       const actorExp = actorTokenPayload.exp as number | undefined;
       if (actorExp && actorExp < now) {
         return c.json(
@@ -8174,28 +8354,6 @@ async function handleTokenExchangeGrant(
   // Capped by the tenant profile's max_token_ttl_seconds (tokenLifetimes).
   const expiresIn = await lifetimes.access();
 
-  // DPoP support
-  let dpopJkt: string | undefined;
-  if (dpopProof) {
-    const dpopValidation = await validateDPoPProof(
-      dpopProof,
-      c.req.method,
-      c.req.url,
-      undefined,
-      c.env, // Pass full Env for region-aware sharding
-      client_id,
-      getTenantIdFromContext(c)
-    );
-    if (!dpopValidation.valid) {
-      return dpopValidationErrorResponse(c, dpopValidation, {
-        fallbackDescription: 'DPoP validation failed',
-        clientMetadata: typedClient,
-        resources,
-      });
-    }
-    dpopJkt = dpopValidation.jkt;
-  }
-
   // Build access token claims
   const subjectSub = subjectTokenPayload.sub as string;
   // RFC 8693: aud can be a single string or array of strings
@@ -8237,7 +8395,16 @@ async function handleTokenExchangeGrant(
       ? { resource: resources.length === 1 ? resources[0] : resources }
       : {}),
     // Add DPoP confirmation
-    ...(dpopJkt ? { cnf: { jkt: dpopJkt } } : {}),
+    ...(dpopJkt || exchangeMTLSThumbprint || inheritedMTLSThumbprint
+      ? {
+          cnf: {
+            ...(dpopJkt ? { jkt: dpopJkt } : {}),
+            ...(exchangeMTLSThumbprint || inheritedMTLSThumbprint
+              ? { 'x5t#S256': exchangeMTLSThumbprint || inheritedMTLSThumbprint }
+              : {}),
+          },
+        }
+      : {}),
     // ID-JAG specific claims (draft-ietf-oauth-identity-assertion-authz-grant)
     // original_issuer: The IdP that originally issued the subject_token
     ...(isIdJagTokenRequest && originalIssuer ? { original_issuer: originalIssuer } : {}),
@@ -9640,14 +9807,27 @@ async function handleClientCredentialsGrant(
     );
   }
 
+  let clientCredentialsMTLSThumbprint: string | undefined;
+  if (typedClient.tls_client_certificate_bound_access_tokens === true) {
+    const certificateBinding = await validateClientCertificateBinding(c.req.raw, typedClient);
+    if (!certificateBinding.valid || !certificateBinding.thumbprint) {
+      return oauthError(c, 'invalid_client', 'Client certificate authentication failed', 401);
+    }
+    clientCredentialsMTLSThumbprint = certificateBinding.thumbprint;
+  }
+
   // 4. Scope validation
   const defaultScope = typedClient.default_scope || 'openid';
   const scopes = requestedScope ? requestedScope.split(' ') : defaultScope.split(' ');
-  const allowedScopes = typedClient.allowed_scopes || [];
+  const hasScopePolicy =
+    Boolean(typedClient.requestable_scopes?.length) ||
+    Boolean(typedClient.allowed_scopes?.length) ||
+    Boolean(typedClient.scope);
 
-  // If allowed_scopes is defined, filter requested scopes
+  // Apply the client's explicit registration ceiling, if it has one.
   let grantedScopes = scopes;
-  if (allowedScopes.length > 0) {
+  if (hasScopePolicy) {
+    const allowedScopes = getClientAllowedScopes(typedClient);
     grantedScopes = scopes.filter((s) => allowedScopes.includes(s));
     if (grantedScopes.length === 0) {
       return oauthError(
@@ -9720,7 +9900,16 @@ async function handleClientCredentialsGrant(
     scope: grantedScope,
     client_id: client_id,
     // Add DPoP confirmation
-    ...(dpopJkt ? { cnf: { jkt: dpopJkt } } : {}),
+    ...(dpopJkt || clientCredentialsMTLSThumbprint
+      ? {
+          cnf: {
+            ...(dpopJkt ? { jkt: dpopJkt } : {}),
+            ...(clientCredentialsMTLSThumbprint
+              ? { 'x5t#S256': clientCredentialsMTLSThumbprint }
+              : {}),
+          },
+        }
+      : {}),
   };
 
   let accessToken: string;

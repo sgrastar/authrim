@@ -283,7 +283,11 @@
 			typeof window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable === 'function'
 	);
 
-	const showPasskey = $derived(passkeyEnabled && isPasskeySupported);
+	// This page collects an email. Its passkey signup may attach that address only after the
+	// invitation email proof; ordinary signups verify the mailbox with email code first.
+	const showPasskey = $derived(
+		passkeyEnabled && isPasskeySupported && Boolean(inviteToken && invitationEmailRequired)
+	);
 	const showRuntimePasskey = $derived(showPasskey && runtimeAllowsAuthenticationHandle('passkey'));
 	const showRuntimeEmailCode = $derived(
 		emailCodeEnabled && runtimeAllowsAuthenticationHandle('mail_otp', ['email_code'])

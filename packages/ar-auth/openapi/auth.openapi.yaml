@@ -404,7 +404,8 @@ paths:
         Creates a new account, so it works only where the tenant allows passkey sign-up
         (`authentication-methods.passkey.signup_enabled`, on unless the tenant turned it off);
         otherwise it is refused with 403 before any account is looked up or created, and with 503
-        when the tenant's settings cannot be read.
+        when the tenant's settings cannot be read. Email-bearing signup is refused with 403 until
+        the address has been verified; use email-free signup or an email-verified Direct Auth flow.
       requestBody:
         $ref: '#/components/requestBodies/PasskeyRegisterOptions'
       responses:
@@ -2245,7 +2246,9 @@ paths:
       summary: Start Direct Auth passkey signup.
       description:
         Creates WebAuthn registration options for Direct Auth signup after validating client,
-        channel, and origin. Email is optional and is not used for discoverable Passkey lookup.
+        channel, and origin. An email may be attached only when an email-restricted invitation's
+        mailbox proof has been verified; otherwise provide no email. Unverified email signup is
+        refused with 403 before a passkey credential is created.
       parameters:
         - $ref: '#/components/parameters/SignUpInteractionId'
       responses:
@@ -3132,7 +3135,6 @@ components:
           schema:
             $ref: '#/components/schemas/PasskeyRegisterOptionsRequest'
           example:
-            email: user@example.com
             name: Example User
     PasskeyRegisterVerify:
       required: true
@@ -3414,7 +3416,6 @@ components:
             $ref: '#/components/schemas/DirectPasskeySignupStartRequest'
           example:
             client_id: client_123
-            email: user@example.com
             display_name: Example User
             code_challenge: rfc7636-code-challenge
             code_challenge_method: S256
@@ -3891,7 +3892,6 @@ components:
           example:
             token: session_token_123
             expires_in: 300
-            session_id: sess_123
     SessionVerify:
       description: Successful JSON response.
       content:
@@ -4497,7 +4497,7 @@ components:
       description: WebAuthn credential response from the browser.
     PasskeyRegisterOptionsRequest:
       type: object
-      description: Email is optional for discoverable Passkey registration.
+      description: Discoverable Passkey registration accepts no unverified email address.
       properties:
         email:
           type: string
@@ -5589,13 +5589,9 @@ components:
         expires_in:
           type: integer
           example: 300
-        session_id:
-          type: string
-          example: sess_123
       required:
         - token
         - expires_in
-        - session_id
     SessionVerifyRequest:
       type: object
       properties:
@@ -5608,6 +5604,7 @@ components:
           example: https://app.example.com
       required:
         - token
+        - rp_origin
     SessionVerifyResponse:
       type: object
       properties:
@@ -5791,7 +5788,7 @@ components:
         - expires_in
     DirectPasskeySignupStartRequest:
       type: object
-      description: Email is optional and is retained only as profile data when supplied.
+      description: Email is accepted only with a verified email-restricted invitation proof.
       properties:
         client_id:
           type: string
@@ -6870,9 +6867,9 @@ components:
         email_verification_required:
           type: boolean
           description:
-            True when the invitation names an email and the tenant requires that email proved, so a
+            True when the invitation names an email, so a
             passkey or authenticator-app signup must first use /api/v1/invitations/email-verification.
-          example: user@example.com
+          example: true
         expires_at:
           type: integer
           example: 1770000000

@@ -680,6 +680,20 @@ describe('Passkey Handlers', () => {
       );
     });
 
+    it('refuses a passkey signup with an unverified email before creating the account', async () => {
+      const response = await passkeyRegisterOptionsHandler(
+        createMockContext({
+          body: { email: 'victim@example.com' },
+          headers: { origin: 'https://example.com' },
+        })
+      );
+
+      expect(response.status).toBe(403);
+      expect(await response.json()).toMatchObject({ reason: 'signup_email_check_required' });
+      expect(mockUserCoreRepository.createUser).not.toHaveBeenCalled();
+      expect(mockPasskeyRepository.create).not.toHaveBeenCalled();
+    });
+
     it('should reject unauthorized origins', async () => {
       const c = createMockContext({
         body: { email: 'test@example.com' },
@@ -708,7 +722,7 @@ describe('Passkey Handlers', () => {
 
     it('should allow same-origin requests even when not listed in allowed origins', async () => {
       const c = createMockContext({
-        body: { email: 'tenant-user@example.com' },
+        body: {},
         headers: {
           host: 'first.multi-tenant.authrim.com',
           origin: 'https://first.multi-tenant.authrim.com',
@@ -735,7 +749,7 @@ describe('Passkey Handlers', () => {
       mockUserPIIRepository.findByTenantAndEmail.mockResolvedValueOnce(null);
 
       const c = createMockContext({
-        body: { email: 'newuser@example.com' },
+        body: {},
         headers: { origin: 'https://example.com' },
       });
 
@@ -850,7 +864,7 @@ describe('Passkey Handlers', () => {
       expect(mockWebAuthnFunctions.generateRegistrationOptions).not.toHaveBeenCalled();
     });
 
-    it("goes on with a resumed sign-up's own account at its address, while it has no passkey", async () => {
+    it("does not attach a passkey to a resumed sign-up's unverified email account", async () => {
       const found = () => {
         mockUserPIIRepository.findByTenantAndEmail.mockResolvedValueOnce({
           id: 'user_first',
@@ -873,10 +887,10 @@ describe('Passkey Handlers', () => {
           }) as Parameters<typeof passkeyRegisterOptionsHandler>[0]
         );
 
-      // The user its server-issued token names: that sign-up's account, gone on with.
+      // Even the account named by a server-issued resume token has not proved its email.
       found();
       signUpMocks.resolvePasskeyProvisioningResumeUserId.mockResolvedValueOnce('user_first');
-      expect((await resumed('user_first')).status).toBe(200);
+      expect((await resumed('user_first')).status).toBe(403);
       expect(mockUserCoreRepository.createUser).not.toHaveBeenCalled();
       expect(mockPasskeyRepository.findByUserId).toHaveBeenCalledWith('user_first');
 
@@ -1038,7 +1052,7 @@ describe('Passkey Handlers', () => {
       mockUserPIIRepository.findByTenantAndEmail.mockResolvedValueOnce(null);
 
       const c = createMockContext({
-        body: { email: 'test@example.com' },
+        body: {},
         headers: { origin: 'https://example.com' },
       });
 
