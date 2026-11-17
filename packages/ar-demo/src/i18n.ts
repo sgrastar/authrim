@@ -1,7 +1,10 @@
 /** Languages, the typed message table and language selection. No HTML in here. */
 
-/** The languages of the admin console (ar-admin-console/src/lib/i18n/locales.ts), in its order. */
-export const LANGS = ['ja', 'en', 'de', 'ar'] as const;
+/**
+ * The languages of the admin console (ar-admin-console/src/lib/i18n/locales.ts). English, the
+ * default, comes first in the language links.
+ */
+export const LANGS = ['en', 'ja', 'de', 'ar'] as const;
 export type Lang = (typeof LANGS)[number];
 
 export type ErrorKind =
@@ -46,12 +49,16 @@ export interface Copy extends GateTexts {
   turnstile: string;
   /** Accessible name of the language switcher. */
   languageLabel: string;
+  /** The day or night button's name. */
+  themeLabel: string;
   title: string;
   intro1: string;
   intro2: string;
   noticeTitle: string;
   notices: (hours: number) => [string, string, string];
   start: string;
+  /** On the start button while the check is still answering. */
+  startChecking: string;
   skipLabel: string;
   sealLabel: string;
   retry: string;
@@ -87,6 +94,7 @@ export const COPY: Record<Lang, Copy> = {
     dir: 'ltr',
     turnstile: 'ja',
     languageLabel: '言語',
+    themeLabel: '昼と夜を切り替える',
     title: 'Authrim デモ環境',
     intro1: p(
       'Authrim の|エンドユーザー向け|ログインと|管理者向けの|画面を、|実際に|操作して|試せる|デモ環境です。'
@@ -101,6 +109,7 @@ export const COPY: Record<Lang, Copy> = {
       p(`作成した|ものは|すべて、|約${hours}時間後に|自動で|削除されます。`),
     ],
     start: '開始する',
+    startChecking: '確認しています…',
     gateTitle: p('デモ環境を|準備しています'),
     gateTitleReady: p('デモ環境の|準備が|できました'),
     gateChecking: p('受付を|確認しています'),
@@ -153,6 +162,7 @@ export const COPY: Record<Lang, Copy> = {
     dir: 'ltr',
     turnstile: 'en',
     languageLabel: 'Language',
+    themeLabel: 'Switch between day and night',
     title: 'Authrim Demo',
     intro1:
       'A demo environment where you can try Authrim’s end-user sign-in and administrator screens hands-on.',
@@ -165,6 +175,7 @@ export const COPY: Record<Lang, Copy> = {
       `Everything you create is deleted automatically after about ${hours} ${hours === 1 ? 'hour' : 'hours'}.`,
     ],
     start: 'Start',
+    startChecking: 'Checking…',
     gateTitle: 'Preparing your demo environment',
     gateTitleReady: 'Your demo environment is ready',
     gateChecking: 'Checking your request',
@@ -207,6 +218,7 @@ export const COPY: Record<Lang, Copy> = {
     dir: 'ltr',
     turnstile: 'de',
     languageLabel: 'Sprache',
+    themeLabel: 'Zwischen Tag und Nacht wechseln',
     title: 'Authrim Demo',
     intro1:
       'Eine Demo-Umgebung, in der du die Anmeldung für Endnutzer und die Verwaltungsoberfläche von Authrim direkt ausprobieren kannst.',
@@ -219,6 +231,7 @@ export const COPY: Record<Lang, Copy> = {
       `Alles, was du anlegst, wird nach etwa ${hours} ${hours === 1 ? 'Stunde' : 'Stunden'} automatisch gelöscht.`,
     ],
     start: 'Starten',
+    startChecking: 'Wird geprüft…',
     gateTitle: 'Deine Demo-Umgebung wird vorbereitet',
     gateTitleReady: 'Deine Demo-Umgebung ist bereit',
     gateChecking: 'Deine Anfrage wird geprüft',
@@ -264,6 +277,7 @@ export const COPY: Record<Lang, Copy> = {
     dir: 'rtl',
     turnstile: 'ar',
     languageLabel: 'اللغة',
+    themeLabel: 'التبديل بين النهار والليل',
     title: 'بيئة Authrim التجريبية',
     intro1:
       'بيئة تجريبية تتيح لك تجربة شاشات تسجيل الدخول للمستخدمين النهائيين وشاشات المسؤولين في Authrim عمليًا.',
@@ -276,6 +290,7 @@ export const COPY: Record<Lang, Copy> = {
       `يُحذف كل ما تنشئه تلقائيًا بعد نحو ${arabicHours(hours)}.`,
     ],
     start: 'ابدأ',
+    startChecking: 'جارٍ التحقق…',
     gateTitle: 'جارٍ تجهيز البيئة التجريبية',
     gateTitleReady: 'البيئة التجريبية جاهزة',
     gateChecking: 'جارٍ التحقق من طلبك',

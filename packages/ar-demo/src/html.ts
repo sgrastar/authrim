@@ -1,11 +1,27 @@
 import type { Config } from './config';
-import { GATE_ASSETS } from './gate-assets';
+import { CITY_SCRIPT } from './city-assets';
 import { COPY, LANGS, plain, type Copy, type ErrorKind, type GateTexts, type Lang } from './i18n';
 
-export { SITE_CSS } from './site-css';
-export { WAIT_JS } from './gate-client';
+import { SCENE_JS, WAIT_JS } from './gate-client';
+import { SITE_CSS } from './site-css';
+
+export { SCENE_JS, SITE_CSS, WAIT_JS };
 export { LANGS };
 export type { ErrorKind, Lang };
+
+/**
+ * A short mark of what the stylesheet and the scripts contain now, put in their addresses. They
+ * are cached for a few minutes: without it, a page made after a release could be shown with the
+ * files of the release before. Not a secret and not a check, only a name that changes.
+ */
+function mark(text: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    hash = Math.imul(hash ^ text.charCodeAt(i), 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0');
+}
+export const ASSET_VERSION = mark(SITE_CSS + SCENE_JS + WAIT_JS);
 
 /** The one place where a dynamic value becomes HTML text or an attribute value. */
 export function esc(value: string | number): string {
@@ -25,27 +41,21 @@ export function esc(value: string | number): string {
   });
 }
 
-function asset(name: string): string {
-  const url = GATE_ASSETS[name];
-  if (!url) throw new Error(`missing gate asset ${name}`);
-  return url;
-}
+/** The city's canvas, and the light the way out ends in. Empty without the script. */
+const BACKDROP = `<div class="backdrop" aria-hidden="true"><canvas class="city"></canvas></div>
+<div class="flash" aria-hidden="true"></div>`;
+
+const MOON =
+  '<svg class="moon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M20.3 14.6A8.6 8.6 0 0 1 9.4 3.7a.7.7 0 0 0-.9-.9 9.9 9.9 0 1 0 12.7 12.7.7.7 0 0 0-.9-.9Z"/></svg>';
+const SUN =
+  '<svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.2" fill="currentColor" stroke="none"/><path d="M12 2.6v2.2M12 19.2v2.2M2.6 12h2.2M19.2 12h2.2M5.3 5.3l1.6 1.6M17.1 17.1l1.6 1.6M5.3 18.7l1.6-1.6M17.1 6.9l1.6-1.6"/></svg>';
 
 /**
- * The far view (dark): the base of every page. AVIF, then WebP; the large file from a wide stage
- * on. Selected by media query (no `w` descriptors) so that the canvas can read the true pixel
- * size of this very element.
+ * The scene and the script that starts it (the waiting page carries that script inside its own). The scene is \`async\`: it is large and only a picture,
+ * so nothing waits for it. The page's own scripts run without it and take the city when it comes.
  */
-function farPicture(): string {
-  const wide = 'media="(min-width:1084px)"';
-  return `<picture>
-<source type="image/avif" ${wide} srcset="${asset('far-dark-2400.avif')}">
-<source type="image/webp" ${wide} srcset="${asset('far-dark-2400.webp')}">
-<source type="image/avif" srcset="${asset('far-dark-1600.avif')}">
-<source type="image/webp" srcset="${asset('far-dark-1600.webp')}">
-<img class="far" src="${asset('far-dark-1600.webp')}" alt="" width="1600" height="1067" fetchpriority="high" decoding="async">
-</picture>`;
-}
+const CITY_TAG = `<script src="${CITY_SCRIPT}" id="city-js" async></script>\n`;
+const SCENE_TAG = `<script src="/assets/scene.js?v=${ASSET_VERSION}" defer></script>\n`;
 
 /** Language links: the same page in each language; the current one is marked. */
 function langNav(current: Lang, path: string, hidden = false): string {
@@ -70,33 +80,26 @@ function layout(
   attrs = ''
 ): string {
   const copy = COPY[lang];
+  // The button is shown by the script: without it there is nothing to switch.
   return `<!doctype html>
 <html lang="${esc(copy.htmlLang)}" dir="${copy.dir}">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex, nofollow">
-<meta name="color-scheme" content="dark">
-<meta name="theme-color" content="#05070b">
+<meta name="color-scheme" content="dark light">
 <title>${esc(plain(title))}</title>
-<link rel="stylesheet" href="/assets/site.css">
-${head}</head>
+<link rel="stylesheet" href="/assets/site.css?v=${ASSET_VERSION}">
+${CITY_TAG}${head}</head>
 <body class="${bodyClass}">
+${BACKDROP}
+<button type="button" id="theme" class="theme" aria-label="${esc(plain(copy.themeLabel))}" aria-pressed="false" hidden>${MOON}${SUN}</button>
 <main class="scene ${bodyClass}"${attrs}>
 ${body}
 </main>
 </body>
 </html>
 `;
-}
-
-/** Far view only: the stage of the start and error pages (no script, no canvas). */
-function stillStage(): string {
-  return `<div class="stage" aria-hidden="true">
-<div class="far-wrap">
-${farPicture()}
-</div>
-</div>`;
 }
 
 export function startPage(lang: Lang, config: Config): string {
@@ -109,9 +112,9 @@ export function startPage(lang: Lang, config: Config): string {
     lang,
     copy.title,
     'start',
-    '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>\n',
-    `<section class="window">
-<h1>${esc(copy.title)}</h1>
+    `${SCENE_TAG}<script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" id="check-js" async defer></script>\n`,
+    `<section class="hero">
+<h1 lang="en">Authrim <span>Demo</span></h1>
 <p class="intro">${esc(copy.intro1)}</p>
 <p class="intro">${esc(copy.intro2)}</p>
 <div class="notices">
@@ -120,13 +123,12 @@ export function startPage(lang: Lang, config: Config): string {
 ${notices}
 </ul>
 </div>
-<form method="post" action="/start">
-<div class="cf-turnstile" data-sitekey="${esc(config.turnstileSiteKey)}" data-theme="dark" data-language="${esc(copy.turnstile)}"></div>
-<button type="submit" class="start-btn">${esc(copy.start)}</button>
+<form id="start-form" method="post" action="/start">
+<div class="check"><div id="check" class="cf-turnstile" data-sitekey="${esc(config.turnstileSiteKey)}" data-language="${esc(copy.turnstile)}"></div></div>
+<button type="submit" class="start-btn" data-wait="${esc(plain(copy.startChecking))}">${esc(copy.start)}</button>
 </form>
 ${langNav(lang, '/')}
-</section>
-${stillStage()}`
+</section>`
   );
 }
 
@@ -157,32 +159,19 @@ export function gatePage(lang: Lang, config: Config): string {
     lang,
     copy.gateTitle,
     'gate',
-    `<meta name="console-origin" content="${esc(config.consoleOrigin)}">\n<script src="/assets/wait.js" defer></script>\n`,
+    `<meta name="console-origin" content="${esc(config.consoleOrigin)}">\n<script src="/assets/wait.js?v=${ASSET_VERSION}" defer></script>\n`,
     `<section class="window">
 <h1 id="title">${esc(copy.gateTitle)}</h1>
+<div class="steps" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
 <p id="status" class="status" role="status" aria-atomic="true"><span id="status-text">${esc(copy.gateChecking)}</span><span class="dots" id="dots" aria-hidden="true"><i>.</i><i>.</i><i>.</i></span></p>
 <button type="button" id="skip" class="skip" hidden>${esc(copy.skipLabel)}</button>
-<button type="button" id="seal2" class="btn open-btn" hidden>${esc(copy.sealLabel)}</button>
+<button type="button" id="open" class="btn open-btn" hidden>${esc(copy.sealLabel)}</button>
 <p id="retry" class="retry" hidden><a class="btn" href="/?lang=${lang}">${esc(copy.retry)}</a></p>
 <noscript><p class="note">${esc(copy.noscript)}</p>
 ${langNav(lang, '/wait')}</noscript>
 ${langNav(lang, '/wait', true)}
-</section>
-<div class="stage">
-<div class="far-wrap" aria-hidden="true">
-${farPicture()}
-</div>
-<div class="near-wrap" aria-hidden="true"></div>
-<canvas class="gl" aria-hidden="true"></canvas>
-<div class="door" aria-hidden="true">
-<img class="passage" alt="">
-<div class="leaf l"><img alt=""><i class="dim"></i><i class="edge"></i></div>
-<div class="leaf r"><img alt=""><i class="dim"></i><i class="edge"></i></div>
-<div class="glow"></div>
-</div>
-<button type="button" id="seal" class="seal" hidden><img alt="" width="256" height="256"><span>${esc(copy.sealLabel)}</span></button>
-</div>`,
-    ` id="gate" data-state="arriving" data-view="arriving" data-station="0" data-texts="${esc(JSON.stringify(gateTexts(copy)))}"`
+</section>`,
+    ` id="gate" data-state="arriving" data-view="arriving" data-texts="${esc(JSON.stringify(gateTexts(copy)))}"`
   );
 }
 
@@ -192,13 +181,12 @@ export function errorPage(lang: Lang, kind: ErrorKind): string {
     lang,
     copy.errorTitle,
     'error',
-    '',
+    SCENE_TAG,
     `<section class="window">
 <h1>${esc(copy.errorTitle)}</h1>
 <p class="status">${esc(copy.errors[kind])}</p>
 <p><a class="btn" href="/?lang=${lang}">${esc(copy.back)}</a></p>
 ${langNav(lang, '/')}
-</section>
-${stillStage()}`
+</section>`
   );
 }

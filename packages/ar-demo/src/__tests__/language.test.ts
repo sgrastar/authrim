@@ -3,7 +3,18 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { COOKIE_NAME } from '../handlers';
-import { errorPage, gatePage, LANGS, SITE_CSS, startPage, WAIT_JS, type ErrorKind } from '../html';
+import { CITY_SCRIPT } from '../city-assets';
+import {
+  ASSET_VERSION,
+  errorPage,
+  gatePage,
+  LANGS,
+  SCENE_JS,
+  SITE_CSS,
+  startPage,
+  WAIT_JS,
+  type ErrorKind,
+} from '../html';
 import { COPY, chooseLang, pickLang, plain } from '../i18n';
 import { handleRequest } from '../index';
 import { CSP } from '../respond';
@@ -227,11 +238,12 @@ describe('every language renders every page', () => {
     }
   });
 
-  it('offers exactly the languages of the admin console, in its order', () => {
-    expect([...LANGS]).toEqual(['ja', 'en', 'de', 'ar']);
-    expect(Object.keys(COPY)).toEqual(['ja', 'en', 'de', 'ar']);
+  it('offers exactly the languages of the admin console, English (the default) first', () => {
+    expect([...LANGS]).toEqual(['en', 'ja', 'de', 'ar']);
+    expect(Object.keys(COPY).sort()).toEqual([...LANGS].sort());
     const locales = readFileSync(join(ROOT, '../ar-admin-console/src/lib/i18n/locales.ts'), 'utf8');
-    expect(locales).toContain("SUPPORTED_LOCALES = ['ja', 'en', 'de', 'ar']");
+    const listed = /SUPPORTED_LOCALES = \[([^\]]*)\]/.exec(locales)?.[1] ?? '';
+    expect(listed.replace(/['\s]/g, '').split(',').sort()).toEqual([...LANGS].sort());
   });
 
   it('fixes the English and Japanese wording', () => {
@@ -354,17 +366,23 @@ describe('every language renders every page', () => {
       for (const notice of copy.notices(7)) expect(html).toContain(notice);
       expect(copy.notices(7)[2]).toContain('7');
       expect(html).toContain(`<html lang="${copy.htmlLang}" dir="${copy.dir}">`);
-      expect(html).toContain('data-theme="dark"');
+      // the check follows the visitor's system; the page's own day or night is the script's
+      // the check is drawn by the script, unseen unless it has to ask
+      expect(html).toContain('turnstile/v0/api.js?render=explicit" id="check-js" async defer>');
+      expect(html).toContain('<div class="check"><div id="check" class="cf-turnstile"');
+      expect(html).toContain(`data-wait="${plain(copy.startChecking)}"`);
+      expect(SCENE_JS).toContain("appearance: 'interaction-only'");
       expect(html).toContain(`data-language="${copy.turnstile}"`);
       expect(html.match(/<h1[ >]/g)).toHaveLength(1);
-      expect(html).toContain('<button type="submit" class="start-btn">');
-      // one translucent window: heading, two intro paragraphs, notices (3), Turnstile, button, language links
-      expect(html).toContain('<section class="window">');
+      expect(html).toContain('<button type="submit" class="start-btn" data-wait=');
+      // words on the empty sheet, no window: name, two intro paragraphs, notices (3), Turnstile, button, language links
+      expect(html).toContain('<section class="hero">');
+      expect(html).not.toContain('class="window"');
       expect(html).not.toContain('class="panel"');
       expect(html.match(/<li>/g)).toHaveLength(3 + LANGS.length);
       expect(html).toContain(`<h2>${copy.noticeTitle}</h2>`);
       expect(html).not.toContain('class="brand"');
-      expect(html).toContain(`<h1>${copy.title}</h1>`);
+      expect(html).toContain('<h1 lang="en">Authrim <span>Demo</span></h1>');
       expect(html).toContain(`<p class="intro">${copy.intro1}</p>`);
       expect(html).toContain(`<p class="intro">${copy.intro2}</p>`);
       expect(html).toContain(`<title>${copy.title}</title>`);
@@ -384,15 +402,21 @@ describe('every language renders every page', () => {
     expect(html).toContain('id="status" class="status" role="status"');
     expect(html).toContain(`<h1 id="title">${copy.gateTitle}</h1>`);
     expect(html).not.toContain('caption');
-    // a second 'open' button in the window, hidden until ready (shown on short screens only)
+    // the one way out, hidden until ready
     expect(html).toContain(
-      `<button type="button" id="seal2" class="btn open-btn" hidden>${copy.sealLabel}</button>`
+      `<button type="button" id="open" class="btn open-btn" hidden>${copy.sealLabel}</button>`
+    );
+    expect(
+      html.match(/<button[^>]*>[^<]*<\/button>/g)?.filter((b) => b.includes(copy.sealLabel))
+    ).toHaveLength(1);
+    // four parts of the work, for the eye only
+    expect(html).toContain(
+      '<div class="steps" aria-hidden="true"><i></i><i></i><i></i><i></i></div>'
     );
     // the status text is announced once; the dots are a separate, hidden-from-assistive-tech element
     expect(html).toContain(
       `<span id="status-text">${copy.gateChecking}</span><span class="dots" id="dots" aria-hidden="true"><i>.</i><i>.</i><i>.</i></span>`
     );
-    expect(html).toContain('<button type="button" id="seal" class="seal" hidden>');
     expect(html).toContain(copy.sealLabel);
     expect(html).toContain(copy.skipLabel);
     expect(html).toContain(copy.noscript);
@@ -449,47 +473,211 @@ describe('every language renders every page', () => {
   it('keeps the stylesheet free of external requests and of @import', () => {
     expect(SITE_CSS).not.toMatch(/@import|https?:\/\//);
     for (const [, target] of SITE_CSS.matchAll(/url\(([^)]*)\)/g)) {
-      expect(target.startsWith('data:image/webp;base64,')).toBe(true);
+      expect(target, 'the stylesheet loads nothing').toBe('');
     }
     expect(SITE_CSS.length).toBeLessThan(20 * 1024);
   });
 
-  it('has no side panel layout and a translucent window', () => {
+  it('has no side panel layout and a translucent window over the city only', () => {
     expect(SITE_CSS).not.toContain('min-width:960px');
     expect(SITE_CSS).not.toContain('.panel');
-    expect(SITE_CSS).toContain('.stage{direction:ltr;position:fixed;inset:0');
-    expect(SITE_CSS).toMatch(/\.window\{[^}]*rgba\(8,12,18,\.78\)/);
-    expect(SITE_CSS).toContain('backdrop-filter:blur(10px)');
-    expect(SITE_CSS).not.toMatch(/@font-face|url\(https?:/);
+    expect(SITE_CSS).toContain('.backdrop{direction:ltr;position:fixed;inset:0');
+    // solid by default (no script, no WebGL), glass once the city is behind it
+    expect(SITE_CSS).toMatch(/\.window\{[^}]*background:var\(--glass-solid\)/);
+    expect(SITE_CSS).toContain('[data-scene=city] .window{background:var(--glass)}');
+    expect(SITE_CSS).toContain('backdrop-filter:blur(16px)');
+    expect(SITE_CSS).not.toMatch(/@font-face|url\(/);
   });
 
-  it('animates the dots in CSS only, with one gold focus style and Arabic type', () => {
+  it('follows the system for day or night until the visitor chooses', () => {
+    expect(SITE_CSS).toContain('@media (prefers-color-scheme:light){:root:not([data-theme]){');
+    expect(SITE_CSS).toContain(':root[data-theme=day]{');
+    expect(SCENE_JS).toContain("window.localStorage.getItem('authrim-theme')");
+    expect(SCENE_JS).toContain("'(prefers-color-scheme: light)'");
+  });
+
+  it('shows every page with the theme button hidden until the script runs, and the scene scripts in order', async () => {
+    const config = await configFor(12);
+    for (const lang of LANGS) {
+      for (const html of [
+        startPage(lang, config),
+        gatePage(lang, config),
+        errorPage(lang, 'failed'),
+      ]) {
+        expect(html).toContain(
+          `aria-label="${COPY[lang].themeLabel}" aria-pressed="false" hidden>`
+        );
+        expect(html).toContain('<canvas class="city"></canvas>');
+        // the picture never holds up the page's own scripts: it is async, they are deferred
+        expect(html).toContain(`<script src="${CITY_SCRIPT}" id="city-js" async>`);
+        expect(html).not.toContain(`src="${CITY_SCRIPT}" defer`);
+      }
+      // the waiting page asks for one script of its own: nothing else can hold up the status
+      const gate = gatePage(lang, config);
+      expect(gate).toContain(`<script src="/assets/wait.js?v=${ASSET_VERSION}" defer>`);
+      expect(gate).not.toContain('/assets/scene.js');
+      expect(gate.match(/<script /g)).toHaveLength(2);
+      expect(startPage(lang, config)).toContain(
+        `<script src="/assets/scene.js?v=${ASSET_VERSION}" defer>`
+      );
+      expect(errorPage(lang, 'failed')).toContain(
+        `<script src="/assets/scene.js?v=${ASSET_VERSION}" defer>`
+      );
+    }
+    expect(WAIT_JS.startsWith(SCENE_JS)).toBe(true);
+    // the cached files carry a mark of their content, so a new page never runs an old script
+    expect(ASSET_VERSION).toMatch(/^[0-9a-f]{8}$/);
+    expect(startPage('en', config)).toContain(`href="/assets/site.css?v=${ASSET_VERSION}"`);
+  });
+
+  it('asks for the status at once, with no city and before any other script has come', () => {
+    const calls: string[] = [];
+    const element = (attrs: Record<string, string> = {}): Record<string, unknown> => {
+      const self: Record<string, unknown> = {
+        hidden: false,
+        textContent: '',
+        classList: { add: () => undefined, toggle: () => undefined },
+        getAttribute: (name: string) => attrs[name] ?? null,
+        setAttribute: (name: string, value: string) => {
+          attrs[name] = value;
+        },
+        addEventListener: () => undefined,
+        focus: () => undefined,
+        querySelector: () => element(),
+      };
+      return self;
+    };
+    const gate = element({ 'data-texts': '{}' });
+    const document = {
+      documentElement: element(),
+      body: element(),
+      hidden: false,
+      activeElement: null,
+      getElementById: (id: string) => (id === 'gate' ? gate : id === 'city-js' ? null : element()),
+      querySelector: () => element(),
+      addEventListener: () => undefined,
+    };
+    const window = { addEventListener: () => undefined } as Record<string, unknown>;
+    const fetch = (url: string) => {
+      calls.push(url);
+      return new Promise(() => undefined);
+    };
+    // eslint-disable-next-line @typescript-eslint/no-implied-eval
+    const run = new Function(
+      'window',
+      'document',
+      'fetch',
+      'setInterval',
+      'setTimeout',
+      'location',
+      WAIT_JS
+    ) as (...args: unknown[]) => void;
+    run(
+      window,
+      document,
+      fetch,
+      () => 0,
+      () => 0,
+      { replace: () => undefined }
+    );
+    expect(calls).toEqual(['/status']);
+    expect((window.AuthrimScene as { city: unknown }).city).toBeNull();
+  });
+
+  it('holds the start button only while the check is still answering, then sends the form', () => {
+    type Options = Record<string, unknown> & { callback: () => void };
+    const listeners: Record<string, (event: { preventDefault: () => void }) => void> = {};
+    const attrs: Record<string, string> = { 'data-wait': 'Checking…' };
+    const button = {
+      textContent: 'Start',
+      disabled: false,
+      getAttribute: (name: string) => attrs[name] ?? null,
+      setAttribute: (name: string, value: string) => {
+        attrs[name] = value;
+      },
+    };
+    let sent = 0;
+    const form = {
+      querySelector: () => button,
+      addEventListener: (name: string, fn: (typeof listeners)[string]) => {
+        listeners[name] = fn;
+      },
+      submit: () => {
+        sent += 1;
+      },
+    };
+    const check = {
+      getAttribute: (name: string) => (name === 'data-sitekey' ? 'key' : 'en'),
+      parentNode: { classList: { add: () => undefined, remove: () => undefined } },
+    };
+    const root = { setAttribute: () => undefined };
+    const document = {
+      documentElement: root,
+      querySelector: () => null,
+      getElementById: (id: string) => (id === 'start-form' ? form : id === 'check' ? check : null),
+    };
+    let options: Options | null = null;
+    const window: Record<string, unknown> = {
+      turnstile: {
+        render: (_el: unknown, given: Options) => {
+          options = given;
+          return 'w1';
+        },
+        remove: () => undefined,
+      },
+    };
+    // eslint-disable-next-line @typescript-eslint/no-implied-eval
+    const run = new Function('window', 'document', SCENE_JS) as (...args: unknown[]) => void;
+    run(window, document);
+    const drawn = options as Options | null;
+    if (!drawn) throw new Error('the check was not drawn');
+    expect(drawn.appearance).toBe('interaction-only');
+    expect(drawn.sitekey).toBe('key');
+
+    // pressed before the check has answered: held, and said so
+    let prevented = 0;
+    listeners.submit({ preventDefault: () => (prevented += 1) });
+    expect(prevented).toBe(1);
+    expect(button.disabled).toBe(true);
+    expect(button.textContent).toBe('Checking…');
+    expect(sent).toBe(0);
+
+    // the answer comes: the form goes, once
+    drawn.callback();
+    expect(sent).toBe(1);
+
+    // pressed after the answer: nothing is held
+    listeners.submit({ preventDefault: () => (prevented += 1) });
+    expect(prevented).toBe(1);
+  });
+
+  it('animates the dots in CSS only, with one focus style and Arabic type', () => {
     expect(SITE_CSS).toContain('@keyframes dot2');
     expect(SITE_CSS).toContain('@keyframes dot3');
-    expect(SITE_CSS).toContain('.dots i{animation:none}');
-    expect(SITE_CSS).not.toMatch(/aurora|#7fe3c4/);
-    expect(SITE_CSS).toContain('outline:2px solid var(--gold-2)');
-    expect(SITE_CSS).toContain('"Geeza Pro","Noto Naskh Arabic"');
+    expect(SITE_CSS.match(/outline:2px solid/g)).toHaveLength(1);
+    expect(SITE_CSS).toContain('outline:2px solid var(--accent)');
+    expect(SITE_CSS).toContain('"Geeza Pro","Noto Sans Arabic"');
+    expect(SITE_CSS).not.toMatch(/serif(?<!sans-serif)/);
     expect(SITE_CSS).toContain('line-break:strict');
     expect(SITE_CSS).toContain('text-wrap:balance');
     expect(WAIT_JS).not.toMatch(/dots[^;]*setInterval|setInterval[^;]*dots/);
   });
 
-  it('swaps which open button is visible on short screens and in the text-only level', () => {
-    expect(SITE_CSS).toContain(
-      '@media (max-height:32rem),(max-width:22rem) and (max-height:36rem){'
-    );
-    expect(SITE_CSS).toContain(
-      '.window .open-btn:not([hidden]){display:inline-flex}.seal{visibility:hidden}'
-    );
-    expect(SITE_CSS).toContain('[data-text-only] .seal{visibility:hidden}');
-    expect(SITE_CSS).toContain('.window .open-btn{display:none');
+  it('has one open button, and the page leaves even if the picture never finishes', () => {
     expect(WAIT_JS).toContain("openBtn.addEventListener('click', onOpen)");
-    expect(WAIT_JS).toContain("sealBtn.addEventListener('click', onOpen)");
+    expect(WAIT_JS).not.toContain('sealBtn');
+    expect(WAIT_JS).toContain('city.leave({ onFlash: light, onDone: go })');
+    expect(WAIT_JS).toContain('setTimeout(go, 13000)');
   });
 
-  it('respects reduced motion in the stylesheet', () => {
-    expect(SITE_CSS).toContain('@media (prefers-reduced-motion:reduce)');
-    expect(SITE_CSS).toContain('[data-motion=reduced] .seal::before{animation:none');
+  it('respects reduced motion in the stylesheet and in the scripts', () => {
+    expect(SITE_CSS).toContain(
+      '@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}'
+    );
+    expect(SCENE_JS).toContain("'(prefers-reduced-motion: reduce)'");
+    expect(WAIT_JS).toContain("mode: reduced ? 'static' : 'full'");
+    // the city is taken when it comes; polling starts whether or not it has
+    expect(WAIT_JS).toContain('else scene.onCity = attach;');
+    expect(SCENE_JS).toContain("loader.addEventListener('load', build)");
   });
 });

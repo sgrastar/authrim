@@ -15,6 +15,7 @@ import {
   LANGS,
   SITE_CSS,
   startPage,
+  SCENE_JS,
   WAIT_JS,
   type ErrorKind,
 } from '../src/html';
@@ -120,14 +121,10 @@ function localise(html: string, lang: Lang): string {
   let result = html
     .replace(/href="\/wait\?lang=([a-z]+)"/g, 'href="/$1/wait/"')
     .replace(/href="\/\?lang=([a-z]+)"/g, 'href="/$1/"');
-  result = result.replace(
-    '<script src="/assets/wait.js" defer></script>',
-    '<script src="/preview-shim.js"></script>\n<script src="/assets/wait.js" defer></script>'
-  );
+  // Last in the head and not deferred: it runs after the head is parsed and before every
+  // deferred script (the scene and the gate script).
+  result = result.replace('</head>', '<script src="/preview-shim.js"></script>\n</head>');
   result = result.replace('<html ', `<html data-wait="/${lang}/wait/" `);
-  if (result.includes('action="/start"')) {
-    result = result.replace('</head>', '<script src="/preview-shim.js"></script>\n</head>');
-  }
   return result;
 }
 
@@ -139,9 +136,10 @@ for (const lang of LANGS) {
   }
 }
 write('assets/site.css', SITE_CSS);
+write('assets/scene.js', SCENE_JS);
 write('assets/wait.js', WAIT_JS);
 write('preview-shim.js', SHIM);
-cpSync(join(root, 'public/assets/gate'), join(out, 'assets/gate'), { recursive: true });
+cpSync(join(root, 'public/assets/city'), join(out, 'assets/city'), { recursive: true });
 write(
   'admin/join/index.html',
   '<!doctype html><meta charset="utf-8"><title>Console (stand-in)</title><body style="font:16px system-ui;padding:2rem;background:#05070b;color:#eef1f4"><h1>Stand-in for the admin console</h1><p>The gate page reached its redirect target. In the real portal the console opens here.</p><p><a style="color:#f2a03d" href="javascript:history.back()">Back</a></p>'
@@ -151,7 +149,7 @@ const scenarios: Array<[string, string, string]> = [
   ['staged', 'Normal run: provisioning, inviting after 4 s, ready after 9 s', ''],
   [
     'instant',
-    'Full run with instant ready (the show plays in full, about 11.8 s, skip button)',
+    'Full run with instant ready (the city is built in full, about 11.8 s, skip button)',
     '',
   ],
   [
@@ -174,7 +172,7 @@ const scenarios: Array<[string, string, string]> = [
   ['reduced', 'Reduced motion: instant ready, no travel, states switch at once', ''],
   [
     'instant&canvas=off',
-    'Image-only picture: canvas unavailable, four stacked photographs switched by data-station',
+    'No WebGL: no city, a solid window, the words follow the real state at once',
     '',
   ],
   ['lost', 'Session not found (404)', ''],

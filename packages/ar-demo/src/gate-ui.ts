@@ -1,54 +1,45 @@
 /**
- * The gate page's browser code (DOM, timers, network) as JavaScript source. The decisions live in
- * gate-logic.ts; this part only feeds it real answers and the clock, and shows its result. Plain
- * text only (textContent): nothing from the network is ever written as HTML. No backticks,
- * dollar-brace or backslashes in here.
+ * The waiting page's browser code (DOM, timers, network) as JavaScript source. The decisions live
+ * in gate-logic.ts; this part only feeds it real answers and the clock, and shows its result: in
+ * words, and in the city behind them, which is told how far the logic's own sequences have got
+ * and never anything more. Plain text only (textContent): nothing from the network is ever
+ * written as HTML. No backticks, dollar-brace or backslashes in here.
  */
 export const GATE_UI_JS = `var root = document.getElementById('gate');
 if (root) {
+  var scene = window.AuthrimScene || {};
+  var city = null;
   var metaTag = document.querySelector('meta[name="console-origin"]');
   var origin = metaTag ? metaTag.getAttribute('content') || '' : '';
   var texts = {};
   try { texts = JSON.parse(root.getAttribute('data-texts') || '{}'); } catch (e) { texts = {}; }
-  var stage = root.querySelector('.stage');
   var statusEl = document.getElementById('status');
   var retryEl = document.getElementById('retry');
   var skipBtn = document.getElementById('skip');
-  var sealBtn = document.getElementById('seal');
-  var openBtn = document.getElementById('seal2');
+  var openBtn = document.getElementById('open');
   var titleEl = document.getElementById('title');
   var statusText = document.getElementById('status-text');
   var dotsEl = document.getElementById('dots');
+  var stepsEl = root.querySelector('.steps');
+  var flash = document.querySelector('.flash');
   // In-progress lines get animated dots (CSS only, aria-hidden); finished and failed ones do not.
   var DOTTED = { gateChecking: 1, gateAccepted: 1, gateInviting: 1, gateSlow: 1, gateUnstable: 1, gateOpening: 1 };
   var langNav = root.querySelector('nav.lang');
-  var canvas = root.querySelector('canvas.gl');
-  var glow = root.querySelector('.glow');
-  var farWrap = root.querySelector('.far-wrap');
-  var nearWrap = root.querySelector('.near-wrap');
-  var baseImg = root.querySelector('img.far');
-  var reduced = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
-  var logic = AuthrimGate.create({ scales: GEO.camera.stationScales, mode: reduced ? 'static' : 'full', limitMs: 360000 });
+  var reduced = !!scene.reduced;
+  // The city may come later or never, and nothing here waits for it: the logic plays its
+  // sequences only once it is told the picture is there, and gives up on it by itself.
+  var logic = AuthrimGate.create({ mode: reduced ? 'static' : 'full', limitMs: 360000 });
   var shown = {};
   var joinUrl = null;
   var inflight = 0;
   var controllers = [];
   var pollTimer = 0;
   var ended = false;
-  var firstAnswerAt = 0;
-  var drawMode = 'canvas';
-  var imgs = { dark: null, farLit: null, flame: null, nearDark: null, nearLit: null };
-  var group1Done = false;
-  var group2Started = false;
-  var doorsLoaded = false;
-  var renderer = null;
-  var rafId = 0;
-  var lastFrame = 0;
-  var stillKey = '';
   var leaving = false;
-  var holder = document.createElement('div');
-  holder.hidden = true;
-  root.appendChild(holder);
+  var departed = false;
+  // When each of the logic's sequences began, on its own clock.
+  var began = { depart: null, middle: null, arrive: null };
+  var held = false;
 
   root.setAttribute('data-motion', reduced ? 'reduced' : 'full');
 
@@ -59,144 +50,49 @@ if (root) {
     el.setAttribute(name, value);
   }
 
-  /** A hidden picture element with AVIF and WebP sources; resolves with the loaded img. */
-  function loadPicture(stem, size) {
-    return new Promise(function (resolve, reject) {
-      var picture = document.createElement('picture');
-      var avif = document.createElement('source');
-      avif.type = 'image/avif';
-      avif.srcset = ASSETS[stem + '-' + size + '.avif'];
-      var webp = document.createElement('source');
-      webp.type = 'image/webp';
-      webp.srcset = ASSETS[stem + '-' + size + '.webp'];
-      var img = document.createElement('img');
-      img.alt = '';
-      img.onload = function () { resolve(img); };
-      img.onerror = function () { reject(new Error(stem)); };
-      picture.appendChild(avif);
-      picture.appendChild(webp);
-      picture.appendChild(img);
-      holder.appendChild(picture);
-      img.src = ASSETS[stem + '-' + size + '.webp'];
-    });
-  }
+  function unit(v) { return v < 0 ? 0 : v > 1 ? 1 : v; }
 
-  function loadFlat(name, target) {
-    return new Promise(function (resolve, reject) {
-      var img = target || new Image();
-      img.onload = function () { resolve(img); };
-      img.onerror = function () { reject(new Error(name)); };
-      img.src = ASSETS[name];
-    });
-  }
-
-  function sizes() {
-    var small = stage.clientWidth <= 700;
-    return { far: small ? 1600 : 2400, near: small ? 1200 : 2400 };
-  }
-
-  /** Image-only picture: the four photographs stacked, switched by data-station in CSS. */
-  function useFallback() {
-    if (drawMode === 'img') return;
-    drawMode = 'img';
-    renderer = null;
-    setAttr(root, 'data-draw', 'img');
-    canvas.hidden = true;
-    var sz = sizes();
-    function layer(parent, cls, stem, size) {
-      loadPicture(stem, size).then(function (img) {
-        holder.removeChild(img.parentNode);
-        img.className = cls;
-        parent.appendChild(img);
-      }, function () {});
+  // The city's stage (1 plan, 2 detail, 3 surfaces, 4 lights) and how far into it, read off the
+  // logic: its sequences are the only clock. Detail goes on being added for as long as the real
+  // creation takes, and is only finished when the next real state has arrived.
+  function picture(snap) {
+    var clock = snap.clock;
+    if (snap.mode === 'static' || (!snap.anim && snap.station >= 3)) {
+      return snap.station >= 3 ? [4, 1] : snap.station === 2 ? [3, 1] : snap.station === 1 ? [2, 0.9] : [1, 1];
     }
-    layer(farWrap, 'far-lit', 'far-lit', sz.far);
-    layer(nearWrap, 'near-dark', 'near-dark', sz.near);
-    layer(nearWrap, 'near-lit', 'near-lit', sz.near);
+    if (snap.anim === 'depart' && began.depart === null) began.depart = clock - snap.animTime;
+    if (snap.anim === 'middle' && began.middle === null) began.middle = clock - snap.animTime;
+    if (snap.anim === 'arrive' && began.arrive === null) began.arrive = clock - snap.animTime;
+    if (snap.station >= 1 && began.depart === null) began.depart = clock;
+    if (snap.station >= 2 && began.middle === null) began.middle = clock;
+    if (snap.station >= 3 && began.arrive === null) began.arrive = clock;
+    if (began.arrive !== null) return [4, unit((clock - began.arrive) / 3000)];
+    if (began.middle !== null) {
+      var m = (clock - began.middle) / 4200;
+      var reached = 0.9 * (1 - Math.exp(-(began.middle - began.depart) / 7000));
+      return m < 0.2 ? [2, reached + (1 - reached) * unit(m / 0.2)] : [3, unit((m - 0.2) / 0.8)];
+    }
+    if (began.depart !== null) return [2, 0.9 * (1 - Math.exp(-(clock - began.depart) / 7000))];
+    return [1, unit(clock / 3200)];
+  }
+
+  function paint(snap) {
+    if (snap.terminal) {
+      // The picture stops where it was and goes quiet.
+      if (city && !held) { held = true; city.setMuted(true); }
+      return;
+    }
+    if (snap.opening) return;
+    var at = picture(snap);
+    setAttr(stepsEl, 'data-step', String(at[0]));
+    if (city) city.setStage(at[0], at[1]);
+  }
+
+  function attach(made) {
+    if (city || departed || !made) return;
+    city = made;
     logic.setAssetsReady();
-    startGroup2();
-  }
-
-  function startGroup2() {
-    if (group2Started) return;
-    group2Started = true;
-    var sz = sizes();
-    var pending = [
-      loadFlat('seal.webp', sealBtn.querySelector('img')),
-      loadFlat('near-passage.webp', root.querySelector('img.passage')),
-      loadFlat('near-leaf-l.webp', root.querySelector('.leaf.l img')),
-      loadFlat('near-leaf-r.webp', root.querySelector('.leaf.r img'))
-    ];
-    Promise.all(pending).then(function () { doorsLoaded = true; }, function () {});
-    if (drawMode === 'canvas') {
-      loadPicture('near-dark', sz.near).then(function (img) { imgs.nearDark = img; scheduleDraw(); }, function () {});
-      loadPicture('near-lit', sz.near).then(function (img) { imgs.nearLit = img; scheduleDraw(); }, function () {});
-    }
-  }
-
-  function startGroup1() {
-    var sz = sizes();
-    Promise.all([loadPicture('far-lit', sz.far), loadFlat('flame-flipbook.webp')]).then(function (done) {
-      imgs.farLit = done[0];
-      imgs.flame = done[1];
-      group1Done = true;
-      logic.setAssetsReady();
-      if (shown.firstAnswer) startGroup2();
-      scheduleDraw();
-    }, function () {
-      useFallback();
-    });
-  }
-
-  // The base photograph failed: text-only level. The in-window button is then the one to use.
-  function noImages() {
-    setAttr(root, 'data-text-only', '1');
-    useFallback();
-  }
-
-  function initRenderer() {
-    var base = baseImg;
-    function ready() {
-      imgs.dark = base;
-      try {
-        renderer = createRenderer(canvas, GEO, imgs);
-      } catch (e) {
-        renderer = null;
-      }
-      if (!renderer) { useFallback(); return; }
-      startGroup1();
-    }
-    if (!base) { useFallback(); return; }
-    if (base.complete && base.naturalWidth) ready();
-    else if (base.complete) noImages();
-    else { base.addEventListener('load', ready); base.addEventListener('error', noImages); }
-  }
-
-  function draw(snap) {
-    if (drawMode !== 'canvas' || !renderer || document.hidden) return;
-    var scene = snap.scene;
-    var idle = !snap.anim && !snap.terminal && !snap.opening && snap.mode === 'full';
-    var breathing = idle ? 1 + 0.002 * Math.sin((2 * Math.PI * snap.clock) / 7000) : 1;
-    var view = { scale: scene.scale * breathing, blend: scene.blend, fires: scene.fires };
-    if (renderer.draw(view, snap.clock, snap.mode === 'static')) canvas.setAttribute('data-on', '1');
-  }
-
-  function scheduleDraw() {
-    if (drawMode !== 'canvas' || !renderer) return;
-    if (!rafId) rafId = requestAnimationFrame(frame);
-  }
-
-  function needsLoop(snap) {
-    if (drawMode !== 'canvas' || !renderer || snap.mode === 'static') return false;
-    return !(snap.terminal && snap.terminalAge > 1500);
-  }
-
-  function frame(ts) {
-    rafId = 0;
-    if (!document.hidden && ts - lastFrame < 30) { rafId = requestAnimationFrame(frame); return; }
-    lastFrame = ts;
-    var snap = step(true);
-    if (needsLoop(snap) && !document.hidden) rafId = requestAnimationFrame(frame);
+    step();
   }
 
   function stopPolling() {
@@ -212,15 +108,9 @@ if (root) {
     location.replace(joinUrl);
   }
 
-  /** The visible 'open' control: the door button, or the one in the window on short screens. */
-  function openControl() {
-    return getComputedStyle(sealBtn).visibility === 'hidden' ? openBtn : sealBtn;
-  }
-
   function apply(snap) {
     setAttr(root, 'data-state', snap.terminal ? snap.terminal : snap.opening ? 'opening' : snap.real);
     setAttr(root, 'data-view', snap.view);
-    setAttr(root, 'data-station', String(snap.station));
     var line = texts[snap.status] || '';
     if (statusText.textContent !== line) statusText.textContent = line;
     dotsEl.hidden = !DOTTED[snap.status];
@@ -229,22 +119,14 @@ if (root) {
     if (heading && titleEl.textContent !== heading) titleEl.textContent = heading;
     skipBtn.hidden = !snap.skip;
     if (langNav) langNav.hidden = !snap.langLinks;
-    var sealNow = snap.seal;
-    if (sealNow && sealBtn.hidden) {
-      sealBtn.hidden = false;
+    if (snap.seal && openBtn.hidden) {
       openBtn.hidden = false;
-      sealBtn.removeAttribute('data-shown');
-      void sealBtn.offsetWidth;
-      sealBtn.setAttribute('data-shown', '1');
+      setAttr(stepsEl, 'data-ready', '1');
       var active = document.activeElement;
-      if (!active || active === document.body || active === skipBtn) openControl().focus();
+      if (!active || active === document.body || active === skipBtn) openBtn.focus();
       if (document.hidden && texts.gateTitleReady) document.title = texts.gateTitleReady.split(String.fromCharCode(8203)).join('');
-      if (stage.scrollIntoView) stage.scrollIntoView({ block: 'nearest' });
     }
-    if (!sealNow && !sealBtn.hidden && !snap.opening) {
-      sealBtn.hidden = true;
-      openBtn.hidden = true;
-    }
+    if (!snap.seal && !openBtn.hidden && !snap.opening) openBtn.hidden = true;
     if (snap.terminal) {
       retryEl.hidden = false;
       joinUrl = null;
@@ -252,26 +134,18 @@ if (root) {
         ended = true;
         stopPolling();
         var a = document.activeElement;
-        if (!a || a === document.body || a === skipBtn || a === sealBtn || a === openBtn) retryEl.querySelector('a').focus();
-        sealBtn.hidden = true;
+        if (!a || a === document.body || a === skipBtn || a === openBtn) retryEl.querySelector('a').focus();
         openBtn.hidden = true;
       }
     }
     if (snap.level >= 3 && !snap.terminal) stopPolling();
-    if (snap.mode === 'static' && drawMode === 'canvas' && !group1Done && shown.firstAnswer && Date.now() - firstAnswerAt > 4000) useFallback();
   }
 
-  /** One tick of the logic and the DOM; 'looping' is true when called from the animation frame. */
-  function step(looping) {
+  /** One tick of the logic, the words and the picture. */
+  function step() {
     var snap = logic.tick(Date.now());
     apply(snap);
-    var key = [snap.real, snap.view, snap.station, snap.terminal, snap.opening, group1Done, !!imgs.nearLit].join('|');
-    if (needsLoop(snap)) {
-      if (looping) draw(snap);
-    } else if (key !== stillKey) {
-      stillKey = key;
-      draw(snap);
-    }
+    paint(snap);
     return snap;
   }
 
@@ -279,14 +153,11 @@ if (root) {
     var now = Date.now();
     if (res.kind === 'ok') {
       var data = res.data || {};
-      shown.firstAnswer = true;
-      if (!firstAnswerAt) firstAnswerAt = now;
       var state = data.state;
       if (state === 'ready') {
         if (AuthrimGate.isJoinTarget(origin, data.join)) {
           joinUrl = data.join;
           logic.onResponse({ kind: 'ready', expiresIn: data.join_expires_in }, now, inflight);
-          startGroup2();
         } else {
           logic.onResponse({ kind: 'badjoin' }, now, inflight);
         }
@@ -294,15 +165,11 @@ if (root) {
       else if (state === 'failed') logic.onResponse({ kind: 'failed' }, now, inflight);
       else logic.onResponse({ kind: data.stage === 'inviting' ? 'inviting' : 'provisioning' }, now, inflight);
     } else if (res.kind === 'notfound') {
-      shown.firstAnswer = true;
-      if (!firstAnswerAt) firstAnswerAt = now;
       logic.onResponse({ kind: 'notfound' }, now, inflight);
     } else {
       logic.onResponse({ kind: 'error' }, now, inflight);
     }
-    if (shown.firstAnswer && group1Done) startGroup2();
     step();
-    scheduleDraw();
   }
 
   /** Independent requests every 2 s: the one that carries the creation may take a long time. */
@@ -330,38 +197,42 @@ if (root) {
       });
   }
 
-  function openGate() {
-    var animated = !reduced && drawMode === 'canvas' && doorsLoaded && glow && typeof glow.addEventListener === 'function';
-    if (!animated) { setTimeout(go, 300); return; }
-    glow.addEventListener('animationend', go);
-    setTimeout(go, 4500);
+  /** The way out: down onto the avenue and along it into the light, then the console. */
+  function leave() {
+    departed = true;
+    document.body.classList.add('leaving');
+    function light() { if (flash) flash.classList.add('on'); }
+    if (!city || reduced) {
+      light();
+      setTimeout(go, 300);
+      return;
+    }
+    city.leave({ onFlash: light, onDone: go });
+    // Whatever happens to the picture, the console is opened.
+    setTimeout(light, 11000);
+    setTimeout(go, 13000);
   }
 
   function onOpen() {
     if (!logic.press(Date.now())) return;
-    sealBtn.disabled = true;
     openBtn.disabled = true;
     step();
-    openGate();
+    leave();
   }
-  sealBtn.addEventListener('click', onOpen);
   openBtn.addEventListener('click', onOpen);
   skipBtn.addEventListener('click', function () {
     if (!logic.skip()) return;
     step();
-    scheduleDraw();
-    openControl().focus();
+    openBtn.focus();
   });
-  function redraw() { stillKey = ''; step(); scheduleDraw(); }
-  window.addEventListener('resize', redraw);
-  document.addEventListener('visibilitychange', function () { if (!document.hidden) redraw(); });
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) step(); });
   window.addEventListener('pageshow', function (event) { if (event.persisted && !ended && !logic.isDone()) poll(); });
 
-  initRenderer();
   step();
+  if (scene.city) attach(scene.city);
+  else scene.onCity = attach;
   poll();
   pollTimer = setInterval(poll, 2000);
-  setInterval(step, 100);
-  scheduleDraw();
+  setInterval(step, 50);
 }
 `;
