@@ -9,7 +9,8 @@ import {
  */
 
 import chalk from 'chalk';
-import ora from 'ora';
+import ora from '../timed-ora.js';
+import { setPhaseTimingTarget } from '../../core/phase-timings.js';
 import { confirm, password, select } from '@inquirer/prompts';
 import { t, getLocale } from '../../i18n/index.js';
 import { existsSync } from 'node:fs';
@@ -929,6 +930,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
   }
 
   const env = options.env || config.environment.prefix;
+  setPhaseTimingTarget({ env, baseDir });
   const resolvedConfigPath = resolve(configPath);
   const canonicalConfigPath = resolve(getEnvironmentPaths({ baseDir, env }).config);
   const configDirectory = dirname(resolvedConfigPath);

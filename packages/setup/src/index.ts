@@ -15,6 +15,7 @@
  *   pnpm setup:info              # Display resource information
  */
 
+import { timedCommand } from './cli/timed-command.js';
 import { Command } from 'commander';
 import { createRequire } from 'node:module';
 import type { AuthrimConfig } from './core/config.js';
@@ -99,7 +100,7 @@ program
     'Initial tenant placement policy (tenant_exclusive or shared_pool)'
   )
   .option('--lang <code>', 'Language (en, ja, zh-CN, etc.)')
-  .action(initCommand);
+  .action(timedCommand('init', initCommand));
 
 program
   .command('deploy')
@@ -136,7 +137,7 @@ program
     'Recover exact Worker ownership after an interrupted initial deployment'
   )
   .option('-y, --yes', 'Skip confirmation prompts')
-  .action(deployCommand);
+  .action(timedCommand('deploy', deployCommand));
 
 program
   .command('recover-initial-d1')
@@ -170,7 +171,7 @@ program
     'Confirm required external database migrations were applied with operator-managed tooling'
   )
   .option('-y, --yes', 'Skip confirmation prompts')
-  .action(updateCommand);
+  .action(timedCommand('update', updateCommand));
 
 program
   .command('control-provision')
@@ -186,7 +187,7 @@ program
   .option('--keys-dir <path>', 'Setup machine key directory')
   .option('--dry-run', 'Show the server-owned operation without claiming it')
   .option('-y, --yes', 'Skip confirmation prompts')
-  .action(controlProvisionCommand);
+  .action(timedCommand('control-provision', controlProvisionCommand));
 
 program
   .command('r2-provision')
