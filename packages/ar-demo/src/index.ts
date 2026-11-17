@@ -1,4 +1,4 @@
-import { handleScheduled } from './cleanup';
+import { dispatchScheduled } from './scheduled';
 import { loadConfig } from './config';
 import { handleStart, handleStartPage, handleStatus, handleWaitPage, langOf } from './handlers';
 import { SITE_CSS, WAIT_JS } from './html';
@@ -74,7 +74,7 @@ export async function handleRequest(
 
 export default {
   fetch: (request: Request, env: Env): Promise<Response> => handleRequest(request, env),
-  scheduled: async (_controller: unknown, env: Env): Promise<void> => {
-    await handleScheduled(env, createDeps(env));
+  scheduled: async (controller: { cron: string }, env: Env): Promise<void> => {
+    await dispatchScheduled(controller.cron, env, createDeps(env));
   },
 };

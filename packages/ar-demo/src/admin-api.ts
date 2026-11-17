@@ -18,6 +18,11 @@ export const CLEANUP_SCOPES = [
   'admin:tenants:provision',
 ] as const;
 
+export type MachineApiConfig = Pick<
+  Config,
+  'adminApiOrigin' | 'machineClientId' | 'machineKeyId' | 'machinePrivateJwk'
+>;
+
 type ScopeSet = readonly string[];
 
 const ADMIN_AUDIENCE = 'authrim:admin-api';
@@ -29,7 +34,7 @@ const REQUEST_TIMEOUT_MS = 10_000;
 // request is idempotent by tenant id (Idempotency-Key), so a retry after a timeout is safe.
 const CREATE_TENANT_TIMEOUT_MS = 90_000;
 const TOKEN_EARLY_EXPIRY_MS = 60_000;
-const MAX_BODY_CHARS = 64 * 1024;
+const MAX_BODY_BYTES = 64 * 1024;
 const TENANT_ADMIN_ROLE_ID = 'role_ar_tenant_admin';
 const INVITATION_MINUTES = 15;
 
@@ -79,7 +84,8 @@ async function request(
   deps: Deps,
   url: string,
   init: RequestInit,
-  timeoutMs: number = REQUEST_TIMEOUT_MS
+  timeoutMs: number = REQUEST_TIMEOUT_MS,
+  maxBodyBytes: number = MAX_BODY_BYTES
 ): Promise<{ status: number; body: unknown }> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -95,8 +101,36 @@ async function request(
     ) {
       throw new AdminApiError('redirect', response.status);
     }
-    const text = await response.text();
-    if (text.length > MAX_BODY_CHARS) throw new AdminApiError('invalid_response', response.status);
+    const chunks: Uint8Array[] = [];
+    let length = 0;
+    const reader = response.body?.getReader();
+    if (reader) {
+      try {
+        while (true) {
+          const chunk = await reader.read();
+          if (chunk.done) break;
+          const value: unknown = chunk.value;
+          if (!(value instanceof Uint8Array)) {
+            throw new AdminApiError('invalid_response', response.status);
+          }
+          length += value.byteLength;
+          if (length > maxBodyBytes) {
+            await reader.cancel();
+            throw new AdminApiError('invalid_response', response.status);
+          }
+          chunks.push(value);
+        }
+      } finally {
+        reader.releaseLock();
+      }
+    }
+    const bytes = new Uint8Array(length);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    const text = new TextDecoder().decode(bytes);
     let body: unknown = null;
     if (text.length > 0) {
       try {
@@ -115,7 +149,7 @@ async function request(
   }
 }
 
-async function signAssertion(config: Config, now: number): Promise<string> {
+async function signAssertion(config: MachineApiConfig, now: number): Promise<string> {
   let key: CryptoKey;
   try {
     key = await crypto.subtle.importKey(
@@ -153,7 +187,7 @@ async function signAssertion(config: Config, now: number): Promise<string> {
 }
 
 async function mintToken(
-  config: Config,
+  config: MachineApiConfig,
   deps: Deps,
   scopes: ScopeSet
 ): Promise<{ token: string; ttlMs: number }> {
@@ -201,7 +235,7 @@ async function mintToken(
   return { token: data.access_token, ttlMs: data.expires_in * 1000 };
 }
 
-async function getToken(config: Config, deps: Deps, scopes: ScopeSet): Promise<string> {
+async function getToken(config: MachineApiConfig, deps: Deps, scopes: ScopeSet): Promise<string> {
   const key = `${config.adminApiOrigin}|${config.machineClientId}|${config.machineKeyId}|${[...scopes].sort().join(' ')}`;
   const cached = tokenCache.get(key);
   if (cached && cached.expiresAtMs > deps.now()) return cached.token;
@@ -222,13 +256,14 @@ async function getToken(config: Config, deps: Deps, scopes: ScopeSet): Promise<s
   return promise;
 }
 
-async function call(
-  config: Config,
+export async function callMachineApi(
+  config: MachineApiConfig,
   deps: Deps,
   path: string,
   init: { method: string; headers?: Record<string, string>; json?: unknown },
   scopes: ScopeSet = REQUIRED_SCOPES,
-  timeoutMs?: number
+  timeoutMs?: number,
+  maxBodyBytes?: number
 ): Promise<{ status: number; body: unknown }> {
   const token = await getToken(config, deps, scopes);
   return request(
@@ -244,12 +279,13 @@ async function call(
       },
       ...(init.json !== undefined ? { body: JSON.stringify(init.json) } : {}),
     },
-    timeoutMs
+    timeoutMs,
+    maxBodyBytes
   );
 }
 
 export async function createTenant(config: Config, deps: Deps, tenantId: string): Promise<void> {
-  const { status, body } = await call(
+  const { status, body } = await callMachineApi(
     config,
     deps,
     '/api/admin/tenants',
@@ -291,7 +327,7 @@ export async function getProvisioningStatus(
   deps: Deps,
   tenantId: string
 ): Promise<ProvisioningStatus> {
-  const { status, body } = await call(
+  const { status, body } = await callMachineApi(
     config,
     deps,
     `/api/admin/tenants/${encodeURIComponent(tenantId)}/provisioning`,
@@ -336,7 +372,7 @@ export async function createInvitation(
   tenantId: string
 ): Promise<Invitation> {
   const email = `${tenantId}@demo.invalid`;
-  const { status, body } = await call(config, deps, '/api/admin/admin-invitations', {
+  const { status, body } = await callMachineApi(config, deps, '/api/admin/admin-invitations', {
     method: 'POST',
     headers: { 'X-Tenant-Id': tenantId },
     json: {
@@ -421,7 +457,7 @@ export async function getTenantLifecycle(
   deps: Deps,
   tenantId: string
 ): Promise<TenantLifecycle> {
-  const { status, body } = await call(
+  const { status, body } = await callMachineApi(
     config,
     deps,
     `/api/admin/tenants/${encodeURIComponent(tenantId)}`,
@@ -452,7 +488,7 @@ export async function deleteTenant(
   deps: Deps,
   tenantId: string
 ): Promise<DeleteResult> {
-  const { status, body } = await call(
+  const { status, body } = await callMachineApi(
     config,
     deps,
     `/api/admin/tenants/${encodeURIComponent(tenantId)}`,
@@ -479,7 +515,7 @@ export async function cleanupProvisioning(
   deps: Deps,
   tenantId: string
 ): Promise<CleanupResult> {
-  const { status, body } = await call(
+  const { status, body } = await callMachineApi(
     config,
     deps,
     `/api/admin/tenants/${encodeURIComponent(tenantId)}/provisioning/cleanup`,
@@ -518,7 +554,7 @@ export async function retryProvisioning(
   deps: Deps,
   tenantId: string
 ): Promise<RetryResult> {
-  const { status, body } = await call(
+  const { status, body } = await callMachineApi(
     config,
     deps,
     `/api/admin/tenants/${encodeURIComponent(tenantId)}/provisioning/retry`,

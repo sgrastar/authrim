@@ -44,6 +44,16 @@ export interface Env {
   MACHINE_KEY_ID?: string;
   MACHINE_PRIVATE_JWK?: string;
   IP_HASH_SECRET?: string;
+  DEFAULT_TENANT_ID?: string;
+  SWEEP_ENABLED?: string;
+  SWEEP_DRY_RUN?: string;
+  SWEEP_MIN_AGE_MINUTES?: string | number;
+  SWEEP_MAX_DELETES_PER_RUN?: string | number;
+  SWEEP_MAX_PAGES?: string | number;
+  SWEEP_KEEP_USER_IDS?: string;
+  SWEEP_MACHINE_CLIENT_ID?: string;
+  SWEEP_MACHINE_KEY_ID?: string;
+  SWEEP_MACHINE_PRIVATE_JWK?: string;
 }
 
 /** What the handlers need from the outside world; the tests replace both. */
