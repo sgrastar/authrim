@@ -299,15 +299,47 @@ describe('what fetches a metadata URL, while saml_metadata_url is off', () => {
   it('refuses import-metadata with a URL, and imports pasted XML', async () => {
     mocks.adapter!.queryOne.mockResolvedValue(providerRow());
     const refused = await handleImportMetadata(
-      context({ switch: false, id: 'provider-a', body: { metadataUrl: STORED_URL } })
+      context({
+        switch: false,
+        id: 'provider-a',
+        body: {
+          expectedUpdatedAt: new Date(1_700_000_001_000).toISOString(),
+          metadataUrl: STORED_URL,
+        },
+      })
     );
     expect(refused.status).toBe(403);
     expect(mocks.safeFetchText).not.toHaveBeenCalled();
     expect(writes()).toBe(0);
     const pasted = await handleImportMetadata(
-      context({ switch: false, id: 'provider-a', body: { metadataXml: spMetadata } })
+      context({
+        switch: false,
+        id: 'provider-a',
+        body: {
+          expectedUpdatedAt: new Date(1_700_000_001_000).toISOString(),
+          metadataXml: spMetadata,
+        },
+      })
     );
     expect(pasted.status).toBe(200);
+  });
+
+  it('also gates a reviewed XML snapshot that would store URL provenance', async () => {
+    mocks.adapter?.queryOne.mockResolvedValue(providerRow());
+    const response = await handleImportMetadata(
+      context({
+        switch: false,
+        id: 'provider-a',
+        body: {
+          expectedUpdatedAt: new Date(1_700_000_001_000).toISOString(),
+          metadataXml: spMetadata,
+          metadataUrl: STORED_URL,
+        },
+      })
+    );
+    expect(response.status).toBe(403);
+    expect(mocks.safeFetchText).not.toHaveBeenCalled();
+    expect(writes()).toBe(0);
   });
 
   it('refuses refresh-metadata, with a stored URL or a given one, and fetches nothing', async () => {

@@ -1,3 +1,4 @@
+import { mapOIDCInboundUserInfo } from '../services/inbound-mapping';
 /**
  * External IdP Callback Handler
  * GET/POST /auth/external/:provider/callback - Handle OAuth callback
@@ -1761,7 +1762,9 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
 
     // 6.5. Normalize userinfo using attributeMapping (important for OAuth2 providers)
     // OAuth2 providers like GitHub may use different claim names (e.g., "id" instead of "sub")
-    userInfo = normalizeUserInfo(userInfo, provider.attributeMapping);
+    const upstreamClaims = userInfo;
+    const inbound = await mapOIDCInboundUserInfo(c.env, authState.tenantId, provider, userInfo);
+    userInfo = inbound?.userInfo ?? normalizeUserInfo(userInfo, provider.attributeMapping);
 
     // Ensure sub is present (required for identity linking)
     if (!userInfo.sub) {
@@ -1814,6 +1817,7 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
       const linked = await handleIdentity(c.env, {
         provider,
         userInfo,
+        upstreamClaims: inbound ? upstreamClaims : undefined,
         tokens,
         linkingUserId: link.userId,
         tenantId: link.tenantId,
@@ -1870,6 +1874,8 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
       provider,
       userInfo,
       tokens,
+      mappedCustomClaims: inbound?.customClaims,
+      upstreamClaims: inbound ? upstreamClaims : undefined,
       linkingUserId: authState.userId,
       tenantId: authState.tenantId,
       ...(invitation ? { invitation } : {}),

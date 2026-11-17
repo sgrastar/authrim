@@ -250,7 +250,10 @@ async function encryptXmlElement(
   };
 }
 
-async function importRsaOaepPublicKey(pem: string, hash: 'SHA-1' | 'SHA-256'): Promise<CryptoKey> {
+export async function importRsaOaepPublicKey(
+  pem: string,
+  hash: 'SHA-1' | 'SHA-256'
+): Promise<CryptoKey> {
   const der = pemToDer(pem);
   const spki = pem.includes('BEGIN CERTIFICATE')
     ? extractSubjectPublicKeyInfoWithFallback(der)
@@ -274,7 +277,7 @@ function resolveEncryptionCertificate(
   return spConfig.encryptionCertificate || spConfig.encryptionCertificates?.[0];
 }
 
-function resolveXmlEncryptionAlgorithms(
+export function resolveXmlEncryptionAlgorithms(
   spConfig: Pick<
     SAMLSPConfig,
     'encryptionAlgorithmPolicy' | 'assertionEncryptionAlgorithm' | 'keyEncryptionAlgorithm'

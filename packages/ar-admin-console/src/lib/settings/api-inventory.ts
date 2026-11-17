@@ -304,7 +304,7 @@ export const API_GROUPS: readonly ApiGroup[] = [
 		kind: 'records',
 		page: 'applications/all',
 		paths: [`${A}/clients`, `${A}/effective-policy`],
-		note: 'One app’s tabs: profile, consent overrides, cache mode, usage, secret; its settings are the Settings API.'
+		note: 'Connection General edits public profile, grants, logout, public RP keys and exchange policy via tenant-scoped Admin client PUT with expected_updated_at. Mapping has its own node. Token lifetimes, refresh and security use client Settings API categories with ifMatch. Private keys are never registered; secrets use their separate lifecycle.'
 	},
 	{
 		id: 'client-presets',
@@ -412,6 +412,7 @@ export const API_GROUPS: readonly ApiGroup[] = [
 	{
 		id: 'saml-providers',
 		name: 'SAML providers and metadata',
+		note: 'Single connections also use applications/all: preview requires provider-create, import requires metadata-import and trust step-up; import uses the loaded expectedUpdatedAt and returns 409 on conflict. Preview never saves a provider.',
 		kind: 'records',
 		page: 'authentication/enterprise',
 		paths: [

@@ -214,7 +214,7 @@ async function sha256Hex(value: string): Promise<string> {
  * same body with the receipt. The bridge validates the body, so the gate sits after the checks
  * this proxy can make and right before the request is forwarded.
  */
-async function requireExternalProviderStepUp(
+export async function requireExternalProviderStepUp(
   c: Context<{ Bindings: Env }>,
   action: 'create' | 'register' | 'update' | 'delete',
   providerId: string | null,

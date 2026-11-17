@@ -221,7 +221,7 @@ function extractResourceId(path: string): string | null {
   return match ? match[1] : null;
 }
 
-function isResponseMarkedRetryable(c: Context): boolean {
+export function isResponseMarkedRetryable(c: Context): boolean {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
   return (c as any).get(RETRYABLE_RESPONSE_CONTEXT_KEY) === true;
 }

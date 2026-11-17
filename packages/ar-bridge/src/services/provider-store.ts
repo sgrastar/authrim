@@ -191,25 +191,31 @@ export async function updateProvider(
   env: Env,
   tenantId: string,
   id: string,
-  updates: Partial<Omit<UpstreamProvider, 'id' | 'createdAt' | 'updatedAt'>>
+  updates: Partial<Omit<UpstreamProvider, 'id' | 'createdAt' | 'updatedAt'>>,
+  expectedUpdatedAt?: number
 ): Promise<UpstreamProvider | null> {
   const existing = await getProvider(env, tenantId, id);
-  if (!existing) return null;
+  if (!existing || (expectedUpdatedAt !== undefined && existing.updatedAt !== expectedUpdatedAt))
+    return null;
 
-  const now = Date.now();
+  const now = Math.max(Date.now(), existing.updatedAt + 1);
   const updated = { ...existing, ...updates, updatedAt: now };
 
   const coreAdapter = await getCoreAdapter(env, 'bridge-provider-store:update', tenantId);
-  await coreAdapter.execute(
+  const result = await coreAdapter.execute(
     `UPDATE upstream_providers SET
       slug = ?, name = ?, provider_type = ?, enabled = ?, priority = ?,
       issuer = ?, client_id = ?, client_secret_encrypted = ?,
       authorization_endpoint = ?, token_endpoint = ?, userinfo_endpoint = ?, jwks_uri = ?,
       scopes = ?, token_endpoint_auth_method = ?, attribute_mapping = ?, auto_link_email = ?, jit_provisioning = ?, require_email_verified = ?, always_fetch_userinfo = ?, enable_sso = ?,
-      provider_quirks = ?, icon_url = ?, icon_name = ?, button_color = ?, button_color_dark = ?, button_text = ?,
+      provider_quirks = CASE
+        WHEN json_type(provider_quirks, '$.inboundIdentityMapping') IS NULL
+          THEN json_remove(?, '$.inboundIdentityMapping')
+        ELSE json_set(?, '$.inboundIdentityMapping', json_extract(provider_quirks, '$.inboundIdentityMapping'))
+      END, icon_url = ?, icon_name = ?, button_color = ?, button_color_dark = ?, button_text = ?,
       use_request_object = ?, request_object_signing_alg = ?, private_key_jwk_encrypted = ?, public_key_jwk = ?,
       profile_update_fields = ?, updated_at = ?
-    WHERE id = ? AND tenant_id = ?`,
+    WHERE id = ? AND tenant_id = ? AND updated_at = ?`,
     [
       updated.slug || null,
       updated.name,
@@ -232,6 +238,7 @@ export async function updateProvider(
       updated.alwaysFetchUserinfo ? 1 : 0,
       updated.enableSso !== false ? 1 : 0,
       serializeProviderQuirks(updated.providerQuirks, updated.trustEmail),
+      serializeProviderQuirks(updated.providerQuirks, updated.trustEmail),
       updated.iconUrl || null,
       updated.iconName || null,
       updated.buttonColor || null,
@@ -245,10 +252,11 @@ export async function updateProvider(
       now,
       id,
       tenantId,
+      existing.updatedAt,
     ]
   );
 
-  return updated;
+  return result.rowsAffected > 0 ? updated : null;
 }
 
 /**

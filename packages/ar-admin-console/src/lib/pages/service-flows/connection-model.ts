@@ -1,3 +1,4 @@
+import type { MetadataPreviewDraft } from './metadata-draft';
 import type { OidcDiscovery } from '#lib/api/external-providers.js';
 import { t, type MessageKey } from '#lib/i18n/i18n.svelte.js';
 import type { WizardStep } from '#lib/ui/patterns/WizardSteps.svelte';
@@ -49,6 +50,8 @@ export const KINDS_OF: Record<Direction, readonly ConnectionKind[]> = {
 
 /** What reading the other side's details needs, for a SAML partner in either direction. */
 export interface ImportForm {
+	/** Live, server-validated preview state; never prototype metadata. */
+	metadata?: MetadataPreviewDraft;
 	importMode: ImportMode;
 	metadataUrl: string;
 	/** The metadata at the URL has been read (dummy). */
@@ -62,6 +65,9 @@ export interface ImportForm {
 }
 
 export interface RpForm {
+	keySource?: 'uri' | 'inline';
+	jwksUri?: string;
+	publicJwks?: string;
 	name: string;
 	appType: AppType;
 	redirectUris: string[];
@@ -176,13 +182,13 @@ function emptyImport(): ImportForm {
 	};
 }
 
-export function emptyAnswers(): Answers {
+export function emptyAnswers(live = false): Answers {
 	return {
 		direction: '',
 		kind: '',
 		active: false,
 		added: [],
-		settings: emptySettings(),
+		settings: emptySettings(live),
 		extras: {
 			inputSchema: '',
 			outputSchema: '',

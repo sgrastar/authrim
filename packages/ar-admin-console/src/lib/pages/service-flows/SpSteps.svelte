@@ -1,8 +1,8 @@
 <script lang="ts">
+	import type { SamlMetadataClient } from '#lib/api/saml-providers.js';
 	import { t } from '#lib/i18n/i18n.svelte.js';
 	import TextRow from '#lib/ui/patterns/TextRow.svelte';
 	import Callout from '#lib/ui/patterns/Callout.svelte';
-	import { entityIdProblem, httpsUrlProblem } from './connection-model';
 	import SelectRow from '#lib/ui/patterns/SelectRow.svelte';
 	import ToggleRow from '#lib/ui/patterns/ToggleRow.svelte';
 	import ConnectionTest from './ConnectionTest.svelte';
@@ -18,6 +18,7 @@
 		step: string;
 		form: SpForm;
 		live?: boolean;
+		previewMetadata?: SamlMetadataClient['preview'];
 		editing?: boolean;
 		serviceName?: string;
 		/** What Authrim gives the service to register on its side (default: the sample values). */
@@ -32,13 +33,10 @@
 		ours,
 		basis,
 		live = false,
+		previewMetadata,
 		editing = false,
 		serviceName = $bindable('')
 	}: Props = $props();
-
-	$effect(() => {
-		if (live) form.importMode = 'manual';
-	});
 
 	// Looked up when shown, so the labels follow a change of language.
 	const ourItems = $derived(
@@ -54,18 +52,7 @@
 
 {#if step === 'sp-import' && live}
 	<TextRow label={t('sf.row.name')} required bind:value={serviceName} />
-	<TextRow
-		label={t('sf.row.entityId')}
-		required
-		error={form.entityId ? entityIdProblem(form.entityId) : undefined}
-		bind:value={form.entityId}
-	/>
-	<TextRow
-		label={t('sf.ours.acsUrl')}
-		required
-		error={form.acsUrl ? httpsUrlProblem(form.acsUrl) : undefined}
-		bind:value={form.acsUrl}
-	/>
+	<MetadataImport bind:form partner="service" live preview={previewMetadata} />
 	{#if !editing}<Callout tone="info">{t('sf.create.spDraft')}</Callout>{/if}
 {:else if step === 'sp-import'}
 	<MetadataImport bind:form partner="service" />

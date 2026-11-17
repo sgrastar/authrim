@@ -338,7 +338,7 @@ export const TEMPLATES: Record<
 	}
 };
 
-export function emptySettings(): ConnectionSettings {
+export function emptySettings(live = false): ConnectionSettings {
 	return {
 		rp: {
 			description: '',
@@ -396,7 +396,7 @@ export function emptySettings(): ConnectionSettings {
 			minimumAal: 'AAL2',
 			metadataRefresh: 'automatic',
 			metadataInterval: 21600,
-			inherited: sampleSpDefaults(),
+			inherited: live ? {} : sampleSpDefaults(),
 			overridden: []
 		},
 		op: {

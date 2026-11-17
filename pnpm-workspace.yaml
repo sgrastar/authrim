@@ -78,3 +78,10 @@ auditConfig:
     # evaluates glob patterns from its own configuration. Review by 2026-12-01 or when those
     # consumers accept minimatch 11.
     - GHSA-g3hv-75wg-m249
+    # Temporary risk acceptance, not a vulnerability fix. All published picomatch
+    # releases through 4.0.7 are affected; no fixed release is published.
+    # agents is a production-classified dependency. The observed path is build
+    # include/exclude filtering via the separately exported agents/vite entry point
+    # -> @rolldown/plugin-babel; Authrim runtime imports agents/mcp.
+    # Review by 2026-12-01; remove when a supported fixed release is available.
+    - GHSA-fc5q-39xc-vjpf

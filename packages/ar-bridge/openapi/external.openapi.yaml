@@ -11,6 +11,66 @@ info:
     "Service temporarily unavailable" (no response body for HEAD). Clients may retry after the
     indicated delay; a failed response does not establish whether an earlier write completed.
 paths:
+  /api/admin/external-providers/{id}:
+    get:
+      summary: Read public upstream provider settings and version.
+      description: Requires admin:external_providers:read in the current tenant. Stored credentials are represented by presence flags and never returned.
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Sanitized provider record with integer updatedAt and public runtime settings.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '403':
+          description: Insufficient permission.
+        '404':
+          description: No provider in the current tenant.
+    put:
+      summary: Partially update upstream provider settings with version protection.
+      description: >-
+        Requires admin:external_providers:write and the existing trust-update step-up through the
+        Management Admin API. The optional expected_updated_at is the integer updatedAt from GET.
+        A stale or concurrent update returns 409. All updates use a conditional SQL write so they
+        cannot replace another request's intervening changes. Omitted credentials, attribute
+        mappings, provider quirks and unknown settings are preserved. Public settings use the
+        existing runtime fields; this operation adds no new OAuth flow or credential lifecycle.
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpstreamAdvancedUpdate'
+      responses:
+        '200':
+          description: Sanitized stored provider with its new updatedAt.
+        '400':
+          description: Invalid metadata, value bounds or public HTTPS endpoint URL.
+        '403':
+          description: Insufficient permission or cancelled trust-update step-up.
+        '404':
+          description: No provider in the current tenant.
+        '409':
+          description: Loaded version is stale or a concurrent write won the conditional update.
   /auth/external/{provider}/start:
     get:
       operationId: startExternalIdentityLogin
@@ -900,6 +960,13 @@ paths:
             (nothing was done); retry later.
 components:
   securitySchemes:
+    adminBearer:
+      type: http
+      scheme: bearer
+    adminSessionCookie:
+      type: apiKey
+      in: cookie
+      name: authrim_admin_session
     authrimSession:
       type: apiKey
       in: cookie
@@ -930,6 +997,47 @@ components:
           schema:
             $ref: '#/components/schemas/FacebookSignedRequestForm'
   schemas:
+    UpstreamAdvancedUpdate:
+      type: object
+      additionalProperties: true
+      properties:
+        expected_updated_at:
+          type: integer
+          minimum: 0
+        authorization_endpoint:
+          type: string
+          format: uri
+        token_endpoint:
+          type: string
+          format: uri
+        userinfo_endpoint:
+          type: string
+          format: uri
+        jwks_uri:
+          type: string
+          format: uri
+        token_endpoint_auth_method:
+          type: string
+          enum: [client_secret_basic, client_secret_post]
+        always_fetch_userinfo:
+          type: boolean
+        enable_sso:
+          type: boolean
+        profile_update_fields:
+          type: [array, 'null']
+          items:
+            type: string
+          description: Null follows the tenant; an empty list updates none; otherwise validated standard profile field names.
+        button_text:
+          type: string
+          maxLength: 256
+        button_color:
+          type: string
+          pattern: '^#[0-9a-fA-F]{6}$'
+        priority:
+          type: integer
+          minimum: -100000
+          maximum: 100000
     FacebookSignedRequestForm:
       type: object
       required:

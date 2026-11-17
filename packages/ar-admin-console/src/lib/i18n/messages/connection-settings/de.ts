@@ -1,6 +1,45 @@
 import type { jaConnectionSettings } from './ja';
 
 export const deConnectionSettings: Record<keyof typeof jaConnectionSettings, string> = {
+	'cs.live.jitPolicy': 'First sign-in account creation and email linking',
+	'cs.live.versionMissing': 'The API did not provide a saved version. Reload before editing.',
+	'cs.live.runtime': 'Token lifetime and security policy',
+	'cs.live.publicOnly':
+		'Register the app’s public keys only. Keep its private key in the app. Authrim never needs the app’s private key.',
+	'cs.live.keySource': 'Public key source',
+	'cs.live.sourceUrl': 'HTTPS JWKS URL',
+	'cs.live.sourceInline': 'Public JWKS JSON',
+	'cs.live.publicJwks': 'Public JWKS JSON',
+	'cs.live.listHint': 'One value per line. An empty list explicitly selects none.',
+	'cs.live.useTenantProfile': 'Use tenant profile fields',
+	'cs.live.locked': 'Locked',
+	'cs.live.origins':
+		'Web origins are managed through the web origin registry. This form preserves the registry.',
+	'cs.live.metadataSource':
+		'Automatic refresh requires a stored metadata source URL. Metadata import is managed separately.',
+	'cs.live.protocolGap':
+		'JAR, FAPI, hybrid responses and expected ID-token algorithm changes require a separate supported credential or protocol configuration flow and are unavailable here.',
+	'cs.live.certDetailsMissing': 'Certificate validation details were not supplied by the API.',
+	'cs.live.certFingerprint': 'SHA-256 fingerprint',
+	'cs.live.validFrom': 'Valid from',
+	'cs.live.validUntil': 'Valid until',
+	'cs.live.signatureAlgorithms': 'Accepted signature algorithm URIs',
+	'cs.live.digestAlgorithms': 'Accepted digest algorithm URIs',
+	'cs.live.assertionSigningAlg': 'Client assertion signing algorithm',
+	'cs.live.encryptionPolicy': 'XML encryption algorithm policy',
+	'cm.in.legacy':
+		'Die bisherige Attributzuordnung gilt bis zum Speichern dieses Graphen. Danach gilt nur der Graph.',
+	'cm.in.schema': 'Quellfelder',
+	'cm.in.schemaHelp':
+		'Attributnamen und Kardinalität festlegen. Quellen werden als PII eingestuft.',
+	'cm.in.source': 'Attributname',
+	'cm.in.multi': 'Empfängt mehrere Werte',
+	'cm.in.add': 'Feld hinzufügen',
+	'cm.in.preview': 'Beispiel prüfen',
+	'cm.in.sample': 'Synthetisches Beispiel (JSON)',
+	'cm.in.evaluate': 'Zuordnung auswerten',
+	'cm.in.single': 'Einzelwert',
+	'cm.in.multiple': 'Mehrere Werte',
 	'cs.title': 'Verbindungsdetails',
 	'cs.lead':
 		'Alle beginnen mit einem funktionierenden Wert. Öffnen Sie nur, was Sie ändern möchten.',

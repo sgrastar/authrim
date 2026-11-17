@@ -313,7 +313,8 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     pattern: '/api/admin/clients/:id',
     methods: ['PUT', 'PATCH'],
     permissions: [ADMIN_PERMISSIONS.CLIENTS_UPDATE],
-    description: 'Update OAuth client',
+    description:
+      'Update OAuth client settings and public keys (the client management gate also requires clients:write)',
   }),
   rule({
     pattern: '/api/admin/clients/:id/regenerate-secret',
@@ -1269,6 +1270,43 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     ADMIN_PERMISSIONS.SETTINGS_WRITE,
     'identity field mapping'
   ),
+  rule({
+    pattern: '/api/admin/identity-mapping/inbound/op/:id',
+    methods: ['GET'],
+    permissions: [ADMIN_PERMISSIONS.SETTINGS_READ, ADMIN_PERMISSIONS.EXTERNAL_PROVIDERS_READ],
+    description: 'incoming connection mapping',
+  }),
+  rule({
+    pattern: '/api/admin/identity-mapping/inbound/op/:id',
+    methods: ['PUT'],
+    permissions: [ADMIN_PERMISSIONS.SETTINGS_WRITE, ADMIN_PERMISSIONS.EXTERNAL_PROVIDERS_WRITE],
+    capability: 'external_identity_providers',
+    description: 'incoming connection mapping',
+  }),
+  rule({
+    pattern: '/api/admin/identity-mapping/inbound/op/:id/preview',
+    methods: ['POST'],
+    permissions: [ADMIN_PERMISSIONS.SETTINGS_READ, ADMIN_PERMISSIONS.EXTERNAL_PROVIDERS_READ],
+    description: 'incoming connection mapping',
+  }),
+  rule({
+    pattern: '/api/admin/identity-mapping/inbound/idp/:id',
+    methods: ['GET'],
+    permissions: [ADMIN_PERMISSIONS.SETTINGS_READ, ADMIN_PERMISSIONS.SAML_PROVIDERS_READ],
+    description: 'incoming connection mapping',
+  }),
+  rule({
+    pattern: '/api/admin/identity-mapping/inbound/idp/:id',
+    methods: ['PUT'],
+    permissions: [ADMIN_PERMISSIONS.SETTINGS_WRITE, ADMIN_PERMISSIONS.SAML_PROVIDERS_UPDATE],
+    description: 'incoming connection mapping',
+  }),
+  rule({
+    pattern: '/api/admin/identity-mapping/inbound/idp/:id/preview',
+    methods: ['POST'],
+    permissions: [ADMIN_PERMISSIONS.SETTINGS_READ, ADMIN_PERMISSIONS.SAML_PROVIDERS_READ],
+    description: 'incoming connection mapping',
+  }),
   ...byMethod(
     '/api/admin/identity-mapping/sets',
     ADMIN_PERMISSIONS.SETTINGS_READ,

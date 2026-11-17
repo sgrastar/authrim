@@ -1,3 +1,4 @@
+import type { Env } from '@authrim/ar-lib-core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   adapter: { query: vi.fn(), queryOne: vi.fn(), execute: vi.fn() },
@@ -294,6 +295,29 @@ describe('upstream provider store', () => {
       'bridge-provider-store:update',
       { tenantId: 'tenant-a' }
     );
+  });
+  it('uses the loaded version and refuses stale or concurrent updates without losing provider secrets', async () => {
+    const fixture = await vi.importActual<{ createMockEnv: () => Promise<Env> }>(
+      '@authrim/ar-lib-core/test/fixtures'
+    );
+    const env = await fixture.createMockEnv();
+    mocks.adapter.queryOne.mockResolvedValueOnce(dbRow({ updated_at: 40 }));
+    expect(await updateProvider(env, 'tenant-a', 'provider-1', { priority: 7 }, 39)).toBeNull();
+    expect(mocks.adapter.execute).not.toHaveBeenCalled();
+    mocks.adapter.queryOne.mockResolvedValueOnce(dbRow({ updated_at: 40 }));
+    mocks.adapter.execute.mockResolvedValueOnce({ success: true, rowsAffected: 0 });
+    expect(await updateProvider(env, 'tenant-a', 'provider-1', { priority: 7 }, 40)).toBeNull();
+    expect(mocks.adapter.execute).toHaveBeenLastCalledWith(
+      expect.stringContaining('AND updated_at = ?'),
+      expect.arrayContaining(['provider-1', 'tenant-a', 40])
+    );
+    mocks.adapter.queryOne.mockResolvedValueOnce(dbRow({ updated_at: 40 }));
+    const updated = await updateProvider(env, 'tenant-a', 'provider-1', { priority: 7 }, 40);
+    expect(updated).toMatchObject({
+      priority: 7,
+      clientSecretEncrypted: 'encrypted',
+      attributeMapping: { email: 'email' },
+    });
   });
   it.each([0, 1])('deletes provider rowsAffected=%s', async (rowsAffected) => {
     mocks.adapter.execute.mockResolvedValueOnce({ success: true, rowsAffected });
