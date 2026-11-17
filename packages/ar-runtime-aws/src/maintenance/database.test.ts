@@ -277,6 +277,15 @@ describe('manual maintenance entry', () => {
   });
   it('rejects arbitrary SQL and altered destinations in invocation payloads', () => {
     expect(parseMaintenanceAction({ action: 'initialize' })).toEqual({ action: 'initialize' });
+    expect(parseMaintenanceAction({ action: 'inspect-audit-session-ids' })).toEqual({
+      action: 'inspect-audit-session-ids',
+    });
+    expect(parseMaintenanceAction({ action: 'repair-audit-session-ids' })).toEqual({
+      action: 'repair-audit-session-ids',
+    });
+    expect(() =>
+      parseMaintenanceAction({ action: 'repair-audit-session-ids', sql: 'SELECT 1' })
+    ).toThrow();
     expect(() =>
       parseMaintenanceAction({ action: 'initialize', database: 'production' })
     ).toThrow();

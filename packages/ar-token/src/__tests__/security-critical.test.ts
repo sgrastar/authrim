@@ -125,6 +125,9 @@ const mocks = vi.hoisted(() => ({
   // DPoP
   mockExtractDPoPProof: vi.fn().mockReturnValue(null),
   mockValidateDPoPProof: vi.fn().mockResolvedValue({ valid: true, jkt: 'test-jkt' }),
+  mockValidateClientCertificateBinding: vi
+    .fn()
+    .mockResolvedValue({ valid: false, error: 'certificate_required' }),
 
   // Sharding
   mockParseShardedAuthCode: vi.fn().mockReturnValue(null),
@@ -312,6 +315,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     // DPoP
     extractDPoPProof: mocks.mockExtractDPoPProof,
     validateDPoPProof: mocks.mockValidateDPoPProof,
+    validateClientCertificateBinding: mocks.mockValidateClientCertificateBinding,
     // Sharding
     parseShardedAuthCode: mocks.mockParseShardedAuthCode,
     getShardCount: mocks.mockGetShardCount,
@@ -457,6 +461,9 @@ function resetAllMocks() {
   // Reset DPoP mocks
   mocks.mockExtractDPoPProof.mockReset().mockReturnValue(null);
   mocks.mockValidateDPoPProof.mockReset().mockResolvedValue({ valid: true, jkt: 'test-jkt' });
+  mocks.mockValidateClientCertificateBinding
+    .mockReset()
+    .mockResolvedValue({ valid: false, error: 'certificate_required' });
 
   // Reset sharding mocks
   mocks.mockParseShardedAuthCode.mockReset().mockReturnValue(null);
@@ -2387,6 +2394,137 @@ describe('Security-Critical Tests', () => {
         expect(response.status).toBe(400);
         expect(body.error).toBe('invalid_request');
         expect(body.error_description).toContain('DPoP proof is required');
+        expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+      });
+
+      it('requires the registered mTLS certificate for client credentials and binds the token', async () => {
+        const client = createM2MClient({
+          tls_client_certificate_bound_access_tokens: true,
+          token_endpoint_auth_method: 'client_secret_post',
+        });
+        mocks.mockLoadTenantProfileCached.mockResolvedValue({
+          tenant_id: 'default',
+          allows_client_credentials: true,
+          max_token_ttl_seconds: 3600,
+        });
+        mocks.mockGetClientCached.mockResolvedValue(client);
+        mocks.mockGetProtocolSettingsCached.mockResolvedValue({
+          feature_client_credentials_enabled: true,
+        });
+        const request = () =>
+          createMockContext({
+            method: 'POST',
+            body: {
+              grant_type: 'client_credentials',
+              client_id: client.client_id,
+              client_secret: 'valid-secret',
+              scope: 'api:read',
+            },
+            env: { ...mockEnv, ENABLE_CLIENT_CREDENTIALS: 'true' },
+          });
+
+        expect((await tokenHandler(request())).status).toBe(401);
+        expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+
+        mocks.mockValidateClientCertificateBinding.mockResolvedValue({
+          valid: true,
+          thumbprint: 'cert-thumbprint',
+        });
+        expect((await tokenHandler(request())).status).toBe(200);
+        expect(mocks.mockCreateAccessToken.mock.calls.at(-1)?.[0]).toMatchObject({
+          cnf: { 'x5t#S256': 'cert-thumbprint' },
+        });
+      });
+
+      it('does not consume an authorization code without the registered mTLS certificate', async () => {
+        const client = createConfidentialClient({
+          require_pkce: false,
+          tls_client_certificate_bound_access_tokens: true,
+        });
+        const authCodeData = createAuthCodeData();
+        const consumeCodeRpc = vi.fn().mockResolvedValue(authCodeData);
+        mocks.mockGetClientCached.mockResolvedValue(client);
+        mockEnv.AUTH_CODE_STORE.get = vi.fn().mockReturnValue({ consumeCodeRpc });
+
+        const response = await tokenHandler(
+          createMockContext({
+            method: 'POST',
+            body: {
+              grant_type: 'authorization_code',
+              code: 'valid-auth-code',
+              redirect_uri: authCodeData.redirectUri,
+              client_id: client.client_id,
+              client_secret: 'valid-secret',
+            },
+            env: mockEnv,
+          })
+        );
+
+        expect(response.status).toBe(401);
+        expect(consumeCodeRpc).not.toHaveBeenCalled();
+      });
+
+      it('does not redeem a Direct Auth code with scopes outside the client registration', async () => {
+        const client = createConfidentialClient({
+          require_pkce: false,
+          requestable_scopes: ['openid'],
+        });
+        const redirectUri = 'https://authrim.local/direct-auth/callback';
+        const authCodeData = createAuthCodeData({ redirectUri, scope: 'openid admin:all' });
+        mocks.mockGetClientCached.mockResolvedValue(client);
+        mockEnv.AUTH_CODE_STORE.get = vi.fn().mockReturnValue({
+          consumeCodeRpc: vi.fn().mockResolvedValue(authCodeData),
+        });
+
+        const response = await tokenHandler(
+          createMockContext({
+            method: 'POST',
+            body: {
+              grant_type: 'authorization_code',
+              code: 'valid-auth-code',
+              redirect_uri: redirectUri,
+              client_id: client.client_id,
+              client_secret: 'valid-secret',
+            },
+            env: mockEnv,
+          })
+        );
+
+        expect(response.status).toBe(400);
+        expect(await parseJsonResponse(response)).toMatchObject({ error: 'invalid_scope' });
+        expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+      });
+
+      it('limits client credentials to requestable_scopes', async () => {
+        const client = createM2MClient({
+          requestable_scopes: ['api:read'],
+          allowed_scopes: ['api:read', 'admin:all'],
+          token_endpoint_auth_method: 'client_secret_post',
+        });
+        mocks.mockLoadTenantProfileCached.mockResolvedValue({
+          tenant_id: 'default',
+          allows_client_credentials: true,
+          max_token_ttl_seconds: 3600,
+        });
+        mocks.mockGetClientCached.mockResolvedValue(client);
+        mocks.mockGetProtocolSettingsCached.mockResolvedValue({
+          feature_client_credentials_enabled: true,
+        });
+        const response = await tokenHandler(
+          createMockContext({
+            method: 'POST',
+            body: {
+              grant_type: 'client_credentials',
+              client_id: client.client_id,
+              client_secret: 'valid-secret',
+              scope: 'admin:all',
+            },
+            env: { ...mockEnv, ENABLE_CLIENT_CREDENTIALS: 'true' },
+          })
+        );
+
+        expect(response.status).toBe(400);
+        expect(await parseJsonResponse(response)).toMatchObject({ error: 'invalid_scope' });
         expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
       });
 

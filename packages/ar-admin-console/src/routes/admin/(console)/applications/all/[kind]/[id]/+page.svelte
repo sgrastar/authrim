@@ -11,7 +11,11 @@
 	import { identifierMaterialsClient } from '#lib/api/identifier-materials.js';
 	import { tenantScope } from '#lib/auth/tenant-scope.svelte.js';
 	import { t } from '#lib/i18n/i18n.svelte.js';
-	import { emptyAnswers, type Answers } from '#lib/pages/service-flows/connection-model.js';
+	import {
+		basicSettingsAnswers,
+		type ConnectionSettingsResources
+	} from '#lib/pages/service-flows/connection-basic-settings.js';
+	import { type Answers } from '#lib/pages/service-flows/connection-model.js';
 	import ServiceFlowDetail from '#lib/pages/service-flows/ServiceFlowDetail.svelte';
 	import type { ConnectionMappingResources } from '#lib/pages/service-flows/connection-mapping.svelte.js';
 	import { provideIdentifierMaterials } from '#lib/ui/patterns/identifier-materials-context.js';
@@ -24,11 +28,13 @@
 	let answers = $state<Answers | null>(null);
 	let resources = $state<ConnectionMappingResources | null>(null);
 	let failed = $state(false);
+	let settings = $state<ConnectionSettingsResources | null>(null);
 	let generation = 0;
 	async function load() {
 		const turn = ++generation;
 		answers = null;
 		resources = null;
+		settings = null;
 		failed = false;
 		const kind = page.params.kind;
 		const id = page.params.id;
@@ -37,27 +43,26 @@
 		try {
 			if (!id || !tenantId || (kind !== 'rp' && kind !== 'sp'))
 				throw new Error('Invalid connection');
-			const next = emptyAnswers();
-			next.kind = kind;
-			next.direction = 'out';
-			let entityId: string | undefined;
-			if (kind === 'rp') {
-				const client = (await httpClients.list()).find((client) => client.id === id);
-				if (!client) throw new Error('Client unavailable');
-				next.rp.name = client.name;
-				next.rp.redirectUris = client.redirectUris;
-			} else {
-				const provider = (await httpSamlProviders.listServiceProviders()).find(
-					(provider) => provider.id === id
-				);
-				if (!provider) throw new Error('Service provider unavailable');
-				next.sp.entityId = provider.entityId;
-				next.rp.name = provider.name;
-				next.active = provider.enabled;
-				entityId = provider.entityId;
-			}
+			if (
+				!hasPermission(
+					adminAccess.current,
+					kind === 'rp' ? 'admin:clients:read' : 'admin:saml_providers:read'
+				)
+			)
+				throw new Error('Unavailable');
+			const loaded: ConnectionSettingsResources =
+				kind === 'rp'
+					? { kind, detail: await httpClients.get(id), client: httpClients }
+					: {
+							kind,
+							detail: await httpSamlProviders.getServiceProvider(id),
+							client: httpSamlProviders
+						};
+			const next = basicSettingsAnswers(loaded);
+			const entityId = loaded.kind === 'sp' ? loaded.detail.entityId : undefined;
 			if (turn !== generation) return;
 			answers = next;
+			settings = loaded;
 			resources = {
 				client: httpIdentityMapping(),
 				tenantId,
@@ -67,10 +72,15 @@
 				entityId,
 				readBinding: () =>
 					kind === 'rp' ? httpClients.mapping(id) : httpSamlProviders.mapping(id),
-				bind: (set, key) =>
-					kind === 'rp'
-						? httpClients.bindMapping(id, set.id, key)
-						: httpSamlProviders.bindMapping(id, set, key)
+				bind: async (set, key) => {
+					if (kind === 'rp') await httpClients.bindMapping(id, set.id, key);
+					else {
+						await httpSamlProviders.bindMapping(id, set, key);
+						// Our own binding can advance updatedAt. Refresh activation without rebasing dirty settings.
+						const detail = await httpSamlProviders.getServiceProvider(id);
+						if (turn === generation) settings = { kind: 'sp', detail, client: httpSamlProviders };
+					}
+				}
 			};
 		} catch {
 			if (turn === generation) failed = true;
@@ -108,12 +118,25 @@
 				>{t('mc.loadFailed')} <Button onclick={load}>{t('common.retry')}</Button></Callout
 			>
 		{:else if answers && resources}
-			<ServiceFlowDetail
-				bind:answers
-				mappingResources={resources}
-				onback={() => goto('/admin/applications/all')}
-				focusTitle
-			/>
+			{#key `${tenantScope.tenantId}:${page.params.kind}:${page.params.id}`}
+				<ServiceFlowDetail
+					settingsResources={settings ?? undefined}
+					canEdit={hasPermission(
+						adminAccess.current,
+						page.params.kind === 'rp' ? 'admin:clients:write' : 'admin:saml_providers:update'
+					)}
+					canReadMapping={hasPermission(adminAccess.current, 'admin:settings:read')}
+					canEditMapping={hasPermission(adminAccess.current, 'admin:settings:write') &&
+						hasPermission(
+							adminAccess.current,
+							page.params.kind === 'rp' ? 'admin:clients:write' : 'admin:saml_providers:update'
+						)}
+					bind:answers
+					mappingResources={resources}
+					onback={() => goto('/admin/applications/all')}
+					focusTitle
+				/>
+			{/key}
 		{:else}<LoadingState label={t('common.loading')} />{/if}
 	</Page>
 {/if}

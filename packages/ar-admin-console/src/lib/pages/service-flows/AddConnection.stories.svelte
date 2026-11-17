@@ -33,6 +33,14 @@
 	const inFlow = (root: HTMLElement, name: RegExp) =>
 		within(root.querySelector<HTMLElement>('.detail__flow')!).getByRole('button', { name });
 
+	async function openMapping(root: HTMLElement, part: 'schemas' | 'sets') {
+		const label = t(part === 'schemas' ? 'sf.part.mapping-schemas' : 'sf.part.mapping-sets');
+		await userEvent.click(inFlow(root, new RegExp(`^${label}`)));
+		await waitFor(() =>
+			expect(within(root).getByRole('heading', { name: label, level: 2 })).toBeVisible()
+		);
+	}
+
 	const OUT = /^Let an app or service sign in through Authrim/;
 	const IN = /^Let people sign in through another provider/;
 
@@ -301,22 +309,25 @@
 			'https://reading.example.com/cb'
 		);
 		// An app gets what its mapping gives it: the mapping is required.
-		await userEvent.click(inFlow(canvasElement, /^Input and output schemas.*Required/));
+		await openMapping(canvasElement, 'schemas');
 		await userEvent.selectOptions(
-			canvas.getByRole('combobox', { name: 'Input schema' }),
+			await canvas.findByRole('combobox', { name: 'Input schema' }),
 			'authrim'
 		);
 		await userEvent.selectOptions(
 			canvas.getByRole('combobox', { name: 'Output schema' }),
 			'standard'
 		);
-		await userEvent.click(inFlow(canvasElement, /^Mapping sets.*Required/));
+		await openMapping(canvasElement, 'sets');
 		await userEvent.selectOptions(
-			canvas.getByRole('combobox', { name: 'Mapping set' }),
+			await canvas.findByRole('combobox', { name: 'Mapping set' }),
 			'tenant-default'
 		);
 		// Activating is at the end of the general settings: Save, then activate.
 		await userEvent.click(canvas.getAllByRole('button', { name: 'General settings' })[0]);
+		await waitFor(() =>
+			expect(canvas.getByRole('heading', { name: 'General settings' })).toBeVisible()
+		);
 		await userEvent.click(button(canvas, 'Save changes'));
 		await waitFor(() => expect(button(canvas, 'Activate')).toBeEnabled());
 		await userEvent.click(button(canvas, 'Activate'));
@@ -369,18 +380,18 @@
 		await userEvent.click(button(canvas, 'Run the test'));
 		await expect(await canvas.findByRole('list', { name: 'Test results' })).toBeInTheDocument();
 		// A service cannot work without a mapping set: it is a setting of the flow from the start.
-		await userEvent.click(inFlow(canvasElement, /^Input and output schemas.*Required/));
+		await openMapping(canvasElement, 'schemas');
 		await userEvent.selectOptions(
-			canvas.getByRole('combobox', { name: 'Input schema' }),
+			await canvas.findByRole('combobox', { name: 'Input schema' }),
 			'authrim'
 		);
 		await userEvent.selectOptions(
 			canvas.getByRole('combobox', { name: 'Output schema' }),
 			'standard'
 		);
-		await userEvent.click(inFlow(canvasElement, /^Mapping sets.*Required/));
+		await openMapping(canvasElement, 'sets');
 		await userEvent.selectOptions(
-			canvas.getByRole('combobox', { name: 'Mapping set' }),
+			await canvas.findByRole('combobox', { name: 'Mapping set' }),
 			'tenant-default'
 		);
 		// No "Review and activate" step in a service's flow.
@@ -391,6 +402,9 @@
 		).toBeNull();
 		// It is put into service under its test, in the general settings: Save, then activate.
 		await userEvent.click(canvas.getAllByRole('button', { name: 'General settings' })[0]);
+		await waitFor(() =>
+			expect(canvas.getByRole('heading', { name: 'General settings' })).toBeVisible()
+		);
 		await expect(button(canvas, 'Activate')).toBeDisabled();
 		await userEvent.click(button(canvas, 'Save changes'));
 		await waitFor(() => expect(button(canvas, 'Activate')).toBeEnabled());
@@ -440,21 +454,24 @@
 		);
 		await expect(canvas.getByText('Redirect URI')).toBeInTheDocument();
 		// What the provider sends is the mapping's to take: it is required.
-		await userEvent.click(inFlow(canvasElement, /^Input and output schemas.*Required/));
+		await openMapping(canvasElement, 'schemas');
 		await userEvent.selectOptions(
-			canvas.getByRole('combobox', { name: 'Input schema' }),
+			await canvas.findByRole('combobox', { name: 'Input schema' }),
 			'standard'
 		);
 		await userEvent.selectOptions(
 			canvas.getByRole('combobox', { name: 'Output schema' }),
 			'authrim'
 		);
-		await userEvent.click(inFlow(canvasElement, /^Mapping sets.*Required/));
+		await openMapping(canvasElement, 'sets');
 		await userEvent.selectOptions(
-			canvas.getByRole('combobox', { name: 'Mapping set' }),
+			await canvas.findByRole('combobox', { name: 'Mapping set' }),
 			'tenant-default'
 		);
 		await userEvent.click(canvas.getAllByRole('button', { name: 'General settings' })[0]);
+		await waitFor(() =>
+			expect(canvas.getByRole('heading', { name: 'General settings' })).toBeVisible()
+		);
 		// Activating waits for the test, which is right above it.
 		await expect(button(canvas, 'Activate')).toBeDisabled();
 		await userEvent.click(button(canvas, 'Run the test'));

@@ -1,5 +1,6 @@
 import { API_BASE_URL, adminFetch } from './admin-request';
-import { stepUpHeaders, withStepUp } from './admin-step-up';
+import { tenantScope } from '#lib/auth/tenant-scope.svelte.js';
+import { StepUpCancelledError, stepUpHeaders, withStepUp } from './admin-step-up';
 import { errorFromResponse } from './api-error';
 import type { MappingSetDetail } from './mapping-set';
 
@@ -36,7 +37,38 @@ export interface SamlCreationClient {
 	createServiceProvider(input: CreateServiceProviderInput): Promise<{ id: string }>;
 }
 
-export interface SamlIdentityProvider {
+export interface SamlProviderStatus {
+	id: string;
+	enabled: boolean;
+	updatedAt: string;
+	hasMapping: boolean;
+	trustBlocked: boolean;
+}
+export interface SamlServiceProvider extends SamlProviderStatus {
+	name: string;
+	entityId: string;
+	acsUrl: string;
+}
+export interface ServiceProviderBasicUpdate {
+	name?: string;
+	expectedUpdatedAt: string;
+	config?: { entityId?: string; acsUrl?: string };
+}
+export interface SamlSettingsClient {
+	getServiceProvider(id: string): Promise<SamlServiceProvider>;
+	updateServiceProvider(
+		id: string,
+		input: ServiceProviderBasicUpdate
+	): Promise<SamlServiceProvider>;
+}
+export interface SamlActivationClient {
+	setEnabled(
+		id: string,
+		input: { enabled: boolean; expectedUpdatedAt: string }
+	): Promise<SamlProviderStatus>;
+}
+
+export interface SamlIdentityProvider extends SamlProviderStatus {
 	id: string;
 	name: string;
 	enabled: boolean;
@@ -59,7 +91,7 @@ export interface CreateIdentityProviderInput {
 		allowSyntheticEmailFallback: false;
 	};
 }
-export interface SamlIdentityProvidersClient {
+export interface SamlIdentityProvidersClient extends SamlActivationClient {
 	listIdentityProviders(): Promise<SamlIdentityProvider[]>;
 	getIdentityProvider(id: string): Promise<SamlIdentityProvider>;
 	createIdentityProvider(input: CreateIdentityProviderInput): Promise<{ id: string }>;
@@ -107,12 +139,15 @@ function writeProvider(
 	body: string,
 	idempotencyKey?: string
 ) {
+	const tenantId = tenantScope.tenantId;
+	const operationKey = idempotencyKey ?? crypto.randomUUID();
 	return withStepUp(async (receipt) => {
+		if (tenantScope.tenantId !== tenantId) throw new StepUpCancelledError();
 		const response = await adminFetch(`${API_BASE_URL}/api/admin/saml-providers${path}`, {
 			method,
 			headers: {
 				...stepUpHeaders(receipt),
-				...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {})
+				'Idempotency-Key': operationKey
 			},
 			includeJsonContentType: true,
 			body
@@ -120,6 +155,48 @@ function writeProvider(
 		if (!response.ok) throw await errorFromResponse(response);
 		return response;
 	});
+}
+
+function providerStatus(value: unknown): SamlProviderStatus {
+	const row = object(value);
+	if (
+		typeof row.id !== 'string' ||
+		typeof row.updatedAt !== 'string' ||
+		typeof row.enabled !== 'boolean'
+	)
+		throw new Error('Invalid SAML provider response');
+	const config = object(row.config);
+	const policy = object(config.metadataRefreshPolicy);
+	return {
+		id: row.id,
+		enabled: row.enabled,
+		updatedAt: row.updatedAt,
+		hasMapping:
+			typeof object(config.identityMapping).fieldMappingSetId === 'string' &&
+			!!object(config.identityMapping).fieldMappingSetId,
+		trustBlocked:
+			object(config.certificateValidation).allExpired === true ||
+			policy.suspendedByMetadataSync === true ||
+			policy.sourceState === 'expired'
+	};
+}
+
+function serviceProviderDetail(value: unknown): SamlServiceProvider {
+	const row = object(value);
+	const config = object(row.config);
+	if (
+		row.providerType !== 'saml_sp' ||
+		typeof row.name !== 'string' ||
+		typeof config.entityId !== 'string' ||
+		typeof config.acsUrl !== 'string'
+	)
+		throw new Error('Invalid SAML SP response');
+	return {
+		...providerStatus(value),
+		name: row.name,
+		entityId: config.entityId,
+		acsUrl: config.acsUrl
+	};
 }
 
 function identityProviderFromRow(value: unknown): SamlIdentityProvider {
@@ -133,7 +210,7 @@ function identityProviderFromRow(value: unknown): SamlIdentityProvider {
 	)
 		throw new Error('Invalid SAML IdP response');
 	return {
-		id: row.id,
+		...providerStatus(value),
 		name: typeof row.name === 'string' ? row.name : row.id,
 		enabled: row.enabled === true,
 		updatedAt: row.updatedAt,
@@ -146,7 +223,36 @@ function identityProviderFromRow(value: unknown): SamlIdentityProvider {
 export const httpSamlProviders: SamlProvidersClient &
 	SamlMappingClient &
 	SamlCreationClient &
-	SamlIdentityProvidersClient = {
+	SamlIdentityProvidersClient &
+	SamlSettingsClient = {
+	async getServiceProvider(id) {
+		return serviceProviderDetail(await readProvider(id));
+	},
+	async updateServiceProvider(id, input) {
+		const response = await writeProvider(
+			`/${encodeURIComponent(id)}`,
+			'PUT',
+			JSON.stringify({
+				expectedUpdatedAt: input.expectedUpdatedAt,
+				name: input.name,
+				...(input.config
+					? { config: { entityId: input.config.entityId, acsUrl: input.config.acsUrl } }
+					: {})
+			})
+		);
+		return serviceProviderDetail(await response.json());
+	},
+	async setEnabled(id, input) {
+		const response = await writeProvider(
+			`/${encodeURIComponent(id)}`,
+			'PUT',
+			JSON.stringify({
+				enabled: input.enabled,
+				expectedUpdatedAt: input.expectedUpdatedAt
+			})
+		);
+		return providerStatus(await response.json());
+	},
 	async listIdentityProviders() {
 		const response = await adminFetch(`${API_BASE_URL}/api/admin/saml-providers`);
 		if (!response.ok) throw await errorFromResponse(response);

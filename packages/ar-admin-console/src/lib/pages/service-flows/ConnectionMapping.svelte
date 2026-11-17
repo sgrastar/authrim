@@ -33,13 +33,23 @@
 		resources?: ConnectionMappingResources;
 		dirty?: boolean;
 		bound?: string;
+		readonly?: boolean;
+		disabled?: boolean;
+		pending?: boolean;
+		guardNavigation?: boolean;
+		connectionDirty?: boolean;
 	}
 
 	let {
 		mapping = $bindable(),
 		resources,
 		dirty = $bindable(false),
-		bound = $bindable('')
+		bound = $bindable(''),
+		readonly = false,
+		disabled = false,
+		pending = $bindable(false),
+		guardNavigation = true,
+		connectionDirty = false
 	}: Props = $props();
 	const shared = untrack(() => (resources ? new ConnectionMappingState(resources) : null));
 	let invalid = $state(false);
@@ -48,13 +58,14 @@
 	let explainError = $state(false);
 	$effect(() => {
 		dirty = shared?.dirty ?? false;
+		pending = shared?.phase === 'saving' || shared?.phase === 'impact';
 		bound = shared?.bound ?? '';
 	});
 	onMount(() => {
 		if (shared) void shared.load();
 	});
 	function choose(value: string) {
-		if (!shared) return;
+		if (!shared || readonly || disabled) return;
 		if (shared.dirty) changeTo = value;
 		else if (value === '__new') {
 			shared.create();
@@ -91,7 +102,7 @@
 
 <Card title={t(copy.title)} description={t(copy.description)}>
 	{#if shared}
-		<LeaveGuard dirty={shared.dirty} />
+		<LeaveGuard dirty={guardNavigation && shared.dirty} />
 		<div class="mapping">
 			{#if shared.phase === 'loading'}<LoadingState label={t('common.loading')} />{/if}
 			<Select
@@ -103,17 +114,21 @@
 				}))}
 				value={shared.selected}
 				onchange={choose}
-				disabled={shared.locked || shared.phase === 'loading' || shared.pinned}
+				disabled={readonly ||
+					disabled ||
+					shared.locked ||
+					shared.phase === 'loading' ||
+					shared.pinned}
 				changed={shared.selected !== shared.bound}
 			/>
-			<div>
-				<Button
-					variant="secondary"
-					size="sm"
-					onclick={() => choose('__new')}
-					disabled={shared.locked || shared.pinned}>{t('cm.create')}</Button
-				>
-			</div>
+			{#if !readonly}<div>
+					<Button
+						variant="secondary"
+						size="sm"
+						onclick={() => choose('__new')}
+						disabled={disabled || shared.locked || shared.pinned}>{t('cm.create')}</Button
+					>
+				</div>{/if}
 			{#if shared.dirty}<Badge tone="changed">{t('common.changed')}</Badge>{/if}
 			{#if shared.readonlyReason}<Callout tone="warning">{t('cm.readonly')}</Callout>{/if}
 			{#if shared.phase === 'failed'}<Callout tone="warning" live
@@ -136,19 +151,22 @@
 				>{/if}
 			{#if shared.phase === 'outcome_unknown'}<Callout tone="warning" live
 					>{t('cm.unknown')}
-					<Button size="sm" onclick={() => shared.write()}>{t('common.retry')}</Button>
+					<Button size="sm" disabled={disabled || readonly} onclick={() => shared.write()}
+						>{t('common.retry')}</Button
+					>
 					<Button size="sm" onclick={() => choose('__inspect')}>{t('cm.reload')}</Button></Callout
 				>{/if}
 			{#if shared.phase === 'binding_failed'}<Callout tone="warning" live
 					>{t('cm.bindingFailed')}
-					<Button size="sm" onclick={() => shared.retryBinding()}>{t('cm.retryBinding')}</Button
+					<Button size="sm" disabled={disabled || readonly} onclick={() => shared.retryBinding()}
+						>{t('cm.retryBinding')}</Button
 					></Callout
 				>{/if}
 			{#if shared.phase === 'saved' && !shared.dirty}<Callout tone="info" live
 					>{t('cm.saved')}</Callout
 				>{/if}
 			{#if shared.detail || shared.newKey}
-				<BusyScope busy={shared.locked || shared.readonlyReason}>
+				<BusyScope busy={disabled || readonly || shared.locked || shared.readonlyReason}>
 					<Disclosure title={t('cm.options')} bind:open={metadataOpen}>
 						{#snippet meta()}{#if !shared.form.value.name.trim() || !shared.form.value.profileId || !shared.form.value.catalogVersionId}<RequiredBadge
 								/>{/if}{/snippet}
@@ -204,7 +222,7 @@
 							field="mappings"
 						/>
 					{/if}
-					{#if !shared.readonlyReason}
+					{#if !readonly && !shared.readonlyReason}
 						<div>
 							<Button
 								onclick={() => shared.save()}
@@ -225,8 +243,8 @@
 							>{/if}{/snippet}<ConnectionMappingExplain
 						{resources}
 						bind:error={explainError}
-						changed={shared.dirty}
-						revision={`${shared.bound}:${shared.detail?.content_version ?? ''}`}
+						changed={shared.dirty || connectionDirty}
+						revision={`${shared.bound}:${shared.detail?.content_version ?? ''}:${resources.entityId ?? ''}`}
 					/></Disclosure
 				>{/if}
 		</div>

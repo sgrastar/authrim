@@ -156,7 +156,7 @@ describe('public invitation handlers', () => {
         tenant_id: 'tenant-1',
         tenant_name: 'Tenant One',
         invited_email: 'Invited@Example.com',
-        email_verification_required: false,
+        email_verification_required: true,
         expires_at: 2_000_000_000,
       });
       expect(mocks.findActiveInvitationByToken).toHaveBeenCalledWith(
@@ -168,7 +168,7 @@ describe('public invitation handlers', () => {
 
     it.each([
       ['required', 'Invited@Example.com', true],
-      ['optional', 'Invited@Example.com', false],
+      ['optional', 'Invited@Example.com', true],
       ['required', null, false],
     ])(
       'says whether the invited email must be proved (policy %s, invited email %s)',
@@ -184,13 +184,7 @@ describe('public invitation handlers', () => {
         const response = await createApp().request(`/validate?token=${token}`, undefined, env);
 
         expect(await response.json()).toMatchObject({ email_verification_required: required });
-        if (invitedEmail) {
-          expect(mocks.resolveEffectiveSettings).toHaveBeenCalledWith(
-            env,
-            'authentication-methods',
-            { tenantId: 'tenant-1' }
-          );
-        }
+        expect(mocks.resolveEffectiveSettings).not.toHaveBeenCalled();
       }
     );
 

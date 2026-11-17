@@ -406,6 +406,10 @@ function createMockSessionStore() {
   };
 }
 
+function mockSettingsGet(get: () => Promise<string | null | undefined>): Env['SETTINGS'] {
+  return { get: vi.fn(get) } as unknown as Env['SETTINGS'];
+}
+
 // Helper to create mock context
 function createMockContext(options: {
   method?: string;
@@ -493,9 +497,9 @@ function createMockContext(options: {
     _mockDBPII: mockDBPII, // For test assertions
     _challengeStore: challengeStore,
     _sessionStore: sessionStore,
-  } as any;
+  };
 
-  return c;
+  return c as typeof c & Parameters<typeof passkeyRegisterOptionsHandler>[0];
 }
 
 describe('Passkey Handlers', () => {
@@ -680,6 +684,20 @@ describe('Passkey Handlers', () => {
       );
     });
 
+    it('refuses a passkey signup with an unverified email before creating the account', async () => {
+      const response = await passkeyRegisterOptionsHandler(
+        createMockContext({
+          body: { email: 'victim@example.com' },
+          headers: { origin: 'https://example.com' },
+        })
+      );
+
+      expect(response.status).toBe(403);
+      expect(await response.json()).toMatchObject({ reason: 'signup_email_check_required' });
+      expect(mockUserCoreRepository.createUser).not.toHaveBeenCalled();
+      expect(mockPasskeyRepository.create).not.toHaveBeenCalled();
+    });
+
     it('should reject unauthorized origins', async () => {
       const c = createMockContext({
         body: { email: 'test@example.com' },
@@ -708,7 +726,7 @@ describe('Passkey Handlers', () => {
 
     it('should allow same-origin requests even when not listed in allowed origins', async () => {
       const c = createMockContext({
-        body: { email: 'tenant-user@example.com' },
+        body: {},
         headers: {
           host: 'first.multi-tenant.authrim.com',
           origin: 'https://first.multi-tenant.authrim.com',
@@ -735,7 +753,7 @@ describe('Passkey Handlers', () => {
       mockUserPIIRepository.findByTenantAndEmail.mockResolvedValueOnce(null);
 
       const c = createMockContext({
-        body: { email: 'newuser@example.com' },
+        body: {},
         headers: { origin: 'https://example.com' },
       });
 
@@ -850,7 +868,7 @@ describe('Passkey Handlers', () => {
       expect(mockWebAuthnFunctions.generateRegistrationOptions).not.toHaveBeenCalled();
     });
 
-    it("goes on with a resumed sign-up's own account at its address, while it has no passkey", async () => {
+    it("does not attach a passkey to a resumed sign-up's unverified email account", async () => {
       const found = () => {
         mockUserPIIRepository.findByTenantAndEmail.mockResolvedValueOnce({
           id: 'user_first',
@@ -873,10 +891,10 @@ describe('Passkey Handlers', () => {
           }) as Parameters<typeof passkeyRegisterOptionsHandler>[0]
         );
 
-      // The user its server-issued token names: that sign-up's account, gone on with.
+      // Even the account named by a server-issued resume token has not proved its email.
       found();
       signUpMocks.resolvePasskeyProvisioningResumeUserId.mockResolvedValueOnce('user_first');
-      expect((await resumed('user_first')).status).toBe(200);
+      expect((await resumed('user_first')).status).toBe(403);
       expect(mockUserCoreRepository.createUser).not.toHaveBeenCalled();
       expect(mockPasskeyRepository.findByUserId).toHaveBeenCalledWith('user_first');
 
@@ -1038,7 +1056,7 @@ describe('Passkey Handlers', () => {
       mockUserPIIRepository.findByTenantAndEmail.mockResolvedValueOnce(null);
 
       const c = createMockContext({
-        body: { email: 'test@example.com' },
+        body: {},
         headers: { origin: 'https://example.com' },
       });
 
@@ -1617,7 +1635,7 @@ describe('Passkey Handlers', () => {
         authenticationMethods: { 'authentication-methods.passkey.login_enabled': false },
       });
       if (status === 503) {
-        context.env.SETTINGS = { get: vi.fn(async () => '{not json') };
+        context.env.SETTINGS = mockSettingsGet(async () => '{not json');
       }
       const response = await passkeyLoginVerifyHandler(context);
 
@@ -1685,7 +1703,7 @@ describe('Passkey Handlers', () => {
         challengeStore,
         sessionStore,
       });
-      context.env.SETTINGS = { get: vi.fn(async () => stored) };
+      context.env.SETTINGS = mockSettingsGet(async () => stored);
 
       const response = await passkeyLoginVerifyHandler(context);
 
@@ -2035,7 +2053,7 @@ describe('Passkey Handlers', () => {
         body: { email: 'new-user@example.com' },
         headers: { origin: 'https://example.com' },
       });
-      c.env.SETTINGS = { get: vi.fn(async () => '{not json') };
+      c.env.SETTINGS = mockSettingsGet(async () => '{not json');
 
       const response = await passkeyRegisterOptionsHandler(c);
 
@@ -2049,7 +2067,7 @@ describe('Passkey Handlers', () => {
         body: { email: 'new-user@example.com' },
         headers: { origin: 'https://example.com' },
       });
-      c.env.SETTINGS = { get: vi.fn(async () => '') };
+      c.env.SETTINGS = mockSettingsGet(async () => '');
 
       const response = await passkeyRegisterOptionsHandler(c);
 
@@ -2062,11 +2080,9 @@ describe('Passkey Handlers', () => {
         body: { email: 'new-user@example.com' },
         headers: { origin: 'https://example.com' },
       });
-      c.env.SETTINGS = {
-        get: vi.fn(async () => {
-          throw new Error('KV unavailable');
-        }),
-      };
+      c.env.SETTINGS = mockSettingsGet(async () => {
+        throw new Error('KV unavailable');
+      });
 
       const response = await passkeyRegisterOptionsHandler(c);
 
@@ -2115,7 +2131,7 @@ describe('Passkey Handlers', () => {
         body: registrationBody,
         headers: { origin: 'https://example.com' },
       });
-      c.env.SETTINGS = { get: vi.fn(async () => '[1,2]') };
+      c.env.SETTINGS = mockSettingsGet(async () => '[1,2]');
 
       const response = await passkeyRegisterVerifyHandler(c);
 

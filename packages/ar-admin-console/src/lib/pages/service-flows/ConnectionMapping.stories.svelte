@@ -10,6 +10,20 @@
 		parameters: { layout: 'fullscreen' },
 		tags: ['autodocs']
 	});
+	async function openMapping(root: HTMLElement) {
+		const canvas = within(root);
+		const node = canvas.getByRole('button', { name: new RegExp(`^${t('sf.part.mapping-sets')}`) });
+		if (node.getAttribute('aria-current') !== 'step') {
+			await expect(canvas.queryByRole('button', { name: /^email/ })).toBeNull();
+			await userEvent.click(node);
+		}
+		await waitFor(() =>
+			expect(
+				canvas.getByRole('combobox', { name: new RegExp(`^${t('sf.row.mappingSet')}`) })
+			).toBeVisible()
+		);
+	}
+
 	async function openDisclosure(root: HTMLElement, title: string) {
 		const heading = within(root).getByText(title, { selector: '.disclosure__title' });
 		const details = heading.closest('details');
@@ -20,6 +34,7 @@
 		return details;
 	}
 	async function edit(root: HTMLElement) {
+		await openMapping(root);
 		const canvas = within(root);
 		await canvas.findByRole('button', { name: /^email/ });
 		const details = await openDisclosure(root, 'Mapping Set settings');
@@ -37,6 +52,7 @@
 <Story
 	name="OIDC RP shared set"
 	play={async ({ canvasElement }) => {
+		await openMapping(canvasElement);
 		const canvas = within(canvasElement);
 		await canvas.findByRole('button', { name: /^email/ });
 		await userEvent.selectOptions(
@@ -98,6 +114,7 @@
 	name="Binding only retry"
 	args={{ scenario: 'binding' }}
 	play={async ({ canvasElement }) => {
+		await openMapping(canvasElement);
 		const canvas = within(canvasElement);
 		await canvas.findByRole('button', { name: /^email/ });
 		await userEvent.selectOptions(
@@ -116,6 +133,7 @@
 <Story
 	name="Test user explanation"
 	play={async ({ canvasElement }) => {
+		await openMapping(canvasElement);
 		const canvas = within(canvasElement);
 		await canvas.findByRole('button', { name: /^email/ });
 		await openDisclosure(canvasElement, 'Test conditions');
@@ -128,6 +146,7 @@
 	name="SAML SP deferred identifier"
 	args={{ protocol: 'saml' }}
 	play={async ({ canvasElement }) => {
+		await openMapping(canvasElement);
 		const canvas = within(canvasElement);
 		await canvas.findByRole('button', { name: /^email/ });
 		await openDisclosure(canvasElement, 'Test conditions');
@@ -141,10 +160,20 @@
 <Story
 	name="Mapping edits survive staying on the detail"
 	play={async ({ canvasElement }) => {
+		await openMapping(canvasElement);
 		const canvas = within(canvasElement);
 		await canvas.findByRole('button', { name: /^email/ });
 		await openDisclosure(canvasElement, t('cm.options'));
 		await userEvent.type(canvas.getByRole('textbox', { name: t('sf.row.name') }), ' updated');
+		await userEvent.click(canvas.getAllByRole('button', { name: t('af.general') })[0]);
+		await expect(
+			canvas.queryByRole('combobox', { name: new RegExp(`^${t('sf.row.mappingSet')}`) })
+		).toBeNull();
+		await expect(canvas.queryByRole('button', { name: /^email/ })).toBeNull();
+		await openMapping(canvasElement);
+		await expect(canvas.getByRole('textbox', { name: new RegExp(t('sf.row.name')) })).toHaveValue(
+			'Portal mapping updated'
+		);
 		await userEvent.click(canvas.getByRole('button', { name: t('sf.detail.back') }));
 		const dialog = within(
 			await within(canvasElement.ownerDocument.body).findByRole('dialog', {

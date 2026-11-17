@@ -56,6 +56,9 @@
 	import SpSteps from './SpSteps.svelte';
 	import UnsavedChangesDialog from './UnsavedChangesDialog.svelte';
 	import type { ConnectionMappingResources } from './connection-mapping.svelte.js';
+	import LeaveGuard from './LeaveGuard.svelte';
+	import LiveConnectionSettings from './LiveConnectionSettings.svelte';
+	import type { ConnectionSettingsResources } from './connection-basic-settings';
 	import DetailList from '#lib/ui/patterns/DetailList.svelte';
 	import DetailItem from '#lib/ui/patterns/DetailItem.svelte';
 
@@ -66,7 +69,7 @@
 	 * end, Authrim's own steps between, each with its settings and how far it has got); choosing
 	 * one shows that setting on the right, as a form. The flow can grow: the "+" between steps adds
 	 * an optional one (consent, an extra sign-in), and its × takes it away again. Live RP/SP routes
-	 * use this layout for Mapping Sets; the prototype connection settings remain local to stories.
+	 * use this layout for basic settings and Mapping Sets; advanced prototype controls stay in stories.
 	 */
 	interface Props {
 		answers: Answers;
@@ -76,10 +79,28 @@
 		focusTitle?: boolean;
 		/** Live RP/SP mapping facade and the connection's existing binding client. */
 		mappingResources?: ConnectionMappingResources;
+		settingsResources?: ConnectionSettingsResources;
+		canEdit?: boolean;
+		canEditMapping?: boolean;
+		canReadMapping?: boolean;
 	}
 
-	let { answers = $bindable(), onback, focusTitle = false, mappingResources }: Props = $props();
+	let {
+		answers = $bindable(),
+		onback,
+		focusTitle = false,
+		mappingResources,
+		settingsResources,
+		canEdit = false,
+		canEditMapping = true,
+		canReadMapping = true
+	}: Props = $props();
 	let mappingDirty = $state(false);
+	let mappingPending = $state(false);
+	let settingsDirty = $state(false);
+	let settingsPending = $state(false);
+	let liveName = $state('');
+	let liveEntityId = $state('');
 	let mappingBound = $state('');
 	let mappingPanel = $state<HTMLElement>();
 
@@ -91,10 +112,13 @@
 	}
 
 	let asking = $state(false);
+	let leaving = $state(false);
 	/** Going back in place asks first when there are unsaved changes. */
 	function goBack() {
-		if (draft.dirty || mappingDirty) asking = true;
-		else onback?.();
+		if (settingsPending || mappingPending) return;
+		if (draft.dirty || mappingDirty || settingsDirty) {
+			asking = true;
+		} else onback?.();
 	}
 
 	let titleElement = $state<HTMLHeadingElement | null>(null);
@@ -105,29 +129,36 @@
 	const kind = $derived(draft.value.kind as ConnectionKind);
 	const allGroups = $derived(
 		mappingResources
-			? FLOW_GROUPS[kind].filter((group) => group.id === 'mapping')
+			? FLOW_GROUPS[kind].filter((group) => canReadMapping && group.id === 'mapping')
 			: FLOW_GROUPS[kind]
 	);
 	const groups = $derived(mappingResources ? allGroups : visibleGroups(draft.value));
 	const incoming = $derived(KINDS_OF.in.includes(kind));
-	const name = $derived(mappingResources?.connectionName ?? nameOf(draft.value));
+	const name = $derived(liveName || mappingResources?.connectionName || nameOf(draft.value));
+
+	const liveMappingResources = $derived(
+		mappingResources && settingsResources
+			? {
+					...mappingResources,
+					connectionName: name,
+					entityId: kind === 'sp' ? liveEntityId : mappingResources.entityId
+				}
+			: mappingResources
+	);
 
 	/** The connection's one mapping, in its own direction (sample data, not saved yet). */
 	let mapping = $state(untrack(() => sampleMapping(draft.value.kind as ConnectionKind)));
 
 	/** The setting shown on the right; empty is the overview. */
 	let current = $state('');
+	const mappingSelected = $derived(current.startsWith('mapping-'));
 	let panel = $state<HTMLElement | null>(null);
 
 	/** Opens a setting on the right, and brings the page up to it if the flow had scrolled away. */
 	async function select(id: string) {
-		if (mappingResources) {
-			mappingPanel?.scrollIntoView({ block: 'start', behavior: 'smooth' });
-			return;
-		}
 		current = id;
 		await tick();
-		revealPanel(panel);
+		revealPanel(mappingResources ? (mappingPanel ?? null) : panel);
 	}
 
 	const STATUS: Record<PartState, MessageKey> = {
@@ -267,6 +298,11 @@
 	<BackLink onclick={goBack}>{t('sf.detail.back')}</BackLink>
 {/snippet}
 
+<LeaveGuard
+	dirty={!leaving &&
+		!!settingsResources &&
+		(settingsDirty || mappingDirty || settingsPending || mappingPending)}
+/>
 <SaveScope {draft} onsave={save}>
 	<PageHeader
 		title={name}
@@ -359,26 +395,55 @@
 
 		<div class="detail__side">
 			{#if mappingResources}
-				<Card title={t('af.general')}>
-					<DetailList ruled>
-						<DetailItem label={t('sf.row.name')}>{name}</DetailItem>
-						<DetailItem label={t('sf.mock.col.protocol')}
-							>{KIND_MARK[kind]} · {role.badge}</DetailItem
-						>
-						<DetailItem label={t(kind === 'rp' ? 'sf.part.rp-redirect' : 'sf.row.entityId')}
-							>{kind === 'rp'
-								? draft.value.rp.redirectUris.join(', ')
-								: draft.value.sp.entityId}</DetailItem
-						>
-					</DetailList>
-				</Card>
-				<div bind:this={mappingPanel}>
-					<ConnectionMapping
-						resources={mappingResources}
-						bind:dirty={mappingDirty}
-						bind:bound={mappingBound}
-					/>
+				<div class="detail__general" hidden={mappingSelected}>
+					{#if settingsResources}
+						<LiveConnectionSettings
+							resources={settingsResources}
+							guardNavigation={false}
+							{canEdit}
+							{mappingDirty}
+							{mappingPending}
+							bind:dirty={settingsDirty}
+							bind:pending={settingsPending}
+							bind:name={liveName}
+							bind:entityId={liveEntityId}
+						/>
+					{:else}
+						<Card title={t('af.general')}>
+							<DetailList ruled>
+								<DetailItem label={t('sf.row.name')}>{name}</DetailItem>
+								<DetailItem label={t('sf.mock.col.protocol')}
+									>{KIND_MARK[kind]} · {role.badge}</DetailItem
+								>
+								<DetailItem label={t(kind === 'rp' ? 'sf.part.rp-redirect' : 'sf.row.entityId')}
+									>{kind === 'rp'
+										? draft.value.rp.redirectUris.join(', ')
+										: draft.value.sp.entityId}</DetailItem
+								>
+							</DetailList>
+						</Card>
+					{/if}
 				</div>
+				{#if canReadMapping}<div
+						class="detail__general"
+						hidden={!mappingSelected}
+						bind:this={mappingPanel}
+					>
+						<PanelHeader title={t('sf.group.mapping')}>
+							{#snippet back()}<BackLink onclick={() => (current = '')}>{overview}</BackLink
+								>{/snippet}
+						</PanelHeader>
+						<ConnectionMapping
+							resources={liveMappingResources}
+							connectionDirty={settingsDirty}
+							guardNavigation={!settingsResources}
+							readonly={!canEditMapping}
+							disabled={settingsPending}
+							bind:pending={mappingPending}
+							bind:dirty={mappingDirty}
+							bind:bound={mappingBound}
+						/>
+					</div>{/if}
 			{:else if current === ''}
 				<!-- What the other side is does not belong to the flow: a frame of its own above. -->
 				<Card title={t('af.general')}>
@@ -411,8 +476,7 @@
 					</div>
 				</Card>
 				{@render share()}
-				<ConnectionMapping bind:mapping />
-			{:else}
+			{:else if !mappingSelected}
 				<section class="detail__panel" bind:this={panel} aria-label={labelOf(current)}>
 					<PanelHeader title={labelOf(current)}>
 						{#snippet back()}
@@ -440,6 +504,20 @@
 						{/key}
 					</div>
 				</section>
+			{/if}
+			{#if !mappingResources}
+				<div class="detail__general" hidden={!mappingSelected} bind:this={mappingPanel}>
+					<PanelHeader title={mappingSelected ? labelOf(current) : t('sf.group.mapping')}>
+						{#snippet back()}<BackLink onclick={() => (current = '')}>{overview}</BackLink
+							>{/snippet}
+					</PanelHeader>
+					{#if mappingSelected}<ExtraSteps
+							step={current}
+							bind:form={draft.value.extras}
+							outbound={!incoming}
+						/>{/if}
+					<ConnectionMapping bind:mapping />
+				</div>
 			{/if}
 			{#if current === '' && !mappingResources}
 				<!-- How the connection itself behaves: closed sections, each with what it holds. -->
@@ -488,15 +566,27 @@
 
 <UnsavedChangesDialog
 	open={asking}
-	onleave={() => {
+	onleave={async () => {
 		asking = false;
 		draft.discard();
-		onback?.();
+		if (settingsResources) {
+			leaving = true;
+			await tick();
+		}
+		try {
+			await onback?.();
+		} finally {
+			leaving = false;
+		}
 	}}
 	onstay={() => (asking = false)}
 />
 
 <style>
+	.detail__side > [hidden] {
+		display: none;
+	}
+
 	.detail {
 		display: grid;
 		grid-template-columns: auto minmax(0, 1fr);

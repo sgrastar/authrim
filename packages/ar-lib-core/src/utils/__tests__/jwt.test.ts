@@ -65,6 +65,7 @@ describe('JWT Utilities', () => {
       expect(token).toBeDefined();
       expect(typeof token).toBe('string');
       expect(token.split('.').length).toBe(3); // JWT has 3 parts
+      expect(parseToken(token).token_use).toBe('id');
     });
 
     it('should create ID token with nonce', async () => {

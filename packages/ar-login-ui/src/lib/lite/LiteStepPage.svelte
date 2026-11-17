@@ -562,7 +562,7 @@
 						{#if field.authMethod === 'passkey'}
 							<!-- A passkey's sign-in needs no address: its button goes without the required
 							     fields; a passkey's sign-up makes an account from them. -->
-							{#if data.available.passkey}
+							{#if data.available.passkey && (data.purpose === 'login' || Boolean(data.invitedEmail))}
 								<button
 									type="submit"
 									formnovalidate={data.purpose === 'login'}

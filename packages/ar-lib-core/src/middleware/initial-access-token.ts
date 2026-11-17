@@ -24,6 +24,7 @@ const log = createLogger().module('INITIAL-ACCESS-TOKEN');
  * Token metadata stored in context
  */
 interface TokenMetadata {
+  tenantId?: string;
   single_use?: boolean;
   description?: string;
 }
@@ -166,6 +167,20 @@ export function initialAccessTokenMiddleware(): MiddlewareHandler<{
 
       // Token is valid - check if it's single-use
       const metadata = tokenData as TokenMetadata;
+
+      // Legacy unscoped tokens must be reissued. Check before consuming a single-use token.
+      if (metadata.tenantId !== tenantId) {
+        return c.json(
+          {
+            error: 'invalid_token',
+            error_description: 'The provided Initial Access Token is invalid or has expired',
+          },
+          401,
+          {
+            'WWW-Authenticate': 'Bearer realm="Dynamic Client Registration", error="invalid_token"',
+          }
+        );
+      }
 
       if (metadata.single_use) {
         // KV cannot atomically consume a value. Serialize the claim through a

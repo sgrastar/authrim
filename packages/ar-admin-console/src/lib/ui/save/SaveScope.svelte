@@ -44,12 +44,14 @@
 		onsave: (value: T) => Promise<void> | void;
 		/** Show the save bar. Off for forms with their own Save button. */
 		bar?: boolean;
+		/** A containing page may own the combined settings/mapping leave guard. */
+		guardNavigation?: boolean;
 		/** In-place page navigation must also protect unsaved work and running saves. */
 		onstate?: (state: { dirty: boolean; saving: boolean }) => void;
 		children: Snippet<[SaveControls]>;
 	}
 
-	let { draft, onsave, bar = true, onstate, children }: Props = $props();
+	let { draft, onsave, bar = true, guardNavigation = true, onstate, children }: Props = $props();
 
 	let saving = $state(false);
 	$effect(() => {
@@ -72,7 +74,7 @@
 	let leaveTo = $state<URL | null>(null);
 
 	beforeNavigate((navigation) => {
-		if (navigation.shallow && navigation.type === 'goto') return;
+		if (!guardNavigation || (navigation.shallow && navigation.type === 'goto')) return;
 
 		const decision = leaveDecision(navigation, draft.dirty);
 		if (decision === 'allow') return;
