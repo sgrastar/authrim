@@ -6038,6 +6038,17 @@ describe('Admin API Handlers', () => {
             created_at: Date.now(),
             updated_at: Date.now(),
           },
+          {
+            client_id: 'login-ui-client',
+            client_name: 'Login UI',
+            description:
+              'System-managed public OAuth client used by the built-in Authrim Login UI.',
+            redirect_uris: '["https://login.example.com/callback"]',
+            grant_types: '["authorization_code"]',
+            response_types: '["code"]',
+            created_at: Date.now(),
+            updated_at: Date.now(),
+          },
         ],
       });
 
@@ -6058,6 +6069,15 @@ describe('Admin API Handlers', () => {
           }),
         })
       );
+      // The clients Authrim registered for itself are marked; the tenant's own are not.
+      const { clients } = (c.json as ReturnType<typeof vi.fn>).mock.calls[0][0] as {
+        clients: Array<{ client_id: string; system_managed: boolean }>;
+      };
+      expect(clients.map((client) => [client.client_id, client.system_managed])).toEqual([
+        ['client-1', false],
+        ['client-2', false],
+        ['login-ui-client', true],
+      ]);
     });
 
     it('should support search filtering by client_id or client_name', async () => {

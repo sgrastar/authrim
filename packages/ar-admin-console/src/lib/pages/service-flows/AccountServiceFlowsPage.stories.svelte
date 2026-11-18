@@ -3,6 +3,7 @@
 	import { expect, userEvent, waitFor, within } from 'storybook/test';
 	import { t } from '#lib/i18n/i18n.svelte.js';
 	import AccountServiceFlowsHarness from './AccountServiceFlowsHarness.svelte';
+	import { MOCK_CLIENTS, MOCK_SYSTEM_CLIENTS } from '#lib/api/fake/clients-fake.js';
 	import AccountServiceFlowsPage from './AccountServiceFlowsPage.svelte';
 
 	const saves: { kind: string; editor: unknown }[] = [];
@@ -60,6 +61,62 @@
 		await expect(canvas.getByRole('textbox', { name: /Service flow name/ })).toBeRequired();
 	}}
 ></Story>
+
+<!-- The live page: the tenant's own apps join the preset flows in one table; the clients Authrim registered for itself (Login UI, downstream introspection) are not service flows and are not listed. -->
+<Story
+	name="Apps join the flows; Authrim's own clients are not listed"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const flows = await canvas.findByRole('table', { name: t('sf.mock.connections') });
+		await within(flows).findByRole('button', { name: t('sf.mock.open', { name: 'Member app' }) });
+		await expect(within(flows).getAllByRole('row')).toHaveLength(1 + 2 + MOCK_CLIENTS.length + 2);
+		await expect(canvas.queryByText('Login UI')).toBeNull();
+		await expect(canvas.queryByText('Downstream Grant Introspection')).toBeNull();
+		await expect(canvas.getAllByRole('table')).toHaveLength(1);
+	}}
+>
+	{#snippet template()}<AccountServiceFlowsHarness
+			answer="seeded"
+			showConnections
+			clients={[...MOCK_CLIENTS, ...MOCK_SYSTEM_CLIENTS]}
+		/>{/snippet}
+</Story>
+
+<!-- Only Authrim's own clients exist (a tenant just set up): the page holds the two presets and nothing else. -->
+<Story
+	name="A new tenant: presets only"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const flows = await canvas.findByRole('table', { name: t('sf.mock.connections') });
+		await within(flows).findByRole('button', {
+			name: t('sf.mock.open', { name: 'Standard sign-up' })
+		});
+		// The header row, sign-up and sign-in: nothing of the tenant's.
+		await expect(within(flows).getAllByRole('row')).toHaveLength(3);
+		await expect(canvas.getAllByRole('table')).toHaveLength(1);
+	}}
+>
+	{#snippet template()}<AccountServiceFlowsHarness
+			answer="seeded"
+			showConnections
+			clients={MOCK_SYSTEM_CLIENTS}
+			samlServiceProviders={[]}
+		/>{/snippet}
+</Story>
+
+<!-- The flows could not be read but the connections were: they are still listed and open on their own. -->
+<Story
+	name="Load failed: the connections read are still listed"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findByText(t('af.live.loadFailed'));
+		const flows = await canvas.findByRole('table', { name: t('sf.mock.connections') });
+		await within(flows).findByRole('button', { name: t('sf.mock.open', { name: 'Member app' }) });
+		await expect(within(flows).queryByText('Standard sign-up')).toBeNull();
+	}}
+>
+	{#snippet template()}<AccountServiceFlowsHarness answer="failed" showConnections />{/snippet}
+</Story>
 
 <!-- The tenant's Flows cannot be read: nothing is listed to open, so no new Flow is made over the tenant's. -->
 <Story

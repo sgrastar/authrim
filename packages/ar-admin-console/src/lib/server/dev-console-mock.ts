@@ -21,7 +21,7 @@ import {
 } from '#lib/api/fake/profile-fake-core.js';
 import type { AuthenticationMethodProfilesClient } from '#lib/api/authentication-method-profiles.js';
 import type { SessionProfilesClient } from '#lib/api/session-profiles.js';
-import { MOCK_CLIENTS } from '#lib/api/fake/clients-fake.js';
+import { MOCK_CLIENTS, MOCK_SYSTEM_CLIENTS } from '#lib/api/fake/clients-fake.js';
 import { MOCK_SAML_SERVICE_PROVIDERS } from '#lib/api/fake/saml-providers-fake.js';
 import { createFakeSettings } from '#lib/api/fake/settings-fake.js';
 import { answerAuditMock } from './dev-audit-mock.js';
@@ -52,6 +52,36 @@ const mockFlows = new Map<string, MockFlow>();
 const mockFlowAssignments: Array<Record<string, unknown>> = [];
 
 const mockConnections = new Map<string, Record<string, unknown>>();
+/** As the Admin API decides it: the fixed name and description setup writes, never a request value. */
+const SYSTEM_CLIENT_DESCRIPTIONS: Record<string, string> = {
+	'Login UI': 'System-managed public OAuth client used by the built-in Authrim Login UI.',
+	'Downstream Grant Introspection':
+		'System-managed confidential client used by Authrim for downstream grant introspection.'
+};
+function isSystemManagedClient(row: Record<string, unknown>): boolean {
+	return (
+		typeof row.client_name === 'string' &&
+		Object.hasOwn(SYSTEM_CLIENT_DESCRIPTIONS, row.client_name) &&
+		SYSTEM_CLIENT_DESCRIPTIONS[row.client_name] === row.description
+	);
+}
+/** The clients Authrim registered for the tenant itself, readable and editable like the rest. */
+for (const client of MOCK_SYSTEM_CLIENTS) {
+	mockConnections.set(`clients:${client.id}`, {
+		client_id: client.id,
+		client_name: client.name,
+		description: SYSTEM_CLIENT_DESCRIPTIONS[client.name],
+		enabled: client.enabled,
+		enable_blockers: [],
+		redirect_uris: [...client.redirectUris],
+		application_type: client.id === 'client_login_ui' ? 'spa' : 'service',
+		token_endpoint_auth_method: client.id === 'client_login_ui' ? 'none' : 'client_secret_basic',
+		require_pkce: client.id === 'client_login_ui',
+		system_managed: true,
+		created_at: NOW,
+		updated_at: NOW
+	});
+}
 function isObject(value: unknown): value is Record<string, unknown> {
 	return !!value && typeof value === 'object' && !Array.isArray(value);
 }
@@ -655,6 +685,7 @@ export async function handleDevAdminMock(
 						redirect_uris: body.redirect_uris ?? stored?.redirect_uris ?? [],
 						updated_at: now
 					};
+			if (!saml) (row as Record<string, unknown>).system_managed = isSystemManagedClient(row);
 			mockConnections.set(`${segments[0]}:${id}`, row);
 			if (segments[2] === 'import-metadata') return json({ ...row, success: true });
 			return json(saml ? row : { client: row }, creating ? 201 : 200);
@@ -693,7 +724,8 @@ export async function handleDevAdminMock(
 					enabled: true,
 					enable_blockers: [],
 					client_name: client.name,
-					redirect_uris: client.redirectUris
+					redirect_uris: client.redirectUris,
+					system_managed: false
 				}))
 			]
 		});

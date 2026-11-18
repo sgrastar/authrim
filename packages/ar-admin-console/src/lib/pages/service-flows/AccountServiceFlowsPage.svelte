@@ -81,32 +81,54 @@
 		}
 	}
 	onMount(() => void loadConnections());
-	const connections = $derived([
+	type ConnectionKind = 'rp' | 'sp' | 'op' | 'idp';
+	interface ConnectionRow {
+		id: string;
+		kind: ConnectionKind;
+		protocol: string;
+		name: string;
+		enabled: boolean;
+		systemManaged: boolean;
+	}
+	const connections = $derived<ConnectionRow[]>([
 		...clients.map((client) => ({
 			id: client.id,
-			kind: 'rp',
+			kind: 'rp' as const,
 			protocol: 'OIDC RP',
-			name: client.name
+			name: client.name,
+			enabled: client.enabled,
+			systemManaged: client.systemManaged === true
 		})),
 		...serviceProviders.map((provider) => ({
 			id: provider.id,
-			kind: 'sp',
+			kind: 'sp' as const,
 			protocol: 'SAML SP',
-			name: provider.name
+			name: provider.name,
+			enabled: provider.enabled,
+			systemManaged: false
 		})),
 		...externalProviders.map((provider) => ({
 			id: provider.id,
-			kind: 'op',
+			kind: 'op' as const,
 			protocol: 'OIDC OP',
-			name: provider.name
+			name: provider.name,
+			enabled: provider.enabled,
+			systemManaged: false
 		})),
 		...identityProviders.map((provider) => ({
 			id: provider.id,
-			kind: 'idp',
+			kind: 'idp' as const,
 			protocol: 'SAML IdP',
-			name: provider.name
+			name: provider.name,
+			enabled: provider.enabled,
+			systemManaged: false
 		}))
 	]);
+	/** The tenant's own apps and services join the service flows; the clients Authrim registered for itself (the Login UI's, downstream introspection) are not service flows and are left out here. */
+	const appConnections = $derived(connections.filter((row) => !row.systemManaged));
+	function openConnection(row: ConnectionRow) {
+		void goto(`/admin/applications/all/${row.kind}/${encodeURIComponent(row.id)}`);
+	}
 
 	/** Account flows keep their existing editor and navigation. */
 	const columns = $derived([
@@ -126,8 +148,31 @@
 		registration: aboutState('registration', 'Standard sign-up', 'default-ui'),
 		login: aboutState('login', 'Standard sign-in', 'default-ui')
 	});
-	const rows = $derived(
+	type ServiceFlowRow =
+		| {
+				row: 'flow';
+				id: AccountFlowId;
+				protocol: string;
+				kind: string;
+				name: string;
+				ready: boolean;
+				created: string;
+				modified: string;
+		  }
+		| {
+				row: 'connection';
+				id: string;
+				protocol: string;
+				kind: string;
+				name: string;
+				ready: boolean;
+				created: null;
+				modified: null;
+				connection: ConnectionRow;
+		  };
+	const flowRows = $derived<ServiceFlowRow[]>(
 		ACCOUNT_FLOW_IDS.map((id) => ({
+			row: 'flow' as const,
 			id,
 			protocol: t(FLOWS[id].title),
 			kind: '—',
@@ -136,6 +181,21 @@
 			...dates[id]
 		}))
 	);
+	/** One table: the preset sign-up and sign-in first, then the connections the tenant added. */
+	const rows = $derived<ServiceFlowRow[]>([
+		...flowRows,
+		...appConnections.map((connection) => ({
+			row: 'connection' as const,
+			id: `${connection.kind}:${connection.id}`,
+			protocol: connection.protocol,
+			kind: '—',
+			name: connection.name,
+			ready: connection.enabled,
+			created: null,
+			modified: null,
+			connection
+		}))
+	]);
 	// The account flows live in the tenant's Flows where the page has them (the live console):
 	// each read from the one the tenant runs, saved back to it and published. Elsewhere (the mock
 	// pages, Storybook) both flows are kept in the page only.
@@ -156,6 +216,10 @@
 		login: { loaded: !flows, id: null, editable: true, editor: null }
 	});
 	let phase = $state<'loading' | 'ready' | 'failed'>(flows ? 'loading' : 'ready');
+	/** The preset flows are rows only once they were read; connections stand on their own. */
+	const visibleRows = $derived(
+		phase === 'ready' ? rows : rows.filter((row) => row.row === 'connection')
+	);
 	const toIso = (flow: AccountFlowId, seconds: number | null) =>
 		seconds === null ? dates[flow].created : new Date(seconds * 1000).toISOString();
 
@@ -300,62 +364,54 @@
 		</PageHeader>
 		{#if phase === 'loading'}
 			<LoadingState label={t('common.loading')} />
-		{:else if phase === 'failed'}
-			<Callout tone="warning">
-				{t('af.live.loadFailed')}
-				<Button size="sm" onclick={loadFlows}>{t('common.retry')}</Button>
-			</Callout>
 		{:else}
-			<Card title={t('sf.mock.connections')} flush>
-				<DataTable
-					{columns}
-					{rows}
-					rowKey={(row) => row.id}
-					caption={t('sf.mock.connections')}
-					onrowopen={(row) => {
-						// A flow is opened only once it was read: a failed read is not a flow to replace.
-						if (saved[row.id].loaded) opened = row.id;
-					}}
-					rowOpenLabel={(row) => t('sf.mock.open', { name: row.name })}
-				>
-					{#snippet cell(row, column)}
-						{#if column.key === 'status'}
-							<AccountFlowStatus ready={row.ready} />
-						{:else if column.key === 'created' || column.key === 'modified'}
-							<DateTime value={row[column.key]} stacked />
-						{:else if column.key === 'name'}
-							<strong>{row.name}</strong>
-						{:else}
-							{row[column.key as 'protocol' | 'kind']}
-						{/if}
-					{/snippet}
-				</DataTable>
-			</Card>
-		{/if}
-		{#if showConnections}
-			<Card title={t('cm.connections')} flush>
-				{#if connectionsLoading}<LoadingState label={t('common.loading')} />
-				{:else if connectionsFailed}<Callout tone="warning"
-						>{t('mc.loadFailed')}
-						<Button onclick={loadConnections}>{t('common.retry')}</Button></Callout
-					>
-				{:else}
+			{#if phase === 'failed'}
+				<Callout tone="warning">
+					{t('af.live.loadFailed')}
+					<Button size="sm" onclick={loadFlows}>{t('common.retry')}</Button>
+				</Callout>
+			{/if}
+			<!-- Connections that were read are listed even when the flows could not be: they open on their own. -->
+			{#if phase === 'ready' || appConnections.length > 0}
+				<Card title={t('sf.mock.connections')} flush>
 					<DataTable
-						columns={[
-							{ key: 'protocol', label: t('sf.mock.col.protocol'), width: '140px' },
-							{ key: 'name', label: t('sf.mock.col.name') }
-						]}
-						rows={connections}
-						rowKey={(row) => `${row.kind}:${row.id}`}
-						caption={t('cm.connections')}
-						onrowopen={(row) =>
-							goto(`/admin/applications/all/${row.kind}/${encodeURIComponent(row.id)}`)}
+						{columns}
+						rows={visibleRows}
+						rowKey={(row) => row.id}
+						caption={t('sf.mock.connections')}
+						onrowopen={(row) => {
+							if (row.row === 'connection') openConnection(row.connection);
+							// A flow is opened only once it was read: a failed read is not a flow to replace.
+							else if (saved[row.id].loaded) opened = row.id;
+						}}
 						rowOpenLabel={(row) => t('sf.mock.open', { name: row.name })}
 					>
-						{#snippet cell(row, column)}{column.key === 'name' ? row.name : row.protocol}{/snippet}
+						{#snippet cell(row, column)}
+							{#if column.key === 'status'}
+								<AccountFlowStatus ready={row.ready} />
+							{:else if column.key === 'created' || column.key === 'modified'}
+								{@const stamp = row[column.key]}
+								{#if stamp}<DateTime value={stamp} stacked />{:else}—{/if}
+							{:else if column.key === 'name'}
+								<strong>{row.name}</strong>
+							{:else}
+								{row[column.key as 'protocol' | 'kind']}
+							{/if}
+						{/snippet}
+						{#snippet empty()}{t('sf.mock.empty')}{/snippet}
 					</DataTable>
-				{/if}
-			</Card>
+				</Card>
+			{/if}
+		{/if}
+		{#if showConnections}
+			{#if connectionsLoading}
+				<LoadingState label={t('common.loading')} />
+			{:else if connectionsFailed}
+				<Callout tone="warning"
+					>{t('mc.loadFailed')}
+					<Button onclick={loadConnections}>{t('common.retry')}</Button></Callout
+				>
+			{/if}
 		{/if}
 	{/if}
 </Page>

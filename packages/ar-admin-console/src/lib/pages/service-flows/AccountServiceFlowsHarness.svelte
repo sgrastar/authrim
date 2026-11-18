@@ -5,8 +5,13 @@
 		createFakeConsentStatements,
 		MOCK_CONSENT_STATEMENTS
 	} from '#lib/api/fake/consent-statements-fake.js';
-	import { createFakeClients } from '#lib/api/fake/clients-fake.js';
-	import { createFakeSamlProviders } from '#lib/api/fake/saml-providers-fake.js';
+	import { createFakeClients, MOCK_CLIENTS } from '#lib/api/fake/clients-fake.js';
+	import type { ClientOption } from '#lib/api/clients.js';
+	import {
+		createFakeSamlProviders,
+		MOCK_SAML_SERVICE_PROVIDERS
+	} from '#lib/api/fake/saml-providers-fake.js';
+	import type { SamlServiceProviderOption } from '#lib/api/saml-providers.js';
 	import { createFakeScreens } from '#lib/api/fake/screens-fake.js';
 	import { createFakeSessionProfiles } from '#lib/api/fake/session-profiles-fake.js';
 	import { MOCK_SCREENS } from '#lib/mock/fixtures/screens.js';
@@ -27,9 +32,20 @@
 		answer: 'seeded' | 'failed' | 'race' | 'no-completion';
 		saves?: { kind: string; editor: unknown }[];
 		control?: { release?: () => void };
+		/** With the tenant's connections listed under the flows (the live console's page). */
+		showConnections?: boolean;
+		clients?: readonly ClientOption[];
+		samlServiceProviders?: readonly SamlServiceProviderOption[];
 	}
 
-	let { answer, saves = [], control = {} }: Props = $props();
+	let {
+		answer,
+		saves = [],
+		control = {},
+		showConnections = false,
+		clients = MOCK_CLIENTS,
+		samlServiceProviders = MOCK_SAML_SERVICE_PROVIDERS
+	}: Props = $props();
 	let reads = 0;
 
 	/** A sign-in with nowhere to put consent: no completion step. */
@@ -73,16 +89,18 @@
 		async publish() {},
 		async assignToTenant() {}
 	};
+	// The fake is built once from the story's clients, on purpose.
+	// svelte-ignore state_referenced_locally
 	provideFlowResources({
 		methodProfiles: createFakeAuthenticationMethodProfiles(),
 		sessionProfiles: createFakeSessionProfiles(),
 		screens: createFakeScreens({ screens: MOCK_SCREENS }),
-		clients: createFakeClients(),
-		samlProviders: createFakeSamlProviders(),
+		clients: createFakeClients(clients),
+		samlProviders: createFakeSamlProviders(samlServiceProviders),
 		consentStatements: createFakeConsentStatements(MOCK_CONSENT_STATEMENTS),
 		flows,
 		canCreateProfile: () => false
 	});
 </script>
 
-<AccountServiceFlowsPage />
+<AccountServiceFlowsPage {showConnections} />

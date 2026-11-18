@@ -93,6 +93,7 @@ import {
 } from '@authrim/ar-lib-core/services/identity-mapping-client-history-receipt';
 import { runTenantBackupCoveredMutation } from './tenant-backup-writer';
 import { requireAdminStepUp } from './admin-step-up-gate';
+import { isSystemManagedClient } from './system-managed-clients';
 
 type AdminClientApplicationType = 'web' | 'native' | 'spa' | 'service';
 type AdminBrowserPublicClientMode = 'strict' | 'cookie_fallback';
@@ -1808,6 +1809,7 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
         client: {
           enabled: client.enabled,
           enable_blockers: clientEnableBlockers(client),
+          system_managed: isSystemManagedClient(client),
           client_id: client.client_id,
           client_secret: clientSecret,
           client_name: client.client_name,
@@ -1924,6 +1926,7 @@ export async function adminClientsListHandler(c: Context<{ Bindings: Env }>) {
         ...clientWithoutHash,
         enabled: client.enabled,
         enable_blockers: clientEnableBlockers(client),
+        system_managed: isSystemManagedClient(client),
         jwks: readPublicClientJwks(client.jwks),
         post_logout_redirect_uris: parseClientStringArray(client.post_logout_redirect_uris, []),
         redirect_uris: parseClientStringArray(client.redirect_uris, []),
@@ -2010,6 +2013,7 @@ export async function adminClientGetHandler(c: Context<{ Bindings: Env }>) {
     const formattedClient = {
       ...clientWithoutHash,
       enable_blockers: clientEnableBlockers(client),
+      system_managed: isSystemManagedClient(client),
       jwks: readPublicClientJwks(client.jwks),
       post_logout_redirect_uris: parseClientStringArray(client.post_logout_redirect_uris, []),
       redirect_uris: parseClientStringArray(client.redirect_uris, []),
@@ -3340,6 +3344,7 @@ async function executeAdminClientUpdate(
         client: {
           ...clientWithoutHash,
           enable_blockers: clientEnableBlockers(updatedClient),
+          system_managed: isSystemManagedClient(updatedClient),
           updated_at: toMilliseconds(updatedClient.updated_at),
           jwks: readPublicClientJwks(updatedClient.jwks),
           post_logout_redirect_uris: parseClientStringArray(
