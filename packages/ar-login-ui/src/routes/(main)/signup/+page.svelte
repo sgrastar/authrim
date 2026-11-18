@@ -283,10 +283,13 @@
 			typeof window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable === 'function'
 	);
 
-	// This page collects an email. Its passkey signup may attach that address only after the
-	// invitation email proof; ordinary signups verify the mailbox with email code first.
+	// A passkey signup has no mailbox proof of its own, and the server refuses one that carries an
+	// address nothing proved. Two signups are left: an invitation's, once its email is proved, and
+	// an ordinary one that makes an account WITHOUT an address (see `passkeySignupEmail`). An
+	// invitation that asks no proof would attach its address unproved, so it offers no passkey.
+	const passkeyAfterInvitationProof = $derived(Boolean(inviteToken && invitationEmailRequired));
 	const showPasskey = $derived(
-		passkeyEnabled && isPasskeySupported && Boolean(inviteToken && invitationEmailRequired)
+		passkeyEnabled && isPasskeySupported && (passkeyAfterInvitationProof || !inviteToken)
 	);
 	const showRuntimePasskey = $derived(showPasskey && runtimeAllowsAuthenticationHandle('passkey'));
 	const showRuntimeEmailCode = $derived(
@@ -1460,6 +1463,15 @@
 		}
 	}
 
+	/**
+	 * The address a passkey signup sends: the invited one, which the invitation's proof covers, and
+	 * otherwise none. An address typed or prefilled on this page is proved by nobody, so an ordinary
+	 * passkey signup leaves it out; signing up with that address goes through the email code.
+	 */
+	function passkeySignupEmail(): string | undefined {
+		return passkeyAfterInvitationProof ? email : undefined;
+	}
+
 	async function handlePasskeyRegister() {
 		if (authActionLoading) return;
 		error = '';
@@ -1474,7 +1486,7 @@
 			if (turnstileRequired && !cfTurnstileResponse) return;
 			const submittedCustomFields = getSubmittedCustomFields();
 			const { data: optionsData, error: optionsError } = await passkeyAPI.getRegisterOptions({
-				email,
+				email: passkeySignupEmail(),
 				name: getSubmittedDisplayName(),
 				custom_fields: submittedCustomFields,
 				authorizationChallengeId: authorizationChallengeId || undefined,
