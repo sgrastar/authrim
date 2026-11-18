@@ -166,6 +166,10 @@
             {
               "path": "023_mapping_rule_graph.sql",
               "checksum": "2deaf4914d48c774ee0a8d31373c0d25dbc2cb66099e0a41d0b2d370654d36e6"
+            },
+            {
+              "path": "024_admin_onboarding_progress.sql",
+              "checksum": "3c3add59e75d76d1be2b08ea481faf4f8c3ddb49a0a3cef12eb60401a0b206f1"
             }
           ]
         },
@@ -429,6 +433,10 @@
         {
           "path": "023_mapping_rule_graph.sql",
           "checksum": "2deaf4914d48c774ee0a8d31373c0d25dbc2cb66099e0a41d0b2d370654d36e6"
+        },
+        {
+          "path": "024_admin_onboarding_progress.sql",
+          "checksum": "3c3add59e75d76d1be2b08ea481faf4f8c3ddb49a0a3cef12eb60401a0b206f1"
         }
       ]
     },

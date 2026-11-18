@@ -333,6 +333,12 @@ const packageSpecs = [
         },
       },
       {
+        file: 'packages/ar-management/src/routes/admin-management/my-onboarding.ts',
+        receiverPrefixes: {
+          myOnboardingRouter: '/api/admin/me/onboarding',
+        },
+      },
+      {
         file: 'packages/ar-management/src/routes/admin-management/admin-notices.ts',
         receiverPrefixes: {
           adminNoticesRouter: '/api/admin/notices',

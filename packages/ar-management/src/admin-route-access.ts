@@ -234,6 +234,8 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
   authenticated('/api/admin/me/second-factor-recovery', 'current admin second-factor recovery'),
   authenticated('/api/admin/me/second-factor-recovery/*', 'current admin second-factor recovery'),
   authenticated('/api/admin/me/notice-preferences', 'current admin notice email preferences'),
+  authenticated('/api/admin/me/onboarding', 'current admin first-steps checklist progress'),
+  authenticated('/api/admin/me/onboarding/*', 'current admin first-steps checklist progress'),
   authenticated('/api/admin/me/agent-consents', 'current admin Agent consent management'),
   authenticated('/api/admin/me/agent-consents/*', 'current admin Agent consent management'),
   authenticated('/api/admin/me/wallet-credentials', 'current admin wallet credential list'),

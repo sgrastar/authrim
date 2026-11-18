@@ -91,7 +91,7 @@
 <div class="palette" role="group" aria-label={label}>
 	{#each sections as section (section.group?.id ?? 'all')}
 		{#if section.group}<p class="palette__group" aria-hidden="true">{section.group.label}</p>{/if}
-		<ul aria-label={section.group?.label ?? label}>
+		<ul aria-label={section.group?.label ?? label} data-palette-group={section.group?.id}>
 			{#each section.entries as entry (entry.kind)}{@render entryItem(entry)}{/each}
 		</ul>
 	{/each}

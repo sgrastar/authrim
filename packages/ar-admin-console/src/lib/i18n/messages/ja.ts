@@ -7,6 +7,7 @@ import { jaConnectionSettings } from './connection-settings/ja';
 import { jaAccountFlows } from './account-flows/ja';
 import { jaSchemaSetting } from './schema-setting/ja';
 import { jaTenantGeneral } from './tenant-general/ja';
+import { jaOnboarding } from './onboarding/ja';
 import { jaSecurityKeys } from './security-keys/ja';
 import { jaKeyringPresentation } from './keyring-presentation/ja';
 import { jaNotices } from './notices/ja';
@@ -40,6 +41,7 @@ export const ja = {
 	...jaAccountFlows,
 	...jaSchemaSetting,
 	...jaTenantGeneral,
+	...jaOnboarding,
 	...jaSecurityKeys,
 	...jaKeyringPresentation,
 	...jaNotices,

@@ -44,6 +44,7 @@ import { adminSecondFactorRecoveriesRouter } from './admin-second-factor-recover
 import { adminSecondFactorsRouter } from './admin-second-factors';
 import { adminNoticesRouter } from './admin-notices';
 import { adminNoticeChannelsRouter, myNoticePreferencesRouter } from './admin-notice-delivery';
+import { myOnboardingRouter } from './my-onboarding';
 import { loginUIThemesRouter } from './login-ui-themes';
 import { authenticationMethodProfilesRouter } from './authentication-method-profiles';
 import { sessionProfilesRouter } from './session-profiles';
@@ -116,6 +117,7 @@ adminManagementRouter.route('/authentication-method-profiles', authenticationMet
 adminManagementRouter.route('/session-profiles', sessionProfilesRouter);
 adminManagementRouter.route('/login-ui/lite-mode', loginUILiteModeRouter);
 adminManagementRouter.route('/me/notice-preferences', myNoticePreferencesRouter);
+adminManagementRouter.route('/me/onboarding', myOnboardingRouter);
 adminManagementRouter.route('/me/agent-consents', myAgentConsentsRouter);
 adminManagementRouter.route('/me/wallet-credentials', myWalletCredentialsRouter);
 adminManagementRouter.route('/approvals', adminApprovalsRouter);
@@ -173,6 +175,7 @@ export { adminSecondFactorRecoveriesRouter } from './admin-second-factor-recover
 export { adminSecondFactorsRouter } from './admin-second-factors';
 export { adminNoticesRouter } from './admin-notices';
 export { adminNoticeChannelsRouter, myNoticePreferencesRouter } from './admin-notice-delivery';
+export { myOnboardingRouter } from './my-onboarding';
 export { loginUIThemesRouter } from './login-ui-themes';
 export { authenticationMethodProfilesRouter } from './authentication-method-profiles';
 export { sessionProfilesRouter } from './session-profiles';

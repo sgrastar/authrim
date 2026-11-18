@@ -217,7 +217,8 @@ function liveStory(options: LiveClientFixtureOptions = {}) {
 }
 
 describe('client activation in the live service flow', () => {
-	it('shows step-up cancellation and keeps the client disabled', async () => {
+	// These mount the whole live page; on a busy CI runner that alone can pass the default 5 s.
+	it('shows step-up cancellation and keeps the client disabled', { timeout: 15_000 }, async () => {
 		const view = liveStory({ activationCancelled: true });
 		await fireEvent.click(await view.findByRole('button', { name: t('sf.live.enable') }));
 		await view.findByText(t('settings.stepUpCancelled'));
@@ -250,22 +251,26 @@ describe('client activation in the live service flow', () => {
 		}
 	);
 
-	it('shows a settings-save error for refused callbacks and keeps the activation state', async () => {
-		const view = liveStory({ enabled: true, refuseMissingCallbacks: true });
-		await view.findByRole('textbox', { name: t('sf.row.name') });
-		await fireEvent.click(
-			view.getByRole('button', {
-				name: t('list.remove', { name: 'https://portal.example.test/callback' })
-			})
-		);
-		await fireEvent.click(view.getByRole('button', { name: t('common.save') }));
-		await view.findByText(t('common.saveFailed'));
-		expect(view.clients.updateBasics).toHaveBeenCalledWith('portal', {
-			redirect_uris: [],
-			expected_updated_at: 1000
-		});
-		expect(view.queryByText(t('sf.live.activationFailed'))).toBeNull();
-		expect(view.getByRole('button', { name: t('sf.live.disable') })).toBeEnabled();
-		expect(view.queryByText(t('sf.live.saved'))).toBeNull();
-	});
+	it(
+		'shows a settings-save error for refused callbacks and keeps the activation state',
+		{ timeout: 15_000 },
+		async () => {
+			const view = liveStory({ enabled: true, refuseMissingCallbacks: true });
+			await view.findByRole('textbox', { name: t('sf.row.name') });
+			await fireEvent.click(
+				view.getByRole('button', {
+					name: t('list.remove', { name: 'https://portal.example.test/callback' })
+				})
+			);
+			await fireEvent.click(view.getByRole('button', { name: t('common.save') }));
+			await view.findByText(t('common.saveFailed'));
+			expect(view.clients.updateBasics).toHaveBeenCalledWith('portal', {
+				redirect_uris: [],
+				expected_updated_at: 1000
+			});
+			expect(view.queryByText(t('sf.live.activationFailed'))).toBeNull();
+			expect(view.getByRole('button', { name: t('sf.live.disable') })).toBeEnabled();
+			expect(view.queryByText(t('sf.live.saved'))).toBeNull();
+		}
+	);
 });

@@ -146,7 +146,9 @@
 	<PageHeader title={t('nav.custom.screens')}>
 		{#snippet actions()}
 			{#if canWrite}
-				<Button variant="primary" icon="plus" href={hrefOf('new')}>{t('sc.list.create')}</Button>
+				<span class="guide-anchor" data-guide="screen-create">
+					<Button variant="primary" icon="plus" href={hrefOf('new')}>{t('sc.list.create')}</Button>
+				</span>
 			{/if}
 		{/snippet}
 	</PageHeader>

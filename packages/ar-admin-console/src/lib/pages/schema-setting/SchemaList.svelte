@@ -27,6 +27,7 @@
 	import TypeBadge from '#lib/ui/primitives/TypeBadge.svelte';
 	import SearchField from '#lib/ui/primitives/SearchField.svelte';
 	import Select from '#lib/ui/primitives/Select.svelte';
+	import { guideSignal } from '#lib/onboarding/signals.js';
 	import { toast } from '#lib/ui/toast/toast.svelte.js';
 	import Page from '#lib/ui/templates/Page.svelte';
 	import CreateSchemaDialog from './CreateSchemaDialog.svelte';
@@ -184,6 +185,7 @@
 	function created(schema: Schema) {
 		adding = false;
 		toast.success(t('ss.saved'));
+		guideSignal('schema.saved');
 		onopen(schema.id);
 	}
 
@@ -192,6 +194,7 @@
 		toast.success(
 			t('ss.preset.done', { created: done.createdKeys.length, skipped: done.skippedKeys.length })
 		);
+		if (done.createdKeys.length > 0) guideSignal('schema.saved');
 		void load();
 	}
 </script>
@@ -201,7 +204,12 @@
 		{#snippet actions()}
 			{#if canWrite && !forbidden}
 				<Button variant="secondary" onclick={() => (applying = true)}>{t('ss.presetOpen')}</Button>
-				<Button variant="primary" icon="plus" onclick={() => (adding = true)}>{t('ss.add')}</Button>
+				<Button
+					variant="primary"
+					icon="plus"
+					data-guide="schema-add"
+					onclick={() => (adding = true)}>{t('ss.add')}</Button
+				>
 			{/if}
 		{/snippet}
 	</PageHeader>
