@@ -13,7 +13,7 @@
 			docs: {
 				description: {
 					component:
-						'The consent statements a sign-up or sign-in flow asks, in the order they are shown. Statements are added from the tenant’s own (only those turned on and with a published version), each required or optional, moved up and down, or removed. A statement that is no longer there (deleted or retired) or not published stays in the list, flagged, so it can be removed. A chosen statement’s current text can be read in place, in each of its languages. A new statement can be made here, as a sign-in method profile can: its kind, its text in every language (a link to a document by default, with a preview beside it; a terms of service or privacy policy starts with its name and an agreement sentence, HTML, until they are changed) and its details, published at once and chosen; its key is made up, and later versions are on its own page. A list that cannot be read is told in the field and the rest of the page carries on.'
+						'The consent statements a sign-up or sign-in flow asks, in the order they are shown. Statements are added from the tenant’s own (only those turned on and with a published version), each required or optional, moved up and down, or removed. A statement that is no longer there (deleted or retired) or not published stays in the list, flagged, so it can be removed. A chosen statement’s current text can be read in place, in each of its languages. A new statement can be made here, as a sign-in method profile can: its kind, its text in every language (a link to a document by default, with a preview beside it; a terms of service or privacy policy starts with its name and an agreement sentence until they are changed; the description is HTML the admin writes) and its details, published at once and chosen; its key is made up, and later versions are on its own page. A list that cannot be read is told in the field and the rest of the page carries on.'
 				}
 			}
 		}
@@ -88,12 +88,12 @@
 		await userEvent.click(publish);
 		await expect(await canvas.findByText(t('cs.error.fix'))).toBeInTheDocument();
 		await userEvent.type(canvas.getByLabelText(t('cs.content.url')), 'https://example.com/terms');
-		// The name in the description now links to the document, as the preview shows.
-		await expect(canvas.getByLabelText(t('cs.content.summary'))).toHaveValue(
-			statementPreset('terms', i18n.locale, 'https://example.com/terms').description
-		);
+		// The description is the admin's own HTML: a link written in it shows in the preview.
+		const summary = canvas.getByLabelText(t('cs.content.summary'));
+		await userEvent.clear(summary);
+		await userEvent.type(summary, 'Read <a href="https://example.com/terms">the terms</a>.');
 		const preview = canvas.getByRole('region', { name: t('cs.content.preview') });
-		await expect(within(preview).getByRole('link', { name: terms.title })).toHaveAttribute(
+		await expect(within(preview).getByRole('link', { name: 'the terms' })).toHaveAttribute(
 			'href',
 			'https://example.com/terms'
 		);

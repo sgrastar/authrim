@@ -1,4 +1,10 @@
+import { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it } from 'vitest';
+import {
+  listMigrationSourceFiles,
+  readMigrationSource,
+} from '../../../../test/helpers/migration-source.mjs';
+import { renderPortableMigrationSql } from '../core/sql-portability.js';
 import {
   buildInitialAdminRolesBootstrapSql,
   buildInitialTenantBootstrapSql,
@@ -61,6 +67,54 @@ describe('buildInitialTenantBootstrapSql', () => {
     const sql = buildInitialTenantBootstrapSql(config);
 
     expect(sql).toContain("name = 'O''Hara'");
+  });
+});
+
+describe('the initial tenant bootstrap on a fresh core database', () => {
+  const CORE = new URL('../../../../migrations/core/d1/', import.meta.url);
+
+  /** A fresh install: the 0.5.0 baseline and every later delta, as setup applies them. */
+  function freshCore(): DatabaseSync {
+    const db = new DatabaseSync(':memory:');
+    const files = listMigrationSourceFiles(CORE);
+    const number = (name: string) => Number(name.split('_')[0]);
+    const start = files.findIndex(
+      (name, index) => index > 0 && number(name) < number(files[index - 1])
+    );
+    const later = start < 0 ? [] : files.slice(start).filter((name) => number(name) > 2);
+    for (const file of ['001_0_5_0_core_baseline.sql', ...later]) {
+      db.exec(renderPortableMigrationSql(readMigrationSource(CORE, file), 'sqlite'));
+    }
+    return db;
+  }
+
+  const consentRows = (db: DatabaseSync, tenantId: string) =>
+    [
+      'consent_statements',
+      'consent_statement_versions',
+      'consent_statement_localizations',
+      'statement_consent_projection_jobs',
+    ].map((table) =>
+      Number(
+        (
+          db.prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE tenant_id = ?`).get(tenantId) as {
+            n: number;
+          }
+        ).n
+      )
+    );
+
+  it('moves the default terms of service and privacy policy to a renamed initial tenant', () => {
+    const db = freshCore();
+    expect(consentRows(db, 'default')).toEqual([2, 2, 8, 2]);
+    const config = createDefaultConfig('mt');
+    config.tenant.name = 'first';
+    db.exec(buildInitialTenantBootstrapSql(config));
+    expect(consentRows(db, 'default')).toEqual([0, 0, 0, 0]);
+    expect(consentRows(db, 'first')).toEqual([2, 2, 8, 2]);
+    // A setup resumed after the rename changes nothing more.
+    db.exec(buildInitialTenantBootstrapSql(config));
+    expect(consentRows(db, 'first')).toEqual([2, 2, 8, 2]);
   });
 });
 

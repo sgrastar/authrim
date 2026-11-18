@@ -66,7 +66,7 @@ describe('statement consent restore target rebinding', () => {
       if (kind === 'empty')
         expect(
           await target.adapter.queryOne(
-            'SELECT statement_id,definition_generation,closed_generation,mode,targets_json,cursor_binding_ref FROM statement_consent_projection_jobs'
+            "SELECT statement_id,definition_generation,closed_generation,mode,targets_json,cursor_binding_ref FROM statement_consent_projection_jobs WHERE tenant_id='tenant-a'"
           )
         ).toEqual({
           statement_id: 'retired',
@@ -120,7 +120,10 @@ describe('statement consent restore target rebinding', () => {
           })
         ).toEqual({ done: true });
         expect(
-          await target.adapter.query('SELECT tenant_id FROM statement_consent_projection_jobs')
+          // The baseline tenant's default statements (core migration 013) are not this tenant's.
+          await target.adapter.query(
+            "SELECT tenant_id FROM statement_consent_projection_jobs WHERE tenant_id <> 'default'"
+          )
         ).toEqual([{ tenant_id: 'other-tenant' }]);
       }
     }

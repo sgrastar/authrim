@@ -6,6 +6,7 @@ import { samlDrAll } from './saml-dr-writer';
 import { backupOwnershipPredicate, type BackupRowOwnership } from './row-ownership';
 import { TENANT_BACKUP_SQLITE_RESTORE_MAX_ROW_BYTES } from './container-dataset-reader';
 import { readSqliteRestoreSeedFingerprint } from './sqlite-restore-seed';
+import { installedSeedRowsSupersededBy } from './installed-seed-supersede';
 import type { DatabaseAdapter } from '../../db/adapter';
 import {
   normalizeGuestPiiDeletedMarker,
@@ -543,6 +544,15 @@ export class SqliteRestoreTarget {
           group.keys.push({ sql: predicate, params: keyInsert.params });
           seedKeys.set(currentPolicy.dataset.id, group);
         }
+        if (seedOwner)
+          statements.push(
+            ...installedSeedRowsSupersededBy(
+              currentPolicy.schema.table,
+              this.identity.tenantId,
+              storedRowJson,
+              { sql: this.guardSql(), params: this.guard() }
+            )
+          );
         statements.push(
           seedOwner
             ? {
@@ -1139,6 +1149,16 @@ export class SqliteRestoreTarget {
             seedOwner
           );
         await this.assertLive();
+        if (seedOwner)
+          for (const superseded of installedSeedRowsSupersededBy(
+            policy.schema.table,
+            this.identity.tenantId,
+            storedRowJson,
+            { sql: this.guardSql(), params: this.guard() }
+          )) {
+            const removed = await this.database.execute(superseded.sql, superseded.params);
+            if (!removed.success) throw error();
+          }
         const result = await this.database.execute(sql, [
           ...insert.params,
           ...this.guard(),
