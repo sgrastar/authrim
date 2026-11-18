@@ -1,0 +1,150 @@
+/*
+ * The guide's popover (Driver.js), dressed as the console: the card surface, the type scale, the
+ * console's buttons. Driver.js ships its own neutral look; everything here overrides it with
+ * tokens, so the popover follows the theme and the light or dark mode.
+ */
+.driver-popover.console-guide {
+	min-width: 260px;
+	max-width: 340px;
+	padding: 16px;
+	border: 1px solid var(--border);
+	border-radius: var(--radius-panel);
+	background-color: var(--bg-card);
+	box-shadow: var(--shadow-lg);
+	color: var(--text-primary);
+	font-family: var(--font-sans);
+}
+
+.console-guide .driver-popover-title {
+	/* Room for the close button at the end edge. */
+	padding-inline-end: 28px;
+	font-size: var(--fs-title);
+	font-weight: var(--fw-semibold);
+	line-height: var(--lh-snug);
+}
+
+.console-guide .driver-popover-description {
+	margin-top: 6px;
+	color: var(--text-secondary);
+	font-size: var(--fs-body);
+	line-height: var(--lh-body);
+}
+
+/* What the person is asked to do: a quiet box, the dot says the guide is waiting. */
+.console-guide .driver-popover-instruction {
+	margin-top: 12px;
+	padding: 8px 10px;
+	border-radius: var(--radius-control);
+	background-color: var(--bg-subtle);
+	color: var(--text-primary);
+	font-size: var(--fs-body);
+	line-height: var(--lh-body);
+}
+
+.console-guide .driver-popover-instruction-indicator {
+	background-color: var(--primary);
+}
+
+.console-guide .driver-popover-footer {
+	gap: 12px;
+	margin-top: 14px;
+	opacity: 1;
+	text-align: start;
+}
+
+.console-guide .driver-popover-progress-text {
+	color: var(--text-muted);
+	font-size: var(--fs-small);
+	font-variant-numeric: tabular-nums;
+}
+
+.console-guide .driver-popover-navigation-btns {
+	gap: 6px;
+}
+
+.console-guide .driver-popover-footer-btn {
+	display: inline-flex;
+	align-items: center;
+	min-height: var(--control-h-sm);
+	padding: 0 12px;
+	border: 1px solid var(--border-strong);
+	border-radius: var(--radius-control);
+	background-color: var(--bg-card);
+	color: var(--text-primary);
+	font-size: var(--fs-control);
+	font-weight: var(--fw-medium);
+	line-height: var(--lh-tight);
+	text-shadow: none;
+}
+
+.console-guide .driver-popover-footer-btn:hover {
+	background-color: var(--bg-hover);
+}
+
+.console-guide .driver-popover-next-btn {
+	border-color: var(--primary);
+	background-color: var(--primary);
+	color: var(--text-inverse);
+}
+
+.console-guide .driver-popover-next-btn:hover {
+	border-color: var(--primary-hover);
+	background-color: var(--primary-hover);
+}
+
+.console-guide .driver-popover-close-btn {
+	inset-block-start: 6px;
+	inset-inline: auto 6px;
+	width: 28px;
+	height: 28px;
+	border-radius: var(--radius-control);
+	color: var(--text-muted);
+	font-size: var(--fs-title);
+	/* Centres the × in the button. */
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.console-guide .driver-popover-close-btn:hover {
+	background-color: var(--bg-hover);
+	color: var(--text-primary);
+}
+
+.console-guide .driver-popover-footer-btn:focus-visible,
+.console-guide .driver-popover-close-btn:focus-visible {
+	outline: 2px solid var(--focus-ring);
+	outline-offset: 2px;
+}
+
+/* The arrow takes the card's colour (Driver.js draws it with borders). */
+.console-guide .driver-popover-arrow {
+	border-color: var(--bg-card);
+}
+
+.console-guide .driver-popover-arrow-side-left {
+	border-block-color: transparent;
+	border-right-color: transparent;
+}
+
+.console-guide .driver-popover-arrow-side-right {
+	border-block-color: transparent;
+	border-left-color: transparent;
+}
+
+.console-guide .driver-popover-arrow-side-top {
+	border-inline-color: transparent;
+	border-bottom-color: transparent;
+}
+
+.console-guide .driver-popover-arrow-side-bottom {
+	border-inline-color: transparent;
+	border-top-color: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.driver-popover.console-guide,
+	.console-guide .driver-popover-instruction-indicator {
+		animation: none;
+	}
+}

@@ -131,7 +131,9 @@
 	<PageHeader title={t('nav.custom.branding')} description={t('th.list.desc')}>
 		{#snippet actions()}
 			{#if canWrite}
-				<Button variant="primary" icon="plus" href={hrefOf('new')}>{t('th.list.create')}</Button>
+				<span class="guide-anchor" data-guide="theme-create">
+					<Button variant="primary" icon="plus" href={hrefOf('new')}>{t('th.list.create')}</Button>
+				</span>
 			{/if}
 		{/snippet}
 	</PageHeader>

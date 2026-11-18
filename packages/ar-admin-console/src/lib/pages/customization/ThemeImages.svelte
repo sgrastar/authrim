@@ -108,85 +108,87 @@
 	</ThemeGroup>
 {/snippet}
 
-<Tabs label={t('th.i.modes')} items={tabs} value={imageTab} onchange={pickTab}>
-	{#snippet panel(id)}
-		{@const tab = id === 'dark' ? 'dark' : 'light'}
-		<div class="mode-images">
-			<ThemeGroup
-				title={t('th.g.logo')}
-				info={tab === 'dark' ? t('th.g.logo.dark.d') : t('th.g.logo.d')}
-			>
-				<ImageUpload
-					resolveUrl={apiAssetUrl}
-					label={t('th.i.logo')}
-					shape="square"
-					maxBytes={512 * 1024}
-					bind:value={() => logoFor(tab), (value) => setLogo(tab, value)}
-				/>
-			</ThemeGroup>
+<div data-guide="theme-image-modes">
+	<Tabs label={t('th.i.modes')} items={tabs} value={imageTab} onchange={pickTab}>
+		{#snippet panel(id)}
+			{@const tab = id === 'dark' ? 'dark' : 'light'}
+			<div class="mode-images">
+				<ThemeGroup
+					title={t('th.g.logo')}
+					info={tab === 'dark' ? t('th.g.logo.dark.d') : t('th.g.logo.d')}
+				>
+					<ImageUpload
+						resolveUrl={apiAssetUrl}
+						label={t('th.i.logo')}
+						shape="square"
+						maxBytes={512 * 1024}
+						bind:value={() => logoFor(tab), (value) => setLogo(tab, value)}
+					/>
+				</ThemeGroup>
 
-			{#if tab === 'light'}
-				{@render picture(
-					t('th.g.bgImage'),
-					t('th.g.bgImage.d'),
-					t('th.i.bgImage'),
-					draft.backgroundImage,
-					(value) => (draft.backgroundImage = value),
-					t('th.i.bgOpacity'),
-					draft.backgroundOpacity,
-					(value) => (draft.backgroundOpacity = value),
-					draft.backgroundFilters,
-					(filters) => (draft.backgroundFilters = filters)
-				)}
-				{#if hasCard}
+				{#if tab === 'light'}
 					{@render picture(
-						t('th.g.cardImage'),
-						t('th.g.cardImage.d'),
-						t('th.i.cardImage'),
-						draft.cardImage,
-						(value) => (draft.cardImage = value),
-						t('th.i.cardOpacity'),
-						draft.cardImageOpacity,
-						(value) => (draft.cardImageOpacity = value),
-						draft.cardImageFilters,
-						(filters) => (draft.cardImageFilters = filters)
+						t('th.g.bgImage'),
+						t('th.g.bgImage.d'),
+						t('th.i.bgImage'),
+						draft.backgroundImage,
+						(value) => (draft.backgroundImage = value),
+						t('th.i.bgOpacity'),
+						draft.backgroundOpacity,
+						(value) => (draft.backgroundOpacity = value),
+						draft.backgroundFilters,
+						(filters) => (draft.backgroundFilters = filters)
 					)}
+					{#if hasCard}
+						{@render picture(
+							t('th.g.cardImage'),
+							t('th.g.cardImage.d'),
+							t('th.i.cardImage'),
+							draft.cardImage,
+							(value) => (draft.cardImage = value),
+							t('th.i.cardOpacity'),
+							draft.cardImageOpacity,
+							(value) => (draft.cardImageOpacity = value),
+							draft.cardImageFilters,
+							(filters) => (draft.cardImageFilters = filters)
+						)}
+					{/if}
+					{#if split}
+						{@render picture(
+							t('th.g.panelImage'),
+							t('th.g.panelImage.d'),
+							t('th.i.panelImage'),
+							draft.panelImage,
+							(value) => (draft.panelImage = value),
+							t('th.i.panelOpacity'),
+							draft.panelImageOpacity,
+							(value) => (draft.panelImageOpacity = value),
+							draft.panelImageFilters,
+							(filters) => (draft.panelImageFilters = filters)
+						)}
+					{/if}
+				{:else}
+					<p class="shared-note">{t('th.i.darkPicturesNote')}</p>
+					{#if draft.backgroundImage}
+						{@render darkening(t('th.g.bgImage'), draft.backgroundDarkDim, (value) => {
+							draft.backgroundDarkDim = value;
+						})}
+					{/if}
+					{#if hasCard && draft.cardImage}
+						{@render darkening(t('th.g.cardImage'), draft.cardImageDarkDim, (value) => {
+							draft.cardImageDarkDim = value;
+						})}
+					{/if}
+					{#if split && draft.panelImage}
+						{@render darkening(t('th.g.panelImage'), draft.panelImageDarkDim, (value) => {
+							draft.panelImageDarkDim = value;
+						})}
+					{/if}
 				{/if}
-				{#if split}
-					{@render picture(
-						t('th.g.panelImage'),
-						t('th.g.panelImage.d'),
-						t('th.i.panelImage'),
-						draft.panelImage,
-						(value) => (draft.panelImage = value),
-						t('th.i.panelOpacity'),
-						draft.panelImageOpacity,
-						(value) => (draft.panelImageOpacity = value),
-						draft.panelImageFilters,
-						(filters) => (draft.panelImageFilters = filters)
-					)}
-				{/if}
-			{:else}
-				<p class="shared-note">{t('th.i.darkPicturesNote')}</p>
-				{#if draft.backgroundImage}
-					{@render darkening(t('th.g.bgImage'), draft.backgroundDarkDim, (value) => {
-						draft.backgroundDarkDim = value;
-					})}
-				{/if}
-				{#if hasCard && draft.cardImage}
-					{@render darkening(t('th.g.cardImage'), draft.cardImageDarkDim, (value) => {
-						draft.cardImageDarkDim = value;
-					})}
-				{/if}
-				{#if split && draft.panelImage}
-					{@render darkening(t('th.g.panelImage'), draft.panelImageDarkDim, (value) => {
-						draft.panelImageDarkDim = value;
-					})}
-				{/if}
-			{/if}
-		</div>
-	{/snippet}
-</Tabs>
+			</div>
+		{/snippet}
+	</Tabs>
+</div>
 
 <style>
 	.mode-images {

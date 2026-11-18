@@ -14,6 +14,7 @@
 	import Button from '#lib/ui/primitives/Button.svelte';
 	import IconButton from '#lib/ui/primitives/IconButton.svelte';
 	import Page from '#lib/ui/templates/Page.svelte';
+	import { guideSignal } from '#lib/onboarding/signals.js';
 	import { toast } from '#lib/ui/toast/toast.svelte.js';
 	import ThemeEditor from './ThemeEditor.svelte';
 	import { newThemeDraft, type ThemeDraft } from './theme-draft';
@@ -268,6 +269,7 @@
 			} else {
 				toast.success(t('th.toast.saved'));
 			}
+			guideSignal('theme.saved');
 		} catch (error) {
 			if (error instanceof Gone) return;
 			const key = themeErrorKey(error, 'th.error.save');
@@ -383,6 +385,7 @@
 					loading={busy}
 					disabled={!dirty && !isNew}
 					attention={dirty}
+					data-guide="theme-save"
 					onclick={save}
 				>
 					{t('th.page.save')}

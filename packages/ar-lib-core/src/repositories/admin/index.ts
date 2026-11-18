@@ -54,6 +54,14 @@ export {
   type AdminSecondFactorRecoveryWebAuthnInput,
 } from './admin-second-factor-recovery';
 export {
+  ADMIN_ONBOARDING_ITEM_LIMIT,
+  ADMIN_ONBOARDING_ITEM_MAX_LENGTH,
+  ADMIN_ONBOARDING_ITEM_PATTERN,
+  AdminOnboardingRepository,
+  isAdminOnboardingItemId,
+  type AdminOnboardingCompletion,
+} from './admin-onboarding';
+export {
   ADMIN_NOTICE_EMAIL_DEFAULTS,
   AdminNoticeDeliveryRepository,
   severityReaches,

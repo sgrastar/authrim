@@ -8,6 +8,7 @@ import { enConnectionSettings } from './connection-settings/en';
 import { enAccountFlows } from './account-flows/en';
 import { enSchemaSetting } from './schema-setting/en';
 import { enTenantGeneral } from './tenant-general/en';
+import { enOnboarding } from './onboarding/en';
 import { enSecurityKeys } from './security-keys/en';
 import { enKeyringPresentation } from './keyring-presentation/en';
 import { enNotices } from './notices/en';
@@ -37,6 +38,7 @@ export const en = {
 	...enAccountFlows,
 	...enSchemaSetting,
 	...enTenantGeneral,
+	...enOnboarding,
 	...enSecurityKeys,
 	...enKeyringPresentation,
 	...enNotices,

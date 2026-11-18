@@ -45,6 +45,7 @@
 	import { SaveStopped } from '#lib/ui/save/save-scope.js';
 	import SaveScope from '#lib/ui/save/SaveScope.svelte';
 	import Page from '#lib/ui/templates/Page.svelte';
+	import { guideSignal } from '#lib/onboarding/signals.js';
 	import { toast } from '#lib/ui/toast/toast.svelte.js';
 	import PartSettingsPanel from './PartSettingsPanel.svelte';
 	import ActiveThemeScreenPreview from './ActiveThemeScreenPreview.svelte';
@@ -315,6 +316,7 @@
 			} else {
 				toast.success(t('sc.editor.saved'));
 			}
+			guideSignal('screen.saved');
 		} catch (error) {
 			if (error instanceof SaveStopped) throw error;
 			const key = screenErrorKey(error, 'sc.editor.saveFailed');
@@ -697,18 +699,20 @@
 								/>
 								{#if place}
 									{@const chosen = value.rows[place.row].columns[place.column][place.index]}
-									<PartSettingsPanel
-										bind:part={draft.value.rows[place.row].columns[place.column][place.index]}
-										bind:settings={draft.value.settings[chosen.id]}
-										isNew={!savedPart(chosen.id)}
-										labelChanged={!!savedPart(chosen.id) &&
-											savedPart(chosen.id)?.label !== chosen.label}
-										{schemaFields}
-										{choices}
-										{schemaHref}
-										legacyYesNo={isLegacyYesNo(origins[chosen.id])}
-										exitsAllowed={value.kind !== 'account'}
-									/>
+									<div data-guide="part-settings">
+										<PartSettingsPanel
+											bind:part={draft.value.rows[place.row].columns[place.column][place.index]}
+											bind:settings={draft.value.settings[chosen.id]}
+											isNew={!savedPart(chosen.id)}
+											labelChanged={!!savedPart(chosen.id) &&
+												savedPart(chosen.id)?.label !== chosen.label}
+											{schemaFields}
+											{choices}
+											{schemaHref}
+											legacyYesNo={isLegacyYesNo(origins[chosen.id])}
+											exitsAllowed={value.kind !== 'account'}
+										/>
+									</div>
 								{:else if rowIndex >= 0}
 									{@const row = value.rows[rowIndex]}
 									<PartSettingsPanel

@@ -8,6 +8,7 @@ import { arConnectionSettings } from './connection-settings/ar';
 import { arAccountFlows } from './account-flows/ar';
 import { arSchemaSetting } from './schema-setting/ar';
 import { arTenantGeneral } from './tenant-general/ar';
+import { arOnboarding } from './onboarding/ar';
 import { arSecurityKeys } from './security-keys/ar';
 import { arKeyringPresentation } from './keyring-presentation/ar';
 import { arNotices } from './notices/ar';
@@ -37,6 +38,7 @@ export const ar = {
 	...arAccountFlows,
 	...arSchemaSetting,
 	...arTenantGeneral,
+	...arOnboarding,
 	...arSecurityKeys,
 	...arKeyringPresentation,
 	...arNotices,

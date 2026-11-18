@@ -3,6 +3,7 @@
 	import { apiAssetUrl } from '#lib/api/assets.js';
 	import IconButton from '#lib/ui/primitives/IconButton.svelte';
 	import PickerDialog, { type PickerGroup } from '#lib/ui/patterns/PickerDialog.svelte';
+	import { guideSignal } from '#lib/onboarding/signals.js';
 	import { apiBgPresets, bgPresetGroups, type BgPresetSource } from './bg-presets';
 
 	/**
@@ -58,7 +59,14 @@
 	}
 </script>
 
-<IconButton icon="folder" size="sm" label={t('th.bg.browse')} {disabled} onclick={show} />
+<IconButton
+	icon="folder"
+	size="sm"
+	label={t('th.bg.browse')}
+	data-guide="theme-bg-preset"
+	{disabled}
+	onclick={show}
+/>
 
 <PickerDialog
 	{open}
@@ -69,6 +77,7 @@
 	currentLabel={t('th.bg.current')}
 	onchoose={(url) => {
 		onchoose(url);
+		guideSignal('theme.preset-chosen');
 		close();
 	}}
 	oncancel={close}

@@ -205,3 +205,9 @@ samp {
 	unicode-bidi: isolate;
 	direction: ltr;
 }
+
+/* Wraps a control the first-steps guide points at when the control cannot carry the hook itself
+   (a link styled as a button). It takes the control's size and adds nothing. */
+.guide-anchor {
+	display: inline-flex;
+}

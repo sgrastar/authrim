@@ -159,6 +159,7 @@ tags:
   - name: Admin Invitations
   - name: Admin Miscellaneous
   - name: Admin Notices
+  - name: Admin Onboarding
   - name: Admin Passkeys
   - name: Admin Policies
   - name: Admin ReBAC
@@ -34365,6 +34366,102 @@ paths:
                     $ref: '#/components/schemas/AdminNoticePreferences'
         '400':
           description: invalid_request with the offending field.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
+  /api/admin/me/onboarding:
+    get:
+      tags:
+        - Admin Onboarding
+      operationId: getApiAdminMeOnboarding
+      summary: The signed-in admin's first-steps checklist progress
+      description: >-
+        The checklist items the admin has finished in the admin console for the selected tenant.
+        Only the progress is kept; the items are the console's. Human sessions only.
+      x-authrim-route-coverage: inferred-from-source
+      responses:
+        '200':
+          description: The finished items.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminOnboardingProgress'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
+  /api/admin/me/onboarding/{item_id}:
+    put:
+      tags:
+        - Admin Onboarding
+      operationId: putApiAdminMeOnboardingItemId
+      summary: Mark a first-steps checklist item finished
+      description: >-
+        Finishing an item again keeps the first time. At most 50 finished items are kept per admin
+        and tenant.
+      x-authrim-route-coverage: inferred-from-source
+      parameters:
+        - name: item_id
+          in: path
+          required: true
+          description: Lowercase words joined by hyphens, 40 characters at most.
+          schema:
+            type: string
+            maxLength: 40
+            pattern: '^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$'
+      responses:
+        '200':
+          description: The finished items.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminOnboardingProgress'
+        '400':
+          description: invalid_request - item_id is not an item identifier.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: limit_reached - no more finished items can be kept for this tenant.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
+    delete:
+      tags:
+        - Admin Onboarding
+      operationId: deleteApiAdminMeOnboardingItemId
+      summary: Mark a first-steps checklist item not finished
+      description: Nothing happens when the item was not finished.
+      x-authrim-route-coverage: inferred-from-source
+      parameters:
+        - name: item_id
+          in: path
+          required: true
+          description: Lowercase words joined by hyphens, 40 characters at most.
+          schema:
+            type: string
+            maxLength: 40
+            pattern: '^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$'
+      responses:
+        '200':
+          description: The finished items.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminOnboardingProgress'
+        '400':
+          description: invalid_request - item_id is not an item identifier.
           content:
             application/json:
               schema:
@@ -82946,6 +83043,24 @@ components:
           type: integer
         updated_at:
           type: integer
+    AdminOnboardingProgress:
+      type: object
+      required:
+        - completed
+      properties:
+        completed:
+          type: array
+          items:
+            type: object
+            required:
+              - item_id
+              - completed_at
+            properties:
+              item_id:
+                type: string
+              completed_at:
+                type: integer
+                description: Epoch milliseconds.
     AdminNoticePreferences:
       type: object
       properties:
