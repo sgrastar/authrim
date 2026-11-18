@@ -234,7 +234,9 @@ export async function adminClientTrustPolicyUpsertHandler(c: Context<{ Bindings:
       statements.push({
         sql: `INSERT INTO client_trust_policies (id, tenant_id, name, display_name, description, target_type, target_id,
         first_party, trusted, skip_authorization_consent, is_active, created_at, updated_at)
-        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE ${guard}`,
+        SELECT CAST(? AS TEXT), CAST(? AS TEXT), CAST(? AS TEXT), CAST(? AS TEXT), CAST(? AS TEXT),
+          CAST(? AS TEXT), CAST(? AS TEXT), CAST(? AS INTEGER), CAST(? AS INTEGER), CAST(? AS INTEGER),
+          CAST(? AS INTEGER), CAST(? AS BIGINT), CAST(? AS BIGINT) WHERE ${guard}`,
         params: [
           crypto.randomUUID(),
           tenantId,

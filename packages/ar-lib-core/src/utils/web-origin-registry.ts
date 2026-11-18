@@ -315,7 +315,9 @@ export function clientOriginReplacementStatements(
     ...normalizeRegistryInput(payload).map((entry) => ({
       sql: `INSERT INTO web_origin_registry (id, tenant_id, client_id, origin, cors_allowed, csp_frame_ancestors,
         handoff_allowed, iframe_allowed, environment, is_active, created_at, updated_at)
-        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ? WHERE ${exists}`,
+        SELECT CAST(? AS TEXT), CAST(? AS TEXT), CAST(? AS TEXT), CAST(? AS TEXT), CAST(? AS INTEGER),
+          CAST(? AS TEXT), CAST(? AS INTEGER), CAST(? AS INTEGER), CAST(? AS TEXT), 1,
+          CAST(? AS BIGINT), CAST(? AS BIGINT) WHERE ${exists}`,
       params: [
         crypto.randomUUID(),
         tenantId,

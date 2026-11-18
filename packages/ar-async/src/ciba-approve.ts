@@ -190,7 +190,10 @@ export async function cibaApproveHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    if (!(await getClientCached(c, c.env, metadata.client_id)))
+    if (
+      (await getClientCached(c, c.env, metadata.client_id, { includeDisabled: true }))?.enabled ===
+      false
+    )
       return c.json({ error: 'invalid_client' }, 400);
 
     // Approve the request
@@ -211,7 +214,11 @@ export async function cibaApproveHandler(c: Context<{ Bindings: Env }>) {
     // Send ping mode notification if required
     if (metadata.delivery_mode === 'ping' && metadata.client_notification_endpoint) {
       getRequestCache(c).clients.delete(`${tenantId}:${metadata.client_id}`);
-      if (!(await getClientCached(c, c.env, metadata.client_id)))
+      getRequestCache(c).clients.delete(`${tenantId}:${metadata.client_id}:include-disabled`);
+      if (
+        (await getClientCached(c, c.env, metadata.client_id, { includeDisabled: true }))
+          ?.enabled === false
+      )
         return c.json({ error: 'invalid_client' }, 400);
       try {
         // Awaited inline: the approving person's request is held open until the client's endpoint

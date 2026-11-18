@@ -139,7 +139,7 @@ describe('CIBA approval security branches', () => {
   });
 
   it('refuses approval after the client was disabled without sending a decision or notification', async () => {
-    mocks.client.mockResolvedValue(null);
+    mocks.client.mockResolvedValue({ client_id: 'client-1', enabled: false });
     const response = await request({ auth_req_id: 'legacy-request-id' });
     expect(response.status).toBe(400);
     expect(await response.json()).toMatchObject({ error: 'invalid_client' });
@@ -324,7 +324,7 @@ describe('CIBA approval security branches', () => {
   it('does not send a ping if the client is disabled after approval', async () => {
     mocks.client
       .mockResolvedValueOnce({ client_id: 'client-1', enabled: true })
-      .mockResolvedValueOnce(null);
+      .mockResolvedValueOnce({ client_id: 'client-1', enabled: false });
     mocks.storeFetch.mockImplementation(async (input: Request) =>
       new URL(input.url).pathname === '/get-by-auth-req-id'
         ? Response.json(

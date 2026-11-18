@@ -189,7 +189,10 @@ async function handleVerificationSubmission(c: Context<{ Bindings: Env }>) {
     const mockUserId = 'user_' + Date.now();
     const mockSub = 'mock-user@example.com';
 
-    if (!(await getClientCached(c, c.env, metadata.client_id)))
+    if (
+      (await getClientCached(c, c.env, metadata.client_id, { includeDisabled: true }))?.enabled ===
+      false
+    )
       return c.json({ error: 'invalid_client' }, 400);
     const approveResponse = await deviceCodeStore.fetch(
       new Request('https://internal/approve', {

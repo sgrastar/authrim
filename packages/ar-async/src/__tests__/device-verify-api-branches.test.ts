@@ -190,7 +190,7 @@ describe('device verification API branch security', () => {
   });
 
   it('refuses approval after the client was disabled without sending a decision or notification', async () => {
-    mocks.client.mockResolvedValue(null);
+    mocks.client.mockResolvedValue({ client_id: 'client-1', enabled: false });
     const response = await request({ user_code: 'WDJB-MJHT' });
     expect(response.status).toBe(400);
     expect(await response.json()).toMatchObject({ error: 'invalid_client' });

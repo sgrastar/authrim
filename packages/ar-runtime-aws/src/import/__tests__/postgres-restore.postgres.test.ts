@@ -254,6 +254,7 @@ function loginUiRow(): PortableSqliteRow {
   return row('core.oauth_clients', {
     tenant_id: t('tenant-a'),
     client_id: t('login-ui'),
+    enabled: i(1),
     client_name: t('Login UI'),
     redirect_uris: t('[]'),
     grant_types: t('["authorization_code"]'),

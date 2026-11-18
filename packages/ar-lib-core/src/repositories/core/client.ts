@@ -1371,6 +1371,9 @@ export class ClientRepository {
     return {
       ...row,
       enabled: row.enabled === undefined ? true : Boolean(row.enabled),
+      // PostgreSQL drivers return BIGINT as strings; versions are compared as numbers.
+      created_at: Number(row.created_at),
+      updated_at: Number(row.updated_at),
       application_type: row.application_type ?? 'web',
       browser_refresh_token_policy: row.browser_refresh_token_policy ?? 'disabled',
       is_trusted: Boolean(row.is_trusted),

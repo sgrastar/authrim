@@ -86,7 +86,11 @@ export async function cibaConformanceActionHandler(c: Context<{ Bindings: Env }>
     return c.json({ error: 'invalid_request' }, 400);
   }
 
-  if (action === 'allow' && !(await getClientCached(c, c.env, metadata.client_id)))
+  if (
+    action === 'allow' &&
+    (await getClientCached(c, c.env, metadata.client_id, { includeDisabled: true }))?.enabled ===
+      false
+  )
     return c.json({ error: 'invalid_client' }, 400);
   const internalAction = action === 'allow' ? 'approve' : 'deny';
   const actionResponse = await store.fetch(

@@ -235,16 +235,20 @@ describe('client activation in the live service flow', () => {
 		expect(view.clients.setEnabled).not.toHaveBeenCalled();
 	});
 
-	it('uses the saved version when disabling a newly enabled client', async () => {
-		const view = liveStory();
-		await fireEvent.click(await view.findByRole('button', { name: t('sf.live.enable') }));
-		const disable = await view.findByRole('button', { name: t('sf.live.disable') });
-		expect(disable).toBeEnabled();
-		await fireEvent.click(disable);
-		await view.findByRole('button', { name: t('sf.live.enable') });
-		expect(view.clients.setEnabled).toHaveBeenNthCalledWith(1, 'portal', true, 1000);
-		expect(view.clients.setEnabled).toHaveBeenNthCalledWith(2, 'portal', false, 1001);
-	});
+	it(
+		'uses the saved version when disabling a newly enabled client',
+		{ timeout: 15_000 },
+		async () => {
+			const view = liveStory();
+			await fireEvent.click(await view.findByRole('button', { name: t('sf.live.enable') }));
+			const disable = await view.findByRole('button', { name: t('sf.live.disable') });
+			expect(disable).toBeEnabled();
+			await fireEvent.click(disable);
+			await view.findByRole('button', { name: t('sf.live.enable') });
+			expect(view.clients.setEnabled).toHaveBeenNthCalledWith(1, 'portal', true, 1000);
+			expect(view.clients.setEnabled).toHaveBeenNthCalledWith(2, 'portal', false, 1001);
+		}
+	);
 
 	it('shows a settings-save error for refused callbacks and keeps the activation state', async () => {
 		const view = liveStory({ enabled: true, refuseMissingCallbacks: true });

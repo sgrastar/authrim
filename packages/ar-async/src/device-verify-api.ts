@@ -174,7 +174,10 @@ export async function deviceVerifyApiHandler(c: Context<{ Bindings: Env }>) {
 
     // Handle approval or denial
     if (approve) {
-      if (!(await getClientCached(c, c.env, metadata.client_id)))
+      if (
+        (await getClientCached(c, c.env, metadata.client_id, { includeDisabled: true }))
+          ?.enabled === false
+      )
         return c.json({ error: 'invalid_client' }, 400);
 
       if ((userId || sub) && !mockAuthEnabled) {

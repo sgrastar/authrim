@@ -179,7 +179,7 @@ describe('protected customer profile default adapters', () => {
   it.each(['masked', 'summary_only'] as const)(
     'refuses an existing %s token while its client is disabled',
     async (redaction) => {
-      mocks.client.mockResolvedValue(null);
+      mocks.client.mockResolvedValue({ client_id: 'client-1', enabled: false });
       const response = await createApp().request(
         'http://localhost/profiles/user-1',
         { headers: { Authorization: `Bearer ${token(grantPayload(redaction))}` } },

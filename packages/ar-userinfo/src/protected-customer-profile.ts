@@ -828,7 +828,12 @@ async function verifyProtectedCustomerProfileToken(input: {
     audience: input.audience,
   });
   const clientId = payload.client_id ?? payload.azp;
-  if (typeof clientId !== 'string' || !(await getClientCached(input.c, input.c.env, clientId)))
+  // JWT bearer issuers need not have an OAuth client registration; a disabled one is refused.
+  if (
+    typeof clientId !== 'string' ||
+    (await getClientCached(input.c, input.c.env, clientId, { includeDisabled: true }))?.enabled ===
+      false
+  )
     throw new Error('Invalid token client');
   return payload;
 }
