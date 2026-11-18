@@ -23,6 +23,8 @@
 	import { SaveStopped } from '#lib/ui/save/save-scope.js';
 	import SaveScope from '#lib/ui/save/SaveScope.svelte';
 	import Page from '#lib/ui/templates/Page.svelte';
+	import CustomBlocksEditor from './CustomBlocksEditor.svelte';
+	import { BLOCKS_MAX } from './login-ui-custom-blocks';
 	import LiteLoginUiCard from './LiteLoginUiCard.svelte';
 	import {
 		automaticFirst,
@@ -45,8 +47,9 @@
 	 * 2. which is the default (a select limited to the languages shown),
 	 * 3. which are listed first (a second grid limited to those shown, up to six, from eleven on),
 	 * 4. whether the switch adds English names,
-	 * and the lite Login UI (LiteLoginUiCard): its switch, which takes effect at once through its
-	 * own route, and its logo, saved with the languages.
+	 * the lite Login UI (LiteLoginUiCard): its switch, which takes effect at once through its own
+	 * route, and its logo, saved with the languages; and the tenant's own content blocks around
+	 * the screens (CustomBlocksEditor), saved with them too.
 	 * Read from and saved to the `login-ui` settings of the tenant, with the version read, so
 	 * another admin's save in between is noticed, not overwritten. A language setting the platform
 	 * has fixed, or a page the admin may only look at, is shown as text.
@@ -360,6 +363,19 @@
 					/>
 				{/if}
 
+				<Card title={t('lu.blocks')} description={t('lu.blocks.desc', { max: BLOCKS_MAX })}>
+					{#if editable('customBlocks')}
+						<CustomBlocksEditor field="customBlocks" bind:blocks={draft.value.customBlocks} />
+					{:else}
+						{@render fixed(
+							'customBlocks',
+							draft.value.customBlocks.length === 0
+								? t('lu.blocks.none')
+								: t('lu.blocks.count', { n: draft.value.customBlocks.length })
+						)}
+					{/if}
+				</Card>
+
 				<Card title={t('lu.display')}>
 					{#if editable('englishNames')}
 						<Checkbox
@@ -388,7 +404,15 @@
 <!-- A setting shown as text: the admin may only look, or the platform has fixed it. -->
 {#snippet fixed(field: Exclude<LanguageField, 'liteLogo'>, text: string)}
 	<DetailList ruled>
-		<DetailItem label={t(`lu.${field === 'defaultLang' ? 'default' : field}`)}>
+		<DetailItem
+			label={t(
+				field === 'defaultLang'
+					? 'lu.default'
+					: field === 'customBlocks'
+						? 'lu.blocks'
+						: `lu.${field}`
+			)}
+		>
 			{text}
 			{#if locked.has(KEYS[field])}
 				<span class="login-ui__locked">{t('settings.locked.platform')}</span>

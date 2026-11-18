@@ -4,6 +4,7 @@
 	import { useLoginUIStores } from '#lib/stores/login-ui-context.js';
 	import { isValidImageUrl } from '#lib/utils/url-validation.js';
 	import ConfiguredFooter from './ConfiguredFooter.svelte';
+	import CustomBlocks from './CustomBlocks.svelte';
 	import LanguageSwitcher from './LanguageSwitcher.svelte';
 	import LocalizedTagline from './LocalizedTagline.svelte';
 
@@ -75,6 +76,11 @@
 			: null;
 	});
 	const BAR_ZONES = ['left', 'center', 'right'] as const;
+	/** With a header bar, "above the header" is above the bar: a row of the page, not of the card. */
+	const aboveBarBlocks = $derived(
+		loginUIPageStore.headerBar &&
+			loginUIPageStore.customBlocks.some((block) => block.position === 'above-header')
+	);
 </script>
 
 {#snippet footerTools()}
@@ -90,6 +96,7 @@
 	data-branding-loaded={brand ? '' : undefined}
 	class:auth-page--has-footer={loginUIPageStore.footerEnabled}
 	class:auth-page--header-bar={loginUIPageStore.headerBar}
+	class:auth-page--above-header={aboveBarBlocks}
 	class:auth-page--footer-bar={loginUIPageStore.footerBar}
 	data-has-link-color={loginUIPageStore.linkColor ? 'true' : undefined}
 	style:--login-link-color={loginUIPageStore.linkColor || undefined}
@@ -153,6 +160,7 @@
 	{#if loginUIPageStore.backgroundImageFilter}<span class="auth-image-filter" aria-hidden="true"
 		></span>{/if}
 	{#if loginUIPageStore.headerBar}
+		<CustomBlocks position="above-header" />
 		<!-- The header bar runs along the top of the whole page (over the brand panel too): the brand
 		     at its start, middle or end, and the choices on their side when they sit in it. -->
 		<header class="auth-bar auth-bar--header" data-align={loginUIPageStore.headerAlign}>
@@ -239,6 +247,9 @@
 			{#if !showVisibleHeading}
 				<h1 class="sr-only">{brandName || $LL.app_title()}</h1>
 			{/if}
+			{#if !loginUIPageStore.headerBar}
+				<CustomBlocks position="above-header" />
+			{/if}
 			{#if loginUIPageStore.headerEnabled && !loginUIPageStore.headerBar}
 				<header class="auth-header">
 					{#if showBrandLogo && brandLogoUrl}
@@ -270,7 +281,9 @@
 				/>
 			{/if}
 
+			<CustomBlocks position="above-form" />
 			{@render children()}
+			<CustomBlocks position="below-form" />
 
 			{#if loginUIPageStore.showTopbar && topbarInForm}
 				<LanguageSwitcher
@@ -286,4 +299,5 @@
 		tools={topbarInBar?.bar === 'footer' ? footerTools : undefined}
 		toolsSide={topbarInBar?.bar === 'footer' ? topbarInBar.side : undefined}
 	/>
+	<CustomBlocks position="below-footer" />
 </div>
