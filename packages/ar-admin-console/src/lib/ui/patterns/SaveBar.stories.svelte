@@ -23,9 +23,9 @@
 <Story
 	name="Unsaved changes"
 	play={async ({ canvasElement }) => {
-		// Save is the action to take, and its frame pulses slowly.
+		// Save is the action to take, and its frame is marked (a slow pulse; Button's own story).
 		const save = within(canvasElement).getByRole('button', { name: t('common.save') });
-		await expect(getComputedStyle(save).animationName).toContain('btn-attention');
+		await expect(save).toHaveClass('btn--attention');
 	}}
 />
 
@@ -35,7 +35,7 @@
 	play={async ({ canvasElement }) => {
 		// Running: nothing to press, so nothing to draw the eye to.
 		const save = within(canvasElement).getByRole('button', { name: t('common.saving') });
-		await expect(getComputedStyle(save).animationName).toBe('none');
+		await expect(save).not.toHaveClass('btn--attention');
 	}}
 />
 
@@ -45,6 +45,6 @@
 	play={async ({ canvasElement }) => {
 		// The bar is asking for a fix first: Save does not pulse.
 		const save = within(canvasElement).getByRole('button', { name: t('common.save') });
-		await expect(getComputedStyle(save).animationName).toBe('none');
+		await expect(save).not.toHaveClass('btn--attention');
 	}}
 />

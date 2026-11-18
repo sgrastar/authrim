@@ -58,10 +58,16 @@ export default defineConfig({
 				plugins: [storybookTest({ configDir: `${dirname}.storybook` })],
 				test: {
 					name: 'storybook',
+					// A zero-length transition is the last guard: a colour that is still changing would
+					// be measured half-way by the contrast check.
+					setupFiles: ['./.storybook/vitest.setup.ts'],
 					browser: {
 						enabled: true,
 						headless: true,
-						provider: playwright(),
+						// Check each story in its settled state. With reduced motion the console skips
+						// its entry reveal, toast fly-in and theme wash, so the accessibility check
+						// never reads a colour part-way through a fade on a slow machine.
+						provider: playwright({ contextOptions: { reducedMotion: 'reduce' } }),
 						instances: [{ browser: 'chromium' }]
 					}
 				}
