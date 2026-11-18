@@ -242,7 +242,12 @@ function stableFailureCode(error: unknown): string {
   if (message.includes('signature') || message.includes('trust profile')) {
     return 'metadata_verification_failed';
   }
-  if (message.includes('does not contain entityID')) return 'federation_entity_missing';
+  if (
+    message.includes('does not contain entityID') ||
+    message.includes('federation_entity_missing')
+  ) {
+    return 'federation_entity_missing';
+  }
   if (message.includes('metadata_refresh_conflict')) return 'metadata_refresh_conflict';
   if (message.includes('metadata_refresh_superseded')) return 'metadata_refresh_superseded';
   if (message.includes('federation_trust_context_changed')) {

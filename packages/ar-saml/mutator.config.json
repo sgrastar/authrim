@@ -1,0 +1,10 @@
+{
+  "$schema": "../../node_modules/@mizchi/mutator/schema/mutator.config.schema.json",
+  "exclude": [
+    "src/**/__tests__/**",
+    "src/**/__fixtures__/**",
+    "src/**/*.test.ts",
+    "src/**/*.d.ts",
+    "src/index.ts"
+  ]
+}
