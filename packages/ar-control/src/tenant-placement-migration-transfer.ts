@@ -237,6 +237,63 @@ export async function readTenantMigrationBackfillPage(input: {
   };
 }
 
+/**
+ * Before a tenant's consent statements are copied, the target's installed default statements
+ * (core migration 013, ids `cst_default_…`) are removed, with their versions, texts and
+ * projection jobs, and so are its installed versions (`csv_default_…`) and their texts. A fresh
+ * target's baseline tenant has them; the copy is verified against the source's rows only, and
+ * the source may hold its own statement under the same key, have changed a default one's key,
+ * published a later version or deleted them. The source's own copies, if any, are copied after.
+ *
+ * Once per operation: the removal and a marker row (`migration_metadata`, local to the target and
+ * never copied or backed up) are one batch, and every removal is void once the marker exists, so
+ * a retry or a run resumed late removes nothing the copy has written since.
+ */
+export async function pruneTargetInstalledConsentStatements(input: {
+  executor: TenantMigrationTransferExecutor;
+  targetDatabaseId: string;
+  operationId: string;
+  tenantId: string;
+}): Promise<void> {
+  const marker = `tenant_placement_consent_seed_pruned:${input.operationId}`;
+  const unmarked = `NOT EXISTS (SELECT 1 FROM migration_metadata WHERE id = ?)`;
+  const installed = `SELECT id FROM consent_statements
+    WHERE tenant_id = ? AND substr(id, 1, 12) = 'cst_default_'`;
+  const installedVersions = `SELECT id FROM consent_statement_versions
+    WHERE tenant_id = ? AND (substr(id, 1, 12) = 'csv_default_' OR statement_id IN (${installed}))`;
+  const tenant = input.tenantId;
+  const results = await input.executor.queryD1Batch(input.targetDatabaseId, [
+    {
+      sql: `DELETE FROM statement_consent_projection_jobs
+             WHERE tenant_id = ? AND statement_id IN (${installed}) AND ${unmarked}`,
+      params: [tenant, tenant, marker],
+    },
+    {
+      sql: `DELETE FROM consent_statement_localizations
+             WHERE tenant_id = ? AND version_id IN (${installedVersions}) AND ${unmarked}`,
+      params: [tenant, tenant, tenant, marker],
+    },
+    {
+      sql: `DELETE FROM consent_statement_versions
+             WHERE tenant_id = ? AND id IN (${installedVersions}) AND ${unmarked}`,
+      params: [tenant, tenant, tenant, marker],
+    },
+    {
+      sql: `DELETE FROM consent_statements
+             WHERE tenant_id = ? AND id IN (${installed}) AND ${unmarked}`,
+      params: [tenant, tenant, marker],
+    },
+    {
+      sql: `INSERT INTO migration_metadata (id, current_version, metadata_json)
+            SELECT ?, 0, ? WHERE ${unmarked}`,
+      params: [marker, JSON.stringify({ tenant_id: tenant }), marker],
+    },
+  ]);
+  if (results.length !== 5 || results.some((result) => result.success !== true)) {
+    throw new Error('tenant_migration_consent_seed_prune_failed');
+  }
+}
+
 export async function applyTenantMigrationBackfillPage(input: {
   executor: TenantMigrationTransferExecutor;
   targetDatabaseId: string;

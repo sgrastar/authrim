@@ -13,6 +13,7 @@ import {
 import { buildTenantMigrationCapturePlan } from './tenant-placement-migration-capture';
 import {
   applyTenantMigrationBackfillPage,
+  pruneTargetInstalledConsentStatements,
   applyTenantMigrationOutboxBatch,
   buildTenantMigrationPurgeQuery,
   readTenantMigrationBackfillPage,
@@ -995,6 +996,14 @@ export class TenantPlacementMigrationReconciler {
       tenantKey,
       cursor: primaryCursor ?? null,
     });
+    if (table.table === 'consent_statements' && primaryCursor == null) {
+      await pruneTargetInstalledConsentStatements({
+        executor: this.d1,
+        targetDatabaseId: targetDatabaseId(route),
+        operationId: operation.operation_id,
+        tenantId: operation.tenant_id,
+      });
+    }
     await applyTenantMigrationBackfillPage({
       executor: this.d1,
       targetDatabaseId: targetDatabaseId(route),

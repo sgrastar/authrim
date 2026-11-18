@@ -5798,6 +5798,94 @@ WHERE tenant_id = 'default'
   AND EXISTS (SELECT 1 FROM tenants WHERE id = ${tenantIdSql})
   AND NOT EXISTS (SELECT 1 FROM tenants WHERE id = 'default');
 
+-- Core migration 013 gives the fresh baseline's 'default' tenant its terms of service and privacy
+-- policy; they move with a renamed initial tenant. One the destination already has (an
+-- idempotent setup resume) is kept and the 'default' copy dropped (its version and texts with it).
+DELETE FROM statement_consent_projection_jobs
+WHERE tenant_id = 'default'
+  AND ${tenantIdSql} <> 'default'
+  AND EXISTS (SELECT 1 FROM tenants WHERE id = ${tenantIdSql})
+  AND NOT EXISTS (SELECT 1 FROM tenants WHERE id = 'default')
+  AND statement_id IN (
+    SELECT d.id FROM consent_statements d
+    WHERE d.tenant_id = 'default'
+      AND EXISTS (
+        SELECT 1 FROM consent_statements target
+        WHERE target.tenant_id = ${tenantIdSql}
+          AND (target.slug = d.slug OR target.category = d.category)
+      )
+  );
+
+DELETE FROM consent_statement_localizations
+WHERE tenant_id = 'default'
+  AND ${tenantIdSql} <> 'default'
+  AND EXISTS (SELECT 1 FROM tenants WHERE id = ${tenantIdSql})
+  AND NOT EXISTS (SELECT 1 FROM tenants WHERE id = 'default')
+  AND version_id IN (
+    SELECT v.id FROM consent_statement_versions v
+    JOIN consent_statements d ON d.tenant_id = v.tenant_id AND d.id = v.statement_id
+    WHERE v.tenant_id = 'default'
+      AND EXISTS (
+        SELECT 1 FROM consent_statements target
+        WHERE target.tenant_id = ${tenantIdSql}
+          AND (target.slug = d.slug OR target.category = d.category)
+      )
+  );
+
+DELETE FROM consent_statement_versions
+WHERE tenant_id = 'default'
+  AND ${tenantIdSql} <> 'default'
+  AND EXISTS (SELECT 1 FROM tenants WHERE id = ${tenantIdSql})
+  AND NOT EXISTS (SELECT 1 FROM tenants WHERE id = 'default')
+  AND statement_id IN (
+    SELECT d.id FROM consent_statements d
+    WHERE d.tenant_id = 'default'
+      AND EXISTS (
+        SELECT 1 FROM consent_statements target
+        WHERE target.tenant_id = ${tenantIdSql}
+          AND (target.slug = d.slug OR target.category = d.category)
+      )
+  );
+
+DELETE FROM consent_statements
+WHERE tenant_id = 'default'
+  AND ${tenantIdSql} <> 'default'
+  AND EXISTS (SELECT 1 FROM tenants WHERE id = ${tenantIdSql})
+  AND NOT EXISTS (SELECT 1 FROM tenants WHERE id = 'default')
+  AND EXISTS (
+    SELECT 1 FROM consent_statements target
+    WHERE target.tenant_id = ${tenantIdSql}
+      AND (target.slug = consent_statements.slug OR target.category = consent_statements.category)
+  );
+
+UPDATE consent_statements
+SET tenant_id = ${tenantIdSql}
+WHERE tenant_id = 'default'
+  AND ${tenantIdSql} <> 'default'
+  AND EXISTS (SELECT 1 FROM tenants WHERE id = ${tenantIdSql})
+  AND NOT EXISTS (SELECT 1 FROM tenants WHERE id = 'default');
+
+UPDATE consent_statement_versions
+SET tenant_id = ${tenantIdSql}
+WHERE tenant_id = 'default'
+  AND ${tenantIdSql} <> 'default'
+  AND EXISTS (SELECT 1 FROM tenants WHERE id = ${tenantIdSql})
+  AND NOT EXISTS (SELECT 1 FROM tenants WHERE id = 'default');
+
+UPDATE consent_statement_localizations
+SET tenant_id = ${tenantIdSql}
+WHERE tenant_id = 'default'
+  AND ${tenantIdSql} <> 'default'
+  AND EXISTS (SELECT 1 FROM tenants WHERE id = ${tenantIdSql})
+  AND NOT EXISTS (SELECT 1 FROM tenants WHERE id = 'default');
+
+UPDATE statement_consent_projection_jobs
+SET tenant_id = ${tenantIdSql}
+WHERE tenant_id = 'default'
+  AND ${tenantIdSql} <> 'default'
+  AND EXISTS (SELECT 1 FROM tenants WHERE id = ${tenantIdSql})
+  AND NOT EXISTS (SELECT 1 FROM tenants WHERE id = 'default');
+
 INSERT INTO tenants (
   id, tenant_code, tenant_key, name, description, lifecycle_state, is_default,
   default_tenant_guard, created_at, updated_at, isolation_policy

@@ -77,6 +77,10 @@ export const PHASE8_INSTALLED_TENANT_SEED_DATASETS = [
   'admin.field_catalogs',
   'admin.tenant_runtime_cache_generations',
   'admin.tenant_settings_documents',
+  // Core migration 013's terms of service and privacy policy (the baseline tenant's).
+  'core.consent_statement_localizations',
+  'core.consent_statement_versions',
+  'core.consent_statements',
   'core.custom_claim_schemas',
   'core.flow_assignments',
   'core.flow_versions',

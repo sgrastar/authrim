@@ -42,9 +42,10 @@ function render(sql: string): string {
 /** The core schema with every migration before `until` (or all of them) applied. */
 function coreDatabase(until?: string): SQLiteDatabase {
   const db = new DatabaseSync(':memory:');
-  const files = until
-    ? listMigrationSourceFiles(MIGRATIONS).filter((name) => name < until)
-    : ['001_0_5_0_core_baseline.sql'];
+  // The history before `until`, in the order it was applied (the 0.4.0 series): files of the
+  // later series sort among it by name but were never applied to that schema.
+  const history = listMigrationSourceFiles(MIGRATIONS);
+  const files = until ? history.slice(0, history.indexOf(until)) : ['001_0_5_0_core_baseline.sql'];
   for (const file of files) {
     db.exec(render(readMigrationSource(MIGRATIONS, file)));
   }
