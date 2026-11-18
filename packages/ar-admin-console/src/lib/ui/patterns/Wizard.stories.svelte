@@ -87,7 +87,7 @@
 	play={async ({ canvasElement }) => {
 		const next = within(canvasElement).getByRole('button', { name: t('wizard.next') });
 		await expect(next).toBeDisabled();
-		await expect(getComputedStyle(next).animationName).toBe('none');
+		await expect(next).not.toHaveClass('btn--attention');
 	}}
 >
 	{#snippet template(args)}
@@ -106,10 +106,11 @@
 	play={async ({ canvasElement }) => {
 		const next = within(canvasElement).getByRole('button', { name: t('wizard.next') });
 		await expect(next).toBeEnabled();
-		await expect(getComputedStyle(next).animationName).toContain('btn-attention');
+		// The mark itself (a pulse, or a still frame with reduced motion) is Button's own story.
+		await expect(next).toHaveClass('btn--attention');
 		// Back is not the action to take.
 		const back = within(canvasElement).getByRole('button', { name: t('wizard.back') });
-		await expect(getComputedStyle(back).animationName).toBe('none');
+		await expect(back).not.toHaveClass('btn--attention');
 	}}
 >
 	{#snippet template(args)}
