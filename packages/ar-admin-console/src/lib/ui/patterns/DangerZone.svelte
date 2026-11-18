@@ -11,10 +11,20 @@
 		actionLabel: string;
 		confirmTitle: string;
 		confirmBody: string;
+		/** Another operation of the page is running: the action cannot be started meanwhile. */
+		disabled?: boolean;
 		onconfirm: () => Promise<void> | void;
 	}
 
-	let { title, description, actionLabel, confirmTitle, confirmBody, onconfirm }: Props = $props();
+	let {
+		title,
+		description,
+		actionLabel,
+		confirmTitle,
+		confirmBody,
+		disabled = false,
+		onconfirm
+	}: Props = $props();
 
 	let open = $state(false);
 	let busy = $state(false);
@@ -35,7 +45,9 @@
 		<h2>{title}</h2>
 		<p>{description}</p>
 	</div>
-	<Button variant="danger" icon="trash" onclick={() => (open = true)}>{actionLabel}</Button>
+	<Button variant="danger" icon="trash" {disabled} onclick={() => (open = true)}
+		>{actionLabel}</Button
+	>
 </section>
 
 <ConfirmDialog

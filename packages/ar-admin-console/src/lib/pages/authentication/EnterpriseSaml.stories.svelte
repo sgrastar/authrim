@@ -2,6 +2,7 @@
 	import { defineMeta } from '@storybook/addon-svelte-csf';
 	import { expect, within } from 'storybook/test';
 	import { adminAccess } from '#lib/access/admin-access.svelte.js';
+	import { createFakeSamlSettings } from '#lib/api/fake/saml-settings-fake.js';
 	import { createFakeSettings } from '#lib/api/fake/settings-fake.js';
 	import { t } from '#lib/i18n/i18n.svelte.js';
 	import { settingText } from '#lib/settings/setting-text.js';
@@ -16,7 +17,7 @@
 			docs: {
 				description: {
 					component:
-						'Authentication → SAML: whether the tenant answers SAML at all (on by default), how long the assertions it issues and the requests it handles stay valid, and the NameID format and bindings a new SAML provider starts from. Built from the Settings API `federation` settings by its placement (`ENTERPRISE_SAML` in `settings/placement.ts`). Turning SAML off refuses the SAML endpoints and metadata but keeps the registered providers. The Artifact binding settings are not on the page until that binding exists.'
+						'Authentication → SAML: whether the tenant answers SAML at all (on by default), how long the assertions it issues and the requests it handles stay valid, and the NameID format and bindings a new SAML provider starts from. Built from the Settings API `federation` settings by its placement (`ENTERPRISE_SAML` in `settings/placement.ts`). Turning SAML off refuses the SAML endpoints and metadata but keeps the registered providers. The Artifact binding settings are not on the page until that binding exists. Below the settings sits the tenant’s own SAML identity (Pages/Authentication/SAML identity): entity IDs and metadata per role, signing certificates and their rollover, the published entity ID style, and the signing-key DR bundle.'
 				}
 			}
 		}
@@ -45,7 +46,7 @@
 	}}
 >
 	{#snippet template()}
-		<EnterpriseSaml client={settings()} tenantId={TENANT} />
+		<EnterpriseSaml client={settings()} saml={createFakeSamlSettings()} tenantId={TENANT} />
 	{/snippet}
 </Story>
 
@@ -58,7 +59,11 @@
 	}}
 >
 	{#snippet template()}
-		<EnterpriseSaml client={settings({ 'federation.saml_enabled': false })} tenantId={TENANT} />
+		<EnterpriseSaml
+			client={settings({ 'federation.saml_enabled': false })}
+			saml={createFakeSamlSettings()}
+			tenantId={TENANT}
+		/>
 	{/snippet}
 </Story>
 
@@ -76,6 +81,7 @@
 				'federation.saml_nameid_format': 'persistent',
 				'federation.saml_assertion_ttl': 120
 			})}
+			saml={createFakeSamlSettings()}
 			tenantId={TENANT}
 		/>
 	{/snippet}
