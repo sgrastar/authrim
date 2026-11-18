@@ -115,6 +115,7 @@ export const POSTGRES_RESTORE_TABLE_CONTRACTS: readonly PostgresRestoreTableCont
       'device_secret_introspection_trust_groups',
       'identity_mapping',
       'information_release_consent',
+      'enabled',
       'authorization_signed_response_alg',
       'authorization_encrypted_response_alg',
       'authorization_encrypted_response_enc',
@@ -130,6 +131,7 @@ export const POSTGRES_RESTORE_TABLE_CONTRACTS: readonly PostgresRestoreTableCont
       'minimum_ial',
     ],
     sqliteIntegerColumns: [
+      'enabled',
       'token_exchange_allowed',
       'client_credentials_allowed',
       'created_at',

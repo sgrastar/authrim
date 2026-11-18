@@ -6120,7 +6120,7 @@ describe('Admin API Handlers', () => {
     it('should return client details', async () => {
       const clientId = 'test-client';
       const mockDB = createMockDB({
-        firstResult: {
+        firstResult: createOAuthClientRow(clientId, {
           client_id: clientId,
           client_name: 'Test Client',
           client_secret: 'secret-hash',
@@ -6130,7 +6130,7 @@ describe('Admin API Handlers', () => {
           scope: 'openid profile email',
           created_at: Date.now(),
           updated_at: Date.now(),
-        },
+        }),
       });
 
       const c = createMockContext({
@@ -6176,7 +6176,7 @@ describe('Admin API Handlers', () => {
     it('should normalize JSON fields in response', async () => {
       const clientId = 'json-normalize-client';
       const mockDB = createMockDB({
-        firstResult: {
+        firstResult: createOAuthClientRow(clientId, {
           client_id: clientId,
           client_name: 'Normalize Client',
           redirect_uris: '["https://a.com","https://b.com"]',
@@ -6186,7 +6186,7 @@ describe('Admin API Handlers', () => {
           contacts: '["admin@example.com"]',
           created_at: Date.now(),
           updated_at: Date.now(),
-        },
+        }),
       });
 
       const c = createMockContext({
@@ -6268,13 +6268,14 @@ describe('Admin API Handlers', () => {
   });
 
   describe('adminClientCreateHandler', () => {
-    it('should require redirect_uris', async () => {
+    it('accepts omitted redirect_uris for later callback configuration in a draft', async () => {
       const mockDB = createMockDB({});
 
       const c = createMockContext({
         method: 'POST',
         body: {
           client_name: 'Client without URIs',
+          enabled: false,
         },
         db: mockDB,
       });
@@ -6283,10 +6284,13 @@ describe('Admin API Handlers', () => {
 
       expect(c.json).toHaveBeenCalledWith(
         expect.objectContaining({
-          error: 'invalid_request',
-          error_description: expect.stringContaining('redirect_uris'),
+          client: expect.objectContaining({
+            redirect_uris: [],
+            enabled: false,
+            enable_blockers: ['redirect_uris'],
+          }),
         }),
-        400
+        201
       );
     });
 
@@ -7152,14 +7156,14 @@ describe('Admin API Handlers', () => {
           [null, null],
         ] as const) {
           const mockDB = createMockDB({
-            firstResult: {
+            firstResult: createOAuthClientRow('assurance-client', {
               client_id: 'assurance-client',
               client_name: 'Existing Client',
               redirect_uris: '["https://example.com/callback"]',
               grant_types: '["authorization_code"]',
               response_types: '["code"]',
               minimum_ial: given === null ? 'IAL2' : null,
-            },
+            }),
             runResult: { success: true },
           });
           const c = createMockContext({
@@ -7181,14 +7185,14 @@ describe('Admin API Handlers', () => {
 
       it('leaves the minimum alone when an update does not mention it', async () => {
         const mockDB = createMockDB({
-          firstResult: {
+          firstResult: createOAuthClientRow('assurance-client', {
             client_id: 'assurance-client',
             client_name: 'Existing Client',
             redirect_uris: '["https://example.com/callback"]',
             grant_types: '["authorization_code"]',
             response_types: '["code"]',
             minimum_ial: 'IAL2',
-          },
+          }),
           runResult: { success: true },
         });
         const c = createMockContext({
@@ -7207,13 +7211,13 @@ describe('Admin API Handlers', () => {
         'refuses %j as a minimum on update, leaving the stored one',
         async (minimum_ial) => {
           const mockDB = createMockDB({
-            firstResult: {
+            firstResult: createOAuthClientRow('assurance-client', {
               client_id: 'assurance-client',
               client_name: 'Existing Client',
               redirect_uris: '["https://example.com/callback"]',
               grant_types: '["authorization_code"]',
               response_types: '["code"]',
-            },
+            }),
             runResult: { success: true },
           });
           const c = createMockContext({
@@ -7390,9 +7394,8 @@ describe('Admin API Handlers', () => {
 
       expect(c.json).toHaveBeenCalledWith(
         expect.objectContaining({
-          error: 'invalid_request',
-          error_description:
-            'require_pkce must be true for public clients using the authorization_code grant',
+          error: 'client_configuration_required_to_enable',
+          missing: ['require_pkce'],
         }),
         400
       );
@@ -7529,13 +7532,13 @@ describe('Admin API Handlers', () => {
     it('should reject legacy app_suite in admin client update', async () => {
       const clientId = 'legacy-client-update';
       const mockDB = createMockDB({
-        firstResult: {
+        firstResult: createOAuthClientRow(clientId, {
           client_id: clientId,
           client_name: 'Existing Client',
           redirect_uris: '["https://example.com/callback"]',
           grant_types: '["authorization_code"]',
           response_types: '["code"]',
-        },
+        }),
       });
 
       const c = createMockContext({
@@ -7563,14 +7566,14 @@ describe('Admin API Handlers', () => {
 
     it('lets an Agent Access connection keep its loopback redirect, by its stored scopes', async () => {
       const mockDB = createMockDB({
-        firstResult: {
+        firstResult: createOAuthClientRow('agent-connection', {
           client_id: 'agent-connection',
           client_name: 'MCP client',
           redirect_uris: '["http://localhost:18080/callback"]',
           grant_types: '["authorization_code","refresh_token"]',
           response_types: '["code"]',
           requestable_scopes: '["agent:read"]',
-        },
+        }),
       });
       const c = createMockContext({
         method: 'PUT',
@@ -7586,14 +7589,14 @@ describe('Admin API Handlers', () => {
 
     it('checks a cleared application type as web', async () => {
       const mockDB = createMockDB({
-        firstResult: {
+        firstResult: createOAuthClientRow('native-app', {
           client_id: 'native-app',
           client_name: 'Native app',
           application_type: 'native',
           redirect_uris: '["http://127.0.0.1:49152/callback"]',
           grant_types: '["authorization_code"]',
           response_types: '["code"]',
-        },
+        }),
       });
       const c = createMockContext({
         method: 'PUT',
@@ -7609,13 +7612,13 @@ describe('Admin API Handlers', () => {
 
     it('recognizes agent scopes as the scope validation reads them (trimmed)', async () => {
       const mockDB = createMockDB({
-        firstResult: {
+        firstResult: createOAuthClientRow('agent-connection', {
           client_id: 'agent-connection',
           client_name: 'MCP client',
           redirect_uris: '["http://localhost:18080/callback"]',
           grant_types: '["authorization_code","refresh_token"]',
           response_types: '["code"]',
-        },
+        }),
       });
       const c = createMockContext({
         method: 'PUT',
@@ -7631,7 +7634,7 @@ describe('Admin API Handlers', () => {
 
     it('checks the redirect URIs again when an Agent Access connection loses its agent scopes', async () => {
       const mockDB = createMockDB({
-        firstResult: {
+        firstResult: createOAuthClientRow('former-agent', {
           client_id: 'former-agent',
           client_name: 'MCP client',
           redirect_uris: '["https://example.com/callback"]',
@@ -7639,7 +7642,7 @@ describe('Admin API Handlers', () => {
           response_types: '["code"]',
           scope: 'openid',
           requestable_scopes: '["agent:read"]',
-        },
+        }),
       });
       const c = createMockContext({
         method: 'PUT',
@@ -7655,13 +7658,13 @@ describe('Admin API Handlers', () => {
 
     it('refuses another ID token algorithm while the tenant signs every ID token with its own', async () => {
       const mockDB = createMockDB({
-        firstResult: {
+        firstResult: createOAuthClientRow('client-locked-alg', {
           client_id: 'client-locked-alg',
           client_name: 'Existing Client',
           redirect_uris: '["https://example.com/callback"]',
           grant_types: '["authorization_code"]',
           response_types: '["code"]',
-        },
+        }),
       });
       const c = createMockContext({
         method: 'PUT',
@@ -7699,21 +7702,25 @@ describe('Admin API Handlers', () => {
       (mockDB as any)._mockStatement.first.mockImplementation(() => {
         queryCount++;
         if (queryCount === 1) {
-          return Promise.resolve({
+          return Promise.resolve(
+            createOAuthClientRow(clientId, {
+              client_id: clientId,
+              client_name: 'Old Name',
+              redirect_uris: '["https://old.com/cb"]',
+              grant_types: '["authorization_code"]',
+              response_types: '["code"]',
+            })
+          );
+        }
+        return Promise.resolve(
+          createOAuthClientRow(clientId, {
             client_id: clientId,
-            client_name: 'Old Name',
-            redirect_uris: '["https://old.com/cb"]',
+            client_name: 'Updated Client Name',
+            redirect_uris: '["https://new.com/callback"]',
             grant_types: '["authorization_code"]',
             response_types: '["code"]',
-          });
-        }
-        return Promise.resolve({
-          client_id: clientId,
-          client_name: 'Updated Client Name',
-          redirect_uris: '["https://new.com/callback"]',
-          grant_types: '["authorization_code"]',
-          response_types: '["code"]',
-        });
+          })
+        );
       });
 
       const c = createMockContext({
@@ -7736,6 +7743,8 @@ describe('Admin API Handlers', () => {
           client: expect.objectContaining({
             client_id: clientId,
             client_name: 'Updated Client Name',
+            enabled: true,
+            enable_blockers: [],
           }),
         })
       );
@@ -7784,39 +7793,43 @@ describe('Admin API Handlers', () => {
       (mockDB as any)._mockStatement.first.mockImplementation(() => {
         queryCount++;
         if (queryCount === 1) {
-          return Promise.resolve({
+          return Promise.resolve(
+            createOAuthClientRow(clientId, {
+              client_id: clientId,
+              client_name: 'Existing Client',
+              redirect_uris: '["https://example.com/callback"]',
+              grant_types: '["authorization_code"]',
+              response_types: '["code"]',
+              token_exchange_allowed: 0,
+              allowed_subject_token_clients: null,
+              allowed_token_exchange_resources: null,
+              delegation_mode: 'none',
+              client_credentials_allowed: 0,
+              allowed_scopes: '["openid"]',
+              requestable_scopes: '["agent:read"]',
+              default_scope: 'openid',
+              default_audience: null,
+            })
+          );
+        }
+        return Promise.resolve(
+          createOAuthClientRow(clientId, {
             client_id: clientId,
             client_name: 'Existing Client',
             redirect_uris: '["https://example.com/callback"]',
             grant_types: '["authorization_code"]',
             response_types: '["code"]',
-            token_exchange_allowed: 0,
-            allowed_subject_token_clients: null,
-            allowed_token_exchange_resources: null,
-            delegation_mode: 'none',
-            client_credentials_allowed: 0,
-            allowed_scopes: '["openid"]',
-            requestable_scopes: '["agent:read"]',
-            default_scope: 'openid',
-            default_audience: null,
-          });
-        }
-        return Promise.resolve({
-          client_id: clientId,
-          client_name: 'Existing Client',
-          redirect_uris: '["https://example.com/callback"]',
-          grant_types: '["authorization_code"]',
-          response_types: '["code"]',
-          token_exchange_allowed: 1,
-          allowed_subject_token_clients: '["svc-client-a"]',
-          allowed_token_exchange_resources: '["svc://op-userinfo/customer-profile"]',
-          delegation_mode: 'delegation',
-          client_credentials_allowed: 1,
-          allowed_scopes: '["openid","profile"]',
-          requestable_scopes: '["agent:read","agent:write"]',
-          default_scope: 'openid profile',
-          default_audience: 'svc://op-userinfo/customer-profile',
-        });
+            token_exchange_allowed: 1,
+            allowed_subject_token_clients: '["svc-client-a"]',
+            allowed_token_exchange_resources: '["svc://op-userinfo/customer-profile"]',
+            delegation_mode: 'delegation',
+            client_credentials_allowed: 1,
+            allowed_scopes: '["openid","profile"]',
+            requestable_scopes: '["agent:read","agent:write"]',
+            default_scope: 'openid profile',
+            default_audience: 'svc://op-userinfo/customer-profile',
+          })
+        );
       });
 
       const c = createMockContext({
@@ -7863,13 +7876,13 @@ describe('Admin API Handlers', () => {
         saved: { token_exchange_allowed: number; delegation_mode: string }
       ) => {
         const clientId = 'client-ceiling-update';
-        const row = {
+        const row = createOAuthClientRow(clientId, {
           client_id: clientId,
           client_name: 'Existing Client',
           redirect_uris: '["https://example.com/callback"]',
           grant_types: '["authorization_code"]',
           response_types: '["code"]',
-        };
+        });
         const mockDB = createMockDB({ runResult: { success: true, meta: { changes: 1 } } });
         let queryCount = 0;
         (mockDB as any)._mockStatement.first.mockImplementation(() => {
@@ -7928,34 +7941,38 @@ describe('Admin API Handlers', () => {
       (mockDB as any)._mockStatement.first.mockImplementation(() => {
         queryCount++;
         if (queryCount === 1) {
-          return Promise.resolve({
+          return Promise.resolve(
+            createOAuthClientRow(clientId, {
+              client_id: clientId,
+              client_name: 'Existing Client',
+              redirect_uris: '["https://example.com/callback"]',
+              grant_types: '["authorization_code"]',
+              response_types: '["code"]',
+            })
+          );
+        }
+        return Promise.resolve(
+          createOAuthClientRow(clientId, {
             client_id: clientId,
             client_name: 'Existing Client',
             redirect_uris: '["https://example.com/callback"]',
             grant_types: '["authorization_code"]',
             response_types: '["code"]',
-          });
-        }
-        return Promise.resolve({
-          client_id: clientId,
-          client_name: 'Existing Client',
-          redirect_uris: '["https://example.com/callback"]',
-          grant_types: '["authorization_code"]',
-          response_types: '["code"]',
-          application_type: 'native',
-          trust_group: 'wallet-suite',
-          trust_group_id: 'wallet-suite',
-          browser_public_client_mode: 'strict',
-          browser_refresh_token_policy: 'disabled',
-          native_sso_enabled: 0,
-          native_channel_allowed: 1,
-          allowed_channels: '["browser","native"]',
-          device_secret_revoke_enabled: 1,
-          device_secret_revoke_trust_groups: '["wallet-suite"]',
-          device_secret_introspection_enabled: 0,
-          device_secret_introspection_trust_groups: '["wallet-suite"]',
-          default_resource: 'svc://wallet-api',
-        });
+            application_type: 'native',
+            trust_group: 'wallet-suite',
+            trust_group_id: 'wallet-suite',
+            browser_public_client_mode: 'strict',
+            browser_refresh_token_policy: 'disabled',
+            native_sso_enabled: 0,
+            native_channel_allowed: 1,
+            allowed_channels: '["browser","native"]',
+            device_secret_revoke_enabled: 1,
+            device_secret_revoke_trust_groups: '["wallet-suite"]',
+            device_secret_introspection_enabled: 0,
+            device_secret_introspection_trust_groups: '["wallet-suite"]',
+            default_resource: 'svc://wallet-api',
+          })
+        );
       });
 
       const c = createMockContext({
@@ -8004,13 +8021,13 @@ describe('Admin API Handlers', () => {
     it('should reject legacy browser public client mode on update', async () => {
       const clientId = 'legacy-browser-client-update';
       const mockDB = createMockDB({
-        firstResult: {
+        firstResult: createOAuthClientRow(clientId, {
           client_id: clientId,
           client_name: 'Existing Client',
           redirect_uris: '["https://example.com/callback"]',
           grant_types: '["authorization_code"]',
           response_types: '["code"]',
-        },
+        }),
         runResult: { success: true },
       });
 
@@ -8044,28 +8061,32 @@ describe('Admin API Handlers', () => {
       (mockDB as any)._mockStatement.first.mockImplementation(() => {
         queryCount++;
         if (queryCount === 1) {
-          return Promise.resolve({
+          return Promise.resolve(
+            createOAuthClientRow(clientId, {
+              client_id: clientId,
+              client_name: 'Existing Client',
+              redirect_uris: '["https://example.com/callback"]',
+              grant_types: '["authorization_code"]',
+              response_types: '["code"]',
+            })
+          );
+        }
+        return Promise.resolve(
+          createOAuthClientRow(clientId, {
             client_id: clientId,
             client_name: 'Existing Client',
             redirect_uris: '["https://example.com/callback"]',
             grant_types: '["authorization_code"]',
             response_types: '["code"]',
-          });
-        }
-        return Promise.resolve({
-          client_id: clientId,
-          client_name: 'Existing Client',
-          redirect_uris: '["https://example.com/callback"]',
-          grant_types: '["authorization_code"]',
-          response_types: '["code"]',
-          allow_claims_without_scope: 0,
-          claims_parameter_policy: '{"email":"claims_allowed","birthdate":"claims_allowed"}',
-          asc_enabled: 1,
-          asc_protected_request_required: 1,
-          asc_sao_enabled: 1,
-          asc_transformed_claims_enabled: 1,
-          asc_allowed_transformed_claims: '["age_over_18","email_domain"]',
-        });
+            allow_claims_without_scope: 0,
+            claims_parameter_policy: '{"email":"claims_allowed","birthdate":"claims_allowed"}',
+            asc_enabled: 1,
+            asc_protected_request_required: 1,
+            asc_sao_enabled: 1,
+            asc_transformed_claims_enabled: 1,
+            asc_allowed_transformed_claims: '["age_over_18","email_domain"]',
+          })
+        );
       });
 
       const c = createMockContext({
@@ -8137,13 +8158,15 @@ describe('Admin API Handlers', () => {
         runResult: { success: true },
       });
 
-      (mockDB as any)._mockStatement.first.mockResolvedValue({
-        client_id: clientId,
-        client_name: 'Existing Client',
-        redirect_uris: '["https://example.com/callback"]',
-        grant_types: '["authorization_code"]',
-        response_types: '["code"]',
-      });
+      (mockDB as any)._mockStatement.first.mockResolvedValue(
+        createOAuthClientRow(clientId, {
+          client_id: clientId,
+          client_name: 'Existing Client',
+          redirect_uris: '["https://example.com/callback"]',
+          grant_types: '["authorization_code"]',
+          response_types: '["code"]',
+        })
+      );
 
       const c = createMockContext({
         method: 'PUT',
@@ -8171,13 +8194,15 @@ describe('Admin API Handlers', () => {
         runResult: { success: true },
       });
 
-      (mockDB as any)._mockStatement.first.mockResolvedValue({
-        client_id: clientId,
-        client_name: 'Existing Client',
-        redirect_uris: '["https://example.com/callback"]',
-        grant_types: '["authorization_code"]',
-        response_types: '["code"]',
-      });
+      (mockDB as any)._mockStatement.first.mockResolvedValue(
+        createOAuthClientRow(clientId, {
+          client_id: clientId,
+          client_name: 'Existing Client',
+          redirect_uris: '["https://example.com/callback"]',
+          grant_types: '["authorization_code"]',
+          response_types: '["code"]',
+        })
+      );
 
       const c = createMockContext({
         method: 'PUT',
@@ -8205,13 +8230,15 @@ describe('Admin API Handlers', () => {
         runResult: { success: true },
       });
 
-      (mockDB as any)._mockStatement.first.mockResolvedValue({
-        client_id: clientId,
-        client_name: 'Existing Client',
-        redirect_uris: '["https://example.com/callback"]',
-        grant_types: '["authorization_code"]',
-        response_types: '["code"]',
-      });
+      (mockDB as any)._mockStatement.first.mockResolvedValue(
+        createOAuthClientRow(clientId, {
+          client_id: clientId,
+          client_name: 'Existing Client',
+          redirect_uris: '["https://example.com/callback"]',
+          grant_types: '["authorization_code"]',
+          response_types: '["code"]',
+        })
+      );
 
       const c = createMockContext({
         method: 'PUT',
@@ -8240,13 +8267,15 @@ describe('Admin API Handlers', () => {
         runResult: { success: true },
       });
 
-      (mockDB as any)._mockStatement.first.mockResolvedValue({
-        client_id: clientId,
-        client_name: 'Existing Client',
-        redirect_uris: '["https://example.com/callback"]',
-        grant_types: '["authorization_code"]',
-        response_types: '["code"]',
-      });
+      (mockDB as any)._mockStatement.first.mockResolvedValue(
+        createOAuthClientRow(clientId, {
+          client_id: clientId,
+          client_name: 'Existing Client',
+          redirect_uris: '["https://example.com/callback"]',
+          grant_types: '["authorization_code"]',
+          response_types: '["code"]',
+        })
+      );
 
       const c = createMockContext({
         method: 'PUT',
@@ -8274,15 +8303,17 @@ describe('Admin API Handlers', () => {
         runResult: { success: true },
       });
 
-      (mockDB as any)._mockStatement.first.mockResolvedValue({
-        client_id: clientId,
-        client_name: 'Existing Client',
-        redirect_uris: '["https://example.com/callback"]',
-        grant_types: '["authorization_code"]',
-        response_types: '["code"]',
-        token_endpoint_auth_method: 'client_secret_basic',
-        require_pkce: 1,
-      });
+      (mockDB as any)._mockStatement.first.mockResolvedValue(
+        createOAuthClientRow(clientId, {
+          client_id: clientId,
+          client_name: 'Existing Client',
+          redirect_uris: '["https://example.com/callback"]',
+          grant_types: '["authorization_code"]',
+          response_types: '["code"]',
+          token_endpoint_auth_method: 'client_secret_basic',
+          require_pkce: 1,
+        })
+      );
 
       const c = createMockContext({
         method: 'PUT',
@@ -8298,9 +8329,8 @@ describe('Admin API Handlers', () => {
 
       expect(c.json).toHaveBeenCalledWith(
         expect.objectContaining({
-          error: 'invalid_request',
-          error_description:
-            'require_pkce must be true for public clients using the authorization_code grant',
+          error: 'client_configuration_required_to_enable',
+          missing: ['require_pkce'],
         }),
         400
       );
@@ -8312,13 +8342,15 @@ describe('Admin API Handlers', () => {
         runResult: { success: true },
       });
 
-      (mockDB as any)._mockStatement.first.mockResolvedValue({
-        client_id: clientId,
-        client_name: 'Existing Client',
-        redirect_uris: '["https://example.com/callback"]',
-        grant_types: '["authorization_code"]',
-        response_types: '["code"]',
-      });
+      (mockDB as any)._mockStatement.first.mockResolvedValue(
+        createOAuthClientRow(clientId, {
+          client_id: clientId,
+          client_name: 'Existing Client',
+          redirect_uris: '["https://example.com/callback"]',
+          grant_types: '["authorization_code"]',
+          response_types: '["code"]',
+        })
+      );
 
       const c = createMockContext({
         method: 'PUT',
@@ -8341,7 +8373,10 @@ describe('Admin API Handlers', () => {
       disableAliasIfPublished.mockReset();
       disableAliasIfPublished.mockRejectedValueOnce(new Error('tenant_alias_already_owned'));
       const mockDB = createMockDB({
-        firstResult: { client_id: 'client-with-alias', client_name: 'Aliased' },
+        firstResult: createOAuthClientRow('client-with-alias', {
+          client_id: 'client-with-alias',
+          client_name: 'Aliased',
+        }),
         runResult: { success: true, meta: { changes: 1 } },
       });
       const c = createMockContext({
@@ -8370,7 +8405,10 @@ describe('Admin API Handlers', () => {
         'dev:contract:client:default:other-client': '{"version":1}',
       });
       const mockDB = createMockDB({
-        firstResult: { client_id: clientId, client_name: 'Delete Me' },
+        firstResult: createOAuthClientRow(clientId, {
+          client_id: clientId,
+          client_name: 'Delete Me',
+        }),
         runResult: { success: true, meta: { changes: 1 } },
       });
 
@@ -8414,7 +8452,7 @@ describe('Admin API Handlers', () => {
       const settings = createMockKVNamespace();
       settings.list.mockRejectedValueOnce(new Error('kv unavailable'));
       const mockDB = createMockDB({
-        firstResult: { client_id: clientId },
+        firstResult: createOAuthClientRow(clientId, { client_id: clientId }),
         runResult: { success: true },
       });
       const c = createMockContext({
@@ -8453,7 +8491,6 @@ describe('Admin API Handlers', () => {
       expect(c.json).toHaveBeenCalledWith(
         expect.objectContaining({
           error: 'not_found',
-          error_description: 'The requested resource was not found',
         }),
         404
       );
@@ -8611,7 +8648,7 @@ describe('Admin API Handlers', () => {
         runResult: {
           success: true,
           meta: {
-            changes: 0,
+            changes: 1,
             duration: 1,
           },
         } as unknown as { success: boolean },

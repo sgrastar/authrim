@@ -21,6 +21,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   return {
     ...actual,
+    getClientCached: vi.fn(async () => ({ client_id: 'client-123', enabled: true })),
     getLogger: vi.fn(() => mockLogger),
     isMockAuthEnabled: mockIsMockAuthEnabled,
     getUIConfig: mockGetUIConfig,

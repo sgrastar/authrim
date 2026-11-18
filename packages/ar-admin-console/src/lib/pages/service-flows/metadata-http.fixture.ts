@@ -2,11 +2,12 @@ import { fn } from 'storybook/test';
 import type { SamlProviderKind } from '#lib/api/saml-providers.js';
 import { inboundMappingFixture } from './inbound-mapping.fixture';
 
-/** Synthetic, public-only metadata for the story HTTP boundary. No external fetches. */
-export const metadataCertificate =
-	'-----BEGIN CERTIFICATE-----\nVEVTVA==\n-----END CERTIFICATE-----';
-export const metadataXml = (kind: SamlProviderKind) =>
-	`<md:EntityDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata" xmlns:ds="http://www.w3.org/2000/09/xmldsig#" entityID="urn:synthetic:${kind}"><md:${kind === 'saml_sp' ? 'SP' : 'IDP'}SSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol"><md:KeyDescriptor use="signing"><ds:KeyInfo><ds:X509Data><ds:X509Certificate>VEVTVA==</ds:X509Certificate></ds:X509Data></ds:KeyInfo></md:KeyDescriptor><md:${kind === 'saml_sp' ? 'AssertionConsumerService' : 'SingleSignOnService'} Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST" Location="https://synthetic.example.test/${kind === 'saml_sp' ? 'acs' : 'sso'}" index="0" /></md:${kind === 'saml_sp' ? 'SP' : 'IDP'}SSODescriptor></md:EntityDescriptor>`;
+import {
+	metadataCertificate,
+	metadataXml,
+	previewMetadataFixture
+} from '#lib/api/fake/metadata-fixture.js';
+export { metadataCertificate, metadataXml } from '#lib/api/fake/metadata-fixture.js';
 function object(value: unknown): value is Record<string, unknown> {
 	return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
@@ -18,7 +19,14 @@ export function metadataHttpFixture(kind: SamlProviderKind = 'saml_sp') {
 		minimumAal: 'aal2',
 		custom_extension: { preserved: true }
 	};
-	let row = {
+	let row: {
+		id: string;
+		name: string;
+		providerType: SamlProviderKind;
+		enabled: boolean;
+		updatedAt: string;
+		config: Record<string, unknown>;
+	} = {
 		id: 'portal',
 		name: 'Stored connection',
 		providerType: kind,
@@ -51,28 +59,9 @@ export function metadataHttpFixture(kind: SamlProviderKind = 'saml_sp') {
 			...(body.metadataUrl ? { metadataUrl: body.metadataUrl } : {})
 		};
 	}
-	const preview = fn(async (body: Record<string, unknown>): Promise<Response> => {
-		if (
-			body.metadataXml &&
-			body.metadataXml !== metadataXml('saml_sp') &&
-			body.metadataXml !== metadataXml('saml_idp')
-		)
-			return Response.json(
-				{ error: 'invalid_request', error_description: 'Invalid SAML metadata XML' },
-				{ status: 400 }
-			);
-		const parsed = parseInput(body);
-		const actual = parsed.entityId.endsWith('saml_sp') ? 'saml_sp' : 'saml_idp';
-		if (body.providerType !== actual)
-			return Response.json(
-				{
-					error: 'invalid_request',
-					error_description: 'Metadata role does not match the expected provider type'
-				},
-				{ status: 400 }
-			);
-		return Response.json({ kind: 'single', providerType: actual, config: parsed });
-	});
+	const preview = fn(
+		async (body: Record<string, unknown>): Promise<Response> => previewMetadataFixture(body)
+	);
 	const fetcher = fn(async (url: RequestInfo | URL, init: RequestInit = {}) => {
 		const path = String(url);
 		const body: unknown = init.body ? JSON.parse(String(init.body)) : {};
@@ -92,6 +81,16 @@ export function metadataHttpFixture(kind: SamlProviderKind = 'saml_sp') {
 		if (!path.includes('/saml-providers'))
 			throw new Error(`Unexpected story HTTP request: ${path}`);
 		if (!init.method || init.method === 'GET') return Response.json(row);
+		if (init.method === 'PUT' && body.enabled === true && !row.enabled)
+			return Response.json(
+				{
+					error: 'step_up_required',
+					required_level: 'L2',
+					step_up_id: 'story-activation-step-up',
+					missing: ['passkey', 'second_factor']
+				},
+				{ status: 403 }
+			);
 		writes.push(body);
 		if (path.endsWith('/import-metadata') || init.method === 'PUT') {
 			if (body.expectedUpdatedAt !== row.updatedAt)
@@ -101,9 +100,16 @@ export function metadataHttpFixture(kind: SamlProviderKind = 'saml_sp') {
 		row = {
 			...row,
 			name: typeof body.name === 'string' ? body.name : row.name,
+			enabled: typeof body.enabled === 'boolean' ? body.enabled : row.enabled,
 			updatedAt: new Date(Date.UTC(2026, 10, 17, 0, 0, ++version)).toISOString(),
 			config: {
-				...row.config,
+				...(init.method === 'POST' &&
+				!path.endsWith('/import-metadata') &&
+				!config.entityId &&
+				!body.metadataXml &&
+				!body.metadataUrl
+					? {}
+					: row.config),
 				...config,
 				...(body.metadataXml || body.metadataUrl ? parseInput(body) : {})
 			}

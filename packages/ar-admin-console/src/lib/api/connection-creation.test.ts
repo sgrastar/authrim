@@ -48,6 +48,7 @@ describe('live outgoing creation through HTTP', () => {
 			expect(init.headers.get('Idempotency-Key')).toBeTruthy();
 			expect(init.headers.get('Content-Type')).toBe('application/json');
 			expect(JSON.parse(init.body)).toEqual({
+				enabled: false,
 				client_name: 'Portal',
 				application_type: appType,
 				redirect_uris: answers.rp.redirectUris,
@@ -63,6 +64,45 @@ describe('live outgoing creation through HTTP', () => {
 				...(appType === 'web' ? { clientSecret: 'one-time-test-credential' } : {})
 			});
 			expect(connectionPath(result)).toBe('/admin/applications/all/rp/client%2Fa');
+		}
+	);
+	it.each(['web', 'spa', 'native'])(
+		'creates a %s RP without callbacks as a disabled draft',
+		async (appType) => {
+			const answers = emptyAnswers(true);
+			answers.direction = 'out';
+			answers.kind = 'rp';
+			if (appType !== 'web' && appType !== 'spa' && appType !== 'native')
+				throw new Error('Unexpected app type');
+			Object.assign(answers.rp, {
+				name: 'Callback later',
+				appType,
+				...defaultsForAppType(appType),
+				skipped: true,
+				redirectUris: ['not finished']
+			});
+			const payloads: unknown[] = [];
+			vi.stubGlobal(
+				'fetch',
+				vi.fn(async (_url: string, init: RequestInit = {}) => {
+					payloads.push(JSON.parse(String(init.body)));
+					return json({ client: { client_id: 'callback-later' } });
+				})
+			);
+			await expect(createConnection(resources, answers, '')).resolves.toEqual({
+				kind: 'rp',
+				id: 'callback-later'
+			});
+			expect(payloads[0]).toMatchObject({
+				client_name: 'Callback later',
+				redirect_uris: [],
+				token_endpoint_auth_method: appType === 'web' ? 'client_secret_basic' : 'none',
+				require_pkce: true
+			});
+			expect(payloads[0]).toHaveProperty('enabled', false);
+			expect(payloads[0]).not.toHaveProperty('status');
+			answers.rp.skipped = false;
+			expect(() => rpCreateInput(answers.rp)).toThrow();
 		}
 	);
 	it('creates a disabled manual SP with real fields and no invented metadata, mapping, certificate or NameID', async () => {
@@ -120,14 +160,16 @@ describe('live outgoing creation through HTTP', () => {
 		await expect(createConnection(resources, answers, '')).resolves.toMatchObject({ id: 'saved' });
 		expect(fetcher.mock.calls[0][1].body).toBe(fetcher.mock.calls[1][1].body);
 	});
-	it('rejects incomplete redirects, unsupported JWT auth and public clients without PKCE before any write', () => {
+	it('allows absent callbacks and keys in drafts while rejecting malformed values and public clients without PKCE', () => {
 		const form = emptyAnswers().rp;
 		form.name = 'Portal';
-		expect(() => rpCreateInput(form)).toThrow();
+		expect(rpCreateInput(form).redirect_uris).toEqual([]);
 		form.redirectUris = ['https://portal.example/callback#fragment'];
 		expect(() => rpCreateInput(form)).toThrow();
 		form.redirectUris = ['https://portal.example/callback'];
 		form.authMethod = 'private_key_jwt';
+		expect(rpCreateInput(form)).toMatchObject({ enabled: false, jwks: null, jwks_uri: null });
+		form.jwksUri = 'http://keys.example/jwks';
 		expect(() => rpCreateInput(form)).toThrow();
 		form.appType = 'spa';
 		Object.assign(form, defaultsForAppType('spa'));

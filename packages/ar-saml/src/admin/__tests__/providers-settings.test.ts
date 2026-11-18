@@ -453,7 +453,7 @@ describe('SAML trust settings need a step-up', () => {
       expect(mocks.putPublic).toHaveBeenCalledTimes(1);
       expect(mocks.stepUp).toHaveBeenCalledTimes(1);
       expect(mocks.stepUp.mock.calls[0]?.[1]).toEqual({
-        operation: 'federation.trust.update',
+        operation: 'federation.trust.activate',
         targetTenantId: 'tenant-a',
         targetIds: ['tenant-a'],
         params: {
@@ -508,7 +508,7 @@ describe('SAML trust settings need a step-up', () => {
       expect(mocks.putSigning).toHaveBeenCalledTimes(1);
       expect(mocks.stepUp).toHaveBeenCalledTimes(1);
       expect(mocks.stepUp.mock.calls[0]?.[1]).toMatchObject({
-        operation: 'federation.trust.update',
+        operation: 'federation.trust.activate',
         targetTenantId: 'tenant-a',
         targetIds: ['tenant-a:idp'],
         params: { action: 'local_signing.publish_next', role: 'idp', targetKid: 'kid-1' },
@@ -567,7 +567,7 @@ describe('SAML trust settings need a step-up', () => {
       expect(writes.count).toBe(1);
       const descriptor = mocks.stepUp.mock.calls[0]?.[1] as { params: Record<string, unknown> };
       expect(descriptor).toMatchObject({
-        operation: 'federation.trust.update',
+        operation: 'federation.trust.activate',
         targetTenantId: 'tenant-a',
         targetIds: ['tenant-a'],
         params: { action: 'local_signing.dr_bundle.import' },

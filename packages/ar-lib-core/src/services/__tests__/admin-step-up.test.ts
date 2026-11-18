@@ -46,6 +46,7 @@ vi.mock('../../utils/challenge-sharding', () => ({
 }));
 
 import {
+  ADMIN_STEP_UP_ALWAYS_ENFORCED,
   ADMIN_STEP_UP_EVIDENCE_WINDOW_MS,
   ADMIN_STEP_UP_RECEIPT_TTL_SECONDS,
   AdminStepUpError,
@@ -100,6 +101,44 @@ async function errorOf(promise: Promise<unknown>): Promise<AdminStepUpError> {
 }
 
 describe('admin step-up policy', () => {
+  it('splits federation activation and containment while retaining the compatibility operation', () => {
+    expect(resolveAdminStepUpLevel('federation.trust.activate')).toBe('L2');
+    expect(resolveAdminStepUpLevel('federation.trust.disable')).toBe('L1');
+    expect(resolveAdminStepUpLevel('federation.trust.update')).toBe('L2');
+    expect(ADMIN_STEP_UP_ALWAYS_ENFORCED.has('federation.trust.activate')).toBe(
+      ADMIN_STEP_UP_ALWAYS_ENFORCED.has('federation.trust.update')
+    );
+    expect(adminStepUpOverridesProblem({ 'federation.trust.activate': 'L1' })).toContain(
+      'cannot be lowered'
+    );
+    expect(adminStepUpOverridesProblem({ 'federation.trust.disable': 'L2' })).toBeNull();
+  });
+
+  it('inherits legacy federation overrides until a valid new override is explicitly set', () => {
+    const legacy = { 'federation.trust.update': 'L2' };
+    expect(resolveAdminStepUpLevel('federation.trust.disable', legacy)).toBe('L2');
+    expect(resolveAdminStepUpLevel('federation.trust.activate', legacy)).toBe('L2');
+    expect(
+      resolveAdminStepUpLevel('federation.trust.disable', {
+        ...legacy,
+        'federation.trust.disable': 'L1',
+      })
+    ).toBe('L1');
+    expect(
+      resolveAdminStepUpLevel('federation.trust.disable', {
+        ...legacy,
+        'federation.trust.disable': 'invalid',
+      })
+    ).toBe('L2');
+    expect(
+      resolveAdminStepUpLevel('federation.trust.disable', {
+        ...legacy,
+        'federation.trust.disable': null,
+      })
+    ).toBe('L2');
+    expect(resolveAdminStepUpLevel('federation.trust.disable')).toBe('L1');
+  });
+
   it('uses the catalog level and lets a tenant only raise it', () => {
     expect(resolveAdminStepUpLevel('sessions.revoke_all')).toBe('L1');
     expect(resolveAdminStepUpLevel('sessions.revoke_all', { 'sessions.revoke_all': 'L2' })).toBe(

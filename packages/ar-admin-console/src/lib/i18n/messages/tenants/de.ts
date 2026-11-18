@@ -103,6 +103,9 @@ export const deTenants: Record<keyof typeof jaTenants, string> = {
 		'Nutzungsbedingungen, Datenschutzhinweise und andere Dokumente, denen zugestimmt wird.',
 	'tn.copy.clients': 'Apps (Clients)',
 	'tn.copy.clients.desc': 'Registrierte Apps und ihre Einstellungen.',
+	'tn.copy.samlProviders': 'SAML-Verbindungen (deaktiviert kopieren)',
+	'tn.copy.samlProviders.desc':
+		'SP- und IdP-Konfiguration als Entwürfe kopieren. Vor der Aktivierung einen Mapping Set im Zielmandanten auswählen und mit Level 2 bestätigen.',
 	'tn.copy.clientCredentials': 'Client-Geheimnisse einschließen',
 	'tn.copy.clientCredentials.desc': 'Kopiert auch die Geheimnisse der Apps unverändert.',
 	'tn.copy.webhooks': 'Webhooks',

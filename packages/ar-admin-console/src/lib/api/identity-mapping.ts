@@ -1,3 +1,5 @@
+import { StepUpCancelledError, stepUpHeaders, withStepUp } from './admin-step-up';
+import { tenantScope } from '#lib/auth/tenant-scope.svelte.js';
 /**
  * Shared mapping response types and the authenticated Mapping Set facade client.
  * The existing overview stories use IdentityMappingStoryClient, a presentation-only service;
@@ -515,7 +517,12 @@ export interface IdentityMappingStoryClient {
 	/** PROPOSED: POST /api/admin/identity-mapping/history/{id}/restore with `preview: true` */
 	previewRestore(tenantId: string, entryId: string): Promise<RestorePreview>;
 	/** PROPOSED: POST /api/admin/identity-mapping/history/{id}/restore */
-	restore(tenantId: string, entryId: string, expectedVersion: string): Promise<HistoryEntry>;
+	restore(
+		tenantId: string,
+		entryId: string,
+		expectedVersion: string,
+		receipt?: string
+	): Promise<HistoryEntry>;
 }
 
 // Public HTTP client. Storybook's presentation service above is not a wire contract.
@@ -552,6 +559,7 @@ import { API_BASE_URL, adminFetch } from './admin-request';
 import { ApiError, errorFromResponse } from './api-error';
 
 export interface IdentityMappingClient {
+	restoreLevel(tenantId: string, entryId: string, expectedVersion: string): Promise<void>;
 	sets(tenantId: string): Promise<{ sets: MappingSetSummary[] }>;
 	setContent(tenantId: string, setId: string): Promise<MappingSetDetail>;
 	createSet(
@@ -702,6 +710,31 @@ async function mutateMapping<T>(
 		details
 	);
 }
+/** The restore body and tenant stay fixed while the admin supplies evidence. */
+export async function restoreIdentityMappingLevel(
+	tenantId: string,
+	entryId: string,
+	expectedVersion: string
+): Promise<void> {
+	const body = JSON.stringify({ expected_version: expectedVersion });
+	const key = crypto.randomUUID();
+	const selectedTenant = tenantScope.tenantId;
+	await withStepUp(async (receipt) => {
+		if (tenantScope.tenantId !== selectedTenant) throw new StepUpCancelledError();
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/identity-mapping/history/${encodeURIComponent(entryId)}/restore`,
+			{
+				tenantId,
+				method: 'POST',
+				includeJsonContentType: true,
+				body,
+				headers: { 'X-Tenant-Id': tenantId, 'Idempotency-Key': key, ...stepUpHeaders(receipt) }
+			}
+		);
+		if (!response.ok) throw await errorFromResponse(response);
+	});
+}
+
 export function httpIdentityMapping(): IdentityMappingClient {
 	const get = <T>(tenantId: string, url: string) =>
 		adminFetch(url, { tenantId }).then(readMappingJson<T>);
@@ -720,6 +753,7 @@ export function httpIdentityMapping(): IdentityMappingClient {
 			body: JSON.stringify(body)
 		}).then(readMappingJson<T>);
 	return {
+		restoreLevel: restoreIdentityMappingLevel,
 		sets: (tenantId) => get(tenantId, `${mappingBase}/sets`),
 		async setContent(tenantId, setId) {
 			const response = await adminFetch(setPath(setId), { tenantId });

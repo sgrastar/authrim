@@ -205,6 +205,23 @@ describe('fillSAMLProviderProvisioningDefaults (a provider added without metadat
     });
   });
 
+  it('defers an incomplete IdP draft NameID default while preserving explicit choices', () => {
+    const draft: Partial<SAMLIdPConfig> = { jitEmailLinkingPolicy: 'disabled' };
+    const filled = fillSAMLProviderProvisioningDefaults('saml_idp', draft, defaults, {
+      deferNameIdFormat: true,
+    });
+    expect(filled).not.toHaveProperty('nameIdFormat');
+    expect(filled).toMatchObject({ jitEmailLinkingPolicy: 'disabled', allowedBindings: ['post'] });
+    expect(
+      fillSAMLProviderProvisioningDefaults(
+        'saml_idp',
+        { ...draft, nameIdFormat: NAMEID_FORMATS.EMAIL },
+        defaults,
+        { deferNameIdFormat: true }
+      ).nameIdFormat
+    ).toBe(NAMEID_FORMATS.EMAIL);
+  });
+
   it('keeps an empty allowedBindings list an identity provider names without metadata', () => {
     const config = fillSAMLProviderProvisioningDefaults(
       'saml_idp',

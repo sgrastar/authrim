@@ -336,7 +336,9 @@ export async function adminIdentityMappingExplainHandler(c: ExplainContext) {
   try {
     const { coreAdapter } = createAuthContextFromHono(c, tenantId);
     // The app as the issuing endpoints read it: the tenant's row alone.
-    const client = await getClient(c.env, tenantId, request.clientId, coreAdapter);
+    const client = await getClient(c.env, tenantId, request.clientId, coreAdapter, {
+      includeDisabled: true,
+    });
     if (!client) {
       return c.json({ error: 'not_found', error_description: 'client not found' }, 404);
     }

@@ -105,6 +105,32 @@ describe('requireAdminStepUp', () => {
     expect(marked).toBe(true);
   });
 
+  it('requires an L2 receipt for federation activation and L1 freshness for containment', async () => {
+    const activation = await run({
+      operation: 'federation.trust.activate',
+      targetTenantId: 'tenant-a',
+    });
+    expect(activation.status).toBe(403);
+    expect(activation.body).toMatchObject({ error: 'step_up_required', required_level: 'L2' });
+    const descriptor: Parameters<typeof requireAdminStepUp>[1] = {
+      operation: 'federation.trust.disable',
+      targetTenantId: 'tenant-a',
+    };
+    expect((await run(descriptor)).status).toBe(200);
+    const stale = await run(descriptor, human({ authenticationTimeMs: NOW - 600_000 }));
+    expect(stale.status).toBe(403);
+    expect(stale.body).toMatchObject({ error: 'admin_fresh_auth_required', required_level: 'L1' });
+  });
+
+  it('keeps containment at L2 under a legacy federation override', async () => {
+    mocks.resolveEffectiveSettings.mockResolvedValue({
+      'security.admin_step_up_overrides': { 'federation.trust.update': 'L2' },
+    });
+    const result = await run({ operation: 'federation.trust.disable', targetTenantId: 'tenant-a' });
+    expect(result.status).toBe(403);
+    expect(result.body).toMatchObject({ error: 'step_up_required', required_level: 'L2' });
+  });
+
   it('lets an L1 operation through with a fresh passkey', async () => {
     await expect(run(revokeAll)).resolves.toEqual({ status: 200, body: { ran: true } });
     expect(mocks.resolveEffectiveSettings).toHaveBeenCalledWith({}, 'security', {
@@ -407,6 +433,13 @@ describe('readAdminStepUpPolicy / effectiveAdminStepUpLevel', () => {
 
     expect(effectiveAdminStepUpLevel('client.secret.rotate', policy)).toBe('L2');
     expect(effectiveAdminStepUpLevel('sessions.revoke_all', policy)).toBe('L1');
+  });
+
+  it('treats activation and the compatibility trust-update operation identically when enforcement is off', () => {
+    const policy = { overrides: undefined, enforced: false };
+    expect(effectiveAdminStepUpLevel('federation.trust.activate', policy)).toBe(
+      effectiveAdminStepUpLevel('federation.trust.update', policy)
+    );
   });
 
   it('gives L0 only when enforcement is off in so many words, never for always-enforced ones', () => {

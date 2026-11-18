@@ -71,6 +71,7 @@ export interface ClientIdentityFieldMappingSetSelector {
  * OAuth Client entity
  */
 export interface OAuthClient {
+  enabled: boolean;
   /** Public OAuth client ID, unique within a tenant */
   client_id: string;
   /** SHA-256 hash of the client secret (null for public clients) */
@@ -205,6 +206,7 @@ export interface OAuthClient {
  * Client create input
  */
 export interface CreateClientInput {
+  enabled?: boolean;
   client_id?: string;
   /** SHA-256 hash of the client secret (null for public clients) */
   client_secret_hash?: string | null;
@@ -298,6 +300,7 @@ export interface CreateClientInput {
  * Client update input
  */
 export interface UpdateClientInput {
+  enabled?: boolean;
   client_name?: string;
   description?: string | null;
   /** SHA-256 hash of the client secret (null for public clients) */
@@ -386,6 +389,7 @@ export interface UpdateClientInput {
 }
 
 export interface ClientUpdateOptions {
+  webOriginRegistry?: import('../../utils/web-origin-registry').WebOriginRegistryWritePayload;
   /**
    * Apply the update only while the stored row is still the version that was read.
    * This is used by Agent plans to close the read/validate/write TOCTOU window.
@@ -439,6 +443,121 @@ function resolveInputTenantId(
 /**
  * OAuth Client Repository
  */
+/** Apply the persistence defaults before hashing or writing a new client. */
+export function clientRowForCreate(
+  input: CreateClientInput,
+  tenantId: string,
+  clientId: string,
+  now: number
+): OAuthClient {
+  return {
+    enabled: input.enabled ?? true,
+    client_id: clientId,
+    client_secret_hash: input.client_secret_hash ?? null,
+    client_name: input.client_name,
+    description: input.description ?? null,
+    tenant_id: tenantId,
+    application_type: input.application_type ?? 'web',
+    trust_group: input.trust_group ?? null,
+    trust_group_id: input.trust_group_id ?? input.trust_group ?? null,
+    browser_public_client_mode: input.browser_public_client_mode ?? null,
+    browser_refresh_token_policy: input.browser_refresh_token_policy ?? 'disabled',
+    native_sso_enabled: input.native_sso_enabled ?? null,
+    native_channel_allowed: input.native_channel_allowed ?? null,
+    allowed_channels: input.allowed_channels ? JSON.stringify(input.allowed_channels) : null,
+    device_secret_revoke_enabled: input.device_secret_revoke_enabled ?? null,
+    device_secret_revoke_trust_groups: input.device_secret_revoke_trust_groups
+      ? JSON.stringify(input.device_secret_revoke_trust_groups)
+      : null,
+    device_secret_introspection_enabled: input.device_secret_introspection_enabled ?? null,
+    device_secret_introspection_trust_groups: input.device_secret_introspection_trust_groups
+      ? JSON.stringify(input.device_secret_introspection_trust_groups)
+      : null,
+    redirect_uris: JSON.stringify(input.redirect_uris),
+    grant_types: JSON.stringify(input.grant_types || ['authorization_code']),
+    response_types: JSON.stringify(input.response_types || ['code']),
+    scope: input.scope ?? null,
+    logo_uri: input.logo_uri ?? null,
+    client_uri: input.client_uri ?? null,
+    policy_uri: input.policy_uri ?? null,
+    tos_uri: input.tos_uri ?? null,
+    contacts: input.contacts ? JSON.stringify(input.contacts) : null,
+    post_logout_redirect_uris: input.post_logout_redirect_uris
+      ? JSON.stringify(input.post_logout_redirect_uris)
+      : null,
+    subject_type: input.subject_type || 'public',
+    sector_identifier_uri: input.sector_identifier_uri ?? null,
+    token_endpoint_auth_method: input.token_endpoint_auth_method || 'client_secret_basic',
+    token_endpoint_auth_signing_alg: input.token_endpoint_auth_signing_alg ?? null,
+    jwks: input.jwks ? JSON.stringify(input.jwks) : null,
+    jwks_uri: input.jwks_uri ?? null,
+    is_trusted: input.is_trusted ?? false,
+    skip_consent: input.skip_consent ?? false,
+    allow_claims_without_scope: input.allow_claims_without_scope ?? false,
+    claims_parameter_policy: input.claims_parameter_policy
+      ? JSON.stringify(input.claims_parameter_policy)
+      : null,
+    identity_mapping: input.identity_mapping ? JSON.stringify(input.identity_mapping) : null,
+    information_release_consent: input.information_release_consent
+      ? JSON.stringify(input.information_release_consent)
+      : null,
+    asc_enabled: input.asc_enabled ?? true,
+    asc_protected_request_required: input.asc_protected_request_required ?? true,
+    asc_sao_enabled: input.asc_sao_enabled ?? true,
+    asc_transformed_claims_enabled: input.asc_transformed_claims_enabled ?? true,
+    asc_allowed_transformed_claims: input.asc_allowed_transformed_claims
+      ? JSON.stringify(input.asc_allowed_transformed_claims)
+      : null,
+    token_exchange_allowed: input.token_exchange_allowed ?? false,
+    allowed_subject_token_clients: input.allowed_subject_token_clients
+      ? JSON.stringify(input.allowed_subject_token_clients)
+      : null,
+    allowed_token_exchange_resources: input.allowed_token_exchange_resources
+      ? JSON.stringify(input.allowed_token_exchange_resources)
+      : null,
+    delegation_mode: input.delegation_mode || 'delegation',
+    client_credentials_allowed: input.client_credentials_allowed ?? false,
+    allowed_scopes: input.allowed_scopes ? JSON.stringify(input.allowed_scopes) : null,
+    default_scope: input.default_scope ?? null,
+    default_audience: input.default_audience ?? null,
+    default_resource: input.default_resource ?? null,
+    backchannel_token_delivery_mode: input.backchannel_token_delivery_mode ?? null,
+    backchannel_client_notification_endpoint:
+      input.backchannel_client_notification_endpoint ?? null,
+    backchannel_authentication_request_signing_alg:
+      input.backchannel_authentication_request_signing_alg ?? null,
+    backchannel_user_code_parameter: input.backchannel_user_code_parameter ?? false,
+    tls_client_certificate_bound_access_tokens:
+      input.tls_client_certificate_bound_access_tokens ?? false,
+    id_token_signed_response_alg: input.id_token_signed_response_alg ?? null,
+    userinfo_signed_response_alg: input.userinfo_signed_response_alg ?? null,
+    authorization_signed_response_alg: input.authorization_signed_response_alg ?? null,
+    authorization_encrypted_response_alg: input.authorization_encrypted_response_alg ?? null,
+    authorization_encrypted_response_enc: input.authorization_encrypted_response_enc ?? null,
+    // OIDC Logout
+    backchannel_logout_uri: input.backchannel_logout_uri ?? null,
+    backchannel_logout_session_required: input.backchannel_logout_session_required ?? false,
+    frontchannel_logout_uri: input.frontchannel_logout_uri ?? null,
+    frontchannel_logout_session_required: input.frontchannel_logout_session_required ?? false,
+    // Custom Redirect URIs (Authrim Extension)
+    allowed_redirect_origins: input.allowed_redirect_origins
+      ? JSON.stringify(input.allowed_redirect_origins)
+      : null,
+    // RFC 7591: Dynamic Client Registration
+    software_id: input.software_id ?? null,
+    software_version: input.software_version ?? null,
+    requestable_scopes: input.requestable_scopes ? JSON.stringify(input.requestable_scopes) : null,
+    // PKCE (RFC 7636)
+    require_pkce: input.require_pkce ?? false,
+    minimum_ial: input.minimum_ial ?? null,
+    // OIDC Dynamic Client Registration
+    initiate_login_uri: input.initiate_login_uri ?? null,
+    login_ui_url: input.login_ui_url ?? null,
+    created_at: now,
+    updated_at: now,
+  };
+}
+
 export class ClientRepository {
   protected readonly adapter: DatabaseAdapter;
   private readonly tenantId: string;
@@ -460,117 +579,11 @@ export class ClientRepository {
       'ClientRepository.create'
     );
 
-    const client: OAuthClient = {
-      client_id: clientId,
-      client_secret_hash: input.client_secret_hash ?? null,
-      client_name: input.client_name,
-      description: input.description ?? null,
-      tenant_id: tenantId,
-      application_type: input.application_type ?? 'web',
-      trust_group: input.trust_group ?? null,
-      trust_group_id: input.trust_group_id ?? input.trust_group ?? null,
-      browser_public_client_mode: input.browser_public_client_mode ?? null,
-      browser_refresh_token_policy: input.browser_refresh_token_policy ?? 'disabled',
-      native_sso_enabled: input.native_sso_enabled ?? null,
-      native_channel_allowed: input.native_channel_allowed ?? null,
-      allowed_channels: input.allowed_channels ? JSON.stringify(input.allowed_channels) : null,
-      device_secret_revoke_enabled: input.device_secret_revoke_enabled ?? null,
-      device_secret_revoke_trust_groups: input.device_secret_revoke_trust_groups
-        ? JSON.stringify(input.device_secret_revoke_trust_groups)
-        : null,
-      device_secret_introspection_enabled: input.device_secret_introspection_enabled ?? null,
-      device_secret_introspection_trust_groups: input.device_secret_introspection_trust_groups
-        ? JSON.stringify(input.device_secret_introspection_trust_groups)
-        : null,
-      redirect_uris: JSON.stringify(input.redirect_uris),
-      grant_types: JSON.stringify(input.grant_types || ['authorization_code']),
-      response_types: JSON.stringify(input.response_types || ['code']),
-      scope: input.scope ?? null,
-      logo_uri: input.logo_uri ?? null,
-      client_uri: input.client_uri ?? null,
-      policy_uri: input.policy_uri ?? null,
-      tos_uri: input.tos_uri ?? null,
-      contacts: input.contacts ? JSON.stringify(input.contacts) : null,
-      post_logout_redirect_uris: input.post_logout_redirect_uris
-        ? JSON.stringify(input.post_logout_redirect_uris)
-        : null,
-      subject_type: input.subject_type || 'public',
-      sector_identifier_uri: input.sector_identifier_uri ?? null,
-      token_endpoint_auth_method: input.token_endpoint_auth_method || 'client_secret_basic',
-      token_endpoint_auth_signing_alg: input.token_endpoint_auth_signing_alg ?? null,
-      jwks: input.jwks ? JSON.stringify(input.jwks) : null,
-      jwks_uri: input.jwks_uri ?? null,
-      is_trusted: input.is_trusted ?? false,
-      skip_consent: input.skip_consent ?? false,
-      allow_claims_without_scope: input.allow_claims_without_scope ?? false,
-      claims_parameter_policy: input.claims_parameter_policy
-        ? JSON.stringify(input.claims_parameter_policy)
-        : null,
-      identity_mapping: input.identity_mapping ? JSON.stringify(input.identity_mapping) : null,
-      information_release_consent: input.information_release_consent
-        ? JSON.stringify(input.information_release_consent)
-        : null,
-      asc_enabled: input.asc_enabled ?? true,
-      asc_protected_request_required: input.asc_protected_request_required ?? true,
-      asc_sao_enabled: input.asc_sao_enabled ?? true,
-      asc_transformed_claims_enabled: input.asc_transformed_claims_enabled ?? true,
-      asc_allowed_transformed_claims: input.asc_allowed_transformed_claims
-        ? JSON.stringify(input.asc_allowed_transformed_claims)
-        : null,
-      token_exchange_allowed: input.token_exchange_allowed ?? false,
-      allowed_subject_token_clients: input.allowed_subject_token_clients
-        ? JSON.stringify(input.allowed_subject_token_clients)
-        : null,
-      allowed_token_exchange_resources: input.allowed_token_exchange_resources
-        ? JSON.stringify(input.allowed_token_exchange_resources)
-        : null,
-      delegation_mode: input.delegation_mode || 'delegation',
-      client_credentials_allowed: input.client_credentials_allowed ?? false,
-      allowed_scopes: input.allowed_scopes ? JSON.stringify(input.allowed_scopes) : null,
-      default_scope: input.default_scope ?? null,
-      default_audience: input.default_audience ?? null,
-      default_resource: input.default_resource ?? null,
-      backchannel_token_delivery_mode: input.backchannel_token_delivery_mode ?? null,
-      backchannel_client_notification_endpoint:
-        input.backchannel_client_notification_endpoint ?? null,
-      backchannel_authentication_request_signing_alg:
-        input.backchannel_authentication_request_signing_alg ?? null,
-      backchannel_user_code_parameter: input.backchannel_user_code_parameter ?? false,
-      tls_client_certificate_bound_access_tokens:
-        input.tls_client_certificate_bound_access_tokens ?? false,
-      id_token_signed_response_alg: input.id_token_signed_response_alg ?? null,
-      userinfo_signed_response_alg: input.userinfo_signed_response_alg ?? null,
-      authorization_signed_response_alg: input.authorization_signed_response_alg ?? null,
-      authorization_encrypted_response_alg: input.authorization_encrypted_response_alg ?? null,
-      authorization_encrypted_response_enc: input.authorization_encrypted_response_enc ?? null,
-      // OIDC Logout
-      backchannel_logout_uri: input.backchannel_logout_uri ?? null,
-      backchannel_logout_session_required: input.backchannel_logout_session_required ?? false,
-      frontchannel_logout_uri: input.frontchannel_logout_uri ?? null,
-      frontchannel_logout_session_required: input.frontchannel_logout_session_required ?? false,
-      // Custom Redirect URIs (Authrim Extension)
-      allowed_redirect_origins: input.allowed_redirect_origins
-        ? JSON.stringify(input.allowed_redirect_origins)
-        : null,
-      // RFC 7591: Dynamic Client Registration
-      software_id: input.software_id ?? null,
-      software_version: input.software_version ?? null,
-      requestable_scopes: input.requestable_scopes
-        ? JSON.stringify(input.requestable_scopes)
-        : null,
-      // PKCE (RFC 7636)
-      require_pkce: input.require_pkce ?? false,
-      minimum_ial: input.minimum_ial ?? null,
-      // OIDC Dynamic Client Registration
-      initiate_login_uri: input.initiate_login_uri ?? null,
-      login_ui_url: input.login_ui_url ?? null,
-      created_at: now,
-      updated_at: now,
-    };
+    const client = clientRowForCreate(input, tenantId, clientId, now);
 
     await this.adapter.execute(
       `INSERT INTO oauth_clients (
-        client_id, client_secret_hash, client_name, description, tenant_id,
+        enabled, client_id, client_secret_hash, client_name, description, tenant_id,
         application_type, trust_group, trust_group_id,
         browser_public_client_mode, browser_refresh_token_policy,
         native_sso_enabled, native_channel_allowed, allowed_channels,
@@ -601,8 +614,9 @@ export class ClientRepository {
         require_pkce, minimum_ial,
         initiate_login_uri, login_ui_url,
         created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
+        client.enabled ? 1 : 0,
         client.client_id,
         client.client_secret_hash,
         client.client_name,
@@ -727,10 +741,16 @@ export class ClientRepository {
     // Decide against the current SQL row so a delayed, unconditional edit cannot roll back
     // a version written after this read. A successful CAS still uses exactly `now`.
     const now = Math.max(getCurrentTimestamp(), existing.updated_at + 1);
+    options = { ...options, expectedUpdatedAt: options.expectedUpdatedAt ?? existing.updated_at };
     const updates: string[] = [
       'updated_at = CASE WHEN updated_at >= ? THEN updated_at + 1 ELSE ? END',
     ];
     const params: unknown[] = [now, now];
+
+    if (input.enabled !== undefined) {
+      updates.push('enabled = ?');
+      params.push(input.enabled ? 1 : 0);
+    }
 
     // Build dynamic update query
     if (input.client_name !== undefined) {
@@ -1081,6 +1101,24 @@ export class ClientRepository {
       params.push(options.expectedUpdatedAt);
     }
 
+    const dependent =
+      options.webOriginRegistry === undefined
+        ? []
+        : (await import('../../utils/web-origin-registry')).clientOriginReplacementStatements(
+            this.tenantId,
+            clientId,
+            options.webOriginRegistry,
+            existing.updated_at
+          );
+    const lock =
+      this.adapter.getType() === 'postgres'
+        ? [
+            {
+              sql: 'SELECT 1 FROM oauth_clients WHERE tenant_id = ? AND client_id = ? AND updated_at = ? FOR UPDATE',
+              params: [this.tenantId, clientId, existing.updated_at],
+            },
+          ]
+        : [];
     const receipt = options.identityMappingHistoryReceipt;
     let result: { rowsAffected: number };
     if (receipt) {
@@ -1118,20 +1156,28 @@ export class ClientRepository {
       };
       // The receipt SELECT and UPDATE name the same tenant, client and source version. D1's
       // atomic batch keeps a failed CAS, receipt collision or failed UPDATE from writing either.
-      if (this.adapter.getType() === 'd1' || this.adapter.getType() === 'sqlite') {
-        const results = await this.adapter.batch([statement, update]);
-        result = results[1];
-        if (result.rowsAffected !== (results[0]?.rowsAffected ?? -1)) {
+      if (
+        this.adapter.getType() === 'd1' ||
+        this.adapter.getType() === 'sqlite' ||
+        this.adapter.getType() === 'postgres'
+      ) {
+        const results = await this.adapter.batch([...lock, ...dependent, statement, update]);
+        result = results[results.length - 1];
+        if (result.rowsAffected !== (results[results.length - 2]?.rowsAffected ?? -1)) {
           throw new Error('history_receipt_atomicity_failed');
         }
       } else {
         throw new Error('history_receipt_adapter_unsupported');
       }
     } else {
-      result = await this.adapter.execute(
-        `UPDATE oauth_clients SET ${updates.join(', ')} WHERE tenant_id = ? AND client_id = ?${versionCondition}`,
-        params
-      );
+      const statement = {
+        sql: `UPDATE oauth_clients SET ${updates.join(', ')} WHERE tenant_id = ? AND client_id = ?${versionCondition}`,
+        params,
+      };
+      if (dependent.length) {
+        const results = await this.adapter.batch([...lock, ...dependent, statement]);
+        result = results[results.length - 1];
+      } else result = await this.adapter.execute(statement.sql, statement.params);
     }
 
     if (result.rowsAffected === 0) {
@@ -1324,6 +1370,10 @@ export class ClientRepository {
   private mapFromDb(row: OAuthClient): OAuthClient {
     return {
       ...row,
+      enabled: row.enabled === undefined ? true : Boolean(row.enabled),
+      // PostgreSQL drivers return BIGINT as strings; versions are compared as numbers.
+      created_at: Number(row.created_at),
+      updated_at: Number(row.updated_at),
       application_type: row.application_type ?? 'web',
       browser_refresh_token_policy: row.browser_refresh_token_policy ?? 'disabled',
       is_trusted: Boolean(row.is_trusted),

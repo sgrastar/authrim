@@ -21,6 +21,7 @@ import { sqliteAdapter } from './helpers/admin-authority-fixture';
 import {
   adminClientCreateHandler,
   adminClientGetHandler,
+  adminClientsListHandler,
   adminClientUpdateHandler,
 } from '../admin-clients';
 import { requireClientManagementPermission } from '../admin-resource-permissions';
@@ -74,7 +75,7 @@ function app(permissions = ['admin:clients:read', 'admin:clients:write']) {
       actorType: 'machine',
       tenantId,
       roles: [],
-      permissions,
+      permissions: [...permissions, 'admin:step_up_exempt:client.trust.activate'],
       hierarchyLevel: 0,
       mfaVerified: false,
     });
@@ -82,6 +83,7 @@ function app(permissions = ['admin:clients:read', 'admin:clients:write']) {
   });
   router.use('/api/admin/clients/*', requireClientManagementPermission());
   router.use('/api/admin/clients', requireClientManagementPermission());
+  router.get('/api/admin/clients', adminClientsListHandler);
   router.get('/api/admin/clients/:id', adminClientGetHandler);
   router.put('/api/admin/clients/:id', adminClientUpdateHandler);
   router.post('/api/admin/clients', adminClientCreateHandler);
@@ -115,6 +117,12 @@ beforeEach(async () => {
   db.exec(
     readFileSync(
       resolve(__dirname, '../../../../migrations/core/d1/010_information_release_consent.sql'),
+      'utf8'
+    )
+  );
+  db.exec(
+    readFileSync(
+      resolve(__dirname, '../../../../migrations/core/d1/012_oauth_client_enabled.sql'),
       'utf8'
     )
   );
@@ -169,6 +177,7 @@ async function storedClient(): Promise<ClientMetadata> {
   const parsed = object(jwks);
   if (!isPublicClientJwks(parsed)) throw new Error('Expected public JWKS');
   return {
+    enabled: row.enabled,
     client_id: row.client_id,
     client_name: row.client_name,
     created_at: row.created_at,
@@ -179,6 +188,101 @@ async function storedClient(): Promise<ClientMetadata> {
     jwks: { keys: parsed.keys },
   };
 }
+
+describe('Admin callback URL deferral', () => {
+  function create(body: Record<string, unknown>) {
+    return app().request(
+      '/api/admin/clients',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Tenant-Id': 'tenant-a' },
+        body: JSON.stringify(body),
+      },
+      env
+    );
+  }
+
+  it.each([
+    { label: 'empty', input: { redirect_uris: [] } },
+    { label: 'omitted', input: {} },
+  ])(
+    'creates with $label redirects, lists and reopens it, then adds and clears callbacks',
+    async ({ input }) => {
+      const response = await create({ client_name: 'Callback later', enabled: false, ...input });
+      expect(response.status).toBe(201);
+      const created = object(object(await response.json()).client);
+      expect(created.redirect_uris).toEqual([]);
+      const id = String(created.client_id);
+      expect((await repository.findByClientId(id))?.redirect_uris).toBe('[]');
+      const reopened = await request(app(), 'GET', undefined, 'tenant-a', id);
+      expect(reopened.status).toBe(200);
+      expect(object(object(await reopened.json()).client).redirect_uris).toEqual([]);
+      const listed = await app().request(
+        '/api/admin/clients?search=Callback%20later',
+        {
+          headers: { 'X-Tenant-Id': 'tenant-a' },
+        },
+        env
+      );
+      expect(listed.status).toBe(200);
+      expect(object(await listed.json()).clients).toEqual([
+        expect.objectContaining({ client_id: id, redirect_uris: [] }),
+      ]);
+      expect(
+        (
+          await request(
+            app(),
+            'PUT',
+            { redirect_uris: ['https://app.example.test/later'] },
+            'tenant-a',
+            id
+          )
+        ).status
+      ).toBe(200);
+      expect((await repository.findByClientId(id))?.redirect_uris).toBe(
+        '["https://app.example.test/later"]'
+      );
+      expect((await request(app(), 'PUT', { redirect_uris: [] }, 'tenant-a', id)).status).toBe(200);
+      expect((await repository.findByClientId(id))?.redirect_uris).toBe('[]');
+      expect(
+        (await request(app(), 'PUT', { client_name: 'Still waiting' }, 'tenant-a', id)).status
+      ).toBe(200);
+      expect((await repository.findByClientId(id))?.redirect_uris).toBe('[]');
+    }
+  );
+
+  it.each([
+    null,
+    'https://app.example.test/callback',
+    [12],
+    ['not a URL'],
+    ['https://app.example.test/callback#fragment'],
+    ['http://app.example.test/callback'],
+  ])('still rejects malformed redirect lists %j on create and update', async (redirect_uris) => {
+    expect((await create({ client_name: 'Invalid callback', redirect_uris })).status).toBe(400);
+    expect((await request(app(), 'PUT', { redirect_uris })).status).toBe(400);
+    expect((await repository.findByClientId('client'))?.redirect_uris).toBe(
+      '["https://app.example.test/callback"]'
+    );
+  });
+
+  it('retains the pairwise sector requirement when creating or clearing callbacks', async () => {
+    const rejected = await create({
+      client_name: 'Pairwise later',
+      subject_type: 'pairwise',
+      redirect_uris: [],
+    });
+    expect(rejected.status).toBe(400);
+    expect(object(await rejected.json()).missing).toContain('sector_identifier_uri');
+    expect((await request(app(), 'PUT', { subject_type: 'pairwise' })).status).toBe(200);
+    const cleared = await request(app(), 'PUT', { redirect_uris: [] });
+    expect(cleared.status).toBe(400);
+    expect(object(await cleared.json()).missing).toContain('sector_identifier_uri');
+    expect((await repository.findByClientId('client'))?.redirect_uris).toBe(
+      '["https://app.example.test/callback"]'
+    );
+  });
+});
 
 describe('Admin RP public keys and stored advanced settings', () => {
   it.each(['RS256', 'PS256'])(
@@ -339,6 +443,7 @@ describe('Admin RP public keys and stored advanced settings', () => {
     expect(row?.jwks_uri).toBe('https://keys.example.test/jwks');
     expect(transport).toHaveBeenCalled();
     const metadata: ClientMetadata = {
+      enabled: true,
       client_id: 'client',
       redirect_uris: ['https://app.example.test/callback'],
       token_endpoint_auth_method: 'private_key_jwt',

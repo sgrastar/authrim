@@ -2,6 +2,16 @@ import { describe, expect, it, vi } from 'vitest';
 import type { AgentGrantContract } from '../../../core';
 import { createCloudflareAgentAccessTokenAuthenticator } from '../token-authentication';
 
+const clientState = vi.hoisted(() => ({
+  read: vi.fn(async () => ({ client_id: 'client-1', enabled: true })),
+}));
+vi.mock('@authrim/ar-lib-core', async (original) => ({
+  ...(await original<typeof import('@authrim/ar-lib-core')>()),
+  getClient: clientState.read,
+  resolveAuthCorePersistenceAdapterFromEnv: vi.fn(async () => ({})),
+  createAuthContextFromHono: vi.fn(() => ({ coreAdapter: {} })),
+}));
+
 const grant: AgentGrantContract = {
   grantId: 'grant-1',
   tenantId: 'tenant-1',
@@ -60,6 +70,22 @@ function environment(overrides: Record<string, unknown> = {}) {
 }
 
 describe('createCloudflareAgentAccessTokenAuthenticator', () => {
+  it('refuses an existing bearer token after its issuing client is disabled', async () => {
+    clientState.read.mockResolvedValueOnce(null as never);
+    const repo = repository();
+    const authenticate = createCloudflareAgentAccessTokenAuthenticator({
+      now: () => 100,
+      verifyJwt: vi.fn().mockResolvedValue(claims()),
+      validateDpop: vi.fn(),
+      createRepository: () => repo,
+    });
+    const result = await authenticate(request(), environment());
+    expect(result.allowed).toBe(false);
+    if (result.allowed) throw new Error('expected refusal');
+    expect(result.response.status).toBe(401);
+    expect(repo.getGrant).not.toHaveBeenCalled();
+  });
+
   it('returns only a live, verified Mode A authorization context', async () => {
     const repo = repository();
     const authenticate = createCloudflareAgentAccessTokenAuthenticator({

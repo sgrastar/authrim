@@ -38,6 +38,7 @@ import {
   type DownstreamGrantServiceAuthorizer,
   type ApprovalRedactionLevel,
   verifyToken,
+  getClientCached,
 } from '@authrim/ar-lib-core';
 import { getTenantIdFromContext } from '@authrim/ar-lib-core';
 
@@ -826,6 +827,14 @@ async function verifyProtectedCustomerProfileToken(input: {
   const payload = await verifyToken(input.token, publicKey, issuer, {
     audience: input.audience,
   });
+  const clientId = payload.client_id ?? payload.azp;
+  // JWT bearer issuers need not have an OAuth client registration; a disabled one is refused.
+  if (
+    typeof clientId !== 'string' ||
+    (await getClientCached(input.c, input.c.env, clientId, { includeDisabled: true }))?.enabled ===
+      false
+  )
+    throw new Error('Invalid token client');
   return payload;
 }
 

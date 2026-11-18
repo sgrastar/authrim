@@ -3,6 +3,7 @@ import { Hono } from 'hono';
 import type { CIBARequestMetadata, Env } from '@authrim/ar-lib-core';
 
 const mocks = vi.hoisted(() => ({
+  client: vi.fn(),
   authenticatedUser: vi.fn(),
   isMockAuthEnabled: vi.fn(),
   checkRateLimit: vi.fn(),
@@ -25,6 +26,7 @@ vi.mock('@authrim/ar-lib-core', async () => {
     await vi.importActual<typeof import('@authrim/ar-lib-core')>('@authrim/ar-lib-core');
   return {
     ...actual,
+    getClientCached: mocks.client,
     isMockAuthEnabled: mocks.isMockAuthEnabled,
     checkRateLimit: mocks.checkRateLimit,
     getCloudProvider: vi.fn().mockResolvedValue('cloudflare'),
@@ -113,6 +115,7 @@ function request(body: unknown, env: Env = createEnv()) {
 describe('CIBA approval security branches', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.client.mockResolvedValue({ client_id: 'client-1', enabled: true });
     mocks.checkRateLimit.mockResolvedValue({
       allowed: true,
       remaining: 9,
@@ -133,6 +136,19 @@ describe('CIBA approval security branches', () => {
       if (path === '/approve') return Response.json({ success: true });
       return Response.json({ error: 'not_found' }, { status: 404 });
     });
+  });
+
+  it('refuses approval after the client was disabled without sending a decision or notification', async () => {
+    mocks.client.mockResolvedValue({ client_id: 'client-1', enabled: false });
+    const response = await request({ auth_req_id: 'legacy-request-id' });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: 'invalid_client' });
+    expect(
+      mocks.storeFetch.mock.calls.some(
+        ([input]) => new URL((input as Request).url).pathname === '/approve'
+      )
+    ).toBe(false);
+    expect(mocks.sendPingNotification).not.toHaveBeenCalled();
   });
 
   it('rate limits before parsing or looking up an authorization request', async () => {
@@ -303,6 +319,26 @@ describe('CIBA approval security branches', () => {
     });
     const response = await request({ auth_req_id: 'legacy-request-id' });
     expect(response.status).toBe(503);
+  });
+
+  it('does not send a ping if the client is disabled after approval', async () => {
+    mocks.client
+      .mockResolvedValueOnce({ client_id: 'client-1', enabled: true })
+      .mockResolvedValueOnce({ client_id: 'client-1', enabled: false });
+    mocks.storeFetch.mockImplementation(async (input: Request) =>
+      new URL(input.url).pathname === '/get-by-auth-req-id'
+        ? Response.json(
+            pending({
+              delivery_mode: 'ping',
+              client_notification_endpoint: 'https://client.example.com/ciba',
+              client_notification_token: 'notification-token',
+            })
+          )
+        : Response.json({ success: true })
+    );
+    const response = await request({ auth_req_id: 'legacy-request-id' });
+    expect(response.status).toBe(400);
+    expect(mocks.sendPingNotification).not.toHaveBeenCalled();
   });
 
   it.each([false, true])('continues after ping notification failure=%s', async (fails) => {

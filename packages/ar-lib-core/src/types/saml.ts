@@ -552,11 +552,13 @@ export interface SAMLLogoutResponse {
 // Configuration Types
 // ============================================================================
 
-/**
- * SAML SP Configuration (stored in identity_providers table)
- * Used when Authrim acts as IdP
- */
+/** Server-managed approval of a provider's local trust configuration; never accepted in requests. */
+export type SAMLProviderTrustApproval = { state: 'draft' } | { state: 'approved'; digest: string };
+
+/** SAML SP configuration (identity_providers): used when Authrim acts as IdP. */
 export interface SAMLSPConfig {
+  /** Unapproved drafts do not shadow federation runtime entries. */
+  trustApproval?: SAMLProviderTrustApproval;
   /** Operator note shown in Admin UI */
   description?: string;
   /** Logo URL shown on Login UI provider buttons */
@@ -729,6 +731,8 @@ export interface SAMLAssertionConsumerService {
  * Used when Authrim acts as SP
  */
 export interface SAMLIdPConfig {
+  /** Server-managed local trust approval; a draft never shadows a federation runtime entry. */
+  trustApproval?: SAMLProviderTrustApproval;
   /** Operator note shown in Admin UI */
   description?: string;
   /** SP display name sent as AuthnRequest ProviderName when Authrim acts as SP */

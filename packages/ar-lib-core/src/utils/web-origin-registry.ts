@@ -80,7 +80,7 @@ function parseFrameAncestors(value: string | null): string[] | undefined {
   return undefined;
 }
 
-function normalizeRegistryInput(
+export function normalizeRegistryInput(
   payload: WebOriginRegistryWritePayload
 ): WebOriginRegistryWriteEntry[] {
   const entries = payload.origins.map((entry) =>
@@ -173,11 +173,12 @@ export async function getWebOriginRegistry(
   env: Env,
   tenantId: string,
   clientId: string,
-  source: DatabaseSource | DatabaseAdapter
+  source: DatabaseSource | DatabaseAdapter,
+  options: { bypassCache?: boolean } = {}
 ): Promise<WebOriginRegistryDocument> {
   const key = cacheKey(tenantId, clientId);
 
-  if (env.CLIENTS_CACHE) {
+  if (env.CLIENTS_CACHE && !options.bypassCache) {
     const cached = await env.CLIENTS_CACHE.get(key);
     if (cached) {
       try {
@@ -200,7 +201,7 @@ export async function getWebOriginRegistry(
     origins: rows.map(rowToEntry),
   };
 
-  if (env.CLIENTS_CACHE) {
+  if (env.CLIENTS_CACHE && !options.bypassCache) {
     try {
       // Reuse the policy TTL tier: origin registry changes are security-sensitive and
       // should converge faster than general client display metadata.
@@ -293,4 +294,44 @@ export async function isIframeOidcAuthEnabled(env: Env, tenantId: string): Promi
   }
 
   return env.ENABLE_IFRAME_OIDC_AUTH === 'true';
+}
+
+/** Guard every dependent write with the same old client version as the final CAS. */
+export function clientOriginReplacementStatements(
+  tenantId: string,
+  clientId: string,
+  payload: WebOriginRegistryWritePayload,
+  version: number
+): import('../db/adapter').PreparedStatement[] {
+  const exists =
+    'EXISTS (SELECT 1 FROM oauth_clients WHERE tenant_id = ? AND client_id = ? AND updated_at = ?)';
+  const guard = [tenantId, clientId, version];
+  const now = Math.floor(Date.now() / 1000);
+  return [
+    {
+      sql: `DELETE FROM web_origin_registry WHERE tenant_id = ? AND client_id = ? AND ${exists}`,
+      params: [tenantId, clientId, ...guard],
+    },
+    ...normalizeRegistryInput(payload).map((entry) => ({
+      sql: `INSERT INTO web_origin_registry (id, tenant_id, client_id, origin, cors_allowed, csp_frame_ancestors,
+        handoff_allowed, iframe_allowed, environment, is_active, created_at, updated_at)
+        SELECT CAST(? AS TEXT), CAST(? AS TEXT), CAST(? AS TEXT), CAST(? AS TEXT), CAST(? AS INTEGER),
+          CAST(? AS TEXT), CAST(? AS INTEGER), CAST(? AS INTEGER), CAST(? AS TEXT), 1,
+          CAST(? AS BIGINT), CAST(? AS BIGINT) WHERE ${exists}`,
+      params: [
+        crypto.randomUUID(),
+        tenantId,
+        clientId,
+        entry.origin,
+        entry.cors?.allowed === false ? 0 : 1,
+        entry.csp?.frame_ancestors?.length ? JSON.stringify(entry.csp.frame_ancestors) : null,
+        entry.handoff_allowed === false ? 0 : 1,
+        entry.iframe_allowed === true ? 1 : 0,
+        entry.environment ?? null,
+        now,
+        now,
+        ...guard,
+      ],
+    })),
+  ];
 }

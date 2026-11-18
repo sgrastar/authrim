@@ -1,3 +1,9 @@
+import {
+  clientEnableBlockers,
+  requiresClientConfigurationValidation,
+} from './client-configuration';
+import { classifyClientTrustTransition } from './client-trust';
+import { clientKeySettingsProblem } from './admin-client-advanced';
 /**
  * RFC 7592 - OAuth 2.0 Dynamic Client Registration Management Protocol
  * https://www.rfc-editor.org/rfc/rfc7592.html
@@ -142,8 +148,8 @@ function validateOutboundCallbackUri(uri: string, fieldName: string): string | n
  * @returns Error message if invalid, null if valid
  */
 function validateRedirectUris(uris: unknown): string | null {
-  if (!Array.isArray(uris) || uris.length === 0) {
-    return 'redirect_uris must be a non-empty array';
+  if (!Array.isArray(uris)) {
+    return 'redirect_uris must be an array';
   }
 
   for (const uri of uris) {
@@ -453,7 +459,7 @@ async function validateRegistrationAccessToken(
   }
 
   // Fetch client from D1/cache
-  const client = await getClientCached(c, c.env, clientId);
+  const client = await getClientCached(c, c.env, clientId, { includeDisabled: true });
   if (!client) {
     return null;
   }
@@ -569,13 +575,6 @@ function buildClientResponse(
   return response;
 }
 
-function coalesceNullable<T>(
-  newValue: T | undefined,
-  existingValue: T | null | undefined
-): T | null {
-  return newValue ?? existingValue ?? null;
-}
-
 /**
  * GET /clients/:client_id - Read Client Configuration
  *
@@ -606,7 +605,7 @@ export async function clientConfigGetHandler(c: Context<{ Bindings: Env }>): Pro
     }
 
     // Fetch client data
-    const client = await getClientCached(c, c.env, clientId);
+    const client = await getClientCached(c, c.env, clientId, { includeDisabled: true });
     if (!client) {
       // Should not happen if validateRegistrationAccessToken passed
       return c.json(
@@ -748,7 +747,15 @@ async function clientConfigUpdateUnguarded(c: Context<{ Bindings: Env }>): Promi
     }
 
     // Fetch existing client
-    const existingClient = await getClientCached(c, c.env, clientId);
+    if (Object.prototype.hasOwnProperty.call(body, 'enabled'))
+      return c.json(
+        {
+          error: 'invalid_client_metadata',
+          error_description: 'enabled can only be changed by an administrator',
+        },
+        400
+      );
+    const existingClient = await getClientCached(c, c.env, clientId, { includeDisabled: true });
     if (!existingClient) {
       return c.json(
         {
@@ -756,6 +763,61 @@ async function clientConfigUpdateUnguarded(c: Context<{ Bindings: Env }>): Promi
           error_description: 'Client not found',
         },
         404
+      );
+    }
+    // Match the SQL writer: scalar null retains its value; JSON null clears it.
+    const jsonFields = new Set([
+      'redirect_uris',
+      'grant_types',
+      'response_types',
+      'contacts',
+      'jwks',
+      'post_logout_redirect_uris',
+    ]);
+    const scalarFields = new Set([
+      'client_name',
+      'scope',
+      'logo_uri',
+      'client_uri',
+      'policy_uri',
+      'tos_uri',
+      'jwks_uri',
+      'subject_type',
+      'sector_identifier_uri',
+      'token_endpoint_auth_signing_alg',
+      'id_token_signed_response_alg',
+      'userinfo_signed_response_alg',
+      'request_object_signing_alg',
+      'authorization_signed_response_alg',
+      'authorization_encrypted_response_alg',
+      'authorization_encrypted_response_enc',
+      'backchannel_logout_uri',
+      'frontchannel_logout_uri',
+      'initiate_login_uri',
+      'login_ui_url',
+    ]);
+    const booleanFields = new Set([
+      'backchannel_logout_session_required',
+      'frontchannel_logout_session_required',
+    ]);
+    const previousClient: Record<string, unknown> = { ...existingClient };
+    // Compare the persisted representation so omitted legacy fields do not become trust edits.
+    for (const field of [...jsonFields, ...scalarFields]) {
+      previousClient[field] ??= null;
+    }
+    for (const field of booleanFields) previousClient[field] = Boolean(previousClient[field]);
+    const effectiveClient = { ...previousClient };
+    const updates = body as Record<string, unknown>;
+    for (const field of jsonFields) {
+      effectiveClient[field] =
+        updates[field] !== undefined ? updates[field] || null : (effectiveClient[field] ?? null);
+    }
+    for (const field of scalarFields) {
+      effectiveClient[field] = updates[field] ?? effectiveClient[field] ?? null;
+    }
+    for (const field of booleanFields) {
+      effectiveClient[field] = Boolean(
+        updates[field] !== undefined ? updates[field] : effectiveClient[field]
       );
     }
     // OIDC Core 8.1, as at registration: the pairwise configuration the client would have after
@@ -771,6 +833,7 @@ async function clientConfigUpdateUnguarded(c: Context<{ Bindings: Env }>): Promi
         body.sector_identifier_uri ?? existingClient.sector_identifier_uri ?? null;
       const pairwiseError = await validatePairwiseClientMetadata({
         subjectType: body.subject_type ?? existingClient.subject_type ?? 'public',
+        allowIncomplete: true,
         redirectUris: effectiveRedirectUris,
         sectorIdentifierUri: effectiveSectorUri,
         // Whenever the subject type, the sector URI or the redirect URIs are in the update, the
@@ -819,25 +882,42 @@ async function clientConfigUpdateUnguarded(c: Context<{ Bindings: Env }>): Promi
       );
     }
 
-    // Update client in D1
-    const coreAdapter: DatabaseAdapter = createAuthContextFromHono(c, tenantId).coreAdapter;
-    const now = Date.now();
-
-    // Helper function to serialize array/object fields
-    const serializeField = (newValue: unknown, existingValue: unknown): string | null => {
-      if (newValue !== undefined) {
-        return newValue ? JSON.stringify(newValue) : null;
-      }
-      if (existingValue !== undefined && existingValue !== null) {
-        // existingClient already has parsed values from getClient
-        return JSON.stringify(existingValue);
-      }
-      return null;
-    };
+    const level = classifyClientTrustTransition({
+      before: previousClient,
+      after: effectiveClient,
+    });
+    const validateConfiguration = requiresClientConfigurationValidation(
+      existingClient.enabled,
+      level
+    );
+    if (validateConfiguration) {
+      const missing = clientEnableBlockers(effectiveClient);
+      if (missing.length)
+        return c.json({ error: 'client_configuration_required_to_enable', missing }, 400);
+    }
+    if (
+      validateConfiguration ||
+      body.jwks !== undefined ||
+      body.jwks_uri !== undefined ||
+      body.token_endpoint_auth_signing_alg !== undefined
+    ) {
+      const keyError = await clientKeySettingsProblem(
+        effectiveClient,
+        typeof effectiveClient.token_endpoint_auth_method === 'string'
+          ? effectiveClient.token_endpoint_auth_method
+          : 'client_secret_basic',
+        true,
+        false
+      );
+      if (keyError)
+        return c.json({ error: 'invalid_client_metadata', error_description: keyError }, 400);
+    }
 
     // Build complete update SQL with all updatable fields
+    const coreAdapter: DatabaseAdapter = createAuthContextFromHono(c, tenantId).coreAdapter;
+    const now = Math.max(Date.now(), (existingClient.updated_at ?? 0) + 1);
     try {
-      await coreAdapter.execute(
+      const updated = await coreAdapter.execute(
         `
         UPDATE oauth_clients SET
           client_name = ?,
@@ -869,102 +949,55 @@ async function clientConfigUpdateUnguarded(c: Context<{ Bindings: Env }>): Promi
           initiate_login_uri = ?,
           login_ui_url = ?,
           updated_at = ?
-        WHERE tenant_id = ? AND client_id = ?
+        WHERE tenant_id = ? AND client_id = ? AND updated_at = ?
         `,
         [
-          // Basic client info
-          coalesceNullable(
-            body.client_name,
-            existingClient.client_name as string | null | undefined
-          ),
-          serializeField(body.redirect_uris, existingClient.redirect_uris),
-          serializeField(body.grant_types, existingClient.grant_types),
-          serializeField(body.response_types, existingClient.response_types),
-          coalesceNullable(body.scope, existingClient.scope as string | null | undefined),
-          serializeField(body.contacts, existingClient.contacts),
-          // URIs
-          coalesceNullable(body.logo_uri, existingClient.logo_uri as string | null | undefined),
-          coalesceNullable(body.client_uri, existingClient.client_uri as string | null | undefined),
-          coalesceNullable(body.policy_uri, existingClient.policy_uri as string | null | undefined),
-          coalesceNullable(body.tos_uri, existingClient.tos_uri as string | null | undefined),
-          coalesceNullable(body.jwks_uri, existingClient.jwks_uri as string | null | undefined),
-          // JWKS
-          serializeField(body.jwks, existingClient.jwks),
-          // Subject type
-          coalesceNullable(
-            body.subject_type,
-            existingClient.subject_type as string | null | undefined
-          ),
-          coalesceNullable(
-            body.sector_identifier_uri,
-            existingClient.sector_identifier_uri as string | null | undefined
-          ),
-          // Algorithm preferences
-          coalesceNullable(
-            body.token_endpoint_auth_signing_alg,
-            existingClient.token_endpoint_auth_signing_alg
-          ),
-          coalesceNullable(
-            body.id_token_signed_response_alg,
-            existingClient.id_token_signed_response_alg as string | null | undefined
-          ),
-          coalesceNullable(
-            body.userinfo_signed_response_alg,
-            existingClient.userinfo_signed_response_alg as string | null | undefined
-          ),
-          coalesceNullable(
-            body.request_object_signing_alg,
-            existingClient.request_object_signing_alg as string | null | undefined
-          ),
-          coalesceNullable(
-            body.authorization_signed_response_alg,
-            existingClient.authorization_signed_response_alg
-          ),
-          coalesceNullable(
-            body.authorization_encrypted_response_alg,
-            existingClient.authorization_encrypted_response_alg
-          ),
-          coalesceNullable(
-            body.authorization_encrypted_response_enc,
-            existingClient.authorization_encrypted_response_enc
-          ),
-          // Logout URIs
-          serializeField(body.post_logout_redirect_uris, existingClient.post_logout_redirect_uris),
-          coalesceNullable(
-            body.backchannel_logout_uri,
-            existingClient.backchannel_logout_uri as string | null | undefined
-          ),
-          body.backchannel_logout_session_required !== undefined
-            ? body.backchannel_logout_session_required
-              ? 1
-              : 0
-            : existingClient.backchannel_logout_session_required
-              ? 1
-              : 0,
-          coalesceNullable(
-            body.frontchannel_logout_uri,
-            existingClient.frontchannel_logout_uri as string | null | undefined
-          ),
-          body.frontchannel_logout_session_required !== undefined
-            ? body.frontchannel_logout_session_required
-              ? 1
-              : 0
-            : existingClient.frontchannel_logout_session_required
-              ? 1
-              : 0,
-          // OIDC 3rd Party Initiated Login
-          coalesceNullable(
-            body.initiate_login_uri,
-            existingClient.initiate_login_uri as string | null | undefined
-          ),
-          coalesceNullable(body.login_ui_url, existingClient.login_ui_url),
+          // Persist the same effective settings that passed validation.
+          ...[
+            'client_name',
+            'redirect_uris',
+            'grant_types',
+            'response_types',
+            'scope',
+            'contacts',
+            'logo_uri',
+            'client_uri',
+            'policy_uri',
+            'tos_uri',
+            'jwks_uri',
+            'jwks',
+            'subject_type',
+            'sector_identifier_uri',
+            'token_endpoint_auth_signing_alg',
+            'id_token_signed_response_alg',
+            'userinfo_signed_response_alg',
+            'request_object_signing_alg',
+            'authorization_signed_response_alg',
+            'authorization_encrypted_response_alg',
+            'authorization_encrypted_response_enc',
+            'post_logout_redirect_uris',
+            'backchannel_logout_uri',
+            'backchannel_logout_session_required',
+            'frontchannel_logout_uri',
+            'frontchannel_logout_session_required',
+            'initiate_login_uri',
+            'login_ui_url',
+          ].map((field) => {
+            const value = effectiveClient[field];
+            if (jsonFields.has(field)) return value === null ? null : JSON.stringify(value);
+            if (booleanFields.has(field)) return value ? 1 : 0;
+            return value;
+          }),
           // Timestamp
           now,
           // WHERE clause
           tenantId,
           clientId,
+          existingClient.updated_at,
         ]
       );
+      if (!updated.rowsAffected)
+        return c.json({ error: 'conflict', reason: 'version_conflict' }, 409);
     } catch (updateError) {
       const log = getLogger(c).module('RFC7592');
       log.error('D1 UPDATE error', { action: 'config_update', clientId }, updateError as Error);
@@ -977,10 +1010,11 @@ async function clientConfigUpdateUnguarded(c: Context<{ Bindings: Env }>): Promi
     await c.env.CLIENTS_CACHE.delete(cacheKey).catch(() => {
       log.warn('Failed to invalidate client cache', { action: 'config_update', clientId });
     });
-    getRequestCache(c).clients.delete(clientId);
+    getRequestCache(c).clients.delete(`${tenantId}:${clientId}:include-disabled`);
+    getRequestCache(c).clients.delete(`${tenantId}:${clientId}`);
 
     // Fetch updated client and return response
-    const updatedClient = await getClientCached(c, c.env, clientId);
+    const updatedClient = await getClientCached(c, c.env, clientId, { includeDisabled: true });
     if (!updatedClient) {
       return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
     }

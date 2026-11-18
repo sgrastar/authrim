@@ -7,19 +7,21 @@ import type { ImportForm } from './connection-model';
 
 export interface MetadataPreviewDraft {
 	file?: File;
+	sourceXml?: string;
 	preview?: SamlMetadataPreview;
 	pending: boolean;
 	error: string;
 }
 
 export function metadataInput(form: ImportForm): SamlMetadataInput | undefined {
-	if (form.importMode === 'manual') return undefined;
+	if (form.skipped || form.importMode === 'manual') return undefined;
 	const preview = form.metadata?.preview;
 	if (
 		!preview ||
 		form.metadata?.pending ||
 		(form.importMode === 'url' && preview.metadataUrl !== form.metadataUrl) ||
-		(form.importMode === 'file' && !form.metadata?.file)
+		(form.importMode === 'file' && !form.metadata?.file) ||
+		(form.importMode === 'xml' && form.metadata?.sourceXml !== form.metadataXml)
 	)
 		throw new Error('Preview the current metadata before saving.');
 	return {

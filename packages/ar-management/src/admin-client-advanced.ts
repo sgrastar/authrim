@@ -25,6 +25,14 @@ const publicUrl = z
   }, 'Use a public HTTPS URL without credentials or fragments');
 const optionalUrl = z.union([publicUrl, z.literal(''), z.null()]).optional();
 export const adminClientAdvancedSchema = z.object({
+  enabled: z.boolean().optional(),
+  backchannel_token_delivery_mode: z.enum(['poll', 'ping', 'push']).nullable().optional(),
+  backchannel_client_notification_endpoint: publicUrl.nullable().optional(),
+  backchannel_authentication_request_signing_alg: z
+    .enum(CLIENT_ASSERTION_SIGNING_ALGS)
+    .nullable()
+    .optional(),
+  backchannel_user_code_parameter: z.boolean().optional(),
   logo_uri: optionalUrl,
   client_uri: optionalUrl,
   policy_uri: optionalUrl,
@@ -67,14 +75,33 @@ interface KeySettings {
   jwks_uri?: string | null;
   token_endpoint_auth_signing_alg?: string | null;
 }
+/** Repository rows retain serialized JWKS; validate their decoded key material. */
+export async function storedClientKeySettingsProblem(
+  settings: KeySettings,
+  method: string,
+  verifyRemote: boolean,
+  requireComplete = true
+): Promise<string | undefined> {
+  let jwks = settings.jwks;
+  if (typeof jwks === 'string' && jwks) {
+    try {
+      jwks = JSON.parse(jwks) as unknown;
+    } catch {
+      return 'Stored JWKS must be replaced explicitly';
+    }
+  }
+  return clientKeySettingsProblem({ ...settings, jwks }, method, verifyRemote, requireComplete);
+}
+
 /** Validate the resulting state before the single repository write. URI transport is SSRF bounded. */
 export async function clientKeySettingsProblem(
   settings: KeySettings,
   method: string,
-  verifyRemote: boolean
+  verifyRemote: boolean,
+  requireComplete = true
 ): Promise<string | undefined> {
   if (settings.jwks && settings.jwks_uri) return 'Choose either jwks or jwks_uri, never both';
-  if (method === 'private_key_jwt' && !settings.jwks && !settings.jwks_uri)
+  if (requireComplete && method === 'private_key_jwt' && !settings.jwks && !settings.jwks_uri)
     return 'private_key_jwt requires public jwks or a public HTTPS jwks_uri';
   let jwks = settings.jwks;
   if (settings.jwks_uri && verifyRemote && method === 'private_key_jwt') {
@@ -85,6 +112,7 @@ export async function clientKeySettingsProblem(
         timeoutMs: 5000,
         maxResponseSize: 65536,
       });
+      if (!jwks) return 'Invalid public JWKS';
     } catch {
       return 'Unable to validate public signing keys at jwks_uri';
     }

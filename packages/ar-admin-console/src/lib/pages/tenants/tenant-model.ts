@@ -142,6 +142,12 @@ export const COPY_GROUPS: readonly CopyGroup[] = [
 				requires: 'clients'
 			},
 			{
+				id: 'saml_providers',
+				label: 'tn.copy.samlProviders',
+				description: 'tn.copy.samlProviders.desc',
+				part: 'saml_providers'
+			},
+			{
 				id: 'webhooks',
 				label: 'tn.copy.webhooks',
 				description: 'tn.copy.webhooks.desc',
@@ -185,6 +191,7 @@ export function defaultCopyOptions(): TenantCopyOptions {
 		roles: true,
 		admin_access: false,
 		clients: false,
+		saml_providers: false,
 		client_credentials: false,
 		webhooks: false,
 		webhook_secrets: false

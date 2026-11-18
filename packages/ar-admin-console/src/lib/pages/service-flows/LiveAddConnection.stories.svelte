@@ -41,7 +41,7 @@
 			appType
 		);
 		await userEvent.click(canvas.getByRole('button', { name: t('wizard.next') }));
-		await expect(canvas.getByRole('button', { name: t('wizard.next') })).toBeDisabled();
+		await expect(canvas.getByRole('button', { name: t('wizard.next') })).toBeEnabled();
 		await userEvent.click(canvas.getByRole('button', { name: t('sf.rp.addRedirect') }));
 		await userEvent.type(
 			canvas.getByRole('textbox'),
@@ -95,6 +95,13 @@
 		samlProviders: { createServiceProvider: fn() },
 		canCreate: () => true
 	};
+	const deferredCreate = fn(async (_input: CreateClientInput) => ({ id: 'callback-later' }));
+	const deferredNavigate = fn(async (_path: string) => {});
+	const deferredResources: ConnectionCreationResources = {
+		clients: { create: deferredCreate },
+		samlProviders: { createServiceProvider: fn() },
+		canCreate: () => true
+	};
 </script>
 
 <Story
@@ -115,6 +122,7 @@
 		await expect(webCreate).toHaveBeenCalledWith({
 			client_name: 'Portal',
 			application_type: 'web',
+			enabled: false,
 			redirect_uris: ['https://portal.example/callback'],
 			grant_types: ['authorization_code'],
 			response_types: ['code'],
@@ -153,6 +161,7 @@
 		spCreate.mockRejectedValueOnce(new Error('Creation refused'));
 		const canvas = within(canvasElement);
 		await choose(canvas, 'sp');
+		await userEvent.click(canvas.getByRole('radio', { name: t('sf.import.mode.manual') }));
 		await expect(canvas.queryByRole('button', { name: t('sf.import.read') })).toBeNull();
 		await expect(canvas.queryByText(t('sf.ours.signingCert'))).toBeNull();
 		await expect(canvas.queryByRole('tab')).toBeNull();
@@ -218,6 +227,7 @@
 				application_type: 'spa',
 				token_endpoint_auth_method: 'none',
 				require_pkce: true,
+				enabled: false,
 				redirect_uris: ['https://portal.example/callback']
 			})
 		);
@@ -242,6 +252,7 @@
 				application_type: 'native',
 				token_endpoint_auth_method: 'none',
 				require_pkce: true,
+				enabled: false,
 				redirect_uris: ['com.test.portal:/callback']
 			})
 		);
@@ -258,5 +269,69 @@
 		await userEvent.click(canvas.getByRole('button', { name: t('wizard.next') }));
 		await expect(canvas.getByRole('radio', { name: /^Sign-up/ })).toBeVisible();
 		await expect(canvas.getByRole('radio', { name: /^Sign-in/ })).toBeVisible();
+	}}
+/>
+
+<Story
+	name="RP skips callbacks and stays on the completion screen until details are opened"
+	args={{ resources: deferredResources, onnavigate: deferredNavigate }}
+	play={async ({ canvasElement }) => {
+		deferredCreate.mockClear();
+		deferredNavigate.mockClear();
+		const canvas = within(canvasElement);
+		await choose(canvas, 'rp');
+		await userEvent.type(canvas.getByRole('textbox', { name: t('sf.row.name') }), 'Callback later');
+		await userEvent.selectOptions(
+			canvas.getByRole('combobox', { name: t('sf.row.appType') }),
+			'spa'
+		);
+		await userEvent.click(canvas.getByRole('button', { name: t('wizard.next') }));
+		const next = canvas.getByRole('button', { name: t('wizard.next') });
+		await expect(next).toBeEnabled();
+		await userEvent.click(canvas.getByRole('button', { name: t('sf.rp.addRedirect') }));
+		await userEvent.type(canvas.getByRole('textbox'), 'unfinished');
+		await userEvent.click(canvas.getByRole('button', { name: t('sf.draft.skip') }));
+		await expect(canvas.getByText(t('sf.rp.callbacksMissing'))).toBeVisible();
+		await expect(next).toBeEnabled();
+		await userEvent.click(canvas.getByRole('button', { name: t('sf.draft.enterNow') }));
+		await expect(next).toBeDisabled();
+		await userEvent.click(canvas.getByRole('button', { name: t('sf.draft.skip') }));
+		await userEvent.click(next);
+		await userEvent.click(canvas.getByRole('button', { name: t('sf.create.save') }));
+		await canvas.findByRole('heading', { name: t('sf.create.saved') });
+		await expect(canvas.getByText(t('sf.rp.callbacksMissing'))).toBeVisible();
+		await expect(deferredCreate).toHaveBeenCalledOnce();
+		await expect(deferredCreate.mock.calls[0][0]).toMatchObject({
+			redirect_uris: [],
+			application_type: 'spa',
+			token_endpoint_auth_method: 'none',
+			require_pkce: true
+		});
+		await expect(deferredCreate.mock.calls[0][0]).toHaveProperty('enabled', false);
+		await expect(deferredNavigate).not.toHaveBeenCalled();
+		await userEvent.click(canvas.getByRole('button', { name: t('sf.draft.openDetails') }));
+		await waitFor(() =>
+			expect(deferredNavigate).toHaveBeenCalledWith('/admin/applications/all/rp/callback-later')
+		);
+	}}
+/>
+
+<Story
+	name="RP leaves callbacks empty and creates a draft"
+	args={{ resources: deferredResources, onnavigate: deferredNavigate }}
+	play={async ({ canvasElement }) => {
+		deferredCreate.mockClear();
+		const canvas = within(canvasElement);
+		await choose(canvas, 'rp');
+		await userEvent.type(canvas.getByRole('textbox', { name: t('sf.row.name') }), 'Callback later');
+		await userEvent.click(canvas.getByRole('button', { name: t('wizard.next') }));
+		await expect(canvas.getByRole('button', { name: t('wizard.next') })).toBeEnabled();
+		await userEvent.click(canvas.getByRole('button', { name: t('wizard.next') }));
+		await userEvent.click(canvas.getByRole('button', { name: t('sf.create.save') }));
+		await canvas.findByRole('heading', { name: t('sf.create.saved') });
+		await expect(deferredCreate.mock.calls[0][0]).toMatchObject({
+			enabled: false,
+			redirect_uris: []
+		});
 	}}
 />

@@ -49,6 +49,7 @@ const CloneOptionsSchema = z
     settings: z.boolean().default(true),
     secret_settings: z.boolean().default(false),
     clients: z.boolean().default(false),
+    saml_providers: z.boolean().default(false),
     client_credentials: z.boolean().default(false),
     roles: z.boolean().default(true),
     admin_access: z.boolean().default(false),
@@ -86,6 +87,7 @@ const TenantCloneRequestSchema = z
     copy: CloneOptionsSchema.optional(),
     // Legacy flags remain accepted for existing API callers.
     include_clients: z.boolean().optional(),
+    include_saml_providers: z.boolean().optional(),
     include_roles: z.boolean().optional(),
     include_webhooks: z.boolean().optional(),
   })
@@ -188,6 +190,8 @@ export const OAUTH_CLIENT_CLONE_COLUMNS = [
  * lifecycle. It must never be materialized as an ordinary OAuth client in another tenant.
  */
 export const OAUTH_CLIENT_NON_CLONE_COLUMNS: ReadonlySet<string> = new Set([
+  // Destination trust is activated separately; ordinary clones are drafts.
+  'enabled',
   'agent_access_registration_mode',
   'agent_access_expires_at',
   'agent_access_last_used_at',
@@ -482,7 +486,7 @@ export function sanitizeCopiedSettingsValue(
       behavior === 'custom_url' &&
       typeof redirectUrl === 'string' &&
       /^https:\/\//i.test(redirectUrl.trim());
-    // SAML service providers are not copied: a sign-in to one has nowhere to go in the copy.
+    // Copied SAML connections are disabled drafts: sign-in must still return to the account page.
     if (
       sourceBoundCustomRedirect ||
       (behavior === 'app_login' && !context.includeClients) ||
@@ -512,6 +516,7 @@ function normalizeOptions(input: z.infer<typeof TenantCloneRequestSchema>): Clon
   return {
     ...parsed,
     clients: input.include_clients ?? parsed.clients,
+    saml_providers: input.include_saml_providers ?? parsed.saml_providers,
     roles: input.include_roles ?? parsed.roles,
     webhooks: input.include_webhooks ?? parsed.webhooks,
   };
@@ -547,8 +552,12 @@ async function estimateSelectedDatabaseQueries(
        (SELECT COUNT(*) FROM role_assignment_rules WHERE tenant_id = ?) AS role_rules,
        (SELECT MAX(updated_at) FROM role_assignment_rules WHERE tenant_id = ?) AS rules_updated,
        (SELECT COUNT(*) FROM webhook_configs WHERE tenant_id = ?) AS webhooks,
-       (SELECT MAX(updated_at) FROM webhook_configs WHERE tenant_id = ?) AS webhooks_updated`,
-    Array.from({ length: 14 }, () => tenantId)
+       (SELECT MAX(updated_at) FROM webhook_configs WHERE tenant_id = ?) AS webhooks_updated,
+       (SELECT COUNT(*) FROM identity_providers
+         WHERE tenant_id = ? AND provider_type IN ('saml_sp', 'saml_idp')) AS saml_providers,
+       (SELECT MAX(updated_at) FROM identity_providers
+         WHERE tenant_id = ? AND provider_type IN ('saml_sp', 'saml_idp')) AS saml_providers_updated`,
+    Array.from({ length: 16 }, () => tenantId)
   );
   const count = (field: string) => Number(counts?.[field] ?? 0);
   let total = 0;
@@ -564,6 +573,14 @@ async function estimateSelectedDatabaseQueries(
       trust_updated: counts?.trust_updated ?? null,
       flow_assignments: count('flow_assignments'),
       flows_updated: counts?.flows_updated ?? null,
+    });
+  }
+  if (options.saml_providers) {
+    // List the source and destination, then insert each non-conflicting provider once.
+    total += count('saml_providers') + 2;
+    Object.assign(sourceState, {
+      saml_providers: count('saml_providers'),
+      saml_providers_updated: counts?.saml_providers_updated ?? null,
     });
   }
   // Custom roles and admin roles require a second pass to restore inheritance.
@@ -1048,6 +1065,116 @@ function sanitizeContractKeyMaterial(node: unknown): unknown {
   );
 }
 
+/** Preserve portable peer configuration, never the source tenant's approval or signing keys. */
+export function sanitizeSAMLProviderCloneConfig(serialized: string): Record<string, unknown> {
+  const config = parseSettingsRecord(serialized);
+  if (!config) throw new Error('tenant_clone_saml_config_invalid');
+  for (const field of [
+    'trustApproval',
+    'signingKeyPolicy',
+    'aggregateImport',
+    'certificateValidation',
+    'metadataLastFetched',
+    'metadataHash',
+    'metadataCriticalFields',
+    'metadataRefreshStatus',
+    'updatedAt',
+  ])
+    delete config[field];
+  const policy = config.metadataRefreshPolicy;
+  delete config.metadataRefreshPolicy;
+  if (policy && typeof policy === 'object' && !Array.isArray(policy)) {
+    // Only polling choices are portable. Source validity, suspension and verification are not.
+    config.metadataRefreshPolicy = Object.fromEntries(
+      Object.entries(policy).filter(([field]) => field === 'mode' || field === 'intervalSeconds')
+    );
+  }
+  const mapping = config.identityMapping;
+  if (mapping && typeof mapping === 'object' && !Array.isArray(mapping)) {
+    // Mapping Sets and their profiles/versions are not a tenant-clone category. Keep attribute
+    // rules, but require the destination admin to select a destination-owned Mapping Set.
+    const sourceReferences = new Set([
+      'fieldMappingSetId',
+      'fieldMappingVersionId',
+      'sourceProfileId',
+      'destinationProfileId',
+    ]);
+    config.identityMapping = Object.fromEntries(
+      Object.entries(mapping).filter(([field]) => !sourceReferences.has(field))
+    );
+  } else {
+    delete config.identityMapping;
+  }
+  // This is new provenance, not a copy of source approval. Drafts never shadow federation entries.
+  config.trustApproval = { state: 'draft' };
+  return config;
+}
+
+async function cloneSAMLProviders(
+  source: DatabaseAdapter,
+  target: DatabaseAdapter,
+  sourceTenantId: string,
+  targetTenantId: string,
+  now: number,
+  createdIds: string[]
+): Promise<{ copied: number; skipped: number; warnings: string[] }> {
+  const providers = await source.query<{
+    id: string;
+    name: string;
+    provider_type: string;
+    config_json: string;
+  }>(
+    `SELECT id, name, provider_type, config_json FROM identity_providers
+      WHERE tenant_id = ? AND provider_type IN ('saml_sp', 'saml_idp') ORDER BY id`,
+    [sourceTenantId]
+  );
+  const existing = await target.query<{ id: string; provider_type: string; config_json: string }>(
+    `SELECT id, provider_type, config_json FROM identity_providers
+      WHERE tenant_id = ? AND provider_type IN ('saml_sp', 'saml_idp')`,
+    [targetTenantId]
+  );
+  // Match provider registration uniqueness: one entity ID can identify both an SP and an IdP.
+  const entityKeys = new Set(
+    existing.flatMap((row) => {
+      const entityId = parseSettingsRecord(row.config_json)?.entityId;
+      return typeof entityId === 'string' && entityId
+        ? [JSON.stringify([row.provider_type, entityId])]
+        : [];
+    })
+  );
+  const ids = new Set(existing.map((row) => row.id));
+  const result: { copied: number; skipped: number; warnings: string[] } = {
+    copied: 0,
+    skipped: 0,
+    warnings: [],
+  };
+  for (const provider of providers) {
+    const config = sanitizeSAMLProviderCloneConfig(provider.config_json);
+    const entityId = typeof config.entityId === 'string' ? config.entityId : '';
+    const entityKey = JSON.stringify([provider.provider_type, entityId]);
+    // Stable IDs also make retrying an interrupted copy idempotent for empty drafts.
+    const id = `saml-clone-${await sha256Hex(JSON.stringify([sourceTenantId, targetTenantId, provider.id]))}`;
+    if (ids.has(id) || (entityId && entityKeys.has(entityKey))) {
+      result.skipped += 1;
+      result.warnings.push(
+        `SAML provider ${provider.name} (${entityId || provider.id}) was skipped because the destination already contains the same provider type and entity ID, or clone ID.`
+      );
+      continue;
+    }
+    await target.execute(
+      `INSERT INTO identity_providers
+        (id, tenant_id, name, provider_type, config_json, enabled, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, 0, ?, ?)`,
+      [id, targetTenantId, provider.name, provider.provider_type, JSON.stringify(config), now, now]
+    );
+    createdIds.push(id);
+    ids.add(id);
+    if (entityId) entityKeys.add(entityKey);
+    result.copied += 1;
+  }
+  return result;
+}
+
 async function cloneClients(
   source: DatabaseAdapter,
   target: DatabaseAdapter,
@@ -1070,12 +1197,19 @@ async function cloneClients(
     )
   ).filter((client) => String(client.client_id) !== loginUiClientId);
   const clientIds = new Set(clients.map((client) => String(client.client_id)));
-  const columns = ['tenant_id', ...OAUTH_CLIENT_CLONE_COLUMNS, 'created_at', 'updated_at'];
+  const columns = [
+    'enabled',
+    'tenant_id',
+    ...OAUTH_CLIENT_CLONE_COLUMNS,
+    'created_at',
+    'updated_at',
+  ];
   const placeholders = columns.map(() => '?').join(', ');
   for (const client of clients) {
     await target.execute(
       `INSERT INTO oauth_clients (${columns.join(', ')}) VALUES (${placeholders})`,
       [
+        0,
         targetTenantId,
         ...OAUTH_CLIENT_CLONE_COLUMNS.map((column) => {
           if (!includeCredentials && CLIENT_CREDENTIAL_COLUMNS.has(column)) return null;
@@ -1637,6 +1771,8 @@ async function executeTenantCloneHandler(
   let provisioned = false;
   let adminAccessTouched = false;
   const writtenKvKeys: KvRollbackEntry[] = [];
+  const clonedSAMLProviderIds: string[] = [];
+  const samlCloneWarnings: string[] = [];
   try {
     let requestBody: unknown;
     try {
@@ -1825,6 +1961,8 @@ async function executeTenantCloneHandler(
       secret_settings_skipped: 0,
       unclassified_settings_skipped: 0,
       clients: 0,
+      saml_providers: 0,
+      saml_providers_skipped: 0,
       client_settings: 0,
       client_contracts: 0,
       client_web_origins: 0,
@@ -1960,6 +2098,19 @@ async function executeTenantCloneHandler(
       }
     }
 
+    if (options.saml_providers) {
+      const cloned = await cloneSAMLProviders(
+        sourceAdapter,
+        targetAdapter,
+        sourceTenantId,
+        targetTenantId,
+        now,
+        clonedSAMLProviderIds
+      );
+      summary.saml_providers = cloned.copied;
+      summary.saml_providers_skipped = cloned.skipped;
+      samlCloneWarnings.push(...cloned.warnings);
+    }
     if (options.clients) {
       const dependencyCounts = await sourceAdapter.queryOne<Record<string, unknown>>(
         `SELECT
@@ -2043,6 +2194,12 @@ async function executeTenantCloneHandler(
 
     const warnings = [
       'Tenant signing private keys were not copied; a new isolated signing key was generated.',
+      ...samlCloneWarnings,
+      ...(options.saml_providers
+        ? [
+            'SAML connections were copied as disabled, unapproved drafts. Signing keys, federation verification and Mapping Set references were omitted; select a destination Mapping Set and obtain L2 approval before enabling.',
+          ]
+        : []),
       ...(options.settings || options.clients
         ? [
             'KV-backed configuration is eventually consistent across regions; allow propagation before directing production traffic to the new tenant.',
@@ -2191,6 +2348,13 @@ async function executeTenantCloneHandler(
     if (provisioned && targetTenantId && internal) {
       await rollbackKvWrites(writtenKvKeys);
       try {
+        // Preserve destination providers that caused a duplicate skip; remove only our inserts.
+        if (clonedSAMLProviderIds.length > 0) {
+          await internal.targetAdapter.execute(
+            `DELETE FROM identity_providers WHERE tenant_id = ? AND id IN (${clonedSAMLProviderIds.map(() => '?').join(', ')})`,
+            [targetTenantId, ...clonedSAMLProviderIds]
+          );
+        }
         await cleanupInternalCloneDatabaseRows(internal.targetAdapter, targetTenantId);
       } catch {
         // The provisioning operation remains blocked and cleanup can be retried safely.

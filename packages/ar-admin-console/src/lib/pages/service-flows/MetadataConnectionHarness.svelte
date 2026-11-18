@@ -4,6 +4,7 @@
 	import { httpExternalProviders } from '#lib/api/external-providers.js';
 	import { httpSamlProviders, httpSamlMetadata } from '#lib/api/saml-providers.js';
 	import Button from '#lib/ui/primitives/Button.svelte';
+	import StepUpDialog from '#lib/shell/StepUpDialog.svelte';
 	import LiveAddConnection from './LiveAddConnection.svelte';
 	import LiveConnectionSettingsHarness from './LiveConnectionSettingsHarness.svelte';
 	import UpstreamConnectionPage from './UpstreamConnectionPage.svelte';
@@ -25,6 +26,8 @@
 	let opened = $state(untrack(() => existing));
 	let created = $state(untrack(() => existing));
 </script>
+
+<StepUpDialog />
 
 {#if opened}
 	{#if kind === 'sp'}

@@ -308,22 +308,23 @@ export async function consentGetHandler(c: Context<{ Bindings: Env }>) {
     ]);
 
     // Map to clientRow format for compatibility
-    const clientRow = client
-      ? {
-          client_id: client.client_id,
-          client_name: client.client_name ?? null,
-          logo_uri: client.logo_uri ?? null,
-          client_uri: client.client_uri ?? null,
-          policy_uri: client.policy_uri ?? null,
-          tos_uri: client.tos_uri ?? null,
-          // Legacy oauth_clients trust flags are compatibility data, not consent authority.
-          is_trusted:
-            trustPolicy?.first_party &&
-            (trustPolicy.trusted || trustPolicy.skip_authorization_consent)
-              ? 1
-              : null,
-        }
-      : null;
+    const clientRow =
+      client && client.enabled !== false
+        ? {
+            client_id: client.client_id,
+            client_name: client.client_name ?? null,
+            logo_uri: client.logo_uri ?? null,
+            client_uri: client.client_uri ?? null,
+            policy_uri: client.policy_uri ?? null,
+            tos_uri: client.tos_uri ?? null,
+            // Legacy oauth_clients trust flags are compatibility data, not consent authority.
+            is_trusted:
+              trustPolicy?.first_party &&
+              (trustPolicy.trusted || trustPolicy.skip_authorization_consent)
+                ? 1
+                : null,
+          }
+        : null;
 
     if (!clientRow) {
       return c.json(

@@ -7788,6 +7788,16 @@ async function handleTokenExchangeGrant(
 
   // 7. Audience validation (Cross-tenant escalation prevention)
   // This is CRITICAL for security - prevents stealing tokens meant for other clients
+  if (!isIdJagTokenRequest && subjectTokenPayload.token_use !== ELEVATION_GRANT_SUBJECT_TOKEN_USE) {
+    const recipient = subjectTokenPayload.client_id ?? subjectTokenPayload.azp;
+    const recipientClient =
+      typeof recipient === 'string'
+        ? await getClientCached(c, c.env, recipient, { includeDisabled: true })
+        : null;
+    // JWT bearer issuers need not have an OAuth client registration.
+    if (typeof recipient !== 'string' || recipientClient?.enabled === false)
+      return oauthError(c, 'invalid_grant', 'Subject token is invalid or revoked', 400);
+  }
   const subjectAud = subjectTokenPayload.aud as string | string[] | undefined;
   const subjectClientId =
     (subjectTokenPayload.client_id as string | undefined) ??
@@ -8219,6 +8229,15 @@ async function handleTokenExchangeGrant(
         )
       ) {
         return oauthError(c, 'invalid_grant', 'Actor token sender binding does not match', 400);
+      }
+      if (actorTokenPayload.iss === getRequestIssuer(c)) {
+        const recipient = actorTokenPayload.client_id ?? actorTokenPayload.azp;
+        const recipientClient =
+          typeof recipient === 'string'
+            ? await getClientCached(c, c.env, recipient, { includeDisabled: true })
+            : null;
+        if (typeof recipient !== 'string' || recipientClient?.enabled === false)
+          return oauthError(c, 'invalid_grant', 'Actor token is invalid or revoked', 400);
       }
       inheritedMTLSThumbprint ??= getMTLSCertificateThumbprintFromCnfClaim(actorTokenPayload);
       if (actorTokenPayload.token_use !== undefined && actorTokenPayload.token_use !== 'access') {

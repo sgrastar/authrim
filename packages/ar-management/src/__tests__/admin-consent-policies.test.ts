@@ -1,7 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
-  adapter: { query: vi.fn(), execute: vi.fn() },
+  adapter: {
+    query: vi.fn<(sql: string, params?: unknown[]) => Promise<unknown[]>>(),
+    queryOne: vi.fn(),
+    execute: vi.fn<(sql: string, params?: unknown[]) => Promise<unknown>>(),
+    batch: vi.fn(),
+    getType: () => 'sqlite',
+  },
   validateVersion: vi.fn(),
   logger: { error: vi.fn() },
 }));
@@ -11,7 +17,19 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   return {
     ...actual,
     getTenantIdFromContext: vi.fn(() => 'tenant-a'),
-    createAuthContextFromHono: vi.fn(() => ({ coreAdapter: mocks.adapter })),
+    createAuthContextFromHono: vi.fn(() => ({
+      coreAdapter: mocks.adapter,
+      repositories: {
+        client: {
+          findByClientId: async (id: string) => ({
+            client_id: id,
+            enabled: false,
+            updated_at: 1000,
+          }),
+        },
+      },
+    })),
+    invalidateClientCache: vi.fn(async () => undefined),
     validateVersionFormat: mocks.validateVersion,
     getLogger: vi.fn(() => ({ module: vi.fn(() => mocks.logger) })),
   };
@@ -43,6 +61,16 @@ describe('admin client trust and sign-in confirmation policy APIs', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.adapter.query.mockResolvedValue([]);
+    mocks.adapter.queryOne.mockImplementation(async (sql: string, params: unknown[]) => {
+      const rows: unknown[] = await mocks.adapter.query(sql, params);
+      return rows[0] ?? null;
+    });
+    mocks.adapter.batch.mockImplementation(
+      async (statements: Array<{ sql: string; params: unknown[] }>) =>
+        Promise.all(
+          statements.map(async (s): Promise<unknown> => mocks.adapter.execute(s.sql, s.params))
+        )
+    );
     mocks.adapter.execute.mockResolvedValue({ success: true, rowsAffected: 1 });
     mocks.validateVersion.mockReturnValue(true);
   });

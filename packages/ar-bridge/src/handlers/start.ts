@@ -315,6 +315,7 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
         const authCtx = createAuthContextFromHono(c, tenantIdResolved);
         const client = await authCtx.repositories.client.findByClientId(clientId);
 
+        if (client?.enabled === false) return c.json({ error: 'invalid_client' }, 400);
         if (client && client.redirect_uris) {
           // Parse redirect_uris (handle both JSON array and single string)
           if (typeof client.redirect_uris === 'string') {

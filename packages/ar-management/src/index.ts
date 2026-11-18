@@ -1688,7 +1688,10 @@ app.use('/api/admin/clients/:id/regenerate-secret', async (c, next) => {
   })(c, next);
 });
 // Idempotency support for regenerate-secret (prevents duplicate credential regeneration)
-app.use('/api/admin/clients/:id/regenerate-secret', idempotencyMiddleware());
+app.use(
+  '/api/admin/clients/:id/regenerate-secret',
+  idempotencyMiddleware({ reserveBeforeExecution: true })
+);
 app.post('/api/admin/clients/:id/regenerate-secret', adminClientRegenerateSecretHandler);
 app.get('/api/admin/clients/:id/usage', adminClientUsageHandler);
 // Note: Routes with additional path segments (e.g., /usage, /regenerate-secret) must be before :id routes

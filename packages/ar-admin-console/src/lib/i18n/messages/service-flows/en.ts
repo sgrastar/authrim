@@ -1,6 +1,42 @@
 import type { jaServiceFlows } from './ja';
 
 export const enServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
+	'sf.rp.missing.grant_types': 'Allowed grants',
+	'sf.rp.enableRequires': 'Settings required to enable',
+	'sf.rp.disabledNote':
+		'While disabled, sign-in and token use are unavailable. Revocation and logout remain available.',
+	'sf.rp.missing.redirect_uris': 'Callback URLs',
+	'sf.rp.missing.jwks': 'Public signing keys or JWKS URL',
+	'sf.rp.missing.client_secret': 'Client secret',
+	'sf.rp.missing.require_pkce': 'Required PKCE',
+	'sf.rp.missing.token_endpoint_auth_method': 'Client authentication compatible with the grants',
+	'sf.rp.missing.response_types': 'Response types compatible with the grants',
+	'sf.rp.missing.sector_identifier_uri': 'Pairwise identifier sector',
+	'sf.rp.missing.backchannel_client_notification_endpoint': 'CIBA notification endpoint',
+	'sf.rp.missing.configuration': 'Client configuration',
+
+	'sf.rp.callbacksMissing':
+		'No callback URL has been added, so sign-in is not available yet. Add a callback URL in the connection details.',
+	'sf.draft.skip': 'Skip for now',
+	'sf.draft.enterNow': 'Enter now',
+	'sf.draft.saved': 'Saved as a draft',
+	'sf.draft.metadataRequired':
+		'To enable, add the entity ID and endpoint URL. IdP connections also require a signing certificate. You can import metadata to fill these in.',
+	'sf.draft.openDetails': 'Open connection details',
+	'sf.import.mode.xml': 'Paste XML',
+	'sf.metadata.xmlHint': 'Paste metadata XML to preview it automatically.',
+	'sf.metadata.wrongRoleSp':
+		'This connection requires SP metadata. The imported metadata describes an IdP.',
+	'sf.metadata.wrongRoleIdp':
+		'This connection requires IdP metadata. The imported metadata describes an SP.',
+	'sf.metadata.fetchFailed':
+		'Could not fetch metadata. Check the public HTTPS URL and the remote server response.',
+	'sf.metadata.invalidXml':
+		'Could not read the SAML metadata XML. Check its contents and file size.',
+	'sf.metadata.aggregate':
+		'This metadata contains multiple entities. Use federation metadata import.',
+	'sf.draft.noMetadata': 'No metadata has been added yet.',
+
 	'sf.live.status': 'Connection status',
 	'sf.live.enable': 'Enable',
 	'sf.live.disable': 'Disable',

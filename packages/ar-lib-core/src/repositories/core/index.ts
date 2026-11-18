@@ -17,6 +17,7 @@
 
 export {
   ClientRepository,
+  clientRowForCreate,
   type OAuthClient,
   type CreateClientInput,
   type UpdateClientInput,

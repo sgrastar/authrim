@@ -119,6 +119,15 @@ export function parseAggregateMetadata(xml: string): ParsedAggregateMetadata {
   return buildParsedAggregateMetadata(xml, scanAggregateMetadata(xml));
 }
 
+/** Unwrap a bounded connection document without requiring federation signature IDs. */
+export function unwrapSingleEntityMetadata(xml: string): string {
+  const scan = scanAggregateMetadata(xml, undefined, true, false);
+  if (scan.entityCount !== 1) {
+    throw new SAMLMetadataValidationError('metadata_aggregate_requires_federation');
+  }
+  return scan.entityXml[0];
+}
+
 export function extractEntityDescriptorXml(xml: string, entityId: string): string {
   const entities = extractEntityDescriptorXmls(xml, [entityId]);
   const entityXml = entities.get(entityId);
@@ -819,7 +828,8 @@ function parseEntityDescriptor(xml: string): Element {
 function scanAggregateMetadata(
   xml: string,
   requestedEntityIds?: ReadonlySet<string>,
-  captureEntities = true
+  captureEntities = true,
+  requireRootId = true
 ): ScannedAggregateMetadata {
   if (utf8ByteLength(xml) > AGGREGATE_XML_LIMITS.maxBytes) {
     throw new SAMLMetadataValidationError('Aggregate metadata exceeds maximum size');
@@ -901,7 +911,7 @@ function scanAggregateMetadata(
         );
       }
       rootId = id ?? '';
-      if (!rootId) {
+      if (requireRootId && !rootId) {
         throw new SAMLMetadataValidationError('Invalid aggregate metadata: missing root ID');
       }
       validUntil = getSaxesAttribute(tag, 'validUntil');
@@ -1021,7 +1031,7 @@ function scanAggregateMetadata(
     throw toAggregateValidationError(error);
   }
 
-  if (!rootId) {
+  if (requireRootId && !rootId) {
     throw new SAMLMetadataValidationError('Invalid aggregate metadata: missing EntitiesDescriptor');
   }
   if (entityCount === 0) {

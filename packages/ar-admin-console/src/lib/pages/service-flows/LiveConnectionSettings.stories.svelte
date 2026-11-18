@@ -4,42 +4,31 @@
 	import { accessFromSession, hasPermission } from '#lib/access/access.js';
 	import { ApiError } from '#lib/api/api-error.js';
 	import { StepUpCancelledError } from '#lib/api/admin-step-up.js';
-	import type { ClientDetail, ClientBasicUpdate } from '#lib/api/clients.js';
+	import {
+		liveClientSettingsFixture,
+		type LiveClientFixtureOptions
+	} from './live-client-settings.fixture';
 	import type {
 		SamlServiceProvider,
 		SamlProviderStatus,
 		ServiceProviderBasicUpdate
 	} from '#lib/api/saml-providers.js';
 	import { t } from '#lib/i18n/i18n.svelte.js';
+	import { SvelteSet } from 'svelte/reactivity';
 	import LiveConnectionSettingsHarness from './LiveConnectionSettingsHarness.svelte';
 
+	const resets = new SvelteSet<() => void>();
 	const { Story } = defineMeta({
 		title: 'Pages/Service flows/Live basic settings',
 		component: LiveConnectionSettingsHarness,
-		parameters: { layout: 'fullscreen' }
+		parameters: { layout: 'fullscreen' },
+		beforeEach: () => {
+			for (const reset of resets) reset();
+			back.mockClear();
+		}
 	});
-	function fixture(
-		options: { auth?: string; enabled?: boolean; mapping?: boolean; advanced?: boolean } = {}
-	) {
-		let rp: ClientDetail = {
-			id: 'portal',
-			name: 'Staff portal',
-			redirectUris: ['https://portal.example.test/callback'],
-			applicationType: 'web',
-			authMethod: options.auth ?? 'client_secret_basic',
-			pkce: true,
-			updatedAt: 1000,
-			...(options.auth === 'private_key_jwt' ? { jwksUri: 'https://keys.example.test/jwks' } : {}),
-			...(options.advanced
-				? {
-						advanced: {
-							description: 'Stored note',
-							id_token_signed_response_alg: 'PS256',
-							default_audience: 'https://api.example.test'
-						}
-					}
-				: {})
-		};
+	function fixture(options: LiveClientFixtureOptions & { mapping?: boolean } = {}) {
+		const rp = liveClientSettingsFixture(options);
 		let sp: SamlServiceProvider = {
 			id: 'portal',
 			name: 'Staff portal',
@@ -64,21 +53,9 @@
 		let version = 0;
 		const nextVersion = () => `2026-11-17T00:00:0${++version}.000Z`;
 		const clients = {
-			get: fn(async () => ({ ...rp, redirectUris: [...rp.redirectUris] })),
-			updateBasics: fn(async (_id: string, input: ClientBasicUpdate) => {
-				rp = {
-					...rp,
-					name: input.client_name ?? rp.name,
-					redirectUris: input.redirect_uris ?? rp.redirectUris,
-					authMethod: input.token_endpoint_auth_method ?? rp.authMethod,
-					pkce: input.require_pkce ?? rp.pkce,
-					...(input.jwks_uri !== undefined ? { jwksUri: input.jwks_uri } : {}),
-					...(input.jwks !== undefined ? { jwks: input.jwks } : {}),
-					advanced: { ...rp.advanced, ...input.advanced },
-					...(rp.updatedAt !== undefined ? { updatedAt: rp.updatedAt + 1 } : {})
-				};
-				return { ...rp };
-			})
+			setEnabled: fn(rp.client.setEnabled),
+			get: fn(rp.client.get),
+			updateBasics: fn(rp.client.updateBasics)
 		};
 		async function writeServiceProvider(_id: string, input: ServiceProviderBasicUpdate) {
 			if (input.expectedUpdatedAt !== sp.updatedAt) throw new ApiError(409, 'conflict', 'Conflict');
@@ -111,10 +88,32 @@
 		const onbind = fn(() => {
 			sp = { ...sp, hasMapping: true, updatedAt: nextVersion() };
 		});
+		const initialSp = structuredClone(sp);
+		resets.add(() => {
+			rp.reset();
+			sp = structuredClone(initialSp);
+			version = 0;
+			clients.get.mockReset().mockImplementation(rp.client.get);
+			clients.setEnabled.mockReset().mockImplementation(rp.client.setEnabled);
+			clients.updateBasics.mockReset().mockImplementation(rp.client.updateBasics);
+			saml.getServiceProvider.mockReset();
+			saml.updateServiceProvider.mockReset();
+			saml.setEnabled.mockReset();
+			onbind.mockReset();
+		});
 		return { clients, saml, onbind, writeServiceProvider, currentSp: () => ({ ...sp }) };
 	}
+	const rpCancelled = fixture({ activationCancelled: true });
+	const rpDisabled = fixture({ enabled: true });
 	const rp = fixture();
+	const callbacksMissing = fixture({ redirects: [] });
+	const missingConfiguration = fixture({ redirects: [] });
+	const callbacksCleared = fixture();
+	const ciba = fixture({ enabled: true, redirects: [], ciba: true });
+	const activeCallbacksCleared = fixture({ enabled: true, refuseMissingCallbacks: true });
 	const privateKey = fixture({ auth: 'private_key_jwt' });
+	const legacyPublic = fixture({ enabled: true, auth: 'none', pkce: false });
+	const legacyKey = fixture({ enabled: true, auth: 'private_key_jwt', missingKeys: true });
 	const advanced = fixture({ advanced: true });
 	const advancedSp = fixture({ advanced: true });
 	const transition = fixture();
@@ -546,7 +545,7 @@
 		await userEvent.selectOptions(auth, 'private_key_jwt');
 		const uri = canvas.getByRole('textbox', { name: t('cs.row.jwksUri') });
 		const save = canvas.getByRole('button', { name: t('common.save') });
-		await expect(save).toBeDisabled();
+		await expect(save).toBeEnabled();
 		await userEvent.type(uri, 'http://keys.example.test/jwks');
 		await expect(save).toBeDisabled();
 		await userEvent.clear(uri);
@@ -599,5 +598,163 @@
 		await waitFor(() => expect(advancedSp.saml.getServiceProvider).toHaveBeenCalledTimes(2));
 		await expect(lifetime).toHaveValue('600');
 		await expect(context).toHaveValue('assurance');
+	}}
+/>
+
+<Story
+	name="RP with no callbacks can save its name and add a callback later"
+	args={{ ...callbacksMissing }}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await waitFor(() => expect(canvas.getByText(t('sf.rp.callbacksMissing'))).toBeVisible());
+		await rename(canvas, 'Callback later');
+		await expect(canvas.getByRole('button', { name: t('common.save') })).toBeEnabled();
+		await userEvent.click(canvas.getByRole('button', { name: t('common.save') }));
+		await canvas.findByText(t('sf.live.saved'));
+		await expect(callbacksMissing.clients.updateBasics).toHaveBeenCalledWith('portal', {
+			client_name: 'Callback later',
+			expected_updated_at: 1000
+		});
+		await waitFor(() => expect(canvas.getByText(t('sf.rp.callbacksMissing'))).toBeVisible());
+		await userEvent.click(canvas.getByRole('button', { name: t('sf.rp.addRedirect') }));
+		await userEvent.type(
+			canvas.getByRole('textbox', {
+				name: t('list.item', { label: t('sf.part.rp-redirect'), n: 1 })
+			}),
+			'https://portal.example.test/later'
+		);
+		await userEvent.click(canvas.getByRole('button', { name: t('common.save') }));
+		await waitFor(() =>
+			expect(callbacksMissing.clients.updateBasics).toHaveBeenLastCalledWith('portal', {
+				redirect_uris: ['https://portal.example.test/later'],
+				expected_updated_at: 1001
+			})
+		);
+		await waitFor(() => expect(canvas.queryByText(t('sf.rp.callbacksMissing'))).toBeNull());
+	}}
+/>
+
+<Story
+	name="RP can save and reopen an empty callback list"
+	args={{ ...callbacksCleared }}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findByRole('textbox', { name: t('sf.row.name') });
+		await userEvent.click(
+			canvas.getByRole('button', {
+				name: t('list.remove', { name: 'https://portal.example.test/callback' })
+			})
+		);
+		await expect(canvas.queryByText(t('sf.rp.callbacksMissing'))).toBeNull();
+		await userEvent.click(canvas.getByRole('button', { name: t('common.save') }));
+		await canvas.findByText(t('sf.live.saved'));
+		await expect(callbacksCleared.clients.updateBasics).toHaveBeenCalledWith('portal', {
+			redirect_uris: [],
+			expected_updated_at: 1000
+		});
+		await userEvent.click(canvas.getByRole('button', { name: t('sf.live.reload') }));
+		await waitFor(() => expect(callbacksCleared.clients.get).toHaveBeenCalledTimes(2));
+		await waitFor(() => expect(canvas.getByText(t('sf.rp.callbacksMissing'))).toBeVisible());
+	}}
+/>
+
+<Story
+	name="RP activation step-up cancelled"
+	args={{ ...rpCancelled }}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(await canvas.findByRole('button', { name: t('sf.live.enable') }));
+		await expect(rpCancelled.clients.setEnabled).toHaveBeenCalledWith('portal', true, 1000);
+		await waitFor(() => expect(canvas.getByText(t('settings.stepUpCancelled'))).toBeVisible());
+		await expect(canvas.getByRole('button', { name: t('sf.live.enable') })).toBeEnabled();
+	}}
+/>
+<Story
+	name="RP missing configuration cannot activate"
+	args={{ ...missingConfiguration }}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await expect(await canvas.findByRole('button', { name: t('sf.live.enable') })).toBeDisabled();
+		await waitFor(() => expect(canvas.getByText(t('sf.rp.missing.redirect_uris'))).toBeVisible());
+		await expect(missingConfiguration.clients.setEnabled).not.toHaveBeenCalled();
+	}}
+/>
+<Story
+	name="RP disable uses L1"
+	args={{ ...rpDisabled }}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(await canvas.findByRole('button', { name: t('sf.live.disable') }));
+		await expect(rpDisabled.clients.setEnabled).toHaveBeenCalledWith('portal', false, 1000);
+	}}
+/>
+
+<Story
+	name="Enabled CIBA client can rename without callbacks"
+	args={{ ...ciba }}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await rename(canvas, 'CIBA polling');
+		await expect(canvas.queryByText(t('sf.rp.callbacksMissing'))).toBeNull();
+		await expect(canvas.getByRole('button', { name: t('common.save') })).toBeEnabled();
+		await userEvent.click(canvas.getByRole('button', { name: t('common.save') }));
+		await canvas.findByText(t('sf.live.saved'));
+		await expect(ciba.clients.updateBasics).toHaveBeenCalledWith('portal', {
+			client_name: 'CIBA polling',
+			expected_updated_at: 1000
+		});
+	}}
+/>
+<Story
+	name="Server refuses missing callbacks on an enabled browser client"
+	args={{ ...activeCallbacksCleared }}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findByRole('textbox', { name: t('sf.row.name') });
+		await userEvent.click(
+			canvas.getByRole('button', {
+				name: t('list.remove', { name: 'https://portal.example.test/callback' })
+			})
+		);
+		await expect(canvas.getByRole('button', { name: t('common.save') })).toBeEnabled();
+		await userEvent.click(canvas.getByRole('button', { name: t('common.save') }));
+		await waitFor(() => expect(canvas.getByText(t('common.saveFailed'))).toBeVisible());
+		await expect(activeCallbacksCleared.clients.updateBasics).toHaveBeenCalledWith('portal', {
+			redirect_uris: [],
+			expected_updated_at: 1000
+		});
+	}}
+/>
+
+<Story
+	name="Enabled legacy public client can rename without PKCE"
+	args={{ ...legacyPublic }}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await rename(canvas, 'Legacy public renamed');
+		await expect(canvas.getByRole('button', { name: t('common.save') })).toBeEnabled();
+		await userEvent.click(canvas.getByRole('button', { name: t('common.save') }));
+		await canvas.findByText(t('sf.live.saved'));
+		await expect(legacyPublic.clients.updateBasics).toHaveBeenCalledWith('portal', {
+			client_name: 'Legacy public renamed',
+			expected_updated_at: 1000
+		});
+	}}
+/>
+<Story
+	name="Enabled legacy private key client can rename without keys"
+	args={{ ...legacyKey }}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await rename(canvas, 'Legacy key renamed');
+		await authPanel(canvasElement);
+		await expect(canvas.getByRole('textbox', { name: t('cs.row.jwksUri') })).toHaveValue('');
+		await expect(canvas.getByRole('button', { name: t('common.save') })).toBeEnabled();
+		await userEvent.click(canvas.getByRole('button', { name: t('common.save') }));
+		await canvas.findByText(t('sf.live.saved'));
+		await expect(legacyKey.clients.updateBasics).toHaveBeenCalledWith('portal', {
+			client_name: 'Legacy key renamed',
+			expected_updated_at: 1000
+		});
 	}}
 />

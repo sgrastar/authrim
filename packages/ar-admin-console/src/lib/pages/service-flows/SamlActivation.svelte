@@ -44,7 +44,9 @@
 			observedVersion = version;
 		});
 	});
-	const blocked = $derived(dirty || !provider.hasMapping || provider.trustBlocked);
+	const blocked = $derived(
+		dirty || provider.configurationMissing || !provider.hasMapping || provider.trustBlocked
+	);
 	async function change() {
 		if (!canEdit || busy || pending || (!provider.enabled && blocked)) return;
 		const enabled = !provider.enabled;
@@ -82,6 +84,9 @@
 		>{/if}
 	{#if !provider.enabled}
 		{#if dirty}<Callout tone="info">{t('sf.live.saveFirst')}</Callout>
+		{:else if provider.configurationMissing}<Callout tone="warning"
+				>{t('sf.draft.metadataRequired')}</Callout
+			>
 		{:else if !provider.hasMapping}<Callout tone="warning">{t('sf.live.mappingRequired')}</Callout>
 		{:else if provider.trustBlocked}<Callout tone="warning">{t('sf.live.trustRequired')}</Callout
 			>{/if}

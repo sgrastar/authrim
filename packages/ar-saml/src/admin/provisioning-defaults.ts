@@ -7,37 +7,44 @@
  *
  * Metadata that names its own NameID format or offers only one binding is read as it always was;
  * that is handled where the metadata is parsed (see parseIdPMetadata and parseSPMetadata in
- * providers.ts). This covers a provider added without metadata.
+ * providers.ts). The same defaults also complete a draft when it is edited or enabled later.
+ * An incomplete IdP draft defers the automatic NameID format so its first metadata import can
+ * supply one; an administrator's explicit choice is always kept.
  */
 
-import type { SAMLIdPConfig, SAMLSPConfig, SamlProvisioningDefaults } from '@authrim/ar-lib-core';
+import type { SAMLSPConfig, SamlProvisioningDefaults } from '@authrim/ar-lib-core';
 import { SAML_SP_PROFILE_DEFAULTS } from './profile-defaults';
 
-export function fillSAMLProviderProvisioningDefaults<T extends SAMLIdPConfig | SAMLSPConfig>(
+type ProvisioningConfig = Partial<
+  Pick<SAMLSPConfig, 'nameIdFormat' | 'allowedBindings' | 'samlProfile' | 'sloBinding' | 'sloUrl'>
+>;
+
+export function fillSAMLProviderProvisioningDefaults<T extends ProvisioningConfig>(
   providerType: 'saml_idp' | 'saml_sp',
   config: T,
-  defaults: SamlProvisioningDefaults
+  defaults: SamlProvisioningDefaults,
+  options: { deferNameIdFormat?: boolean } = {}
 ): T {
   if (providerType === 'saml_idp') {
-    const idp = config as SAMLIdPConfig;
     return {
-      ...idp,
-      nameIdFormat: idp.nameIdFormat || defaults.nameIdFormat,
+      ...config,
+      ...(config.nameIdFormat || !options.deferNameIdFormat
+        ? { nameIdFormat: config.nameIdFormat || defaults.nameIdFormat }
+        : {}),
       // Only a list that is absent is filled; an empty one is the request's own choice (signed in
       // by POST), as it always was.
-      allowedBindings: Array.isArray(idp.allowedBindings)
-        ? idp.allowedBindings
+      allowedBindings: Array.isArray(config.allowedBindings)
+        ? config.allowedBindings
         : [defaults.ssoBinding],
-    } as T;
+    };
   }
 
-  const sp = config as SAMLSPConfig;
-  const profile = sp.samlProfile ? SAML_SP_PROFILE_DEFAULTS[sp.samlProfile] : undefined;
+  const profile = config.samlProfile ? SAML_SP_PROFILE_DEFAULTS[config.samlProfile] : undefined;
   const sloBinding =
-    sp.sloBinding ?? (sp.sloUrl ? (profile?.sloBinding ?? defaults.sloBinding) : undefined);
+    config.sloBinding ?? (config.sloUrl ? (profile?.sloBinding ?? defaults.sloBinding) : undefined);
   return {
-    ...sp,
-    nameIdFormat: sp.nameIdFormat || profile?.nameIdFormat || defaults.nameIdFormat,
+    ...config,
+    nameIdFormat: config.nameIdFormat || profile?.nameIdFormat || defaults.nameIdFormat,
     ...(sloBinding ? { sloBinding } : {}),
-  } as T;
+  };
 }

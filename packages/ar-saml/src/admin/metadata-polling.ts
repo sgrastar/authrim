@@ -24,6 +24,7 @@ import {
   SINGLE_METADATA_FETCH_LIMIT_BYTES,
   extractEntityDescriptorXmls,
   isAggregateMetadata,
+  unwrapSingleEntityMetadata,
   verifyAggregateMetadata,
 } from './aggregate-metadata';
 import {
@@ -33,6 +34,7 @@ import {
   normalizeSAMLMetadataRefreshPolicy,
 } from './metadata-refresh';
 import { listFederationTrustProfiles, refreshSAMLProviderConfigFromMetadata } from './providers';
+import { hasApprovedSAMLProviderTrust } from './provider-trust';
 
 const log = createLogger().module('SAML-METADATA-POLLING');
 const TENANT_CURSOR_KEY = 'saml_metadata_polling:tenant_cursor';
@@ -381,6 +383,8 @@ async function applyEntityMetadataToProvider(
   let persistedConfig = result.config;
   const restoreMetadataSuspension =
     existingConfig.metadataRefreshPolicy?.suspendedByMetadataSync === true;
+  const restorationApproved =
+    restoreMetadataSuspension && (await hasApprovedSAMLProviderTrust(existingConfig));
   if (rejected) {
     const failureCode = certificatesExpired ? 'metadata_certificates_expired' : 'metadata_expired';
     persistedConfig = {
@@ -412,10 +416,16 @@ async function applyEntityMetadataToProvider(
         metadataUrl,
         result.metadataRefreshStatus.current.validUntil
       ),
-      suspendedByMetadataSync: undefined,
+      // Missing or mismatched approval stays suspended until an administrator approves at L2.
+      suspendedByMetadataSync: restoreMetadataSuspension && !restorationApproved ? true : undefined,
+      ...(restoreMetadataSuspension && !restorationApproved
+        ? { lastErrorCode: 'metadata_approval_required' }
+        : {}),
     };
+    // Parsing metadata must never replace the approval of local administrator-controlled settings.
+    persistedConfig.trustApproval = existingConfig.trustApproval;
   }
-  const nextEnabled = !rejected && (row.enabled === 1 || restoreMetadataSuspension);
+  const nextEnabled = !rejected && (row.enabled === 1 || restorationApproved);
   const update = await adapter.execute(
     `UPDATE identity_providers
         SET config_json = ?, enabled = ?, updated_at = ?
@@ -1676,6 +1686,14 @@ async function pollIndividualProvidersForTenant(
           metadataUrl,
           config.metadataCriticalFields?.validUntil
         );
+        // A 304 updates fetch bookkeeping, not administrator intent. In particular it must not
+        // turn an automatically suspended relationship into an editable L0 draft.
+        if (config.metadataRefreshPolicy?.suspendedByMetadataSync === true) {
+          policy.suspendedByMetadataSync = true;
+          if (!(await hasApprovedSAMLProviderTrust(config))) {
+            policy.lastErrorCode = 'metadata_approval_required';
+          }
+        }
         const update = await adapter.execute(
           `UPDATE identity_providers
               SET config_json = ?, updated_at = ?
@@ -1697,36 +1715,40 @@ async function pollIndividualProvidersForTenant(
       if (metadataXml === undefined) throw new Error('metadata_response_body_missing');
       let aggregateImport = config.aggregateImport;
       if (isAggregateMetadata(metadataXml)) {
-        if (!aggregateImport?.aggregateEntityId)
-          throw new Error('aggregate_entity_snapshot_required');
-        const profiles = await listFederationTrustProfiles(env, tenantId);
-        const pinnedTrustProfileId =
-          aggregateImport.federationTrustProfileId ?? aggregateImport.verification.trustProfileId;
-        const pinnedProfile = pinnedTrustProfileId
-          ? profiles.find((profile) => profile.id === pinnedTrustProfileId)
-          : undefined;
-        const verificationProfiles = pinnedTrustProfileId
-          ? pinnedProfile
-            ? [pinnedProfile]
-            : []
-          : profiles;
-        const verified = await verifyAggregateMetadata(
-          metadataXml,
-          metadataUrl,
-          verificationProfiles,
-          pinnedProfile?.policy ?? 'strict'
-        );
-        metadataXml =
-          extractEntityDescriptorXmls(verified.aggregate.metadataXml, [
-            aggregateImport.aggregateEntityId,
-          ]).get(aggregateImport.aggregateEntityId) ?? '';
-        if (!metadataXml) throw new Error('federation_entity_missing');
-        aggregateImport = {
-          ...aggregateImport,
-          aggregateSourceUrl: metadataUrl,
-          federationTrustProfileId: verified.verification.trustProfileId ?? pinnedTrustProfileId,
-          verification: verified.verification,
-        };
+        if (!aggregateImport) {
+          metadataXml = unwrapSingleEntityMetadata(metadataXml);
+        } else {
+          if (!aggregateImport.aggregateEntityId)
+            throw new Error('aggregate_entity_snapshot_required');
+          const profiles = await listFederationTrustProfiles(env, tenantId);
+          const pinnedTrustProfileId =
+            aggregateImport.federationTrustProfileId ?? aggregateImport.verification.trustProfileId;
+          const pinnedProfile = pinnedTrustProfileId
+            ? profiles.find((profile) => profile.id === pinnedTrustProfileId)
+            : undefined;
+          const verificationProfiles = pinnedTrustProfileId
+            ? pinnedProfile
+              ? [pinnedProfile]
+              : []
+            : profiles;
+          const verified = await verifyAggregateMetadata(
+            metadataXml,
+            metadataUrl,
+            verificationProfiles,
+            pinnedProfile?.policy ?? 'strict'
+          );
+          metadataXml =
+            extractEntityDescriptorXmls(verified.aggregate.metadataXml, [
+              aggregateImport.aggregateEntityId,
+            ]).get(aggregateImport.aggregateEntityId) ?? '';
+          if (!metadataXml) throw new Error('federation_entity_missing');
+          aggregateImport = {
+            ...aggregateImport,
+            aggregateSourceUrl: metadataUrl,
+            federationTrustProfileId: verified.verification.trustProfileId ?? pinnedTrustProfileId,
+            verification: verified.verification,
+          };
+        }
       } else if (aggregateImport) {
         throw new Error('aggregate_source_not_aggregate');
       }

@@ -1998,6 +1998,7 @@ async function handleRegistration(
       logout_webhook_secret_encrypted?: string;
     } = {
       ...response,
+      enabled: true,
       created_at: issuedAt,
       updated_at: issuedAt,
       is_trusted: isTrusted,

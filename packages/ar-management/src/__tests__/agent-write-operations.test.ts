@@ -32,6 +32,15 @@ const mocks = vi.hoisted(() => ({
   ),
   userSuspend: vi.fn(),
   snapshot: vi.fn(),
+  readClient: vi.fn(),
+}));
+
+vi.mock('@authrim/ar-lib-core', async (original) => ({
+  ...(await original<typeof import('@authrim/ar-lib-core')>()),
+  getTenantIdFromContext: () => 'tenant-1',
+  createAuthContextFromHono: () => ({
+    repositories: { client: { findByClientId: mocks.readClient } },
+  }),
 }));
 
 vi.mock('../admin', () => ({
@@ -75,6 +84,7 @@ function updateProtocol(body: Record<string, unknown>, resourceVersion = 'resour
 describe('Agent write owner projections', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.readClient.mockResolvedValue({ client_id: 'client-1', enabled: false });
     mocks.snapshot.mockResolvedValue({
       status: 200,
       client: { client_id: 'client-1', updated_at: 1234 },
@@ -111,6 +121,14 @@ describe('Agent write owner projections', () => {
   it('rejects empty updates', async () => {
     const response = await update({});
     expect(response.status).toBe(400);
+    expect(mocks.clientUpdate).not.toHaveBeenCalled();
+  });
+
+  it('requires a human session to change an enabled client protocol', async () => {
+    mocks.readClient.mockResolvedValue({ client_id: 'client-1', enabled: true });
+    const response = await updateProtocol({ require_pkce: true });
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({ error: 'step_up_human_required' });
     expect(mocks.clientUpdate).not.toHaveBeenCalled();
   });
 

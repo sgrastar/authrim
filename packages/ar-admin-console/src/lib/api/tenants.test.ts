@@ -95,6 +95,7 @@ describe('the tenants client', () => {
 			roles: true,
 			admin_access: false,
 			clients: true,
+			saml_providers: true,
 			client_credentials: false,
 			webhooks: false,
 			webhook_secrets: false
@@ -148,6 +149,7 @@ describe('the fake', () => {
 			roles: true,
 			admin_access: true,
 			clients: false,
+			saml_providers: false,
 			client_credentials: false,
 			webhooks: true,
 			webhook_secrets: false

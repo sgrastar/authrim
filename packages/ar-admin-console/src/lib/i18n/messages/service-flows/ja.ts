@@ -4,6 +4,40 @@
  * their usual abbreviations (RP, SP, OP, IdP). Spread into `../ja.ts`.
  */
 export const jaServiceFlows = {
+	'sf.rp.missing.grant_types': '許可するgrant',
+	'sf.rp.enableRequires': '有効化に必要な設定',
+	'sf.rp.disabledNote':
+		'無効のあいだはサインインもトークンの利用もできません。失効とログアウトはできます。',
+	'sf.rp.missing.redirect_uris': 'コールバックURL',
+	'sf.rp.missing.jwks': '公開署名鍵またはJWKS URL',
+	'sf.rp.missing.client_secret': 'クライアントシークレット',
+	'sf.rp.missing.require_pkce': 'PKCEの必須化',
+	'sf.rp.missing.token_endpoint_auth_method': 'grantに対応するクライアント認証方式',
+	'sf.rp.missing.response_types': 'grantと整合するレスポンスタイプ',
+	'sf.rp.missing.sector_identifier_uri': 'ペアワイズ識別子のセクター',
+	'sf.rp.missing.backchannel_client_notification_endpoint': 'CIBA通知先',
+	'sf.rp.missing.configuration': 'クライアント設定',
+
+	'sf.rp.callbacksMissing':
+		'callback URLが未設定のため、まだサインインできません。詳細画面で追加してください。',
+	'sf.draft.skip': 'あとで入力する',
+	'sf.draft.enterNow': '今入力する',
+	'sf.draft.saved': '下書きとして保存しました',
+	'sf.draft.metadataRequired':
+		'有効にするには、エンティティIDと接続先URLを入力してください。IdP接続には署名証明書も必要です。メタデータの読み込みでも設定できます。',
+	'sf.draft.openDetails': '詳細画面を開く',
+	'sf.import.mode.xml': 'XMLを貼り付ける',
+	'sf.metadata.xmlHint': 'XMLを貼り付けると、自動で内容を読み込みます。',
+	'sf.metadata.wrongRoleSp': 'この接続はSP用です。読み込んだメタデータはIdPのものです。',
+	'sf.metadata.wrongRoleIdp': 'この接続はIdP用です。読み込んだメタデータはSPのものです。',
+	'sf.metadata.fetchFailed':
+		'メタデータを取得できませんでした。公開HTTPS URLと接続先の応答を確認してください。',
+	'sf.metadata.invalidXml':
+		'SAMLメタデータのXMLを読み込めませんでした。内容とファイルサイズを確認してください。',
+	'sf.metadata.aggregate':
+		'複数のエンティティを含むメタデータです。フェデレーションのメタデータ読み込みを使ってください。',
+	'sf.draft.noMetadata': 'メタデータはまだ設定されていません。',
+
 	'sf.live.status': '接続の状態',
 	'sf.live.enable': '有効にする',
 	'sf.live.disable': '無効にする',

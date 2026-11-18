@@ -10,6 +10,8 @@ import { connectionMappingFixture } from '#lib/pages/service-flows/connection-ma
 vi.mock('#lib/auth/tenant-scope.svelte.js', () => ({ tenantScope: { tenantId: 'demo' } }));
 afterEach(() => vi.unstubAllGlobals());
 const client = {
+	enabled: false,
+	enable_blockers: [],
 	client_id: 'client/a',
 	client_name: 'Portal',
 	application_type: 'native',
@@ -40,6 +42,117 @@ const provider = {
 };
 
 describe('basic connection settings over HTTP', () => {
+	it('enables an RP with the version returned by its mapping bind without another GET', async () => {
+		const fetcher = vi
+			.fn()
+			.mockResolvedValueOnce(Response.json({ client: { ...client, updated_at: 1000 } }))
+			.mockResolvedValueOnce(
+				Response.json({
+					client: {
+						...client,
+						updated_at: 1001,
+						enable_blockers: [],
+						identity_mapping: { fieldMappingSetId: 'new' }
+					}
+				})
+			)
+			.mockResolvedValueOnce(
+				Response.json({
+					client: { ...client, updated_at: 1002, enabled: true, enable_blockers: [] }
+				})
+			);
+		vi.stubGlobal('fetch', fetcher);
+		const bound = await httpClients.bindMapping(client.client_id, 'new');
+		const activated = await httpClients.setEnabled(bound.id, true, bound.updatedAt!);
+		expect(activated.enabled).toBe(true);
+		expect(fetcher).toHaveBeenCalledTimes(3);
+		expect(JSON.parse(String(fetcher.mock.calls[2][1].body))).toEqual({
+			enabled: true,
+			expected_updated_at: 1001
+		});
+	});
+
+	it('renames an enabled CIBA client with no callback blockers', async () => {
+		const row = {
+			...client,
+			enabled: true,
+			redirect_uris: [],
+			token_endpoint_auth_method: 'client_secret_basic',
+			grant_types: ['urn:openid:params:grant-type:ciba'],
+			response_types: [],
+			updated_at: 1000
+		};
+		const fetcher = vi.fn(async (_url: string, init: RequestInit = {}) => {
+			if (init.method === 'PUT') {
+				expect(JSON.parse(String(init.body))).toEqual({
+					client_name: 'CIBA renamed',
+					expected_updated_at: 1000
+				});
+				return Response.json({ client: { ...row, client_name: 'CIBA renamed', updated_at: 1001 } });
+			}
+			return Response.json({ client: row });
+		});
+		vi.stubGlobal('fetch', fetcher);
+		const loaded = await httpClients.get(client.client_id);
+		expect(loaded.enableBlockers).toEqual([]);
+		const answers = basicSettingsAnswers({ kind: 'rp', detail: loaded, client: httpClients });
+		answers.rp.name = 'CIBA renamed';
+		const saved = await httpClients.updateBasics(loaded.id, clientBasicUpdate(loaded, answers));
+		expect(saved).toMatchObject({
+			enabled: true,
+			name: 'CIBA renamed',
+			redirectUris: [],
+			enableBlockers: []
+		});
+	});
+
+	it('preserves the server missing-field response when active callbacks are cleared', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async () =>
+				Response.json(
+					{ error: 'client_configuration_required_to_enable', missing: ['redirect_uris'] },
+					{ status: 400 }
+				)
+			)
+		);
+		await expect(
+			httpClients.updateBasics(client.client_id, { redirect_uris: [], expected_updated_at: 1000 })
+		).rejects.toMatchObject({
+			status: 400,
+			code: 'client_configuration_required_to_enable',
+			body: { missing: ['redirect_uris'] }
+		});
+	});
+
+	it('saves and reopens empty RP callbacks without changing unrelated settings', async () => {
+		let row = { ...client, updated_at: 1000 };
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (_url: string, init: RequestInit = {}) => {
+				if (init.method === 'PUT') {
+					expect(JSON.parse(String(init.body))).toEqual({
+						redirect_uris: [],
+						expected_updated_at: 1000
+					});
+					row = { ...row, redirect_uris: [], updated_at: 1001 };
+				}
+				return Response.json({ client: row });
+			})
+		);
+		const loaded = await httpClients.get(client.client_id);
+		const answers = basicSettingsAnswers({ kind: 'rp', detail: loaded, client: httpClients });
+		answers.rp.redirectUris = [];
+		const saved = await httpClients.updateBasics(loaded.id, clientBasicUpdate(loaded, answers));
+		expect(saved.redirectUris).toEqual([]);
+		expect(await httpClients.get(loaded.id)).toEqual(saved);
+		expect(
+			basicSettingsAnswers({ kind: 'rp', detail: saved, client: httpClients }).rp.redirectUris
+		).toEqual([]);
+		expect(row.identity_mapping).toEqual(client.identity_mapping);
+		expect(row.require_pkce).toBe(1);
+	});
+
 	it('gets RP by its encoded ID, updates only intended fields, and uses actual saved values on reopen', async () => {
 		let row = { ...client };
 		const writes: RequestInit[] = [];
@@ -138,7 +251,7 @@ describe('basic connection settings over HTTP', () => {
 		}
 	);
 
-	it('allows only basic/post secret reuse and keeps public PKCE required', async () => {
+	it('allows only basic/post secret reuse and leaves PKCE completeness to the server', async () => {
 		vi.stubGlobal(
 			'fetch',
 			vi.fn(async () =>
@@ -168,9 +281,34 @@ describe('basic connection settings over HTTP', () => {
 			client: httpClients
 		});
 		publicAnswers.rp.pkce = false;
-		expect(() => clientBasicUpdate(publicClient, publicAnswers)).toThrow(
-			'Public clients require PKCE'
-		);
+		expect(clientBasicUpdate(publicClient, publicAnswers)).toEqual({ require_pkce: false });
+	});
+
+	it('allows cleared keys on enabled clients while rejecting malformed key input', async () => {
+		const loaded = {
+			id: 'client/a',
+			name: 'Portal',
+			enabled: true,
+			enableBlockers: [],
+			redirectUris: ['https://portal.example/callback'],
+			applicationType: 'web',
+			authMethod: 'private_key_jwt',
+			pkce: false,
+			jwksUri: 'https://keys.example/jwks',
+			updatedAt: 1000
+		};
+		const answers = basicSettingsAnswers({ kind: 'rp', detail: loaded, client: httpClients });
+		answers.rp.jwksUri = '';
+		expect(clientBasicUpdate(loaded, answers)).toEqual({
+			jwks: null,
+			jwks_uri: null,
+			expected_updated_at: 1000
+		});
+		answers.rp.jwksUri = 'http://keys.example/jwks';
+		expect(() => clientBasicUpdate(loaded, answers)).toThrow('Use a public HTTPS JWKS URL');
+		answers.rp.keySource = 'inline';
+		answers.rp.publicJwks = '{malformed';
+		expect(() => clientBasicUpdate(loaded, answers)).toThrow(SyntaxError);
 	});
 
 	it('SP settings use the loaded version and a partial config, then return/reload the server values', async () => {

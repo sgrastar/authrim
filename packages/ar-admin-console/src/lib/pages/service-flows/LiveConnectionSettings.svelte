@@ -30,6 +30,7 @@
 	import RpSteps from './RpSteps.svelte';
 	import SpSteps from './SpSteps.svelte';
 	import SamlActivation from './SamlActivation.svelte';
+	import ClientActivation from './ClientActivation.svelte';
 	import { entityIdProblem, httpsUrlProblem, redirectUriProblem } from './connection-model';
 	import {
 		basicSettingsAnswers,
@@ -104,11 +105,11 @@
 	const valid = $derived(
 		draft.value.rp.name.trim() !== '' &&
 			(resources.kind === 'rp'
-				? draft.value.rp.redirectUris.length > 0 &&
-					draft.value.rp.redirectUris.every((uri) => !redirectUriProblem(uri)) &&
-					(client?.authMethod !== 'none' || draft.value.rp.pkce) &&
-					(draft.value.rp.authMethod !== 'private_key_jwt' || !publicKeyProblem(draft.value.rp))
-				: !entityIdProblem(draft.value.sp.entityId) && !httpsUrlProblem(draft.value.sp.acsUrl))
+				? draft.value.rp.redirectUris.every((uri) => !redirectUriProblem(uri)) &&
+					(draft.value.rp.authMethod !== 'private_key_jwt' ||
+						!publicKeyProblem(draft.value.rp, true))
+				: (!draft.value.sp.entityId && !draft.value.sp.acsUrl && !sp?.enabled) ||
+					(!entityIdProblem(draft.value.sp.entityId) && !httpsUrlProblem(draft.value.sp.acsUrl)))
 	);
 
 	async function save(value: ReturnType<typeof basicSettingsAnswers>) {
@@ -195,6 +196,12 @@
 	}
 </script>
 
+{#if resources.kind === 'rp' && client?.enableBlockers.includes('redirect_uris')}<Callout
+		tone="warning">{t('sf.rp.callbacksMissing')}</Callout
+	>{/if}
+{#if resources.kind === 'sp' && !sp?.entityId}<Callout tone="info"
+		>{t('sf.draft.noMetadata')}</Callout
+	>{/if}
 <LeaveGuard dirty={guardNavigation && (metadataDirty || metadataPending)} />
 <SaveScope
 	{guardNavigation}
@@ -248,13 +255,14 @@
 							>{client?.applicationType ?? t('sf.live.unset')}</DetailItem
 						></DetailList
 					>
-					<RpSteps step="rp-redirect" live bind:form={draft.value.rp} />
+					<RpSteps step="rp-redirect" live editing allowIncomplete bind:form={draft.value.rp} />
 					<Disclosure title={t('sf.part.rp-signin')}>
 						<div class="settings-fields">
 							<RpSteps
 								step="rp-signin"
 								live
 								editing
+								allowIncomplete
 								storedAuthMethod={client?.authMethod}
 								storedPkce={client?.pkce}
 								bind:form={draft.value.rp}
@@ -350,6 +358,23 @@
 		disabled={saving || activating || reloading || mappingPending}
 		bind:dirty={runtimeDirty}
 		bind:pending={runtimePending}
+	/>
+{/if}
+{#if resources.kind === 'rp' && client}
+	<ClientActivation
+		{client}
+		{canEdit}
+		dirty={draft.dirty || runtimeDirty || mappingDirty || metadataDirty}
+		busy={saving || reloading || mappingPending || metadataPending || runtimePending}
+		bind:pending={activating}
+		update={(enabled, version) =>
+			resources.kind === 'rp'
+				? resources.client.setEnabled(resources.detail.id, enabled, version)
+				: Promise.reject(new Error('Invalid client'))}
+		onupdated={(detail) => {
+			if (resources.kind === 'rp') accept({ ...resources, detail });
+		}}
+		onreload={requestReload}
 	/>
 {/if}
 {#if resources.kind === 'sp' && status}

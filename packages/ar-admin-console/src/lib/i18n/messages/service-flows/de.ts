@@ -2,6 +2,42 @@
 import type { jaServiceFlows } from './ja';
 
 export const deServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
+	'sf.rp.missing.grant_types': 'Erlaubte Grants',
+	'sf.rp.enableRequires': 'Zum Aktivieren erforderliche Einstellungen',
+	'sf.rp.disabledNote':
+		'Solange der Client deaktiviert ist, sind Anmeldung und Tokennutzung nicht möglich. Widerruf und Abmeldung bleiben möglich.',
+	'sf.rp.missing.redirect_uris': 'Callback-URLs',
+	'sf.rp.missing.jwks': 'Öffentliche Signaturschlüssel oder JWKS-URL',
+	'sf.rp.missing.client_secret': 'Client-Geheimnis',
+	'sf.rp.missing.require_pkce': 'Verpflichtendes PKCE',
+	'sf.rp.missing.token_endpoint_auth_method': 'Mit den Grants kompatible Client-Authentifizierung',
+	'sf.rp.missing.response_types': 'Mit den Grants kompatible Antworttypen',
+	'sf.rp.missing.sector_identifier_uri': 'Sektor für paarweise Kennungen',
+	'sf.rp.missing.backchannel_client_notification_endpoint': 'CIBA-Benachrichtigungsendpunkt',
+	'sf.rp.missing.configuration': 'Client-Konfiguration',
+
+	'sf.rp.callbacksMissing':
+		'Es wurde noch keine Callback-URL hinterlegt. Die Anmeldung ist daher noch nicht möglich. Ergänzen Sie die URL in den Verbindungsdetails.',
+	'sf.draft.skip': 'Später eingeben',
+	'sf.draft.enterNow': 'Jetzt eingeben',
+	'sf.draft.saved': 'Als Entwurf gespeichert',
+	'sf.draft.metadataRequired':
+		'Zum Aktivieren werden Entity-ID und Endpunkt-URL benötigt. IdP-Verbindungen benötigen auch ein Signaturzertifikat. Sie können Metadaten importieren.',
+	'sf.draft.openDetails': 'Verbindungsdetails öffnen',
+	'sf.import.mode.xml': 'XML einfügen',
+	'sf.metadata.xmlHint': 'Eingefügtes Metadaten-XML wird automatisch eingelesen.',
+	'sf.metadata.wrongRoleSp':
+		'Diese Verbindung benötigt SP-Metadaten. Die importierten Metadaten beschreiben einen IdP.',
+	'sf.metadata.wrongRoleIdp':
+		'Diese Verbindung benötigt IdP-Metadaten. Die importierten Metadaten beschreiben einen SP.',
+	'sf.metadata.fetchFailed':
+		'Metadaten konnten nicht abgerufen werden. Prüfen Sie die öffentliche HTTPS-URL und die Serverantwort.',
+	'sf.metadata.invalidXml':
+		'SAML-Metadaten-XML konnte nicht gelesen werden. Prüfen Sie Inhalt und Dateigröße.',
+	'sf.metadata.aggregate':
+		'Diese Metadaten enthalten mehrere Entitäten. Verwenden Sie den Metadatenimport für Föderationen.',
+	'sf.draft.noMetadata': 'Es wurden noch keine Metadaten hinterlegt.',
+
 	'sf.live.status': 'Verbindungsstatus',
 	'sf.live.enable': 'Aktivieren',
 	'sf.live.disable': 'Deaktivieren',

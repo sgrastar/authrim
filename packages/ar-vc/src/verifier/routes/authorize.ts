@@ -115,7 +115,7 @@ export async function vpAuthorizeRoute(c: Context<{ Bindings: Env }>): Promise<R
         tenantId,
       });
       const client = await new ClientRepository(adapter, tenantId).findByClientId(body.client_id);
-      if (!client) {
+      if (!client || client.enabled === false) {
         return createErrorResponse(c, AR_ERROR_CODES.CLIENT_INVALID);
       }
     }
