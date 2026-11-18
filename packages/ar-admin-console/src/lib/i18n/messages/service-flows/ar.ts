@@ -5,6 +5,20 @@
 import type { jaServiceFlows } from './ja';
 
 export const arServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
+	'sf.rp.missing.grant_types': 'أنواع المنح المسموح بها',
+	'sf.rp.enableRequires': 'الإعدادات المطلوبة للتفعيل',
+	'sf.rp.disabledNote':
+		'أثناء التعطيل، لا يمكن تسجيل الدخول أو استخدام الرموز. يظل إلغاء الرموز وتسجيل الخروج متاحين.',
+	'sf.rp.missing.redirect_uris': 'عناوين URL لمعاودة الاتصال',
+	'sf.rp.missing.jwks': 'مفاتيح التوقيع العامة أو عنوان JWKS',
+	'sf.rp.missing.client_secret': 'سر العميل',
+	'sf.rp.missing.require_pkce': 'اشتراط PKCE',
+	'sf.rp.missing.token_endpoint_auth_method': 'مصادقة عميل متوافقة مع أنواع المنح',
+	'sf.rp.missing.response_types': 'أنواع استجابة متوافقة مع المنح',
+	'sf.rp.missing.sector_identifier_uri': 'قطاع المعرّفات الزوجية',
+	'sf.rp.missing.backchannel_client_notification_endpoint': 'نقطة نهاية إشعارات CIBA',
+	'sf.rp.missing.configuration': 'إعدادات العميل',
+
 	'sf.rp.callbacksMissing':
 		'لم تتم إضافة عنوان URL لرد الاتصال، لذا لا يمكن تسجيل الدخول بعد. أضف العنوان في تفاصيل الاتصال.',
 	'sf.draft.skip': 'الإدخال لاحقًا',

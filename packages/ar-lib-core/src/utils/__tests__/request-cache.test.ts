@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { Context } from 'hono';
 import type { Env } from '../../types/env';
 
 const { mockCreateAuthContextFromHono, mockGetClient } = vi.hoisted(() => ({
@@ -21,7 +22,7 @@ function createContext() {
   return {
     get: vi.fn((key: string) => store.get(key)),
     set: vi.fn((key: string, value: unknown) => store.set(key, value)),
-  } as any;
+  } as unknown as Context<{ Bindings: Env; Variables: Record<string, unknown> }>;
 }
 
 describe('request client cache', () => {
@@ -67,6 +68,25 @@ describe('request client cache', () => {
     );
     expect(getRequestCacheStats(c).clientMiss).toBe(2);
     expect(getRequestCacheStats(c).clientHit).toBe(0);
+  });
+
+  it('keeps administrative and runtime reads in separate cache entries', async () => {
+    const c = createContext();
+    const env = {} as Env;
+    const coreAdapter = { id: 'core' };
+    c.set('tenantId', 'tenant-a');
+    mockCreateAuthContextFromHono.mockReturnValue({ tenantId: 'tenant-a', coreAdapter });
+    mockGetClient
+      .mockResolvedValueOnce({ client_id: 'draft', enabled: false })
+      .mockResolvedValueOnce(null);
+    expect(await getClientCached(c, env, 'draft', { includeDisabled: true })).toMatchObject({
+      enabled: false,
+    });
+    expect(await getClientCached(c, env, 'draft')).toBeNull();
+    expect(await getClientCached(c, env, 'draft', { includeDisabled: true })).toMatchObject({
+      enabled: false,
+    });
+    expect(mockGetClient).toHaveBeenCalledTimes(2);
   });
 
   it('reuses the cached client within the same tenant', async () => {

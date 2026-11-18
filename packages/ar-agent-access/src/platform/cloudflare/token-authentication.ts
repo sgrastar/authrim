@@ -1,6 +1,8 @@
 import { createCloudflareAdminAgentAuditWriter } from './admin-agent-audit-writer';
 import {
   getPublicKeyByKid,
+  getClient,
+  resolveAuthCorePersistenceAdapterFromEnv,
   hasAdminPermission,
   parseTokenHeader,
   requireDedicatedAdminDatabaseAdapter,
@@ -240,6 +242,17 @@ export function createCloudflareAgentAccessTokenAuthenticator<
         tenant.tenantId
       );
     }
+    const clientAdapter = await resolveAuthCorePersistenceAdapterFromEnv(
+      env,
+      'agent-token-client',
+      { tenantId: tenant.tenantId }
+    );
+    if (!(await getClient(env, tenant.tenantId, claims.client_id, clientAdapter)))
+      return authenticationFailure(
+        invalidToken(request),
+        'AGENT_MCP_TOKEN_INVALID',
+        tenant.tenantId
+      );
     if (
       !claims.sub.startsWith('admin_user:') ||
       claims.sub.length === 'admin_user:'.length ||

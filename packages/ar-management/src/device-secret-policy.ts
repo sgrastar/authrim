@@ -66,6 +66,8 @@ export function evaluateDeviceSecretRevokePolicy(
 
   if (
     callerClass === 'confidential_or_service_client' &&
+    // Disabled clients retain cleanup of their own secrets, without cross-client authority.
+    (ownDeviceSecret || clientMetadata.enabled !== false) &&
     isTrustGroupAllowlisted(
       clientMetadata,
       target,

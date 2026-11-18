@@ -75,7 +75,7 @@ function app(permissions = ['admin:clients:read', 'admin:clients:write']) {
       actorType: 'machine',
       tenantId,
       roles: [],
-      permissions,
+      permissions: [...permissions, 'admin:step_up_exempt:client.trust.activate'],
       hierarchyLevel: 0,
       mfaVerified: false,
     });
@@ -117,6 +117,12 @@ beforeEach(async () => {
   db.exec(
     readFileSync(
       resolve(__dirname, '../../../../migrations/core/d1/010_information_release_consent.sql'),
+      'utf8'
+    )
+  );
+  db.exec(
+    readFileSync(
+      resolve(__dirname, '../../../../migrations/core/d1/012_oauth_client_enabled.sql'),
       'utf8'
     )
   );
@@ -171,6 +177,7 @@ async function storedClient(): Promise<ClientMetadata> {
   const parsed = object(jwks);
   if (!isPublicClientJwks(parsed)) throw new Error('Expected public JWKS');
   return {
+    enabled: row.enabled,
     client_id: row.client_id,
     client_name: row.client_name,
     created_at: row.created_at,
@@ -201,7 +208,7 @@ describe('Admin callback URL deferral', () => {
   ])(
     'creates with $label redirects, lists and reopens it, then adds and clears callbacks',
     async ({ input }) => {
-      const response = await create({ client_name: 'Callback later', ...input });
+      const response = await create({ client_name: 'Callback later', enabled: false, ...input });
       expect(response.status).toBe(201);
       const created = object(object(await response.json()).client);
       expect(created.redirect_uris).toEqual([]);
@@ -266,11 +273,11 @@ describe('Admin callback URL deferral', () => {
       redirect_uris: [],
     });
     expect(rejected.status).toBe(400);
-    expect(object(await rejected.json()).error_description).toContain('sector_identifier_uri');
+    expect(object(await rejected.json()).missing).toContain('sector_identifier_uri');
     expect((await request(app(), 'PUT', { subject_type: 'pairwise' })).status).toBe(200);
     const cleared = await request(app(), 'PUT', { redirect_uris: [] });
     expect(cleared.status).toBe(400);
-    expect(object(await cleared.json()).error_description).toContain('sector_identifier_uri');
+    expect(object(await cleared.json()).missing).toContain('sector_identifier_uri');
     expect((await repository.findByClientId('client'))?.redirect_uris).toBe(
       '["https://app.example.test/callback"]'
     );
@@ -436,6 +443,7 @@ describe('Admin RP public keys and stored advanced settings', () => {
     expect(row?.jwks_uri).toBe('https://keys.example.test/jwks');
     expect(transport).toHaveBeenCalled();
     const metadata: ClientMetadata = {
+      enabled: true,
       client_id: 'client',
       redirect_uris: ['https://app.example.test/callback'],
       token_endpoint_auth_method: 'private_key_jwt',

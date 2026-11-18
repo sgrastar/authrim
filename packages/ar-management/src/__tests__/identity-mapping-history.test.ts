@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+// Receipt handling is covered by client-trust-retry; these tests exercise history and CAS.
+vi.mock('../admin-step-up-gate', () => ({ requireAdminStepUp: async () => null }));
 import {
   adminAuthMiddleware,
   applyOIDCIdentityMapping,
@@ -490,7 +492,7 @@ describe('mapping selection history, restore and committed evidence', () => {
     }
   });
 
-  it('keeps a delayed ordinary PUT version above later mapping writes and rejects an old restore token', async () => {
+  it('rejects a delayed ordinary PUT, advances its retry, and rejects an old restore token', async () => {
     const f = setup();
     const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now());
     try {
@@ -528,6 +530,12 @@ describe('mapping selection history, restore and committed evidence', () => {
       };
       expect(
         (await f.call('PUT', '/api/admin/clients/app', { client_name: 'Slow ordinary edit' }))
+          .status
+      ).toBe(409);
+      expect(f.client().updated_at).toBe(laterVersion);
+      expect(f.client().client_name).toBe('Client app');
+      expect(
+        (await f.call('PUT', '/api/admin/clients/app', { client_name: 'Retried ordinary edit' }))
           .status
       ).toBe(200);
       const monotonic = f.client().updated_at > laterVersion;

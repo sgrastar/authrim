@@ -99,6 +99,23 @@ describe('RP-initiated upstream logout', () => {
     mocks.diagnosticCleanup.mockResolvedValue(undefined);
   });
 
+  it('continues logout for a disabled client using only its registered logout return URLs', async () => {
+    mocks.findByClientId.mockResolvedValue({
+      enabled: false,
+      redirect_uris: '["https://rp.example/signin"]',
+      post_logout_redirect_uris: '["https://rp.example/logout"]',
+    });
+    const response: unknown = await app().request(
+      'https://tenant.example/auth/external/suite/logout?post_logout_redirect_uri=https%3A%2F%2Frp.example%2Flogout',
+      { headers: { Cookie: 'authrim_session=0_session-1' } },
+      {}
+    );
+    if (!(response instanceof Response)) throw new Error('Expected a response');
+    expect(response.status).toBe(302);
+    const stored: unknown = mocks.storeChallengeRpc.mock.calls[0]?.[0];
+    expect(stored).toHaveProperty('metadata.target_uri', 'https://rp.example/logout');
+  });
+
   it('terminates the local session and redirects to the discovered end_session_endpoint', async () => {
     const response = await app().request(
       'https://tenant.example/auth/external/suite/logout?post_logout_redirect_uri=https%3A%2F%2Frp.example%2Fcallback&state=app-state',

@@ -224,7 +224,7 @@ async function createHandoffSession(
   const authCtx = createAuthContextFromHono(c, tenantId);
   const client = await authCtx.repositories.client.findByClientId(client_id);
 
-  if (!client) {
+  if (!client || client.enabled === false) {
     log.error('Client not found', {
       client_id,
       origin,

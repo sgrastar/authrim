@@ -2247,6 +2247,7 @@ describe('admin tenant clone', () => {
     const clientInsert = mocks.target.execute.mock.calls.find(([sql]) =>
       String(sql).includes('INSERT INTO oauth_clients')
     );
+    expect((clientInsert?.[1] as unknown[])[0]).toBe(0);
     expect((clientInsert?.[1] as unknown[]).slice(-2)).toEqual([now, now]);
   });
 

@@ -1,3 +1,4 @@
+import { createAuthContextFromHono, getTenantIdFromContext } from '@authrim/ar-lib-core';
 import { Hono } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import {
@@ -34,6 +35,7 @@ const PUBLIC_CLIENT_FIELDS = new Set([
   'skip_consent',
 ]);
 const PUBLIC_CLIENT_RESPONSE_FIELDS = [
+  'enabled',
   'client_id',
   'client_name',
   'application_type',
@@ -122,6 +124,11 @@ async function requireClientProtocolSecurityProjection(
       412
     );
   }
+  const client = await createAuthContextFromHono(
+    c,
+    getTenantIdFromContext(c)
+  ).repositories.client.findByClientId(c.req.param('id')!);
+  if (client?.enabled !== false) return c.json({ error: 'step_up_human_required' }, 403);
   c.set(AGENT_EXPECTED_CLIENT_UPDATED_AT as never, snapshot.updatedAt as never);
   await next();
 }
@@ -158,6 +165,7 @@ async function requirePublicClientProjection(
   ) {
     return c.json({ error: 'AGENT_PUBLIC_CLIENT_SECURITY_PROFILE_REQUIRED' }, 400);
   }
+  value.enabled = false;
   await next();
 }
 

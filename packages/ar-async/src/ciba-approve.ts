@@ -1,3 +1,4 @@
+import { getClientCached, getRequestCache } from '@authrim/ar-lib-core';
 /**
  * CIBA Request Approval API Handler
  * OpenID Connect CIBA Core 1.0
@@ -189,6 +190,12 @@ export async function cibaApproveHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
+    if (
+      (await getClientCached(c, c.env, metadata.client_id, { includeDisabled: true }))?.enabled ===
+      false
+    )
+      return c.json({ error: 'invalid_client' }, 400);
+
     // Approve the request
     const approved = await sendCibaDecision(cibaRequestStore, internalHeaders, 'approve', {
       auth_req_id: authReqId,
@@ -206,6 +213,13 @@ export async function cibaApproveHandler(c: Context<{ Bindings: Env }>) {
 
     // Send ping mode notification if required
     if (metadata.delivery_mode === 'ping' && metadata.client_notification_endpoint) {
+      getRequestCache(c).clients.delete(`${tenantId}:${metadata.client_id}`);
+      getRequestCache(c).clients.delete(`${tenantId}:${metadata.client_id}:include-disabled`);
+      if (
+        (await getClientCached(c, c.env, metadata.client_id, { includeDisabled: true }))
+          ?.enabled === false
+      )
+        return c.json({ error: 'invalid_client' }, 400);
       try {
         // Awaited inline: the approving person's request is held open until the client's endpoint
         // answers or the tenant's ping timeout (ciba.ping_notification_timeout_ms) runs out.

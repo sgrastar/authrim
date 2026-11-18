@@ -17,6 +17,7 @@ interface LoginClient {
   application_type: string | null;
   allowed_channels: string | null;
   client_secret_hash: string | null;
+  enabled: number;
 }
 
 function record(value: unknown): RecordValue | null {
@@ -219,12 +220,13 @@ export async function assertPasskeyOnlySamlFlowReady(
   }
 
   const client = await db.queryOne<LoginClient>(
-    `SELECT client_id, application_type, allowed_channels, client_secret_hash FROM oauth_clients
+    `SELECT client_id, application_type, allowed_channels, client_secret_hash, enabled FROM oauth_clients
      WHERE tenant_id = ? AND client_id = ?`,
     [tenantId, clientId]
   );
   if (
     !client ||
+    client.enabled === 0 ||
     client.client_id !== clientId ||
     client.application_type !== 'web' ||
     client.client_secret_hash !== null

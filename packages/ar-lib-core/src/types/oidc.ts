@@ -468,6 +468,7 @@ export interface ClientRegistrationResponse {
  * Stored Client Metadata
  */
 export interface ClientMetadata extends ClientRegistrationResponse {
+  enabled: boolean;
   created_at: number;
   updated_at: number;
   /** Admin-only memo/description for operators. Not part of OIDC discovery metadata. */

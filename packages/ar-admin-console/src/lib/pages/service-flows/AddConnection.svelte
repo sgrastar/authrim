@@ -293,10 +293,7 @@
 					!!answers.direction &&
 					KINDS_OF[answers.direction].includes(answers.kind)
 				);
-			if (id === 'rp-redirect')
-				return (
-					(answers.rp.skipped || answers.rp.redirectUris.length > 0) && rpRedirectsReady(answers.rp)
-				);
+			if (id === 'rp-redirect') return rpRedirectsReady(answers.rp);
 			if (id === 'rp-signin' || id === 'sp-import' || id === 'op-details' || id === 'idp-import') {
 				try {
 					if (id === 'rp-signin') rpCreateInput(answers.rp);

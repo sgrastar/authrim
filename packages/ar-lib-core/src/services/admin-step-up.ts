@@ -53,6 +53,8 @@ const ID_PATTERN = /^as[rp]_[A-Za-z0-9_-]{32,64}$/u;
  */
 export const ADMIN_STEP_UP_OPERATIONS = {
   'client.secret.rotate': 'L1',
+  'client.trust.activate': 'L2',
+  'client.trust.disable': 'L1',
   'sessions.revoke_all': 'L1',
   'admin.passkey.add': 'L1',
   'tenant.delete': 'L2',

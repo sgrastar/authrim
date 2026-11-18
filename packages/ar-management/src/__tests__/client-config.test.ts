@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DatabaseAdapter, Env } from '@authrim/ar-lib-core';
+import type { Context } from 'hono';
 
 const mocked = vi.hoisted(() => ({
   getClientCached: vi.fn(),
@@ -51,7 +52,11 @@ function createMockAdapter(): DatabaseAdapter {
     query: vi.fn().mockResolvedValue([]),
     queryOne: vi.fn().mockResolvedValue(null),
     execute: vi.fn().mockResolvedValue({ success: true, rowsAffected: 1, insertId: undefined }),
-    transaction: vi.fn().mockImplementation(async (fn) => fn({} as DatabaseAdapter)),
+    transaction: vi
+      .fn()
+      .mockImplementation(async (fn: (adapter: DatabaseAdapter) => Promise<unknown>) =>
+        fn({} as DatabaseAdapter)
+      ),
     batch: vi.fn().mockResolvedValue([]),
     isHealthy: vi.fn().mockResolvedValue(true),
     getType: vi.fn().mockReturnValue('mock'),
@@ -92,10 +97,11 @@ function createMockContext(options: {
     get: vi.fn((key: string) => store.get(key)),
     set: vi.fn((key: string, value: unknown) => store.set(key, value)),
     json: vi.fn(
-      (body, status = 200, headers) => new Response(JSON.stringify(body), { status, headers })
+      (body: unknown, status = 200, headers?: HeadersInit) =>
+        new Response(JSON.stringify(body), { status, headers })
     ),
-    body: vi.fn((body, status = 200) => new Response(body, { status })),
-  } as any;
+    body: vi.fn((body: BodyInit | null, status = 200) => new Response(body, { status })),
+  } as unknown as Context<{ Bindings: Env }>;
 }
 
 describe('client-config update handler', () => {
@@ -106,7 +112,7 @@ describe('client-config update handler', () => {
     mocked.getTenantIdFromContext.mockReturnValue('default');
     mocked.buildKVKey.mockReturnValue('client:client-123');
     mocked.getRequestCache.mockReturnValue({
-      clients: new Map([['client-123', { client_id: 'client-123' }]]),
+      clients: new Map([['default:client-123:include-disabled', { client_id: 'client-123' }]]),
     });
     mocked.createErrorResponse.mockImplementation(
       (_c: unknown, code: { error: string; error_description: string }) =>
@@ -123,6 +129,190 @@ describe('client-config update handler', () => {
     mocked.publishEvent.mockResolvedValue(undefined);
   });
 
+  it.each([false, true])(
+    'RAT never changes enabled to %s, including a disabled client',
+    async (enabled) => {
+      const adapter = createMockAdapter();
+      mocked.createAuthContextFromHono.mockReturnValue({ coreAdapter: adapter });
+      mocked.getClientCached.mockResolvedValue({
+        client_id: 'client-123',
+        enabled: false,
+        redirect_uris: [],
+        grant_types: ['authorization_code'],
+        response_types: ['code'],
+        updated_at: 1000,
+        registration_access_token_hash: 'token-hash',
+      });
+      const response = await clientConfigUpdateHandler(
+        createMockContext({ body: { client_id: 'client-123', enabled } })
+      );
+      expect(response.status).toBe(400);
+      expect(adapter.execute).not.toHaveBeenCalled();
+    }
+  );
+  it('allows RAT writes to a draft without admin evidence and refuses CAS conflicts', async () => {
+    const adapter = createMockAdapter();
+    mocked.createAuthContextFromHono.mockReturnValue({ coreAdapter: adapter });
+    mocked.getClientCached.mockResolvedValue({
+      client_id: 'client-123',
+      enabled: false,
+      redirect_uris: [],
+      grant_types: ['authorization_code'],
+      response_types: ['code'],
+      token_endpoint_auth_method: 'private_key_jwt',
+      updated_at: 1000,
+      registration_access_token_hash: 'token-hash',
+    });
+    const context = () =>
+      createMockContext({ body: { client_id: 'client-123', client_name: 'Draft' } });
+    expect((await clientConfigUpdateHandler(context())).status).toBe(200);
+    expect(mocked.getClientCached).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      'client-123',
+      { includeDisabled: true }
+    );
+    vi.mocked(adapter.execute).mockResolvedValue({ success: true, rowsAffected: 0 });
+    expect((await clientConfigUpdateHandler(context())).status).toBe(409);
+  });
+  it.each([false, true])(
+    'clears draft callbacks but validates enabled=%s completeness',
+    async (enabled) => {
+      const adapter = createMockAdapter();
+      mocked.createAuthContextFromHono.mockReturnValue({ coreAdapter: adapter });
+      mocked.getClientCached.mockResolvedValue({
+        client_id: 'client-123',
+        enabled,
+        redirect_uris: ['https://example.com/callback'],
+        grant_types: ['authorization_code'],
+        response_types: ['code'],
+        token_endpoint_auth_method: 'none',
+        require_pkce: true,
+        updated_at: 1000,
+        registration_access_token_hash: 'token-hash',
+      });
+      const response = await clientConfigUpdateHandler(
+        createMockContext({
+          body: { client_id: 'client-123', redirect_uris: [] },
+        })
+      );
+      expect(response.status).toBe(enabled ? 400 : 200);
+      if (enabled) {
+        expect(await response.json()).toMatchObject({
+          error: 'client_configuration_required_to_enable',
+          missing: ['redirect_uris'],
+        });
+        expect(adapter.execute).not.toHaveBeenCalled();
+      } else {
+        expect(vi.mocked(adapter.execute).mock.calls[0][1]?.[1]).toBe('[]');
+      }
+    }
+  );
+
+  it.each([false, true])(
+    'validates and persists the same cleared JWKS with enabled=%s',
+    async (enabled) => {
+      const adapter = createMockAdapter();
+      mocked.createAuthContextFromHono.mockReturnValue({ coreAdapter: adapter });
+      mocked.getClientCached.mockResolvedValue({
+        client_id: 'client-123',
+        enabled,
+        client_name: 'Keep name',
+        redirect_uris: ['https://example.com/callback'],
+        grant_types: ['authorization_code'],
+        response_types: ['code'],
+        token_endpoint_auth_method: 'private_key_jwt',
+        jwks: { keys: [{ kty: 'RSA', kid: 'old-key' }] },
+        updated_at: 1000,
+        registration_access_token_hash: 'token-hash',
+      });
+      const response = await clientConfigUpdateHandler(
+        createMockContext({
+          body: { client_id: 'client-123', jwks: null, client_name: null },
+        })
+      );
+      expect(response.status).toBe(enabled ? 400 : 200);
+      if (enabled) {
+        expect(await response.json()).toMatchObject({
+          error: 'client_configuration_required_to_enable',
+          missing: ['jwks'],
+        });
+        expect(adapter.execute).not.toHaveBeenCalled();
+      } else {
+        const params = vi.mocked(adapter.execute).mock.calls[0][1];
+        expect(params?.[0]).toBe('Keep name');
+        expect(params?.[11]).toBeNull();
+      }
+    }
+  );
+
+  it('validates retained jwks_uri when inline keys are cleared', async () => {
+    const adapter = createMockAdapter();
+    mocked.createAuthContextFromHono.mockReturnValue({ coreAdapter: adapter });
+    mocked.getClientCached.mockResolvedValue({
+      client_id: 'client-123',
+      enabled: false,
+      token_endpoint_auth_method: 'private_key_jwt',
+      jwks_uri: 'https://keys.example.com/jwks',
+      updated_at: 1000,
+      registration_access_token_hash: 'token-hash',
+    });
+    mocked.safeFetchJson.mockResolvedValueOnce({ keys: [] });
+    const response = await clientConfigUpdateHandler(
+      createMockContext({
+        body: { client_id: 'client-123', jwks: null },
+      })
+    );
+    expect(response.status).toBe(400);
+    expect(mocked.safeFetchJson).toHaveBeenCalledWith(
+      'https://keys.example.com/jwks',
+      expect.anything()
+    );
+    expect(adapter.execute).not.toHaveBeenCalled();
+  });
+
+  it('validates incomplete legacy RAT clients only when effective trust changes', async () => {
+    const adapter = createMockAdapter();
+    mocked.createAuthContextFromHono.mockReturnValue({ coreAdapter: adapter });
+    mocked.getClientCached.mockResolvedValue({
+      client_id: 'client-123',
+      enabled: true,
+      redirect_uris: [],
+      grant_types: ['authorization_code'],
+      response_types: ['code'],
+      token_endpoint_auth_method: 'private_key_jwt',
+      scope: 'openid',
+      backchannel_logout_session_required: true,
+      updated_at: 1000,
+      registration_access_token_hash: 'token-hash',
+    });
+    const display = await clientConfigUpdateHandler(
+      createMockContext({ body: { client_id: 'client-123', client_name: 'Active' } })
+    );
+    expect(display.status).toBe(200);
+    const unchanged = await clientConfigUpdateHandler(
+      createMockContext({ body: { client_id: 'client-123', scope: 'openid' } })
+    );
+    expect(unchanged.status).toBe(200);
+    vi.mocked(adapter.execute).mockClear();
+    const response = await clientConfigUpdateHandler(
+      createMockContext({ body: { client_id: 'client-123', scope: 'openid email' } })
+    );
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({
+      error: 'client_configuration_required_to_enable',
+      missing: ['redirect_uris', 'jwks'],
+    });
+    expect(adapter.execute).not.toHaveBeenCalled();
+    const logoutChange = await clientConfigUpdateHandler(
+      createMockContext({
+        body: { client_id: 'client-123', backchannel_logout_session_required: null },
+      })
+    );
+    expect(logoutChange.status).toBe(400);
+    expect(adapter.execute).not.toHaveBeenCalled();
+  });
+
   it('refuses to update a web app to an http loopback redirect URI while HTTPS only is on', async () => {
     const adapter = createMockAdapter();
     mocked.createAuthContextFromHono.mockReturnValue({ coreAdapter: adapter });
@@ -133,6 +323,7 @@ describe('client-config update handler', () => {
       grant_types: ['authorization_code'],
       response_types: ['code'],
       registration_access_token_hash: 'token-hash',
+      updated_at: 1000,
     });
 
     const res = await clientConfigUpdateHandler(
@@ -172,12 +363,15 @@ describe('client-config update handler', () => {
     const adapter = createMockAdapter();
     mocked.createAuthContextFromHono.mockReturnValue({ coreAdapter: adapter });
     mocked.getClientCached.mockResolvedValue({
+      enabled: true,
+      client_secret_hash: 'fixture-hash',
       client_id: 'client-123',
       client_name: 'Smoke Client',
       redirect_uris: ['https://example.com/callback'],
       grant_types: ['authorization_code'],
       response_types: ['code'],
       registration_access_token_hash: 'token-hash',
+      updated_at: 1000,
     });
 
     const res = await clientConfigUpdateHandler(
@@ -192,7 +386,12 @@ describe('client-config update handler', () => {
     );
 
     expect(res.status).toBe(400);
-    expect(await res.json()).toMatchObject({ error: 'invalid_client_metadata' });
+    expect(await res.json()).toMatchObject({
+      error:
+        _name === 'redirect URIs on several hosts and no sector_identifier_uri'
+          ? 'client_configuration_required_to_enable'
+          : 'invalid_client_metadata',
+    });
     expect(adapter.execute).not.toHaveBeenCalled();
   });
 
@@ -210,6 +409,7 @@ describe('client-config update handler', () => {
       grant_types: ['authorization_code'],
       response_types: ['code'],
       registration_access_token_hash: 'token-hash',
+      updated_at: 1000,
     });
 
     const res = await clientConfigUpdateHandler(
@@ -232,6 +432,8 @@ describe('client-config update handler', () => {
     const adapter = createMockAdapter();
     mocked.createAuthContextFromHono.mockReturnValue({ coreAdapter: adapter });
     mocked.getClientCached.mockResolvedValue({
+      enabled: true,
+      client_secret_hash: 'fixture-hash',
       client_id: 'client-123',
       client_name: 'Smoke Client',
       subject_type: 'pairwise',
@@ -239,6 +441,7 @@ describe('client-config update handler', () => {
       grant_types: ['authorization_code'],
       response_types: ['code'],
       registration_access_token_hash: 'token-hash',
+      updated_at: 1000,
     });
 
     const res = await clientConfigUpdateHandler(
@@ -268,6 +471,7 @@ describe('client-config update handler', () => {
         grant_types: ['authorization_code', 'refresh_token'],
         response_types: ['code'],
         registration_access_token_hash: 'token-hash',
+        updated_at: 1000,
       })
       .mockResolvedValueOnce({
         client_id: 'client-123',
@@ -276,6 +480,7 @@ describe('client-config update handler', () => {
         grant_types: ['authorization_code', 'refresh_token'],
         response_types: ['code'],
         registration_access_token_hash: 'token-hash',
+        updated_at: 1000,
       })
       .mockResolvedValueOnce({
         client_id: 'client-123',
@@ -284,6 +489,7 @@ describe('client-config update handler', () => {
         grant_types: ['authorization_code', 'refresh_token'],
         response_types: ['code'],
         registration_access_token_hash: 'token-hash',
+        updated_at: 1000,
       });
 
     const c = createMockContext({
@@ -312,12 +518,12 @@ describe('client-config update handler', () => {
       .calls[0]?.[1] as unknown[];
     expect(executeParams).toBeDefined();
     expect(executeParams.some((value) => value === undefined)).toBe(false);
-    expect(executeParams.slice(-2)).toEqual(['default', 'client-123']);
+    expect(executeParams.slice(-3)).toEqual(['default', 'client-123', 1000]);
 
     const requestCache = mocked.getRequestCache.mock.results[0]?.value as {
       clients: Map<string, unknown>;
     };
-    expect(requestCache.clients.has('client-123')).toBe(false);
+    expect(requestCache.clients.has('default:client-123:include-disabled')).toBe(false);
     expect(mocked.getClientCached).toHaveBeenCalledTimes(3);
   });
 
@@ -331,6 +537,7 @@ describe('client-config update handler', () => {
       grant_types: ['authorization_code'],
       response_types: ['code'],
       registration_access_token_hash: 'token-hash',
+      updated_at: 1000,
       minimum_ial: 'IAL3',
     };
     mocked.getClientCached.mockResolvedValue(stored);
@@ -368,6 +575,7 @@ describe('client-config update handler', () => {
       grant_types: ['authorization_code'],
       response_types: ['code'],
       registration_access_token_hash: 'token-hash',
+      updated_at: 1000,
     };
     mocked.getClientCached.mockResolvedValue(client);
     const c = createMockContext({
@@ -404,6 +612,7 @@ describe('client-config update handler', () => {
       grant_types: ['authorization_code', 'refresh_token'],
       response_types: ['code'],
       registration_access_token_hash: 'token-hash',
+      updated_at: 1000,
     });
 
     const c = createMockContext({
@@ -430,6 +639,7 @@ describe('client-config update handler', () => {
       grant_types: ['authorization_code'],
       response_types: ['code'],
       registration_access_token_hash: 'token-hash',
+      updated_at: 1000,
     });
 
     const c = createMockContext({
@@ -456,6 +666,7 @@ describe('client-config update handler', () => {
       grant_types: ['authorization_code'],
       response_types: ['code'],
       registration_access_token_hash: 'token-hash',
+      updated_at: 1000,
     });
 
     const c = createMockContext({
@@ -483,6 +694,7 @@ describe('client-config update handler', () => {
       grant_types: ['authorization_code', 'refresh_token'],
       response_types: ['code'],
       registration_access_token_hash: 'token-hash',
+      updated_at: 1000,
     });
 
     const c = createMockContext({
@@ -506,6 +718,7 @@ describe('client-config update handler', () => {
       client_id: 'client-123',
       token_endpoint_auth_method: 'private_key_jwt',
       registration_access_token_hash: 'token-hash',
+      updated_at: 1000,
     });
     const c = createMockContext({
       body: {
@@ -529,6 +742,7 @@ describe('client-config update handler', () => {
     mocked.getClientCached.mockResolvedValueOnce({
       client_id: 'client-123',
       registration_access_token_hash: 'token-hash',
+      updated_at: 1000,
     });
     const c = createMockContext({
       body: {
@@ -565,6 +779,7 @@ describe('client-config update handler', () => {
     mocked.getClientCached.mockResolvedValueOnce({
       client_id: 'client-123',
       registration_access_token_hash: 'token-hash',
+      updated_at: 1000,
     });
     const c = createMockContext({
       body: {
@@ -589,6 +804,7 @@ describe('client-config update handler', () => {
       client_id: 'client-123',
       token_endpoint_auth_method: 'private_key_jwt',
       registration_access_token_hash: 'token-hash',
+      updated_at: 1000,
     });
     const c = createMockContext({
       body: {
@@ -623,6 +839,7 @@ describe('client-config update handler', () => {
       client_id: 'client-123',
       token_endpoint_auth_method: 'private_key_jwt',
       registration_access_token_hash: 'token-hash',
+      updated_at: 1000,
     });
     const c = createMockContext({
       body: {
@@ -664,6 +881,7 @@ describe('client-config update handler', () => {
         grant_types: ['authorization_code'],
         response_types: ['code'],
         registration_access_token_hash: 'token-hash',
+        updated_at: 1000,
       };
       mocked.getClientCached
         .mockResolvedValueOnce(storedClient)
@@ -701,6 +919,7 @@ describe('client-config update handler', () => {
     mocked.getClientCached.mockResolvedValueOnce({
       client_id: 'client-123',
       registration_access_token_hash: 'token-hash',
+      updated_at: 1000,
     });
     const c = createMockContext({
       body: {

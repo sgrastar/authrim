@@ -88,6 +88,7 @@ function freshDatabase(family: Family) {
   // The 0.5.0 baseline, and the later admin tables the backup registry requires.
   for (const file of [
     `001_0_5_0_${family}_baseline.sql`,
+    ...(family === 'core' ? ['012_oauth_client_enabled.sql'] : []),
     ...(family === 'admin'
       ? [
           '009_login_ui_themes.sql',
@@ -385,6 +386,8 @@ describe('Phase 8 empty-environment SQL roundtrip', () => {
       source.core.exec(`
         INSERT INTO tenants(id,tenant_code,tenant_key,name,created_at,updated_at)
         VALUES('tenant-a','TENANTA','${sourceTenantKey}','Tenant A',1,1);
+        INSERT INTO oauth_clients(tenant_id,client_id,client_name,redirect_uris,grant_types,response_types,enabled,created_at,updated_at)
+        VALUES('tenant-a','draft-client','Draft','[]','["authorization_code"]','["code"]',0,1,1);
         INSERT INTO users_core(
           id,tenant_id,email_verified,password_hash,is_active,user_type,pii_partition,pii_status,
           created_at,updated_at,status,lifecycle_state
@@ -708,6 +711,11 @@ describe('Phase 8 empty-environment SQL roundtrip', () => {
         }
       }
 
+      expect(
+        target.core
+          .prepare("SELECT enabled FROM oauth_clients WHERE client_id='draft-client'")
+          .get()
+      ).toMatchObject({ enabled: 0 });
       const portableTotp = portableTotpSecret(
         JSON.parse(restored.get('core.totp_credentials')![0])
       );

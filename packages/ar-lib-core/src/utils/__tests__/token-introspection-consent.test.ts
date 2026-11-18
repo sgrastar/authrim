@@ -6,9 +6,15 @@ import { createAccessToken } from '../jwt';
 import { introspectTokenFromContext } from '../token-introspection';
 
 const mocks = vi.hoisted(() => ({
+  client: vi.fn(),
   resolveAccount: vi.fn(),
   findWithdrawal: vi.fn(),
   createAccountAuthContext: vi.fn(() => ({ coreAdapter: {} })),
+}));
+
+vi.mock('../request-cache', async (original) => ({
+  ...(await original<typeof import('../request-cache')>()),
+  getClientCached: mocks.client,
 }));
 
 vi.mock('../../services/runtime-data-context', async (importOriginal) => ({
@@ -41,6 +47,7 @@ describe('protected-resource consent withdrawal', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.client.mockResolvedValue({ client_id: 'client-a', enabled: true });
     mocks.findWithdrawal.mockResolvedValue({ generation: 1, revokedAt: null });
   });
 
@@ -103,6 +110,32 @@ describe('protected-resource consent withdrawal', () => {
       valid: false,
       error: { error: 'temporarily_unavailable', statusCode: 503 },
     });
+  });
+
+  it.each(['user-a', 'client-a'])(
+    'rejects an existing token for a disabled client before resolving %s',
+    async (sub) => {
+      mocks.client.mockResolvedValue({ client_id: 'client-a', enabled: false });
+      expect(await inspect({ sub })).toMatchObject({
+        valid: false,
+        error: { error: 'invalid_token', statusCode: 401 },
+      });
+      expect(mocks.findWithdrawal).not.toHaveBeenCalled();
+    }
+  );
+
+  it('accepts a JWT bearer issuer without an OAuth client row', async () => {
+    mocks.client.mockResolvedValue(null);
+    expect(
+      await inspect({
+        client_id: 'https://trusted.example',
+        authrim_subject_issuer: 'https://trusted.example',
+      })
+    ).toMatchObject({ valid: true });
+    expect(mocks.client).toHaveBeenCalledWith(expect.anything(), env, 'https://trusted.example', {
+      includeDisabled: true,
+    });
+    expect(mocks.findWithdrawal).not.toHaveBeenCalled();
   });
 
   it('does not require user consent for a machine token', async () => {
