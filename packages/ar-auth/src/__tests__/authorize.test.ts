@@ -650,6 +650,37 @@ describe('Authorization Handler', () => {
   });
 
   describe('Authorization Flow - Unauthenticated User', () => {
+    it.each(['code', 'id_token'])(
+      'refuses %s authorization for a client with no callback URLs without redirecting',
+      async (responseType) => {
+        mockGetClient.mockResolvedValue({
+          client_id: 'callback-later',
+          redirect_uris: [],
+          grant_types: ['authorization_code', 'implicit'],
+          response_types: ['code', 'id_token'],
+          scope: 'openid',
+          token_endpoint_auth_method: 'none',
+        });
+        const query = new URLSearchParams({
+          response_type: responseType,
+          client_id: 'callback-later',
+          redirect_uri: 'https://app.example.test/callback',
+          scope: 'openid',
+          nonce: 'callback-later-nonce',
+        });
+        const response = await app.request(
+          `/authorize?${query.toString()}`,
+          { method: 'GET' },
+          env
+        );
+        expect(response.status).toBe(400);
+        expect(response.headers.get('Location')).toBeNull();
+        const body = await response.text();
+        expect(body).toContain('invalid_client');
+        expect(body).toContain('Client has no registered redirect URIs');
+      }
+    );
+
     it('should redirect to login page when user is not authenticated', async () => {
       const response = await app.request(
         '/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&state=test-state',

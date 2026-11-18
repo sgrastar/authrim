@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { SAMLMetadataRefreshPolicy } from '@authrim/ar-lib-core';
+import { approveSAMLProviderTrust } from '../provider-trust';
+import type { SAMLIdPConfig, SAMLMetadataRefreshPolicy } from '@authrim/ar-lib-core';
 
 const mocks = vi.hoisted(() => ({
   admin: null as ReturnType<typeof createAdapter> | null,
@@ -1145,37 +1146,91 @@ describe('SAML federation metadata polling', () => {
     expect(mocks.core!.execute.mock.calls[0]?.[1]?.[1]).toBe(0);
   });
 
-  it('restores a provider only when metadata automation previously suspended it', async () => {
-    mocks.isAggregate.mockReturnValueOnce(false);
-    mocks.core!.query.mockResolvedValue([
-      {
-        id: 'provider-a',
-        provider_type: 'saml_idp',
-        enabled: 0,
-        updated_at: 10,
-        config_json: JSON.stringify({
-          entityId: 'https://idp.example.test/entity',
-          metadataUrl: 'https://idp.example.test/metadata.xml',
-          metadataRefreshPolicy: {
-            mode: 'automatic',
-            intervalSeconds: 21_600,
-            nextRefreshAt: 0,
-            sourceState: 'expired',
-            suspendedByMetadataSync: true,
-          },
-        }),
-      },
-    ]);
-
-    const result = await pollSAMLMetadata({} as never, 2_000);
-
-    expect(result.individualProvidersProcessed).toBe(1);
-    expect(mocks.core!.execute.mock.calls[0]?.[1]?.[1]).toBe(1);
-    const persisted = JSON.parse(String(mocks.core!.execute.mock.calls[0]?.[1]?.[0])) as {
-      metadataRefreshPolicy: SAMLMetadataRefreshPolicy;
-    };
-    expect(persisted.metadataRefreshPolicy.suspendedByMetadataSync).toBeUndefined();
-  });
+  it.each([
+    'approved',
+    'jit-changed',
+    'mapping-changed',
+    'missing-approval',
+    'not-modified-mismatch',
+  ])(
+    'restores a metadata-suspended provider only with its last approved settings: %s',
+    async (mode) => {
+      mocks.isAggregate.mockReturnValueOnce(false);
+      const current: SAMLIdPConfig = {
+        entityId: 'https://idp.example.test/entity',
+        ssoUrl: 'https://idp.example.test/sso',
+        certificate: 'CERT',
+        nameIdFormat: 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress',
+        attributeMapping: {},
+        allowedBindings: ['post'],
+        jitEmailLinkingPolicy: 'disabled',
+        identityMapping: { fieldMappingSetId: 'approved-mapping' },
+        metadataUrl: 'https://idp.example.test/metadata.xml',
+        metadataRefreshPolicy: {
+          mode: 'automatic',
+          intervalSeconds: 21_600,
+          nextRefreshAt: 0,
+          etag: '"snapshot-a"',
+          validatorSourceUrl: 'https://idp.example.test/metadata.xml',
+          sourceState: 'expired',
+          suspendedByMetadataSync: true,
+        },
+      };
+      if (mode !== 'missing-approval') await approveSAMLProviderTrust(current);
+      if (mode === 'jit-changed' || mode === 'not-modified-mismatch')
+        current.jitEmailLinkingPolicy = 'email_linking';
+      if (mode === 'not-modified-mismatch')
+        mocks.safeFetch.mockResolvedValueOnce(new Response(null, { status: 304 }));
+      if (mode === 'mapping-changed')
+        current.identityMapping = { fieldMappingSetId: 'unapproved-mapping' };
+      mocks.refreshProvider.mockResolvedValueOnce({
+        config: {
+          ...current,
+          metadataRefreshPolicy: { ...current.metadataRefreshPolicy, sourceState: 'healthy' },
+        },
+        metadataRefreshStatus: { current: { validUntil: '2030-01-01T00:00:00Z' } },
+        expired: false,
+        changed: true,
+      });
+      mocks.core!.query.mockResolvedValue([
+        {
+          id: 'provider-a',
+          provider_type: 'saml_idp',
+          enabled: 0,
+          updated_at: 10,
+          config_json: JSON.stringify(current),
+        },
+      ]);
+      const result = await pollSAMLMetadata({} as never, 2_000);
+      expect(result.individualProvidersProcessed).toBe(1);
+      if (mode === 'not-modified-mismatch') {
+        expect(String(mocks.core!.execute.mock.calls[0]?.[0])).not.toContain('enabled = ?');
+      } else {
+        expect(mocks.core!.execute.mock.calls[0]?.[1]?.[1]).toBe(mode === 'approved' ? 1 : 0);
+      }
+      const persisted: unknown = JSON.parse(String(mocks.core!.execute.mock.calls[0]?.[1]?.[0]));
+      if (
+        !persisted ||
+        typeof persisted !== 'object' ||
+        !('metadataRefreshPolicy' in persisted) ||
+        !('jitEmailLinkingPolicy' in persisted) ||
+        !('identityMapping' in persisted)
+      )
+        throw new Error('Missing persisted provider config');
+      expect(persisted.jitEmailLinkingPolicy).toBe(current.jitEmailLinkingPolicy);
+      expect(persisted.identityMapping).toEqual(current.identityMapping);
+      expect('trustApproval' in persisted ? persisted.trustApproval : undefined).toEqual(
+        current.trustApproval
+      );
+      const policy = persisted.metadataRefreshPolicy;
+      if (!policy || typeof policy !== 'object') throw new Error('Missing metadata policy');
+      expect('suspendedByMetadataSync' in policy ? policy.suspendedByMetadataSync : undefined).toBe(
+        mode === 'approved' ? undefined : true
+      );
+      if (mode !== 'approved')
+        expect(policy).toMatchObject({ lastErrorCode: 'metadata_approval_required' });
+    }
+  );
 
   it('disables an individual provider when all cached metadata certificates expire on a 304', async () => {
     mocks.safeFetch.mockResolvedValue(

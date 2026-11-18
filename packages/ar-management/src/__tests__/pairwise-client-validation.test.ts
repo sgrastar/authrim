@@ -49,6 +49,18 @@ describe('validatePairwiseClientMetadata', () => {
     expect(await validatePairwiseClientMetadata({ redirectUris: [] })).toBeNull();
   });
 
+  it('accepts empty redirects for a pairwise client with an explicit sector', async () => {
+    safeFetchJson.mockResolvedValue([]);
+    expect(
+      await validatePairwiseClientMetadata({
+        subjectType: 'pairwise',
+        redirectUris: [],
+        sectorIdentifierUri: SECTOR,
+      })
+    ).toBeNull();
+    expect(safeFetchJson).toHaveBeenCalledOnce();
+  });
+
   it('accepts a sector_identifier_uri that lists every redirect URI', async () => {
     safeFetchJson.mockResolvedValue(['https://a.example/cb', 'https://b.example/cb']);
     expect(

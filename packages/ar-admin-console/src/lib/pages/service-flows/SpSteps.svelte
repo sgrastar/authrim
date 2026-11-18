@@ -6,7 +6,7 @@
 	import SelectRow from '#lib/ui/patterns/SelectRow.svelte';
 	import ToggleRow from '#lib/ui/patterns/ToggleRow.svelte';
 	import ConnectionTest from './ConnectionTest.svelte';
-	import type { SpForm } from './connection-model';
+	import { entityIdProblem, httpsUrlProblem, type SpForm } from './connection-model';
 	import MetadataImport from './MetadataImport.svelte';
 	import OurDetails from './OurDetails.svelte';
 
@@ -52,7 +52,20 @@
 
 {#if step === 'sp-import' && live}
 	<TextRow label={t('sf.row.name')} required bind:value={serviceName} />
-	<MetadataImport bind:form partner="service" live preview={previewMetadata} />
+	{#if editing}
+		<TextRow
+			label={t('sf.row.entityId')}
+			error={form.entityId ? entityIdProblem(form.entityId) : undefined}
+			bind:value={form.entityId}
+		/>
+		<TextRow
+			label={t('sf.ours.acsUrl')}
+			error={form.acsUrl ? httpsUrlProblem(form.acsUrl) : undefined}
+			bind:value={form.acsUrl}
+		/>
+	{:else}
+		<MetadataImport bind:form partner="service" live preview={previewMetadata} />
+	{/if}
 	{#if !editing}<Callout tone="info">{t('sf.create.spDraft')}</Callout>{/if}
 {:else if step === 'sp-import'}
 	<MetadataImport bind:form partner="service" />

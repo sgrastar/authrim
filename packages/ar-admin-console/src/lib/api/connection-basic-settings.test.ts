@@ -40,6 +40,34 @@ const provider = {
 };
 
 describe('basic connection settings over HTTP', () => {
+	it('saves and reopens empty RP callbacks without changing unrelated settings', async () => {
+		let row = { ...client, updated_at: 1000 };
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (_url: string, init: RequestInit = {}) => {
+				if (init.method === 'PUT') {
+					expect(JSON.parse(String(init.body))).toEqual({
+						redirect_uris: [],
+						expected_updated_at: 1000
+					});
+					row = { ...row, redirect_uris: [], updated_at: 1001 };
+				}
+				return Response.json({ client: row });
+			})
+		);
+		const loaded = await httpClients.get(client.client_id);
+		const answers = basicSettingsAnswers({ kind: 'rp', detail: loaded, client: httpClients });
+		answers.rp.redirectUris = [];
+		const saved = await httpClients.updateBasics(loaded.id, clientBasicUpdate(loaded, answers));
+		expect(saved.redirectUris).toEqual([]);
+		expect(await httpClients.get(loaded.id)).toEqual(saved);
+		expect(
+			basicSettingsAnswers({ kind: 'rp', detail: saved, client: httpClients }).rp.redirectUris
+		).toEqual([]);
+		expect(row.identity_mapping).toEqual(client.identity_mapping);
+		expect(row.require_pkce).toBe(1);
+	});
+
 	it('gets RP by its encoded ID, updates only intended fields, and uses actual saved values on reopen', async () => {
 		let row = { ...client };
 		const writes: RequestInit[] = [];

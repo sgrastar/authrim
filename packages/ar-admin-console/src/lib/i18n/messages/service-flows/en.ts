@@ -1,6 +1,28 @@
 import type { jaServiceFlows } from './ja';
 
 export const enServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
+	'sf.rp.callbacksMissing':
+		'No callback URL has been added, so sign-in is not available yet. Add a callback URL in the connection details.',
+	'sf.draft.skip': 'Skip for now',
+	'sf.draft.enterNow': 'Enter now',
+	'sf.draft.saved': 'Saved as a draft',
+	'sf.draft.metadataRequired':
+		'To enable, add the entity ID and endpoint URL. IdP connections also require a signing certificate. You can import metadata to fill these in.',
+	'sf.draft.openDetails': 'Open connection details',
+	'sf.import.mode.xml': 'Paste XML',
+	'sf.metadata.xmlHint': 'Paste metadata XML to preview it automatically.',
+	'sf.metadata.wrongRoleSp':
+		'This connection requires SP metadata. The imported metadata describes an IdP.',
+	'sf.metadata.wrongRoleIdp':
+		'This connection requires IdP metadata. The imported metadata describes an SP.',
+	'sf.metadata.fetchFailed':
+		'Could not fetch metadata. Check the public HTTPS URL and the remote server response.',
+	'sf.metadata.invalidXml':
+		'Could not read the SAML metadata XML. Check its contents and file size.',
+	'sf.metadata.aggregate':
+		'This metadata contains multiple entities. Use federation metadata import.',
+	'sf.draft.noMetadata': 'No metadata has been added yet.',
+
 	'sf.live.status': 'Connection status',
 	'sf.live.enable': 'Enable',
 	'sf.live.disable': 'Disable',

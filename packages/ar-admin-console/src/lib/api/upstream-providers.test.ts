@@ -198,6 +198,7 @@ describe('upstream provider HTTP contracts', () => {
 		});
 		const read = await httpSamlProviders.getIdentityProvider(samlRow.id);
 		expect(read).toEqual({
+			configurationMissing: false,
 			id: samlRow.id,
 			name: samlRow.name,
 			enabled: false,

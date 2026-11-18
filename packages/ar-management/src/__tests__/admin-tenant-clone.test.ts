@@ -542,7 +542,7 @@ describe('admin tenant clone', () => {
       'login-entry.app_login_redirect_uri': '',
     });
 
-    // SAML service providers are not copied: a sign-in to one goes back to the account page.
+    // Even copied SAML providers are disabled drafts, so sign-in returns to the account page.
     expect(
       JSON.parse(
         sanitizeCopiedSettingsValue(
@@ -637,6 +637,243 @@ describe('admin tenant clone', () => {
       )
     ).toEqual({ keys: [{ kty: 'RSA', kid: 'rsa', n: 'n', e: 'AQAB' }] });
     expect(sanitizeClientJwks('{bad')).toBeNull();
+  });
+
+  describe('SAML connection drafts', () => {
+    const config = {
+      entityId: 'urn:source:sp',
+      acsUrl: 'https://sp.example.test/acs',
+      ssoUrl: 'https://idp.example.test/sso',
+      certificate: 'PEER-PUBLIC-CERTIFICATE',
+      certificates: ['PEER-PUBLIC-CERTIFICATE'],
+      attributeMapping: { email: 'mail' },
+      jitEmailLinkingPolicy: 'disabled',
+      metadataUrl: 'https://metadata.example.test/saml.xml',
+      metadataXml: '<EntityDescriptor entityID="urn:source:sp" />',
+      trustApproval: { state: 'approved', digest: 'source-approval' },
+      signingKeyPolicy: {
+        active: { keyRef: 'source-key-ref', certificate: 'SOURCE-SIGNING-CERT' },
+      },
+      aggregateImport: { aggregateEntityId: 'urn:source:sp', verification: { status: 'verified' } },
+      certificateValidation: { allExpired: false },
+      metadataHash: 'source-hash',
+      metadataLastFetched: 100,
+      metadataCriticalFields: { validUntil: '2000-01-01T00:00:00Z' },
+      metadataRefreshStatus: { current: {} },
+      metadataRefreshPolicy: {
+        mode: 'automatic',
+        intervalSeconds: 21600,
+        suspendedByMetadataSync: true,
+        sourceState: 'expired',
+        lastErrorCode: 'metadata_expired',
+        acceptedValidUntil: 'old',
+      },
+      identityMapping: {
+        fieldMappingSetId: 'source-set',
+        fieldMappingVersionId: 'source-version',
+        sourceProfileId: 'source-profile',
+        destinationProfileId: 'source-destination',
+        inboundContract: 'connection-v1',
+        destinationFieldPolicies: { mail: 'required' },
+        attributeDescriptors: { mail: { name: 'mail' } },
+      },
+      updatedAt: 'source-time',
+    };
+    const row = (id = 'sp-a', entityId = 'urn:source:sp', providerType = 'saml_sp') => ({
+      id,
+      name: id,
+      provider_type: providerType,
+      enabled: 1,
+      config_json: JSON.stringify({ ...config, entityId }),
+      created_at: 10,
+      updated_at: 20,
+    });
+    const request = (extra: Record<string, unknown> = {}) =>
+      context(
+        {
+          id: 'destination',
+          name: 'Destination',
+          copy: { settings: false, roles: false, saml_providers: true },
+          ...extra,
+        },
+        {}
+      );
+    const inserts = () =>
+      mocks.target.execute.mock.calls.filter(
+        ([sql]) => typeof sql === 'string' && sql.includes('INSERT INTO identity_providers')
+      );
+
+    it('copies SP and IdP peer settings as disabled drafts with fresh timestamps and no source authority', async () => {
+      mocks.source.query.mockResolvedValue([row(), row('idp-a', 'urn:source:idp', 'saml_idp')]);
+      const response = await adminTenantCloneHandler(request());
+      expect(response.status).toBe(201);
+      const body: unknown = await response.json();
+      expect(body).toMatchObject({
+        copy: { saml_providers: true },
+        cloned_items: { saml_providers: 2, saml_providers_skipped: 0 },
+      });
+      expect(inserts()).toHaveLength(2);
+      for (const [sql, values] of inserts()) {
+        expect(sql).toContain('VALUES (?, ?, ?, ?, ?, 0, ?, ?)');
+        const params: unknown = values;
+        if (!Array.isArray(params)) throw new Error('Missing cloned provider values');
+        expect(params[1]).toBe('destination');
+        expect(params[0]).not.toBe(params[2]);
+        expect(params[5]).toBeGreaterThan(20);
+        expect(params[6]).toBe(params[5]);
+        const cloned: unknown = JSON.parse(String(params[4]));
+        expect(cloned).toEqual({
+          entityId: params[3] === 'saml_sp' ? 'urn:source:sp' : 'urn:source:idp',
+          acsUrl: config.acsUrl,
+          ssoUrl: config.ssoUrl,
+          certificate: config.certificate,
+          certificates: config.certificates,
+          attributeMapping: config.attributeMapping,
+          jitEmailLinkingPolicy: 'disabled',
+          metadataUrl: config.metadataUrl,
+          metadataXml: config.metadataXml,
+          trustApproval: { state: 'draft' },
+          metadataRefreshPolicy: { mode: 'automatic', intervalSeconds: 21600 },
+          identityMapping: {
+            inboundContract: 'connection-v1',
+            destinationFieldPolicies: { mail: 'required' },
+            attributeDescriptors: { mail: { name: 'mail' } },
+          },
+        });
+      }
+      expect(mocks.source.query).not.toHaveBeenCalledWith(
+        expect.stringContaining('federation_saml_runtime_entities'),
+        expect.anything()
+      );
+    });
+
+    it.each(['saml_sp', 'saml_idp'])(
+      'copies both roles sharing an entity ID when %s is first',
+      async (firstRole) => {
+        const secondRole = firstRole === 'saml_sp' ? 'saml_idp' : 'saml_sp';
+        mocks.source.query.mockResolvedValue([
+          row('first', 'urn:shared', firstRole),
+          row('second', 'urn:shared', secondRole),
+        ]);
+        const response = await adminTenantCloneHandler(request());
+        expect(response.status).toBe(201);
+        const body: unknown = await response.json();
+        expect(body).toMatchObject({
+          cloned_items: { saml_providers: 2, saml_providers_skipped: 0 },
+        });
+        expect(inserts()).toHaveLength(2);
+        const roles = inserts().map(([, values]) => {
+          const params: unknown = values;
+          if (!Array.isArray(params)) throw new Error('Missing cloned provider values');
+          const cloned: unknown = JSON.parse(String(params[4]));
+          expect(cloned).toMatchObject({ entityId: 'urn:shared' });
+          return String(params[3]);
+        });
+        expect(roles).toEqual([firstRole, secondRole]);
+      }
+    );
+
+    it.each(['saml_sp', 'saml_idp'])(
+      'copies a shared entity ID when the destination only has the other role: %s',
+      async (providerType) => {
+        const otherRole = providerType === 'saml_sp' ? 'saml_idp' : 'saml_sp';
+        mocks.source.query.mockResolvedValue([row('source-provider', 'urn:shared', providerType)]);
+        mocks.target.query.mockResolvedValue([row('existing', 'urn:shared', otherRole)]);
+        const response = await adminTenantCloneHandler(request());
+        expect(response.status).toBe(201);
+        const body: unknown = await response.json();
+        expect(body).toMatchObject({
+          cloned_items: { saml_providers: 1, saml_providers_skipped: 0 },
+        });
+        expect(inserts()).toHaveLength(1);
+        const params: unknown = inserts()[0]?.[1];
+        if (!Array.isArray(params)) throw new Error('Missing cloned provider values');
+        expect(params[3]).toBe(providerType);
+      }
+    );
+
+    it.each([undefined, false])('does not copy SAML when the option is %s', async (selected) => {
+      const response = await adminTenantCloneHandler(
+        request({
+          copy: { settings: false, roles: false, saml_providers: selected },
+        })
+      );
+      expect(response.status).toBe(201);
+      expect(inserts()).toHaveLength(0);
+      expect(mocks.source.query).not.toHaveBeenCalled();
+      const body: unknown = await response.json();
+      expect(body).toMatchObject({
+        copy: { saml_providers: false },
+        cloned_items: { saml_providers: 0, saml_providers_skipped: 0 },
+      });
+    });
+
+    it('accepts the include_saml_providers alias and reports same-role duplicate destination entity IDs', async () => {
+      mocks.source.query.mockResolvedValue([row(), row('idp-a', 'urn:source:idp', 'saml_idp')]);
+      mocks.target.query.mockResolvedValue([row('existing', 'urn:source:sp', 'saml_sp')]);
+      const response = await adminTenantCloneHandler(
+        request({
+          copy: { settings: false, roles: false, saml_providers: false },
+          include_saml_providers: true,
+        })
+      );
+      expect(response.status).toBe(201);
+      expect(inserts()).toHaveLength(1);
+      const body: unknown = await response.json();
+      const duplicateWarnings: unknown = expect.arrayContaining([
+        expect.stringContaining('urn:source:sp'),
+      ]);
+      expect(body).toMatchObject({
+        cloned_items: { saml_providers: 1, saml_providers_skipped: 1 },
+        warnings: duplicateWarnings,
+      });
+      expect(mocks.target.execute).not.toHaveBeenCalledWith(
+        expect.stringContaining('DELETE FROM identity_providers'),
+        expect.anything()
+      );
+    });
+
+    it('does not duplicate an empty draft when retrying an interrupted clone', async () => {
+      mocks.source.query.mockResolvedValue([{ ...row(), config_json: '{}' }]);
+      expect((await adminTenantCloneHandler(request())).status).toBe(201);
+      const params: unknown = inserts()[0]?.[1];
+      if (!Array.isArray(params)) throw new Error('Missing cloned draft');
+      mocks.target.query.mockResolvedValue([
+        { id: String(params[0]), provider_type: 'saml_sp', config_json: String(params[4]) },
+      ]);
+      mocks.target.execute.mockClear();
+      expect((await adminTenantCloneHandler(request())).status).toBe(201);
+      expect(inserts()).toHaveLength(0);
+    });
+
+    it('includes SAML inserts and source reads in the synchronous clone budget', async () => {
+      mocks.source.queryOne
+        .mockResolvedValueOnce({ id: 'source', name: 'Source', lifecycle_state: 'active' })
+        .mockResolvedValueOnce({ saml_providers: 24, saml_providers_updated: 20 });
+      expect((await adminTenantCloneHandler(request())).status).toBe(400);
+      expect(inserts()).toHaveLength(0);
+    });
+
+    it('rolls back only newly inserted SAML rows after a later invalid source config', async () => {
+      mocks.source.query.mockResolvedValue([
+        row('duplicate'),
+        row('new', 'urn:new'),
+        { ...row('invalid'), config_json: '{' },
+      ]);
+      mocks.target.query.mockResolvedValue([row('existing')]);
+      expect((await adminTenantCloneHandler(request())).status).toBe(500);
+      const params: unknown = inserts()[0]?.[1];
+      if (!Array.isArray(params)) throw new Error('Missing inserted draft');
+      const removed = mocks.target.execute.mock.calls.filter(
+        ([sql]) => typeof sql === 'string' && sql.includes('DELETE FROM identity_providers')
+      );
+      expect(removed).toEqual([
+        [
+          'DELETE FROM identity_providers WHERE tenant_id = ? AND id IN (?)',
+          ['destination', params[0]],
+        ],
+      ]);
+    });
   });
 
   it('copies non-secret settings and creates a distinct tenant signing key', async () => {

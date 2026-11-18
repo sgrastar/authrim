@@ -60,6 +60,8 @@ export const ADMIN_STEP_UP_OPERATIONS = {
   'admin.role.revoke': 'L2',
   'signing_key.rotate': 'L2',
   'federation.trust.update': 'L2',
+  'federation.trust.activate': 'L2',
+  'federation.trust.disable': 'L1',
   'dr.restore': 'L2',
   'tenant.jurisdiction.update': 'L2',
   'webhook.destination.update': 'L2',
@@ -163,8 +165,19 @@ export function resolveAdminStepUpLevel(
 ): Exclude<AdminStepUpLevel, 'L0'> {
   const floor = ADMIN_STEP_UP_OPERATIONS[operation];
   if (!overrides || typeof overrides !== 'object' || Array.isArray(overrides)) return floor;
-  const raised = (overrides as Record<string, unknown>)[operation];
-  return isRaisableLevel(raised) && LEVEL_RANK[raised] > LEVEL_RANK[floor] ? raised : floor;
+  const entries = new Map<string, unknown>(Object.entries(overrides));
+  const raised = entries.get(operation);
+  // The old trust operation protected containment too. A missing new override inherits that
+  // tenant decision; an explicit new override can deliberately choose the new catalog floor.
+  const inherited =
+    (operation === 'federation.trust.activate' || operation === 'federation.trust.disable') &&
+    !isRaisableLevel(raised)
+      ? entries.get('federation.trust.update')
+      : undefined;
+  const requested = isRaisableLevel(raised) ? raised : inherited;
+  return isRaisableLevel(requested) && LEVEL_RANK[requested] > LEVEL_RANK[floor]
+    ? requested
+    : floor;
 }
 
 // =============================================================================

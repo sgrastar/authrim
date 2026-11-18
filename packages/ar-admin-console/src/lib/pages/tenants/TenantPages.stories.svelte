@@ -278,6 +278,47 @@
 </Story>
 
 <Story
+	name="Copy SAML connections as disabled drafts"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const body = within(canvasElement.ownerDocument.body);
+		toast.dismissAll();
+		copies.length = 0;
+		await userEvent.click(await canvas.findByRole('button', { name: t('tn.copy.action') }));
+		const dialog = await body.findByRole('dialog');
+		const saml = box(dialog, t('tn.copy.samlProviders'));
+		await expect(saml).not.toBeChecked();
+		const description = t('tn.copy.samlProviders.desc');
+		await expect(description.trim()).not.toBe('');
+		// The dialog starts its entrance animation at opacity 0; wait for the real text to be visible.
+		await waitFor(() => expect(within(dialog).getByText(description)).toBeVisible());
+		await userEvent.click(saml);
+		await userEvent.click(within(dialog).getByRole('button', { name: t('tn.copy.submit') }));
+		await waitFor(() =>
+			expect(copies.at(-1)?.copy).toMatchObject({
+				saml_providers: true,
+				clients: false,
+				client_credentials: false
+			})
+		);
+		await waitForSettledToasts();
+	}}
+>
+	{#snippet template()}
+		<Toaster />
+		<TenantDetailPage
+			domains={fakeTenantDomains()}
+			client={fakeTenants({ copies })}
+			tenantId="acme"
+			access={platform}
+			listHref="#tenants"
+			{onopen}
+			{ondeleted}
+		/>
+	{/snippet}
+</Story>
+
+<Story
 	name="Copy admin access and webhooks together"
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);

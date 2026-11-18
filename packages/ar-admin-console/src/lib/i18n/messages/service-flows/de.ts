@@ -2,6 +2,28 @@
 import type { jaServiceFlows } from './ja';
 
 export const deServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
+	'sf.rp.callbacksMissing':
+		'Es wurde noch keine Callback-URL hinterlegt. Die Anmeldung ist daher noch nicht möglich. Ergänzen Sie die URL in den Verbindungsdetails.',
+	'sf.draft.skip': 'Später eingeben',
+	'sf.draft.enterNow': 'Jetzt eingeben',
+	'sf.draft.saved': 'Als Entwurf gespeichert',
+	'sf.draft.metadataRequired':
+		'Zum Aktivieren werden Entity-ID und Endpunkt-URL benötigt. IdP-Verbindungen benötigen auch ein Signaturzertifikat. Sie können Metadaten importieren.',
+	'sf.draft.openDetails': 'Verbindungsdetails öffnen',
+	'sf.import.mode.xml': 'XML einfügen',
+	'sf.metadata.xmlHint': 'Eingefügtes Metadaten-XML wird automatisch eingelesen.',
+	'sf.metadata.wrongRoleSp':
+		'Diese Verbindung benötigt SP-Metadaten. Die importierten Metadaten beschreiben einen IdP.',
+	'sf.metadata.wrongRoleIdp':
+		'Diese Verbindung benötigt IdP-Metadaten. Die importierten Metadaten beschreiben einen SP.',
+	'sf.metadata.fetchFailed':
+		'Metadaten konnten nicht abgerufen werden. Prüfen Sie die öffentliche HTTPS-URL und die Serverantwort.',
+	'sf.metadata.invalidXml':
+		'SAML-Metadaten-XML konnte nicht gelesen werden. Prüfen Sie Inhalt und Dateigröße.',
+	'sf.metadata.aggregate':
+		'Diese Metadaten enthalten mehrere Entitäten. Verwenden Sie den Metadatenimport für Föderationen.',
+	'sf.draft.noMetadata': 'Es wurden noch keine Metadaten hinterlegt.',
+
 	'sf.live.status': 'Verbindungsstatus',
 	'sf.live.enable': 'Aktivieren',
 	'sf.live.disable': 'Deaktivieren',

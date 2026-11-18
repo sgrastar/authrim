@@ -339,6 +339,7 @@
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		await chooseInbound(canvas, 'idp');
+		await userEvent.click(canvas.getByRole('radio', { name: t('sf.import.mode.manual') }));
 		await expect(canvas.queryByRole('button', { name: t('sf.import.read') })).toBeNull();
 		await userEvent.type(canvas.getByRole('textbox', { name: t('sf.row.name') }), 'Identity');
 		await userEvent.type(

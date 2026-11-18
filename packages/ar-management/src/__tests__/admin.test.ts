@@ -6268,7 +6268,7 @@ describe('Admin API Handlers', () => {
   });
 
   describe('adminClientCreateHandler', () => {
-    it('should require redirect_uris', async () => {
+    it('accepts omitted redirect_uris for later callback configuration', async () => {
       const mockDB = createMockDB({});
 
       const c = createMockContext({
@@ -6283,10 +6283,9 @@ describe('Admin API Handlers', () => {
 
       expect(c.json).toHaveBeenCalledWith(
         expect.objectContaining({
-          error: 'invalid_request',
-          error_description: expect.stringContaining('redirect_uris'),
+          client: expect.objectContaining({ redirect_uris: [] }),
         }),
-        400
+        201
       );
     });
 

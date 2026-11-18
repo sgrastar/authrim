@@ -116,8 +116,6 @@
 					trustEmail: false,
 					jitProvisioning: false
 				});
-				initial.sp.importMode = 'manual';
-				initial.idp.importMode = 'manual';
 				initial.idp.certificate = '';
 			}
 			return initial;
@@ -166,6 +164,13 @@
 	let pending = $state(false);
 	let failure = $state('');
 	let created = $state<CreatedConnection | null>(null);
+	const deferred = $derived(
+		answers.kind === 'rp'
+			? answers.rp.skipped || answers.rp.redirectUris.length === 0
+			: answers.kind === 'sp'
+				? answers.sp.skipped
+				: answers.kind === 'idp' && answers.idp.skipped
+	);
 	provideBusy(() => pending);
 
 	async function navigateCreated() {
@@ -197,15 +202,13 @@
 			failure =
 				error instanceof StepUpCancelledError
 					? t('settings.stepUpCancelled')
-					: answers.kind === 'op' || answers.kind === 'idp'
-						? t('sf.create.failed')
-						: error instanceof Error
-							? error.message
-							: t('sf.create.failed');
+					: error instanceof Error
+						? error.message
+						: t('sf.create.failed');
 		} finally {
 			pending = false;
 		}
-		if (created && !created.clientSecret) await navigateCreated();
+		if (created && !created.clientSecret && !deferred) await navigateCreated();
 	}
 
 	const steps = $derived(
@@ -290,7 +293,10 @@
 					!!answers.direction &&
 					KINDS_OF[answers.direction].includes(answers.kind)
 				);
-			if (id === 'rp-redirect') return rpRedirectsReady(answers.rp);
+			if (id === 'rp-redirect')
+				return (
+					(answers.rp.skipped || answers.rp.redirectUris.length > 0) && rpRedirectsReady(answers.rp)
+				);
 			if (id === 'rp-signin' || id === 'sp-import' || id === 'op-details' || id === 'idp-import') {
 				try {
 					if (id === 'rp-signin') rpCreateInput(answers.rp);
@@ -375,6 +381,12 @@
 
 {#if created}
 	<PageHeader title={t('sf.create.saved')} />
+	{#if (created.kind === 'sp' && answers.sp.skipped) || (created.kind === 'idp' && answers.idp.skipped)}
+		<Callout tone="info" title={t('sf.draft.saved')}>{t('sf.draft.metadataRequired')}</Callout>
+	{/if}
+	{#if created.kind === 'rp' && deferred}<Callout tone="warning"
+			>{t('sf.rp.callbacksMissing')}</Callout
+		>{/if}
 	{#if created.kind === 'rp'}
 		<OurDetails partner="app" items={[{ label: t('sf.row.clientId'), value: created.id }]} />
 	{/if}
@@ -383,7 +395,7 @@
 	{/if}
 	{#if failure}<Callout tone="danger" live>{failure}</Callout>{/if}
 	<Button onclick={navigateCreated} disabled={pending} loading={pending}
-		>{t('sf.wizard.finish')}</Button
+		>{t(deferred ? 'sf.draft.openDetails' : 'sf.wizard.finish')}</Button
 	>
 {:else if reviewing && forAccount && account.flow}
 	<AccountFlowDetail
@@ -474,6 +486,30 @@
 					bind:op={answers.op}
 					bind:idp={answers.idp}
 				/>
+			{/if}
+			{#if live && (stepInfo.id === 'rp-redirect' || stepInfo.id === 'sp-import' || stepInfo.id === 'idp-import')}
+				{@const skipped =
+					stepInfo.id === 'rp-redirect'
+						? answers.rp.skipped
+						: stepInfo.id === 'sp-import'
+							? answers.sp.skipped
+							: answers.idp.skipped}
+				<Button
+					variant="secondary"
+					aria-pressed={skipped === true}
+					onclick={() => {
+						if (stepInfo.id === 'rp-redirect') answers.rp.skipped = !answers.rp.skipped;
+						else if (stepInfo.id === 'sp-import') answers.sp.skipped = !answers.sp.skipped;
+						else answers.idp.skipped = !answers.idp.skipped;
+					}}>{t(skipped ? 'sf.draft.enterNow' : 'sf.draft.skip')}</Button
+				>
+				{#if skipped}
+					<Callout tone="info"
+						>{t(
+							stepInfo.id === 'rp-redirect' ? 'sf.rp.callbacksMissing' : 'sf.draft.metadataRequired'
+						)}</Callout
+					>
+				{/if}
 			{/if}
 		{/snippet}
 	</Wizard>

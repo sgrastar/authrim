@@ -14,6 +14,22 @@ info:
     "Service temporarily unavailable" (no response body for HEAD). Clients may retry after the
     indicated delay; a failed response does not establish whether an earlier write completed.
 
+    Unapproved SAML provider drafts (enabled: false) can be created and edited at L0, including metadata
+    import and manual configuration. Activation (including enabled creation) and trust changes
+    to an enabled provider require L2 (federation.trust.activate); receipts bind the effective
+    trust settings. A name-only change is L0. Disabling and deleting require L1
+    (federation.trust.disable), except that deleting or moving an authoritative entity that
+    masks a federation runtime entry requires L2. Unapproved drafts do not shadow federation
+    runtime entries. Metadata-suspended providers retain runtime authority and trust edits require
+    L2 even while disabled. Automatic recovery requires a matching server-managed trustApproval
+    digest from the last accepted L2 operation; missing or mismatched approval leaves the provider
+    suspended with metadata_approval_required until explicit L2 activation. Signing-key and
+    federation-metadata operations remain L2.
+    Tenant step-up policy may raise these catalog levels; the platform enforcement switch
+    applies to activate just as it does to the compatibility federation.trust.update operation.
+    The legacy federation.trust.update override is inherited when a new operation has no valid
+    explicit override.
+
     Every write (POST, PUT, PATCH, DELETE) of an authenticated caller under `/api/admin` can
     answer HTTP 429 `rate_limit_exceeded` from the Admin API write limit (`rate_limit.admin_write`
     per `rate_limit.admin_write_window_seconds`, per authenticated principal and tenant, shared with the
@@ -308,6 +324,7 @@ paths:
         - SAML Admin
       summary: Create a SAML provider.
       description: >-
+        Creating a disabled provider is L0. Enabled creation requires L2 (federation.trust.activate).
         While the `saml_metadata_url` capability is off, a request with a `metadataUrl` (or whose config carries a `metadataUrl`) is refused; pasted `metadataXml` and a config without a URL are not.
       security:
         - adminBearer: []
@@ -342,6 +359,12 @@ paths:
         - SAML Admin
       summary: Update a SAML provider.
       description: >-
+        Unapproved disabled edits and name-only changes are L0. Metadata-suspended trust edits
+        and changes that expose an authoritative entity's federation fallback require L2.
+        Activation and changes to an enabled
+        provider's config require L2 (federation.trust.activate). Disabling requires L1
+        (federation.trust.disable), except that suspended-trust changes or federation exposure
+        require L2.
         While the `saml_metadata_url` capability is off, a new or changed `config.metadataUrl` is refused; keeping the stored URL while other fields change, and clearing it, are allowed.
       security:
         - adminBearer: []
@@ -361,6 +384,10 @@ paths:
       tags:
         - SAML Admin
       summary: Delete a SAML provider.
+      description: >-
+        Requires L1 (federation.trust.disable). Deleting an authoritative entity that can expose
+        a federation runtime fallback requires L2 (federation.trust.activate). Unapproved drafts
+        never suppress that fallback.
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -576,7 +603,10 @@ paths:
       summary: Import SAML provider metadata.
       description: Imports single-entity SAML metadata into an existing provider, preserving custom
         settings while updating metadata-derived configuration and refresh status.
-        Requires admin:saml_providers:metadata:import and the existing federation trust step-up.
+        Requires admin:saml_providers:metadata:import. Import into a disabled provider is L0;
+        importing into an enabled or metadata-suspended provider requires L2 (federation.trust.activate).
+        Changing an authoritative entity ID that suppresses federation fallback also requires L2,
+        even while the provider is disabled.
         expectedUpdatedAt is required and must equal the loaded provider version. A stale version,
         including a concurrent change during fetch or step-up, returns 409 without updating the provider.
         The success response includes the new updatedAt for subsequent mapping or activation operations.
@@ -617,6 +647,10 @@ paths:
         metadata-refresh permission is sufficient only when the configured URL and entityID remain
         unchanged. Supplying a different URL or approving an entityID change also requires the
         provider-update permission.
+        Refreshing a disabled provider without activation is L0. An enabled provider or restoration
+        of a metadata-suspended provider requires L2 (federation.trust.activate).
+        Moving an authoritative entity ID that suppresses federation fallback requires L2 even
+        with allowEntityIdChange and while disabled.
         Every refresh fetches a URL, so it is refused while the `saml_metadata_url` capability is off.
       responses:
         '503':
@@ -677,8 +711,11 @@ paths:
       summary: Promote next SAML signing certificate.
       description:
         Promotes the provider signing policy next certificate to active and can retain the
-        previous active certificate as backup.
+        previous active certificate as backup. L2 receipts bind the current configuration digest,
+        selected public key and provider version. A concurrent save returns 409.
       responses:
+        '409':
+          description: Provider changed during approval or save. Reload and obtain approval for the current version.
         '403':
           $ref: '#/components/responses/AdminStepUpRequired'
         '200':
@@ -701,8 +738,11 @@ paths:
       summary: Publish next SAML signing certificate.
       description:
         Adds a next signing certificate to the provider signing policy for metadata publication
-        before activation.
+        before activation. L2 receipts bind the current configuration digest, selected public key
+        and provider version. A concurrent save returns 409.
       responses:
+        '409':
+          description: Provider changed during approval or save. Reload and obtain approval for the current version.
         '403':
           $ref: '#/components/responses/AdminStepUpRequired'
         '200':
@@ -724,8 +764,11 @@ paths:
       operationId: postApiAdminSamlProvidersByIdSigningRolloverRetireBackup
       summary: Retire backup SAML signing certificate.
       description: Removes the backup signing certificate from the provider signing policy after a
-        rollover has completed.
+        rollover has completed. L2 receipts bind the current configuration digest, selected public key
+        and provider version. A concurrent save returns 409.
       responses:
+        '409':
+          description: Provider changed during approval or save. Reload and obtain approval for the current version.
         '403':
           $ref: '#/components/responses/AdminStepUpRequired'
         '200':
@@ -1074,7 +1117,7 @@ components:
                 enum: [saml_metadata_url]
     AdminStepUpOrCapabilityDisabled:
       description: >-
-        Either the trust change needs admin step-up L2 (see `AdminStepUpRequired`), or the
+        Either the operation needs admin step-up L1 or L2 (see `AdminStepUpRequired`), or the
         platform turned the `saml_metadata_url` capability off for tenants and the request would
         fetch a metadata URL or store a new or changed one (`capability_disabled`).
       content:
@@ -1086,7 +1129,13 @@ components:
             properties:
               error:
                 type: string
-                enum: [step_up_required, step_up_human_required, capability_disabled]
+                enum:
+                  [
+                    admin_fresh_auth_required,
+                    step_up_required,
+                    step_up_human_required,
+                    capability_disabled,
+                  ]
               error_description:
                 type: string
               capability:
@@ -1104,11 +1153,15 @@ components:
                   type: string
     AdminStepUpRequired:
       description: >-
-        The trust change needs admin step-up L2 (federation.trust.update), unless the platform
-        turned security.admin_step_up_enforced off. step_up_required: verify what `missing` lists,
+        Activation, active or metadata-suspended trust changes, and deletion or entity moves
+        exposing federation fallback need L2 (federation.trust.activate). Other disabling or
+        deleting needs L1 (federation.trust.disable); admin_fresh_auth_required asks for a fresh
+        passkey. Unapproved draft edits and name-only updates need no step-up. The platform can turn
+        security.admin_step_up_enforced off, and tenant overrides can raise the catalog level.
+        step_up_required: verify what `missing` lists,
         exchange `step_up_id` at POST /api/admin/me/step-up/receipts and repeat the same request
         once with the receipt in the authrim-step-up-receipt header. step_up_human_required: a
-        machine token without admin:step_up_exempt:federation.trust.update, or an agent.
+        machine token without the exact admin:step_up_exempt permission for the operation, or an agent.
       content:
         application/json:
           schema:
@@ -1118,7 +1171,7 @@ components:
             properties:
               error:
                 type: string
-                enum: [step_up_required, step_up_human_required]
+                enum: [admin_fresh_auth_required, step_up_required, step_up_human_required]
               required_level:
                 type: string
               step_up_id:
@@ -1463,6 +1516,23 @@ components:
       type: object
       additionalProperties: true
       properties:
+        trustApproval:
+          type: object
+          readOnly: true
+          description: >-
+            Server-managed approval provenance. New unapproved drafts have state draft and do
+            not shadow federation runtime entries. An accepted L2 trust operation stores state
+            approved and a SHA-256 digest of stable trust settings. Automatic recovery requires
+            the current settings to match. Legacy rows without approval cannot automatically
+            recover and require explicit L2 activation. Client-supplied values are ignored; only the server can establish approval.
+          required: [state]
+          properties:
+            state:
+              type: string
+              enum: [draft, approved]
+            digest:
+              type: string
+              pattern: '^[0-9a-f]{64}$'
         acsUrls:
           type: array
           maxItems: 30
@@ -1778,7 +1848,9 @@ components:
           type: boolean
           description: >
             Defaults to true. A Field Mapping Set is required when true. When false, the provider may be
-            registered without identityMapping and configured later from its detail page.
+            registered without config or metadata as an empty draft and configured later from its detail page.
+            Enabling requires entityId and acsUrl for SPs, or entityId, ssoUrl and certificate for IdPs;
+            missing values return HTTP 400 saml_configuration_required_to_enable.
         metadataUrl:
           type: string
           format: uri
@@ -1806,7 +1878,9 @@ components:
           type: boolean
           description: >
             Enabling requires a valid role-compatible Field Mapping Set. Disabled providers may retain no
-            identityMapping while configuration is pending.
+            identityMapping while configuration is pending. Enabling also requires entityId and acsUrl (SP),
+            or entityId, ssoUrl and certificate (IdP); missing values return HTTP 400
+            saml_configuration_required_to_enable.
     SAMLProviderResponse:
       type: object
       required:
@@ -1922,7 +1996,7 @@ components:
         providerType:
           type: string
           enum: [saml_sp, saml_idp]
-          description: Expected role for a single connection. Limits XML to 1 MiB and rejects aggregate or mismatched metadata.
+          description: Role hint for a single connection. Limits XML to 1 MiB and returns the detected role for client-side verification. Unwraps an EntitiesDescriptor containing exactly one EntityDescriptor; larger aggregates return metadata_aggregate_requires_federation. Invalid XML returns metadata_invalid_xml; URL fetch failures return metadata_fetch_failed without SSRF details.
         metadataXml:
           type: string
           maxLength: 10485760

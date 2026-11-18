@@ -65,6 +65,7 @@ export const TENANT_COPY_PARTS = [
 	'roles',
 	'admin_access',
 	'clients',
+	'saml_providers',
 	'client_credentials',
 	'webhooks',
 	'webhook_secrets'

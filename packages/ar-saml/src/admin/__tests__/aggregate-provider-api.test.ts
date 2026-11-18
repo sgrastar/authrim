@@ -352,7 +352,7 @@ describe('SAML aggregate provider API', () => {
     const body = (await response.json()) as { error_description: string };
 
     expect(response.status).toBe(400);
-    expect(body.error_description).toContain('request body exceeds size limit');
+    expect(body.error_description).toBe('metadata_invalid_xml');
     expect(mocks.safeFetchText).not.toHaveBeenCalled();
   });
 
@@ -367,7 +367,7 @@ describe('SAML aggregate provider API', () => {
 
     expect(response.status).toBe(400);
     const body = (await response.json()) as { error_description?: string };
-    expect(body.error_description).toContain('Single-entity SAML metadata exceeds size limit');
+    expect(body.error_description).toBe('metadata_invalid_xml');
   });
 
   it('loads normalized SAML federation trust sources during aggregate preview', async () => {
@@ -427,7 +427,7 @@ describe('SAML aggregate provider API', () => {
     const body = (await response.json()) as { error_description: string };
 
     expect(response.status).toBe(400);
-    expect(body.error_description).toContain('DOCTYPE declarations are not allowed');
+    expect(body.error_description).toBe('metadata_invalid_xml');
   });
 
   it('keeps the 1 MiB fetch limit for direct single-entity provider creation', async () => {
@@ -1096,7 +1096,7 @@ describe('SAML aggregate provider API', () => {
       await Promise.all(waitUntil);
       expect(mocks.stepUp).toHaveBeenCalledTimes(1);
       expect(mocks.stepUp.mock.calls[0]?.[1]).toEqual({
-        operation: 'federation.trust.update',
+        operation: 'federation.trust.activate',
         targetTenantId: 'tenant-a',
         targetIds: [previewId],
         params: {
