@@ -113,6 +113,15 @@ export const enCustomization: Record<keyof typeof jaCustomization, string> = {
 	'th.f.splitWidth': 'Width',
 	'th.splitWidth.narrow': 'Narrow (2/5)',
 	'th.splitWidth.wide': 'Wide (3/5)',
+	'th.f.splitBackground': 'Background picture',
+	'th.f.splitBackground.d':
+		'Where the page’s background picture shows. “Behind both sides” lays it behind the whole screen, frosted on the form side. “Brand side only” shows it on the brand panel alone and paints the form side.',
+	'th.splitBackground.shared': 'Behind both sides',
+	'th.splitBackground.brand': 'Brand side only',
+	'th.splitBackground.panel': 'Panel picture (older setting: same as behind both sides)',
+	'th.f.loginPanelColor': 'Form side colour',
+	'th.f.loginPanelGradient': 'Gradient end colour',
+	'th.f.loginPanelGradient.d': 'When set, the form side runs from its colour to this one.',
 	'th.f.brandPosition': 'Position',
 	'th.brandPosition.top': 'Top',
 	'th.brandPosition.center': 'Center',
@@ -147,6 +156,12 @@ export const enCustomization: Record<keyof typeof jaCustomization, string> = {
 	'th.t.themeToggle.d': 'Lets people choose the colour mode.',
 	'th.t.language': 'Offer a language choice',
 	'th.t.language.d': 'Lets people switch the language of the screen.',
+	'th.t.authSwitch': 'Offer the sign-in / sign-up switch',
+	'th.t.authSwitch.d':
+		'Ends the form with the link between signing in and signing up. Off, people use only the screen they opened.',
+	'th.t.themeFixed': 'Keep this mode',
+	'th.t.themeFixed.d':
+		'Stays in the chosen light or dark mode whatever the device uses or the visitor chooses. The light/dark toggle is not offered.',
 	'th.f.mode': 'Mode',
 	'th.f.mode.d':
 		'Auto follows each visitor’s device setting (light or dark). Light or Dark fixes the design to that mode, even when the device uses the other.',
@@ -201,6 +216,9 @@ export const enCustomization: Record<keyof typeof jaCustomization, string> = {
 		'The text along the bottom of the screen. Write a link with an “a” tag and an https address; it opens in a new window.',
 	'th.f.tagline': 'Tagline',
 	'th.f.footerText': 'Footer text',
+	'th.t.poweredBy': 'Show the footer text',
+	'th.t.poweredBy.d':
+		'Shows the footer’s line (“Powered by Authrim” by default, or the text written below). Off, the footer keeps its links only.',
 	'th.g.logo': 'Logo',
 	'th.g.logo.d': 'A square image (PNG, SVG or WebP).',
 	'th.g.logo.dark.d': 'The logo for dark mode. Without one, the light logo is used.',

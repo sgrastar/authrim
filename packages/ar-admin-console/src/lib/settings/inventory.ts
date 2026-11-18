@@ -566,15 +566,19 @@ place(
 	},
 	{
 		'login-ui.auth_switch_link_enabled':
-			'Read by the screens, not yet a theme key nor in the theme editor: to add to the editor.',
+			'A theme key, set in the theme editor (Look → Layout: offer the sign-in / sign-up switch).',
 		'login-ui.theme_fixed':
-			'Read by the screens, not yet a theme key nor in the theme editor: to add to the editor.',
-		'login-ui.powered_by_enabled': 'A theme key the editor has no control for yet.',
-		'login-ui.logo_layout': 'A theme key the editor has no control for yet.',
-		'login-ui.split_background_mode': 'A theme key the editor has no control for yet.',
-		'login-ui.login_panel_background_color': 'A theme key the editor has no control for yet.',
+			'A theme key, set in the theme editor (Look → Layout: keep this mode, with a fixed mode).',
+		'login-ui.powered_by_enabled':
+			'A theme key, set in the theme editor (Content → Footer: show the footer text).',
+		'login-ui.logo_layout':
+			'A theme key the editor has no control for: it lays out the in-card header only (header_style other than bar), and the editor always writes the bar header.',
+		'login-ui.split_background_mode':
+			'A theme key, set in the theme editor (Layout → Split panel: background picture; "panel" is an older value the screens show as "shared").',
+		'login-ui.login_panel_background_color':
+			'A theme key, set in the theme editor (Layout → Split panel: form side colour, with "brand side only").',
 		'login-ui.login_panel_background_gradient_color':
-			'A theme key the editor has no control for yet.'
+			'A theme key, set in the theme editor (Layout → Split panel: gradient end colour, with "brand side only").'
 	}
 );
 place('customization/branding', 'Theme values', {

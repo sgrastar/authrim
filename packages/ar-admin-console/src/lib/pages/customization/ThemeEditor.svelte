@@ -86,7 +86,7 @@
 				{#snippet panel(id)}
 					<div class="sections">
 						{#if id === 'layout'}
-							<ThemeLayout bind:draft />
+							<ThemeLayout bind:draft {scheme} />
 						{:else if id === 'look'}
 							<ThemeDesign bind:draft {scheme} bind:mode />
 						{:else if id === 'content'}

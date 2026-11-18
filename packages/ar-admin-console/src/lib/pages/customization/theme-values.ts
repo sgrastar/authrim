@@ -85,6 +85,12 @@ const FIELD_KEYS: readonly (readonly [keyof ThemeDraft, readonly string[]])[] = 
 	['splitSide', ['split_panel_side']],
 	['formFrame', ['form_frame']],
 	['splitWidth', ['split_panel_width']],
+	['splitBackground', ['split_background_mode']],
+	['loginPanelColor', ['login_panel_background_color']],
+	['loginPanelGradientColor', ['login_panel_background_gradient_color']],
+	['poweredBy', ['powered_by_enabled']],
+	['authSwitchLink', ['auth_switch_link_enabled']],
+	['themeFixed', ['theme_fixed']],
 	['brandPosition', ['brand_position']],
 	['brandAlign', ['brand_align']],
 	['backgroundOpacity', ['background_image_opacity']],
@@ -135,6 +141,10 @@ function freshValues(draft: ThemeDraft): ThemeValues {
 		[KEY('split_panel_side')]: draft.splitSide,
 		[KEY('form_frame')]: draft.formFrame,
 		[KEY('split_panel_width')]: draft.splitWidth,
+		[KEY('split_background_mode')]: draft.splitBackground,
+		[KEY('powered_by_enabled')]: draft.poweredBy,
+		[KEY('auth_switch_link_enabled')]: draft.authSwitchLink,
+		[KEY('theme_fixed')]: draft.themeFixed,
 		[KEY('brand_position')]: draft.brandPosition,
 		[KEY('brand_align')]: draft.brandAlign,
 		[KEY('background_image_opacity')]: draft.backgroundOpacity,
@@ -161,6 +171,13 @@ function freshValues(draft: ThemeDraft): ThemeValues {
 	for (const colour of THEME_COLOURS) {
 		const value = draft[colour.field];
 		if (value) values[KEY(`${colour.name}_color`)] = value;
+	}
+	// The form side's own fill, as the other colours: not written while empty.
+	if (draft.loginPanelColor) {
+		values[KEY('login_panel_background_color')] = draft.loginPanelColor;
+	}
+	if (draft.loginPanelGradientColor) {
+		values[KEY('login_panel_background_gradient_color')] = draft.loginPanelGradientColor;
 	}
 	// Written even when empty: a theme with the key has a dark set of its own (none set is the
 	// palette's), one without it was saved before there was one (see valuesToDraft).
@@ -291,6 +308,9 @@ const textOf = (value: unknown, fallback: string): string =>
 	typeof value === 'string' ? value : fallback;
 const flagOf = (value: unknown, fallback: boolean): boolean =>
 	typeof value === 'boolean' ? value : fallback;
+/** A colour the colour field can show: "#rrggbb" or "#rrggbbaa"; anything else is not set. */
+const hexColourOf = (value: unknown): string =>
+	typeof value === 'string' && /^#(?:[0-9a-f]{6}|[0-9a-f]{8})$/i.test(value) ? value : '';
 const percentOf = (value: unknown, fallback: number): number =>
 	typeof value === 'number' && Number.isFinite(value)
 		? Math.min(100, Math.max(0, Math.round(value)))
@@ -368,6 +388,16 @@ export function valuesToDraft(values: ThemeValues): ThemeDraft {
 	draft.splitSide = oneOf(v('split_panel_side'), SPLIT_CHOICES.splitSide, draft.splitSide);
 	draft.formFrame = oneOf(v('form_frame'), SPLIT_CHOICES.formFrame, draft.formFrame);
 	draft.splitWidth = oneOf(v('split_panel_width'), SPLIT_CHOICES.splitWidth, draft.splitWidth);
+	draft.splitBackground = oneOf(
+		v('split_background_mode'),
+		SPLIT_CHOICES.splitBackground,
+		draft.splitBackground
+	);
+	draft.loginPanelColor = hexColourOf(v('login_panel_background_color'));
+	draft.loginPanelGradientColor = hexColourOf(v('login_panel_background_gradient_color'));
+	draft.poweredBy = flagOf(v('powered_by_enabled'), draft.poweredBy);
+	draft.authSwitchLink = flagOf(v('auth_switch_link_enabled'), draft.authSwitchLink);
+	draft.themeFixed = flagOf(v('theme_fixed'), draft.themeFixed);
 	draft.brandPosition = oneOf(
 		v('brand_position'),
 		SPLIT_CHOICES.brandPosition,

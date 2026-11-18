@@ -117,6 +117,15 @@ export const arCustomization: Record<keyof typeof jaCustomization, string> = {
 	'th.f.splitWidth': 'Width',
 	'th.splitWidth.narrow': 'Narrow (2/5)',
 	'th.splitWidth.wide': 'Wide (3/5)',
+	'th.f.splitBackground': 'صورة الخلفية',
+	'th.f.splitBackground.d':
+		'أين تظهر صورة خلفية الصفحة. «خلف الجانبين» تضعها خلف الشاشة كلها مع تعتيم زجاجي على جانب النموذج. «جانب العلامة فقط» تعرضها على لوحة العلامة وحدها وتلوّن جانب النموذج.',
+	'th.splitBackground.shared': 'خلف الجانبين',
+	'th.splitBackground.brand': 'جانب العلامة فقط',
+	'th.splitBackground.panel': 'صورة اللوحة (إعداد قديم: مثل خلف الجانبين)',
+	'th.f.loginPanelColor': 'لون جانب النموذج',
+	'th.f.loginPanelGradient': 'لون نهاية التدرج',
+	'th.f.loginPanelGradient.d': 'عند تعيينه يتدرج جانب النموذج من لونه إلى هذا اللون.',
 	'th.f.brandPosition': 'Position',
 	'th.brandPosition.top': 'Top',
 	'th.brandPosition.center': 'Center',
@@ -151,6 +160,12 @@ export const arCustomization: Record<keyof typeof jaCustomization, string> = {
 	'th.t.themeToggle.d': 'Lets people choose the colour mode.',
 	'th.t.language': 'Offer a language choice',
 	'th.t.language.d': 'Lets people switch the language of the screen.',
+	'th.t.authSwitch': 'إظهار رابط التبديل بين الدخول والتسجيل',
+	'th.t.authSwitch.d':
+		'ينهي النموذج برابط ينقل بين تسجيل الدخول وإنشاء حساب. عند إيقافه يستعمل الزائر الشاشة التي فتحها فقط.',
+	'th.t.themeFixed': 'تثبيت هذا الوضع',
+	'th.t.themeFixed.d':
+		'يبقى في الوضع الفاتح أو الداكن المختار مهما كان إعداد الجهاز أو اختيار الزائر. لا يُعرض زر التبديل بين الفاتح والداكن.',
 	'th.f.mode': 'Mode',
 	'th.f.mode.d':
 		'Auto follows each visitor’s device setting (light or dark). Light or Dark fixes the design to that mode, even when the device uses the other.',
@@ -205,6 +220,9 @@ export const arCustomization: Record<keyof typeof jaCustomization, string> = {
 		'The text along the bottom of the screen. Write a link with an “a” tag and an https address; it opens in a new window.',
 	'th.f.tagline': 'Tagline',
 	'th.f.footerText': 'Footer text',
+	'th.t.poweredBy': 'إظهار نص التذييل',
+	'th.t.poweredBy.d':
+		'يعرض سطر التذييل («Powered by Authrim» افتراضيًا أو النص المكتوب أدناه). عند إيقافه يبقى في التذييل الروابط فقط.',
 	'th.g.logo': 'Logo',
 	'th.g.logo.d': 'A square image (PNG, SVG or WebP).',
 	'th.g.logo.dark.d': 'الشعار الخاص بالوضع الداكن. إن لم يُضبط، يُستخدم شعار الوضع الفاتح.',
