@@ -71,8 +71,20 @@
 			canvas.getByRole('button', { name: 'Not yet' }),
 			canvas.getByRole('button', { name: 'Running' })
 		];
-		await expect(getComputedStyle(calling).animationName).toContain('btn-attention');
-		await expect(getComputedStyle(calling).animationIterationCount).toBe('infinite');
+		// Only the button that can be pressed is marked.
+		await expect(calling).toHaveClass('btn--attention');
+		await expect(waiting).not.toHaveClass('btn--attention');
+		await expect(running).not.toHaveClass('btn--attention');
+		// Story tests run with reduced motion, where the frame stays marked instead of pulsing.
+		if (matchMedia('(prefers-reduced-motion: reduce)').matches) {
+			await expect(getComputedStyle(calling).animationName).toBe('none');
+			await expect(getComputedStyle(calling).borderTopColor).not.toBe(
+				getComputedStyle(waiting).borderTopColor
+			);
+		} else {
+			await expect(getComputedStyle(calling).animationName).toContain('btn-attention');
+			await expect(getComputedStyle(calling).animationIterationCount).toBe('infinite');
+		}
 		await expect(getComputedStyle(waiting).animationName).toBe('none');
 		await expect(getComputedStyle(running).animationName).toBe('none');
 	}}
