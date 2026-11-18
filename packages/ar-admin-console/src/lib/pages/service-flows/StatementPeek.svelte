@@ -79,7 +79,7 @@
 				onchange={(code) => (chosen = code)}
 			/>
 		{/if}
-		<StatementPreview value={shown} {contentType} {dir} />
+		<StatementPreview value={shown} {contentType} {dir} showUrl />
 	{/if}
 </div>
 

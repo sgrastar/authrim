@@ -60,14 +60,16 @@
 							{item.title}
 						</label>
 					{/if}
-					{#if item.description}<p class="muted">{item.description}</p>{/if}
+					{#if item.descriptionHtml}
+						<!-- eslint-disable-next-line svelte/no-at-html-tags -- sanitized (runtime-consent-html) -->
+						<div class="muted">{@html item.descriptionHtml}</div>
+					{/if}
 					{#if item.processingPurpose}
 						<p class="muted">{data.text.processingPurpose}: {item.processingPurpose}</p>
 					{/if}
 					{#if item.withdrawalImpact}
 						<p class="muted">{data.text.withdrawalImpact}: {item.withdrawalImpact}</p>
 					{/if}
-					{#if item.documentUrl}<p><a href={item.documentUrl}>{data.text.viewDocument}</a></p>{/if}
 				{/each}
 			{/if}
 			{#if consent.optionalItems.length > 0}
@@ -86,14 +88,16 @@
 							{item.title}
 						</label>
 					{/if}
-					{#if item.description}<p class="muted">{item.description}</p>{/if}
+					{#if item.descriptionHtml}
+						<!-- eslint-disable-next-line svelte/no-at-html-tags -- sanitized (runtime-consent-html) -->
+						<div class="muted">{@html item.descriptionHtml}</div>
+					{/if}
 					{#if item.processingPurpose}
 						<p class="muted">{data.text.processingPurpose}: {item.processingPurpose}</p>
 					{/if}
 					{#if item.withdrawalImpact}
 						<p class="muted">{data.text.withdrawalImpact}: {item.withdrawalImpact}</p>
 					{/if}
-					{#if item.documentUrl}<p><a href={item.documentUrl}>{data.text.viewDocument}</a></p>{/if}
 				{/each}
 			{/if}
 			{#if consent.release}
@@ -125,12 +129,12 @@
 					{#if consent.release.purpose}
 						{@const purpose = consent.release.purpose}
 						<p class="muted">{data.text.releasePurpose}: {purpose.title}</p>
-						{#if purpose.description}<p class="muted">{purpose.description}</p>{/if}
+						{#if purpose.descriptionHtml}
+							<!-- eslint-disable-next-line svelte/no-at-html-tags -- sanitized (runtime-consent-html) -->
+							<div class="muted">{@html purpose.descriptionHtml}</div>
+						{/if}
 						{#if purpose.inlineContent}<p class="muted" style="white-space: pre-wrap;">
 								{purpose.inlineContent}
-							</p>{/if}
-						{#if purpose.documentUrl}<p>
-								<a href={purpose.documentUrl}>{data.text.viewDocument}</a>
 							</p>{/if}
 					{/if}
 				</fieldset>

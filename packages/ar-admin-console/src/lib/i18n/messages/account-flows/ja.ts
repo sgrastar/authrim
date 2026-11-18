@@ -380,8 +380,8 @@ export const jaAccountFlows = {
 	'af.consent.new.open': '同意文を新しく作る',
 	'af.consent.new.title': '新しい同意文',
 	'af.consent.new.lead':
-		'作った同意文はすぐに公開され、このフローで選ばれます。ほかのフローでも使えます。設定の詳細や版の更新は、同意文のページで行います。',
-	'af.consent.new.publish': '公開して選ぶ',
+		'作った同意文はすぐに公開され、このフローで選ばれます。ほかのフローでも使えます。版の更新は、同意文のページで行います。',
+	'af.consent.new.publish': '保存・公開して選択',
 	'af.consent.new.created': '同意文を作って公開しました。',
 	'af.consent.new.noLanguage': '言語を 1 つ以上追加してください。',
 	'af.consent.new.unpublished':

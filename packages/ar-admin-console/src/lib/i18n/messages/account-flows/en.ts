@@ -380,8 +380,8 @@ export const enAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 	'af.consent.new.open': 'Create a statement',
 	'af.consent.new.title': 'New statement',
 	'af.consent.new.lead':
-		'The statement is published at once and chosen for this flow. Other flows can use it too. Its other settings and later versions are on the statement page.',
-	'af.consent.new.publish': 'Publish and choose',
+		'The statement is published at once and chosen for this flow. Other flows can use it too. Later versions are made on the statement page.',
+	'af.consent.new.publish': 'Save, publish and choose',
 	'af.consent.new.created': 'The statement was created and published.',
 	'af.consent.new.noLanguage': 'Add at least one language.',
 	'af.consent.new.unpublished':
