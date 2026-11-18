@@ -4,7 +4,7 @@ import { handleStart, handleStartPage, handleStatus, handleWaitPage, langOf } fr
 import { SCENE_JS, SITE_CSS, WAIT_JS } from './html';
 import { logError } from './log';
 import { assetResponse, errorResponse, withSecurityHeaders } from './respond';
-import { createDeps, type Deps, type Env } from './types';
+import { createDeps, type Deps, type Env, type Lifetime } from './types';
 
 const ROUTES: Record<string, string[]> = {
   '/': ['GET', 'HEAD'],
@@ -17,7 +17,12 @@ const ROUTES: Record<string, string[]> = {
   '/assets/wait.js': ['GET', 'HEAD'],
 };
 
-async function route(request: Request, env: Env, deps: Deps): Promise<Response> {
+async function route(
+  request: Request,
+  env: Env,
+  deps: Deps,
+  lifetime?: Lifetime
+): Promise<Response> {
   const url = new URL(request.url);
   const lang = langOf(request);
   const allowed = ROUTES[url.pathname];
@@ -48,7 +53,7 @@ async function route(request: Request, env: Env, deps: Deps): Promise<Response> 
   const { config } = loaded;
   switch (url.pathname) {
     case '/':
-      return handleStartPage(request, config);
+      return handleStartPage(request, env, config, deps, lifetime);
     case '/start':
       return handleStart(request, env, config, deps);
     case '/wait':
@@ -61,11 +66,12 @@ async function route(request: Request, env: Env, deps: Deps): Promise<Response> 
 export async function handleRequest(
   request: Request,
   env: Env,
-  deps: Deps = createDeps(env)
+  deps: Deps = createDeps(env),
+  lifetime?: Lifetime
 ): Promise<Response> {
   let response: Response;
   try {
-    response = await route(request, env, deps);
+    response = await route(request, env, deps, lifetime);
   } catch {
     logError('unhandled_error');
     response = errorResponse(langOf(request), 'failed', 500);
@@ -77,7 +83,8 @@ export async function handleRequest(
 }
 
 export default {
-  fetch: (request: Request, env: Env): Promise<Response> => handleRequest(request, env),
+  fetch: (request: Request, env: Env, ctx?: Lifetime): Promise<Response> =>
+    handleRequest(request, env, createDeps(env), ctx),
   scheduled: async (controller: { cron: string }, env: Env): Promise<void> => {
     await dispatchScheduled(controller.cron, env, createDeps(env));
   },
