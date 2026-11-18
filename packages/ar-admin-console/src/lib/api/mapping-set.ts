@@ -157,6 +157,8 @@ export type MappingMutationOutcome<T> =
 			body: Record<string, unknown>;
 	  }
 	| { kind: 'conflict'; status: number; body: Record<string, unknown> }
+	/** Refused because the environment is being updated: nothing was changed, try again later. */
+	| { kind: 'paused' }
 	| { kind: 'stage_failed'; stage: string; body: Record<string, unknown> }
 	| { kind: 'outcome_unknown'; idempotencyKey: string; body: Record<string, unknown> };
 export interface MappingWriteOptions {

@@ -13,7 +13,7 @@
 import { isFreshAuthRequired } from '#lib/api/admin-reauth.js';
 import { adminFetch } from '#lib/api/admin-request.js';
 import { stepUpHeaders, stepUpRequired, withStepUp } from '#lib/api/admin-step-up.js';
-import { ApiError, errorFromResponse } from '#lib/api/api-error.js';
+import { ApiError, errorFromResponse, isReleasePauseCode } from '#lib/api/api-error.js';
 import type { MessageKey } from '#lib/i18n/i18n.svelte.js';
 
 const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || '';
@@ -241,6 +241,7 @@ export const httpWalletCredentials: WalletCredentialsClient & WalletCredentialMa
 /** Message key for a failed offer request. */
 export function walletCredentialErrorKey(error: unknown): MessageKey {
 	if (error instanceof WalletCredentialError) {
+		if (isReleasePauseCode(error.code)) return 'common.releasePaused';
 		switch (error.code) {
 			case FRESH_AUTH_REQUIRED:
 				return 'keyring.error.freshAuth';
@@ -257,6 +258,8 @@ export function walletCredentialErrorKey(error: unknown): MessageKey {
 export function revokeErrorKey(error: unknown): MessageKey {
 	if (error instanceof WalletCredentialError) {
 		if (error.code === FRESH_AUTH_REQUIRED) return 'keyring.error.freshAuth';
+		// Before the 503 below: paused for an update is not another operation under way.
+		if (isReleasePauseCode(error.code)) return 'common.releasePaused';
 		if (error.status === 503) return 'keyring.credentials.error.busy';
 	}
 	return 'keyring.error.generic';

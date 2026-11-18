@@ -2,7 +2,12 @@
  * Admin API request helper. Copied from the legacy Admin UI (ar-admin-ui) with one change: the
  * tenant header comes from the console's scope store instead of the legacy settings context.
  * Keep the retry and size-limit behaviour identical; it is part of the Admin API contract.
+ *
+ * The console adds one thing that changes no answer: it notes when a change is refused because
+ * the environment is being updated, so the shell can say so on every page (`releasePause`).
  */
+import { isReleasePause } from './api-error';
+import { releasePause } from './release-pause.svelte';
 import { tenantScope } from '#lib/auth/tenant-scope.svelte.js';
 
 export const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || '';
@@ -130,5 +135,19 @@ export async function adminFetch(
 		}
 	}
 
+	await noteReleasePause(response, rest.method);
 	return response;
+}
+
+/** Keeps `releasePause` in step with what the Admin API just answered. */
+async function noteReleasePause(response: Response, method?: string): Promise<void> {
+	if (response.status === 409 || response.status === 503) {
+		const body = (await response
+			.clone()
+			.json()
+			.catch(() => null)) as { error?: unknown } | null;
+		if (isReleasePause(response.status, body?.error)) releasePause.report();
+	} else if (response.ok && shouldAttachIdempotencyKey(method)) {
+		releasePause.clear();
+	}
 }
