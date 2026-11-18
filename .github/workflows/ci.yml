@@ -125,7 +125,8 @@ jobs:
 
   # The API tests of the packages, one job per shard (scripts/ci-test-shards.mjs), so the workflow
   # takes as long as its slowest shard instead of the sum of all packages. A shard that is still
-  # long is cut into parts with `vitest --shard` (PARTS in that script), one job per part. The
+  # long is cut into parts with `vitest --shard` (PARTS in that script), one job per part, or, when
+  # it holds several packages, into two shards of packages (services-a and services-b). The
   # entries below are checked against `node scripts/ci-test-shards.mjs matrix` by
   # scripts/ci-test-shards.test.mjs. Each job hands its coverage on to the summary job, which merges
   # the parts of a package back into one result.
@@ -142,7 +143,8 @@ jobs:
           - { shard: management, id: management-4, part: '4', vitestShard: '--shard=4/4' }
           - { shard: auth, id: auth, part: '', vitestShard: '' }
           - { shard: core, id: core, part: '', vitestShard: '' }
-          - { shard: services, id: services, part: '', vitestShard: '' }
+          - { shard: services-a, id: services-a, part: '', vitestShard: '' }
+          - { shard: services-b, id: services-b, part: '', vitestShard: '' }
     env:
       TURBO_CONCURRENCY: 2
 
@@ -307,8 +309,10 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  ui-tests:
-    name: UI Tests
+  # The UI packages' unit tests. The story tests (Playwright in a real Chromium) run in their own
+  # jobs below, so neither waits for the other and only those jobs install a browser.
+  ui-unit-tests:
+    name: UI Unit Tests
     runs-on: ubuntu-latest
 
     steps:
@@ -334,18 +338,73 @@ jobs:
           echo "PUBLIC_API_BASE_URL=http://localhost:8786" > packages/ar-login-ui/.env
           echo "PUBLIC_API_BASE_URL=http://localhost:8786" > packages/ar-admin-ui/.env
 
-      - name: Run UI tests
+      # `turbo run test` builds each UI package and its dependencies first; the cache replays the
+      # builds whose inputs did not change.
+      - name: Restore Turbo cache
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: .turbo/cache
+          key: turbo-ui-unit-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            turbo-ui-unit-${{ runner.os }}-
+
+      - name: Run UI unit tests
         run: pnpm run test:ui
 
-      # Both packages pin the same Playwright, so one browser install serves both story suites.
-      - name: Install Playwright Chromium for the story tests
-        run: pnpm --filter=@authrim/ar-admin-console exec playwright install --with-deps chromium
+  # One job per package with a Storybook: the admin console's stories take about three times as
+  # long as the login UI's, so they do not share a job. Both packages pin the same Playwright.
+  ui-story-tests:
+    name: UI Story Tests (${{ matrix.id }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { id: admin-console, package: '@authrim/ar-admin-console' }
+          - { id: login-ui, package: '@authrim/ar-login-ui' }
 
-      - name: Run admin console story tests (interactions + accessibility)
-        run: pnpm --filter=@authrim/ar-admin-console test:stories
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - name: Run login UI story tests (interactions + accessibility)
-        run: pnpm --filter=@authrim/ar-login-ui test:stories
+      - name: Setup pnpm
+        uses: pnpm/action-setup@eae0cfeb286e66ffb5155f1a79b90583a127a68b # v2
+        with:
+          version: 9.0.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Setup environment variables
+        run: |
+          echo "PUBLIC_API_BASE_URL=http://localhost:8786" > packages/ar-login-ui/.env
+          echo "PUBLIC_API_BASE_URL=http://localhost:8786" > packages/ar-admin-ui/.env
+
+      - name: Restore Turbo cache
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: .turbo/cache
+          key: turbo-ui-stories-${{ matrix.id }}-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            turbo-ui-stories-${{ matrix.id }}-${{ runner.os }}-
+
+      # The stories import the built output of workspace packages (ar-lib-core, ar-lib-field-mapping),
+      # which `turbo run test` builds first but `test:stories` alone does not. `pkg^...` selects the
+      # dependencies of the package without the package itself.
+      - name: Build workspace dependencies
+        run: pnpm exec turbo run build --filter=${{ matrix.package }}^...
+
+      - name: Install Playwright Chromium
+        run: pnpm --filter=${{ matrix.package }} exec playwright install --with-deps chromium
+
+      - name: Run story tests (interactions + accessibility)
+        run: pnpm --filter=${{ matrix.package }} test:stories
 
   control-plane-tests:
     name: Tenant D1 Control Plane Tests
@@ -390,7 +449,7 @@ jobs:
 
   # The AWS runtime's PostgreSQL-backed tests (`*.postgres.test.ts`, the state-restore test and the
   # local state-backend test) skip themselves unless their database variables are set, so the
-  # `services` shard never exercises them. This job runs them against a real PostgreSQL 17 with
+  # `services-b` shard never exercises them. This job runs them against a real PostgreSQL 17 with
   # verified TLS: several of them require `sslmode=verify-full` against localhost, a CA file and a
   # nonsuperuser administrator over TLS, and the DSQL probe test requires the database to be named
   # `postgres`. A service container cannot be given a certificate, so the job starts the server
@@ -643,7 +702,8 @@ jobs:
       - typecheck
       - api-package-tests
       - api-suite-tests
-      - ui-tests
+      - ui-unit-tests
+      - ui-story-tests
       - control-plane-tests
       - postgres-tests
       - coverage-summary
