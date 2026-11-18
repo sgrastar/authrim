@@ -184,6 +184,66 @@ describe('theme values', () => {
 		expect(changed['login-ui.background_image_grayscale']).toBe(false);
 	});
 
+	it('saves the screen switches and the Split background, and opens them again', () => {
+		const draft: ThemeDraft = {
+			...newThemeDraft(),
+			template: 'split',
+			mode: 'dark',
+			themeFixed: true,
+			authSwitchLink: false,
+			poweredBy: false,
+			splitBackground: 'brand',
+			loginPanelColor: '#0f172a',
+			loginPanelGradientColor: '#1e3a8a'
+		};
+		const values = draftToValues(draft);
+		expect(values).toMatchObject({
+			'login-ui.theme_fixed': true,
+			'login-ui.auth_switch_link_enabled': false,
+			'login-ui.powered_by_enabled': false,
+			'login-ui.split_background_mode': 'brand',
+			'login-ui.login_panel_background_color': '#0f172a',
+			'login-ui.login_panel_background_gradient_color': '#1e3a8a'
+		});
+		expect(valuesToDraft(values)).toMatchObject({
+			themeFixed: true,
+			authSwitchLink: false,
+			poweredBy: false,
+			splitBackground: 'brand',
+			loginPanelColor: '#0f172a',
+			loginPanelGradientColor: '#1e3a8a'
+		});
+		// A new theme writes the switches on and no fill: the form side's colours are left out.
+		const fresh = draftToValues(newThemeDraft());
+		expect(fresh).toMatchObject({
+			'login-ui.theme_fixed': false,
+			'login-ui.auth_switch_link_enabled': true,
+			'login-ui.powered_by_enabled': true,
+			'login-ui.split_background_mode': 'shared'
+		});
+		expect(fresh).not.toHaveProperty('login-ui.login_panel_background_color');
+		expect(fresh).not.toHaveProperty('login-ui.login_panel_background_gradient_color');
+	});
+
+	it('opens the older panel background mode as it is, and drops a fill it cannot show', () => {
+		const draft = valuesToDraft({
+			'login-ui.split_background_mode': 'panel',
+			'login-ui.login_panel_background_color': 'rgb(1 2 3)',
+			'login-ui.login_panel_background_gradient_color': '#abc'
+		});
+		expect(draft.splitBackground).toBe('panel');
+		expect(draft.loginPanelColor).toBe('');
+		expect(draft.loginPanelGradientColor).toBe('');
+		// Saved over the stored theme unchanged, the fills it could not show are kept as stored.
+		const stored = openStored({
+			...draftToValues(newThemeDraft()),
+			'login-ui.login_panel_background_color': 'rgb(1 2 3)'
+		});
+		expect(draftToValues(stored.opened, stored)['login-ui.login_panel_background_color']).toBe(
+			'rgb(1 2 3)'
+		);
+	});
+
 	it('saves the input field and secondary button colours', () => {
 		const draft = { ...newThemeDraft(), fieldColor: '#fafafa', secondaryButtonColor: '#12345680' };
 		const values = draftToValues(draft);

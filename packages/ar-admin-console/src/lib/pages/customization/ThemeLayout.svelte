@@ -1,28 +1,49 @@
 <script lang="ts">
 	import { t, type MessageKey } from '#lib/i18n/i18n.svelte.js';
 	import ChoiceCards from '#lib/ui/patterns/ChoiceCards.svelte';
+	import ColorField from '#lib/ui/primitives/ColorField.svelte';
 	import SegmentedControl from '#lib/ui/primitives/SegmentedControl.svelte';
 	import Select from '#lib/ui/primitives/Select.svelte';
 	import ThemeGroup from './ThemeGroup.svelte';
-	import { PALETTE_IDS } from './theme-palettes';
+	import { draftColour, THEME_COLOURS } from './theme-colours';
+	import { PALETTE_IDS, paletteColours } from './theme-palettes';
 	import {
 		SPLIT_CHOICES,
 		type BrandAlign,
 		type BrandPosition,
 		type FormFrame,
+		type SplitBackground,
 		type SplitFrame,
 		type SplitSide,
 		type SplitWidth,
 		type ThemeDraft
 	} from './theme-draft';
 
-	/** Layout: the template, the palette, and (Split) how the template is laid out. */
-	let { draft = $bindable() }: { draft: ThemeDraft } = $props();
+	/**
+	 * Layout: the template, the palette, and (Split) how the template is laid out. `scheme` is the
+	 * mode the preview shows: the colours in effect are read in it.
+	 */
+	let { draft = $bindable(), scheme }: { draft: ThemeDraft; scheme: 'light' | 'dark' } = $props();
+
+	const FORM_AREA = THEME_COLOURS.find((colour) => colour.field === 'cardColor')!;
 
 	/** The values of a choice, with their labels (`th.<group>.<value>`). */
 	function choices<T extends string>(group: string, values: readonly T[]) {
 		return values.map((value) => ({ value, label: t(`th.${group}.${value}` as MessageKey) }));
 	}
+
+	// "Panel picture" is an older value the screens show as "shared": it is not offered, but a theme
+	// that has it keeps it listed, so the field never shows blank.
+	const splitBackgrounds = $derived(
+		SPLIT_CHOICES.splitBackground.filter(
+			(value) => value !== 'panel' || draft.splitBackground === 'panel'
+		)
+	);
+	// With "brand side only" the form side is painted: its own colour here, else the form area's
+	// colour (Look) in the mode shown, else the palette's.
+	const formSideColour = $derived(
+		draftColour(draft, FORM_AREA, scheme) || paletteColours(draft.palette, scheme).card
+	);
 </script>
 
 <ThemeGroup title={t('th.g.template')} info={t('th.g.template.d')}>
@@ -89,6 +110,31 @@
 			value={draft.brandAlign}
 			onchange={(value) => (draft.brandAlign = value as BrandAlign)}
 		/>
+		<Select
+			label={t('th.f.splitBackground')}
+			info={t('th.f.splitBackground.d')}
+			options={choices<SplitBackground>('splitBackground', splitBackgrounds)}
+			bind:value={draft.splitBackground}
+		/>
+		{#if draft.splitBackground === 'brand'}
+			<div class="pair">
+				<ColorField
+					label={t('th.f.loginPanelColor')}
+					alpha
+					fallback={formSideColour}
+					bind:value={draft.loginPanelColor}
+				/>
+				<!-- A gradient runs from the colour set: without one, the screens draw none. -->
+				<ColorField
+					label={t('th.f.loginPanelGradient')}
+					alpha
+					hint={t('th.f.loginPanelGradient.d')}
+					fallback={draft.loginPanelColor}
+					disabled={!draft.loginPanelColor}
+					bind:value={draft.loginPanelGradientColor}
+				/>
+			</div>
+		{/if}
 	</ThemeGroup>
 {/if}
 

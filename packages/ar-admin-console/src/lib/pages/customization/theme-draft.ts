@@ -45,6 +45,12 @@ export type SplitSide = 'left' | 'right';
 /** The form area in Split: filling its side, or a floating card on it. */
 export type FormFrame = 'full' | 'card';
 export type SplitWidth = 'narrow' | 'wide';
+/**
+ * Where the page's background picture shows in Split: behind both sides (`shared`), on the brand
+ * side alone with the form side painted (`brand`); `panel` is an older value the screens now show
+ * as `shared` (the form area's own picture shows in every mode).
+ */
+export type SplitBackground = 'shared' | 'brand' | 'panel';
 /** What the Split template's brand panel shows of the brand; "none" shows nothing of it. */
 export type BrandPanelDisplay = LogoDisplay | 'none';
 export type BrandPosition = 'top' | 'center' | 'bottom';
@@ -118,8 +124,24 @@ export interface ThemeDraft {
 	splitSide: SplitSide;
 	formFrame: FormFrame;
 	splitWidth: SplitWidth;
+	splitBackground: SplitBackground;
+	/**
+	 * The form side's own fill with "brand side only" (Split): a colour, and the end colour of a
+	 * gradient from it. Empty is the form area's colour, or the palette's.
+	 */
+	loginPanelColor: string;
+	loginPanelGradientColor: string;
 	brandPosition: BrandPosition;
 	brandAlign: BrandAlign;
+	/** Whether the footer shows its text (the "Powered by" line, or the footer text set here). */
+	poweredBy: boolean;
+	/** Whether the form ends with the link that switches between signing in and signing up. */
+	authSwitchLink: boolean;
+	/**
+	 * With a fixed mode (light or dark): the screens stay in it whatever the device uses, and the
+	 * light/dark toggle is not offered. Ignored while the mode is auto.
+	 */
+	themeFixed: boolean;
 	language: TextLanguage;
 	texts: Record<TextLanguage, ThemeTexts>;
 	/** A stored image's URL, a newly chosen file, or none. */
@@ -165,6 +187,7 @@ export const SPLIT_CHOICES = {
 	splitSide: ['left', 'right'],
 	formFrame: ['full', 'card'],
 	splitWidth: ['narrow', 'wide'],
+	splitBackground: ['shared', 'brand', 'panel'],
 	brandPosition: ['top', 'center', 'bottom'],
 	brandAlign: ['left', 'center', 'right']
 } as const;
@@ -250,8 +273,14 @@ export function newThemeDraft(): ThemeDraft {
 		splitSide: 'left',
 		formFrame: 'full',
 		splitWidth: 'narrow',
+		splitBackground: 'shared',
+		loginPanelColor: '',
+		loginPanelGradientColor: '',
 		brandPosition: 'center',
 		brandAlign: 'left',
+		poweredBy: true,
+		authSwitchLink: true,
+		themeFixed: false,
 		language: 'en',
 		texts: { en: emptyTexts(), ja: emptyTexts(), de: emptyTexts(), ar: emptyTexts() },
 		logo: null,

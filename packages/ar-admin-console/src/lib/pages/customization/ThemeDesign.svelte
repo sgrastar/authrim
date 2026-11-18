@@ -120,6 +120,13 @@
 		options={modes.map((value) => ({ value, label: t(`th.mode.${value}`) }))}
 		bind:value={draft.mode}
 	/>
+	{#if draft.mode !== 'auto'}
+		<ToggleRow
+			label={t('th.t.themeFixed')}
+			info={t('th.t.themeFixed.d')}
+			bind:checked={draft.themeFixed}
+		/>
+	{/if}
 	<Select
 		label={t('th.f.fontScale')}
 		info={t('th.f.fontScale.d')}
@@ -141,6 +148,11 @@
 		label={t('th.t.language')}
 		info={t('th.t.language.d')}
 		bind:checked={draft.languageSelect}
+	/>
+	<ToggleRow
+		label={t('th.t.authSwitch')}
+		info={t('th.t.authSwitch.d')}
+		bind:checked={draft.authSwitchLink}
 	/>
 </ThemeGroup>
 

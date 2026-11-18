@@ -90,7 +90,7 @@ export const DRAFT_PAGES: readonly DraftPage[] = [
 	{
 		id: 'customization/login-ui',
 		scope: 'tenant',
-		note: 'A built page (dedicated UI: the languages, as choice grids). The lite mode is not on it yet (it needs its own route and readiness check), nor the custom blocks (the Login UI does not draw them yet).'
+		note: 'A built page (dedicated UI: the languages as choice grids, the lite Login UI with its own route, and the custom content blocks).'
 	},
 	{ id: 'customization/screens', scope: 'tenant' },
 	{ id: 'customization/account-page', scope: 'tenant' },
@@ -566,15 +566,19 @@ place(
 	},
 	{
 		'login-ui.auth_switch_link_enabled':
-			'Read by the screens, not yet a theme key nor in the theme editor: to add to the editor.',
+			'A theme key, set in the theme editor (Look → Layout: offer the sign-in / sign-up switch).',
 		'login-ui.theme_fixed':
-			'Read by the screens, not yet a theme key nor in the theme editor: to add to the editor.',
-		'login-ui.powered_by_enabled': 'A theme key the editor has no control for yet.',
-		'login-ui.logo_layout': 'A theme key the editor has no control for yet.',
-		'login-ui.split_background_mode': 'A theme key the editor has no control for yet.',
-		'login-ui.login_panel_background_color': 'A theme key the editor has no control for yet.',
+			'A theme key, set in the theme editor (Look → Layout: keep this mode, with a fixed mode).',
+		'login-ui.powered_by_enabled':
+			'A theme key, set in the theme editor (Content → Footer: show the footer text).',
+		'login-ui.logo_layout':
+			'A theme key the editor has no control for: it lays out the in-card header only (header_style other than bar), and the editor always writes the bar header.',
+		'login-ui.split_background_mode':
+			'A theme key, set in the theme editor (Layout → Split panel: background picture; "panel" is an older value the screens show as "shared").',
+		'login-ui.login_panel_background_color':
+			'A theme key, set in the theme editor (Layout → Split panel: form side colour, with "brand side only").',
 		'login-ui.login_panel_background_gradient_color':
-			'A theme key the editor has no control for yet.'
+			'A theme key, set in the theme editor (Layout → Split panel: gradient end colour, with "brand side only").'
 	}
 );
 place('customization/branding', 'Theme values', {
@@ -656,15 +660,6 @@ place(
 	}
 );
 place(
-	'customization/login-ui',
-	'Custom content',
-	{ advanced: ['login-ui.custom_blocks'] },
-	{
-		'login-ui.custom_blocks':
-			'Parsed by the API, but the Login UI has no renderer for the blocks yet: not offered until it does.'
-	}
-);
-place(
 	'hidden',
 	'Login UI (no longer read)',
 	{
@@ -688,13 +683,22 @@ place(
 );
 place(
 	'customization/login-ui',
+	'Custom content',
+	{ primary: ['login-ui.custom_blocks'] },
+	{
+		'login-ui.custom_blocks':
+			'A JSON array edited as rows on the page (place, kind, text or address); the Login UI draws the blocks around the form, header and footer.'
+	}
+);
+place(
+	'customization/login-ui',
 	'Lite Login UI',
 	{ primary: ['login-ui.lite_mode', 'login-ui.lite_logo'] },
 	{
 		'login-ui.lite_mode':
-			'Switched with PUT /api/admin/login-ui/lite-mode (a compatibility check, then the policy); the settings PATCH refuses it. Show the readiness issues from the GET of that route.',
+			'Switched with PUT /api/admin/login-ui/lite-mode (a compatibility check, then the policy); the settings PATCH refuses it. The page shows the readiness issues from the GET of that route.',
 		'login-ui.lite_logo':
-			'A still PNG or WebP of at most 8 KB and 640x160 px, saved as a data: URI.'
+			'A still PNG or WebP of at most 8 KB and 640x160 px, saved as a data: URI with the page’s other settings.'
 	}
 );
 place('customization/screens', 'Screen flows', {

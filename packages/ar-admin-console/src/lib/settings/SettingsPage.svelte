@@ -78,11 +78,22 @@
 		framed?: boolean;
 		/** A containing operation is pending; also blocks keyboard-triggered saves. */
 		disabled?: boolean;
+		/** A containing page with other unsaved work of its own owns the one leave guard (default on). */
+		guardNavigation?: boolean;
 		/** Whether there are unsaved changes, and whether a save is running (for a page around it). */
 		onstate?: (state: { dirty: boolean; saving: boolean }) => void;
 	}
 
-	let { page, client, target, access, framed = true, disabled = false, onstate }: Props = $props();
+	let {
+		page,
+		client,
+		target,
+		access,
+		framed = true,
+		disabled = false,
+		guardNavigation = true,
+		onstate
+	}: Props = $props();
 
 	const who = $derived(access ?? adminAccess.current);
 	const parts = $derived(partsOf(page));
@@ -268,7 +279,7 @@
 				>{t('settings.readOnly.body')}</Callout
 			>
 		{/if}
-		<SaveScope {draft} onsave={save} {onstate}>
+		<SaveScope {draft} onsave={save} {guardNavigation} {onstate}>
 			<div class="settings">
 				{#each page.sections as section (section.id)}
 					{@const view = sectionView(section, draft!.value, levels, draft!.saved)}

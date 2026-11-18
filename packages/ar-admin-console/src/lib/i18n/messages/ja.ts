@@ -26,6 +26,7 @@ import { jaProfileLayer } from './profile-layer/ja';
 import { jaPlatformProfiles } from './platform-profiles/ja';
 import { jaLaunchers } from './launchers/ja';
 import { jaUsers } from './users/ja';
+import { jaSamlLocal } from './saml-local/ja';
 
 /**
  * Japanese is the source locale: every other locale must provide exactly these keys.
@@ -60,6 +61,7 @@ export const ja = {
 	...jaPlatformProfiles,
 	...jaLaunchers,
 	...jaUsers,
+	...jaSamlLocal,
 	'app.adminLabel': '管理コンソール',
 	'app.env.dev': '開発環境',
 	'app.env.prod': '本番環境',

@@ -25,6 +25,11 @@
 		/** The parts read in the legacy yes/no form (see `legacyYesNoIds`). */
 		legacyYesNo?: ReadonlySet<string>;
 		wide?: boolean;
+		/**
+		 * Kinds of part the screens do not show under the theme (the sign-in / sign-up switch when
+		 * the theme does not offer it), left out as a hidden part is.
+		 */
+		hiddenKinds?: ReadonlySet<string>;
 	}
 
 	let {
@@ -33,7 +38,8 @@
 		rowSettings = {},
 		choices,
 		legacyYesNo,
-		wide = false
+		wide = false,
+		hiddenKinds
 	}: Props = $props();
 
 	const shownRows = $derived(rows.filter((row) => rowSettings[row.id]?.mode !== 'hidden'));
@@ -44,7 +50,7 @@
 		<div class="screen__row" style:--cols={row.columns.length}>
 			{#each row.columns as column, c (c)}
 				<div class="screen__col">
-					{#each column.filter((p) => settings[p.id]?.condition.mode !== 'hidden') as part (part.id)}
+					{#each column.filter((p) => settings[p.id]?.condition.mode !== 'hidden' && !hiddenKinds?.has(p.kind)) as part (part.id)}
 						{@const extra = settings[part.id]}
 						{#if part.kind === 'heading'}
 							<h2>{part.label}</h2>

@@ -27,6 +27,7 @@ import { enProfileLayer } from './profile-layer/en';
 import { enPlatformProfiles } from './platform-profiles/en';
 import { enLaunchers } from './launchers/en';
 import { enUsers } from './users/en';
+import { enSamlLocal } from './saml-local/en';
 
 export const en = {
 	...enSettings,
@@ -57,6 +58,7 @@ export const en = {
 	...enPlatformProfiles,
 	...enLaunchers,
 	...enUsers,
+	...enSamlLocal,
 	'app.adminLabel': 'Admin',
 	'app.env.dev': 'Development',
 	'app.env.prod': 'Production',
