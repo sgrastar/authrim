@@ -222,7 +222,12 @@ export const TENANT_AREAS: readonly NavArea[] = [
 				id: 'enterprise',
 				label: 'nav.auth.enterprise',
 				platform: 'tenant',
-				requires: { settings: ['federation', 'institution'] },
+				// The SAML settings (those categories), or the tenant's own SAML identity below them
+				// (its read permission): either opens the page.
+				requires: {
+					settings: ['federation', 'institution'],
+					permission: 'admin:saml_providers:read'
+				},
 				legacyRoutes: ['/admin/saml', '/admin/saml/[id]', '/admin/saml/local']
 			},
 			{

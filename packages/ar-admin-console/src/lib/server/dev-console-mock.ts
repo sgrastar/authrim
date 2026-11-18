@@ -25,6 +25,7 @@ import { MOCK_CLIENTS, MOCK_SYSTEM_CLIENTS } from '#lib/api/fake/clients-fake.js
 import { MOCK_SAML_SERVICE_PROVIDERS } from '#lib/api/fake/saml-providers-fake.js';
 import { createFakeSettings } from '#lib/api/fake/settings-fake.js';
 import { answerAuditMock } from './dev-audit-mock.js';
+import { answerSamlSettingsMock, devSamlSettings } from './dev-saml-settings-mock.js';
 import { createFakeAdminUsers } from '#lib/api/fake/admin-users-fake.js';
 import { answerSessionsMock, answerUserMock } from './dev-users-mock.js';
 import { mockScreens } from '#lib/mock/fixtures/screens.js';
@@ -617,6 +618,13 @@ export async function handleDevAdminMock(
 			flow.published_version_id = `${flow.id}_v${Date.now()}`;
 			return json({ version: { id: flow.published_version_id } });
 		}
+	}
+	// The tenant's own SAML identity: settings, signing-key rollover, DR bundle, certificate preview.
+	if (segments[0] === 'saml-settings' || segments[1] === 'certificate-preview') {
+		const body: unknown =
+			method === 'GET' ? undefined : await event.request.json().catch(() => undefined);
+		const answer = await answerSamlSettingsMock(devSamlSettings, segments, method, body);
+		if (answer) return json(answer.body, answer.status);
 	}
 	if (segments[0] === 'saml-metadata' && segments[1] === 'preview' && method === 'POST') {
 		const body: unknown = await event.request.json();

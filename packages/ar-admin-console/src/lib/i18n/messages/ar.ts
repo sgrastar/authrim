@@ -27,6 +27,7 @@ import { arProfileLayer } from './profile-layer/ar';
 import { arPlatformProfiles } from './platform-profiles/ar';
 import { arLaunchers } from './launchers/ar';
 import { arUsers } from './users/ar';
+import { arSamlLocal } from './saml-local/ar';
 
 export const ar = {
 	...arSettings,
@@ -57,6 +58,7 @@ export const ar = {
 	...arPlatformProfiles,
 	...arLaunchers,
 	...arUsers,
+	...arSamlLocal,
 	'app.adminLabel': 'وحدة التحكم الإدارية',
 	'app.env.dev': 'التطوير',
 	'app.env.prod': 'الإنتاج',

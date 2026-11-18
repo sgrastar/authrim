@@ -27,6 +27,7 @@ import { deProfileLayer } from './profile-layer/de';
 import { dePlatformProfiles } from './platform-profiles/de';
 import { deLaunchers } from './launchers/de';
 import { deUsers } from './users/de';
+import { deSamlLocal } from './saml-local/de';
 
 export const de = {
 	...deSettings,
@@ -57,6 +58,7 @@ export const de = {
 	...dePlatformProfiles,
 	...deLaunchers,
 	...deUsers,
+	...deSamlLocal,
 	'app.adminLabel': 'Verwaltungskonsole',
 	'app.env.dev': 'Entwicklung',
 	'app.env.prod': 'Produktion',
