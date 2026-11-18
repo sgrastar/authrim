@@ -80,4 +80,15 @@ describe('the Login UI page’s languages', () => {
 		const set = changesBetween(saved, screen, new Set([KEYS.shown]));
 		expect(set).toEqual({ [KEYS.englishNames]: true });
 	});
+
+	it('carries the lite logo with the languages, sent only when it changes', () => {
+		const saved = valuesFrom({
+			'login-ui.supported_locales': 'en',
+			'login-ui.default_locale': 'en',
+			'login-ui.lite_logo': 'data:image/png;base64,AAAA'
+		});
+		expect(saved.liteLogo).toBe('data:image/png;base64,AAAA');
+		expect(changesBetween(saved, saved)).toEqual({});
+		expect(changesBetween(saved, { ...saved, liteLogo: '' })).toEqual({ [KEYS.liteLogo]: '' });
+	});
 });

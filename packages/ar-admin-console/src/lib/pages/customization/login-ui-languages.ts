@@ -6,6 +6,9 @@
  *   primary_locales              — the ones listed first (a JSON array), or null: the most
  *                                  spoken of those shown, chosen by the screens
  *   show_english_language_names  — "Japanese (日本語)" in the language switch
+ * and, with them, the lite Login UI's logo (`lite_logo`, a small image as a data: URI) and the
+ * custom content blocks (`custom_blocks`, a JSON array; `login-ui-custom-blocks.ts`), which the
+ * page saves the same way. The lite mode itself has its own route (LiteLoginUiCard).
  * The page shows the saved values and never corrects one on its own: only what the admin changes
  * is sent. The default language counts as shown (the grid locks it on), so saving the languages
  * shown always includes it.
@@ -19,12 +22,15 @@ import {
 	selectDefaultPrimaryLoginUILocales,
 	type LoginUILocale
 } from '@authrim/ar-lib-core/types/login-ui-languages';
+import { parseBlocks, serializeBlocks, type CustomBlock } from './login-ui-custom-blocks';
 
 export const KEYS = {
 	shown: 'login-ui.supported_locales',
 	defaultLang: 'login-ui.default_locale',
 	first: 'login-ui.primary_locales',
-	englishNames: 'login-ui.show_english_language_names'
+	englishNames: 'login-ui.show_english_language_names',
+	liteLogo: 'login-ui.lite_logo',
+	customBlocks: 'login-ui.custom_blocks'
 } as const;
 
 export type LanguageField = keyof typeof KEYS;
@@ -35,6 +41,10 @@ export interface LanguageValues {
 	/** The languages listed first; null while the screens choose them (the most spoken shown). */
 	first: LoginUILocale[] | null;
 	englishNames: boolean;
+	/** The lite Login UI's logo as a data: URI; '' for none. */
+	liteLogo: string;
+	/** The tenant's own content blocks around the screens. */
+	customBlocks: CustomBlock[];
 }
 
 /** From how many languages shown the switch groups them, listing some first. */
@@ -89,7 +99,9 @@ export function valuesFrom(values: Record<string, unknown>): LanguageValues {
 		defaultLang,
 		// Limited to what is shown with the default among it, as the grid offers it.
 		first: parseFirst(values[KEYS.first], shownWithDefault({ shown, defaultLang })),
-		englishNames: values[KEYS.englishNames] === true
+		englishNames: values[KEYS.englishNames] === true,
+		liteLogo: typeof values[KEYS.liteLogo] === 'string' ? (values[KEYS.liteLogo] as string) : '',
+		customBlocks: parseBlocks(values[KEYS.customBlocks])
 	};
 }
 
@@ -114,6 +126,9 @@ export function changesBetween(
 		screen.first && screen.first.filter((code) => shown.includes(code)).slice(0, FIRST_MAX);
 	if (!sameList(first, saved.first)) set[KEYS.first] = first;
 	if (screen.englishNames !== saved.englishNames) set[KEYS.englishNames] = screen.englishNames;
+	if (screen.liteLogo !== saved.liteLogo) set[KEYS.liteLogo] = screen.liteLogo;
+	const blocks = serializeBlocks(screen.customBlocks);
+	if (blocks !== serializeBlocks(saved.customBlocks)) set[KEYS.customBlocks] = blocks;
 	for (const key of fixed) delete set[key];
 	return set;
 }
