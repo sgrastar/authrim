@@ -1,3 +1,4 @@
+import { t } from '#lib/i18n/i18n.svelte.js';
 import { SP_FIELDS, IDP_FIELDS, record } from '#lib/pages/service-flows/advanced-settings.js';
 import { API_BASE_URL, adminFetch } from './admin-request';
 import { tenantScope } from '#lib/auth/tenant-scope.svelte.js';
@@ -82,6 +83,7 @@ export interface SamlProviderStatus {
 	updatedAt: string;
 	hasMapping: boolean;
 	trustBlocked: boolean;
+	configurationMissing?: boolean;
 }
 export interface SamlServiceProvider extends SamlProviderStatus {
 	config?: Record<string, unknown>;
@@ -133,7 +135,7 @@ export interface CreateIdentityProviderInput extends SamlMetadataInput {
 	name: string;
 	providerType: 'saml_idp';
 	enabled: false;
-	config: Partial<IdentityProviderConfig> & {
+	config?: Partial<IdentityProviderConfig> & {
 		jitEmailLinkingPolicy: 'disabled';
 		allowSyntheticEmailFallback: false;
 	};
@@ -162,11 +164,16 @@ export function serviceProviderFromRow(value: unknown): SamlServiceProviderOptio
 	const row = object(value);
 	if (row.providerType !== 'saml_sp') return null;
 	const entityId = object(row.config).entityId;
-	if (typeof entityId !== 'string' || !entityId) return null;
+	if ((typeof entityId !== 'string' || !entityId) && row.enabled !== false) return null;
 	return {
 		id: typeof row.id === 'string' ? row.id : '',
-		entityId,
-		name: typeof row.name === 'string' && row.name.trim() ? row.name : entityId,
+		entityId: typeof entityId === 'string' ? entityId : '',
+		name:
+			typeof row.name === 'string' && row.name.trim()
+				? row.name
+				: typeof entityId === 'string'
+					? entityId
+					: '',
 		enabled: row.enabled === true
 	};
 }
@@ -179,7 +186,7 @@ async function readProvider(id: string) {
 	return object(await response.json());
 }
 
-/** Freeze the serialized payload before meeting the backend's trust-update step-up. */
+/** Freeze the serialized payload; the backend decides the operation's risk and step-up level. */
 function writeProvider(
 	path: string,
 	method: 'POST' | 'PUT',
@@ -218,12 +225,16 @@ function providerStatus(value: unknown): SamlProviderStatus {
 		id: row.id,
 		enabled: row.enabled,
 		updatedAt: row.updatedAt,
+		configurationMissing:
+			!config.entityId ||
+			(row.providerType === 'saml_sp' ? !config.acsUrl : !config.ssoUrl || !config.certificate),
 		hasMapping:
 			typeof object(config.identityMapping).fieldMappingSetId === 'string' &&
 			!!object(config.identityMapping).fieldMappingSetId,
 		trustBlocked:
 			object(config.certificateValidation).allExpired === true ||
-			policy.suspendedByMetadataSync === true ||
+			(policy.suspendedByMetadataSync === true &&
+				policy.lastErrorCode !== 'metadata_approval_required') ||
 			policy.sourceState === 'expired'
 	};
 }
@@ -234,15 +245,15 @@ function serviceProviderDetail(value: unknown): SamlServiceProvider {
 	if (
 		row.providerType !== 'saml_sp' ||
 		typeof row.name !== 'string' ||
-		typeof config.entityId !== 'string' ||
-		typeof config.acsUrl !== 'string'
+		(row.enabled !== false &&
+			(typeof config.entityId !== 'string' || typeof config.acsUrl !== 'string'))
 	)
 		throw new Error('Invalid SAML SP response');
 	return {
 		...providerStatus(value),
 		name: row.name,
-		entityId: config.entityId,
-		acsUrl: config.acsUrl,
+		entityId: typeof config.entityId === 'string' ? config.entityId : '',
+		acsUrl: typeof config.acsUrl === 'string' ? config.acsUrl : '',
 		metadataUrl: typeof config.metadataUrl === 'string' ? config.metadataUrl : undefined,
 		hasMetadataUrl: typeof config.metadataUrl === 'string' && !!config.metadataUrl,
 		certificateValidation: record(config.certificateValidation),
@@ -424,12 +435,9 @@ export const httpSamlProviders: SamlProvidersClient &
 
 function metadataPreview(value: unknown, kind: SamlProviderKind): SamlMetadataPreview {
 	const row = object(value);
-	if (row.kind === 'aggregate')
-		throw new Error(
-			'Use federation metadata import for aggregate metadata. This connection requires one EntityDescriptor.'
-		);
+	if (row.kind === 'aggregate') throw new Error(t('sf.metadata.aggregate'));
 	if (row.kind !== 'single' || row.providerType !== kind)
-		throw new Error('Metadata role does not match this connection.');
+		throw new Error(t(kind === 'saml_sp' ? 'sf.metadata.wrongRoleSp' : 'sf.metadata.wrongRoleIdp'));
 	const config = object(row.config);
 	const address = kind === 'saml_sp' ? config.acsUrl : config.ssoUrl;
 	if (
@@ -474,7 +482,15 @@ export const httpSamlMetadata: SamlMetadataClient = {
 			signal,
 			body: JSON.stringify({ ...input, providerType: kind })
 		});
-		if (!response.ok) throw await errorFromResponse(response);
+		if (!response.ok) {
+			const error = await errorFromResponse(response);
+			const code = error.body.error_description;
+			if (code === 'metadata_fetch_failed') throw new Error(t('sf.metadata.fetchFailed'));
+			if (code === 'metadata_invalid_xml') throw new Error(t('sf.metadata.invalidXml'));
+			if (code === 'metadata_aggregate_requires_federation')
+				throw new Error(t('sf.metadata.aggregate'));
+			throw error;
+		}
 		return metadataPreview(await response.json(), kind);
 	},
 	async importMetadata(id, input) {

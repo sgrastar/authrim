@@ -50,6 +50,15 @@ describe('what a copy takes', () => {
 		).toEqual(['settings', 'roles']);
 	});
 
+	it('selects SAML drafts independently without opting in by default', () => {
+		expect(defaultCopyOptions().saml_providers).toBe(false);
+		expect(setCopyPart(defaultCopyOptions(), 'saml_providers', true)).toMatchObject({
+			saml_providers: true,
+			clients: false,
+			client_credentials: false
+		});
+	});
+
 	it('keeps a secret with what holds it', () => {
 		let options = setCopyPart(defaultCopyOptions(), 'client_credentials', true);
 		expect(options).toMatchObject({ clients: true, client_credentials: true });

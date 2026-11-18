@@ -132,6 +132,13 @@
 					(!answers.op.discovered || answers.op.discovery?.issuer !== answers.op.issuer.trim())
 				)
 					return false;
+			} else if (
+				!saml?.enabled &&
+				!answers.idp.entityId &&
+				!answers.idp.acsUrl &&
+				!answers.idp.certificate
+			) {
+				if (!answers.idp.name.trim()) return false;
 			} else idpConfig(answers.idp);
 			return true;
 		} catch {
@@ -267,7 +274,14 @@
 						expectedUpdatedAt: saml.updatedAt,
 						config: {
 							...Object.fromEntries(
-								Object.entries(idpConfig(answers.idp)).filter(
+								Object.entries(
+									!saml.enabled &&
+										!answers.idp.entityId &&
+										!answers.idp.acsUrl &&
+										!answers.idp.certificate
+										? {}
+										: idpConfig(answers.idp)
+								).filter(
 									([key, value]) =>
 										JSON.stringify(value) !==
 										JSON.stringify(
@@ -410,6 +424,7 @@
 								<InSteps
 									step={kind === 'op' ? 'op-details' : 'idp-import'}
 									live
+									editing
 									bind:op={answers.op}
 									bind:idp={answers.idp}
 									hasSecret={oidc?.hasSecret ?? false}
@@ -417,6 +432,9 @@
 									discoverOidc={(issuer, signal) => externalProviders.discover(issuer, signal)}
 								/>
 							{/key}
+							{#if kind === 'idp' && !saml?.entityId}<Callout tone="info"
+									>{t('sf.draft.noMetadata')}</Callout
+								>{/if}
 							{#each SETTINGS_PARTS[kind] as part (part)}
 								<Disclosure title={t(SETTINGS_LABELS[part])}>
 									{#if part === 'idp-certs'}<CertificateSummary

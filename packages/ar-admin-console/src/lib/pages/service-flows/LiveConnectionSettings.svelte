@@ -104,11 +104,11 @@
 	const valid = $derived(
 		draft.value.rp.name.trim() !== '' &&
 			(resources.kind === 'rp'
-				? draft.value.rp.redirectUris.length > 0 &&
-					draft.value.rp.redirectUris.every((uri) => !redirectUriProblem(uri)) &&
+				? draft.value.rp.redirectUris.every((uri) => !redirectUriProblem(uri)) &&
 					(client?.authMethod !== 'none' || draft.value.rp.pkce) &&
 					(draft.value.rp.authMethod !== 'private_key_jwt' || !publicKeyProblem(draft.value.rp))
-				: !entityIdProblem(draft.value.sp.entityId) && !httpsUrlProblem(draft.value.sp.acsUrl))
+				: (!draft.value.sp.entityId && !draft.value.sp.acsUrl && !sp?.enabled) ||
+					(!entityIdProblem(draft.value.sp.entityId) && !httpsUrlProblem(draft.value.sp.acsUrl)))
 	);
 
 	async function save(value: ReturnType<typeof basicSettingsAnswers>) {
@@ -195,6 +195,12 @@
 	}
 </script>
 
+{#if resources.kind === 'rp' && draft.value.rp.redirectUris.length === 0}<Callout tone="warning"
+		>{t('sf.rp.callbacksMissing')}</Callout
+	>{/if}
+{#if resources.kind === 'sp' && !sp?.entityId}<Callout tone="info"
+		>{t('sf.draft.noMetadata')}</Callout
+	>{/if}
 <LeaveGuard dirty={guardNavigation && (metadataDirty || metadataPending)} />
 <SaveScope
 	{guardNavigation}

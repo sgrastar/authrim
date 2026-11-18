@@ -165,6 +165,7 @@
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		await choose(canvas, 'sp');
+		await userEvent.click(canvas.getByRole('radio', { name: t('sf.import.mode.manual') }));
 		await change(canvas, t('sf.row.entityId'), 'urn:manual:service');
 		await change(canvas, t('sf.ours.acsUrl'), 'https://manual.example.test/acs');
 		await userEvent.click(canvas.getByRole('button', { name: t('sf.create.save') }));
@@ -182,6 +183,7 @@
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		await choose(canvas, 'sp');
+		await userEvent.click(canvas.getByRole('radio', { name: t('sf.import.mode.manual') }));
 		await change(canvas, t('sf.row.entityId'), 'urn:manual:draft');
 		await change(canvas, t('sf.ours.acsUrl'), 'https://manual.example.test/acs');
 		let release: ((response: Response) => void) | undefined;
@@ -235,7 +237,7 @@
 		const canvas = within(canvasElement);
 		await choose(canvas, 'sp');
 		await url(canvas, 'https://metadata.example.test/idp.xml');
-		await canvas.findByText('Metadata role does not match the expected provider type');
+		await canvas.findByText(t('sf.metadata.wrongRoleSp'));
 		await expect(canvas.getByRole('button', { name: t('sf.create.save') })).toBeDisabled();
 		await userEvent.click(canvas.getByRole('radio', { name: t('sf.import.mode.file') }));
 		const picker = canvas.getByLabelText(t('file.chooseOne'));
@@ -243,7 +245,7 @@
 			picker,
 			new File(['<broken'], 'broken.xml', { type: 'application/xml' })
 		);
-		await canvas.findByText('Invalid SAML metadata XML');
+		await canvas.findByText(t('sf.metadata.invalidXml'));
 		const readText = fn(async () => 'must not read');
 		const oversized = new File(['x'.repeat(1024 * 1024 + 1)], 'oversized.xml', {
 			type: 'application/xml'
@@ -348,5 +350,154 @@
 		await expect(canvas.queryByRole('button', { name: t('sf.metadata.confirm') })).toBeNull();
 		await expect(http.preview).not.toHaveBeenCalled();
 		await expect(http.writes).toHaveLength(0);
+	}}
+/>
+
+<Story
+	name="SP skips metadata and opens a disabled draft with activation blocked"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await choose(canvas, 'sp');
+		await expect(canvas.getByRole('radio', { name: t('sf.ours.metadataUrl') })).toBeChecked();
+		await userEvent.click(canvas.getByRole('button', { name: t('sf.draft.skip') }));
+		await waitFor(() => {
+			const save = canvas.getByRole('button', { name: t('sf.create.save') });
+			expect(save).toBeVisible();
+			expect(save).toBeEnabled();
+		});
+		await userEvent.click(canvas.getByRole('button', { name: t('sf.create.save') }));
+		await waitFor(() => expect(canvas.getByText(t('sf.draft.saved'))).toBeVisible());
+		await expect(http.writes[0]).toEqual({
+			name: 'Metadata connection',
+			providerType: 'saml_sp',
+			enabled: false
+		});
+		await userEvent.click(canvas.getByRole('button', { name: t('sf.draft.openDetails') }));
+		await waitFor(() => {
+			expect(canvas.getByText(t('sf.draft.noMetadata'))).toBeVisible();
+			expect(canvas.getByRole('button', { name: t('sf.live.enable') })).toBeDisabled();
+			expect(canvas.getByText(t('sf.draft.metadataRequired'))).toBeVisible();
+		});
+	}}
+/>
+
+<Story
+	name="IdP skips metadata and opens a disabled draft"
+	args={{ kind: 'idp' }}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await choose(canvas, 'idp');
+		await userEvent.click(canvas.getByRole('button', { name: t('sf.draft.skip') }));
+		await userEvent.click(canvas.getByRole('button', { name: t('sf.create.save') }));
+		await canvas.findByText(t('sf.draft.saved'));
+		await expect(http.writes[0]).toEqual({
+			name: 'Metadata connection',
+			providerType: 'saml_idp',
+			enabled: false,
+			config: { jitEmailLinkingPolicy: 'disabled', allowSyntheticEmailFallback: false }
+		});
+		await userEvent.click(canvas.getByRole('button', { name: t('sf.draft.openDetails') }));
+		await canvas.findByText(t('sf.draft.noMetadata'));
+		await expect(canvas.getByRole('button', { name: t('sf.live.enable') })).toBeDisabled();
+	}}
+/>
+
+<Story
+	name="Paste XML previews automatically and creates from a single entity wrapper"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await choose(canvas, 'sp');
+		await userEvent.click(canvas.getByRole('radio', { name: t('sf.import.mode.xml') }));
+		const input = canvas.getByRole('textbox', { name: t('sf.import.mode.xml') });
+		await expect(input).toHaveValue('');
+		await userEvent.click(input);
+		await userEvent.paste(
+			`<md:EntitiesDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata">${metadataXml('saml_sp')}</md:EntitiesDescriptor>`
+		);
+		await canvas.findByText('urn:synthetic:saml_sp');
+		await expect(canvas.getByRole('button', { name: t('sf.create.save') })).toBeEnabled();
+		await expect(http.writes).toHaveLength(0);
+	}}
+/>
+
+<Story
+	name="Existing connection switches to XML, previews a paste and resets after saving"
+	args={{ existing: true }}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findByRole('textbox', { name: t('sf.row.name') });
+		await openImport(canvas);
+		await userEvent.click(canvas.getByRole('radio', { name: t('sf.import.mode.xml') }));
+		let input = canvas.getByRole('textbox', { name: t('sf.import.mode.xml') });
+		await expect(input).toHaveValue('');
+		await userEvent.click(input);
+		await userEvent.paste(metadataXml('saml_sp'));
+		await canvas.findByText('urn:synthetic:saml_sp');
+		await expect(canvas.getByRole('button', { name: t('sf.metadata.confirm') })).toBeEnabled();
+		await confirmImport(canvas);
+		await waitFor(() => expect(http.writes).toHaveLength(1));
+		await expect(http.writes[0]).toMatchObject({ metadataXml: metadataXml('saml_sp') });
+		await waitFor(() =>
+			expect(canvas.getByRole('radio', { name: t('sf.ours.metadataUrl') })).toBeChecked()
+		);
+		await userEvent.click(canvas.getByRole('radio', { name: t('sf.import.mode.xml') }));
+		input = canvas.getByRole('textbox', { name: t('sf.import.mode.xml') });
+		await expect(input).toHaveValue('');
+		await expect(canvas.getByRole('button', { name: t('sf.metadata.confirm') })).toBeDisabled();
+	}}
+/>
+
+<Story
+	name="Wrong role shows a specific SP hint"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await choose(canvas, 'sp');
+		await url(canvas, 'https://metadata.example.test/idp.xml');
+		await canvas.findByText(t('sf.metadata.wrongRoleSp'));
+		await expect(canvas.getByRole('button', { name: t('sf.create.save') })).toBeDisabled();
+	}}
+/>
+
+<Story
+	name="Failed metadata fetch shows a localized URL hint"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await choose(canvas, 'sp');
+		await url(canvas, 'https://metadata.example.test/fetch-failed.xml');
+		await canvas.findByText(t('sf.metadata.fetchFailed'));
+		await expect(canvas.getByRole('button', { name: t('sf.create.save') })).toBeDisabled();
+	}}
+/>
+
+<Story
+	name="Draft creation and editing stay L0 while activation asks for L2"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const page = within(canvasElement.ownerDocument.body);
+		await choose(canvas, 'sp');
+		await url(canvas);
+		await canvas.findByText('urn:synthetic:saml_sp');
+		await expect(page.queryByRole('dialog', { name: t('stepUp.title') })).toBeNull();
+		await userEvent.click(canvas.getByRole('button', { name: t('sf.create.save') }));
+		await canvas.findByRole('heading', { name: t('af.general') });
+		await expect(http.writes).toHaveLength(1);
+		await expect(http.current().enabled).toBe(false);
+		await expect(page.queryByRole('dialog', { name: t('stepUp.title') })).toBeNull();
+		await change(canvas, t('sf.ours.acsUrl'), 'https://synthetic.example.test/draft-acs');
+		await userEvent.click(canvas.getByRole('button', { name: t('common.save') }));
+		await canvas.findByText(t('sf.live.saved'));
+		await expect(http.writes).toHaveLength(2);
+		await expect(page.queryByRole('dialog', { name: t('stepUp.title') })).toBeNull();
+		const enable = canvas.getByRole('button', { name: t('sf.live.enable') });
+		await waitFor(() => expect(enable).toBeEnabled());
+		await userEvent.click(enable);
+		const dialog = await page.findByRole('dialog', { name: t('stepUp.title') });
+		await waitFor(() => expect(dialog).toBeVisible());
+		await expect(dialog).toHaveTextContent('L2');
+		await expect(http.current().enabled).toBe(false);
+		await userEvent.click(within(dialog).getByRole('button', { name: t('common.cancel') }));
+		await waitFor(() => expect(dialog).not.toBeVisible());
+		await expect(http.writes).toHaveLength(2);
+		await expect(http.current().enabled).toBe(false);
 	}}
 />

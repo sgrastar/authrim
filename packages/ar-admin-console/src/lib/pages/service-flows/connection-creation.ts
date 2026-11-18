@@ -50,8 +50,8 @@ export interface LiveConnectionCreation {
 }
 
 export function rpRedirectsReady(form: RpForm): boolean {
+	if (form.skipped) return true;
 	return (
-		form.redirectUris.length > 0 &&
 		new Set(form.redirectUris.map((uri) => uri.trim())).size === form.redirectUris.length &&
 		form.redirectUris.every((uri) => !!uri.trim() && !redirectUriProblem(uri))
 	);
@@ -79,7 +79,7 @@ export function rpCreateInput(form: RpForm): CreateClientInput {
 		client_name: form.name.trim(),
 		// The Admin API accepts SPA separately from native redirect and browser policies.
 		application_type: form.appType,
-		redirect_uris: form.redirectUris.map((uri) => uri.trim()),
+		redirect_uris: form.skipped ? [] : form.redirectUris.map((uri) => uri.trim()),
 		grant_types: ['authorization_code'],
 		response_types: ['code'],
 		scope: 'openid',
@@ -91,6 +91,10 @@ export function rpCreateInput(form: RpForm): CreateClientInput {
 
 export function spCreateInput(answers: Answers, name: string): CreateServiceProviderInput {
 	const form = answers.sp;
+	if (form.skipped) {
+		if (!name.trim()) throw new Error(t('sf.create.invalid'));
+		return { name: name.trim(), providerType: 'saml_sp', enabled: false };
+	}
 	const metadata = metadataInput(form);
 	if (metadata) {
 		if (!name.trim() || form.metadata?.preview?.providerType !== 'saml_sp')
@@ -179,6 +183,14 @@ export function idpConfig(form: IdpForm): IdentityProviderConfig {
 	};
 }
 export function idpCreateInput(form: IdpForm): CreateIdentityProviderInput {
+	const safeConfig: NonNullable<CreateIdentityProviderInput['config']> = {
+		jitEmailLinkingPolicy: 'disabled',
+		allowSyntheticEmailFallback: false
+	};
+	if (form.skipped) {
+		if (!form.name.trim()) throw new Error(t('sf.create.invalid'));
+		return { name: form.name.trim(), providerType: 'saml_idp', enabled: false, config: safeConfig };
+	}
 	const metadata = metadataInput(form);
 	if (metadata) {
 		if (!form.name.trim() || form.metadata?.preview?.providerType !== 'saml_idp')
@@ -188,7 +200,7 @@ export function idpCreateInput(form: IdpForm): CreateIdentityProviderInput {
 			providerType: 'saml_idp',
 			enabled: false,
 			...metadata,
-			config: { jitEmailLinkingPolicy: 'disabled', allowSyntheticEmailFallback: false }
+			config: safeConfig
 		};
 	}
 	return {
@@ -197,8 +209,7 @@ export function idpCreateInput(form: IdpForm): CreateIdentityProviderInput {
 		enabled: false,
 		config: {
 			...idpConfig(form),
-			jitEmailLinkingPolicy: 'disabled',
-			allowSyntheticEmailFallback: false
+			...safeConfig
 		}
 	};
 }

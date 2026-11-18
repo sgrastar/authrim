@@ -1,3 +1,4 @@
+import { previewMetadataFixture } from '#lib/api/fake/metadata-fixture.js';
 /**
  * Loopback-only Admin API stand-in for local development (`AUTHRIM_ADMIN_UI_DEV_MOCK=true`).
  * It answers only what the console already uses; add fixtures here as features are rebuilt.
@@ -49,6 +50,11 @@ type MockFlow = {
 /** The mock tenant's Flows: none at first (the sign-up flow is made by the first save). */
 const mockFlows = new Map<string, MockFlow>();
 const mockFlowAssignments: Array<Record<string, unknown>> = [];
+
+const mockConnections = new Map<string, Record<string, unknown>>();
+function isObject(value: unknown): value is Record<string, unknown> {
+	return !!value && typeof value === 'object' && !Array.isArray(value);
+}
 
 type EnvLike = Record<string, unknown> | undefined;
 
@@ -582,16 +588,87 @@ export async function handleDevAdminMock(
 			return json({ version: { id: flow.published_version_id } });
 		}
 	}
+	if (segments[0] === 'saml-metadata' && segments[1] === 'preview' && method === 'POST') {
+		const body: unknown = await event.request.json();
+		return isObject(body) ? previewMetadataFixture(body) : json({ error: 'invalid_request' }, 400);
+	}
+	if (segments[0] === 'clients' || segments[0] === 'saml-providers') {
+		const saml = segments[0] === 'saml-providers';
+		const key = `${segments[0]}:${segments[1]}`;
+		if (method === 'GET' && segments.length === 2 && mockConnections.has(key)) {
+			const row = mockConnections.get(key);
+			return json(saml ? row : { client: row });
+		}
+		if (method === 'POST' || method === 'PUT') {
+			const body: unknown = await event.request.json();
+			if (!isObject(body)) return json({ error: 'invalid_request' }, 400);
+			const creating = method === 'POST' && segments.length === 1;
+			const stored = mockConnections.get(key);
+			if (!creating && !stored) return json({ error: 'not_found' }, 404);
+			const id = creating ? crypto.randomUUID() : segments[1];
+			const now = saml
+				? new Date(
+						Math.max(
+							Date.now(),
+							typeof stored?.updatedAt === 'string' ? Date.parse(stored.updatedAt) + 1 : 0
+						)
+					).toISOString()
+				: Date.now();
+			if (saml && stored && body.expectedUpdatedAt !== stored.updatedAt)
+				return json({ error: 'conflict' }, 409);
+			let config = {
+				...(isObject(stored?.config) ? stored.config : {}),
+				...(isObject(body.config) ? body.config : {})
+			};
+			if (saml && (body.metadataXml || body.metadataUrl)) {
+				const preview = previewMetadataFixture(body);
+				if (!preview.ok) return preview;
+				const parsed: unknown = await preview.json();
+				if (!isObject(parsed) || !isObject(parsed.config))
+					return json({ error: 'invalid_request' }, 400);
+				if (parsed.providerType !== (stored?.providerType ?? body.providerType))
+					return json(
+						{ error: 'invalid_request', error_description: 'metadata_role_mismatch' },
+						400
+					);
+				config = { ...config, ...parsed.config };
+			}
+			const row = saml
+				? {
+						...stored,
+						...body,
+						id,
+						config,
+						enabled: body.enabled ?? stored?.enabled ?? false,
+						updatedAt: now
+					}
+				: {
+						...stored,
+						...body,
+						client_id: id,
+						redirect_uris: body.redirect_uris ?? stored?.redirect_uris ?? [],
+						updated_at: now
+					};
+			mockConnections.set(`${segments[0]}:${id}`, row);
+			if (segments[2] === 'import-metadata') return json({ ...row, success: true });
+			return json(saml ? row : { client: row }, creating ? 201 : 200);
+		}
+	}
 	// The SAML service providers a flow can go on to sign in to (read only here).
 	if (segments[0] === 'saml-providers' && segments.length === 1 && method === 'GET') {
 		return json({
-			providers: MOCK_SAML_SERVICE_PROVIDERS.map((provider, index) => ({
-				id: `saml_sp_${index + 1}`,
-				name: provider.name,
-				providerType: 'saml_sp',
-				config: { entityId: provider.entityId },
-				enabled: provider.enabled
-			}))
+			providers: [
+				...Array.from(mockConnections.entries()).flatMap(([key, row]) =>
+					key.startsWith('saml-providers:') ? [row] : []
+				),
+				...MOCK_SAML_SERVICE_PROVIDERS.map((provider, index) => ({
+					id: `saml_sp_${index + 1}`,
+					name: provider.name,
+					providerType: 'saml_sp',
+					config: { entityId: provider.entityId },
+					enabled: provider.enabled
+				}))
+			]
 		});
 	}
 	if (segments[0] === 'users') {
@@ -601,11 +678,16 @@ export async function handleDevAdminMock(
 	// The clients a flow can go on to sign in to (read only here).
 	if (segments[0] === 'clients' && segments.length === 1 && method === 'GET') {
 		return json({
-			clients: MOCK_CLIENTS.map((client) => ({
-				client_id: client.id,
-				client_name: client.name,
-				redirect_uris: client.redirectUris
-			}))
+			clients: [
+				...Array.from(mockConnections.entries()).flatMap(([key, row]) =>
+					key.startsWith('clients:') ? [row] : []
+				),
+				...MOCK_CLIENTS.map((client) => ({
+					client_id: client.id,
+					client_name: client.name,
+					redirect_uris: client.redirectUris
+				}))
+			]
 		});
 	}
 	if (segments[0] === 'authentication-method-profiles') {

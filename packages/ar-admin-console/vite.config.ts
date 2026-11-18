@@ -25,7 +25,10 @@ export default defineConfig({
 			// `/_authrim_admin/*` to the Admin UI Worker when the UI shares the API origin, so the
 			// asset directory must stay identical.
 			appDir: '_authrim_admin',
-			adapter: adapter({ routes: { include: ['/*'], exclude: ['<all>'] } })
+			// Unit and story tests use the existing cloudflare:workers stub, without a local Worker.
+			adapter: process.env.VITEST
+				? undefined
+				: adapter({ routes: { include: ['/*'], exclude: ['<all>'] } })
 		})
 	],
 	logLevel: process.env.CI ? 'warn' : 'info',
@@ -39,6 +42,8 @@ export default defineConfig({
 		projects: [
 			{
 				extends: true,
+				// DOM unit tests mount client-compiled Svelte components in jsdom.
+				resolve: { conditions: ['browser'] },
 				test: {
 					name: 'unit',
 					environment: 'jsdom',

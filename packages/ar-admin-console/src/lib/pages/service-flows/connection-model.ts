@@ -35,7 +35,7 @@ import {
 export type Direction = 'out' | 'in';
 export type ConnectionKind = 'rp' | 'sp' | 'op' | 'idp';
 export type AppType = 'web' | 'spa' | 'native';
-export type ImportMode = 'url' | 'file' | 'manual';
+export type ImportMode = 'url' | 'xml' | 'file' | 'manual';
 /** How a person who signs in through an upstream provider is matched to an Authrim account. */
 /**
  * How someone not linked yet is matched to an existing account: by a verified email address, or
@@ -50,6 +50,8 @@ export const KINDS_OF: Record<Direction, readonly ConnectionKind[]> = {
 
 /** What reading the other side's details needs, for a SAML partner in either direction. */
 export interface ImportForm {
+	skipped?: boolean;
+	metadataXml?: string;
 	/** Live, server-validated preview state; never prototype metadata. */
 	metadata?: MetadataPreviewDraft;
 	importMode: ImportMode;
@@ -65,6 +67,7 @@ export interface ImportForm {
 }
 
 export interface RpForm {
+	skipped?: boolean;
 	keySource?: 'uri' | 'inline';
 	jwksUri?: string;
 	publicJwks?: string;
@@ -171,10 +174,11 @@ export interface ExtrasForm {
 	signupFlow: string;
 }
 
-function emptyImport(): ImportForm {
+export function emptyImport(metadataUrl = ''): ImportForm {
 	return {
 		importMode: 'url',
-		metadataUrl: '',
+		metadataUrl,
+		metadataXml: '',
 		fetched: false,
 		fileName: '',
 		entityId: '',
@@ -523,6 +527,13 @@ export function dummyMetadata(url: string): {
 export function importReady(form: ImportForm): boolean {
 	if (form.importMode === 'url') return !httpsUrlProblem(form.metadataUrl) && form.fetched;
 	if (form.importMode === 'file') return form.fileName !== '';
+	if (form.importMode === 'xml')
+		return (
+			!!form.metadata?.preview &&
+			!form.metadata.pending &&
+			!form.metadata.error &&
+			form.metadata.sourceXml === form.metadataXml
+		);
 	return !entityIdProblem(form.entityId) && !httpsUrlProblem(form.acsUrl);
 }
 
@@ -801,7 +812,9 @@ function importedFrom(f: ImportForm): string {
 		? f.metadataUrl
 		: f.importMode === 'file'
 			? f.fileName
-			: t('sf.value.byHand');
+			: f.importMode === 'xml'
+				? t('sf.import.mode.xml')
+				: t('sf.value.byHand');
 }
 
 function consentLabel(id: string): string {

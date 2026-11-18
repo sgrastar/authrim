@@ -111,6 +111,7 @@ import {
   extractEntityDescriptorXmls,
   getLogoUrl,
   isAggregateMetadata,
+  unwrapSingleEntityMetadata,
   resolveAggregateSignaturePolicy,
   verifyAggregateMetadata,
 } from './aggregate-metadata';
@@ -128,6 +129,12 @@ import {
   type SAMLDRBundleFailureStage,
 } from './local-signing-dr-bundle';
 import { requireSAMLTrustStepUp, sha256Digest } from './step-up';
+import {
+  approveSAMLProviderTrust,
+  isMetadataSuspendedSAMLProvider,
+  isUnapprovedSAMLProvider,
+  providerTrustConfigurationDigest,
+} from './provider-trust';
 import { previewTrustCertificate } from './certificate-preview';
 import {
   buildSAMLSigningCertificateSubjectAlternativeNames,
@@ -451,6 +458,107 @@ function isPersistedSAMLProviderTrustUsable(
   });
 }
 
+async function providerDeletionUnblocksFederation(
+  env: Env,
+  tenantId: string,
+  role: string,
+  config: unknown
+): Promise<boolean> {
+  if (
+    !config ||
+    typeof config !== 'object' ||
+    !('entityId' in config) ||
+    typeof config.entityId !== 'string' ||
+    !config.entityId
+  )
+    return false;
+  if (
+    'trustApproval' in config &&
+    config.trustApproval &&
+    typeof config.trustApproval === 'object' &&
+    'state' in config.trustApproval &&
+    config.trustApproval.state === 'draft'
+  )
+    return false;
+  const admin = requireDedicatedAdminDatabaseAdapter(env, 'saml-federation-runtime-resolution');
+  // Even an inactive or ambiguous candidate may later become resolvable; do not uncover it at L1.
+  const candidates = await admin.query(
+    `SELECT entity_id FROM federation_saml_runtime_entities
+      WHERE tenant_id = ? AND entity_id = ? AND entity_role IN (?, 'ambiguous') LIMIT 1`,
+    [tenantId, config.entityId, role]
+  );
+  return candidates.length > 0;
+}
+
+/** Client snapshots may include these response-only fields; retain only the stored values. */
+function writableSAMLProviderConfig<T extends NonNullable<SAMLProviderUpdateRequest['config']>>(
+  config: T
+): T {
+  const writable = { ...config };
+  delete writable.trustApproval;
+  delete writable.certificateValidation;
+  delete writable.metadataLastFetched;
+  delete writable.metadataHash;
+  delete writable.metadataCriticalFields;
+  delete writable.metadataRefreshStatus;
+  return writable;
+}
+
+/** Shared by PUT (including enable), import and refresh so entity moves cannot bypass approval. */
+async function classifySAMLProviderTrustTransition(input: {
+  env: Env;
+  tenantId: string;
+  providerType: string;
+  wasEnabled: boolean;
+  requestedEnabled: boolean;
+  explicitlyDisabling?: boolean;
+  previousConfig: SAMLIdPConfig | SAMLSPConfig;
+  nextConfig: SAMLIdPConfig | SAMLSPConfig;
+  configChanges?: SAMLProviderUpdateRequest['config'];
+  metadataOperation?: boolean;
+}): Promise<'L0' | 'L1' | 'L2'> {
+  const {
+    env,
+    tenantId,
+    providerType,
+    wasEnabled,
+    requestedEnabled,
+    explicitlyDisabling,
+    previousConfig,
+    nextConfig,
+    configChanges,
+    metadataOperation,
+  } = input;
+  const entityChanged = previousConfig.entityId !== nextConfig.entityId;
+  const unblocksFederation =
+    entityChanged &&
+    (await providerDeletionUnblocksFederation(env, tenantId, providerType, previousConfig));
+  // All writable config fields may affect authentication or mapping. Treat unknown changes
+  // conservatively as trust changes; metadata re-import is a trust operation even if unchanged.
+  const previousValues = new Map(Object.entries(previousConfig));
+  const trustChanged =
+    metadataOperation ||
+    Object.entries(configChanges ?? {}).some(
+      ([key, value]) => JSON.stringify(previousValues.get(key)) !== JSON.stringify(value)
+    );
+  const suspended = isMetadataSuspendedSAMLProvider(previousConfig);
+  const level =
+    unblocksFederation || (suspended && trustChanged)
+      ? 'L2'
+      : !requestedEnabled
+        ? wasEnabled || (suspended && explicitlyDisabling)
+          ? 'L1'
+          : 'L0'
+        : !wasEnabled || trustChanged
+          ? 'L2'
+          : 'L0';
+  // Unapproved identity changes must not create a new runtime fallback suppression record.
+  if (!previousConfig.entityId || (entityChanged && level === 'L0')) {
+    nextConfig.trustApproval = { state: 'draft' };
+  }
+  return level;
+}
+
 async function hasConflictingSAMLProviderEntityId(
   adapter: DatabaseAdapter,
   tenantId: string,
@@ -458,6 +566,7 @@ async function hasConflictingSAMLProviderEntityId(
   entityId: string,
   excludeProviderId?: string
 ): Promise<boolean> {
+  if (!entityId) return false;
   const rows = await adapter.query<{ id: string; config_json: string }>(
     `SELECT id, config_json
        FROM identity_providers
@@ -1542,7 +1651,7 @@ export interface SAMLConnectionMetadataImportRequest extends MetadataImportReque
 }
 
 interface SAMLMetadataPreviewRequest extends MetadataImportRequest {
-  /** Supplying a role opts into bounded, single-connection preview. */
+  /** Role hint for bounded single-connection preview; the detected role is returned. */
   providerType?: 'saml_idp' | 'saml_sp';
   samlProfile?: SAMLSPProfile;
   attributePresetId?: SAMLAttributePresetId;
@@ -1592,12 +1701,10 @@ export async function handlePreviewMetadata(c: AdminSAMLContext): Promise<Respon
       return resolvedMetadata;
     }
 
+    if (metadataIsAggregateOrThrow(resolvedMetadata.metadataXml) && body.providerType) {
+      resolvedMetadata.metadataXml = unwrapSingleEntityMetadata(resolvedMetadata.metadataXml);
+    }
     if (metadataIsAggregateOrThrow(resolvedMetadata.metadataXml)) {
-      if (body.providerType) {
-        throw new SAMLMetadataValidationError(
-          'This connection requires one EntityDescriptor. Use the federation metadata import path for aggregate metadata.'
-        );
-      }
       const tenantId = resolveSAMLTenantIdFromContext(c);
       const policy = resolveAggregateSignaturePolicy(c.env);
       const trustProfiles = await listFederationTrustProfiles(c.env, tenantId);
@@ -1633,11 +1740,6 @@ export async function handlePreviewMetadata(c: AdminSAMLContext): Promise<Respon
     let config: SAMLIdPConfig | SAMLSPConfig;
     try {
       providerType = detectSAMLMetadataProviderType(resolvedMetadata.metadataXml);
-      if (body.providerType && providerType !== body.providerType) {
-        throw new SAMLMetadataValidationError(
-          'Metadata role does not match the expected provider type'
-        );
-      }
       config = buildConfigFromMetadata(
         providerType,
         resolvedMetadata.metadataXml,
@@ -1670,7 +1772,17 @@ export async function handlePreviewMetadata(c: AdminSAMLContext): Promise<Respon
   } catch (error) {
     if (error instanceof SAMLMetadataValidationError) {
       log.warn('Preview metadata validation failed', {}, error);
-      return createSAMLMetadataValidationErrorResponse(c, error);
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description:
+            error.message === 'metadata_aggregate_requires_federation'
+              ? error.message
+              : 'metadata_invalid_xml',
+          message: error.message,
+        },
+        400
+      );
     }
 
     log.error('Preview metadata error', {}, error as Error);
@@ -1873,10 +1985,16 @@ export async function handleCreateProvider(c: AdminSAMLContext): Promise<Respons
       SINGLE_METADATA_REQUEST_LIMIT_BYTES
     );
 
+    if (body.config) body.config = writableSAMLProviderConfig(body.config);
+
     const hasMetadataInput = Boolean(body.metadataXml || body.metadataUrl);
 
     // Validate request
-    if (!body.name || !body.providerType || (!body.config && !hasMetadataInput)) {
+    if (
+      !body.name ||
+      !body.providerType ||
+      (!body.config && !hasMetadataInput && body.enabled !== false)
+    ) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
         variables: { field: 'name, providerType, config or metadata' },
       });
@@ -1903,9 +2021,7 @@ export async function handleCreateProvider(c: AdminSAMLContext): Promise<Respons
         return resolvedMetadata;
       }
       if (metadataIsAggregateOrThrow(resolvedMetadata.metadataXml)) {
-        throw new SAMLMetadataValidationError(
-          'Aggregate metadata must be previewed first and imported by selecting EntityDescriptor entries.'
-        );
+        resolvedMetadata.metadataXml = unwrapSingleEntityMetadata(resolvedMetadata.metadataXml);
       }
 
       try {
@@ -1942,14 +2058,16 @@ export async function handleCreateProvider(c: AdminSAMLContext): Promise<Respons
       };
     }
 
+    const providedConfig = {
+      ...(metadataDerivedConfig ?? {}),
+      ...(requestedConfig ?? {}),
+      ...(metadataDerivedFields ?? {}),
+    } as SAMLIdPConfig | SAMLSPConfig;
     const config = fillSAMLProviderProvisioningDefaults(
       body.providerType,
-      {
-        ...(metadataDerivedConfig ?? {}),
-        ...(requestedConfig ?? {}),
-        ...(metadataDerivedFields ?? {}),
-      } as SAMLIdPConfig | SAMLSPConfig,
-      provisioningDefaults
+      providedConfig,
+      provisioningDefaults,
+      { deferNameIdFormat: !providerConfigurationReady(body.providerType, providedConfig) }
     );
     if (!hasMetadataInput && config.metadataRefreshPolicy) {
       config.metadataRefreshPolicy = {
@@ -1964,24 +2082,19 @@ export async function handleCreateProvider(c: AdminSAMLContext): Promise<Respons
       if (capabilityRefused) return capabilityRefused;
     }
 
-    // Validate config based on type
-    if (body.providerType === 'saml_idp') {
-      const idpConfig = config as SAMLIdPConfig;
-      if (!idpConfig.entityId || !idpConfig.ssoUrl || !idpConfig.certificate) {
-        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
-          variables: { field: 'entityId, ssoUrl, certificate' },
-        });
-      }
-    } else {
-      const spConfig = config as SAMLSPConfig;
-      if (!spConfig.entityId || !spConfig.acsUrl) {
-        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
-          variables: { field: 'entityId, acsUrl' },
-        });
-      }
-    }
-
     const requestedEnabled = body.enabled !== false;
+    if (requestedEnabled && !providerConfigurationReady(body.providerType, config)) {
+      return c.json(
+        {
+          error: 'saml_configuration_required_to_enable',
+          error_description:
+            'Add the entity ID and ACS URL (SP), or entity ID, SSO URL and certificate (IdP), before enabling this provider.',
+        },
+        400
+      );
+    }
+    const emptyDraft = !body.config && !hasMetadataInput && !requestedEnabled;
+    if (!requestedEnabled) config.trustApproval = { state: 'draft' };
     const normalizedConfig =
       body.providerType === 'saml_sp'
         ? normalizeSAMLSPConfig(config as SAMLSPConfig, {
@@ -2035,6 +2148,7 @@ export async function handleCreateProvider(c: AdminSAMLContext): Promise<Respons
     }
     const refused = await requireSAMLTrustStepUp(c, {
       tenantId,
+      level: requestedEnabled ? 'L2' : 'L0',
       params: {
         action: 'provider.create',
         providerType: body.providerType,
@@ -2042,9 +2156,11 @@ export async function handleCreateProvider(c: AdminSAMLContext): Promise<Respons
         enabled: requestedEnabled,
         // Certificates, metadata and the rest of the request, as a digest.
         request_sha256: await sha256Digest(body),
+        effective_config_sha256: await providerTrustConfigurationDigest(normalizedConfig),
       },
     });
     if (refused) return refused;
+    if (requestedEnabled) await approveSAMLProviderTrust(normalizedConfigWithValidation);
     await coreAdapter.execute(
       `INSERT INTO identity_providers (id, tenant_id, name, provider_type, config_json, enabled, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -2053,7 +2169,7 @@ export async function handleCreateProvider(c: AdminSAMLContext): Promise<Respons
         tenantId,
         body.name,
         body.providerType,
-        JSON.stringify(normalizedConfigWithValidation),
+        JSON.stringify(emptyDraft ? {} : normalizedConfigWithValidation),
         providerEnabled ? 1 : 0,
         now,
         now,
@@ -2092,7 +2208,7 @@ export async function handleCreateProvider(c: AdminSAMLContext): Promise<Respons
         id,
         name: body.name,
         providerType: body.providerType,
-        config: normalizedConfigWithValidation,
+        config: emptyDraft ? {} : normalizedConfigWithValidation,
         enabled: providerEnabled,
         createdAt: new Date(now).toISOString(),
         updatedAt: new Date(now).toISOString(),
@@ -2216,6 +2332,8 @@ export async function handleUpdateProvider(c: AdminSAMLContext): Promise<Respons
       c,
       SINGLE_METADATA_REQUEST_LIMIT_BYTES
     );
+    if (body.config) body.config = writableSAMLProviderConfig(body.config);
+
     if (!body.expectedUpdatedAt) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
         variables: { field: 'expectedUpdatedAt' },
@@ -2232,8 +2350,14 @@ export async function handleUpdateProvider(c: AdminSAMLContext): Promise<Respons
     const existingConfig = JSON.parse(existing.config_json) as SAMLIdPConfig | SAMLSPConfig;
     const requestedEnabled = body.enabled !== undefined ? body.enabled : existing.enabled === 1;
 
-    // Merge config updates
-    const mergedConfig = body.config ? { ...existingConfig, ...body.config } : existingConfig;
+    // Merge config updates without turning an incomplete draft's defaults into explicit choices.
+    const providedConfig = body.config ? { ...existingConfig, ...body.config } : existingConfig;
+    const mergedConfig = fillSAMLProviderProvisioningDefaults(
+      existing.provider_type === 'saml_sp' ? 'saml_sp' : 'saml_idp',
+      providedConfig,
+      await resolveSamlProvisioningDefaults(c.env, tenantId),
+      { deferNameIdFormat: !providerConfigurationReady(existing.provider_type, providedConfig) }
+    );
     if (body.config?.metadataRefreshPolicy !== undefined) {
       mergedConfig.metadataRefreshPolicy =
         body.config.metadataUrl === undefined ||
@@ -2269,6 +2393,16 @@ export async function handleUpdateProvider(c: AdminSAMLContext): Promise<Respons
       const capabilityRefused = await refuseWhileSamlMetadataUrlOff(c);
       if (capabilityRefused) return capabilityRefused;
     }
+    if (requestedEnabled && !providerConfigurationReady(existing.provider_type, mergedConfig)) {
+      return c.json(
+        {
+          error: 'saml_configuration_required_to_enable',
+          error_description:
+            'Add the entity ID and ACS URL (SP), or entity ID, SSO URL and certificate (IdP), before enabling this provider.',
+        },
+        400
+      );
+    }
     const newConfig =
       existing.provider_type === 'saml_sp'
         ? normalizeSAMLSPConfig(mergedConfig as SAMLSPConfig, {
@@ -2300,7 +2434,7 @@ export async function handleUpdateProvider(c: AdminSAMLContext): Promise<Respons
     ) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
     }
-    if (body.enabled === true && newConfig.metadataRefreshPolicy) {
+    if (body.enabled !== undefined && newConfig.metadataRefreshPolicy) {
       newConfig.metadataRefreshPolicy = {
         ...newConfig.metadataRefreshPolicy,
         suspendedByMetadataSync: undefined,
@@ -2340,22 +2474,33 @@ export async function handleUpdateProvider(c: AdminSAMLContext): Promise<Respons
       (existingConfig as SAMLSPConfig).authnContextClassRefMode !==
         (newConfig as SAMLSPConfig).authnContextClassRefMode;
 
-    // A rename or a disable on its own does not widen what the tenant trusts (disabling is the
-    // containment path and stays available); a config change or an enable does.
-    if (body.config !== undefined || (nextEnabled && existing.enabled !== 1)) {
-      const refused = await requireSAMLTrustStepUp(c, {
-        tenantId,
-        targetIds: [existing.id],
-        params: {
-          action: 'provider.update',
-          name: body.name,
-          enabled: body.enabled,
-          expectedUpdatedAt: body.expectedUpdatedAt,
-          config_sha256: body.config === undefined ? undefined : await sha256Digest(body.config),
-        },
-      });
-      if (refused) return refused;
-    }
+    const level = await classifySAMLProviderTrustTransition({
+      env: c.env,
+      tenantId,
+      providerType: existing.provider_type,
+      wasEnabled: existing.enabled === 1,
+      requestedEnabled,
+      explicitlyDisabling: body.enabled === false,
+      previousConfig: existingConfig,
+      nextConfig: newConfigWithValidation,
+      configChanges: body.config,
+    });
+    const refused = await requireSAMLTrustStepUp(c, {
+      tenantId,
+      level,
+      targetIds: [existing.id],
+      params: {
+        action: 'provider.update',
+        name: body.name,
+        enabled: body.enabled,
+        expectedUpdatedAt: body.expectedUpdatedAt,
+        config_sha256: body.config === undefined ? undefined : await sha256Digest(body.config),
+        // Bind activation to the effective stored configuration, even without config in the PUT.
+        effective_config_sha256: await providerTrustConfigurationDigest(newConfig),
+      },
+    });
+    if (refused) return refused;
+    if (level === 'L2') await approveSAMLProviderTrust(newConfigWithValidation);
 
     const update = await coreAdapter.execute(
       `UPDATE identity_providers
@@ -2450,18 +2595,33 @@ export async function handleDeleteProvider(c: AdminSAMLContext): Promise<Respons
 
     const tenantId = resolveSAMLTenantIdFromContext(c);
     const coreAdapter = createAuthContextFromHono(c, tenantId).coreAdapter;
-    const existing = await coreAdapter.queryOne<{ id: string }>(
-      `SELECT id FROM identity_providers
+    const existing = await coreAdapter.queryOne<{
+      id: string;
+      provider_type: string;
+      config_json: string;
+    }>(
+      `SELECT id, provider_type, config_json FROM identity_providers
        WHERE id = ? AND tenant_id = ? AND provider_type IN ('saml_idp', 'saml_sp')`,
       [id, tenantId]
     );
     if (!existing) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
+    const deletionConfig: unknown = JSON.parse(existing.config_json ?? '{}');
+    const unblocksFederation = await providerDeletionUnblocksFederation(
+      c.env,
+      tenantId,
+      existing.provider_type,
+      deletionConfig
+    );
     const refused = await requireSAMLTrustStepUp(c, {
       tenantId,
       targetIds: [existing.id],
-      params: { action: 'provider.delete' },
+      level: unblocksFederation ? 'L2' : 'L1',
+      params: {
+        action: 'provider.delete',
+        ...(unblocksFederation ? { config_sha256: await sha256Digest(deletionConfig) } : {}),
+      },
     });
     if (refused) return refused;
     const result = await coreAdapter.execute(
@@ -2552,14 +2712,17 @@ export async function handleImportMetadata(c: AdminSAMLContext): Promise<Respons
     if (resolvedMetadata instanceof Response) {
       return resolvedMetadata;
     }
-    if (metadataIsAggregateOrThrow(resolvedMetadata.metadataXml)) {
-      throw new SAMLMetadataValidationError(
-        'Aggregate metadata must be previewed first and imported by selecting EntityDescriptor entries.'
-      );
-    }
-
     const metadataUrl = resolvedMetadata.metadataUrl;
     const existingConfig = JSON.parse(existing.config_json) as SAMLIdPConfig | SAMLSPConfig;
+    const wrappedEntity = metadataIsAggregateOrThrow(resolvedMetadata.metadataXml);
+    if (wrappedEntity) {
+      if (existingConfig.aggregateImport) {
+        throw new SAMLMetadataValidationError(
+          'Aggregate metadata must be previewed first and imported by selecting EntityDescriptor entries.'
+        );
+      }
+      resolvedMetadata.metadataXml = unwrapSingleEntityMetadata(resolvedMetadata.metadataXml);
+    }
     const previousAnalysis = buildPreviousMetadataAnalysis(existingConfig);
     let currentAnalysis: SAMLMetadataAnalysis;
     try {
@@ -2567,8 +2730,18 @@ export async function handleImportMetadata(c: AdminSAMLContext): Promise<Respons
     } catch (error) {
       throw toSAMLMetadataValidationError(error);
     }
+    if (
+      wrappedEntity &&
+      existingConfig.entityId &&
+      existingConfig.entityId !== currentAnalysis.criticalFields.entityId
+    ) {
+      throw new SAMLMetadataValidationError(
+        'Metadata entityID changed and requires explicit manual approval.'
+      );
+    }
     const refreshStatus = buildSAMLMetadataRefreshStatus(previousAnalysis, currentAnalysis);
     let newConfig: SAMLIdPConfig | SAMLSPConfig;
+    const provisioningDefaults = await resolveSamlProvisioningDefaults(c.env, tenantId);
 
     try {
       newConfig = buildConfigFromMetadata(
@@ -2576,11 +2749,7 @@ export async function handleImportMetadata(c: AdminSAMLContext): Promise<Respons
         resolvedMetadata.metadataXml,
         body.samlProfile,
         body.attributePresetId,
-        defaultsForRequestedBindings(
-          existing.provider_type,
-          existingConfig,
-          await resolveSamlProvisioningDefaults(c.env, tenantId)
-        )
+        defaultsForRequestedBindings(existing.provider_type, existingConfig, provisioningDefaults)
       );
     } catch (error) {
       throw new SAMLMetadataValidationError(
@@ -2589,56 +2758,76 @@ export async function handleImportMetadata(c: AdminSAMLContext): Promise<Respons
     }
 
     // Merge with existing config (preserve custom settings)
-    const mergedConfig = await withProviderCertificateValidation({
-      ...existingConfig,
-      ...newConfig,
-      // Parsed defaults must not erase the connection's custom mapping or local choices.
-      attributeMapping: existingConfig.attributeMapping ?? newConfig.attributeMapping,
-      ...('logoUrl' in existingConfig && 'logoUrl' in newConfig
-        ? { logoUrl: newConfig.logoUrl ?? existingConfig.logoUrl }
-        : {}),
-      nameIdFormat: body.samlProfile
-        ? newConfig.nameIdFormat
-        : (existingConfig.nameIdFormat ?? newConfig.nameIdFormat),
-      ...(!body.samlProfile &&
-      'authnRequestSignaturePolicy' in existingConfig &&
-      existingConfig.authnRequestSignaturePolicy === 'required'
-        ? { authnRequestSignaturePolicy: existingConfig.authnRequestSignaturePolicy }
-        : {}),
-      ...(!body.samlProfile && 'signResponses' in existingConfig
-        ? { signResponses: existingConfig.signResponses }
-        : {}),
-      ...(!body.samlProfile && 'signAssertions' in existingConfig && existingConfig.signAssertions
-        ? { signAssertions: true }
-        : {}),
-      metadataXml: resolvedMetadata.metadataXml,
-      ...(metadataUrl ? { metadataUrl } : {}),
-      metadataHash: currentAnalysis.hash,
-      metadataCriticalFields: currentAnalysis.criticalFields,
-      metadataRefreshStatus: refreshStatus,
-      metadataRefreshPolicy: metadataUrl
-        ? markSAMLMetadataRefreshSuccess(
-            metadataUrl === existingConfig.metadataUrl
-              ? existingConfig.metadataRefreshPolicy
-              : undefined,
-            metadataUrl
-          )
-        : normalizeSAMLMetadataRefreshPolicy(
-            existingConfig.metadataRefreshPolicy,
-            existingConfig.metadataUrl
-          ),
-      metadataLastFetched: Date.now(),
-    });
+    const mergedConfig = await withProviderCertificateValidation(
+      fillSAMLProviderProvisioningDefaults(
+        existing.provider_type === 'saml_sp' ? 'saml_sp' : 'saml_idp',
+        {
+          ...existingConfig,
+          ...newConfig,
+          // Parsed defaults must not erase the connection's custom mapping or local choices.
+          attributeMapping: existingConfig.attributeMapping ?? newConfig.attributeMapping,
+          ...('logoUrl' in existingConfig && 'logoUrl' in newConfig
+            ? { logoUrl: newConfig.logoUrl ?? existingConfig.logoUrl }
+            : {}),
+          nameIdFormat: body.samlProfile
+            ? newConfig.nameIdFormat
+            : (existingConfig.nameIdFormat ?? newConfig.nameIdFormat),
+          ...(!body.samlProfile &&
+          'authnRequestSignaturePolicy' in existingConfig &&
+          existingConfig.authnRequestSignaturePolicy === 'required'
+            ? { authnRequestSignaturePolicy: existingConfig.authnRequestSignaturePolicy }
+            : {}),
+          ...(!body.samlProfile && 'signResponses' in existingConfig
+            ? { signResponses: existingConfig.signResponses }
+            : {}),
+          ...(!body.samlProfile &&
+          'signAssertions' in existingConfig &&
+          existingConfig.signAssertions
+            ? { signAssertions: true }
+            : {}),
+          metadataXml: resolvedMetadata.metadataXml,
+          ...(metadataUrl ? { metadataUrl } : {}),
+          metadataHash: currentAnalysis.hash,
+          metadataCriticalFields: currentAnalysis.criticalFields,
+          metadataRefreshStatus: refreshStatus,
+          metadataRefreshPolicy: metadataUrl
+            ? markSAMLMetadataRefreshSuccess(
+                metadataUrl === existingConfig.metadataUrl
+                  ? existingConfig.metadataRefreshPolicy
+                  : undefined,
+                metadataUrl
+              )
+            : normalizeSAMLMetadataRefreshPolicy(
+                existingConfig.metadataRefreshPolicy,
+                existingConfig.metadataUrl
+              ),
+          metadataLastFetched: Date.now(),
+        },
+        provisioningDefaults
+      )
+    );
     const nextEnabled =
       existing.enabled === 1 && mergedConfig.certificateValidation?.allExpired !== true;
 
     const now = Math.max(Date.now(), existing.updated_at + 1);
+    const level = await classifySAMLProviderTrustTransition({
+      env: c.env,
+      tenantId,
+      providerType: existing.provider_type,
+      wasEnabled: existing.enabled === 1,
+      requestedEnabled: existing.enabled === 1,
+      previousConfig: existingConfig,
+      nextConfig: mergedConfig,
+      metadataOperation: true,
+    });
 
     const refused = await requireSAMLTrustStepUp(c, {
       tenantId,
       targetIds: [existing.id],
+      level,
       params: {
         action: 'provider.import_metadata',
+        effective_config_sha256: await providerTrustConfigurationDigest(mergedConfig),
         expectedUpdatedAt: body.expectedUpdatedAt,
         // What the request supplied: the XML itself, or the URL to fetch it from. A fetched
         // document is not bound (it can change between the refused request and its repeat, as
@@ -2652,6 +2841,7 @@ export async function handleImportMetadata(c: AdminSAMLContext): Promise<Respons
       },
     });
     if (refused) return refused;
+    if (level === 'L2') await approveSAMLProviderTrust(mergedConfig);
 
     const update = await coreAdapter.execute(
       'UPDATE identity_providers SET config_json = ?, enabled = ?, updated_at = ? WHERE id = ? AND tenant_id = ? AND updated_at = ?',
@@ -2845,7 +3035,9 @@ export async function handleRefreshMetadata(c: AdminSAMLContext): Promise<Respon
         'Aggregate-linked provider refresh requires aggregate metadata.'
       );
     }
-    if (fetchedAggregate) {
+    if (fetchedAggregate && !aggregateImport) {
+      metadataXml = unwrapSingleEntityMetadata(fetchedMetadataXml);
+    } else if (fetchedAggregate) {
       if (!aggregateImport?.aggregateEntityId) {
         throw new SAMLMetadataValidationError(
           'Aggregate metadata refresh requires an aggregate import entity snapshot.'
@@ -3018,18 +3210,30 @@ export async function handleRefreshMetadata(c: AdminSAMLContext): Promise<Respon
       (existing.enabled === 1 || restoreMetadataSuspension) &&
       mergedConfig.certificateValidation?.allExpired !== true;
 
-    // The fetched metadata can replace the provider's certificates and endpoints. The request's
-    // own inputs are the params: what the URL serves is not known to the console.
+    const level = await classifySAMLProviderTrustTransition({
+      env: c.env,
+      tenantId,
+      providerType: existing.provider_type,
+      wasEnabled: existing.enabled === 1,
+      requestedEnabled: existing.enabled === 1 || restoreMetadataSuspension,
+      previousConfig: existingConfig,
+      nextConfig: mergedConfig,
+      metadataOperation: true,
+    });
+    // Bind approval to the effective certificates and endpoints fetched from the URL.
     const refreshRefused = await requireSAMLTrustStepUp(c, {
       tenantId,
       targetIds: [existing.id],
+      level,
       params: {
         action: 'provider.refresh_metadata',
+        effective_config_sha256: await providerTrustConfigurationDigest(mergedConfig),
         metadataUrl,
         allowEntityIdChange: body.allowEntityIdChange === true,
       },
     });
     if (refreshRefused) return refreshRefused;
+    if (level === 'L2') await approveSAMLProviderTrust(mergedConfig);
 
     const update = await coreAdapter.execute(
       `UPDATE identity_providers
@@ -3317,6 +3521,7 @@ export async function handleStartAggregateBatchCreate(c: AdminSAMLContext): Prom
       });
     }
 
+    // Applying a federation snapshot is a trust operation even when its new rows start disabled.
     const refused = await requireSAMLTrustStepUp(c, {
       tenantId,
       targetIds: [previewId],
@@ -3538,8 +3743,9 @@ async function updateProviderSigningPolicy(
       id: string;
       provider_type: string;
       config_json: string;
+      updated_at: number;
     }>(
-      `SELECT id, provider_type, config_json
+      `SELECT id, provider_type, config_json, updated_at
        FROM identity_providers
        WHERE id = ? AND tenant_id = ? AND provider_type IN ('saml_idp', 'saml_sp')`,
       [id, tenantId]
@@ -3569,23 +3775,40 @@ async function updateProviderSigningPolicy(
       ...config,
       signingKeyPolicy,
     };
-    const now = Date.now();
+    const now = Math.max(Date.now(), existing.updated_at + 1);
+    const targetKey =
+      options.step === 'publish_next'
+        ? signingKeyPolicy.nextCandidates?.at(-1)
+        : options.step === 'promote_next'
+          ? getSAMLNextSigningCertificates(config.signingKeyPolicy)[0]
+          : config.signingKeyPolicy?.backup;
 
     const refused = await requireSAMLTrustStepUp(c, {
       tenantId,
       targetIds: [existing.id],
       params: {
         action: `provider.signing_rollover.${options.step}`,
-        // The certificate and key references of the request, as a digest.
+        // Bind the receipt to the stored preimage and selected public key, not only the body.
         request_sha256: await sha256Digest(body),
+        current_config_sha256: await providerTrustConfigurationDigest(config),
+        target_key_sha256: await sha256Digest({
+          keyRef: targetKey?.keyRef,
+          kid: targetKey?.kid,
+          certificate: targetKey?.certificate,
+        }),
+        expectedUpdatedAt: new Date(existing.updated_at).toISOString(),
       },
     });
     if (refused) return refused;
+    await approveSAMLProviderTrust(updatedConfig);
 
-    await coreAdapter.execute(
-      'UPDATE identity_providers SET config_json = ?, updated_at = ? WHERE id = ? AND tenant_id = ?',
-      [JSON.stringify(updatedConfig), now, id, tenantId]
+    const update = await coreAdapter.execute(
+      'UPDATE identity_providers SET config_json = ?, updated_at = ? WHERE id = ? AND tenant_id = ? AND updated_at = ?',
+      [JSON.stringify(updatedConfig), now, id, tenantId, existing.updated_at]
     );
+    if (update.rowsAffected !== 1) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
+    }
     await createSAMLAdminAudit(c, {
       tenantId,
       action: 'saml.signing_policy.updated',
@@ -3907,6 +4130,22 @@ function detectSAMLMetadataProviderType(metadataXml: string): 'saml_idp' | 'saml
   );
 }
 
+function providerConfigurationReady(
+  providerType: string,
+  config: { entityId?: string; acsUrl?: string; ssoUrl?: string; certificate?: string }
+): boolean {
+  return (
+    typeof config.entityId === 'string' &&
+    !!config.entityId.trim() &&
+    (providerType === 'saml_sp'
+      ? typeof config.acsUrl === 'string' && !!config.acsUrl.trim()
+      : typeof config.ssoUrl === 'string' &&
+        !!config.ssoUrl.trim() &&
+        typeof config.certificate === 'string' &&
+        !!config.certificate.trim())
+  );
+}
+
 function createSAMLMetadataValidationErrorResponse(
   c: AdminSAMLContext,
   error: SAMLMetadataValidationError
@@ -3965,7 +4204,7 @@ async function resolveMetadataImportInput(
   if (input.metadataXml) {
     const maxResponseSize = options.maxResponseSize ?? SINGLE_METADATA_FETCH_LIMIT_BYTES;
     if (new TextEncoder().encode(input.metadataXml).byteLength > maxResponseSize) {
-      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+      return c.json({ error: 'invalid_request', error_description: 'metadata_invalid_xml' }, 400);
     }
     if (input.metadataUrl) {
       const refused = await refuseWhileSamlMetadataUrlOff(c);
@@ -3976,7 +4215,11 @@ async function resolveMetadataImportInput(
         errorType: 'invalid_request',
         fieldName: 'metadataUrl',
       });
-      if (problem) return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+      if (problem)
+        return c.json(
+          { error: 'invalid_request', error_description: 'metadata_fetch_failed' },
+          400
+        );
     }
     return {
       metadataXml: input.metadataXml,
@@ -4001,7 +4244,7 @@ async function resolveMetadataImportInput(
     fieldName: 'metadataUrl',
   });
   if (ssrfError) {
-    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+    return c.json({ error: 'invalid_request', error_description: 'metadata_fetch_failed' }, 400);
   }
 
   try {
@@ -4011,7 +4254,7 @@ async function resolveMetadataImportInput(
     });
     return { metadataXml, metadataUrl: input.metadataUrl };
   } catch {
-    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+    return c.json({ error: 'invalid_request', error_description: 'metadata_fetch_failed' }, 400);
   }
 }
 
@@ -4554,6 +4797,7 @@ async function processAggregateBatchCreate(
             importedAt: now,
           },
         });
+        await approveSAMLProviderTrust(normalizedConfig);
         const providerEnabled =
           input.enabled && normalizedConfig.certificateValidation?.allExpired !== true;
         const name = buildProviderNameFromEntity(entityId, providerType);
@@ -5228,7 +5472,12 @@ export async function getSPConfig(
 
   const matches = result.flatMap((row) => {
     const config = JSON.parse(row.config_json) as SAMLSPConfig;
-    return config.entityId === entityId ? [{ row, config }] : [];
+    return !isUnapprovedSAMLProvider(config) &&
+      config.entityId &&
+      entityId &&
+      config.entityId === entityId
+      ? [{ row, config }]
+      : [];
   });
   if (matches.length > 1) {
     createLogger().module('SAML').warn('Ambiguous explicit SAML provider resolution denied', {
@@ -5304,7 +5553,12 @@ export async function getIdPConfigByEntityId(
 
   const matches = result.flatMap((row) => {
     const config = JSON.parse(row.config_json) as SAMLIdPConfig;
-    return config.entityId === entityId ? [{ row, config }] : [];
+    return !isUnapprovedSAMLProvider(config) &&
+      config.entityId &&
+      entityId &&
+      config.entityId === entityId
+      ? [{ row, config }]
+      : [];
   });
   if (matches.length > 1) {
     createLogger().module('SAML').warn('Ambiguous explicit SAML provider resolution denied', {
@@ -5337,15 +5591,17 @@ export async function getIdPUsageKeyByEntityId(
   tenantId: string,
   entityId: string
 ): Promise<{ providerId: string; ids: string[] } | null> {
+  if (!entityId) return null;
   const coreAdapter = await resolveSAMLProvidersCoreAdapter(env, tenantId);
   const rows = await coreAdapter.query<{ id: string; config_json: string }>(
     `SELECT id, config_json FROM identity_providers
      WHERE tenant_id = ? AND provider_type = 'saml_idp'`,
     [tenantId]
   );
-  const matches = rows.filter(
-    (row) => (JSON.parse(row.config_json) as SAMLIdPConfig).entityId === entityId
-  );
+  const matches = rows.filter((row) => {
+    const config = JSON.parse(row.config_json) as SAMLIdPConfig;
+    return !isUnapprovedSAMLProvider(config) && config.entityId === entityId;
+  });
   // An ambiguous entity id is refused where the IdP is resolved; no key is guessed here.
   const match = matches.length === 1 ? matches[0] : undefined;
   return match ? { providerId: match.id, ids: [`saml:${match.id}`, match.id] } : null;

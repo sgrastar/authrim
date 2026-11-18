@@ -5,6 +5,24 @@
 import type { jaServiceFlows } from './ja';
 
 export const arServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
+	'sf.rp.callbacksMissing':
+		'لم تتم إضافة عنوان URL لرد الاتصال، لذا لا يمكن تسجيل الدخول بعد. أضف العنوان في تفاصيل الاتصال.',
+	'sf.draft.skip': 'الإدخال لاحقًا',
+	'sf.draft.enterNow': 'الإدخال الآن',
+	'sf.draft.saved': 'تم الحفظ كمسودة',
+	'sf.draft.metadataRequired':
+		'للتفعيل، أضف معرّف الكيان وعنوان نقطة الاتصال. تتطلب اتصالات موفر الهوية شهادة توقيع أيضًا. يمكنك استيراد البيانات الوصفية.',
+	'sf.draft.openDetails': 'فتح تفاصيل الاتصال',
+	'sf.import.mode.xml': 'لصق XML',
+	'sf.metadata.xmlHint': 'الصق XML للبيانات الوصفية لمعاينته تلقائيًا.',
+	'sf.metadata.wrongRoleSp': 'يتطلب هذا الاتصال بيانات SP. تصف البيانات المستوردة موفر هوية IdP.',
+	'sf.metadata.wrongRoleIdp': 'يتطلب هذا الاتصال بيانات IdP. تصف البيانات المستوردة موفر خدمة SP.',
+	'sf.metadata.fetchFailed':
+		'تعذر جلب البيانات الوصفية. تحقق من عنوان HTTPS العام واستجابة الخادم.',
+	'sf.metadata.invalidXml': 'تعذرت قراءة XML لبيانات SAML الوصفية. تحقق من المحتوى وحجم الملف.',
+	'sf.metadata.aggregate': 'تحتوي هذه البيانات على كيانات متعددة. استخدم استيراد بيانات الاتحاد.',
+	'sf.draft.noMetadata': 'لم تتم إضافة بيانات وصفية بعد.',
+
 	'sf.live.status': 'حالة الاتصال',
 	'sf.live.enable': 'تفعيل',
 	'sf.live.disable': 'تعطيل',

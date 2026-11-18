@@ -1,9 +1,18 @@
 import { withExplicitMappingGraphs } from '@authrim/ar-lib-field-mapping/test-support';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { Hono } from 'hono';
 import { exportJWK, exportPKCS8, generateKeyPair } from 'jose';
 import { generateSelfSignedCertificate } from '../../common/key-utils';
 import { applySAMLAssertionEncryptionPolicy } from '../../idp/encryption';
-import { ADMIN_PERMISSIONS, type SAMLSPConfig } from '@authrim/ar-lib-core';
+import {
+  ADMIN_PERMISSIONS,
+  type Env,
+  type SAMLIdPConfig,
+  type SAMLSPConfig,
+} from '@authrim/ar-lib-core';
+import { handleSPLogin } from '../../sp/login';
+import { hasApprovedSAMLProviderTrust } from '../provider-trust';
+import { NAMEID_FORMATS } from '../../common/constants';
 import { PRODUCTION_INPUT_EDGES } from '../../idp/__fixtures__/production-shaped-mapping';
 import type { FieldCatalogBundle } from '@authrim/ar-lib-field-mapping/contract';
 
@@ -16,7 +25,9 @@ const mocks = vi.hoisted(() => ({
   stepUp: vi.fn(async (..._args: unknown[]): Promise<Response | null> => null),
   adapter: null as ReturnType<typeof createAdapter> | null,
   audit: vi.fn(async () => undefined),
+  logError: vi.fn(),
   safeFetchText: vi.fn(),
+  safeFetch: vi.fn(),
   refreshFederationSource: vi.fn(),
   runtimeBinding: {
     fieldMappingSetId: 'saml-sp',
@@ -45,8 +56,18 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     resolveAuthCorePersistenceAdapterFromEnv: vi.fn(async () => mocks.adapter),
     createAuditLog: mocks.audit,
     safeFetchText: mocks.safeFetchText,
+    safeFetch: mocks.safeFetch,
+    listEnvironmentTenantDefaultStores: vi.fn(async () => [{ tenantId: 'tenant-a' }]),
+    bumpAuthenticationMethodsCacheRevision: vi.fn(async () => undefined),
+    readLiteModeAuthoritative: vi.fn(async () => 'off'),
+    verifyHumanVerificationWithRunner: vi.fn(async () => ({ verified: true })),
+    readExternalProviderUsagePolicy: vi.fn(async () => ({
+      loginEnabled: true,
+      signupEnabled: true,
+    })),
+    getUIConfig: vi.fn(async () => null),
     getLogger: () => ({
-      module: () => ({ error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() }),
+      module: () => ({ error: mocks.logError, warn: vi.fn(), info: vi.fn(), debug: vi.fn() }),
     }),
   };
 });
@@ -101,7 +122,7 @@ function context(
     tenantId?: string;
     federation?: Record<string, unknown>;
   } = {}
-) {
+): Parameters<typeof handleCreateProvider>[0] {
   return {
     env: options.federation
       ? {
@@ -184,6 +205,7 @@ describe('SAML provider CRUD boundaries', () => {
     vi.clearAllMocks();
     mocks.adapter = createAdapter();
     mocks.safeFetchText.mockReset();
+    mocks.safeFetch.mockReset();
     mocks.refreshFederationSource.mockReset();
     mocks.runtimeBinding = {
       fieldMappingSetId: 'saml-sp',
@@ -197,6 +219,443 @@ describe('SAML provider CRUD boundaries', () => {
       destinationType: 'saml',
       fields: [{ key: 'mail' }, { key: 'displayName' }, { key: 'eduPersonAffiliation' }],
     };
+  });
+
+  it.each(['saml_sp', 'saml_idp'])(
+    'creates an empty disabled %s draft and refuses enabling it',
+    async (providerType) => {
+      const created = await handleCreateProvider(
+        context({ body: { name: 'Draft', providerType, enabled: false } })
+      );
+      expect(created.status).toBe(201);
+      expect(await created.json()).toMatchObject({ enabled: false, config: {} });
+      expect(persistedConfig()).toEqual({});
+      mocks.adapter!.queryOne.mockResolvedValue(
+        providerRow({ provider_type: providerType, enabled: 0, config_json: '{}' })
+      );
+      const read = await handleGetProvider(context({ id: 'provider-a' }));
+      expect(read.status).toBe(200);
+      expect(await read.json()).toMatchObject({ providerType, enabled: false });
+      mocks.adapter!.query.mockResolvedValue([
+        providerRow({ provider_type: providerType, enabled: 0, config_json: '{}' }),
+      ]);
+      const listed = await handleListProviders(context());
+      expect(listed.status).toBe(200);
+      expect(await listed.json()).toMatchObject({ providers: [{ providerType, enabled: false }] });
+      mocks.adapter!.query.mockResolvedValue([]);
+      const refused = await handleUpdateProvider(
+        context({
+          id: 'provider-a',
+          body: { enabled: true, expectedUpdatedAt: new Date(1_700_000_001_000).toISOString() },
+        })
+      );
+      expect(refused.status).toBe(400);
+      expect(await refused.json()).toMatchObject({
+        error: 'saml_configuration_required_to_enable',
+      });
+    }
+  );
+
+  it('fills an SP draft and enables it after its configuration and mapping are saved', async () => {
+    mocks.adapter!.queryOne.mockResolvedValue(providerRow({ enabled: 0, config_json: '{}' }));
+    const completed = await handleUpdateProvider(
+      context({
+        id: 'provider-a',
+        body: {
+          expectedUpdatedAt: new Date(1_700_000_001_000).toISOString(),
+          config: {
+            entityId: 'https://sp.example.test',
+            acsUrl: 'https://sp.example.test/acs',
+            identityMapping: {
+              fieldMappingSetId: 'saml-sp',
+              destinationFieldPolicies: {
+                mail: 'optional',
+                displayName: 'optional',
+                eduPersonAffiliation: 'optional',
+              },
+            },
+          },
+        },
+      })
+    );
+    expect(completed.status).toBe(200);
+    const saved = await responseBody<{ config: Record<string, unknown>; updatedAt: string }>(
+      completed
+    );
+    mocks.adapter!.queryOne.mockResolvedValue(
+      providerRow({
+        enabled: 0,
+        config_json: JSON.stringify(saved.config),
+        updated_at: Date.parse(saved.updatedAt),
+      })
+    );
+    const enabled = await handleUpdateProvider(
+      context({ id: 'provider-a', body: { enabled: true, expectedUpdatedAt: saved.updatedAt } })
+    );
+    expect(enabled.status).toBe(200);
+    expect(await enabled.json()).toMatchObject({ enabled: true });
+  });
+
+  it.each(['saml_sp', 'saml_idp'])(
+    'imports metadata into a %s draft before enabling it',
+    async (providerType) => {
+      mocks.adapter!.queryOne.mockResolvedValue(
+        providerRow({ provider_type: providerType, enabled: 0, config_json: '{}' })
+      );
+      const metadataXml =
+        providerType === 'saml_sp'
+          ? validSpMetadata()
+          : `<md:EntityDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata" xmlns:ds="http://www.w3.org/2000/09/xmldsig#" entityID="urn:synthetic:idp"><md:IDPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol"><md:KeyDescriptor><ds:KeyInfo><ds:X509Data><ds:X509Certificate>VEVTVA==</ds:X509Certificate></ds:X509Data></ds:KeyInfo></md:KeyDescriptor><md:SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST" Location="https://idp.example.test/sso" /></md:IDPSSODescriptor></md:EntityDescriptor>`;
+      const imported = await handleImportMetadata(
+        context({
+          id: 'provider-a',
+          body: { metadataXml, expectedUpdatedAt: new Date(1_700_000_001_000).toISOString() },
+        })
+      );
+      expect(imported.status).toBe(200);
+      const saved = await responseBody<{
+        config: Record<string, unknown>;
+        updatedAt: string;
+        enabled: boolean;
+      }>(imported);
+      expect(saved.enabled).toBe(false);
+      expect(saved.config.entityId).toBeTruthy();
+      mocks.adapter!.queryOne.mockResolvedValue(
+        providerRow({
+          provider_type: providerType,
+          enabled: 0,
+          config_json: JSON.stringify(saved.config),
+          updated_at: Date.parse(saved.updatedAt),
+        })
+      );
+      const enabled = await handleUpdateProvider(
+        context({
+          id: 'provider-a',
+          body: {
+            enabled: true,
+            expectedUpdatedAt: saved.updatedAt,
+            config: {
+              identityMapping: {
+                fieldMappingSetId: 'saml-sp',
+                destinationFieldPolicies: {
+                  mail: 'optional',
+                  displayName: 'optional',
+                  eduPersonAffiliation: 'optional',
+                },
+              },
+              ...(providerType === 'saml_idp'
+                ? { jitEmailLinkingPolicy: 'disabled', allowSyntheticEmailFallback: false }
+                : {}),
+            },
+          },
+        })
+      );
+      expect(enabled.status).toBe(200);
+      expect(await enabled.json()).toMatchObject({ enabled: true });
+    }
+  );
+
+  it('does not resolve disabled drafts with an absent or empty entity ID', async () => {
+    mocks.adapter!.query.mockResolvedValue([{ config_json: '{}', enabled: 0 }]);
+    expect(await getSPConfig(context().env, 'tenant-a', '')).toBeNull();
+    expect(await getIdPConfigByEntityId(context().env, 'tenant-a', '')).toBeNull();
+  });
+
+  it.each(['disabled', 'jit_create_only', 'email_linking'])(
+    'preserves the explicit %s IdP linking policy from draft creation through import and enable',
+    async (jitEmailLinkingPolicy) => {
+      const adapter = mocks.adapter;
+      if (!adapter) throw new Error('Missing adapter');
+      const created = await handleCreateProvider(
+        context({
+          body: {
+            name: 'Deferred IdP',
+            providerType: 'saml_idp',
+            enabled: false,
+            config: { jitEmailLinkingPolicy, allowSyntheticEmailFallback: false },
+          },
+        })
+      );
+      expect(created.status).toBe(201);
+      const draft = await responseBody<{ config: SAMLIdPConfig; updatedAt: string }>(created);
+      expect(draft.config).toMatchObject({
+        jitEmailLinkingPolicy,
+        allowSyntheticEmailFallback: false,
+      });
+      expect(persistedConfig()).toMatchObject({
+        jitEmailLinkingPolicy,
+        allowSyntheticEmailFallback: false,
+      });
+      expect(draft.config).not.toHaveProperty('nameIdFormat');
+      expect(persistedConfig()).not.toHaveProperty('nameIdFormat');
+      adapter.queryOne.mockResolvedValue(
+        providerRow({
+          provider_type: 'saml_idp',
+          enabled: 0,
+          config_json: JSON.stringify(draft.config),
+          updated_at: Date.parse(draft.updatedAt),
+        })
+      );
+      const edited = await handleUpdateProvider(
+        context({
+          id: 'provider-a',
+          body: {
+            expectedUpdatedAt: draft.updatedAt,
+            name: 'Deferred IdP renamed',
+            config: { entityId: 'urn:imported:idp' },
+          },
+        })
+      );
+      expect(edited.status).toBe(200);
+      const incomplete = await responseBody<{ config: SAMLIdPConfig; updatedAt: string }>(edited);
+      expect(incomplete.config).not.toHaveProperty('nameIdFormat');
+      const updateParameters: unknown = adapter.execute.mock.calls.at(-1)?.[1];
+      if (!Array.isArray(updateParameters)) throw new Error('Missing draft update');
+      expect(JSON.parse(String(updateParameters[1]))).not.toHaveProperty('nameIdFormat');
+      adapter.queryOne.mockResolvedValue(
+        providerRow({
+          provider_type: 'saml_idp',
+          enabled: 0,
+          config_json: JSON.stringify(incomplete.config),
+          updated_at: Date.parse(incomplete.updatedAt),
+        })
+      );
+      const imported = await handleImportMetadata(
+        context({
+          id: 'provider-a',
+          body: {
+            expectedUpdatedAt: incomplete.updatedAt,
+            metadataXml: validIdpMetadata('VEVTVA==', NAMEID_FORMATS.PERSISTENT),
+          },
+        })
+      );
+      expect(imported.status).toBe(200);
+      const complete = await responseBody<{ config: SAMLIdPConfig; updatedAt: string }>(imported);
+      expect(complete.config).toMatchObject({
+        nameIdFormat: NAMEID_FORMATS.PERSISTENT,
+        jitEmailLinkingPolicy,
+        allowSyntheticEmailFallback: false,
+      });
+      adapter.queryOne.mockResolvedValue(
+        providerRow({
+          provider_type: 'saml_idp',
+          enabled: 0,
+          config_json: JSON.stringify(complete.config),
+          updated_at: Date.parse(complete.updatedAt),
+        })
+      );
+      const enabled = await handleUpdateProvider(
+        context({
+          id: 'provider-a',
+          body: {
+            expectedUpdatedAt: complete.updatedAt,
+            enabled: true,
+            config: { identityMapping: { fieldMappingSetId: 'saml-sp' } },
+          },
+        })
+      );
+      expect(enabled.status).toBe(200);
+      expect(await enabled.json()).toMatchObject({
+        enabled: true,
+        config: {
+          jitEmailLinkingPolicy,
+          allowSyntheticEmailFallback: false,
+          allowedBindings: ['post'],
+          nameIdFormat: NAMEID_FORMATS.PERSISTENT,
+        },
+      });
+    }
+  );
+
+  it('preserves an explicit draft NameID format when the first metadata import names another', async () => {
+    const adapter = mocks.adapter;
+    if (!adapter) throw new Error('Missing adapter');
+    const created = await handleCreateProvider(
+      context({
+        body: {
+          name: 'Explicit NameID choice',
+          providerType: 'saml_idp',
+          enabled: false,
+          config: { jitEmailLinkingPolicy: 'disabled', nameIdFormat: NAMEID_FORMATS.EMAIL },
+        },
+      })
+    );
+    expect(created.status).toBe(201);
+    const draft = await responseBody<{ config: SAMLIdPConfig; updatedAt: string }>(created);
+    expect(persistedConfig().nameIdFormat).toBe(NAMEID_FORMATS.EMAIL);
+    adapter.queryOne.mockResolvedValue(
+      providerRow({
+        provider_type: 'saml_idp',
+        enabled: 0,
+        config_json: JSON.stringify(draft.config),
+        updated_at: Date.parse(draft.updatedAt),
+      })
+    );
+    const imported = await handleImportMetadata(
+      context({
+        id: 'provider-a',
+        body: {
+          expectedUpdatedAt: draft.updatedAt,
+          metadataXml: validIdpMetadata('VEVTVA==', NAMEID_FORMATS.PERSISTENT),
+        },
+      })
+    );
+    expect(imported.status).toBe(200);
+    expect(await imported.json()).toMatchObject({
+      config: { nameIdFormat: NAMEID_FORMATS.EMAIL, jitEmailLinkingPolicy: 'disabled' },
+    });
+  });
+
+  it.each(['complete-and-enable', 'complete-then-enable', 'enable-legacy-manual'])(
+    'fills IdP defaults through %s and starts SP-initiated SSO',
+    async (operation) => {
+      const adapter = mocks.adapter;
+      if (!adapter) throw new Error('Missing adapter');
+      const federation = {
+        'federation.saml_sso_binding': 'HTTP-POST',
+        'federation.saml_nameid_format': 'persistent',
+      };
+      const created = await handleCreateProvider(
+        context({
+          federation,
+          body: { name: 'Manual draft', providerType: 'saml_idp', enabled: false },
+        })
+      );
+      expect(created.status).toBe(201);
+      const draft = await responseBody<{ config: SAMLIdPConfig; updatedAt: string }>(created);
+      expect(draft.config).toEqual({});
+      const signingKey = await generateKeyPair('RS256', { extractable: true });
+      const certificate = await generateSelfSignedCertificate(
+        await exportJWK(signingKey.publicKey),
+        await exportPKCS8(signingKey.privateKey)
+      );
+      const manualConfig = {
+        entityId: 'urn:manual:idp',
+        ssoUrl: 'https://idp.example.test/sso',
+        certificate,
+        jitEmailLinkingPolicy: 'disabled',
+        allowSyntheticEmailFallback: false,
+        identityMapping: { fieldMappingSetId: 'saml-sp' },
+      };
+      adapter.queryOne.mockResolvedValue(
+        providerRow({
+          provider_type: 'saml_idp',
+          enabled: 0,
+          config_json: JSON.stringify(
+            operation === 'enable-legacy-manual' ? manualConfig : draft.config
+          ),
+          updated_at: Date.parse(draft.updatedAt),
+        })
+      );
+      const completed = await handleUpdateProvider(
+        context({
+          id: 'provider-a',
+          federation,
+          body: {
+            expectedUpdatedAt: draft.updatedAt,
+            ...(operation !== 'enable-legacy-manual' ? { config: manualConfig } : {}),
+            enabled: operation !== 'complete-then-enable',
+          },
+        })
+      );
+      expect(completed.status).toBe(200);
+      let saved = await responseBody<{
+        config: SAMLIdPConfig;
+        enabled: boolean;
+        updatedAt: string;
+      }>(completed);
+      if (operation === 'complete-then-enable') {
+        expect(saved.enabled).toBe(false);
+        adapter.queryOne.mockResolvedValue(
+          providerRow({
+            provider_type: 'saml_idp',
+            enabled: 0,
+            config_json: JSON.stringify(saved.config),
+            updated_at: Date.parse(saved.updatedAt),
+          })
+        );
+        const enabled = await handleUpdateProvider(
+          context({
+            id: 'provider-a',
+            federation,
+            body: { expectedUpdatedAt: saved.updatedAt, enabled: true },
+          })
+        );
+        expect(enabled.status).toBe(200);
+        saved = await responseBody(enabled);
+      }
+      expect(saved.enabled).toBe(true);
+      const parameters: unknown = adapter.execute.mock.calls.at(-1)?.[1];
+      if (!Array.isArray(parameters) || typeof parameters[1] !== 'string')
+        throw new Error('Missing persisted IdP configuration');
+      const configJson = parameters[1];
+      expect(JSON.parse(configJson)).toEqual(saved.config);
+      adapter.queryOne.mockResolvedValue(
+        providerRow({
+          provider_type: 'saml_idp',
+          enabled: 1,
+          config_json: configJson,
+          updated_at: Date.parse(saved.updatedAt),
+        })
+      );
+      const storeRequest = vi.fn(async (_url: string, _init: RequestInit) => new Response('OK'));
+      const env = Object.assign(context({ federation }).env, {
+        ISSUER_URL: 'https://auth.example.test',
+        SAML_REQUEST_STORE: {
+          idFromName: vi.fn((name: string) => name),
+          get: vi.fn(() => ({ fetch: storeRequest })),
+        },
+      });
+      const app = new Hono<{ Bindings: Env; Variables: { tenantId: string } }>();
+      app.use('*', async (c, next) => {
+        c.set('tenantId', 'tenant-a');
+        await next();
+      });
+      app.get('/saml/sp/login', handleSPLogin);
+      const response = await app.request('/saml/sp/login?idp=provider-a', {}, env);
+      expect(
+        mocks.logError.mock.calls.map((call) =>
+          call[2] instanceof Error ? call[2].message : 'Unknown error'
+        )
+      ).toEqual([]);
+      expect(response.status).toBe(200);
+      const html = await response.text();
+      expect(html).toContain('name="SAMLRequest"');
+      expect(html).toContain('action="https://idp.example.test/sso"');
+      expect(storeRequest).toHaveBeenCalledOnce();
+      expect(saved.config).toMatchObject({
+        allowedBindings: ['post'],
+        nameIdFormat: 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent',
+        jitEmailLinkingPolicy: 'disabled',
+        allowSyntheticEmailFallback: false,
+      });
+    }
+  );
+
+  it('unwraps a single entity and returns its detected role even when the hint differs', async () => {
+    const response = await handlePreviewMetadata(
+      context({ body: { providerType: 'saml_idp', metadataXml: aggregateMetadata() } })
+    );
+    expect(response.status).toBe(200);
+    const body = await responseBody<{ config: { metadataXml: string } }>(response);
+    expect(body).toMatchObject({ kind: 'single', providerType: 'saml_sp' });
+    expect(body.config.metadataXml).not.toContain('EntitiesDescriptor');
+  });
+
+  it('distinguishes fetch failures from invalid XML without exposing fetch details', async () => {
+    mocks.safeFetchText.mockRejectedValue(new Error('private network detail'));
+    const fetched = await handlePreviewMetadata(
+      context({
+        body: { providerType: 'saml_sp', metadataUrl: 'https://metadata.example.test/sp.xml' },
+      })
+    );
+    expect(fetched.status).toBe(400);
+    expect(await fetched.json()).toMatchObject({ error_description: 'metadata_fetch_failed' });
+    const invalid = await handlePreviewMetadata(
+      context({ body: { providerType: 'saml_sp', metadataXml: '<broken' } })
+    );
+    expect(invalid.status).toBe(400);
+    expect(await invalid.json()).toMatchObject({ error_description: 'metadata_invalid_xml' });
   });
 
   it('requires authentication and the specific admin permission', async () => {
@@ -1603,7 +2062,9 @@ describe('SAML provider CRUD boundaries', () => {
     );
 
     expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({
+    const saved = await responseBody<{ config: SAMLSPConfig }>(response);
+    expect(saved.config.metadataRefreshPolicy).not.toHaveProperty('suspendedByMetadataSync');
+    expect(saved).toMatchObject({
       enabled: false,
       config: {
         metadataRefreshPolicy: {
@@ -1611,7 +2072,6 @@ describe('SAML provider CRUD boundaries', () => {
           intervalSeconds: 3_600,
           sourceState: 'missing',
           lastErrorCode: 'federation_entity_missing',
-          suspendedByMetadataSync: true,
         },
       },
     });
@@ -1963,6 +2423,84 @@ describe('SAML provider CRUD boundaries', () => {
     expect(mocks.adapter!.query).toHaveBeenCalledOnce();
   });
 
+  it.each(['saml_sp', 'saml_idp'])(
+    'keeps unapproved %s drafts out of federation fallback and usage resolution',
+    async (role) => {
+      const adapter = mocks.adapter;
+      if (!adapter) throw new Error('Missing adapter');
+      const entityId = role === 'saml_sp' ? 'https://sp.example.test' : 'urn:imported:idp';
+      const xml = role === 'saml_sp' ? validSpMetadata() : validIdpMetadata('VEVTVA==');
+      const created = await handleCreateProvider(
+        context({
+          body: { name: 'Unapproved', providerType: role, enabled: false, metadataXml: xml },
+        })
+      );
+      expect(created.status).toBe(201);
+      const draft = await responseBody<{ config: SAMLIdPConfig | SAMLSPConfig; updatedAt: string }>(
+        created
+      );
+      expect(draft.config.trustApproval).toEqual({ state: 'draft' });
+      const federation = {
+        trust_source_id: 'source-a',
+        trust_context_snapshot_hash: 'context-a',
+        source_url: 'https://metadata.example.test/federation.xml',
+        protocol_payload_json: JSON.stringify({
+          runtimeResolution: {
+            mode: 'automatic',
+            roles: [role],
+            spFieldMappingSetId: 'saml-sp',
+            idpFieldMappingSetId: 'saml-sp',
+          },
+        }),
+        metadata_xml: xml,
+        entity_categories_json: '[]',
+        entity_category_support_json: '[]',
+        registration_authority: null,
+        valid_until: '2099-01-01T00:00:00Z',
+        validated_at: 1,
+      };
+      adapter.query.mockImplementation(async (sql: string) =>
+        sql.includes('federation_saml_runtime_entities')
+          ? [federation]
+          : [{ id: 'draft-a', enabled: 0, config_json: JSON.stringify(draft.config) }]
+      );
+      const resolve = () =>
+        role === 'saml_sp'
+          ? getSPConfig(context().env, 'tenant-a', entityId)
+          : getIdPConfigByEntityId(context().env, 'tenant-a', entityId);
+      expect(await resolve()).toMatchObject({
+        entityId,
+        aggregateImport: { federationTrustProfileId: 'source-a' },
+      });
+      if (role === 'saml_idp')
+        expect(await getIdPUsageKeyByEntityId(context().env, 'tenant-a', entityId)).toBeNull();
+      // Moving an existing draft to another federation entity remains non-authoritative too.
+      adapter.queryOne.mockResolvedValue(
+        providerRow({
+          provider_type: role,
+          enabled: 0,
+          config_json: JSON.stringify({ ...draft.config, entityId: 'urn:unapproved:old' }),
+          updated_at: Date.parse(draft.updatedAt),
+        })
+      );
+      adapter.query.mockResolvedValueOnce([]);
+      const changed = await handleUpdateProvider(
+        context({
+          id: 'draft-a',
+          body: {
+            expectedUpdatedAt: draft.updatedAt,
+            config: { entityId },
+          },
+        })
+      );
+      expect(changed.status).toBe(200);
+      const moved = await responseBody<{ config: SAMLIdPConfig | SAMLSPConfig }>(changed);
+      expect(moved.config.trustApproval).toEqual({ state: 'draft' });
+      expect(await resolve()).toMatchObject({ entityId });
+      expect(mocks.stepUp).not.toHaveBeenCalled();
+    }
+  );
+
   it('does not fall back to an aggregate when an explicit provider is disabled', async () => {
     mocks.adapter!.query.mockResolvedValueOnce([
       {
@@ -2260,9 +2798,12 @@ describe('SAML provider CRUD boundaries', () => {
       })
     );
     expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({
+    const saved = await responseBody<{ config: SAMLSPConfig }>(response);
+    expect(await hasApprovedSAMLProviderTrust(saved.config)).toBe(true);
+    expect(saved).toMatchObject({
       config: {
         ...imported.config,
+        trustApproval: saved.config.trustApproval,
         assertionValiditySeconds: 600,
         metadataRefreshPolicy: {
           mode: 'automatic',
@@ -2301,7 +2842,7 @@ describe('SAML provider CRUD boundaries', () => {
 
   it.each([
     ['malformed XML', '<not-metadata/>'],
-    ['aggregate XML', aggregateMetadata()],
+    ['aggregate XML', aggregateMetadata(2)],
   ])('rejects %s during metadata import', async (_name, metadataXml) => {
     mocks.adapter!.queryOne.mockResolvedValue(providerRow());
     const response = await handleImportMetadata(
@@ -2428,15 +2969,7 @@ describe('SAML provider CRUD boundaries', () => {
         custom_extension: { keep: true },
       });
       expect(mocks.safeFetchText).not.toHaveBeenCalled();
-      expect(mocks.stepUp.mock.calls[0]?.[1]).toMatchObject({
-        params: {
-          expectedUpdatedAt: updatedAt,
-          metadataUrl: 'https://metadata.example.test/sp.xml',
-        },
-      });
-      expect(JSON.stringify(mocks.stepUp.mock.calls[0]?.[1])).toMatch(
-        /"metadata_sha256":"[a-f0-9]{64}"/
-      );
+      expect(mocks.stepUp).not.toHaveBeenCalled();
     });
 
     it('preserves IdP mapping, custom logo and JIT settings when importing new SSO details', async () => {
@@ -2512,7 +3045,6 @@ describe('SAML provider CRUD boundaries', () => {
     });
 
     it.each([
-      ['wrong role', { providerType: 'saml_idp', metadataXml: validSpMetadata() }],
       ['unknown role', { providerType: 'unknown', metadataXml: validSpMetadata() }],
       ['malformed', { providerType: 'saml_sp', metadataXml: '<EntityDescriptor' }],
       [
@@ -2522,7 +3054,19 @@ describe('SAML provider CRUD boundaries', () => {
           metadataXml: '<!DOCTYPE x [<!ENTITY x SYSTEM "file:///synthetic">]><x>&x;</x>',
         },
       ],
-      ['aggregate', { providerType: 'saml_sp', metadataXml: aggregateMetadata() }],
+      [
+        'aggregate',
+        {
+          providerType: 'saml_sp',
+          metadataXml: aggregateMetadata().replace(
+            '</md:EntitiesDescriptor>',
+            validSpMetadata()
+              .replace('<?xml version="1.0"?>', '')
+              .replaceAll('https://sp.example.test', 'https://second.example.test') +
+              '</md:EntitiesDescriptor>'
+          ),
+        },
+      ],
       [
         'oversize',
         { providerType: 'saml_sp', metadataXml: validSpMetadata() + ' '.repeat(1024 * 1024) },
@@ -2956,7 +3500,184 @@ describe('SAML provider CRUD boundaries', () => {
     expect(response.status).toBe(409);
   });
 
-  it('rejects aggregate refresh without the stored aggregate entity snapshot', async () => {
+  it.each(['import', 'refresh', 'poll'])(
+    'creates from a single-entity URL preview and applies certificate and endpoint changes through %s',
+    async (operation) => {
+      const adapter = mocks.adapter;
+      if (!adapter) throw new Error('Missing test adapter');
+      const metadataUrl = 'https://metadata.example.test/wrapped.xml';
+      mocks.safeFetchText.mockResolvedValue(aggregateMetadata());
+      const previewResponse = await handlePreviewMetadata(
+        context({ body: { providerType: 'saml_sp', metadataUrl } })
+      );
+      expect(previewResponse.status).toBe(200);
+      const preview = await responseBody<{ config: { metadataXml: string; metadataUrl: string } }>(
+        previewResponse
+      );
+      const createResponse = await handleCreateProvider(
+        context({
+          body: {
+            name: 'Single wrapped entity',
+            providerType: 'saml_sp',
+            enabled: false,
+            metadataXml: preview.config.metadataXml,
+            metadataUrl: preview.config.metadataUrl,
+          },
+        })
+      );
+      expect(createResponse.status).toBe(201);
+      const created = await responseBody<{ config: SAMLSPConfig; updatedAt: string }>(
+        createResponse
+      );
+      expect(created.config.aggregateImport).toBeUndefined();
+      expect(created.config.metadataUrl).toBe(metadataUrl);
+      const row = providerRow({
+        enabled: 0,
+        config_json: JSON.stringify(created.config),
+        updated_at: Date.parse(created.updatedAt),
+      });
+      adapter.queryOne.mockResolvedValue(row);
+      adapter.query.mockImplementation(async (sql: string) =>
+        sql.includes('FROM identity_providers') ? [row] : []
+      );
+      adapter.execute.mockClear();
+      const signingKey = await generateKeyPair('RS256', { extractable: true });
+      const certificate = await generateSelfSignedCertificate(
+        await exportJWK(signingKey.publicKey),
+        await exportPKCS8(signingKey.privateKey)
+      );
+      const certificateBody = certificate.replace(
+        /-----BEGIN CERTIFICATE-----|-----END CERTIFICATE-----|\s+/g,
+        ''
+      );
+      const updatedMetadata = aggregateMetadata()
+        .replace('https://sp.example.test/acs', 'https://sp.example.test/rotated-acs')
+        .replace(
+          '</md:SPSSODescriptor>',
+          `<md:KeyDescriptor use="signing"><ds:KeyInfo xmlns:ds="http://www.w3.org/2000/09/xmldsig#"><ds:X509Data><ds:X509Certificate>${certificateBody}</ds:X509Certificate></ds:X509Data></ds:KeyInfo></md:KeyDescriptor></md:SPSSODescriptor>`
+        );
+      mocks.safeFetchText.mockResolvedValue(updatedMetadata);
+      if (operation === 'poll') {
+        mocks.safeFetch.mockResolvedValue(new Response(updatedMetadata));
+        const { pollSAMLMetadata } =
+          await vi.importActual<typeof import('../metadata-polling')>('../metadata-polling');
+        expect(await pollSAMLMetadata(context().env, Date.now() + 86_400_000)).toMatchObject({
+          individualProvidersProcessed: 1,
+          individualProvidersFailed: 0,
+        });
+        expect(mocks.safeFetch).toHaveBeenCalledOnce();
+      } else {
+        const refreshed =
+          operation === 'import'
+            ? await handleImportMetadata(
+                context({
+                  id: row.id,
+                  body: { metadataUrl, expectedUpdatedAt: created.updatedAt },
+                })
+              )
+            : await handleRefreshMetadata(context({ id: row.id, body: {} }));
+        expect(refreshed.status).toBe(200);
+        expect(await refreshed.json()).toMatchObject({
+          config: { acsUrl: 'https://sp.example.test/rotated-acs', metadataUrl },
+        });
+      }
+      const parameters: unknown = adapter.execute.mock.calls.at(-1)?.[1];
+      if (!Array.isArray(parameters)) throw new Error('Missing metadata update');
+      const persisted: unknown = JSON.parse(String(parameters[0]));
+      expect(persisted).toMatchObject({
+        entityId: 'https://sp.example.test',
+        acsUrl: 'https://sp.example.test/rotated-acs',
+        certificates: [expect.stringContaining(certificateBody)],
+        metadataUrl,
+        metadataRefreshPolicy: { sourceState: 'healthy', consecutiveFailures: 0 },
+      });
+      expect(persisted).not.toHaveProperty('aggregateImport');
+      expect(JSON.stringify(persisted)).not.toContain('EntitiesDescriptor');
+    }
+  );
+
+  it.each([1, 2])(
+    'creates from a wrapped metadata URL only when it has one entity (%i)',
+    async (count) => {
+      mocks.safeFetchText.mockResolvedValue(aggregateMetadata(count));
+      const response = await handleCreateProvider(
+        context({
+          body: {
+            name: 'Wrapped URL',
+            providerType: 'saml_sp',
+            enabled: false,
+            metadataUrl: 'https://metadata.example.test/wrapped.xml',
+          },
+        })
+      );
+      expect(response.status).toBe(count === 1 ? 201 : 400);
+      if (count === 1) {
+        expect(persistedConfig()).toMatchObject({
+          entityId: 'https://sp.example.test',
+          metadataUrl: 'https://metadata.example.test/wrapped.xml',
+        });
+      } else expect(mocks.adapter?.execute).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(['import', 'refresh', 'poll'])(
+    'refuses a different entity from a wrapped metadata URL through %s',
+    async (operation) => {
+      const adapter = mocks.adapter;
+      if (!adapter) throw new Error('Missing test adapter');
+      const metadataUrl = 'https://metadata.example.test/wrapped.xml';
+      const row = providerRow({
+        config_json: JSON.stringify({
+          entityId: 'https://sp.example.test',
+          acsUrl: 'https://sp.example.test/acs',
+          metadataUrl,
+          metadataRefreshPolicy: { mode: 'automatic', intervalSeconds: 21_600, nextRefreshAt: 0 },
+        }),
+      });
+      adapter.queryOne.mockResolvedValue(row);
+      adapter.query.mockImplementation(async (sql: string) =>
+        sql.includes('FROM identity_providers') ? [row] : []
+      );
+      const changed = aggregateMetadata().replaceAll(
+        'https://sp.example.test',
+        'https://other.test'
+      );
+      mocks.safeFetchText.mockResolvedValue(changed);
+      if (operation === 'poll') {
+        mocks.safeFetch.mockResolvedValue(new Response(changed));
+        const { pollSAMLMetadata } =
+          await vi.importActual<typeof import('../metadata-polling')>('../metadata-polling');
+        expect(await pollSAMLMetadata(context().env)).toMatchObject({
+          individualProvidersProcessed: 0,
+          individualProvidersFailed: 1,
+        });
+      } else {
+        const rejected =
+          operation === 'import'
+            ? await handleImportMetadata(
+                context({
+                  id: row.id,
+                  body: { metadataUrl, expectedUpdatedAt: new Date(row.updated_at).toISOString() },
+                })
+              )
+            : await handleRefreshMetadata(context({ id: row.id, body: {} }));
+        expect(rejected.status).toBe(400);
+      }
+      if (operation === 'import') expect(adapter.execute).not.toHaveBeenCalled();
+      else {
+        const parameters: unknown = adapter.execute.mock.calls.at(-1)?.[1];
+        if (!Array.isArray(parameters)) throw new Error('Missing refresh failure state');
+        const persisted: unknown = JSON.parse(String(parameters[0]));
+        expect(persisted).toMatchObject({
+          entityId: 'https://sp.example.test',
+          acsUrl: 'https://sp.example.test/acs',
+          metadataRefreshPolicy: { sourceState: 'identity_change_pending' },
+        });
+      }
+    }
+  );
+
+  it('rejects multi-entity aggregate refresh without the stored aggregate entity snapshot', async () => {
     mocks.adapter!.queryOne.mockResolvedValue(
       providerRow({
         config_json: JSON.stringify({
@@ -2967,7 +3688,7 @@ describe('SAML provider CRUD boundaries', () => {
         }),
       })
     );
-    mocks.safeFetchText.mockResolvedValue(aggregateMetadata());
+    mocks.safeFetchText.mockResolvedValue(aggregateMetadata(2));
     const response = await handleRefreshMetadata(context({ id: 'provider-a', body: {} }));
     expect(response.status).toBe(400);
   });
@@ -3022,10 +3743,31 @@ function validSpMetadata() {
   </md:EntityDescriptor>`;
 }
 
-function aggregateMetadata() {
+function validIdpMetadata(certificate: string, nameIdFormat?: string) {
+  const body = certificate.replace(
+    /-----BEGIN CERTIFICATE-----|-----END CERTIFICATE-----|\s+/g,
+    ''
+  );
+  return `<md:EntityDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata" xmlns:ds="http://www.w3.org/2000/09/xmldsig#" entityID="urn:imported:idp">
+    <md:IDPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
+      <md:KeyDescriptor use="signing"><ds:KeyInfo><ds:X509Data><ds:X509Certificate>${body}</ds:X509Certificate></ds:X509Data></ds:KeyInfo></md:KeyDescriptor>
+      ${nameIdFormat ? `<md:NameIDFormat>${nameIdFormat}</md:NameIDFormat>` : ''}
+      <md:SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST" Location="https://idp.example.test/sso" />
+    </md:IDPSSODescriptor>
+  </md:EntityDescriptor>`;
+}
+
+function aggregateMetadata(entityCount = 1) {
   return `<?xml version="1.0"?>
   <md:EntitiesDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata">
-    ${validSpMetadata().replace('<?xml version="1.0"?>', '')}
+    ${Array.from({ length: entityCount }, (_, index) =>
+      validSpMetadata()
+        .replace('<?xml version="1.0"?>', '')
+        .replaceAll(
+          'https://sp.example.test',
+          index === 0 ? 'https://sp.example.test' : `https://sp-${index}.example.test`
+        )
+    ).join('')}
   </md:EntitiesDescriptor>`;
 }
 
@@ -3036,6 +3778,7 @@ describe('SAML trust changes need a step-up', () => {
       headers: { 'Content-Type': 'application/json' },
     });
   const HEX64 = /^[0-9a-f]{64}$/;
+  const effectiveConfigDigest: unknown = expect.stringMatching(HEX64);
   const spConfig = {
     entityId: 'https://sp-new.example.test',
     acsUrl: 'https://sp-new.example.test/acs',
@@ -3084,6 +3827,430 @@ describe('SAML trust changes need a step-up', () => {
     };
   });
 
+  it.each(['saml_sp', 'saml_idp'])('creates a disabled %s draft at L0', async (providerType) => {
+    const response = await handleCreateProvider(
+      context({ body: { name: 'Draft', providerType, enabled: false } })
+    );
+    expect(response.status).toBe(201);
+    expect(mocks.stepUp).not.toHaveBeenCalled();
+    expect(mocks.adapter?.execute).toHaveBeenCalledTimes(1);
+  });
+
+  it('edits a disabled provider and imports its metadata at L0', async () => {
+    const adapter = mocks.adapter;
+    if (!adapter) throw new Error('Missing adapter');
+    adapter.queryOne.mockResolvedValue(providerRow({ enabled: 0 }));
+    const edited = await handleUpdateProvider(
+      context({
+        id: 'provider-a',
+        body: {
+          expectedUpdatedAt: updatedAt,
+          config: { acsUrl: 'https://sp.example.test/draft-acs' },
+          name: 'Draft edit',
+        },
+      })
+    );
+    expect(edited.status).toBe(200);
+    adapter.queryOne.mockResolvedValue(providerRow({ enabled: 0 }));
+    const imported = await handleImportMetadata(
+      context({
+        id: 'provider-a',
+        body: {
+          expectedUpdatedAt: updatedAt,
+          metadataXml: validSpMetadata(),
+        },
+      })
+    );
+    expect(imported.status).toBe(200);
+    expect(mocks.stepUp).not.toHaveBeenCalled();
+    expect(adapter.execute).toHaveBeenCalledTimes(2);
+  });
+
+  it('requires L2 for activation and binds even a config-free PUT to the configuration being activated', async () => {
+    const adapter = mocks.adapter;
+    if (!adapter) throw new Error('Missing adapter');
+    const refused = () =>
+      new Response(JSON.stringify({ error: 'step_up_required', required_level: 'L2' }), {
+        status: 403,
+      });
+    mocks.stepUp.mockImplementation(async () => refused());
+    const request = () =>
+      context({ id: 'provider-a', body: { expectedUpdatedAt: updatedAt, enabled: true } });
+    adapter.queryOne.mockResolvedValue(providerRow({ enabled: 0 }));
+    const first = await handleUpdateProvider(request());
+    expect(first.status).toBe(403);
+    expect(await first.json()).toMatchObject({ error: 'step_up_required', required_level: 'L2' });
+    const original = mocks.stepUp.mock.calls[0]?.[1];
+    expect(original).toMatchObject({
+      operation: 'federation.trust.activate',
+      params: {
+        enabled: true,
+        effective_config_sha256: effectiveConfigDigest,
+      },
+    });
+    await handleUpdateProvider(request());
+    expect(mocks.stepUp.mock.calls[1]?.[1]).toEqual(original);
+    adapter.queryOne.mockResolvedValue(
+      providerRow({
+        enabled: 0,
+        config_json: JSON.stringify({ ...spConfig, acsUrl: 'https://changed.example.test/acs' }),
+      })
+    );
+    await handleUpdateProvider(request());
+    expect(mocks.stepUp.mock.calls[2]?.[1]).not.toEqual(original);
+    expect(adapter.execute).not.toHaveBeenCalled();
+    mocks.stepUp.mockResolvedValue(null);
+  });
+
+  it('requires fresh L2 approval to activate a tenant-cloned provider after selecting a destination mapping', async () => {
+    const adapter = mocks.adapter;
+    if (!adapter) throw new Error('Missing adapter');
+    adapter.queryOne.mockResolvedValue(
+      providerRow({
+        id: 'cloned-provider',
+        enabled: 0,
+        config_json: JSON.stringify({
+          entityId: 'https://sp.example.test',
+          acsUrl: 'https://sp.example.test/acs',
+          trustApproval: { state: 'draft' },
+          identityMapping: { inboundContract: 'connection-v1' },
+        }),
+      })
+    );
+    const request = () =>
+      context({
+        id: 'cloned-provider',
+        body: {
+          expectedUpdatedAt: updatedAt,
+          enabled: true,
+          config: { identityMapping: spConfig.identityMapping },
+        },
+      });
+    mocks.stepUp.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          error: 'step_up_required',
+          required_level: 'L2',
+        }),
+        { status: 403 }
+      )
+    );
+    const refused = await handleUpdateProvider(request());
+    expect(refused.status).toBe(403);
+    expect(await refused.json()).toMatchObject({ required_level: 'L2' });
+    expect(mocks.stepUp).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        operation: 'federation.trust.activate',
+        targetIds: ['cloned-provider'],
+      })
+    );
+    expect(adapter.execute).not.toHaveBeenCalled();
+    expect((await handleUpdateProvider(request())).status).toBe(200);
+    const params: unknown = adapter.execute.mock.calls[0]?.[1];
+    if (!Array.isArray(params)) throw new Error('Missing activated provider');
+    const saved: unknown = JSON.parse(String(params[1]));
+    expect(params[2]).toBe(1);
+    expect(saved).toMatchObject({ trustApproval: { state: 'approved' } });
+  });
+
+  it('requires L1 before disabling and allows a rename with unchanged config at L0', async () => {
+    const adapter = mocks.adapter;
+    if (!adapter) throw new Error('Missing adapter');
+    adapter.queryOne.mockResolvedValue(providerRow());
+    const renamed = await handleUpdateProvider(
+      context({
+        id: 'provider-a',
+        body: {
+          expectedUpdatedAt: updatedAt,
+          name: 'Renamed',
+          config: { acsUrl: 'https://sp.example.test/acs' },
+        },
+      })
+    );
+    expect(renamed.status).toBe(200);
+    expect(mocks.stepUp).not.toHaveBeenCalled();
+    adapter.execute.mockClear();
+    mocks.stepUp.mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: 'admin_fresh_auth_required', required_level: 'L1' }), {
+        status: 403,
+      })
+    );
+    const disabled = await handleUpdateProvider(
+      context({ id: 'provider-a', body: { expectedUpdatedAt: updatedAt, enabled: false } })
+    );
+    expect(disabled.status).toBe(403);
+    expect(await disabled.json()).toMatchObject({ required_level: 'L1' });
+    expect(mocks.stepUp).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ operation: 'federation.trust.disable' })
+    );
+    expect(adapter.execute).not.toHaveBeenCalled();
+  });
+
+  it.each(['mapping', 'jit', 'import'])(
+    'protects metadata-suspended trust changes at L2: %s',
+    async (operation) => {
+      const adapter = mocks.adapter;
+      if (!adapter) throw new Error('Missing adapter');
+      adapter.queryOne.mockResolvedValue(
+        providerRow({
+          enabled: 0,
+          config_json: JSON.stringify({
+            ...spConfig,
+            metadataRefreshPolicy: {
+              mode: 'automatic',
+              intervalSeconds: 21600,
+              suspendedByMetadataSync: true,
+              sourceState: 'expired',
+            },
+          }),
+        })
+      );
+      mocks.stepUp.mockResolvedValueOnce(refusal());
+      const response =
+        operation === 'import'
+          ? await handleImportMetadata(
+              context({
+                id: 'provider-a',
+                body: { expectedUpdatedAt: updatedAt, metadataXml: validSpMetadata() },
+              })
+            )
+          : await handleUpdateProvider(
+              context({
+                id: 'provider-a',
+                body: {
+                  expectedUpdatedAt: updatedAt,
+                  config:
+                    operation === 'mapping'
+                      ? { identityMapping: { fieldMappingSetId: 'changed' } }
+                      : { jitEmailLinkingPolicy: 'email_linking' },
+                },
+              })
+            );
+      expect(response.status).toBe(403);
+      expect(mocks.stepUp).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ operation: 'federation.trust.activate' })
+      );
+      expect(adapter.execute).not.toHaveBeenCalled();
+    }
+  );
+
+  it('requires L2 to delete or move an authoritative entity that masks federation trust', async () => {
+    const adapter = mocks.adapter;
+    if (!adapter) throw new Error('Missing adapter');
+    adapter.queryOne.mockResolvedValue(providerRow({ enabled: 0 }));
+    adapter.query.mockImplementation(async (sql: string) =>
+      sql.includes('federation_saml_runtime_entities')
+        ? [{ entity_id: 'https://sp.example.test' }]
+        : []
+    );
+    mocks.stepUp.mockResolvedValueOnce(refusal());
+    const deleted = await handleDeleteProvider(context({ id: 'provider-a' }));
+    expect(deleted.status).toBe(403);
+    expect(mocks.stepUp).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({ operation: 'federation.trust.activate' })
+    );
+    mocks.stepUp.mockResolvedValueOnce(refusal());
+    const moved = await handleUpdateProvider(
+      context({
+        id: 'provider-a',
+        body: { expectedUpdatedAt: updatedAt, config: { entityId: 'urn:moved' } },
+      })
+    );
+    expect(moved.status).toBe(403);
+    expect(mocks.stepUp).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({ operation: 'federation.trust.activate' })
+    );
+    expect(adapter.execute).not.toHaveBeenCalled();
+  });
+
+  it.each(['import', 'refresh'])(
+    'requires L2 when %s moves a disabled authoritative entity away from federation',
+    async (operation) => {
+      const adapter = mocks.adapter;
+      if (!adapter) throw new Error('Missing adapter');
+      adapter.queryOne.mockResolvedValue(
+        providerRow({
+          enabled: 0,
+          config_json: JSON.stringify({
+            entityId: 'https://sp.example.test',
+            acsUrl: 'https://sp.example.test/acs',
+            metadataUrl: 'https://metadata.example.test/sp.xml',
+          }),
+        })
+      );
+      adapter.query.mockImplementation(async (sql: string) =>
+        sql.includes('federation_saml_runtime_entities')
+          ? [{ entity_id: 'https://sp.example.test' }]
+          : []
+      );
+      const metadataXml = validSpMetadata().replaceAll(
+        'https://sp.example.test',
+        'https://moved.example.test'
+      );
+      mocks.safeFetchText.mockResolvedValue(metadataXml);
+      mocks.stepUp.mockResolvedValueOnce(refusal());
+      const request = () =>
+        operation === 'import'
+          ? handleImportMetadata(
+              context({ id: 'provider-a', body: { expectedUpdatedAt: updatedAt, metadataXml } })
+            )
+          : handleRefreshMetadata(
+              context({ id: 'provider-a', body: { allowEntityIdChange: true } })
+            );
+      const response = await request();
+      expect(response.status).toBe(403);
+      expect(mocks.stepUp).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ operation: 'federation.trust.activate' })
+      );
+      expect(adapter.execute).not.toHaveBeenCalled();
+      // An accepted L2 retry may move the entity and records approval for the new settings.
+      expect((await request()).status).toBe(200);
+      const params: unknown = adapter.execute.mock.calls[0]?.[1];
+      if (!Array.isArray(params)) throw new Error('Missing saved configuration');
+      const saved: unknown = JSON.parse(String(params[0]));
+      expect(saved).toMatchObject({
+        entityId: 'https://moved.example.test',
+        trustApproval: { state: 'approved' },
+      });
+    }
+  );
+
+  it.each(['import', 'refresh'])(
+    'keeps an unapproved draft entity move at L0 for %s without shadowing federation',
+    async (operation) => {
+      const adapter = mocks.adapter;
+      if (!adapter) throw new Error('Missing adapter');
+      adapter.queryOne.mockResolvedValue(
+        providerRow({
+          enabled: 0,
+          config_json: JSON.stringify({
+            entityId: 'urn:unapproved',
+            acsUrl: 'https://sp.example.test/acs',
+            metadataUrl: 'https://metadata.example.test/sp.xml',
+            trustApproval: { state: 'draft' },
+          }),
+        })
+      );
+      adapter.query.mockImplementation(async (sql: string) =>
+        sql.includes('federation_saml_runtime_entities') ? [{ entity_id: 'urn:unapproved' }] : []
+      );
+      mocks.safeFetchText.mockResolvedValue(validSpMetadata());
+      const response =
+        operation === 'import'
+          ? await handleImportMetadata(
+              context({
+                id: 'provider-a',
+                body: { expectedUpdatedAt: updatedAt, metadataXml: validSpMetadata() },
+              })
+            )
+          : await handleRefreshMetadata(
+              context({
+                id: 'provider-a',
+                body: { allowEntityIdChange: true },
+              })
+            );
+      expect(response.status).toBe(200);
+      expect(mocks.stepUp).not.toHaveBeenCalled();
+      const params: unknown = adapter.execute.mock.calls[0]?.[1];
+      if (!Array.isArray(params)) throw new Error('Missing saved draft');
+      const saved: unknown = JSON.parse(String(params[0]));
+      expect(saved).toMatchObject({
+        entityId: 'https://sp.example.test',
+        trustApproval: { state: 'draft' },
+      });
+    }
+  );
+
+  it('binds aggregate updates identically after verification clocks advance on receipt retry', async () => {
+    const adapter = mocks.adapter;
+    if (!adapter) throw new Error('Missing adapter');
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      const current = {
+        ...spConfig,
+        aggregateImport: {
+          aggregateEntityId: spConfig.entityId,
+          importedAt: 100,
+          verification: { status: 'skipped', policy: 'disabled', verifiedAt: 100 },
+        },
+      };
+      adapter.queryOne.mockResolvedValue(providerRow({ config_json: JSON.stringify(current) }));
+      mocks.stepUp.mockResolvedValueOnce(refusal());
+      const request = () =>
+        context({
+          id: 'provider-a',
+          body: {
+            expectedUpdatedAt: updatedAt,
+            config: { acsUrl: 'https://new.example.test/acs' },
+          },
+        });
+      expect((await handleUpdateProvider(request())).status).toBe(403);
+      const original = mocks.stepUp.mock.calls[0]?.[1];
+      vi.setSystemTime(Date.now() + 60_000);
+      current.aggregateImport.verification.verifiedAt += 60_000;
+      current.aggregateImport.importedAt += 60_000;
+      adapter.queryOne.mockResolvedValue(providerRow({ config_json: JSON.stringify(current) }));
+      expect((await handleUpdateProvider(request())).status).toBe(200);
+      expect(mocks.stepUp.mock.calls[1]?.[1]).toEqual(original);
+      const params: unknown = adapter.execute.mock.calls[0]?.[1];
+      if (!Array.isArray(params)) throw new Error('Missing saved configuration');
+      const saved: unknown = JSON.parse(String(params[1]));
+      expect(saved).toMatchObject({ trustApproval: { state: 'approved' } });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('ignores client-supplied approval and accepts a fetched config without trusting its approval', async () => {
+    const adapter = mocks.adapter;
+    if (!adapter) throw new Error('Missing adapter');
+    const trustApproval = { state: 'approved', digest: 'forged' };
+    const created = await handleCreateProvider(
+      context({
+        body: {
+          name: 'Unapproved',
+          providerType: 'saml_sp',
+          enabled: false,
+          config: { ...spConfig, trustApproval },
+        },
+      })
+    );
+    expect(created.status).toBe(201);
+    expect(persistedConfig()).toMatchObject({ trustApproval: { state: 'draft' } });
+    adapter.execute.mockClear();
+    const storedConfig = { ...spConfig, trustApproval: { state: 'draft' } };
+    adapter.queryOne.mockResolvedValue(
+      providerRow({ enabled: 0, config_json: JSON.stringify(storedConfig) })
+    );
+    const fetched = await handleGetProvider(context({ id: 'provider-a' }));
+    expect(fetched.status).toBe(200);
+    const provider = await responseBody<{ config: unknown }>(fetched);
+    const update = await handleUpdateProvider(
+      context({ id: 'provider-a', body: { expectedUpdatedAt: updatedAt, config: provider.config } })
+    );
+    expect(update.status).toBe(200);
+    const forged = await handleUpdateProvider(
+      context({
+        id: 'provider-a',
+        body: { expectedUpdatedAt: updatedAt, config: { trustApproval } },
+      })
+    );
+    expect(forged.status).toBe(200);
+    for (const call of adapter.execute.mock.calls) {
+      const params: unknown = call[1];
+      if (!Array.isArray(params)) throw new Error('Missing saved configuration');
+      const saved: unknown = JSON.parse(String(params[1]));
+      expect(saved).toMatchObject({ trustApproval: { state: 'draft' } });
+    }
+    expect(mocks.stepUp).not.toHaveBeenCalled();
+  });
+
   describe('create', () => {
     const request = () =>
       context({ body: { name: 'New SP', providerType: 'saml_sp', config: spConfig } });
@@ -3102,7 +4269,7 @@ describe('SAML trust changes need a step-up', () => {
       expect(mocks.adapter!.execute).toHaveBeenCalledTimes(1);
       expect(mocks.stepUp).toHaveBeenCalledTimes(1);
       expect(mocks.stepUp.mock.calls[0]?.[1]).toEqual({
-        operation: 'federation.trust.update',
+        operation: 'federation.trust.activate',
         targetTenantId: 'tenant-a',
         params: {
           action: 'provider.create',
@@ -3110,6 +4277,7 @@ describe('SAML trust changes need a step-up', () => {
           name: 'New SP',
           enabled: true,
           request_sha256: expect.stringMatching(HEX64) as string,
+          effective_config_sha256: effectiveConfigDigest,
         },
       });
     });
@@ -3158,13 +4326,14 @@ describe('SAML trust changes need a step-up', () => {
       expect(response.status).toBe(200);
       expect(mocks.adapter!.execute).toHaveBeenCalledTimes(1);
       expect(mocks.stepUp.mock.calls[0]?.[1]).toEqual({
-        operation: 'federation.trust.update',
+        operation: 'federation.trust.activate',
         targetTenantId: 'tenant-a',
         targetIds: ['provider-a'],
         params: {
           action: 'provider.update',
           expectedUpdatedAt: updatedAt,
           config_sha256: expect.stringMatching(HEX64) as string,
+          effective_config_sha256: effectiveConfigDigest,
         },
       });
     });
@@ -3185,18 +4354,24 @@ describe('SAML trust changes need a step-up', () => {
       expect(mocks.stepUp).not.toHaveBeenCalled();
     });
 
-    it('lets a rename or a disable through without the gate', async () => {
+    it('lets a rename through at L0 and requires L1 to disable', async () => {
       mocks.adapter!.queryOne.mockResolvedValue(providerRow());
       let response = await handleUpdateProvider(
         context({ id: 'provider-a', body: { expectedUpdatedAt: updatedAt, name: 'Renamed' } })
       );
       expect(response.status).toBe(200);
+      expect(mocks.stepUp).not.toHaveBeenCalled();
       mocks.adapter!.queryOne.mockResolvedValue(providerRow());
       response = await handleUpdateProvider(
         context({ id: 'provider-a', body: { expectedUpdatedAt: updatedAt, enabled: false } })
       );
       expect(response.status).toBe(200);
-      expect(mocks.stepUp).not.toHaveBeenCalled();
+      expect(mocks.stepUp).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          operation: 'federation.trust.disable',
+        })
+      );
     });
 
     it('gates an enable', async () => {
@@ -3225,7 +4400,7 @@ describe('SAML trust changes need a step-up', () => {
       expect(response.status).toBe(200);
       expect(mocks.adapter!.execute).toHaveBeenCalledTimes(1);
       expect(mocks.stepUp.mock.calls[0]?.[1]).toEqual({
-        operation: 'federation.trust.update',
+        operation: 'federation.trust.disable',
         targetTenantId: 'tenant-a',
         targetIds: ['provider-a'],
         params: { action: 'provider.delete' },
@@ -3328,18 +4503,19 @@ describe('SAML trust changes need a step-up', () => {
       expect(mocks.adapter!.execute).not.toHaveBeenCalled();
     });
 
-    it('goes ahead when the gate lets it, with the request inputs only', async () => {
+    it('binds refresh to the resolved trust settings and request inputs', async () => {
       mocks.adapter!.queryOne.mockResolvedValue(refreshRow());
       mocks.safeFetchText.mockResolvedValue(validSpMetadata());
       const response = await handleRefreshMetadata(context({ id: 'provider-a', body: {} }));
       expect(response.status).toBe(200);
       expect(mocks.adapter!.execute).toHaveBeenCalledTimes(1);
       expect(mocks.stepUp.mock.calls[0]?.[1]).toEqual({
-        operation: 'federation.trust.update',
+        operation: 'federation.trust.activate',
         targetTenantId: 'tenant-a',
         targetIds: ['provider-a'],
         params: {
           action: 'provider.refresh_metadata',
+          effective_config_sha256: effectiveConfigDigest,
           metadataUrl: 'https://metadata.example.test/sp.xml',
           allowEntityIdChange: false,
         },
@@ -3389,7 +4565,7 @@ describe('SAML trust changes need a step-up', () => {
       expect(response.status).toBe(200);
       expect(writes.count).toBe(1);
       expect(mocks.stepUp.mock.calls[0]?.[1]).toEqual({
-        operation: 'federation.trust.update',
+        operation: 'federation.trust.activate',
         targetTenantId: 'tenant-a',
         targetIds: ['source-a'],
         params: { action: 'federation_source.refresh_metadata' },
@@ -3436,7 +4612,7 @@ describe('SAML trust changes need a step-up', () => {
         params: Record<string, unknown>;
       };
       expect(mocks.stepUp.mock.calls[0]?.[1]).toMatchObject({
-        operation: 'federation.trust.update',
+        operation: 'federation.trust.activate',
         targetTenantId: 'tenant-a',
         targetIds: ['provider-a'],
       });
@@ -3444,6 +4620,119 @@ describe('SAML trust changes need a step-up', () => {
       expect(descriptor.params.request_sha256).toMatch(HEX64);
       expect(JSON.stringify(descriptor)).not.toContain('CERT-PEM-BODY');
     });
+
+    it.each(['entity', 'next', 'name'])(
+      'invalidates a promotion receipt after an L0 draft %s edit',
+      async (change) => {
+        const adapter = mocks.adapter;
+        if (!adapter) throw new Error('Missing adapter');
+        const row = rolloverRow();
+        row.enabled = 0;
+        adapter.queryOne.mockResolvedValue(row);
+        const request = () => context({ id: 'provider-a', body: { keepPreviousAsBackup: true } });
+        let approvedDescriptor: unknown;
+        mocks.stepUp.mockImplementation(async (_context, descriptor) =>
+          JSON.stringify(descriptor) === JSON.stringify(approvedDescriptor) ? null : refusal()
+        );
+        expect((await handlePromoteSigningNext(request())).status).toBe(403);
+        approvedDescriptor = mocks.stepUp.mock.calls[0]?.[1];
+        expect((await handlePromoteSigningNext(request())).status).toBe(200);
+        adapter.execute.mockClear();
+        // A separate L0 draft request changes the entity, target key, or only the version/name.
+        const edited = await handleUpdateProvider(
+          context({
+            id: 'provider-a',
+            body: {
+              expectedUpdatedAt: updatedAt,
+              name: change === 'name' ? 'Renamed draft' : undefined,
+              config:
+                change === 'entity'
+                  ? { entityId: 'urn:changed-draft' }
+                  : change === 'next'
+                    ? {
+                        signingKeyPolicy: {
+                          next: {
+                            slot: 'next',
+                            keyRef: 'tenant:tenant-a:saml:idp:changed:signing',
+                            certificate: 'CHANGED-NEXT-CERT',
+                            state: 'published_next',
+                          },
+                        },
+                      }
+                    : undefined,
+            },
+          })
+        );
+        expect(edited.status).toBe(200);
+        const savedParams: unknown = adapter.execute.mock.calls[0]?.[1];
+        if (!Array.isArray(savedParams)) throw new Error('Missing saved draft');
+        row.config_json = String(savedParams[1]);
+        row.updated_at = Number(savedParams[3]);
+        adapter.execute.mockClear();
+        expect((await handlePromoteSigningNext(request())).status).toBe(403);
+        expect(adapter.execute).not.toHaveBeenCalled();
+        expect(mocks.stepUp.mock.calls[2]?.[1]).not.toEqual(approvedDescriptor);
+      }
+    );
+
+    it.each(cases)(
+      '%s binds stable receipt params across a delayed retry',
+      async (_step, handler, body) => {
+        const adapter = mocks.adapter;
+        if (!adapter) throw new Error('Missing adapter');
+        vi.useFakeTimers();
+        try {
+          vi.setSystemTime(1_900_000_000_000);
+          adapter.queryOne.mockResolvedValue(rolloverRow());
+          mocks.stepUp.mockResolvedValueOnce(refusal());
+          expect((await handler(context({ id: 'provider-a', body }))).status).toBe(403);
+          const original = mocks.stepUp.mock.calls[0]?.[1];
+          vi.setSystemTime(Date.now() + 60_000);
+          expect((await handler(context({ id: 'provider-a', body }))).status).toBe(200);
+          expect(mocks.stepUp.mock.calls[1]?.[1]).toEqual(original);
+          expect(original).toMatchObject({
+            params: {
+              current_config_sha256: effectiveConfigDigest,
+              target_key_sha256: effectiveConfigDigest,
+              expectedUpdatedAt: updatedAt,
+            },
+          });
+        } finally {
+          vi.useRealTimers();
+        }
+      }
+    );
+
+    it('changes the signing receipt descriptor when only the stored version changes', async () => {
+      const adapter = mocks.adapter;
+      if (!adapter) throw new Error('Missing adapter');
+      const row = rolloverRow();
+      adapter.queryOne.mockResolvedValue(row);
+      mocks.stepUp.mockImplementation(async () => refusal());
+      const request = () => context({ id: 'provider-a', body: {} });
+      expect((await handlePromoteSigningNext(request())).status).toBe(403);
+      const original = mocks.stepUp.mock.calls[0]?.[1];
+      row.updated_at += 1;
+      expect((await handlePromoteSigningNext(request())).status).toBe(403);
+      expect(mocks.stepUp.mock.calls[1]?.[1]).not.toEqual(original);
+      expect(adapter.execute).not.toHaveBeenCalled();
+    });
+
+    it.each(cases)(
+      '%s refuses a concurrent config change at save time',
+      async (_step, handler, body) => {
+        const adapter = mocks.adapter;
+        if (!adapter) throw new Error('Missing adapter');
+        adapter.queryOne.mockResolvedValue(rolloverRow());
+        adapter.execute.mockResolvedValueOnce({ rowsAffected: 0, insertId: undefined });
+        const response = await handler(context({ id: 'provider-a', body }));
+        expect(response.status).toBe(409);
+        expect(adapter.execute).toHaveBeenCalledWith(
+          expect.stringContaining('AND updated_at = ?'),
+          expect.arrayContaining([1_700_000_001_000])
+        );
+      }
+    );
 
     it('does not call the gate for a missing certificate or provider', async () => {
       mocks.adapter!.queryOne.mockResolvedValue(rolloverRow());

@@ -98,6 +98,9 @@ export const arTenants: Record<keyof typeof jaTenants, string> = {
 	'tn.copy.statements.desc': 'الشروط وإشعارات الخصوصية وغيرها من الوثائق التي يُوافَق عليها.',
 	'tn.copy.clients': 'التطبيقات (العملاء)',
 	'tn.copy.clients.desc': 'التطبيقات المسجلة وإعداداتها.',
+	'tn.copy.samlProviders': 'اتصالات SAML (نسخ معطلة)',
+	'tn.copy.samlProviders.desc':
+		'نسخ إعدادات SP وIdP كمسودات. اختر مجموعة تعيين في المستأجر الوجهة وأكّد بالمصادقة الإضافية من المستوى 2 قبل التفعيل.',
 	'tn.copy.clientCredentials': 'تضمين أسرار العملاء',
 	'tn.copy.clientCredentials.desc': 'ينسخ أيضًا أسرار التطبيقات كما هي.',
 	'tn.copy.webhooks': 'خطافات الويب',

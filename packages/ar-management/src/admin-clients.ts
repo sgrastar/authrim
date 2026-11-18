@@ -405,12 +405,12 @@ function validateRedirectUriList(
   if (value === undefined && !required) {
     return { ok: true, value: undefined };
   }
-  if (!Array.isArray(value) || value.length === 0) {
+  if (!Array.isArray(value) || (required && value.length === 0)) {
     return {
       ok: false,
       error: required
         ? `${field} is required and must be a non-empty array`
-        : `${field} must be a non-empty array`,
+        : `${field} must be an array`,
     };
   }
   if (value.some((uri) => typeof uri !== 'string')) {
@@ -944,7 +944,7 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
       tls_client_certificate_bound_access_tokens?: boolean;
       client_name: string;
       description?: string | null;
-      redirect_uris: string[];
+      redirect_uris?: string[];
       grant_types?: string[];
       response_types?: string[];
       scope?: string;
@@ -1043,7 +1043,7 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
     const redirectUrisValidation = validateRedirectUriList(
       body.redirect_uris,
       'redirect_uris',
-      true
+      false
     );
     if (!redirectUrisValidation.ok) {
       return c.json(

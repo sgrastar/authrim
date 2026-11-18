@@ -4098,8 +4098,9 @@ paths:
           $ref: '#/components/responses/Error'
       description: >-
         Provision a new isolated tenant through the normal tenant creation path, then copy the
-        selected tenant settings, roles, Admin access assignments, clients, and webhooks. Tenant
-        signing private keys are never copied; the destination receives a newly generated key.
+        selected tenant settings, roles, Admin access assignments, clients, SAML connection drafts,
+        and webhooks. SAML connections are always disabled and require fresh L2 approval to enable.
+        Tenant signing private keys are never copied; the destination receives a newly generated key.
         The source tenant must be active. Stored secret settings and credential hashes are copied
         only when explicitly requested. End-user accounts and their role assignments are never
         copied. This operation is platform-admin scoped and does not use X-Tenant-Id to identify
@@ -56110,7 +56111,11 @@ components:
             - 'null'
         redirect_uris:
           type: array
-          minItems: 1
+          description: >
+            Registered callback URLs. May be empty or omitted on create; without registered redirect
+            URIs, sign-in requests using redirect-based grants (authorization_code and implicit)
+            are rejected. Pairwise clients still require a resolvable sector from redirect_uris
+            or sector_identifier_uri.
           items:
             $ref: '#/components/schemas/UriString'
         grant_types:
@@ -56418,7 +56423,6 @@ components:
         - type: object
           required:
             - client_name
-            - redirect_uris
     AdminClientUpdate:
       allOf:
         - $ref: '#/components/schemas/AdminClientBase'
@@ -60298,6 +60302,19 @@ components:
                 Client Contracts, and OIDC client trust policies. Consent overrides and Flow
                 assignments are reported as skipped because their referenced tenant resources are
                 not part of this option.
+            saml_providers:
+              type: boolean
+              default: false
+              description: >-
+                Copy SAML SP and IdP connections as disabled, unapproved drafts. Peer entity IDs,
+                ACS/SSO URLs, certificates, metadata URL/XML and attribute rules are retained.
+                Mapping Sets are not copied; their set, version and profile references are removed.
+                Authrim signing-key policies, trust approvals, federation verification snapshots,
+                metadata suspension/diagnostics and source timestamps are not copied. Activation
+                requires selecting a destination Mapping Set and a new L2 trust approval. Federation
+                runtime entities are never copied. Duplicate destination entity IDs are skipped
+                and reported in saml_providers_skipped and warnings. SAML login-entry behavior
+                resets to account even when connections are selected.
             client_credentials:
               type: boolean
               default: false
@@ -60326,6 +60343,10 @@ components:
           default: false
           deprecated: true
           description: Legacy alias for copy.clients.
+        include_saml_providers:
+          type: boolean
+          default: false
+          description: Alias for copy.saml_providers; takes precedence when supplied.
         include_roles:
           type: boolean
           default: true
@@ -60364,6 +60385,8 @@ components:
                 - secret_settings_skipped
                 - unclassified_settings_skipped
                 - clients
+                - saml_providers
+                - saml_providers_skipped
                 - client_settings
                 - client_contracts
                 - client_web_origins
@@ -60384,6 +60407,8 @@ components:
                 secret_settings_skipped: { type: integer, minimum: 0 }
                 unclassified_settings_skipped: { type: integer, minimum: 0 }
                 clients: { type: integer, minimum: 0 }
+                saml_providers: { type: integer, minimum: 0 }
+                saml_providers_skipped: { type: integer, minimum: 0 }
                 client_settings: { type: integer, minimum: 0 }
                 client_contracts: { type: integer, minimum: 0 }
                 client_web_origins: { type: integer, minimum: 0 }

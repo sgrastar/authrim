@@ -4,6 +4,26 @@
  * their usual abbreviations (RP, SP, OP, IdP). Spread into `../ja.ts`.
  */
 export const jaServiceFlows = {
+	'sf.rp.callbacksMissing':
+		'callback URLが未設定のため、まだサインインできません。詳細画面で追加してください。',
+	'sf.draft.skip': 'あとで入力する',
+	'sf.draft.enterNow': '今入力する',
+	'sf.draft.saved': '下書きとして保存しました',
+	'sf.draft.metadataRequired':
+		'有効にするには、エンティティIDと接続先URLを入力してください。IdP接続には署名証明書も必要です。メタデータの読み込みでも設定できます。',
+	'sf.draft.openDetails': '詳細画面を開く',
+	'sf.import.mode.xml': 'XMLを貼り付ける',
+	'sf.metadata.xmlHint': 'XMLを貼り付けると、自動で内容を読み込みます。',
+	'sf.metadata.wrongRoleSp': 'この接続はSP用です。読み込んだメタデータはIdPのものです。',
+	'sf.metadata.wrongRoleIdp': 'この接続はIdP用です。読み込んだメタデータはSPのものです。',
+	'sf.metadata.fetchFailed':
+		'メタデータを取得できませんでした。公開HTTPS URLと接続先の応答を確認してください。',
+	'sf.metadata.invalidXml':
+		'SAMLメタデータのXMLを読み込めませんでした。内容とファイルサイズを確認してください。',
+	'sf.metadata.aggregate':
+		'複数のエンティティを含むメタデータです。フェデレーションのメタデータ読み込みを使ってください。',
+	'sf.draft.noMetadata': 'メタデータはまだ設定されていません。',
+
 	'sf.live.status': '接続の状態',
 	'sf.live.enable': '有効にする',
 	'sf.live.disable': '無効にする',

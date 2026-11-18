@@ -19,12 +19,18 @@
 		parameters: { layout: 'fullscreen' }
 	});
 	function fixture(
-		options: { auth?: string; enabled?: boolean; mapping?: boolean; advanced?: boolean } = {}
+		options: {
+			auth?: string;
+			enabled?: boolean;
+			mapping?: boolean;
+			advanced?: boolean;
+			redirects?: string[];
+		} = {}
 	) {
 		let rp: ClientDetail = {
 			id: 'portal',
 			name: 'Staff portal',
-			redirectUris: ['https://portal.example.test/callback'],
+			redirectUris: options.redirects ?? ['https://portal.example.test/callback'],
 			applicationType: 'web',
 			authMethod: options.auth ?? 'client_secret_basic',
 			pkce: true,
@@ -114,6 +120,8 @@
 		return { clients, saml, onbind, writeServiceProvider, currentSp: () => ({ ...sp }) };
 	}
 	const rp = fixture();
+	const callbacksMissing = fixture({ redirects: [] });
+	const callbacksCleared = fixture();
 	const privateKey = fixture({ auth: 'private_key_jwt' });
 	const advanced = fixture({ advanced: true });
 	const advancedSp = fixture({ advanced: true });
@@ -599,5 +607,62 @@
 		await waitFor(() => expect(advancedSp.saml.getServiceProvider).toHaveBeenCalledTimes(2));
 		await expect(lifetime).toHaveValue('600');
 		await expect(context).toHaveValue('assurance');
+	}}
+/>
+
+<Story
+	name="RP with no callbacks can save its name and add a callback later"
+	args={{ ...callbacksMissing }}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await waitFor(() => expect(canvas.getByText(t('sf.rp.callbacksMissing'))).toBeVisible());
+		await rename(canvas, 'Callback later');
+		await expect(canvas.getByRole('button', { name: t('common.save') })).toBeEnabled();
+		await userEvent.click(canvas.getByRole('button', { name: t('common.save') }));
+		await canvas.findByText(t('sf.live.saved'));
+		await expect(callbacksMissing.clients.updateBasics).toHaveBeenCalledWith('portal', {
+			client_name: 'Callback later',
+			expected_updated_at: 1000
+		});
+		await waitFor(() => expect(canvas.getByText(t('sf.rp.callbacksMissing'))).toBeVisible());
+		await userEvent.click(canvas.getByRole('button', { name: t('sf.rp.addRedirect') }));
+		await userEvent.type(
+			canvas.getByRole('textbox', {
+				name: t('list.item', { label: t('sf.part.rp-redirect'), n: 1 })
+			}),
+			'https://portal.example.test/later'
+		);
+		await userEvent.click(canvas.getByRole('button', { name: t('common.save') }));
+		await waitFor(() =>
+			expect(callbacksMissing.clients.updateBasics).toHaveBeenLastCalledWith('portal', {
+				redirect_uris: ['https://portal.example.test/later'],
+				expected_updated_at: 1001
+			})
+		);
+		await waitFor(() => expect(canvas.queryByText(t('sf.rp.callbacksMissing'))).toBeNull());
+	}}
+/>
+
+<Story
+	name="RP can save and reopen an empty callback list"
+	args={{ ...callbacksCleared }}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findByRole('textbox', { name: t('sf.row.name') });
+		await userEvent.click(
+			canvas.getByRole('button', {
+				name: t('list.remove', { name: 'https://portal.example.test/callback' })
+			})
+		);
+		await waitFor(() => expect(canvas.getByText(t('sf.rp.callbacksMissing'))).toBeVisible());
+		await userEvent.click(canvas.getByRole('button', { name: t('common.save') }));
+		await canvas.findByText(t('sf.live.saved'));
+		await expect(callbacksCleared.clients.updateBasics).toHaveBeenCalledWith('portal', {
+			redirect_uris: [],
+			expected_updated_at: 1000
+		});
+		await userEvent.click(canvas.getByRole('button', { name: t('sf.live.reload') }));
+		await waitFor(() => expect(callbacksCleared.clients.get).toHaveBeenCalledTimes(2));
+		await waitFor(() => expect(canvas.getByText(t('sf.rp.callbacksMissing'))).toBeVisible());
 	}}
 />

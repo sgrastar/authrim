@@ -9,6 +9,7 @@
 	import FileDrop from '#lib/ui/patterns/FileDrop.svelte';
 	import Button from '#lib/ui/primitives/Button.svelte';
 	import SegmentedControl from '#lib/ui/primitives/SegmentedControl.svelte';
+	import TextArea from '#lib/ui/primitives/TextArea.svelte';
 	import TextField from '#lib/ui/primitives/TextField.svelte';
 	import { entityIdProblem, httpsUrlProblem, type ImportForm } from './connection-model';
 	import { boundedMetadataXml } from './metadata-draft';
@@ -27,15 +28,25 @@
 	let files = $state<File[]>(untrack(() => (form.metadata?.file ? [form.metadata.file] : [])));
 	let controller: AbortController | undefined;
 	let generation = 0;
+	let xmlTimer: ReturnType<typeof setTimeout> | undefined;
 	const previewState = $derived(form.metadata);
 	const addressLabel = $derived(t(partner === 'service' ? 'sf.ours.acsUrl' : 'sf.ours.ssoUrl'));
 	const urlProblem = $derived(form.metadataUrl ? httpsUrlProblem(form.metadataUrl) : undefined);
 
 	function cancel() {
+		clearTimeout(xmlTimer);
 		generation++;
 		controller?.abort();
 		if (form.metadata) form.metadata.pending = false;
 	}
+	function checkXmlSize(xml: string) {
+		try {
+			boundedMetadataXml(xml);
+		} catch {
+			throw new Error(t('sf.metadata.tooLarge'));
+		}
+	}
+
 	async function read() {
 		if (!preview || form.importMode === 'manual') return;
 		cancel();
@@ -43,6 +54,7 @@
 		const mode = form.importMode;
 		const url = form.metadataUrl;
 		const file = files[0];
+		const pastedXml = form.metadataXml;
 		form.metadata ??= { pending: false, error: '' };
 		const draft = form.metadata;
 		draft.pending = true;
@@ -53,11 +65,14 @@
 		try {
 			let input;
 			if (mode === 'url') input = { metadataUrl: url };
-			else {
+			else if (mode === 'xml') {
+				checkXmlSize(pastedXml ?? '');
+				input = { metadataXml: pastedXml ?? '' };
+			} else {
 				if (!file) throw new Error(t('sf.metadata.chooseFile'));
 				if (file.size > SAML_METADATA_MAX_BYTES) throw new Error(t('sf.metadata.tooLarge'));
 				const xml = await file.text();
-				boundedMetadataXml(xml);
+				checkXmlSize(xml);
 				input = { metadataXml: xml };
 			}
 			if (signal.aborted || turn !== generation) return;
@@ -67,13 +82,20 @@
 				turn !== generation ||
 				form.metadata !== draft ||
 				form.importMode !== mode ||
-				(mode === 'url' ? form.metadataUrl !== url : files[0] !== file)
+				(mode === 'url'
+					? form.metadataUrl !== url
+					: mode === 'xml'
+						? form.metadataXml !== pastedXml
+						: files[0] !== file)
 			)
 				return;
 			if (result.providerType !== (partner === 'service' ? 'saml_sp' : 'saml_idp'))
-				throw new Error(t('sf.metadata.wrongRole'));
-			boundedMetadataXml(result.metadataXml);
+				throw new Error(
+					t(partner === 'service' ? 'sf.metadata.wrongRoleSp' : 'sf.metadata.wrongRoleIdp')
+				);
+			checkXmlSize(result.metadataXml);
 			draft.preview = result;
+			draft.sourceXml = pastedXml;
 		} catch (error) {
 			if (signal.aborted || turn !== generation) return;
 			draft.error = error instanceof Error ? error.message : t('sf.metadata.failed');
@@ -82,37 +104,50 @@
 		}
 	}
 
-	let previous = untrack(() => ({ mode: form.importMode, url: form.metadataUrl, file: files[0] }));
+	let previous = untrack(() => ({
+		mode: form.importMode,
+		url: form.metadataUrl,
+		xml: form.metadataXml,
+		file: files[0]
+	}));
 	$effect(() => {
 		const mode = form.importMode;
 		const url = form.metadataUrl;
+		const xml = form.metadataXml;
 		const file = files[0];
-		if (mode === previous.mode && url === previous.url && file === previous.file) return;
-		previous = { mode, url, file };
+		if (
+			mode === previous.mode &&
+			url === previous.url &&
+			xml === previous.xml &&
+			file === previous.file
+		)
+			return;
+		previous = { mode, url, xml, file };
 		untrack(() => {
 			cancel();
 			form.metadata = { pending: false, error: '', ...(file ? { file } : {}) };
 			form.fileName = file?.name ?? '';
 			if (mode === 'file' && file) void read();
+			if (mode === 'xml' && xml?.trim()) xmlTimer = setTimeout(() => void read(), 250);
 		});
 	});
 	$effect(() => () => cancel());
 </script>
 
-{#if preview || !allowManual}
-	<SegmentedControl
-		label={t(partner === 'service' ? 'sf.import.how.service' : 'sf.import.how.provider')}
-		value={form.importMode}
-		onchange={(value) => {
-			if (value === 'url' || value === 'file' || value === 'manual') form.importMode = value;
-		}}
-		options={[
-			{ value: 'url', label: t('sf.ours.metadataUrl'), disabled: !preview },
-			{ value: 'file', label: t('sf.import.mode.file'), disabled: !preview },
-			...(allowManual ? [{ value: 'manual', label: t('sf.import.mode.manual') }] : [])
-		]}
-	/>
-{/if}
+<SegmentedControl
+	label={t(partner === 'service' ? 'sf.import.how.service' : 'sf.import.how.provider')}
+	value={form.importMode}
+	onchange={(value) => {
+		if (value === 'url' || value === 'xml' || value === 'file' || value === 'manual')
+			form.importMode = value;
+	}}
+	options={[
+		{ value: 'url', label: t('sf.ours.metadataUrl'), disabled: !preview },
+		{ value: 'xml', label: t('sf.import.mode.xml'), disabled: !preview },
+		{ value: 'file', label: t('sf.import.mode.file'), disabled: !preview },
+		...(allowManual ? [{ value: 'manual', label: t('sf.import.mode.manual') }] : [])
+	]}
+/>
 {#if form.importMode === 'url'}
 	<TextField
 		label={t('sf.ours.metadataUrl')}
@@ -128,6 +163,13 @@
 			onclick={read}>{t('sf.import.read')}</Button
 		>
 	</div>
+{:else if form.importMode === 'xml'}
+	<TextArea
+		label={t('sf.import.mode.xml')}
+		hint={t('sf.metadata.xmlHint')}
+		mono
+		bind:value={form.metadataXml}
+	/>
 {:else if form.importMode === 'file'}
 	<FileDrop
 		label={t('sf.import.file')}

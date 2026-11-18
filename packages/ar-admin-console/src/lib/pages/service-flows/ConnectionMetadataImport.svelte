@@ -13,7 +13,7 @@
 	import ConfirmDialog from '#lib/ui/patterns/ConfirmDialog.svelte';
 	import Button from '#lib/ui/primitives/Button.svelte';
 	import MetadataImport from './MetadataImport.svelte';
-	import { emptyAnswers, type ImportForm } from './connection-model';
+	import { emptyImport, type ImportForm } from './connection-model';
 	import { metadataInput } from './metadata-draft';
 
 	let {
@@ -45,9 +45,7 @@
 		pending?: boolean;
 		onimported: (result: SamlMetadataImportResult) => void;
 	} = $props();
-	let form = $state<ImportForm>(
-		untrack(() => ({ ...emptyAnswers().sp, importMode: 'url', metadataUrl }))
-	);
+	let form = $state<ImportForm>(untrack(() => emptyImport(metadataUrl)));
 	let importing = $state(false);
 	let asking = $state(false);
 	let failure = $state('');
@@ -65,7 +63,11 @@
 		}
 	});
 	$effect(() => {
-		dirty = !!form.metadata?.preview || !!form.metadata?.file || form.metadataUrl !== metadataUrl;
+		dirty =
+			!!form.metadata?.preview ||
+			!!form.metadata?.file ||
+			!!form.metadataXml ||
+			form.metadataUrl !== metadataUrl;
 		pending = importing || !!form.metadata?.pending;
 	});
 	function requestImport() {
@@ -86,7 +88,7 @@
 		try {
 			const result = await client.importMetadata(id, input);
 			onimported(result);
-			form = { ...emptyAnswers().sp, importMode: 'url', metadataUrl: result.metadataUrl ?? '' };
+			form = emptyImport(result.metadataUrl ?? '');
 			revision++;
 			saved = true;
 		} catch (error) {
@@ -130,7 +132,7 @@
 					variant="secondary"
 					disabled={busy || pending || !dirty}
 					onclick={() => {
-						form = { ...emptyAnswers().sp, importMode: 'url', metadataUrl };
+						form = emptyImport(metadataUrl);
 						revision++;
 						failure = '';
 						saved = false;

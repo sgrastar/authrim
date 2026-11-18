@@ -4,6 +4,8 @@
 	interface Props {
 		/** `changed`: changed, not saved yet (the change colour). */
 		tone?: 'neutral' | 'success' | 'warning' | 'danger' | 'info' | 'changed';
+		/** Square level label; its text remains caller supplied, including translated snippets. */
+		variant?: 'status' | 'level';
 		/** Leading status dot. */
 		dot?: boolean;
 		/** `sm`: for a status line inside a compact node (the steps of a flow). */
@@ -11,10 +13,20 @@
 		children: Snippet;
 	}
 
-	let { tone = 'neutral', dot = false, size = 'md', children }: Props = $props();
+	let {
+		tone = 'neutral',
+		variant = 'status',
+		dot = false,
+		size = 'md',
+		children
+	}: Props = $props();
 </script>
 
-<span class="badge badge--{tone}" class:badge--sm={size === 'sm'}>
+<span
+	class="badge badge--{tone}"
+	class:badge--sm={size === 'sm'}
+	class:badge--level={variant === 'level'}
+>
 	{#if dot}<span class="badge__dot"></span>{/if}
 	{@render children()}
 </span>
@@ -32,6 +44,10 @@
 		font-size: var(--fs-small);
 		font-weight: var(--fw-semibold);
 		white-space: nowrap;
+	}
+
+	.badge--level {
+		border-radius: 0;
 	}
 
 	.badge--sm {

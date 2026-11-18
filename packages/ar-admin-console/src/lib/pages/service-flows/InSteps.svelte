@@ -16,7 +16,13 @@
 	import TextRow from '#lib/ui/patterns/TextRow.svelte';
 	import ToggleRow from '#lib/ui/patterns/ToggleRow.svelte';
 	import ConnectionTest from './ConnectionTest.svelte';
-	import { httpsUrlProblem, type IdpForm, type LinkRule, type OpForm } from './connection-model';
+	import {
+		entityIdProblem,
+		httpsUrlProblem,
+		type IdpForm,
+		type LinkRule,
+		type OpForm
+	} from './connection-model';
 	import type { OpSettings } from './connection-settings';
 	import MetadataImport from './MetadataImport.svelte';
 	import OurDetails from './OurDetails.svelte';
@@ -30,6 +36,7 @@
 	interface Props {
 		step: string;
 		live?: boolean;
+		editing?: boolean;
 		previewMetadata?: SamlMetadataClient['preview'];
 		hasSecret?: boolean;
 		discovering?: boolean;
@@ -45,6 +52,7 @@
 	let {
 		step,
 		live = false,
+		editing = false,
 		previewMetadata,
 		hasSecret = false,
 		discovering = $bindable(false),
@@ -289,8 +297,21 @@
 	/>
 {:else if step === 'idp-import' && live}
 	<TextRow label={t('sf.row.name')} required bind:value={idp.name} />
-	<MetadataImport bind:form={idp} partner="provider" live preview={previewMetadata} />
-	{#if idp.importMode === 'manual'}<TextArea
+	{#if editing}
+		<TextRow
+			label={t('sf.row.entityId')}
+			error={idp.entityId ? entityIdProblem(idp.entityId) : undefined}
+			bind:value={idp.entityId}
+		/>
+		<TextRow
+			label={t('sf.ours.ssoUrl')}
+			error={idp.acsUrl ? httpsUrlProblem(idp.acsUrl) : undefined}
+			bind:value={idp.acsUrl}
+		/>
+	{:else}
+		<MetadataImport bind:form={idp} partner="provider" live preview={previewMetadata} />
+	{/if}
+	{#if editing || idp.importMode === 'manual'}<TextArea
 			label={t('sf.ours.signingCert')}
 			required
 			mono
