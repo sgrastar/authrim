@@ -90,7 +90,7 @@ export const DRAFT_PAGES: readonly DraftPage[] = [
 	{
 		id: 'customization/login-ui',
 		scope: 'tenant',
-		note: 'A built page (dedicated UI: the languages as choice grids, and the lite Login UI with its own route). The custom blocks are not on it yet (the Login UI does not draw them).'
+		note: 'A built page (dedicated UI: the languages as choice grids, the lite Login UI with its own route, and the custom content blocks).'
 	},
 	{ id: 'customization/screens', scope: 'tenant' },
 	{ id: 'customization/account-page', scope: 'tenant' },
@@ -656,15 +656,6 @@ place(
 	}
 );
 place(
-	'customization/login-ui',
-	'Custom content',
-	{ advanced: ['login-ui.custom_blocks'] },
-	{
-		'login-ui.custom_blocks':
-			'Parsed by the API, but the Login UI has no renderer for the blocks yet: not offered until it does.'
-	}
-);
-place(
 	'hidden',
 	'Login UI (no longer read)',
 	{
@@ -684,6 +675,15 @@ place(
 		'login-ui.page_layout': 'Deprecated: replaced by template.',
 		'login-ui.custom_themes':
 			'The previous Admin UI’s store of duplicated themes; saved themes have their own API.'
+	}
+);
+place(
+	'customization/login-ui',
+	'Custom content',
+	{ primary: ['login-ui.custom_blocks'] },
+	{
+		'login-ui.custom_blocks':
+			'A JSON array edited as rows on the page (place, kind, text or address); the Login UI draws the blocks around the form, header and footer.'
 	}
 );
 place(

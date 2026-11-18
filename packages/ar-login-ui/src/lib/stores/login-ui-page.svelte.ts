@@ -1,3 +1,4 @@
+import { safeCustomBlocks, type CustomBlock } from '#lib/custom-blocks/custom-blocks.js';
 import { accentTextColor, normalizeAccentColor } from '#lib/utils/accent-text.js';
 import { browser } from '$app/env';
 import type {
@@ -429,6 +430,7 @@ export function createLoginUIPageStore() {
 	let textLocalizations = $state<LoginUITextLocalizations>({});
 	let footerText = $state<string | null>(null);
 	let footerLinks = $state<FooterLink[]>([]);
+	let customBlocks = $state<CustomBlock[]>([]);
 	let brandPanelTitle = $state<string | null>(null);
 	let brandPanelText = $state<string | null>(null);
 	let customCss = $state<string | null>(null);
@@ -726,6 +728,7 @@ export function createLoginUIPageStore() {
 		textLocalizations = readTextLocalizations(appearance?.textLocalizations);
 		footerText = readOptionalText(appearance?.footerText);
 		footerLinks = safeFooterLinks(appearance?.footerLinks);
+		customBlocks = safeCustomBlocks(appearance?.customBlocks);
 		brandPanelTitle = readOptionalText(page?.brandPanelTitle);
 		brandPanelText = readOptionalText(page?.brandPanelText);
 		customCss = readOptionalText(appearance?.customCss);
@@ -1022,6 +1025,9 @@ export function createLoginUIPageStore() {
 		},
 		get footerLinks() {
 			return footerLinks;
+		},
+		get customBlocks() {
+			return customBlocks;
 		},
 		get brandPanelTitle() {
 			return brandPanelTitle;

@@ -398,6 +398,42 @@ export const deCustomization: Record<keyof typeof jaCustomization, string> = {
 	'lu.stale.title': 'Die Einstellungen konnten nicht neu gelesen werden',
 	'lu.stale.body':
 		'Die Lite-Umschaltung ist wirksam, aber die Einstellungen dieser Seite konnten nicht neu gelesen werden. Laden Sie sie vor dem Speichern erneut; Ihre ungespeicherten Änderungen bleiben erhalten.',
+	'lu.blocks': 'Eigene Inhalte',
+	'lu.blocks.desc':
+		'Eigene Texte, Texte mit Links, Bilder oder Links des Mandanten um das Formular, die Kopf- und die Fußzeile der Anmeldeseiten. Bis zu {max}.',
+	'lu.blocks.none': 'Keine Blöcke.',
+	'lu.blocks.count': '{n} Blöcke',
+	'lu.blocks.add': 'Block hinzufügen',
+	'lu.blocks.remove': 'Block {n} entfernen',
+	'lu.blocks.limit': 'Höchstens {max}.',
+	'lu.blocks.position': 'Ort',
+	'lu.blocks.position.above-header': 'Über der Kopfzeile',
+	'lu.blocks.position.above-form': 'Über dem Formular',
+	'lu.blocks.position.below-form': 'Unter dem Formular',
+	'lu.blocks.position.below-footer': 'Unter der Fußzeile',
+	'lu.blocks.type': 'Art',
+	'lu.blocks.type.text': 'Text',
+	'lu.blocks.type.html': 'Text mit Links',
+	'lu.blocks.type.image': 'Bild',
+	'lu.blocks.type.link': 'Link',
+	'lu.blocks.content.text': 'Text',
+	'lu.blocks.content.html': 'Text (Links erlaubt)',
+	'lu.blocks.content.html.hint':
+		'Einen Link schreiben Sie als a-Tag (href mit einer https-Adresse) um seinen Text. Jedes andere Tag wird entfernt, sein Text bleibt.',
+	'lu.blocks.content.image': 'Bild-URL',
+	'lu.blocks.content.link': 'Linktext',
+	'lu.blocks.url': 'Link-URL',
+	'lu.blocks.alt': 'Bildbeschreibung',
+	'lu.blocks.alt.hint':
+		'Eine kurze Beschreibung, die Personen vorgelesen wird, die das Bild nicht sehen können.',
+	'lu.blocks.problem.content.text': 'Geben Sie den Text ein.',
+	'lu.blocks.problem.content.html': 'Geben Sie den Text ein.',
+	'lu.blocks.problem.content.image':
+		'Geben Sie eine Bild-URL ein, die mit https beginnt (SVG ist nicht erlaubt).',
+	'lu.blocks.problem.content.link': 'Geben Sie den Linktext ein.',
+	'lu.blocks.problem.contentLong': 'Höchstens {max} Zeichen.',
+	'lu.blocks.problem.url': 'Geben Sie eine URL ein, die mit http oder https beginnt.',
+	'lu.blocks.problem.urlLong': 'Die URL darf höchstens {max} Zeichen haben.',
 	'lu.display': 'Darstellung der Sprachen',
 	'lu.conflict':
 		'Ein anderer Administrator hat zuerst gespeichert. Die neuesten Werte wurden geladen; prüfen Sie Ihre Änderungen und speichern Sie erneut.'

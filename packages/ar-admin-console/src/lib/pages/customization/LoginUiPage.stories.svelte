@@ -176,6 +176,43 @@
 </Story>
 
 <Story
+	name="Custom content blocks"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findAllByText(t('lu.blocks'));
+		// Two saved blocks are rows; a new one is empty and holds the save until written.
+		await expect(
+			canvas.getByDisplayValue('Available from the campus network only')
+		).toBeInTheDocument();
+		await userEvent.click(canvas.getByRole('button', { name: t('lu.blocks.add') }));
+		await expect(canvas.getByText(t('lu.blocks.problem.content.text'))).toBeInTheDocument();
+		await userEvent.click(canvas.getByRole('button', { name: t('lu.blocks.remove', { n: 3 }) }));
+		await waitFor(() => expect(canvas.queryByText(t('lu.blocks.problem.content.text'))).toBeNull());
+	}}
+>
+	{#snippet template()}
+		<LoginUiPage
+			client={settings({
+				'login-ui.custom_blocks': JSON.stringify([
+					{
+						position: 'below-form',
+						type: 'text',
+						content: 'Available from the campus network only'
+					},
+					{
+						position: 'below-footer',
+						type: 'link',
+						content: 'Privacy notice',
+						url: 'https://example.test/privacy'
+					}
+				])
+			})}
+			tenantId={TENANT}
+		/>
+	{/snippet}
+</Story>
+
+<Story
 	name="Languages fixed by the platform"
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
