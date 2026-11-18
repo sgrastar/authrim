@@ -203,7 +203,9 @@
 	<PageHeader title={t('ss.title')} description={t('ss.description')}>
 		{#snippet actions()}
 			{#if canWrite && !forbidden}
-				<Button variant="secondary" onclick={() => (applying = true)}>{t('ss.presetOpen')}</Button>
+				<Button variant="secondary" data-guide="schema-presets" onclick={() => (applying = true)}
+					>{t('ss.presetOpen')}</Button
+				>
 				<Button
 					variant="primary"
 					icon="plus"

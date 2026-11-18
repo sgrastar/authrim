@@ -17,6 +17,8 @@
 		busy?: boolean;
 		/** Why the last submit failed. Shown inside the dialog, which stays open for a retry. */
 		error?: string;
+		/** `wide`: for a list to choose from, whose rows carry a name, a key and marks side by side. */
+		size?: 'default' | 'wide';
 		onsubmit: () => void;
 		oncancel: () => void;
 		children: Snippet;
@@ -29,6 +31,7 @@
 		submitLabel,
 		busy = false,
 		error,
+		size = 'default',
 		onsubmit,
 		oncancel,
 		children
@@ -50,6 +53,7 @@
 <dialog
 	bind:this={dialog}
 	class="dialog"
+	class:dialog--wide={size === 'wide'}
 	aria-labelledby="{uid}-title"
 	oncancel={(event) => {
 		event.preventDefault();
@@ -84,6 +88,10 @@
 		background: var(--bg-card);
 		color: var(--text-primary);
 		box-shadow: var(--shadow-lg);
+	}
+
+	.dialog--wide {
+		width: min(720px, calc(100vw - 32px));
 	}
 
 	.dialog[open] {

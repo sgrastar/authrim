@@ -128,9 +128,12 @@
 
 {#snippet screenCell(row: ScreenListItem, column: Column)}
 	{#if column.key === 'name'}
-		<CellText title={row.display_name} description={row.screen_key}>
-			{#if !row.is_active}<Badge tone="warning">{t('sc.status.inactive')}</Badge>{/if}
-		</CellText>
+		<!-- The first-steps guide points at the row of the sign-up screen (by its key). -->
+		<span class="guide-anchor" data-guide="screen-row-{row.screen_key}">
+			<CellText title={row.display_name} description={row.screen_key}>
+				{#if !row.is_active}<Badge tone="warning">{t('sc.status.inactive')}</Badge>{/if}
+			</CellText>
+		</span>
 	{:else if column.key === 'kind'}
 		{kindLabel(row.screen_kind)}
 	{:else if column.key === 'usage'}
@@ -146,9 +149,7 @@
 	<PageHeader title={t('nav.custom.screens')}>
 		{#snippet actions()}
 			{#if canWrite}
-				<span class="guide-anchor" data-guide="screen-create">
-					<Button variant="primary" icon="plus" href={hrefOf('new')}>{t('sc.list.create')}</Button>
-				</span>
+				<Button variant="primary" icon="plus" href={hrefOf('new')}>{t('sc.list.create')}</Button>
 			{/if}
 		{/snippet}
 	</PageHeader>
