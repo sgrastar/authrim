@@ -14,7 +14,7 @@ import {
 import type { Mapping } from '#lib/ui/patterns/mapping-model.js';
 import { copyValue, Draft } from '#lib/ui/save/draft.svelte.js';
 import { codecContext, profileDescriptor } from './connection-mapping-fields.js';
-import { ApiError } from '#lib/api/api-error.js';
+import { ApiError, ReleasePausedError } from '#lib/api/api-error.js';
 
 export interface ConnectionMappingResources {
 	client: IdentityMappingClient;
@@ -40,6 +40,7 @@ type Phase =
 	| 'saving'
 	| 'impact'
 	| 'conflict'
+	| 'paused'
 	| 'stage_failed'
 	| 'outcome_unknown'
 	| 'binding_failed'
@@ -66,6 +67,8 @@ export class ConnectionMappingState {
 		key: string;
 		setId: string;
 		version: string;
+		/** A try of this attempt ended without a known result: it is never dropped unresolved. */
+		unknown?: boolean;
 	} | null = null;
 	savedSet: MappingSetDetail | null = null;
 	bindingKey = '';
@@ -268,7 +271,13 @@ export class ConnectionMappingState {
 			}
 			await this.write();
 		} catch (error) {
-			this.phase = error instanceof ApiError && error.status === 409 ? 'conflict' : 'failed';
+			// Only the preview throws here, and it changes nothing: the form stays as it is.
+			this.phase =
+				error instanceof ReleasePausedError
+					? 'paused'
+					: error instanceof ApiError && error.status === 409
+						? 'conflict'
+						: 'failed';
 			this.pending = null;
 		}
 	}
@@ -359,11 +368,21 @@ export class ConnectionMappingState {
 					result.references.count,
 					result.references.scanComplete !== true || result.references.countIsLowerBound === true
 				);
+			} else if (result.kind === 'paused' && attempt.unknown) {
+				// Only this retry was refused; what became of the first try is still not known, so
+				// the attempt (its payload and key) is kept and can be sent again.
+				this.phase = 'outcome_unknown';
+			} else if (result.kind === 'paused') {
+				// Nothing was changed and nothing waits: the next save is a request of its own.
+				this.phase = 'paused';
+				this.pending = null;
 			} else {
+				if (result.kind === 'outcome_unknown') attempt.unknown = true;
 				this.phase = result.kind;
 				if (result.kind === 'stage_failed') this.stage = result.stage;
 			}
 		} catch {
+			attempt.unknown = true;
 			this.phase = 'outcome_unknown';
 		}
 	}

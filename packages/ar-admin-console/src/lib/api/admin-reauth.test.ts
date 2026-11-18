@@ -10,7 +10,7 @@ vi.mock('@simplewebauthn/browser', () => ({
 	WebAuthnAbortService: { cancelCeremony: browser.cancelCeremony }
 }));
 
-import { ApiError } from './api-error';
+import { ApiError, ReleasePausedError } from './api-error';
 import { isFreshAuthRequired, reauthenticateWithPasskey, withFreshAuth } from './admin-reauth';
 
 function json(status: number, body: unknown): Response {
@@ -122,5 +122,14 @@ describe('reauthenticateWithPasskey', () => {
 		expect(failure).toBeInstanceOf(ApiError);
 		expect(failure).toMatchObject({ status: 400, code: 'no_reauth_method' });
 		expect(browser.startAuthentication).not.toHaveBeenCalled();
+	});
+
+	it('reports a request refused for a release as paused, not as a 409', async () => {
+		fetchMock.mockResolvedValueOnce(json(409, { error: 'ADMIN_MUTATION_PAUSED_FOR_RELEASE' }));
+
+		const failure = await reauthenticateWithPasskey().catch((error: unknown) => error);
+
+		expect(failure).toBeInstanceOf(ReleasePausedError);
+		expect(failure).toMatchObject({ status: 503, code: 'ADMIN_MUTATION_PAUSED_FOR_RELEASE' });
 	});
 });

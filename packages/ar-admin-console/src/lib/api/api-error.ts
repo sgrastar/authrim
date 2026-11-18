@@ -4,6 +4,9 @@
  *          `capability_disabled`, where the platform has turned the capability off for tenants
  *          (the message says so)
  *   404  → it does not exist (any more)
+ *   409 `ADMIN_MUTATION_PAUSED_FOR_RELEASE` or 503 `CONTROL_PLANE_RELEASE_ROLLOUT_UNAVAILABLE`
+ *          → the environment is being updated and changes are paused (ReleasePausedError);
+ *          nothing is wrong with what was sent, the same change works a little later
  *   409  → someone else changed it since it was loaded (ConflictError)
  *   400 with per-key reasons → some values were refused (RejectedError)
  *   else → something went wrong; the page offers to try again
@@ -48,6 +51,49 @@ export class ConflictError extends ApiError {
 	}
 }
 
+/** The API codes of a change refused because a release is being rolled out. */
+const RELEASE_PAUSE_CODES: Readonly<Record<string, number>> = {
+	ADMIN_MUTATION_PAUSED_FOR_RELEASE: 409,
+	CONTROL_PLANE_RELEASE_ROLLOUT_UNAVAILABLE: 503
+};
+
+/** True for a code that says changes are paused for a release, whatever status it came with. */
+export function isReleasePauseCode(code: unknown): boolean {
+	return typeof code === 'string' && Object.hasOwn(RELEASE_PAUSE_CODES, code);
+}
+
+/** True when an answer with this status and code says changes are paused for a release. */
+export function isReleasePause(status: number, code: unknown): boolean {
+	return typeof code === 'string' && RELEASE_PAUSE_CODES[code] === status;
+}
+
+/**
+ * The environment is being updated, so the Admin API takes no changes for now. Not an edit
+ * conflict: nothing has to be reloaded, the same change works once the update is over.
+ *
+ * `status` is 503 whichever way the API answered (it answers 409 while the release is being
+ * verified), so that no page reading `status === 409` takes this for a change made elsewhere.
+ * The status the API sent is `httpStatus`.
+ */
+export class ReleasePausedError extends ApiError {
+	readonly httpStatus: number;
+	/** Seconds the API asks to wait before trying again; 0 when it did not say. */
+	readonly retryAfterSeconds: number;
+
+	constructor(
+		httpStatus: number,
+		code: string,
+		message: string,
+		body: Record<string, unknown> = {},
+		retryAfterSeconds = 0
+	) {
+		super(503, code, message, body);
+		this.name = 'ReleasePausedError';
+		this.httpStatus = httpStatus;
+		this.retryAfterSeconds = retryAfterSeconds;
+	}
+}
+
 /** Every value in the change was refused; `rejected` says why, per key. */
 export class RejectedError extends ApiError {
 	readonly rejected: Readonly<Record<string, string>>;
@@ -80,6 +126,16 @@ export async function errorFromResponse(response: Response): Promise<ApiError> {
 		(typeof body.message === 'string' && body.message) ||
 		(typeof body.error_description === 'string' && body.error_description) ||
 		`${response.status} ${response.statusText}`.trim();
+	if (isReleasePause(response.status, code)) {
+		const retryAfter = Number(response.headers.get('retry-after'));
+		return new ReleasePausedError(
+			response.status,
+			code,
+			message,
+			body,
+			Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : 0
+		);
+	}
 	if (response.status === 409) return new ConflictError(message, body);
 	if (response.status === 400 && code === 'validation_failed')
 		return new RejectedError(message, body);

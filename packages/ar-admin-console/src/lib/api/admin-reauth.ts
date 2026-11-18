@@ -13,7 +13,7 @@ import {
 	type PublicKeyCredentialRequestOptionsJSON
 } from '@simplewebauthn/browser';
 import { adminFetch, API_BASE_URL } from '#lib/api/admin-request.js';
-import { ApiError } from '#lib/api/api-error.js';
+import { ApiError, ReleasePausedError, isReleasePause } from '#lib/api/api-error.js';
 
 const PASSKEY_CEREMONY_TIMEOUT_MS = 120_000;
 
@@ -41,6 +41,8 @@ export async function postJson<T>(path: string, body: unknown): Promise<T> {
 			typeof payload.error_description === 'string'
 				? payload.error_description
 				: `Re-authentication failed (${response.status})`;
+		if (isReleasePause(response.status, code))
+			throw new ReleasePausedError(response.status, code, message, payload);
 		throw new ApiError(response.status, code, message, payload);
 	}
 	return payload as T;

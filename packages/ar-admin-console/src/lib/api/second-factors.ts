@@ -13,7 +13,7 @@ import {
 import { withCeremonyTimeout } from '#lib/api/admin-reauth.js';
 import { adminFetch, API_BASE_URL } from '#lib/api/admin-request.js';
 import { stepUpHeaders, withStepUp } from '#lib/api/admin-step-up.js';
-import { ApiError } from '#lib/api/api-error.js';
+import { ApiError, ReleasePausedError, isReleasePause } from '#lib/api/api-error.js';
 
 export interface SecondFactor {
 	id: string;
@@ -87,14 +87,14 @@ async function request<T>(
 	});
 	const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
 	if (!response.ok) {
-		throw new ApiError(
-			response.status,
-			typeof payload.error === 'string' ? payload.error : '',
+		const code = typeof payload.error === 'string' ? payload.error : '';
+		const message =
 			typeof payload.error_description === 'string'
 				? payload.error_description
-				: `Request failed (${response.status})`,
-			payload
-		);
+				: `Request failed (${response.status})`;
+		if (isReleasePause(response.status, code))
+			throw new ReleasePausedError(response.status, code, message, payload);
+		throw new ApiError(response.status, code, message, payload);
 	}
 	return payload as T;
 }

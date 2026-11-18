@@ -10,7 +10,7 @@
 	import { toast } from '#lib/ui/toast/toast.svelte.js';
 	import { CHECKLIST, type ChecklistItem } from './checklist';
 	import { guide } from './guide.svelte';
-	import { onboardingProgress } from './progress.svelte';
+	import { onboardingProgress, saveFailedKey } from './progress.svelte';
 
 	/**
 	 * The first-steps checklist: things to try in a new environment, each with a guide that
@@ -44,7 +44,7 @@
 		const saved = await (finished
 			? onboardingProgress.complete(item.id)
 			: onboardingProgress.reopen(item.id));
-		if (!saved) toast.error(t('ob.saveFailed'));
+		if (!saved) toast.error(t(saveFailedKey()));
 	}
 </script>
 

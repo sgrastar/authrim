@@ -1,8 +1,10 @@
-import { ApiError } from '#lib/api/api-error.js';
+import { ApiError, ReleasePausedError } from '#lib/api/api-error.js';
 import type { MessageKey } from '#lib/i18n/i18n.svelte.js';
 
 /** What a failed theme call says to the admin; `fallback` for anything else. */
 export function themeErrorKey(error: unknown, fallback: MessageKey): MessageKey {
+	// Before anything read from the status: paused for an update is not a change made elsewhere.
+	if (error instanceof ReleasePausedError) return 'common.releasePaused';
 	if (!(error instanceof ApiError)) return fallback;
 	switch (error.code) {
 		case 'theme_active':

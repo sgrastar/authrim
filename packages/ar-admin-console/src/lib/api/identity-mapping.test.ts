@@ -127,6 +127,19 @@ describe('HTTP IdentityMappingClient', () => {
 			expect(fetcher).toHaveBeenCalledTimes(1);
 		}
 	);
+	it.each([
+		{ body: { error: 'ADMIN_MUTATION_PAUSED_FOR_RELEASE', phase: 'verifying' }, status: 409 },
+		{ body: { error: 'CONTROL_PLANE_RELEASE_ROLLOUT_UNAVAILABLE' }, status: 503 }
+	])(
+		'returns paused, not a conflict or an unknown outcome, for $body.error',
+		async ({ body, status }) => {
+			const fetcher = vi.fn().mockResolvedValue(json(body, status));
+			vi.stubGlobal('fetch', fetcher);
+			const result = await httpIdentityMapping().saveSet('t', 'set', request, options);
+			expect(result).toEqual({ kind: 'paused' });
+			expect(fetcher).toHaveBeenCalledTimes(1);
+		}
+	);
 	it('keeps transport and unreadable completion unknown and refuses a missing version before sending', async () => {
 		const fetcher = vi
 			.fn()

@@ -556,7 +556,7 @@ import type {
 	SAMLExplanation
 } from './mapping-set';
 import { API_BASE_URL, adminFetch } from './admin-request';
-import { ApiError, errorFromResponse } from './api-error';
+import { ApiError, errorFromResponse, isReleasePause } from './api-error';
 
 export interface IdentityMappingClient {
 	restoreLevel(tenantId: string, entryId: string, expectedVersion: string): Promise<void>;
@@ -697,6 +697,8 @@ async function mutateMapping<T>(
 			body: details
 		};
 	}
+	// Refused before anything ran: neither an unknown outcome (503) nor a changed set (409).
+	if (isReleasePause(response.status, details.error)) return { kind: 'paused' };
 	if (typeof details.stage_failed === 'string')
 		return { kind: 'stage_failed', stage: details.stage_failed, body: details };
 	if (response.status >= 500)

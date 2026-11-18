@@ -1,5 +1,5 @@
 import { noticeErrorCode, type AdminNotice } from '#lib/api/admin-notices.js';
-import { ApiError } from '#lib/api/api-error.js';
+import { ApiError, ReleasePausedError } from '#lib/api/api-error.js';
 import { deliveryErrorField, isTemporarilyUnavailable } from '#lib/api/notice-delivery.js';
 import type { MessageKey } from '#lib/i18n/i18n.svelte.js';
 import type { DeliveryChannelKind, DeliveryStatus } from '#lib/api/notice-delivery.js';
@@ -81,6 +81,8 @@ export const DELIVERY_CHANNEL_LABEL: Record<DeliveryChannelKind, MessageKey> = {
 
 /** What to tell the admin when a Slack channel action failed. */
 export function channelErrorKey(error: unknown): MessageKey {
+	// Before the 503 below: paused for an update is not the encryption being unset.
+	if (error instanceof ReleasePausedError) return 'common.releasePaused';
 	if (isTemporarilyUnavailable(error)) return 'nt.slack.err.unavailable';
 	if (error instanceof ApiError) {
 		if (error.status === 403) return 'nt.err.forbidden';

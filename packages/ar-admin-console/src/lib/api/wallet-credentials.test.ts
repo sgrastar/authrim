@@ -133,6 +133,21 @@ describe('walletCredentialErrorKey', () => {
 		);
 		expect(walletCredentialErrorKey(new Error('x'))).toBe('keyring.error.generic');
 	});
+
+	it('says the environment is being updated for a change paused for a release', () => {
+		for (const error of [
+			new WalletCredentialError('ADMIN_MUTATION_PAUSED_FOR_RELEASE', 409),
+			// As it arrives through the step-up, where the status is already 503.
+			new WalletCredentialError('ADMIN_MUTATION_PAUSED_FOR_RELEASE', 503),
+			new WalletCredentialError('CONTROL_PLANE_RELEASE_ROLLOUT_UNAVAILABLE', 503)
+		]) {
+			expect(walletCredentialErrorKey(error)).toBe('common.releasePaused');
+			expect(revokeErrorKey(error)).toBe('common.releasePaused');
+		}
+		expect(revokeErrorKey(new WalletCredentialError('vc_busy', 503))).toBe(
+			'keyring.credentials.error.busy'
+		);
+	});
 });
 
 describe('listCredentials', () => {
