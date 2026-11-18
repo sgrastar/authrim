@@ -176,7 +176,6 @@ export const load: PageServerLoad = async (event) => {
 			actingAs: view.actingAs ? LL.consent_actingOnBehalfOf({ name: view.actingAs.name }) : '',
 			requiredTitle: LL.consent_items_required_title(),
 			optionalTitle: LL.consent_items_optional_title(),
-			viewDocument: LL.consent_item_view_document(),
 			processingPurpose: LL.consent_item_processing_purpose(),
 			withdrawalImpact: LL.consent_item_withdrawal_impact(),
 			releaseTitle: view.release ? LL.consent_release_title({ clientName: view.clientName }) : '',

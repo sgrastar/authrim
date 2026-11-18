@@ -25,7 +25,7 @@
 			docs: {
 				description: {
 					component:
-						'One consent statement on the consent step. A statement whose text is kept in Authrim shows its statement page (`/statements/<slug>/embed`) in a scrolling frame, with a "Read …" link that opens the full page; a statement kept at an external URL is a "Read …" link to that document. The checkbox always says "I agree to <title>". (In Storybook the frame has no page to show.)'
+						'One consent statement on the consent step. A statement whose text is kept in Authrim shows its statement page (`/statements/<slug>/embed`) in a scrolling frame, with a "Read …" link that opens the full page; a statement kept at an external URL is linked from its description (HTML the admin writes, sanitized) only, with no link of its own. The checkbox always says "I agree to <title>". (In Storybook the frame has no page to show.)'
 				}
 			}
 		}
@@ -63,9 +63,41 @@
 		item: {
 			...BASE,
 			title: 'Privacy Policy',
+			description:
+				'I have read and agree to the <a href="https://example.com/privacy">Privacy Policy</a>.',
 			inline_content: null,
 			document_url: 'https://example.com/privacy'
 		}
+	}}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		// The one link is the description's; the document URL adds none.
+		const links = canvas.getAllByRole('link');
+		await expect(links).toHaveLength(1);
+		await expect(links[0]).toHaveTextContent('Privacy Policy');
+		await expect(links[0]).toHaveAttribute('href', 'https://example.com/privacy');
+		await expect(links[0]).toHaveAttribute('rel', 'noopener noreferrer');
+		await expect(canvas.getByText('Privacy Policy', { selector: 'p' })).toBeInTheDocument();
+	}}
+>
+	{#snippet template(args)}{@render frame(args)}{/snippet}
+</Story>
+
+<!-- A choice of options drawn as a checkbox (a sign-up without its choices) keeps its link. -->
+<Story
+	name="Choice of options shown as a checkbox"
+	args={{
+		linkDocument: true,
+		item: {
+			...BASE,
+			title: 'Information release',
+			inline_content: null,
+			document_url: 'https://example.com/release'
+		}
+	}}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await expect(canvas.getByRole('link')).toHaveAttribute('href', 'https://example.com/release');
 	}}
 >
 	{#snippet template(args)}{@render frame(args)}{/snippet}

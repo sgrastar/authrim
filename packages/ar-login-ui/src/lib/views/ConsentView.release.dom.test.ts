@@ -58,21 +58,28 @@ describe('the information release section of the consent view (real DOM)', () =>
 		expect(hidden.queryByText('ada.release@example.com')).toBeNull();
 	});
 
-	it('shows the purpose as text with a validated link', () => {
+	it('shows the purpose sanitized, its document linked only from its description', () => {
 		const { getByTestId } = mount();
 		const purpose = getByTestId('release-purpose');
 		expect(within(purpose).getByText('Sign-in and account notices')).toBeTruthy();
 		expect(purpose.textContent).toContain('<b>not bold</b>');
 		expect(purpose.querySelector('b')).toBeNull();
-		expect(purpose.querySelector('a')?.getAttribute('href')).toBe('https://example.com/purpose');
+		// The document URL adds no link of its own.
+		expect(purpose.querySelector('a[href="https://example.com/purpose"]')).toBeNull();
 	});
 
-	it('does not link a purpose document that is not a web link', () => {
+	it('keeps the links the admin writes in the description, checked', () => {
 		const { getByTestId } = mount({
 			...informationRelease,
-			purpose: { ...informationRelease.purpose!, document_url: 'javascript:alert(1)' }
+			purpose: {
+				...informationRelease.purpose!,
+				description:
+					'Read <a href="https://example.com/notice">the notice</a> <a href="javascript:alert(1)">x</a>'
+			}
 		});
-		expect(getByTestId('release-purpose').querySelector('a')).toBeNull();
+		const links = [...getByTestId('release-purpose').querySelectorAll('a')];
+		expect(links.map((link) => link.getAttribute('href'))).toEqual(['https://example.com/notice']);
+		expect(links[0].getAttribute('rel')).toBe('noopener noreferrer');
 	});
 
 	it('draws nothing when there is no information release, as before', () => {

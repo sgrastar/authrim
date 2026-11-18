@@ -2238,6 +2238,27 @@ tr.expired {
 	grid-row: 3;
 }
 
+/* A custom content block above the header bar takes a row of its own at the top. */
+[data-page-layout='split_panel'] .auth-page--header-bar.auth-page--above-header {
+	grid-template-rows: auto auto minmax(0, 1fr) auto;
+}
+
+[data-page-layout='split_panel'] .auth-page--above-header > .auth-custom-blocks--above-header {
+	grid-row: 1;
+}
+
+[data-page-layout='split_panel'] .auth-page--above-header > .auth-bar--header {
+	grid-row: 2;
+}
+
+[data-page-layout='split_panel'] .auth-page--above-header > .auth-main {
+	grid-row: 3;
+}
+
+[data-page-layout='split_panel'] .auth-page--above-header > .auth-page-footer {
+	grid-row: 4;
+}
+
 [data-page-layout='split_panel'] .auth-page .auth-bar--footer {
 	padding: 12px clamp(16px, 4vw, 40px);
 	background: var(--login-footer-background, transparent);

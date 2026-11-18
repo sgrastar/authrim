@@ -97,6 +97,22 @@
 		tIn(draft.language, screen === 'signIn' ? 'th.preview.welcome' : screenOption.label)
 	);
 	const split = $derived(draft.template === 'split' && width === 'desktop');
+	// "Brand side only" (Split): the page's picture shows on the brand side alone and the form side
+	// is painted. At phone width there is no brand side, so the picture shows nowhere, as on the
+	// real screen, and the form side is still painted.
+	const brandOnly = $derived(draft.template === 'split' && draft.splitBackground === 'brand');
+	// The form side's own fill with "brand side only": a gradient, a colour, or none set.
+	const loginPanelFill = $derived(
+		draft.loginPanelColor
+			? draft.loginPanelGradientColor
+				? `linear-gradient(135deg, ${draft.loginPanelColor}, ${draft.loginPanelGradientColor})`
+				: draft.loginPanelColor
+			: undefined
+	);
+	// A fixed mode is not to be changed: the light/dark toggle is not offered.
+	const fixed = $derived(draft.themeFixed && draft.mode !== 'auto');
+	/** The parts a saved screen does not show while the theme offers no sign-in / sign-up switch. */
+	const HIDDEN_WITHOUT_SWITCH: ReadonlySet<string> = new Set(['auth_switch_link']);
 	// The header and the brand panel each choose what they show of the brand.
 	const showName = $derived(draft.logoDisplay !== 'logo');
 	const showLogo = $derived(draft.logoDisplay !== 'name');
@@ -125,14 +141,16 @@
 	});
 	// The link that switches between signing in and signing up: the last line of the card.
 	const switchLink = $derived(
-		screen === 'signIn'
-			? tIn(draft.language, 'th.preview.toSignUp')
-			: screen === 'signUp'
-				? tIn(draft.language, 'th.preview.toSignIn')
-				: null
+		!draft.authSwitchLink
+			? null
+			: screen === 'signIn'
+				? tIn(draft.language, 'th.preview.toSignUp')
+				: screen === 'signUp'
+					? tIn(draft.language, 'th.preview.toSignIn')
+					: null
 	);
 	const showTools = $derived(
-		!contentOnly && (draft.themeToggle || draft.languageSelect) && topbar !== 'hidden'
+		!contentOnly && ((draft.themeToggle && !fixed) || draft.languageSelect) && topbar !== 'hidden'
 	);
 
 	/** A chosen file is shown through an object URL, released when it is replaced or removed. */
@@ -247,6 +265,19 @@
 	{/if}
 {/snippet}
 
+<!-- The page's picture with its opacity, filters and dark-mode veil, laid behind its box. -->
+{#snippet pageImage()}
+	<span class="outline__image" style:opacity={draft.backgroundOpacity / 100}>
+		<span
+			class="outline__picture"
+			style:background-image={`url("${backgroundUrl}")`}
+			style:filter={backgroundFilter || undefined}
+			style:inset={backgroundBleed ? `-${backgroundBleed}px` : undefined}
+		></span>
+		{#if backgroundVeil}<span class="outline__dim" style:background={backgroundVeil}></span>{/if}
+	</span>
+{/snippet}
+
 {#snippet brand()}
 	<div class="brand">
 		{#if showLogo}{@render mark()}{/if}
@@ -260,7 +291,7 @@
 <!-- The colour mode and language choices, as the end user's screen offers them. -->
 {#snippet tools()}
 	<div class="tools">
-		{#if draft.themeToggle}
+		{#if draft.themeToggle && !fixed}
 			<span class="tools__item tools__item--icon"
 				><Icon name={scheme === 'dark' ? 'moon' : 'sun'} /></span
 			>
@@ -348,6 +379,8 @@
 				data-template={draft.template}
 				data-form-area={own.cardColor ? 'set' : 'palette'}
 				data-brand-area={own.brandPanelBackground ? 'set' : 'palette'}
+				data-split-background={brandOnly ? 'brand' : undefined}
+				style:--ol-login-panel={loginPanelFill}
 				data-screen-id={actual?.id}
 				lang={draft.language}
 				dir={localeDir(draft.language)}
@@ -388,17 +421,8 @@
 				data-frost={shape.frost ? 'true' : 'false'}
 				style:font-family={FONT_STACKS[draft.font]}
 			>
-				{#if backgroundUrl}
-					<span class="outline__image" style:opacity={draft.backgroundOpacity / 100}>
-						<span
-							class="outline__picture"
-							style:background-image={`url("${backgroundUrl}")`}
-							style:filter={backgroundFilter || undefined}
-							style:inset={backgroundBleed ? `-${backgroundBleed}px` : undefined}
-						></span>
-						{#if backgroundVeil}<span class="outline__dim" style:background={backgroundVeil}
-							></span>{/if}
-					</span>
+				{#if backgroundUrl && !brandOnly}
+					{@render pageImage()}
 				{/if}
 				<!-- The header runs along the top of the whole screen, over the brand panel too, as the footer
 				     runs along the bottom. The brand panel has no header of its own. -->
@@ -423,7 +447,7 @@
 					class:outline__stage--formcard={split && draft.formFrame === 'card'}
 					class:outline__stage--wide={split && draft.splitWidth === 'wide'}
 					class:outline__stage--card={split && draft.splitFrame === 'card'}
-					class:outline__stage--over-image={split && !!backgroundUrl}
+					class:outline__stage--over-image={split && !!backgroundUrl && !brandOnly}
 				>
 					{#if split}
 						<aside
@@ -432,6 +456,9 @@
 							data-position={draft.brandPosition}
 							data-align={draft.brandAlign}
 						>
+							{#if backgroundUrl && brandOnly}
+								{@render pageImage()}
+							{/if}
 							{#if brandLayer}
 								<span
 									class="outline__image"
@@ -477,6 +504,7 @@
 											choices={actual.choices}
 											legacyYesNo={actual.legacyYesNo}
 											wide={actual.canvas === 'wide'}
+											hiddenKinds={draft.authSwitchLink ? undefined : HIDDEN_WITHOUT_SWITCH}
 										/>
 									{:else if previews !== undefined}
 										<p class="outline__lead">
@@ -554,7 +582,7 @@
 					<footer class="outline__footer outline__bar">
 						{#each BAR_ALIGNS as zone (zone)}
 							<div class="outline__zone outline__zone--{zone}">
-								{#if draft.footerAlign === zone}
+								{#if draft.footerAlign === zone && draft.poweredBy}
 									<p class="outline__footer-text">
 										{#each footerParts as part, index (index)}
 											{#if 'href' in part}
@@ -888,6 +916,20 @@
 		backdrop-filter: none;
 	}
 
+	/*
+	 * "Brand side only": the page shows its colour and the brand side its picture, so the form side
+	 * is painted, not frosted: its own fill (a colour or a gradient), else the form area's colour,
+	 * else the panel colour. At phone width the whole main area is painted, as on the real screen.
+	 */
+	.outline[data-split-background='brand'] .outline__main {
+		background: var(--ol-login-panel, var(--ol-form-area-own, var(--ol-panel)));
+		backdrop-filter: none;
+	}
+
+	.outline[data-split-background='brand'] .outline__stage--formcard .outline__main {
+		background: none;
+	}
+
 	.outline__stage--right .outline__main {
 		border-inline-start: 0;
 		border-inline-end: 1px solid var(--border);
@@ -1206,6 +1248,20 @@
 		backdrop-filter: none;
 	}
 
+	/*
+	 * At phone width Split has one column and the form sits on the painted main area, as on the
+	 * real screen (its form box is see-through there): with "brand side only" the fill shows
+	 * behind the form.
+	 */
+	.outline[data-split-background='brand']
+		.outline__stage:not(.outline__stage--split)
+		.outline__card {
+		background: transparent;
+		border-color: transparent;
+		box-shadow: none;
+		backdrop-filter: none;
+	}
+
 	/* The card, with the topbar below it when it sits there. */
 	.outline__col {
 		display: grid;
@@ -1255,6 +1311,11 @@
 			0 0 24px color-mix(in srgb, var(--ol-text) 22%, transparent),
 			0 12px 32px color-mix(in srgb, var(--ol-text) 10%, transparent);
 		backdrop-filter: blur(3px) saturate(115%);
+	}
+
+	/* "Brand side only" with a floating form area: the fill is the floating surface's, whatever the palette. */
+	.outline[data-split-background='brand'] .outline__stage--formcard .outline__col {
+		background: var(--ol-login-panel, var(--ol-form-area-own, var(--ol-card)));
 	}
 
 	.outline .outline__stage--formcard .outline__card {

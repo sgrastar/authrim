@@ -144,9 +144,13 @@
 		const canvas = within(canvasElement);
 		await canvas.findByText(t('cs.content.readOnly'));
 		await expect(canvas.queryByRole('textbox', { name: t('cs.content.name') })).toBeNull();
+		// The link is said, not offered: people asked see only the description's own links.
 		await expect(
-			canvas.getByRole('link', { name: new RegExp(t('cs.content.openDocument')) })
-		).toHaveAttribute('href', 'https://example.com/privacy');
+			canvas
+				.queryAllByRole('link')
+				.filter((link) => link.getAttribute('href') === 'https://example.com/privacy')
+		).toHaveLength(0);
+		await expect(canvas.getByText('https://example.com/privacy')).toBeInTheDocument();
 	}}
 >
 	{#snippet template()}

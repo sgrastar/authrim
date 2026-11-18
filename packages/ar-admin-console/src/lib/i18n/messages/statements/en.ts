@@ -78,7 +78,8 @@ export const enStatements: Record<keyof typeof jaStatements, string> = {
 	'cs.content.typeUrl': 'Link to a document',
 	'cs.content.name': 'Name',
 	'cs.content.summary': 'Description',
-	'cs.content.summaryHint': 'A short description shown where people are asked to agree.',
+	'cs.content.summaryHint':
+		'A short description shown where people are asked to agree. You can use the HTML tags {tags}.',
 	'cs.content.body': 'Text',
 	'cs.content.url': 'Document URL',
 	'cs.content.urlHint': 'A public page people can read, starting with https://.',
