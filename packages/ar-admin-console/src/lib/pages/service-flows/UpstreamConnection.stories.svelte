@@ -496,7 +496,8 @@
 	}}
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
-		const table = await canvas.findByRole('table', { name: t('cm.connections') });
+		// Upstream providers the tenant added join the service flows table.
+		const table = await canvas.findByRole('table', { name: t('sf.mock.connections') });
 		await waitFor(() => {
 			expect(within(table).getByText('OIDC OP')).toBeVisible();
 			expect(within(table).getByText('SAML IdP')).toBeVisible();

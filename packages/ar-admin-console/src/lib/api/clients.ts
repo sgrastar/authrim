@@ -13,6 +13,8 @@ export interface ClientOption {
 	id: string;
 	name: string;
 	redirectUris: string[];
+	/** Registered and kept by Authrim itself (the Login UI's client, downstream introspection). */
+	systemManaged?: boolean;
 }
 
 export interface ClientsClient {
@@ -92,7 +94,8 @@ export function clientFromRow(value: unknown): ClientOption | null {
 		name: typeof row.client_name === 'string' && row.client_name.trim() ? row.client_name : id,
 		redirectUris: Array.isArray(row.redirect_uris)
 			? row.redirect_uris.filter((uri): uri is string => typeof uri === 'string')
-			: []
+			: [],
+		systemManaged: row.system_managed === true
 	};
 }
 
@@ -123,6 +126,7 @@ function clientDetail(value: unknown): ClientDetail {
 				? row.client_name
 				: row.client_id,
 		redirectUris: row.redirect_uris.filter((uri): uri is string => typeof uri === 'string'),
+		systemManaged: row.system_managed === true,
 		applicationType: typeof row.application_type === 'string' ? row.application_type : null,
 		authMethod:
 			typeof row.token_endpoint_auth_method === 'string' ? row.token_endpoint_auth_method : null,

@@ -8,6 +8,10 @@ import {
   type AdminAuthContext,
   type Env,
 } from '@authrim/ar-lib-core';
+import {
+  DOWNSTREAM_INTROSPECTION_CLIENT_DESCRIPTION,
+  DOWNSTREAM_INTROSPECTION_CLIENT_NAME,
+} from './system-managed-clients';
 
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 const ALWAYS_ALLOWED_PATHS = new Set(['/api/admin/logout']);
@@ -123,9 +127,8 @@ async function isAuthorizedInitialSystemClientBootstrap(
     ];
     return (
       Object.keys(body).sort().join('\n') === expectedDownstreamKeys.sort().join('\n') &&
-      body.client_name === 'Downstream Grant Introspection' &&
-      body.description ===
-        'System-managed confidential client used by Authrim for downstream grant introspection.' &&
+      body.client_name === DOWNSTREAM_INTROSPECTION_CLIENT_NAME &&
+      body.description === DOWNSTREAM_INTROSPECTION_CLIENT_DESCRIPTION &&
       body.application_type === 'service' &&
       body.token_endpoint_auth_method === 'client_secret_basic' &&
       isExactStringArray(body.redirect_uris, [

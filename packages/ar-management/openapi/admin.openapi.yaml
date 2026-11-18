@@ -56631,6 +56631,14 @@ components:
               description: Missing settings that prevent activation; no secret values.
               items:
                 type: string
+            system_managed:
+              type: boolean
+              readOnly: true
+              description: >-
+                True for the clients Authrim itself registers and keeps (the built-in Login UI's
+                public client and the downstream grant introspection client), recognised by the
+                fixed name and description setup writes. Consoles list them apart from the tenant's
+                own apps.
 
             client_id:
               type: string
