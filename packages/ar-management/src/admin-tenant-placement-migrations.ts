@@ -2,6 +2,7 @@ import type { Context } from 'hono';
 import {
   assertControlPlaneRecordIsSecretFree,
   createAuditLog,
+  DEFAULT_TENANT_ID,
   ensureDatabaseAdapter,
   requireAdminDatabaseAdapter,
   type AdminAuthContext,
@@ -154,11 +155,26 @@ export async function adminTenantPlacementMigrationStartHandler(
     }
 
     const platform = ensureDatabaseAdapter(c.env.DB, 'tenant-placement-migration-platform-api');
-    const tenant = await platform.queryOne<{ isolation_policy: string; lifecycle_state: string }>(
-      'SELECT isolation_policy, lifecycle_state FROM tenants WHERE id = ?',
+    const tenant = await platform.queryOne<{
+      isolation_policy: string;
+      lifecycle_state: string;
+      is_default: number;
+      default_tenant_guard: string | null;
+    }>(
+      `SELECT isolation_policy, lifecycle_state, is_default, default_tenant_guard
+         FROM tenants WHERE id = ?`,
       [tenantId]
     );
     if (!tenant) return error(c, 404, 'TENANT_NOT_FOUND');
+    // A fresh tenant database seeds its own default tenant, so the default tenant (the baseline
+    // one, or setup's initial tenant under another id) cannot move into one.
+    if (
+      tenantId === DEFAULT_TENANT_ID ||
+      Number(tenant.is_default) !== 0 ||
+      tenant.default_tenant_guard !== null
+    ) {
+      return error(c, 409, 'TENANT_PLACEMENT_MIGRATION_DEFAULT_TENANT_UNSUPPORTED');
+    }
     if (tenant.lifecycle_state !== 'active' || tenant.isolation_policy !== 'shared_pool') {
       return error(c, 409, 'TENANT_PLACEMENT_MIGRATION_SOURCE_INVALID');
     }

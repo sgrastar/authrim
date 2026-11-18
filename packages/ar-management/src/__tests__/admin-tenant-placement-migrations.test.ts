@@ -112,9 +112,13 @@ describe('Admin tenant placement migration API', () => {
     platformDatabase = new DatabaseSync(':memory:');
     platformDatabase.exec(
       `CREATE TABLE tenants (
-         id TEXT PRIMARY KEY, isolation_policy TEXT NOT NULL, lifecycle_state TEXT NOT NULL
+         id TEXT PRIMARY KEY, isolation_policy TEXT NOT NULL, lifecycle_state TEXT NOT NULL,
+         is_default INTEGER NOT NULL DEFAULT 0, default_tenant_guard TEXT
        );
-       INSERT INTO tenants VALUES ('tenant-a', 'shared_pool', 'active');`
+       INSERT INTO tenants VALUES ('tenant-a', 'shared_pool', 'active', 0, NULL);
+       -- The baseline tenant after another became the default, and setup's initial tenant.
+       INSERT INTO tenants VALUES ('default', 'shared_pool', 'active', 0, NULL);
+       INSERT INTO tenants VALUES ('tenant-initial', 'shared_pool', 'active', 1, 'default');`
     );
     admin = adapter(adminDatabase);
     platform = adapter(platformDatabase);
@@ -189,6 +193,30 @@ describe('Admin tenant placement migration API', () => {
     );
     expect(stored?.requestedBy).toBe(requestedById);
   });
+
+  it.each(['default', 'tenant-initial'])(
+    'refuses to move the default tenant %s into a database of its own',
+    async (tenantId) => {
+      const start = vi.fn(async () => controlView());
+      const env = {
+        AUTHRIM_ENVIRONMENT_NAME: 'test',
+        DB: platform,
+        DB_ADMIN: admin,
+        CONTROL: { startTenantPlacementMigration: start },
+      } as unknown as Env;
+      const test = app(env);
+      const response = await test.value.request(
+        `/tenants/${tenantId}/placement-migrations`,
+        { method: 'POST', headers: { 'Idempotency-Key': 'request-a' } },
+        test.env
+      );
+      expect(response.status).toBe(409);
+      expect(await response.json()).toMatchObject({
+        error: 'TENANT_PLACEMENT_MIGRATION_DEFAULT_TENANT_UNSUPPORTED',
+      });
+      expect(start).not.toHaveBeenCalled();
+    }
+  );
 
   it('does not disclose a migration through a different tenant path', async () => {
     await new TenantPlacementMigrationJobRepository(admin).create({
