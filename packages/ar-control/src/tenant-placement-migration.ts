@@ -240,6 +240,11 @@ export class TenantPlacementMigrationService {
     if (input.targetIsolationPolicy !== 'tenant_exclusive') {
       throw new Error('invalid_tenant_placement_migration_target');
     }
+    // The baseline tenant stays in the shared pool (the reconciler also refuses any tenant marked
+    // default, which only the tenant's own database can tell).
+    if (tenantId === 'default') {
+      throw new Error('control_tenant_placement_default_tenant_unsupported');
+    }
     const operationId = await migrationOperationId(environmentId, tenantId, idempotencyKey);
     const session = primary(this.database);
     const existing = await session
