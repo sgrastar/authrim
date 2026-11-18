@@ -25,8 +25,8 @@
     // Cloudflare Turnstile site key (public).
     "TURNSTILE_SITE_KEY": "0x4AAAAAAGBc4ptXKLZ6Lz10",
     "MAX_ACTIVE_TENANTS": "75",
-    "MAX_STARTS_PER_IP_PER_DAY": "300",
-    "TENANT_TTL_HOURS": "1",
+    "MAX_STARTS_PER_IP_PER_DAY": "10",
+    "TENANT_TTL_HOURS": "24",
     "ENVIRONMENT": "production",
   },
   // Authrim API through the router Worker (see README.md, "Service binding"). Remove for a plain fetch.
