@@ -324,6 +324,62 @@ export const jaCustomization = {
 	'lu.englishNames': '英語名を併記する',
 	'lu.englishNames.desc':
 		'言語切り替えで「Japanese（日本語）」のように英語名も出します。同じ名前は 1 回だけ表示します。',
+	'lu.lite': 'Lite ログイン UI',
+	'lu.lite.desc':
+		'通信環境がとても悪い利用者向けの、サーバー側で描画する軽量なログイン画面です。オンにすると、このテナントのログイン画面はすべて Lite 版になります。',
+	'lu.lite.switch': 'Lite ログイン UI を使う',
+	'lu.lite.switch.desc':
+		'切り替えはすぐに反映されます。オンにする前に、テナントの使っている機能を Lite 版がすべて扱えるかを確認します。',
+	'lu.lite.on': 'オン',
+	'lu.lite.off': 'オフ',
+	'lu.lite.changing': '切り替え中',
+	'lu.lite.issues.title': '今はオンにできません',
+	'lu.lite.issues.body': 'Lite ログイン UI が扱えないものがあります。解消するとオンにできます。',
+	'lu.lite.issue.not_released': 'Lite ログイン UI はまだこの環境で公開されていません',
+	'lu.lite.issue.policy_store_unavailable': 'ポリシーストアに接続できません',
+	'lu.lite.issue.method_unsupported': 'Lite 版が扱えないサインイン方式が有効です',
+	'lu.lite.issue.flow_component_unsupported': 'サービスフローに Lite 版が扱えない部品があります',
+	'lu.lite.issue.flow_screen_missing': 'サービスフローが参照する画面が見つかりません',
+	'lu.lite.issue.screen_block_unsupported': '画面に Lite 版が扱えないブロックがあります',
+	'lu.lite.issue.screen_method_unsupported': '画面に Lite 版が扱えないサインイン方式があります',
+	'lu.lite.issue.account_block_unsupported':
+		'アカウントページに Lite 版が扱えないブロックがあります',
+	'lu.lite.issue.client_login_ui_url': 'アプリが独自のログイン UI の URL を使っています',
+	'lu.lite.issue.issuer_origin_mismatch': '発行者のオリジンがログイン UI と一致しません',
+	'lu.lite.issue.account_page_path_custom': 'アカウントページのパスが既定から変更されています',
+	'lu.lite.refused': 'Lite ログイン UI をオンにできませんでした。理由を確認してください。',
+	'lu.lite.inProgress': 'ほかの切り替えが進行中です。しばらくしてからもう一度お試しください。',
+	'lu.lite.notRecorded':
+		'切り替えは反映されましたが、設定への記録は書けませんでした。表示が古い場合は読み込み直してください。',
+	'lu.lite.turnedOn': 'Lite ログイン UI をオンにしました。',
+	'lu.lite.turnedOff': 'Lite ログイン UI をオフにしました。',
+	'lu.lite.unavailable': 'Lite の状態を読めません',
+	'lu.lite.unavailable.body':
+		'ポリシーストアに接続できないため、Lite ログイン UI の状態を確認できません。',
+	'lu.lite.confirmOn.title': 'Lite ログイン UI をオンにしますか？',
+	'lu.lite.confirmOn.body':
+		'このテナントのログイン画面がすぐに Lite 版に切り替わります。利用者は軽量な画面でサインインします。',
+	'lu.lite.confirmOn.ok': 'オンにする',
+	'lu.lite.confirmOff.title': 'Lite ログイン UI をオフにしますか？',
+	'lu.lite.confirmOff.body': 'このテナントのログイン画面がすぐに通常の画面に戻ります。',
+	'lu.lite.confirmOff.ok': 'オフにする',
+	'lu.lite.logo': 'Lite 版のロゴ',
+	'lu.lite.logo.desc':
+		'Lite 版の画面に出す小さなロゴです。PNG か WebP、8 KB 以下、{w}×{h} ピクセル以下。画像は設定に直接保存されます。',
+	'lu.lite.logo.unreadable': '画像を読み込めませんでした。',
+	'lu.lite.logo.refused.not_data_uri': '画像を読み込めませんでした。',
+	'lu.lite.logo.refused.unsupported_type': 'PNG か WebP の画像を選んでください。',
+	'lu.lite.logo.refused.invalid_base64': '画像を読み込めませんでした。',
+	'lu.lite.logo.refused.too_large': '画像が大きすぎます。8 KB 以下にしてください。',
+	'lu.lite.logo.refused.malformed': '画像が壊れています。',
+	'lu.lite.logo.refused.animated': 'アニメーションする画像は使えません。静止画にしてください。',
+	'lu.lite.logo.refused.too_wide': '画像の幅が大きすぎます。{w} ピクセル以下にしてください。',
+	'lu.lite.logo.refused.too_tall': '画像の高さが大きすぎます。{h} ピクセル以下にしてください。',
+	'lu.lite.logo.set': '設定済み',
+	'lu.lite.logo.none': 'なし',
+	'lu.stale.title': '設定を読み直せませんでした',
+	'lu.stale.body':
+		'Lite の切り替えは反映されましたが、このページの設定を読み直せませんでした。保存する前に、もう一度読み込んでください。入力中の変更は残ります。',
 	'lu.display': '言語の見せ方',
 	'lu.conflict':
 		'ほかの管理者が先に保存しました。最新の値を読み込みました。変更を確かめてから、もう一度保存してください。'

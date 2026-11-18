@@ -90,7 +90,7 @@ export const DRAFT_PAGES: readonly DraftPage[] = [
 	{
 		id: 'customization/login-ui',
 		scope: 'tenant',
-		note: 'A built page (dedicated UI: the languages, as choice grids). The lite mode is not on it yet (it needs its own route and readiness check), nor the custom blocks (the Login UI does not draw them yet).'
+		note: 'A built page (dedicated UI: the languages as choice grids, and the lite Login UI with its own route). The custom blocks are not on it yet (the Login UI does not draw them).'
 	},
 	{ id: 'customization/screens', scope: 'tenant' },
 	{ id: 'customization/account-page', scope: 'tenant' },
@@ -692,9 +692,9 @@ place(
 	{ primary: ['login-ui.lite_mode', 'login-ui.lite_logo'] },
 	{
 		'login-ui.lite_mode':
-			'Switched with PUT /api/admin/login-ui/lite-mode (a compatibility check, then the policy); the settings PATCH refuses it. Show the readiness issues from the GET of that route.',
+			'Switched with PUT /api/admin/login-ui/lite-mode (a compatibility check, then the policy); the settings PATCH refuses it. The page shows the readiness issues from the GET of that route.',
 		'login-ui.lite_logo':
-			'A still PNG or WebP of at most 8 KB and 640x160 px, saved as a data: URI.'
+			'A still PNG or WebP of at most 8 KB and 640x160 px, saved as a data: URI with the page’s other settings.'
 	}
 );
 place('customization/screens', 'Screen flows', {

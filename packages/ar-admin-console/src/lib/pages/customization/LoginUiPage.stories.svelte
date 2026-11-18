@@ -2,6 +2,7 @@
 	import { defineMeta } from '@storybook/addon-svelte-csf';
 	import { expect, userEvent, waitFor, within } from 'storybook/test';
 	import { adminAccess } from '#lib/access/admin-access.svelte.js';
+	import { createFakeLiteMode } from '#lib/api/fake/login-ui-lite-mode-fake.js';
 	import { createFakeSettings } from '#lib/api/fake/settings-fake.js';
 	import { t } from '#lib/i18n/i18n.svelte.js';
 	import LoginUiPage from './LoginUiPage.svelte';
@@ -15,7 +16,7 @@
 			docs: {
 				description: {
 					component:
-						'Customization → Login UI: the languages the sign-in screens offer, one question per step — which languages are shown (a choice grid; the default stays on), which is the default (a select limited to those shown), which are listed first (a second grid, up to six, from eleven shown), and whether English names are added. Read from and saved to the tenant’s `login-ui` settings with the version read. The look of the screens is a theme’s (Branding), not here.'
+						'Customization → Login UI: the languages the sign-in screens offer, one question per step — which languages are shown (a choice grid; the default stays on), which is the default (a select limited to those shown), which are listed first (a second grid, up to six, from eleven shown), and whether English names are added. Read from and saved to the tenant’s `login-ui` settings with the version read. Below them, the lite Login UI: its switch (immediate, confirmed first, refused with the reasons while the tenant is not ready) and its logo (a small PNG or WebP kept as a data: URI, saved with the page). The look of the screens is a theme’s (Branding), not here.'
 				}
 			}
 		}
@@ -77,6 +78,98 @@
 				'login-ui.default_locale': 'ja',
 				'login-ui.show_english_language_names': true
 			})}
+			tenantId={TENANT}
+		/>
+	{/snippet}
+</Story>
+
+<Story
+	name="Lite Login UI ready to switch on"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const toggle = await canvas.findByRole('switch', { name: t('lu.lite.switch') });
+		await expect(toggle).toBeEnabled();
+		await expect(toggle).not.toBeChecked();
+		// Switching asks first; giving up leaves the switch as it was.
+		await userEvent.click(toggle);
+		await expect(await canvas.findByText(t('lu.lite.confirmOn.title'))).toBeInTheDocument();
+		await userEvent.click(canvas.getByRole('button', { name: t('common.cancel') }));
+		await waitFor(() => expect(canvas.queryByText(t('lu.lite.confirmOn.title'))).toBeNull());
+		await expect(canvas.getByRole('switch', { name: t('lu.lite.switch') })).not.toBeChecked();
+	}}
+>
+	{#snippet template()}
+		<LoginUiPage client={settings()} lite={createFakeLiteMode({ delay: 200 })} tenantId={TENANT} />
+	{/snippet}
+</Story>
+
+<Story
+	name="Switch the lite Login UI on, then save a language setting"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const toggle = await canvas.findByRole('switch', { name: t('lu.lite.switch') });
+		await userEvent.click(toggle);
+		await userEvent.click(await canvas.findByRole('button', { name: t('lu.lite.confirmOn.ok') }));
+		await waitFor(() =>
+			expect(canvas.getByRole('switch', { name: t('lu.lite.switch') })).toBeChecked()
+		);
+		// The switch recorded its mode in the same settings: a save right after still works.
+		await userEvent.click(
+			canvas.getByRole('checkbox', { name: (name) => name.startsWith(t('lu.englishNames')) })
+		);
+		await userEvent.click(await canvas.findByRole('button', { name: t('common.save') }));
+		await waitFor(() =>
+			expect(canvas.queryByRole('button', { name: t('common.save') })).toBeNull()
+		);
+	}}
+>
+	{#snippet template()}
+		{@const shared = settings()}
+		<LoginUiPage
+			client={shared}
+			lite={createFakeLiteMode({ delay: 200, settings: { client: shared, tenantId: TENANT } })}
+			tenantId={TENANT}
+		/>
+	{/snippet}
+</Story>
+
+<Story
+	name="Lite Login UI not ready"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const toggle = await canvas.findByRole('switch', { name: t('lu.lite.switch') });
+		await expect(toggle).toBeDisabled();
+		await expect(canvas.getByText(t('lu.lite.issues.title'))).toBeInTheDocument();
+		await expect(canvas.getByText(/did/)).toBeInTheDocument();
+	}}
+>
+	{#snippet template()}
+		<LoginUiPage
+			client={settings()}
+			lite={createFakeLiteMode({
+				delay: 200,
+				issues: [
+					{ code: 'method_unsupported', subject: 'did' },
+					{ code: 'client_login_ui_url', subject: 'client_portal' }
+				]
+			})}
+			tenantId={TENANT}
+		/>
+	{/snippet}
+</Story>
+
+<Story
+	name="Lite Login UI on"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const toggle = await canvas.findByRole('switch', { name: t('lu.lite.switch') });
+		await expect(toggle).toBeChecked();
+	}}
+>
+	{#snippet template()}
+		<LoginUiPage
+			client={settings({ 'login-ui.lite_mode': 'always' })}
+			lite={createFakeLiteMode({ delay: 200, mode: 'always' })}
 			tenantId={TENANT}
 		/>
 	{/snippet}
