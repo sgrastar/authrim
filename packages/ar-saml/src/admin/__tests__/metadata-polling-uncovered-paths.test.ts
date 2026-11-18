@@ -235,7 +235,12 @@ describe('refreshFederationMetadataSource preconditions and failures', () => {
 
   it.each([
     ['HTTP error', () => new Response('x', { status: 503 }), 'metadata_http_503'],
-    ['non-error rejection', () => Promise.reject('boom'), 'metadata_refresh_failed'],
+    [
+      'non-error rejection',
+      // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- the non-Error branch is the point
+      () => Promise.reject('boom'),
+      'metadata_refresh_failed',
+    ],
   ])(
     'persists %s as a stable failure code and fails the job',
     async (_name, makeResponse, code) => {
