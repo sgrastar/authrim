@@ -328,6 +328,65 @@ export const arCustomization: Record<keyof typeof jaCustomization, string> = {
 	'lu.englishNames': 'إظهار الأسماء الإنجليزية أيضًا',
 	'lu.englishNames.desc':
 		'يعرض مبدّل اللغة مثلًا “Japanese (日本語)”. تُعرض الأسماء المتطابقة مرة واحدة.',
+	'lu.lite': 'واجهة تسجيل الدخول الخفيفة',
+	'lu.lite.desc':
+		'تسجيل دخول خفيف يُعرض من الخادم لمن يستخدمون شبكات ضعيفة جدًا. عند التفعيل، تصبح كل شاشات تسجيل الدخول لهذا المستأجر هي النسخة الخفيفة.',
+	'lu.lite.switch': 'استخدام الواجهة الخفيفة',
+	'lu.lite.switch.desc':
+		'يسري فورًا. قبل التفعيل يُفحص المستأجر: يجب أن تؤدي الواجهة الخفيفة كل ما يستخدمه.',
+	'lu.lite.on': 'مفعّل',
+	'lu.lite.off': 'معطّل',
+	'lu.lite.changing': 'جارٍ التبديل',
+	'lu.lite.issues.title': 'لا يمكن التفعيل بعد',
+	'lu.lite.issues.body':
+		'لا تستطيع الواجهة الخفيفة تقديم بعض ما يستخدمه هذا المستأجر. عالج ما يلي ثم فعّل.',
+	'lu.lite.issue.not_released': 'الواجهة الخفيفة غير مُصدَرة في هذه البيئة بعد',
+	'lu.lite.issue.policy_store_unavailable': 'تعذّر الوصول إلى مخزن السياسات',
+	'lu.lite.issue.method_unsupported': 'طريقة تسجيل دخول لا تقدّمها الواجهة الخفيفة مفعّلة',
+	'lu.lite.issue.flow_component_unsupported':
+		'يستخدم تدفق خدمة جزءًا لا تستطيع الواجهة الخفيفة تشغيله',
+	'lu.lite.issue.flow_screen_missing': 'يشير تدفق خدمة إلى شاشة غير موجودة',
+	'lu.lite.issue.screen_block_unsupported': 'تحتوي شاشة على كتلة لا تستطيع الواجهة الخفيفة رسمها',
+	'lu.lite.issue.screen_method_unsupported':
+		'تقدّم شاشة طريقة تسجيل دخول لا تستطيعها الواجهة الخفيفة',
+	'lu.lite.issue.account_block_unsupported':
+		'تحتوي صفحة الحساب على كتلة لا تستطيع الواجهة الخفيفة رسمها',
+	'lu.lite.issue.client_login_ui_url': 'يستخدم تطبيق عنوان واجهة تسجيل دخول خاصًا به',
+	'lu.lite.issue.issuer_origin_mismatch': 'أصل المُصدِر ليس أصل واجهة تسجيل الدخول',
+	'lu.lite.issue.account_page_path_custom': 'مسار صفحة الحساب ليس الافتراضي',
+	'lu.lite.refused': 'تعذّر تفعيل الواجهة الخفيفة. راجع الأسباب.',
+	'lu.lite.inProgress': 'تبديل آخر جارٍ. حاول مرة أخرى بعد قليل.',
+	'lu.lite.notRecorded':
+		'سرى التبديل، لكن تعذّر كتابة السجل في الإعدادات. أعد التحميل إن بدت الصفحة قديمة.',
+	'lu.lite.turnedOn': 'الواجهة الخفيفة مفعّلة.',
+	'lu.lite.turnedOff': 'الواجهة الخفيفة معطّلة.',
+	'lu.lite.unavailable': 'تعذّر قراءة حالة الواجهة الخفيفة',
+	'lu.lite.unavailable.body':
+		'تعذّر الوصول إلى مخزن السياسات، لذا حالة الواجهة الخفيفة غير معروفة.',
+	'lu.lite.confirmOn.title': 'تفعيل الواجهة الخفيفة؟',
+	'lu.lite.confirmOn.body':
+		'تتحوّل شاشات تسجيل الدخول لهذا المستأجر فورًا إلى النسخة الخفيفة. يسجّل المستخدمون الدخول عبر الشاشات الخفيفة.',
+	'lu.lite.confirmOn.ok': 'تفعيل',
+	'lu.lite.confirmOff.title': 'تعطيل الواجهة الخفيفة؟',
+	'lu.lite.confirmOff.body': 'تعود شاشات تسجيل الدخول لهذا المستأجر فورًا إلى الشاشات المعتادة.',
+	'lu.lite.confirmOff.ok': 'تعطيل',
+	'lu.lite.logo': 'شعار الواجهة الخفيفة',
+	'lu.lite.logo.desc':
+		'شعار صغير للشاشات الخفيفة: PNG أو WebP، بحد أقصى 8 ك.ب و{w}×{h} بكسل. تُحفظ الصورة في الإعدادات نفسها.',
+	'lu.lite.logo.unreadable': 'تعذّرت قراءة الصورة.',
+	'lu.lite.logo.refused.not_data_uri': 'تعذّرت قراءة الصورة.',
+	'lu.lite.logo.refused.unsupported_type': 'اختر صورة PNG أو WebP.',
+	'lu.lite.logo.refused.invalid_base64': 'تعذّرت قراءة الصورة.',
+	'lu.lite.logo.refused.too_large': 'الصورة كبيرة جدًا: بحد أقصى 8 ك.ب.',
+	'lu.lite.logo.refused.malformed': 'الصورة تالفة.',
+	'lu.lite.logo.refused.animated': 'لا يمكن استخدام صورة متحركة: اختر صورة ثابتة.',
+	'lu.lite.logo.refused.too_wide': 'الصورة عريضة جدًا: بحد أقصى {w} بكسل.',
+	'lu.lite.logo.refused.too_tall': 'الصورة طويلة جدًا: بحد أقصى {h} بكسل.',
+	'lu.lite.logo.set': 'محدّد',
+	'lu.lite.logo.none': 'لا شيء',
+	'lu.stale.title': 'تعذّرت إعادة قراءة الإعدادات',
+	'lu.stale.body':
+		'سرى تبديل الواجهة الخفيفة، لكن تعذّرت إعادة قراءة إعدادات هذه الصفحة. أعد تحميلها قبل الحفظ؛ تبقى تغييراتك غير المحفوظة.',
 	'lu.display': 'طريقة عرض اللغات',
 	'lu.conflict': 'حفظ مسؤول آخر أولاً. حُمِّلت أحدث القيم؛ راجع تغييراتك ثم احفظ مرة أخرى.'
 };

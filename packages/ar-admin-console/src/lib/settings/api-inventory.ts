@@ -480,8 +480,16 @@ export const API_GROUPS: readonly ApiGroup[] = [
 		name: 'Login UI themes',
 		kind: 'records',
 		page: 'customization/branding',
-		paths: [`${A}/login-ui/themes`, `${A}/login-ui/lite-mode`],
+		paths: [`${A}/login-ui/themes`],
 		note: 'Saved themes; applying one writes its values to the login-ui settings.'
+	},
+	{
+		id: 'login-ui-lite-mode',
+		name: 'Lite Login UI switch',
+		kind: 'actions',
+		page: 'customization/login-ui',
+		paths: [`${A}/login-ui/lite-mode`],
+		note: 'Publishes the mode to the policy store after a readiness check; the settings PATCH refuses login-ui.lite_mode.'
 	},
 	{
 		id: 'login-ui-assets',
