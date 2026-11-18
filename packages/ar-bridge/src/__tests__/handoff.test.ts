@@ -154,7 +154,7 @@ function createContext(
         status,
         headers: responseHeaders,
       }),
-  } as any;
+  } as unknown as Parameters<typeof handleHandoffVerify>[0];
 }
 
 describe('handleHandoffVerify', () => {
@@ -194,6 +194,16 @@ describe('handleHandoffVerify', () => {
     mocks.resolveEffectiveSettings.mockResolvedValue({});
   });
 
+  it('refuses a disabled client before consuming the handoff artifact', async () => {
+    mocks.findClientByClientId.mockResolvedValue({
+      enabled: false,
+      redirect_uris: '["https://rp.example.com/callback"]',
+    });
+    const response = await handleHandoffVerify(createContext());
+    expect(response.status).toBe(400);
+    expect(mocks.consumeChallengeRpc).not.toHaveBeenCalled();
+  });
+
   it('refuses a handoff at FAL3 before the artifact is spent', async () => {
     mocks.resolveEffectiveSettings.mockResolvedValue({
       'assurance.enabled': true,
@@ -204,7 +214,7 @@ describe('handleHandoffVerify', () => {
     const response = await handleHandoffVerify(createContext());
 
     expect(response.status).toBe(400);
-    expect(((await response.json()) as { error: string }).error).toBe('unauthorized_client');
+    expect((await response.json<{ error: string }>()).error).toBe('unauthorized_client');
     expect(mocks.consumeChallengeRpc).not.toHaveBeenCalled();
   });
 
@@ -221,7 +231,7 @@ describe('handleHandoffVerify', () => {
     mocks.extractDPoPProof.mockReturnValue(undefined);
 
     const response = await handleHandoffVerify(createContext());
-    const body = (await response.json()) as { error: string; error_details?: { code: string } };
+    const body = await response.json<{ error: string; error_details?: { code: string } }>();
 
     expect(response.status).toBe(400);
     expect(body.error).toBe('invalid_request');
@@ -236,7 +246,7 @@ describe('handleHandoffVerify', () => {
     });
 
     const response = await handleHandoffVerify(createContext());
-    const body = (await response.json()) as { error: string; error_details?: { code: string } };
+    const body = await response.json<{ error: string; error_details?: { code: string } }>();
 
     expect(response.status).toBe(400);
     expect(body.error).toBe('invalid_request');
@@ -246,7 +256,7 @@ describe('handleHandoffVerify', () => {
 
   it('returns a pure DPoP token response by default and binds the RP token to the DPoP key', async () => {
     const response = await handleHandoffVerify(createContext());
-    const body = (await response.json()) as Record<string, unknown>;
+    const body = await response.json<Record<string, unknown>>();
 
     expect(response.status).toBe(200);
     expect(body).toMatchObject({
@@ -339,7 +349,7 @@ describe('handleHandoffVerify', () => {
       );
 
       expect(response.status).toBe(403);
-      expect(((await response.json()) as { error: string }).error).toBe('access_denied');
+      expect((await response.json<{ error: string }>()).error).toBe('access_denied');
       expect(mocks.getSessionRpc).not.toHaveBeenCalled();
       expect(mocks.createSessionRpc).not.toHaveBeenCalled();
     });
@@ -448,7 +458,7 @@ describe('handleHandoffVerify', () => {
     const response = await handleHandoffVerify(
       createContext('https://issuer.example.com/handoff/verify?include=session,user')
     );
-    const body = (await response.json()) as Record<string, any>;
+    const body = await response.json<Record<string, any>>();
 
     expect(response.status).toBe(200);
     expect(body.session).toMatchObject({
@@ -476,7 +486,7 @@ describe('handleHandoffVerify', () => {
     });
 
     const response = await handleHandoffVerify(createContext());
-    const body = (await response.json()) as { error: string };
+    const body = await response.json<{ error: string }>();
 
     expect(response.status).toBe(400);
     expect(body.error).toBe('auth_invalid_code');
@@ -509,7 +519,7 @@ describe('handleHandoffVerify', () => {
     const response = await handleHandoffVerify(
       createContext('https://issuer.example.com/handoff/verify?include=user,session')
     );
-    const body = (await response.json()) as { error: string; error_description: string };
+    const body = await response.json<{ error: string; error_description: string }>();
 
     expect(response.status).toBe(400);
     expect(body.error).toBe('invalid_request');
@@ -521,7 +531,7 @@ describe('handleHandoffVerify', () => {
     const response = await handleHandoffFinalize(
       createContext('https://issuer.example.com/handoff/finalize')
     );
-    const body = (await response.json()) as Record<string, unknown>;
+    const body = await response.json<Record<string, unknown>>();
     const setCookie = response.headers.get('set-cookie') ?? '';
 
     expect(response.status).toBe(200);
@@ -597,7 +607,7 @@ describe('handleHandoffVerify', () => {
     const second = await handleHandoffFinalize(
       createContext('https://issuer.example.com/handoff/finalize')
     );
-    const secondBody = (await second.json()) as { error: string };
+    const secondBody = await second.json<{ error: string }>();
 
     expect(first.status).toBe(200);
     expect(second.status).toBe(400);

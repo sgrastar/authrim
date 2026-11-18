@@ -661,7 +661,9 @@ export async function adminStatsClientHandler(c: Context<{ Bindings: Env }>) {
         : [clientId, clientId, clientId, clientId];
 
     // Verify client exists and belongs to tenant using KV cache (with D1 fallback)
-    const client = await getClient(c.env, tenantId, clientId, coreAdapter);
+    const client = await getClient(c.env, tenantId, clientId, coreAdapter, {
+      includeDisabled: true,
+    });
 
     if (!client || client.tenant_id !== tenantId) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);

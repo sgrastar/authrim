@@ -145,7 +145,7 @@
 		<DetailList ruled>
 			{#each addresses(info) as address (address.id)}
 				{#if address.url}
-					<DetailItem label={address.label}>
+					<DetailItem label={address.label} data-guide="tenant-url-{address.id}">
 						<AddressValue url={address.url} openable={address.openable} />
 						{#snippet end()}
 							<CopyButton

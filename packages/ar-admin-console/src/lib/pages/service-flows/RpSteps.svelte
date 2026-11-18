@@ -28,6 +28,7 @@
 		live?: boolean;
 		/** Saved settings never change application type or credential family. */
 		editing?: boolean;
+		allowIncomplete?: boolean;
 		storedAuthMethod?: string | null;
 		storedPkce?: boolean | null;
 	}
@@ -37,6 +38,7 @@
 		form = $bindable(),
 		live = false,
 		editing = false,
+		allowIncomplete = !editing,
 		storedAuthMethod = null,
 		storedPkce = null
 	}: Props = $props();
@@ -112,8 +114,8 @@
 		hint={t('sf.rp.redirectHint')}
 		placeholder="https://app.example.com/callback"
 		addLabel={t('sf.rp.addRedirect')}
+		required={editing && !allowIncomplete}
 		mono
-		required
 		validate={redirectUriProblem}
 		bind:values={form.redirectUris}
 	/>
@@ -146,7 +148,10 @@
 			)}
 		/>
 	{/if}
-	{#if live && form.authMethod === 'private_key_jwt'}<PublicClientKeys bind:form />{/if}
+	{#if live && form.authMethod === 'private_key_jwt'}<PublicClientKeys
+			bind:form
+			allowEmpty={allowIncomplete}
+		/>{/if}
 	{#if secretless}
 		<Callout tone="info">{t('sf.rp.pkceOnly')}</Callout>
 	{/if}

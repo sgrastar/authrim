@@ -964,6 +964,10 @@ describe('release update archive verification gate', () => {
       expect(ui).toBeGreaterThanOrEqual(0);
       expect(ui).toBeLessThan(part.indexOf('await verifyUpdatedLogArchive();'));
     }
+    // The wait is one timed step, and the UI Worker spinner is the only step per UI Worker.
+    expect(gate).toContain("awaittimePhase('Waitingforthelogarchivecheck',async()=>{");
+    const uiDeploy = source.slice(source.indexOf('await deployUiWorkerComponent(component, {'));
+    expect(uiDeploy.slice(0, uiDeploy.indexOf('});'))).toContain('timePhase: false');
     // Only a proof for the same attempt skips the wait.
     expect(gate).toContain('startedLogArchiveCheck?.attempt.attemptId===attempt.attemptId');
     for (const part of source.split('await verifyUpdatedLogArchive();').slice(1))

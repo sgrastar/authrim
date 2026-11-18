@@ -28,6 +28,7 @@ export function basicSettingsAnswers(
 	answers.direction = 'out';
 	answers.rp.name = resources.detail.name;
 	if (resources.kind === 'rp') {
+		answers.active = resources.detail.enabled;
 		answers.rp.redirectUris = [...resources.detail.redirectUris];
 		answers.rp.authMethod = resources.detail.authMethod ?? '';
 		answers.rp.appType =
@@ -88,7 +89,6 @@ export function clientBasicUpdate(source: ClientDetail, answers: Answers): Clien
 			update.token_endpoint_auth_method = value.authMethod;
 	}
 	if (source.pkce !== null && value.pkce !== source.pkce) {
-		if (source.authMethod === 'none' && !value.pkce) throw new Error('Public clients require PKCE');
 		update.require_pkce = value.pkce;
 	}
 	if (value.authMethod === 'private_key_jwt') {
@@ -103,7 +103,7 @@ export function clientBasicUpdate(source: ClientDetail, answers: Answers): Clien
 			value.jwksUri !== before.jwksUri ||
 			value.publicJwks !== before.publicJwks
 		)
-			Object.assign(update, publicKeyInput(value));
+			Object.assign(update, publicKeyInput(value, true));
 	}
 	if (source.updatedAt !== undefined) update.expected_updated_at = source.updatedAt;
 	return update;

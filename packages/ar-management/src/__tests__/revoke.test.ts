@@ -8,6 +8,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { Env } from '@authrim/ar-lib-core';
+import type { Context } from 'hono';
 
 // Hoist mock functions to ensure they're available when vi.mock runs
 const {
@@ -117,7 +118,7 @@ vi.mock('jose', () => ({
   decodeProtectedHeader: vi.fn(),
 }));
 
-import { revokeHandler } from '../revoke';
+import { revokeHandler, batchRevokeHandler } from '../revoke';
 import { importJWK, decodeProtectedHeader } from 'jose';
 
 // Use the hoisted mocks directly (already defined above vi.mock)
@@ -134,7 +135,7 @@ const verifyToken = mockVerifyToken;
 function createMockContext(options: {
   method?: string;
   headers?: Record<string, string>;
-  body?: Record<string, string>;
+  body?: Record<string, unknown>;
   env?: Partial<Env>;
 }) {
   const mockEnv: Partial<Env> = {
@@ -161,6 +162,7 @@ function createMockContext(options: {
       header: (name: string) => options.headers?.[name],
       method: options.method || 'POST',
       parseBody: vi.fn().mockResolvedValue(options.body || {}),
+      json: vi.fn().mockResolvedValue(options.body || {}),
     },
     env: mockEnv as Env,
     json: vi.fn((body, status = 200) => new Response(JSON.stringify(body), { status })),
@@ -198,6 +200,46 @@ describe('Token Revocation Endpoint', () => {
   afterEach(() => {
     // Don't use restoreAllMocks as it restores original implementations
     vi.clearAllMocks();
+  });
+
+  it('keeps disabled batch callers limited to their own device secrets', async () => {
+    mockValidateClientId.mockReturnValue({ valid: true });
+    mockClientRepository.findByClientId.mockResolvedValue({
+      client_id: 'client-123',
+      enabled: false,
+      client_secret_hash: 'hash_client-secret',
+      device_secret_revoke_enabled: true,
+      trust_group_id: 'wallet-suite',
+      device_secret_revoke_trust_groups: ['*'],
+    });
+    mockDeviceSecretRepository.findByRawSecret.mockImplementation(async (secret: string) => ({
+      id: secret,
+      client_id: secret === 'own-secret' ? 'client-123' : 'other-client',
+      trust_group_id: 'wallet-suite',
+    }));
+    const c = createMockContext({
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Basic ' + btoa('client-123:client-secret'),
+      },
+      body: {
+        tokens: [
+          { token: 'own-secret', token_type_hint: 'device_secret' },
+          { token: 'other-secret', token_type_hint: 'device_secret' },
+        ],
+      },
+    }) as Context<{ Bindings: Env }>;
+    const response = await batchRevokeHandler(c);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      summary: { total: 2, revoked: 1, invalid: 1 },
+      results: [{ status: 'revoked' }, { status: 'invalid' }],
+    });
+    expect(mockDeviceSecretRepository.revoke).toHaveBeenCalledExactlyOnceWith(
+      'own-secret',
+      'batch_token_revocation',
+      'default'
+    );
   });
 
   describe('Content-Type Validation', () => {
@@ -1148,49 +1190,53 @@ describe('Token Revocation Endpoint', () => {
       expect(mockDeviceSecretRepository.revoke).not.toHaveBeenCalled();
     });
 
-    it('allows confidential client device_secret revoke when policy opt-in is present', async () => {
-      const c = createMockContext({
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body: {
-          token: 'raw-device-secret',
-          token_type_hint: 'device_secret',
+    it.each([true, false])(
+      'allows confidential own device_secret revoke with opt-in and enabled=%s',
+      async (enabled) => {
+        const c = createMockContext({
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+          body: {
+            token: 'raw-device-secret',
+            token_type_hint: 'device_secret',
+            client_id: 'client-123',
+            client_secret: 'client-secret',
+          },
+        });
+
+        vi.mocked(validateClientId).mockReturnValue({ valid: true });
+        mockClientRepository.findByClientId.mockResolvedValue({
           client_id: 'client-123',
-          client_secret: 'client-secret',
-        },
-      });
+          client_secret_hash: 'hash_client-secret',
+          enabled,
+          device_secret_revoke_enabled: true,
+        });
+        mockDeviceSecretRepository.findByRawSecret.mockResolvedValue({
+          id: 'ds-001',
+          installation_id: 'inst-001',
+          tenant_id: 'default',
+          client_id: 'client-123',
+          user_id: 'user-123',
+          session_id: 'sid-123',
+          secret_hash: 'hash',
+          created_at: Date.now() - 60_000,
+          updated_at: Date.now() - 60_000,
+          expires_at: Date.now() + 3_600_000,
+          use_count: 1,
+          is_active: 1,
+        });
 
-      vi.mocked(validateClientId).mockReturnValue({ valid: true });
-      mockClientRepository.findByClientId.mockResolvedValue({
-        client_id: 'client-123',
-        client_secret_hash: 'hash_client-secret',
-        device_secret_revoke_enabled: true,
-      });
-      mockDeviceSecretRepository.findByRawSecret.mockResolvedValue({
-        id: 'ds-001',
-        installation_id: 'inst-001',
-        tenant_id: 'default',
-        client_id: 'client-123',
-        user_id: 'user-123',
-        session_id: 'sid-123',
-        secret_hash: 'hash',
-        created_at: Date.now() - 60_000,
-        updated_at: Date.now() - 60_000,
-        expires_at: Date.now() + 3_600_000,
-        use_count: 1,
-        is_active: 1,
-      });
+        await revokeHandler(c);
 
-      await revokeHandler(c);
-
-      expect(mockDeviceSecretRepository.revoke).toHaveBeenCalledWith(
-        'ds-001',
-        'token_revocation',
-        'tenant1'
-      );
-      expect(c.body).toHaveBeenCalledWith(null, 200);
-    });
+        expect(mockDeviceSecretRepository.revoke).toHaveBeenCalledWith(
+          'ds-001',
+          'token_revocation',
+          'tenant1'
+        );
+        expect(c.body).toHaveBeenCalledWith(null, 200);
+      }
+    );
 
     it('denies confidential cross-client revoke without trust-group allowlist', async () => {
       const c = createMockContext({

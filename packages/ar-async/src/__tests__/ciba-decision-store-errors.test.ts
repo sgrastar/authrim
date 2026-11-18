@@ -23,6 +23,7 @@ vi.mock('@authrim/ar-lib-core', async () => {
     await vi.importActual<typeof import('@authrim/ar-lib-core')>('@authrim/ar-lib-core');
   return {
     ...actual,
+    getClientCached: vi.fn(async () => ({ client_id: 'client-1', enabled: true })),
     isMockAuthEnabled: mocks.isMockAuthEnabled,
     checkRateLimit: mocks.checkRateLimit,
     getCloudProvider: vi.fn().mockResolvedValue('cloudflare'),

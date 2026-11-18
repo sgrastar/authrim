@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { StepUpCancelledError, withStepUp } from '#lib/api/admin-step-up.js';
 	import { ApiError } from '#lib/api/api-error.js';
 	import type {
 		HistoryEntry,
@@ -104,16 +105,21 @@
 		const confirmed = { tenantId, entryId: plan.entry.id, version: plan.expected_version };
 		restoring = true;
 		try {
-			await client.restore(confirmed.tenantId, confirmed.entryId, confirmed.version);
+			await withStepUp((receipt) => {
+				if (tenantId !== confirmed.tenantId) throw new StepUpCancelledError();
+				return client.restore(confirmed.tenantId, confirmed.entryId, confirmed.version, receipt);
+			});
 			onchanged?.();
 			plan = null;
 			toast.success(t('mc.hist.restored'));
 			await load();
 		} catch (error) {
 			dialogError =
-				error instanceof ApiError && error.status === 409
-					? t('mc.hist.conflict')
-					: t('mc.actionFailed');
+				error instanceof StepUpCancelledError
+					? t('settings.stepUpCancelled')
+					: error instanceof ApiError && error.status === 409
+						? t('mc.hist.conflict')
+						: t('mc.actionFailed');
 		} finally {
 			restoring = false;
 		}

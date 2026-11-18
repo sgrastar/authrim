@@ -79,8 +79,11 @@
 				readBinding: () =>
 					kind === 'rp' ? httpClients.mapping(id) : httpSamlProviders.mapping(id),
 				bind: async (set, key) => {
-					if (kind === 'rp') await httpClients.bindMapping(id, set.id, key);
-					else {
+					if (kind === 'rp') {
+						const detail = await httpClients.bindMapping(id, set.id, key);
+						if (turn === generation)
+							settings = { ...loaded, kind: 'rp', detail, client: httpClients };
+					} else {
 						await httpSamlProviders.bindMapping(id, set, key);
 						// Our own binding can advance updatedAt. Refresh activation without rebasing dirty settings.
 						const detail = await httpSamlProviders.getServiceProvider(id);

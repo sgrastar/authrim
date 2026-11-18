@@ -47,6 +47,7 @@ export {
   type TotpBackupCode,
   type CreateTotpBackupCodeInput,
   ClientRepository,
+  clientRowForCreate,
   type OAuthClient,
   type CreateClientInput,
   type UpdateClientInput,

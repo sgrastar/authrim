@@ -14,6 +14,11 @@ describe('connection binding HTTP updates', () => {
 			.mockResolvedValueOnce(
 				json({
 					client: {
+						client_id: 'client/a',
+						redirect_uris: [],
+						enabled: false,
+						enable_blockers: ['redirect_uris'],
+						updated_at: 1000,
 						identity_mapping: {
 							fieldMappingSetId: 'old',
 							destinationNamespace: 'oidc.claim',
@@ -23,12 +28,23 @@ describe('connection binding HTTP updates', () => {
 					}
 				})
 			)
-			.mockResolvedValueOnce(json({ success: true }));
+			.mockResolvedValueOnce(
+				json({
+					client: {
+						client_id: 'client/a',
+						redirect_uris: [],
+						enabled: false,
+						enable_blockers: ['redirect_uris'],
+						updated_at: 1001
+					}
+				})
+			);
 		vi.stubGlobal('fetch', fetcher);
 		await httpClients.bindMapping('client/a', 'new', 'binding-operation');
 		const [url, init] = fetcher.mock.calls[1];
 		expect(url).toBe('/api/admin/clients/client%2Fa');
 		expect(JSON.parse(init.body)).toEqual({
+			expected_updated_at: 1000,
 			identity_mapping: {
 				fieldMappingSetId: 'new',
 				destinationNamespace: 'oidc.claim',

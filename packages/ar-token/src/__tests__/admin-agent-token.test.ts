@@ -830,8 +830,9 @@ describe('Admin Agent token endpoint', () => {
     expect(mocks.coreExecute).toHaveBeenCalledTimes(1);
     const [sql, params] = mocks.coreExecute.mock.calls[0] as [string, unknown[]];
     expect(sql).toContain('agent_access_last_used_at');
-    expect(params[3]).toBe('tenant-1');
-    expect(params[4]).toBe('mcp-client');
+    expect(sql).not.toContain('updated_at');
+    expect(params[2]).toBe('tenant-1');
+    expect(params[3]).toBe('mcp-client');
     expect(params[1]).toBeGreaterThan(now + 29 * 24 * 60 * 60 * 1000);
   });
 

@@ -8,6 +8,7 @@ import { deConnectionSettings } from './connection-settings/de';
 import { deAccountFlows } from './account-flows/de';
 import { deSchemaSetting } from './schema-setting/de';
 import { deTenantGeneral } from './tenant-general/de';
+import { deOnboarding } from './onboarding/de';
 import { deSecurityKeys } from './security-keys/de';
 import { deKeyringPresentation } from './keyring-presentation/de';
 import { deNotices } from './notices/de';
@@ -37,6 +38,7 @@ export const de = {
 	...deAccountFlows,
 	...deSchemaSetting,
 	...deTenantGeneral,
+	...deOnboarding,
 	...deSecurityKeys,
 	...deKeyringPresentation,
 	...deNotices,

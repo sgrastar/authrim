@@ -4,6 +4,20 @@
  * their usual abbreviations (RP, SP, OP, IdP). Spread into `../ja.ts`.
  */
 export const jaServiceFlows = {
+	'sf.rp.missing.grant_types': '許可するgrant',
+	'sf.rp.enableRequires': '有効化に必要な設定',
+	'sf.rp.disabledNote':
+		'無効のあいだはサインインもトークンの利用もできません。失効とログアウトはできます。',
+	'sf.rp.missing.redirect_uris': 'コールバックURL',
+	'sf.rp.missing.jwks': '公開署名鍵またはJWKS URL',
+	'sf.rp.missing.client_secret': 'クライアントシークレット',
+	'sf.rp.missing.require_pkce': 'PKCEの必須化',
+	'sf.rp.missing.token_endpoint_auth_method': 'grantに対応するクライアント認証方式',
+	'sf.rp.missing.response_types': 'grantと整合するレスポンスタイプ',
+	'sf.rp.missing.sector_identifier_uri': 'ペアワイズ識別子のセクター',
+	'sf.rp.missing.backchannel_client_notification_endpoint': 'CIBA通知先',
+	'sf.rp.missing.configuration': 'クライアント設定',
+
 	'sf.rp.callbacksMissing':
 		'callback URLが未設定のため、まだサインインできません。詳細画面で追加してください。',
 	'sf.draft.skip': 'あとで入力する',
@@ -475,7 +489,8 @@ export const jaServiceFlows = {
 	'sf.unsaved.keep': '編集を続ける',
 	'sf.mock.title': 'サービスフロー',
 	'sf.mock.description': 'このテナントのサービスフローの一覧です。',
-	'sf.mock.connections': 'すべてのサービスフロー',
+	'sf.mock.connections': 'サービスフロー',
+	'sf.mock.empty': 'サービスフローはまだありません。',
 	'sf.mock.col.protocol': 'プロトコル',
 	'sf.mock.col.name': '名称',
 	'sf.mock.col.created': '作成日時',

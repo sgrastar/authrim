@@ -1,22 +1,24 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
+	import type { HTMLAttributes } from 'svelte/elements';
 
 	/**
 	 * One fact of a DetailList: its label and value. Laid out by the DetailList around it. `end`
 	 * puts a control at the end of the row, level with the value: a copy button for a value to
 	 * hand on. It sits at the end edge, not right after the text, so the buttons of a list line up.
 	 */
-	interface Props {
+	interface Props extends Omit<HTMLAttributes<HTMLDivElement>, 'children' | 'class'> {
 		label: string;
 		/** A control at the end of the row (a copy button). */
 		end?: Snippet;
 		children: Snippet;
 	}
 
-	let { label, end, children }: Props = $props();
+	// Other attributes (a `data-…` hook, an id) go on the row.
+	let { label, end, children, ...rest }: Props = $props();
 </script>
 
-<div class="detail">
+<div class="detail" {...rest}>
 	<dt>{label}</dt>
 	<dd class:has-end={!!end}>
 		{#if end}

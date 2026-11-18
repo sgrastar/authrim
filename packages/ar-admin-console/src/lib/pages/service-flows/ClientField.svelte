@@ -48,7 +48,8 @@
 							.map((provider) => ({
 								id: provider.entityId,
 								name: provider.name,
-								redirectUris: []
+								redirectUris: [],
+								enabled: true
 							}))
 					: await resources.clients.list();
 			if (gone) return;

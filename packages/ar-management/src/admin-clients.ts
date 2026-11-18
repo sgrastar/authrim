@@ -1,7 +1,19 @@
 import {
+  clientEnableBlockers,
+  requiresClientConfigurationValidation,
+} from './client-configuration';
+import {
+  classifyClientTrustTransition,
+  clientTrustSettings,
+  clientTrustDigest,
+  clientTrustPolicy,
+  requireClientTrustStepUp,
+} from './client-trust';
+import {
   adminClientAdvancedSchema,
   adminClientUpdateEnvelopeSchema,
   clientKeySettingsProblem,
+  storedClientKeySettingsProblem,
 } from './admin-client-advanced';
 import { publicJwkSet } from './routes/policy/client-key-redaction';
 import { runLiteGuardedWrite } from './lite-mode-guard';
@@ -12,7 +24,6 @@ import type { Env } from '@authrim/ar-lib-core';
 import {
   getTenantIdFromContext,
   createAuthContextFromHono,
-  D1Adapter,
   createErrorResponse,
   createCompatibilityErrorResponse,
   AR_ERROR_CODES,
@@ -27,7 +38,6 @@ import {
   invalidateClientCacheOnDelete,
   putClient,
   buildKVKey,
-  getClient,
   GRANT_TYPES,
   getWebOriginRegistry,
   replaceWebOriginRegistry,
@@ -36,6 +46,10 @@ import {
   type WebOriginRegistryDocument,
   type WebOriginRegistryWritePayload,
   DEFAULT_ASC_ALLOWED_TRANSFORMED_CLAIMS,
+  normalizeRegistryInput,
+  type CreateClientInput,
+  clientRowForCreate,
+  type UpdateClientInput,
   requireAdminDatabaseAdapter,
   validateOidcMappingSetReference,
   type DatabaseAdapter,
@@ -79,6 +93,7 @@ import {
 } from '@authrim/ar-lib-core/services/identity-mapping-client-history-receipt';
 import { runTenantBackupCoveredMutation } from './tenant-backup-writer';
 import { requireAdminStepUp } from './admin-step-up-gate';
+import { isSystemManagedClient } from './system-managed-clients';
 
 type AdminClientApplicationType = 'web' | 'native' | 'spa' | 'service';
 type AdminBrowserPublicClientMode = 'strict' | 'cookie_fallback';
@@ -492,24 +507,6 @@ function validateTokenEndpointAuthMethod(
     };
   }
   return { ok: true, value: value as AdminTokenEndpointAuthMethod };
-}
-
-function validatePkcePolicy(
-  grantTypes: string[],
-  tokenEndpointAuthMethod: AdminTokenEndpointAuthMethod,
-  requirePkce: unknown
-): { ok: true } | { ok: false; error: string } {
-  if (
-    tokenEndpointAuthMethod === 'none' &&
-    grantTypes.includes(GRANT_TYPES.AUTHORIZATION_CODE) &&
-    requirePkce !== true
-  ) {
-    return {
-      ok: false,
-      error: 'require_pkce must be true for public clients using the authorization_code grant',
-    };
-  }
-  return { ok: true };
 }
 
 function validateOptionalChannelArrayField(
@@ -942,6 +939,7 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
       frontchannel_logout_session_required?: boolean;
       backchannel_logout_session_required?: boolean;
       tls_client_certificate_bound_access_tokens?: boolean;
+      enabled?: boolean;
       client_name: string;
       description?: string | null;
       redirect_uris?: string[];
@@ -997,6 +995,12 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
       default_resource?: string | null;
     }>();
 
+    const envelope = adminClientUpdateEnvelopeSchema.safeParse(body);
+    if (!envelope.success)
+      return c.json(
+        { error: 'invalid_request', error_description: envelope.error.issues[0]?.message },
+        400
+      );
     const advancedResult = adminClientAdvancedSchema.safeParse(body);
     if (!advancedResult.success)
       return c.json(
@@ -1119,21 +1123,6 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
     const validatedGrantTypes = grantTypesValidation.value ?? [GRANT_TYPES.AUTHORIZATION_CODE];
     const validatedTokenEndpointAuthMethod =
       tokenEndpointAuthMethodValidation.value ?? 'client_secret_basic';
-
-    const pkcePolicyValidation = validatePkcePolicy(
-      validatedGrantTypes,
-      validatedTokenEndpointAuthMethod,
-      requirePkceValidation.value ?? false
-    );
-    if (!pkcePolicyValidation.ok) {
-      return c.json(
-        {
-          error: 'invalid_request',
-          error_description: pkcePolicyValidation.error,
-        },
-        400
-      );
-    }
 
     let validatedAllowedOrigins: string[] | undefined;
     if (body.allowed_redirect_origins !== undefined) {
@@ -1547,6 +1536,7 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
     // OIDC Core 8.1, as at registration (DCR): one sector for a pairwise client.
     const pairwiseError = await validatePairwiseClientMetadata({
       subjectType: body.subject_type,
+      allowIncomplete: true,
       redirectUris: validatedRedirectUris,
       sectorIdentifierUri: body.sector_identifier_uri,
     });
@@ -1556,22 +1546,11 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
         400
       );
     }
-    if (
-      validatedTokenEndpointAuthMethod === 'none' &&
-      (validatedGrantTypes.includes(GRANT_TYPES.CLIENT_CREDENTIALS) ||
-        body.client_credentials_allowed === true)
-    )
-      return c.json(
-        {
-          error: 'invalid_request',
-          error_description: 'Client credentials require a confidential client',
-        },
-        400
-      );
     const keyError = await clientKeySettingsProblem(
       advanced,
       validatedTokenEndpointAuthMethod,
-      true
+      true,
+      false
     );
     if (keyError) return c.json({ error: 'invalid_request', error_description: keyError }, 400);
     const isPublicClient =
@@ -1582,7 +1561,7 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
       : crypto.randomUUID().replace(/-/g, '') + crypto.randomUUID().replace(/-/g, '');
     const clientSecretHash = clientSecret ? await hashClientSecret(clientSecret) : undefined;
 
-    const client = await authCtx.repositories.client.create({
+    const createInput: CreateClientInput = {
       ...advanced,
       client_name: body.client_name,
       description: descriptionValidation.value,
@@ -1602,7 +1581,9 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
         deviceSecretIntrospectionTrustGroupsValidation.value,
       redirect_uris: validatedRedirectUris,
       grant_types: validatedGrantTypes,
-      response_types: body.response_types || ['code'],
+      response_types:
+        body.response_types ??
+        (validatedGrantTypes.includes(GRANT_TYPES.AUTHORIZATION_CODE) ? ['code'] : []),
       scope: body.scope || 'openid profile email',
       logo_uri: body.logo_uri || null,
       client_uri: body.client_uri || null,
@@ -1637,7 +1618,36 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
       allowed_redirect_origins: validatedAllowedOrigins,
       require_pkce: requirePkceValidation.value ?? false,
       minimum_ial: minimumIalValidation.value ?? null,
+    };
+    createInput.enabled = body.enabled ?? true;
+    const missing = clientEnableBlockers(createInput);
+    if (requiresClientConfigurationValidation(createInput.enabled, 'L2') && missing.length)
+      return c.json({ error: 'client_configuration_required_to_enable', missing }, 400);
+    const { client_secret_hash: _generatedSecret, ...approvalInput } = clientRowForCreate(
+      createInput,
+      tenantId,
+      '',
+      0
+    );
+    const refused = await requireClientTrustStepUp(c, {
+      tenantId,
+      level: createInput.enabled ? 'L2' : 'L0',
+      params: {
+        action: 'client.create',
+        enabled: createInput.enabled,
+        idempotency_key: c.req.header('Idempotency-Key'),
+        request_sha256: await clientTrustDigest(body),
+        trust_sha256: await clientTrustDigest(clientTrustSettings(approvalInput)),
+        effective_trust_sha256: await clientTrustDigest({
+          ...clientTrustSettings(approvalInput),
+          web_origin_registry: webOriginRegistryPayload
+            ? normalizeRegistryInput(webOriginRegistryPayload)
+            : [],
+        }),
+      },
     });
+    if (refused) return refused;
+    const client = await authCtx.repositories.client.create(createInput);
 
     let webOriginRegistry: WebOriginRegistryDocument = { origins: [] };
     if (webOriginRegistryPayload) {
@@ -1669,6 +1679,7 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
     await ensureActiveTenantDiscoveryAliasDirectory(c.env, discoveryAlias);
 
     await putClient(c.env, {
+      enabled: client.enabled,
       client_id: client.client_id,
       client_secret_hash: client.client_secret_hash ?? undefined,
       client_name: client.client_name,
@@ -1796,6 +1807,9 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
     return c.json(
       {
         client: {
+          enabled: client.enabled,
+          enable_blockers: clientEnableBlockers(client),
+          system_managed: isSystemManagedClient(client),
           client_id: client.client_id,
           client_secret: clientSecret,
           client_name: client.client_name,
@@ -1910,6 +1924,9 @@ export async function adminClientsListHandler(c: Context<{ Bindings: Env }>) {
       const { client_secret_hash: _excluded, ...clientWithoutHash } = client;
       return {
         ...clientWithoutHash,
+        enabled: client.enabled,
+        enable_blockers: clientEnableBlockers(client),
+        system_managed: isSystemManagedClient(client),
         jwks: readPublicClientJwks(client.jwks),
         post_logout_redirect_uris: parseClientStringArray(client.post_logout_redirect_uris, []),
         redirect_uris: parseClientStringArray(client.redirect_uris, []),
@@ -1995,6 +2012,8 @@ export async function adminClientGetHandler(c: Context<{ Bindings: Env }>) {
     );
     const formattedClient = {
       ...clientWithoutHash,
+      enable_blockers: clientEnableBlockers(client),
+      system_managed: isSystemManagedClient(client),
       jwks: readPublicClientJwks(client.jwks),
       post_logout_redirect_uris: parseClientStringArray(client.post_logout_redirect_uris, []),
       redirect_uris: parseClientStringArray(client.redirect_uris, []),
@@ -2351,7 +2370,8 @@ async function executeAdminClientUpdate(
     if (
       subject_type !== undefined ||
       sector_identifier_uri !== undefined ||
-      redirect_uris !== undefined
+      redirect_uris !== undefined ||
+      body.enabled === true
     ) {
       if (subject_type !== undefined && subject_type !== 'public' && subject_type !== 'pairwise') {
         return c.json(
@@ -2381,6 +2401,7 @@ async function executeAdminClientUpdate(
           : (existingClient.sector_identifier_uri ?? null);
       const pairwiseError = await validatePairwiseClientMetadata({
         subjectType: subject_type ?? existingClient.subject_type ?? 'public',
+        allowIncomplete: true,
         redirectUris:
           redirectUrisValidation.value ?? parseClientStringArray(existingClient.redirect_uris, []),
         sectorIdentifierUri: effectiveSectorUri || null,
@@ -2458,9 +2479,6 @@ async function executeAdminClientUpdate(
       );
     }
 
-    const effectiveGrantTypes =
-      grantTypesValidation.value ??
-      parseClientStringArray(existingClient.grant_types, [GRANT_TYPES.AUTHORIZATION_CODE]);
     const effectiveTokenEndpointAuthMethod =
       tokenEndpointAuthMethodValidation.value ??
       (existingTokenEndpointAuthMethodValidation.ok
@@ -2493,70 +2511,11 @@ async function executeAdminClientUpdate(
         },
         400
       );
-    if (
-      effectiveTokenEndpointAuthMethod === 'none' &&
-      (grant_types !== undefined ||
-        client_credentials_allowed !== undefined ||
-        token_endpoint_auth_method !== undefined) &&
-      (effectiveGrantTypes.includes(GRANT_TYPES.CLIENT_CREDENTIALS) ||
-        (client_credentials_allowed ?? existingClient.client_credentials_allowed))
-    )
-      return c.json(
-        {
-          error: 'invalid_request',
-          error_description: 'Client credentials require a confidential client',
-        },
-        400
-      );
     const keyChanged =
       advanced.jwks !== undefined ||
       advanced.jwks_uri !== undefined ||
       advanced.token_endpoint_auth_signing_alg !== undefined ||
       token_endpoint_auth_method !== undefined;
-    if (keyChanged) {
-      let storedJwks: unknown = null;
-      try {
-        storedJwks = existingClient.jwks ? JSON.parse(existingClient.jwks) : null;
-      } catch {
-        return c.json(
-          {
-            error: 'invalid_request',
-            error_description: 'Stored JWKS must be replaced explicitly',
-          },
-          400
-        );
-      }
-      const keyError = await clientKeySettingsProblem(
-        {
-          jwks: advanced.jwks !== undefined ? advanced.jwks : storedJwks,
-          jwks_uri: advanced.jwks_uri !== undefined ? advanced.jwks_uri : existingClient.jwks_uri,
-          token_endpoint_auth_signing_alg:
-            advanced.token_endpoint_auth_signing_alg !== undefined
-              ? advanced.token_endpoint_auth_signing_alg
-              : existingClient.token_endpoint_auth_signing_alg,
-        },
-        effectiveTokenEndpointAuthMethod,
-        true
-      );
-      if (keyError) return c.json({ error: 'invalid_request', error_description: keyError }, 400);
-    }
-    const effectiveRequirePkce =
-      requirePkceValidation.value ?? Boolean(existingClient.require_pkce);
-    const pkcePolicyValidation = validatePkcePolicy(
-      effectiveGrantTypes,
-      effectiveTokenEndpointAuthMethod,
-      effectiveRequirePkce
-    );
-    if (!pkcePolicyValidation.ok) {
-      return c.json(
-        {
-          error: 'invalid_request',
-          error_description: pkcePolicyValidation.error,
-        },
-        400
-      );
-    }
-
     if (response_types !== undefined) {
       if (!Array.isArray(response_types) || response_types.some((v) => typeof v !== 'string')) {
         return c.json(
@@ -3001,6 +2960,164 @@ async function executeAdminClientUpdate(
     const agentExpectedUpdatedAt = c.get('agentExpectedClientUpdatedAt' as never) as
       | number
       | undefined;
+    if (
+      internal.expectedUpdatedAt !== undefined &&
+      internal.expectedUpdatedAt !== existingClient.updated_at
+    )
+      return c.json({ error: 'conflict', reason: 'version_conflict' }, 409);
+    if (
+      agentExpectedUpdatedAt !== undefined &&
+      agentExpectedUpdatedAt !== existingClient.updated_at
+    )
+      return c.json(
+        {
+          error: 'precondition_failed',
+          error_description: 'The client changed after the Agent plan validated it',
+        },
+        412
+      );
+    const updateInput: UpdateClientInput = {
+      ...advanced,
+      client_name,
+      description: descriptionValidation.value,
+      redirect_uris: redirectUrisValidation.value,
+      grant_types: grantTypesValidation.value,
+      response_types,
+      token_endpoint_auth_method: tokenEndpointAuthMethodValidation.value,
+      scope,
+      logo_uri,
+      client_uri,
+      policy_uri,
+      tos_uri,
+      is_trusted,
+      skip_consent,
+      allow_claims_without_scope,
+      claims_parameter_policy: claimsParameterPolicyValidation.value,
+      identity_mapping: identityMappingValidation.value,
+      information_release_consent: informationReleaseConsentValidation.value,
+      asc_enabled: ascEnabledValidation.value ?? undefined,
+      asc_protected_request_required: ascProtectedRequestRequiredValidation.value ?? undefined,
+      asc_sao_enabled: ascSaoEnabledValidation.value ?? undefined,
+      asc_transformed_claims_enabled: ascTransformedClaimsEnabledValidation.value ?? undefined,
+      asc_allowed_transformed_claims: ascAllowedTransformedClaimsValidation.value,
+      allowed_redirect_origins: validatedAllowedOrigins,
+      require_pkce: requirePkceValidation.value,
+      minimum_ial: minimumIalValidation.value,
+      initiate_login_uri,
+      login_ui_url,
+      application_type: applicationTypeValidation.value,
+      trust_group: trustGroupValidation.value,
+      browser_public_client_mode: browserPublicClientModeValidation.value,
+      browser_refresh_token_policy: browserRefreshTokenPolicyValidation.value,
+      native_sso_enabled: nativeSsoEnabledValidation.value,
+      native_channel_allowed: nativeChannelAllowedValidation.value,
+      allowed_channels: allowedChannelsValidation.value,
+      device_secret_revoke_enabled: deviceSecretRevokeEnabledValidation.value,
+      device_secret_revoke_trust_groups: deviceSecretRevokeTrustGroupsValidation.value,
+      device_secret_introspection_enabled: deviceSecretIntrospectionEnabledValidation.value,
+      device_secret_introspection_trust_groups:
+        deviceSecretIntrospectionTrustGroupsValidation.value,
+      token_exchange_allowed,
+      allowed_subject_token_clients: allowedSubjectTokenClientsValidation.value,
+      allowed_token_exchange_resources: allowedTokenExchangeResourcesValidation.value,
+      delegation_mode,
+      client_credentials_allowed,
+      allowed_scopes: allowedScopesValidation.value,
+      requestable_scopes: requestableScopesValidation.value,
+      default_scope,
+      default_audience,
+      default_resource: defaultResourceValidation.value,
+      id_token_signed_response_alg: idTokenSigningAlgorithmValidation.value,
+      userinfo_signed_response_alg: userInfoSigningAlgorithmValidation.value,
+      subject_type,
+      sector_identifier_uri,
+    };
+    const effectiveClient = {
+      ...existingClient,
+      ...Object.fromEntries(Object.entries(updateInput).filter(([, value]) => value !== undefined)),
+    };
+    if (updateInput.trust_group !== undefined)
+      effectiveClient.trust_group_id = updateInput.trust_group;
+    effectiveClient.application_type ??= 'web';
+    effectiveClient.browser_refresh_token_policy ??= 'disabled';
+    const beforeRegistry = await getWebOriginRegistry(
+      c.env,
+      tenantId,
+      clientId,
+      authCtx.coreAdapter,
+      { bypassCache: true }
+    );
+    const afterRegistry =
+      webOriginRegistryPayload === undefined
+        ? beforeRegistry
+        : {
+            origins: normalizeRegistryInput(webOriginRegistryPayload),
+          };
+    const beforeTrust = {
+      ...clientTrustSettings(existingClient),
+      web_origin_registry: beforeRegistry,
+    };
+    const afterTrust = {
+      ...clientTrustSettings(effectiveClient),
+      web_origin_registry: afterRegistry,
+    };
+    const level = classifyClientTrustTransition({
+      before: { ...beforeTrust, enabled: existingClient.enabled },
+      after: { ...afterTrust, enabled: effectiveClient.enabled },
+    });
+    const validateConfiguration = requiresClientConfigurationValidation(
+      effectiveClient.enabled,
+      level
+    );
+    if (validateConfiguration) {
+      const missing = clientEnableBlockers(effectiveClient);
+      if (missing.length)
+        return c.json({ error: 'client_configuration_required_to_enable', missing }, 400);
+    }
+    if (keyChanged || validateConfiguration) {
+      const keyError = await storedClientKeySettingsProblem(
+        {
+          jwks: advanced.jwks !== undefined ? advanced.jwks : existingClient.jwks,
+          jwks_uri: advanced.jwks_uri !== undefined ? advanced.jwks_uri : existingClient.jwks_uri,
+          token_endpoint_auth_signing_alg:
+            advanced.token_endpoint_auth_signing_alg !== undefined
+              ? advanced.token_endpoint_auth_signing_alg
+              : existingClient.token_endpoint_auth_signing_alg,
+        },
+        effectiveTokenEndpointAuthMethod,
+        true,
+        validateConfiguration
+      );
+      if (keyError) return c.json({ error: 'invalid_request', error_description: keyError }, 400);
+    }
+    const refused = await requireClientTrustStepUp(c, {
+      tenantId,
+      targetIds: [clientId],
+      level,
+      resourceVersion: String(existingClient.updated_at),
+      params: {
+        action: internal.via === 'restore' ? 'client.restore' : 'client.update',
+        enabled: effectiveClient.enabled,
+        expected_updated_at: existingClient.updated_at,
+        trust_sha256: await clientTrustDigest(
+          clientTrustSettings({
+            ...updateInput,
+            ...(webOriginRegistryPayload === undefined
+              ? {}
+              : { web_origin_registry: afterRegistry }),
+          })
+        ),
+        ...(level === 'L2'
+          ? {
+              effective_trust_sha256: await clientTrustDigest({
+                ...clientTrustSettings(afterTrust),
+                trust_policy: await clientTrustPolicy(authCtx.coreAdapter, tenantId, clientId),
+              }),
+            }
+          : {}),
+      },
+    });
+    if (refused) return refused;
     const mappingChanged =
       identityMappingValidation.value !== undefined &&
       !identityMappingLevelHistoryChoicesEqual(
@@ -3009,12 +3126,7 @@ async function executeAdminClientUpdate(
         identityMappingValidation.value
       );
     const expectedUpdatedAt =
-      internal.expectedUpdatedAt ??
-      agentExpectedUpdatedAt ??
-      (typeof requestedVersion === 'number' ? existingClient.updated_at : undefined) ??
-      (identityMappingValidation.value !== undefined || keyChanged
-        ? existingClient.updated_at
-        : undefined);
+      internal.expectedUpdatedAt ?? agentExpectedUpdatedAt ?? existingClient.updated_at;
     if (
       internal.expectedUpdatedAt !== undefined &&
       existingClient.updated_at !== internal.expectedUpdatedAt
@@ -3089,71 +3201,15 @@ async function executeAdminClientUpdate(
     };
     let updatedClient: typeof existingClient | null;
     try {
-      updatedClient = hasClientUpdates
+      updatedClient = hasUpdates
         ? await authCtx.repositories.client.update(
             clientId,
-            {
-              ...advanced,
-              client_name,
-              description: descriptionValidation.value,
-              redirect_uris: redirectUrisValidation.value,
-              grant_types: grantTypesValidation.value,
-              response_types,
-              token_endpoint_auth_method: tokenEndpointAuthMethodValidation.value,
-              scope,
-              logo_uri,
-              client_uri,
-              policy_uri,
-              tos_uri,
-              is_trusted,
-              skip_consent,
-              allow_claims_without_scope,
-              claims_parameter_policy: claimsParameterPolicyValidation.value,
-              identity_mapping: identityMappingValidation.value,
-              information_release_consent: informationReleaseConsentValidation.value,
-              asc_enabled: ascEnabledValidation.value ?? undefined,
-              asc_protected_request_required:
-                ascProtectedRequestRequiredValidation.value ?? undefined,
-              asc_sao_enabled: ascSaoEnabledValidation.value ?? undefined,
-              asc_transformed_claims_enabled:
-                ascTransformedClaimsEnabledValidation.value ?? undefined,
-              asc_allowed_transformed_claims: ascAllowedTransformedClaimsValidation.value,
-              allowed_redirect_origins: validatedAllowedOrigins,
-              require_pkce: requirePkceValidation.value,
-              minimum_ial: minimumIalValidation.value,
-              initiate_login_uri,
-              login_ui_url,
-              application_type: applicationTypeValidation.value,
-              trust_group: trustGroupValidation.value,
-              browser_public_client_mode: browserPublicClientModeValidation.value,
-              browser_refresh_token_policy: browserRefreshTokenPolicyValidation.value,
-              native_sso_enabled: nativeSsoEnabledValidation.value,
-              native_channel_allowed: nativeChannelAllowedValidation.value,
-              allowed_channels: allowedChannelsValidation.value,
-              device_secret_revoke_enabled: deviceSecretRevokeEnabledValidation.value,
-              device_secret_revoke_trust_groups: deviceSecretRevokeTrustGroupsValidation.value,
-              device_secret_introspection_enabled: deviceSecretIntrospectionEnabledValidation.value,
-              device_secret_introspection_trust_groups:
-                deviceSecretIntrospectionTrustGroupsValidation.value,
-              token_exchange_allowed,
-              allowed_subject_token_clients: allowedSubjectTokenClientsValidation.value,
-              allowed_token_exchange_resources: allowedTokenExchangeResourcesValidation.value,
-              delegation_mode,
-              client_credentials_allowed,
-              allowed_scopes: allowedScopesValidation.value,
-              requestable_scopes: requestableScopesValidation.value,
-              default_scope,
-              default_audience,
-              default_resource: defaultResourceValidation.value,
-              id_token_signed_response_alg: idTokenSigningAlgorithmValidation.value,
-              userinfo_signed_response_alg: userInfoSigningAlgorithmValidation.value,
-              subject_type,
-              sector_identifier_uri,
-            },
+            updateInput,
             expectedUpdatedAt === undefined
               ? undefined
               : {
                   expectedUpdatedAt,
+                  webOriginRegistry: webOriginRegistryPayload,
                   ...(history
                     ? {
                         identityMappingHistoryReceipt: {
@@ -3195,7 +3251,7 @@ async function executeAdminClientUpdate(
       );
     }
 
-    if (hasClientUpdates && !updatedClient && expectedUpdatedAt !== undefined) {
+    if (hasUpdates && !updatedClient && expectedUpdatedAt !== undefined) {
       return c.json(
         {
           error: agentExpectedUpdatedAt !== undefined ? 'precondition_failed' : 'conflict',
@@ -3207,29 +3263,18 @@ async function executeAdminClientUpdate(
       );
     }
 
-    let webOriginRegistry =
-      webOriginRegistryPayload !== undefined
-        ? undefined
-        : await getWebOriginRegistry(c.env, tenantId, clientId, authCtx.coreAdapter);
-    if (webOriginRegistryPayload !== undefined) {
-      try {
-        webOriginRegistry = await replaceWebOriginRegistry(
-          authCtx.coreAdapter,
-          tenantId,
-          clientId,
-          webOriginRegistryPayload
-        );
-        await invalidateWebOriginRegistryCache(c.env, tenantId, clientId);
-      } catch (error) {
-        return c.json(
-          {
-            error: 'invalid_request',
-            error_description:
-              error instanceof Error ? error.message : 'Invalid web_origin_registry',
-          },
-          400
-        );
-      }
+    const webOriginRegistry = await getWebOriginRegistry(
+      c.env,
+      tenantId,
+      clientId,
+      authCtx.coreAdapter,
+      { bypassCache: true }
+    );
+    if (hasRegistryUpdate) await invalidateWebOriginRegistryCache(c.env, tenantId, clientId);
+    if (updatedClient && existingClient.enabled !== updatedClient.enabled) {
+      const action = updatedClient.enabled ? 'client.enabled' : 'client.disabled';
+      await createAuditLogFromContext(c, action, 'client', clientId, {});
+      scheduleAdminAuditLog(c, action, clientId, 'success');
     }
 
     const log = getLogger(c).module('ADMIN-CLIENT');
@@ -3298,6 +3343,8 @@ async function executeAdminClientUpdate(
         ...(tokenExchangeWarnings.length > 0 && { warnings: tokenExchangeWarnings }),
         client: {
           ...clientWithoutHash,
+          enable_blockers: clientEnableBlockers(updatedClient),
+          system_managed: isSystemManagedClient(updatedClient),
           updated_at: toMilliseconds(updatedClient.updated_at),
           jwks: readPublicClientJwks(updatedClient.jwks),
           post_logout_redirect_uris: parseClientStringArray(
@@ -3367,6 +3414,16 @@ export async function adminClientDeleteHandler(c: Context<{ Bindings: Env }>) {
   try {
     const clientId = c.req.param('id')!;
     const tenantId = getTenantIdFromContext(c);
+    const authCtx = createAuthContextFromHono(c, tenantId);
+    if (!(await authCtx.repositories.client.exists(clientId)))
+      return c.json({ error: 'not_found' }, 404);
+    const refused = await requireClientTrustStepUp(c, {
+      tenantId,
+      targetIds: [clientId],
+      level: 'L1',
+      params: { action: 'client.delete' },
+    });
+    if (refused) return refused;
     const deleted = await deleteClientAndOwnedPolicy(c, tenantId, clientId);
 
     if (!deleted) {
@@ -3428,7 +3485,12 @@ export async function adminClientsBulkDeleteHandler(c: Context<{ Bindings: Env }
     const body = await c.req.json<{ client_ids: string[] }>();
     const { client_ids } = body;
 
-    if (!client_ids || !Array.isArray(client_ids) || client_ids.length === 0) {
+    if (
+      !client_ids ||
+      !Array.isArray(client_ids) ||
+      client_ids.length === 0 ||
+      client_ids.some((id) => typeof id !== 'string' || !id.trim())
+    ) {
       return c.json(
         {
           error: 'invalid_request',
@@ -3449,6 +3511,13 @@ export async function adminClientsBulkDeleteHandler(c: Context<{ Bindings: Env }
     }
 
     const tenantId = getTenantIdFromContext(c);
+    const refused = await requireClientTrustStepUp(c, {
+      tenantId,
+      targetIds: client_ids,
+      level: 'L1',
+      params: { action: 'client.bulk_delete' },
+    });
+    if (refused) return refused;
     const log = getLogger(c).module('ADMIN-CLIENT');
     const successfullyDeletedIds: string[] = [];
     const failedIds: string[] = [];
@@ -3527,27 +3596,75 @@ export async function adminClientRegenerateSecretHandler(c: Context<{ Bindings: 
       }>()
       .catch(() => ({ revoke_existing_tokens: undefined, grace_period_hours: undefined }));
 
+    if (
+      body.revoke_existing_tokens !== undefined &&
+      typeof body.revoke_existing_tokens !== 'boolean'
+    )
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: { field: 'revoke_existing_tokens', reason: 'Must be boolean' },
+      });
     const gracePeriodHours = body.grace_period_hours;
-    if (gracePeriodHours !== undefined && (gracePeriodHours < 1 || gracePeriodHours > 168)) {
+    if (
+      gracePeriodHours !== undefined &&
+      (!Number.isInteger(gracePeriodHours) || gracePeriodHours < 1 || gracePeriodHours > 168)
+    ) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
         variables: { field: 'grace_period_hours', reason: 'Must be between 1 and 168 hours' },
       });
     }
 
     const adapter = createAuthContextFromHono(c, tenantId).coreAdapter;
-    const client = await getClient(c.env, tenantId, clientId, adapter);
+    const client = await createAuthContextFromHono(c, tenantId).repositories.client.findByClientId(
+      clientId
+    );
 
     if (!client || client.tenant_id !== tenantId) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+    }
+
+    if (requiresClientConfigurationValidation(client.enabled, 'L2')) {
+      const missing = clientEnableBlockers({ ...client, client_secret_hash: 'replacement' });
+      if (missing.length)
+        return c.json({ error: 'client_configuration_required_to_enable', missing }, 400);
+      const keyError = await storedClientKeySettingsProblem(
+        client,
+        client.token_endpoint_auth_method,
+        true,
+        true
+      );
+      if (keyError) return c.json({ error: 'invalid_request', error_description: keyError }, 400);
     }
 
     const refused = await requireAdminStepUp(
       c as unknown as Parameters<typeof requireAdminStepUp>[0],
       {
         operation: 'client.secret.rotate',
+        ...(client.enabled ? { alsoCovers: ['client.trust.activate' as const] } : {}),
+        resourceVersion: client.updated_at,
         targetTenantId: tenantId,
         targetIds: [clientId],
-        params: { revoke_existing_tokens: body.revoke_existing_tokens === true },
+        params: {
+          action: 'client.secret.rotate',
+          enabled: client.enabled,
+          expected_updated_at: client.updated_at,
+          revoke_existing_tokens: body.revoke_existing_tokens === true,
+          grace_period_hours: gracePeriodHours ?? null,
+          ...(client.enabled
+            ? {
+                effective_trust_sha256: await clientTrustDigest({
+                  ...clientTrustSettings(client),
+                  web_origin_registry: await getWebOriginRegistry(
+                    c.env,
+                    tenantId,
+                    clientId,
+                    adapter,
+                    { bypassCache: true }
+                  ),
+                  trust_policy: await clientTrustPolicy(adapter, tenantId, clientId),
+                }),
+              }
+            : {}),
+        },
       }
     );
     if (refused) return refused;
@@ -3568,22 +3685,42 @@ export async function adminClientRegenerateSecretHandler(c: Context<{ Bindings: 
       });
     }
 
-    await adapter.execute(
-      `UPDATE oauth_clients SET
-        client_secret_hash = ?,
-        updated_at = ?
-       WHERE tenant_id = ? AND client_id = ?`,
-      [newSecretHash, nowTs, tenantId, clientId]
-    );
-
+    const rotation = {
+      sql: 'UPDATE oauth_clients SET client_secret_hash = ?, updated_at = ? WHERE tenant_id = ? AND client_id = ? AND updated_at = ?',
+      params: [
+        newSecretHash,
+        Math.max(Date.now(), client.updated_at + 1),
+        tenantId,
+        clientId,
+        client.updated_at,
+      ],
+    };
     let revokedTokens = 0;
+    let rotated: { rowsAffected: number };
     if (body.revoke_existing_tokens) {
-      const tokenResult = await adapter.execute(
-        'UPDATE refresh_tokens SET revoked = 1, revoked_at = ? WHERE tenant_id = ? AND client_id = ? AND revoked = 0',
-        [nowTs, tenantId, clientId]
-      );
-      revokedTokens = tokenResult.rowsAffected;
-    }
+      const guard = [tenantId, clientId, client.updated_at];
+      const statements = [
+        ...(adapter.getType() === 'postgres'
+          ? [
+              {
+                sql: 'SELECT 1 FROM oauth_clients WHERE tenant_id = ? AND client_id = ? AND updated_at = ? FOR UPDATE',
+                params: guard,
+              },
+            ]
+          : []),
+        {
+          sql: `UPDATE refresh_tokens SET revoked = 1, revoked_at = ? WHERE tenant_id = ? AND client_id = ? AND revoked = 0
+          AND EXISTS (SELECT 1 FROM oauth_clients WHERE tenant_id = ? AND client_id = ? AND updated_at = ?)`,
+          params: [nowTs, tenantId, clientId, ...guard],
+        },
+        rotation,
+      ];
+      const results = await adapter.batch(statements);
+      rotated = results[results.length - 1];
+      revokedTokens = results[results.length - 2].rowsAffected;
+    } else rotated = await adapter.execute(rotation.sql, rotation.params);
+    if (!rotated.rowsAffected)
+      return c.json({ error: 'conflict', reason: 'version_conflict' }, 409);
 
     try {
       await c.env.CLIENTS_CACHE.delete(buildKVKey('client', clientId, tenantId));

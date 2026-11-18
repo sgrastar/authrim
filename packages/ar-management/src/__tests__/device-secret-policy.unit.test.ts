@@ -66,6 +66,23 @@ describe('device secret revoke policy', () => {
     ).toEqual({ allowed: true, callerClass: 'confidential_or_service_client' });
   });
 
+  it.each([
+    client(),
+    client({ client_secret_hash: 'stored-hash', device_secret_revoke_enabled: true }),
+  ])('keeps own-secret revocation after disable without trust-group authority', (metadata) => {
+    const disabled = {
+      ...metadata,
+      enabled: false,
+      trust_group_id: 'group-a',
+      device_secret_revoke_trust_groups: ['*'],
+    };
+    expect(evaluateDeviceSecretRevokePolicy(disabled, own).allowed).toBe(true);
+    expect(evaluateDeviceSecretRevokePolicy(disabled, other)).toMatchObject({
+      allowed: false,
+      code: 'revoke_disabled',
+    });
+  });
+
   it('allows cross-client revocation only within the matching allowlisted trust group', () => {
     const allowed = client({
       client_secret_hash: 'stored-hash',

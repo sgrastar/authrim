@@ -48,6 +48,7 @@ class MockR2Bucket {
 function createClient(overrides: Partial<OAuthClient> = {}): OAuthClient {
   const now = Date.now();
   return {
+    enabled: true,
     client_id: 'diag-client',
     client_secret_hash: null,
     client_name: 'Diagnostic Client',

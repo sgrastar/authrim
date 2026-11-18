@@ -215,8 +215,15 @@ async function resolveAdminAgentClient(
       });
       await createAuthContextFromHono(c, tenantId).coreAdapter.execute(
         `UPDATE oauth_clients SET agent_access_expires_at = 0, client_metadata_hash = ?,
-          client_metadata_fetched_at = ?, updated_at = ? WHERE tenant_id = ? AND client_id = ?`,
-        [document.hash, now, now, tenantId, clientId]
+          client_metadata_fetched_at = ?, updated_at = ? WHERE tenant_id = ? AND client_id = ? AND updated_at = ?`,
+        [
+          document.hash,
+          now,
+          Math.max(now, existing.updated_at + 1),
+          tenantId,
+          clientId,
+          existing.updated_at,
+        ]
       );
       return null;
     }
@@ -225,10 +232,10 @@ async function resolveAdminAgentClient(
       const now = Date.now();
       const expiresAt = now + 30 * 24 * 60 * 60 * 1000;
       const result = await createAuthContextFromHono(c, tenantId).coreAdapter.execute(
-        `UPDATE oauth_clients SET agent_access_expires_at = ?, client_metadata_fetched_at = ?,
-          updated_at = ? WHERE tenant_id = ? AND client_id = ?
+        `UPDATE oauth_clients SET agent_access_expires_at = ?, client_metadata_fetched_at = ?
+          WHERE tenant_id = ? AND client_id = ?
           AND agent_access_registration_mode = 'cimd' AND client_metadata_hash = ?`,
-        [expiresAt, now, now, tenantId, clientId, document.hash]
+        [expiresAt, now, tenantId, clientId, document.hash]
       );
       if (result.rowsAffected !== 1) return null;
       return {
@@ -239,15 +246,16 @@ async function resolveAdminAgentClient(
     }
     return existing;
   }
-  if (existing) return existing;
+  if (existing) return existing.enabled === false ? null : existing;
   const document = await fetchClientIdMetadataDocument(clientId);
   if (!document) return null;
   const tenantId = getTenantIdFromContext(c);
   const now = Date.now();
   const coreAdapter = createAuthContextFromHono(c, tenantId).coreAdapter;
   const repository = new ClientRepository(coreAdapter, tenantId);
+  let configuredVersion = now;
   try {
-    await repository.create({
+    const created = await repository.create({
       client_id: clientId,
       client_name: document.metadata.client_name ?? new URL(clientId).hostname,
       tenant_id: tenantId,
@@ -265,16 +273,28 @@ async function resolveAdminAgentClient(
       is_trusted: false,
       skip_consent: false,
     });
-    await coreAdapter.execute(
+    configuredVersion = Math.max(now, created.updated_at + 1);
+    const configured = await coreAdapter.execute(
       `UPDATE oauth_clients SET agent_access_registration_mode = 'cimd',
         agent_access_expires_at = ?, client_metadata_url = ?, client_metadata_hash = ?,
-        client_metadata_fetched_at = ? WHERE tenant_id = ? AND client_id = ?`,
-      [now + 30 * 24 * 60 * 60 * 1000, clientId, document.hash, now, tenantId, clientId]
+        client_metadata_fetched_at = ?, updated_at = ? WHERE tenant_id = ? AND client_id = ? AND updated_at = ?`,
+      [
+        now + 30 * 24 * 60 * 60 * 1000,
+        clientId,
+        document.hash,
+        now,
+        configuredVersion,
+        tenantId,
+        clientId,
+        created.updated_at,
+      ]
     );
+    if (configured.rowsAffected !== 1) return null;
   } catch {
     return null;
   }
   return {
+    enabled: true,
     client_id: clientId,
     client_name: document.metadata.client_name,
     client_uri: document.metadata.client_uri,
@@ -290,7 +310,7 @@ async function resolveAdminAgentClient(
     default_resource: canonicalResource,
     tenant_id: tenantId,
     created_at: now,
-    updated_at: now,
+    updated_at: configuredVersion,
     agent_access_registration_mode: 'cimd',
     agent_access_expires_at: now + 30 * 24 * 60 * 60 * 1000,
     client_metadata_url: clientId,

@@ -48,6 +48,7 @@ describe('live outgoing creation through HTTP', () => {
 			expect(init.headers.get('Idempotency-Key')).toBeTruthy();
 			expect(init.headers.get('Content-Type')).toBe('application/json');
 			expect(JSON.parse(init.body)).toEqual({
+				enabled: false,
 				client_name: 'Portal',
 				application_type: appType,
 				redirect_uris: answers.rp.redirectUris,
@@ -66,7 +67,7 @@ describe('live outgoing creation through HTTP', () => {
 		}
 	);
 	it.each(['web', 'spa', 'native'])(
-		'creates a %s RP without callbacks and does not add lifecycle state',
+		'creates a %s RP without callbacks as a disabled draft',
 		async (appType) => {
 			const answers = emptyAnswers(true);
 			answers.direction = 'out';
@@ -98,7 +99,7 @@ describe('live outgoing creation through HTTP', () => {
 				token_endpoint_auth_method: appType === 'web' ? 'client_secret_basic' : 'none',
 				require_pkce: true
 			});
-			expect(payloads[0]).not.toHaveProperty('enabled');
+			expect(payloads[0]).toHaveProperty('enabled', false);
 			expect(payloads[0]).not.toHaveProperty('status');
 			answers.rp.skipped = false;
 			expect(() => rpCreateInput(answers.rp)).toThrow();
@@ -159,7 +160,7 @@ describe('live outgoing creation through HTTP', () => {
 		await expect(createConnection(resources, answers, '')).resolves.toMatchObject({ id: 'saved' });
 		expect(fetcher.mock.calls[0][1].body).toBe(fetcher.mock.calls[1][1].body);
 	});
-	it('allows absent callbacks while rejecting malformed redirects, unsupported JWT auth and public clients without PKCE before any write', () => {
+	it('allows absent callbacks and keys in drafts while rejecting malformed values and public clients without PKCE', () => {
 		const form = emptyAnswers().rp;
 		form.name = 'Portal';
 		expect(rpCreateInput(form).redirect_uris).toEqual([]);
@@ -167,6 +168,8 @@ describe('live outgoing creation through HTTP', () => {
 		expect(() => rpCreateInput(form)).toThrow();
 		form.redirectUris = ['https://portal.example/callback'];
 		form.authMethod = 'private_key_jwt';
+		expect(rpCreateInput(form)).toMatchObject({ enabled: false, jwks: null, jwks_uri: null });
+		form.jwksUri = 'http://keys.example/jwks';
 		expect(() => rpCreateInput(form)).toThrow();
 		form.appType = 'spa';
 		Object.assign(form, defaultsForAppType('spa'));

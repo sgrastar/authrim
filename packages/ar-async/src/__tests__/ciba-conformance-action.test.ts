@@ -4,6 +4,10 @@ import type { Env } from '@authrim/ar-lib-core';
 import { cibaConformanceActionHandler } from '../ciba-conformance-action';
 
 const { sendPingNotification } = vi.hoisted(() => ({ sendPingNotification: vi.fn() }));
+vi.mock('@authrim/ar-lib-core', async (original) => ({
+  ...(await original<typeof import('@authrim/ar-lib-core')>()),
+  getClientCached: vi.fn(async () => ({ client_id: 'client-1', enabled: true })),
+}));
 vi.mock('@authrim/ar-lib-core/notifications', () => ({ sendPingNotification }));
 
 async function keyFor(secret: string): Promise<string> {

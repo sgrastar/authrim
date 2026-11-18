@@ -744,6 +744,25 @@ export async function introspectTokenFromContext(
     audience: options.audience,
     allowSubjectReference: options.allowSubjectReference,
   });
+  if (result.valid && result.claims) {
+    const clientId = result.claims.client_id ?? result.claims.azp;
+    const client =
+      typeof clientId === 'string'
+        ? await getClientCached(c, c.env, clientId, { includeDisabled: true })
+        : null;
+    // JWT bearer issuers need not have an OAuth client registration.
+    if (typeof clientId !== 'string' || client?.enabled === false) {
+      return {
+        valid: false,
+        error: {
+          error: 'invalid_token',
+          error_description: 'The access token is invalid',
+          wwwAuthenticate: 'Bearer error="invalid_token"',
+          statusCode: 401,
+        },
+      };
+    }
+  }
   if (!result.valid || !result.claims || !tokenRecordsUserGrant(result.claims)) return result;
 
   const userId = result.accountUserId ?? result.claims.sub;

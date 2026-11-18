@@ -52,6 +52,10 @@
             {
               "path": "011_saml_sp_release_consent.sql",
               "checksum": "ae4ccf262942c2f11e125a0740cd715d9c3a63d6e7fea8371113740037e7fec2"
+            },
+            {
+              "path": "012_oauth_client_enabled.sql",
+              "checksum": "add03dc182bd6d94e597740db74f7e54ca5b1e37b63435f1ebcbd3ac8ac380f1"
             }
           ]
         },
@@ -162,6 +166,10 @@
             {
               "path": "023_mapping_rule_graph.sql",
               "checksum": "2deaf4914d48c774ee0a8d31373c0d25dbc2cb66099e0a41d0b2d370654d36e6"
+            },
+            {
+              "path": "024_admin_onboarding_progress.sql",
+              "checksum": "3c3add59e75d76d1be2b08ea481faf4f8c3ddb49a0a3cef12eb60401a0b206f1"
             }
           ]
         },
@@ -224,6 +232,10 @@
             {
               "path": "011_saml_sp_release_consent.sql",
               "checksum": "b5ccc3d6c7350ef76298cf22f8ca2d94307fdce2f4306c151a7545fa3994f382"
+            },
+            {
+              "path": "012_oauth_client_enabled.sql",
+              "checksum": "add03dc182bd6d94e597740db74f7e54ca5b1e37b63435f1ebcbd3ac8ac380f1"
             }
           ]
         },
@@ -299,6 +311,10 @@
         {
           "path": "011_saml_sp_release_consent.sql",
           "checksum": "ae4ccf262942c2f11e125a0740cd715d9c3a63d6e7fea8371113740037e7fec2"
+        },
+        {
+          "path": "012_oauth_client_enabled.sql",
+          "checksum": "add03dc182bd6d94e597740db74f7e54ca5b1e37b63435f1ebcbd3ac8ac380f1"
         }
       ]
     },
@@ -417,6 +433,10 @@
         {
           "path": "023_mapping_rule_graph.sql",
           "checksum": "2deaf4914d48c774ee0a8d31373c0d25dbc2cb66099e0a41d0b2d370654d36e6"
+        },
+        {
+          "path": "024_admin_onboarding_progress.sql",
+          "checksum": "3c3add59e75d76d1be2b08ea481faf4f8c3ddb49a0a3cef12eb60401a0b206f1"
         }
       ]
     },
@@ -497,6 +517,10 @@
         {
           "path": "011_saml_sp_release_consent.sql",
           "checksum": "b5ccc3d6c7350ef76298cf22f8ca2d94307fdce2f4306c151a7545fa3994f382"
+        },
+        {
+          "path": "012_oauth_client_enabled.sql",
+          "checksum": "add03dc182bd6d94e597740db74f7e54ca5b1e37b63435f1ebcbd3ac8ac380f1"
         }
       ]
     },

@@ -197,6 +197,7 @@ export function connectionMappingFixture(
 		};
 	}
 	const client: IdentityMappingClient = {
+		restoreLevel: async () => undefined,
 		sets: async () => ({ sets: copyValue([...sets.values()]) }),
 		setContent: async (_tenant, id) => {
 			const set = sets.get(id);

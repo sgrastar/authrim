@@ -86,6 +86,8 @@ export async function validatePairwiseClientMetadata(input: {
   sectorIdentifierUri?: string | null;
   /** False when neither the redirect URIs nor the sector URI changed (no fetch needed). */
   checkSectorContent?: boolean;
+  /** Missing sector settings may be saved in a draft; supplied URLs still pass safety checks. */
+  allowIncomplete?: boolean;
 }): Promise<OAuthErrorResponse | null> {
   const subjectType = input.subjectType ?? 'public';
   if (subjectType !== 'public' && subjectType !== 'pairwise') {
@@ -104,6 +106,7 @@ export async function validatePairwiseClientMetadata(input: {
   // (the sector URI's host, else the one host its redirect URIs share): none means no sub.
   if (
     subjectType === 'pairwise' &&
+    !(input.allowIncomplete && !input.sectorIdentifierUri) &&
     !resolvePairwiseSector({
       sectorIdentifierUri: input.sectorIdentifierUri,
       redirectUris: input.redirectUris,

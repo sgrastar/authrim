@@ -326,8 +326,9 @@ export async function verifyRestoredSourceLoginUi(
     application_type: string;
     allowed_channels: string;
     client_secret_hash: string | null;
+    enabled: number;
   }>(
-    'SELECT tenant_id, client_id, application_type, allowed_channels, client_secret_hash FROM oauth_clients WHERE tenant_id = ? AND client_id = ?',
+    'SELECT tenant_id, client_id, application_type, allowed_channels, client_secret_hash, enabled FROM oauth_clients WHERE tenant_id = ? AND client_id = ?',
     [tenantId, clientId]
   );
   const restoredOrigin = await input.restored.metadataCoreDb.queryOne<{
@@ -342,6 +343,7 @@ export async function verifyRestoredSourceLoginUi(
   );
   if (
     !client ||
+    client.enabled === 0 ||
     client.tenant_id !== tenantId ||
     client.client_id !== clientId ||
     client.application_type !== rowText(source.client, 'application_type') ||

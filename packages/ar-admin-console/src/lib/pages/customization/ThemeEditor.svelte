@@ -81,7 +81,7 @@
 
 <div class="editor">
 	<div class="workspace">
-		<div class="workspace__edit">
+		<div class="workspace__edit" data-guide="theme-sections">
 			<Tabs label={t('th.edit.label')} items={tabs} bind:value={section}>
 				{#snippet panel(id)}
 					<div class="sections">

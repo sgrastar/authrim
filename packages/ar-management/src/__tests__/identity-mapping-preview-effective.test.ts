@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+// Receipt handling is covered by client-trust-retry; these tests compare mapping previews.
+vi.mock('../admin-step-up-gate', () => ({ requireAdminStepUp: async () => null }));
 import { logProducerFixture } from '../../../../test/helpers/log-iceberg-producer-fixture.mjs';
 import { adminAuthMiddleware, PLATFORM_MAPPING_TENANT_ID } from '@authrim/ar-lib-core';
 

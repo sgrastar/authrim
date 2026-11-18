@@ -111,7 +111,7 @@ describe('Admin Agent PAR', () => {
       token_endpoint_auth_method: 'none',
       requestable_scopes: ['agent:read'],
     });
-    mocks.clientCreate.mockResolvedValue({ client_id: 'created' });
+    mocks.clientCreate.mockResolvedValue({ client_id: 'created', updated_at: 1000 });
     mocks.coreExecute.mockResolvedValue({ success: true, rows: [], rowsAffected: 1 });
     mocks.getPARRequestStoreForNewRequest.mockResolvedValue({
       stub: { storeRequestRpc: mocks.storeRequestRpc },

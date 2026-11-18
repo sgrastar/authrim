@@ -1,10 +1,28 @@
+import { storedClientKeySettingsProblem } from './admin-client-advanced';
+import {
+  clientEnableBlockers,
+  requiresClientConfigurationValidation,
+} from './client-configuration';
+import {
+  classifyClientTrustTransition,
+  clientTrustDigest,
+  clientTrustSettings,
+  requireClientTrustStepUp,
+} from './client-trust';
 import { Context } from 'hono';
 import type {
   ClientTrustPolicyTargetType,
+  PreparedStatement,
   Env,
   SignInConfirmationMode,
 } from '@authrim/ar-lib-core';
-import { createAuthContextFromHono, getLogger, getTenantIdFromContext } from '@authrim/ar-lib-core';
+import {
+  createAuthContextFromHono,
+  getLogger,
+  getTenantIdFromContext,
+  invalidateClientCache,
+  getWebOriginRegistry,
+} from '@authrim/ar-lib-core';
 
 type Row = Record<string, unknown>;
 
@@ -122,58 +140,129 @@ export async function adminClientTrustPolicyUpsertHandler(c: Context<{ Bindings:
         'An active first-party Client Trust Policy is required while App Login is enabled'
       );
     }
+    const client =
+      targetType === 'oidc_client'
+        ? await authCtx.repositories.client.findByClientId(targetId)
+        : null;
+    if (targetType === 'oidc_client' && !client) return notFound(c, 'OIDC client was not found');
     const name = `${targetType}-${targetId}-trust`;
-    const displayName = readTrimmed(body.display_name) ?? name;
-    const now = Date.now();
-    const existing = await authCtx.coreAdapter.query(
-      `SELECT id FROM client_trust_policies
-        WHERE tenant_id = ? AND target_type = ? AND target_id = ?`,
+    const policy = {
+      name,
+      display_name: readTrimmed(body.display_name) ?? name,
+      description: readOptionalString(body.description),
+      first_party: readBool(body.first_party) ? 1 : 0,
+      trusted: readBool(body.trusted) ? 1 : 0,
+      skip_authorization_consent: readBool(body.skip_authorization_consent) ? 1 : 0,
+      is_active: readBool(body.is_active, true) ? 1 : 0,
+    };
+    const previous = await authCtx.coreAdapter.queryOne<Row>(
+      'SELECT * FROM client_trust_policies WHERE tenant_id = ? AND target_type = ? AND target_id = ?',
       [tenantId, targetType, targetId]
     );
-    const values = [
-      name,
-      displayName,
-      readOptionalString(body.description),
-      readBool(body.first_party) ? 1 : 0,
-      readBool(body.trusted) ? 1 : 0,
-      readBool(body.skip_authorization_consent) ? 1 : 0,
-      readBool(body.is_active, true) ? 1 : 0,
-      now,
-      tenantId,
-      targetType,
-      targetId,
-    ];
-    if (existing.length > 0) {
-      await authCtx.coreAdapter.execute(
-        `UPDATE client_trust_policies
-            SET name = ?, display_name = ?, description = ?, first_party = ?, trusted = ?,
-                skip_authorization_consent = ?, is_active = ?, updated_at = ?
-          WHERE tenant_id = ? AND target_type = ? AND target_id = ?`,
-        values
-      );
-    } else {
-      await authCtx.coreAdapter.execute(
-        `INSERT INTO client_trust_policies
-         (id, tenant_id, name, display_name, description, target_type, target_id,
-          first_party, trusted, skip_authorization_consent, is_active, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
+    if (client) {
+      const trustSettings = (row: Row | null) =>
+        row
+          ? {
+              first_party: readBool(row.first_party),
+              trusted: readBool(row.trusted),
+              skip_authorization_consent: readBool(row.skip_authorization_consent),
+              is_active: readBool(row.is_active, true),
+            }
+          : null;
+      const level = classifyClientTrustTransition({
+        before: { ...client, trust_policy: trustSettings(previous) },
+        after: { ...client, trust_policy: trustSettings(policy) },
+      });
+      if (requiresClientConfigurationValidation(client.enabled, level)) {
+        const missing = clientEnableBlockers(client);
+        if (missing.length)
+          return c.json({ error: 'client_configuration_required_to_enable', missing }, 400);
+        const keyError = await storedClientKeySettingsProblem(
+          client,
+          client.token_endpoint_auth_method,
+          true,
+          true
+        );
+        if (keyError) return c.json({ error: 'invalid_request', error_description: keyError }, 400);
+      }
+    }
+    if (client?.enabled) {
+      const refused = await requireClientTrustStepUp(c, {
+        tenantId,
+        targetIds: [targetId],
+        level: 'L2',
+        resourceVersion: String(client.updated_at),
+        params: {
+          action: 'client.trust_policy.upsert',
+          enabled: true,
+          expected_updated_at: client.updated_at,
+          trust_sha256: await clientTrustDigest(policy),
+          effective_trust_sha256: await clientTrustDigest({
+            ...clientTrustSettings(client),
+            web_origin_registry: await getWebOriginRegistry(
+              c.env,
+              tenantId,
+              targetId,
+              authCtx.coreAdapter,
+              { bypassCache: true }
+            ),
+            trust_policy: { ...previous, ...policy },
+          }),
+        },
+      });
+      if (refused) return refused;
+    }
+    const now = Date.now();
+    const guard = client
+      ? 'EXISTS (SELECT 1 FROM oauth_clients WHERE tenant_id = ? AND client_id = ? AND updated_at = ?)'
+      : '1 = 1';
+    const guardParams = client ? [tenantId, targetId, client.updated_at] : [];
+    const statements: PreparedStatement[] = [];
+    if (client && authCtx.coreAdapter.getType() === 'postgres')
+      statements.push({
+        sql: 'SELECT 1 FROM oauth_clients WHERE tenant_id = ? AND client_id = ? AND updated_at = ? FOR UPDATE',
+        params: guardParams,
+      });
+    if (previous)
+      statements.push({
+        sql: `UPDATE client_trust_policies SET name = ?, display_name = ?, description = ?, first_party = ?, trusted = ?,
+        skip_authorization_consent = ?, is_active = ?, updated_at = ?
+        WHERE tenant_id = ? AND target_type = ? AND target_id = ? AND ${guard}`,
+        params: [...Object.values(policy), now, tenantId, targetType, targetId, ...guardParams],
+      });
+    else
+      statements.push({
+        sql: `INSERT INTO client_trust_policies (id, tenant_id, name, display_name, description, target_type, target_id,
+        first_party, trusted, skip_authorization_consent, is_active, created_at, updated_at)
+        SELECT CAST(? AS TEXT), CAST(? AS TEXT), CAST(? AS TEXT), CAST(? AS TEXT), CAST(? AS TEXT),
+          CAST(? AS TEXT), CAST(? AS TEXT), CAST(? AS INTEGER), CAST(? AS INTEGER), CAST(? AS INTEGER),
+          CAST(? AS INTEGER), CAST(? AS BIGINT), CAST(? AS BIGINT) WHERE ${guard}`,
+        params: [
           crypto.randomUUID(),
           tenantId,
-          name,
-          displayName,
-          readOptionalString(body.description),
+          policy.name,
+          policy.display_name,
+          policy.description,
           targetType,
           targetId,
-          readBool(body.first_party) ? 1 : 0,
-          readBool(body.trusted) ? 1 : 0,
-          readBool(body.skip_authorization_consent) ? 1 : 0,
-          readBool(body.is_active, true) ? 1 : 0,
+          policy.first_party,
+          policy.trusted,
+          policy.skip_authorization_consent,
+          policy.is_active,
           now,
           now,
-        ]
-      );
-    }
+          ...guardParams,
+        ],
+      });
+    if (client)
+      statements.push({
+        sql: 'UPDATE oauth_clients SET updated_at = ? WHERE tenant_id = ? AND client_id = ? AND updated_at = ?',
+        params: [Math.max(now, client.updated_at + 1), ...guardParams],
+      });
+    const results = await authCtx.coreAdapter.batch(statements);
+    if (client && !results[results.length - 1].rowsAffected)
+      return c.json({ error: 'conflict', reason: 'version_conflict' }, 409);
+    if (client) await invalidateClientCache(c.env, targetId, tenantId);
     return adminClientTrustPoliciesListHandler(c);
   } catch (error) {
     log.error('Failed to upsert client trust policy', { action: 'upsert_trust' }, error as Error);

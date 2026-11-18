@@ -5,6 +5,7 @@
 	import { tenantScope } from '#lib/auth/tenant-scope.svelte.js';
 	import { identifierMaterialsClient } from '#lib/api/identifier-materials.js';
 	import { t } from '#lib/i18n/i18n.svelte.js';
+	import OnboardingGuide from '#lib/onboarding/OnboardingGuide.svelte';
 	import AppShell from '#lib/shell/AppShell.svelte';
 	import EnvironmentBanner from '#lib/shell/EnvironmentBanner.svelte';
 	import StepUpDialog from '#lib/shell/StepUpDialog.svelte';
@@ -136,4 +137,5 @@
 		{@render children()}
 	</AppShell>
 	<StepUpDialog />
+	<OnboardingGuide />
 {/if}

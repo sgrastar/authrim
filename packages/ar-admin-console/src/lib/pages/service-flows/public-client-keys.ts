@@ -2,8 +2,11 @@ import { publicClientJwksProblem } from '@authrim/ar-lib-core/utils/public-clien
 import type { RpForm } from './connection-model';
 
 export function publicKeyInput(
-	form: RpForm
-): { jwks_uri: string; jwks: null } | { jwks: Record<string, unknown>; jwks_uri: null } {
+	form: RpForm,
+	allowEmpty = false
+): { jwks_uri: string | null; jwks: null } | { jwks: Record<string, unknown>; jwks_uri: null } {
+	if (allowEmpty && !(form.keySource === 'inline' ? form.publicJwks : form.jwksUri)?.trim())
+		return { jwks: null, jwks_uri: null };
 	if (form.keySource !== 'inline') {
 		const uri = form.jwksUri?.trim() ?? '';
 		const parsed = new URL(uri);
@@ -17,9 +20,9 @@ export function publicKeyInput(
 	if (!jwks || typeof jwks !== 'object' || Array.isArray(jwks)) throw new Error('Invalid JWKS');
 	return { jwks: Object.fromEntries(Object.entries(jwks)), jwks_uri: null };
 }
-export function publicKeyProblem(form: RpForm): string | undefined {
+export function publicKeyProblem(form: RpForm, allowEmpty = false): string | undefined {
 	try {
-		publicKeyInput(form);
+		publicKeyInput(form, allowEmpty);
 		return undefined;
 	} catch (error) {
 		return error instanceof SyntaxError

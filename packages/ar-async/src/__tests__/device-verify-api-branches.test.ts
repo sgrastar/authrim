@@ -3,6 +3,7 @@ import { Hono } from 'hono';
 import type { DeviceCodeMetadata, Env } from '@authrim/ar-lib-core';
 
 const mocks = vi.hoisted(() => ({
+  client: vi.fn(),
   authenticatedUser: vi.fn(),
   isMockAuthEnabled: vi.fn(),
   storeFetch: vi.fn(),
@@ -24,6 +25,7 @@ vi.mock('@authrim/ar-lib-core', async () => {
     await vi.importActual<typeof import('@authrim/ar-lib-core')>('@authrim/ar-lib-core');
   return {
     ...actual,
+    getClientCached: mocks.client,
     isMockAuthEnabled: mocks.isMockAuthEnabled,
     getLogger: () => mocks.logger,
     resolveAccountDataContextFromHono: mocks.resolveAccount,
@@ -112,6 +114,7 @@ function request(body: unknown, env = createEnv(), headers: Record<string, strin
 describe('device verification API branch security', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.client.mockResolvedValue({ client_id: 'client-1', enabled: true });
     mocks.authenticatedUser.mockResolvedValue({
       userId: 'user-1',
       sub: 'subject-1',
@@ -184,6 +187,18 @@ describe('device verification API branch security', () => {
         await expect(call.clone().json()).resolves.toMatchObject({ user_code: canonical });
       }
     });
+  });
+
+  it('refuses approval after the client was disabled without sending a decision or notification', async () => {
+    mocks.client.mockResolvedValue({ client_id: 'client-1', enabled: false });
+    const response = await request({ user_code: 'WDJB-MJHT' });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: 'invalid_client' });
+    expect(
+      mocks.storeFetch.mock.calls.some(
+        ([input]) => new URL((input as Request).url).pathname === '/approve'
+      )
+    ).toBe(false);
   });
 
   it('counts a miss for a code of any length, and blocks like before', async () => {
