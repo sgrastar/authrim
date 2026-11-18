@@ -36,10 +36,18 @@ type MigrationState =
   | 'write_fencing'
   | 'purge_pending';
 
-const operation = (migrationState: MigrationState) => ({
+const TENANT_ROW = { tenant_key: 'tenant-key-a', is_default: 0, default_tenant_guard: null };
+/** Setup's initial tenant: another id, marked default in its database. */
+const INITIAL_TENANT_ROW = {
+  tenant_key: 'tenant-key-a',
+  is_default: 1,
+  default_tenant_guard: 'default',
+};
+
+const operation = (migrationState: MigrationState, tenantId = 'tenant-a') => ({
   operation_id: 'migration-a',
   environment_id: 'env-a',
-  tenant_id: 'tenant-a',
+  tenant_id: tenantId,
   migration_state: migrationState,
   source_policy_generation: 1,
   target_policy_generation: 2,
@@ -87,6 +95,8 @@ function harness(
     inventoryCount?: number;
     remainingShards?: number;
     claimChanges?: number;
+    tenantId?: string;
+    tenant?: Record<string, unknown>;
   } = {}
 ) {
   const statements: { sql: string; params: unknown[] }[] = [];
@@ -96,7 +106,8 @@ function harness(
       return { count: options.inventoryCount ?? 0 };
     }
     if (sql.includes('SELECT COUNT(*) AS count')) return { count: options.remainingShards ?? 0 };
-    if (sql.includes('FROM control_tenant_placement_migrations\n')) return operation(state);
+    if (sql.includes('FROM control_tenant_placement_migrations\n'))
+      return operation(state, options.tenantId);
     if (sql.includes('FROM control_tenant_placement_migration_shards\n')) {
       return options.migrationShard ?? null;
     }
@@ -144,7 +155,7 @@ function harness(
   const control = { requestTenantShard } as unknown as ControlService;
   const queryD1 = vi.fn(async (_databaseId: string, sql: string): Promise<unknown[]> => {
     if (sql.includes('SELECT tenant_key')) {
-      return [{ success: true, results: [{ tenant_key: 'tenant-key-a' }] }];
+      return [{ success: true, results: [options.tenant ?? TENANT_ROW] }];
     }
     throw new Error(`unexpected_source_query:${sql}`);
   });
@@ -172,6 +183,46 @@ describe('tenant placement reconciler guards', () => {
     expect(context.statements[0].sql).toContain('fencing_token = ?');
     expect(context.statements[0].params.slice(-4)).toEqual(['migration-a', 'env-a', 7, 100]);
     expect(context.batched).toHaveLength(0);
+  });
+
+  it('plans a tenant that is not the default one', async () => {
+    const context = harness('planning');
+
+    expect(await context.reconciler.reconcile(1)).toBe(1);
+    expect(blockedCode(context.statements)).toBeUndefined();
+    expect(context.statements[1].params[0]).toBe('targets_provisioning');
+  });
+
+  it.each([
+    ['the baseline tenant', 'default', TENANT_ROW],
+    ["setup's initial tenant", 'tenant-a', INITIAL_TENANT_ROW],
+  ])('refuses %s before provisioning a target', async (_name, tenantId, tenant) => {
+    const context = harness('planning', { tenantId, tenant });
+
+    expect(await context.reconciler.reconcile(1)).toBe(1);
+    expect(blockedCode(context.statements)).toBe(
+      'control_tenant_placement_default_tenant_unsupported'
+    );
+    expect(
+      context.statements.some((statement) => statement.params[0] === 'targets_provisioning')
+    ).toBe(false);
+    expect(context.requestTenantShard).not.toHaveBeenCalled();
+  });
+
+  it('blocks a tenant made the default during the move before copying more rows', async () => {
+    const context = harness('backfilling', {
+      migrationShard: shard('backfilling'),
+      route: { source_database_id: 'source-a-db', target_database_id: 'target-a-db' },
+      inventory: [purgeInventory],
+      tenant: INITIAL_TENANT_ROW,
+    });
+
+    expect(await context.reconciler.reconcile(1)).toBe(1);
+    expect(blockedCode(context.statements)).toBe(
+      'control_tenant_placement_default_tenant_unsupported'
+    );
+    expect(dependencies.readBackfill).not.toHaveBeenCalled();
+    expect(dependencies.applyBackfill).not.toHaveBeenCalled();
   });
 
   it('waits for target provisioning and retries with the same tenant-scoped idempotency key', async () => {
@@ -338,9 +389,7 @@ describe('tenant placement reconciler guards', () => {
     context.queryD1Batch.mockImplementation(async (_databaseId: string, queries: unknown[]) =>
       queries.map(() => ({ success: true }))
     );
-    context.queryD1.mockResolvedValueOnce([
-      { success: true, results: [{ tenant_key: 'tenant-key-a' }] },
-    ]);
+    context.queryD1.mockResolvedValueOnce([{ success: true, results: [TENANT_ROW] }]);
     context.queryD1.mockResolvedValueOnce([
       {
         success: true,
@@ -375,9 +424,7 @@ describe('tenant placement reconciler guards', () => {
     context.queryD1Batch.mockImplementation(async (_databaseId: string, queries: unknown[]) =>
       queries.map(() => ({ success: true }))
     );
-    context.queryD1.mockResolvedValueOnce([
-      { success: true, results: [{ tenant_key: 'tenant-key-a' }] },
-    ]);
+    context.queryD1.mockResolvedValueOnce([{ success: true, results: [TENANT_ROW] }]);
     context.queryD1.mockResolvedValueOnce([
       {
         success: true,
@@ -415,7 +462,7 @@ describe('tenant placement reconciler guards', () => {
     );
     expect(context.queryD1).toHaveBeenCalledExactlyOnceWith(
       'source-a-db',
-      'SELECT tenant_key FROM tenants WHERE id = ? LIMIT 1',
+      'SELECT tenant_key, is_default, default_tenant_guard FROM tenants WHERE id = ? LIMIT 1',
       ['tenant-a']
     );
     expect(context.queryD1Batch).not.toHaveBeenCalled();
@@ -553,9 +600,7 @@ describe('tenant placement reconciler guards', () => {
       inventory: [purgeInventory],
     });
     dependencies.readOutbox.mockResolvedValue([]);
-    context.queryD1.mockResolvedValueOnce([
-      { success: true, results: [{ tenant_key: 'tenant-key-a' }] },
-    ]);
+    context.queryD1.mockResolvedValueOnce([{ success: true, results: [TENANT_ROW] }]);
     context.queryD1.mockResolvedValueOnce([
       { success: true, results: [{ max_sequence: 0, pending_count: 0 }] },
     ]);
@@ -590,9 +635,7 @@ describe('tenant placement reconciler guards', () => {
       inventory: [purgeInventory],
     });
     dependencies.readOutbox.mockResolvedValue([]);
-    context.queryD1.mockResolvedValueOnce([
-      { success: true, results: [{ tenant_key: 'tenant-key-a' }] },
-    ]);
+    context.queryD1.mockResolvedValueOnce([{ success: true, results: [TENANT_ROW] }]);
     context.queryD1.mockResolvedValueOnce([
       { success: true, results: [{ max_sequence: '0', pending_count: 0 }] },
     ]);
@@ -611,9 +654,7 @@ describe('tenant placement reconciler guards', () => {
       inventory: [purgeInventory],
     });
     dependencies.readOutbox.mockResolvedValue([]);
-    context.queryD1.mockResolvedValueOnce([
-      { success: true, results: [{ tenant_key: 'tenant-key-a' }] },
-    ]);
+    context.queryD1.mockResolvedValueOnce([{ success: true, results: [TENANT_ROW] }]);
     context.queryD1.mockResolvedValueOnce([
       { success: true, results: [{ max_sequence: 1, pending_count: 1 }] },
     ]);
@@ -636,9 +677,7 @@ describe('tenant placement reconciler guards', () => {
       inventory: [purgeInventory],
     });
     dependencies.readOutbox.mockResolvedValue([]);
-    context.queryD1.mockResolvedValueOnce([
-      { success: true, results: [{ tenant_key: 'tenant-key-a' }] },
-    ]);
+    context.queryD1.mockResolvedValueOnce([{ success: true, results: [TENANT_ROW] }]);
     context.queryD1.mockResolvedValueOnce([
       { success: true, results: [{ max_sequence: 1, pending_count: 0 }] },
     ]);
@@ -661,9 +700,7 @@ describe('tenant placement reconciler guards', () => {
       route: { source_database_id: 'source-a-db', target_database_id: 'target-a-db' },
       inventory: [purgeInventory],
     });
-    context.queryD1.mockResolvedValueOnce([
-      { success: true, results: [{ tenant_key: 'tenant-key-a' }] },
-    ]);
+    context.queryD1.mockResolvedValueOnce([{ success: true, results: [TENANT_ROW] }]);
     context.queryD1.mockResolvedValueOnce([{ success: true, meta: { changes: 1 } }]);
     context.queryD1.mockResolvedValueOnce([
       { success: true, results: [{ capture_state: 'write_fenced', fencing_token: 7 }] },
@@ -719,9 +756,7 @@ describe('tenant placement reconciler guards', () => {
     context.queryD1Batch.mockImplementation(async (_databaseId: string, queries: unknown[]) =>
       queries.map(() => ({ success: true }))
     );
-    context.queryD1.mockResolvedValueOnce([
-      { success: true, results: [{ tenant_key: 'tenant-key-a' }] },
-    ]);
+    context.queryD1.mockResolvedValueOnce([{ success: true, results: [TENANT_ROW] }]);
     context.queryD1.mockResolvedValueOnce([{ success: true, meta: { changes: 1 } }]);
 
     expect(await context.reconciler.reconcile(1)).toBe(1);
@@ -740,6 +775,26 @@ describe('tenant placement reconciler guards', () => {
     ).toBe('{"purgeTableIndex":1}');
   });
 
+  it('still purges a moved source whose tenant was made the default after cutover', async () => {
+    const context = harness('purge_pending', {
+      migrationShard: shard('quarantined', { table_cursor_json: '{"purgeTableIndex":0}' }),
+      route: { source_database_id: 'source-a-db', target_database_id: 'target-a-db' },
+      inventory: [purgeInventory],
+    });
+    context.queryD1Batch.mockImplementation(async (_databaseId: string, queries: unknown[]) =>
+      queries.map(() => ({ success: true }))
+    );
+    context.queryD1.mockResolvedValueOnce([{ success: true, results: [INITIAL_TENANT_ROW] }]);
+    context.queryD1.mockResolvedValueOnce([{ success: true, meta: { changes: 1 } }]);
+
+    expect(await context.reconciler.reconcile(1)).toBe(1);
+    expect(blockedCode(context.statements)).toBeUndefined();
+    expect(
+      context.statements.find((statement) => statement.sql.includes('SET table_cursor_json = ?'))
+        ?.params[0]
+    ).toBe('{"purgeTableIndex":1}');
+  });
+
   it('does not advance the purge checkpoint if the source rejects the delete', async () => {
     const context = harness('purge_pending', {
       migrationShard: shard('quarantined', { table_cursor_json: '{"purgeTableIndex":0}' }),
@@ -749,9 +804,7 @@ describe('tenant placement reconciler guards', () => {
     context.queryD1Batch.mockImplementation(async (_databaseId: string, queries: unknown[]) =>
       queries.map(() => ({ success: true }))
     );
-    context.queryD1.mockResolvedValueOnce([
-      { success: true, results: [{ tenant_key: 'tenant-key-a' }] },
-    ]);
+    context.queryD1.mockResolvedValueOnce([{ success: true, results: [TENANT_ROW] }]);
     context.queryD1.mockResolvedValueOnce([{ success: false, meta: { changes: 1 } }]);
 
     expect(await context.reconciler.reconcile(1)).toBe(1);
