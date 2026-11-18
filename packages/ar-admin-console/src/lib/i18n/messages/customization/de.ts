@@ -331,6 +331,109 @@ export const deCustomization: Record<keyof typeof jaCustomization, string> = {
 	'lu.englishNames': 'Englische Namen zusätzlich anzeigen',
 	'lu.englishNames.desc':
 		'Die Sprachauswahl zeigt z. B. „Japanese (日本語)“. Gleiche Namen erscheinen nur einmal.',
+	'lu.lite': 'Lite-Anmeldeoberfläche',
+	'lu.lite.desc':
+		'Eine leichte, serverseitig gerenderte Anmeldung für Personen mit sehr schlechter Verbindung. Eingeschaltet ist jede Anmeldeseite dieses Mandanten die Lite-Version.',
+	'lu.lite.switch': 'Lite-Anmeldeoberfläche verwenden',
+	'lu.lite.switch.desc':
+		'Wirkt sofort. Vor dem Einschalten wird geprüft, ob die Lite-Version alles kann, was der Mandant nutzt.',
+	'lu.lite.on': 'Ein',
+	'lu.lite.off': 'Aus',
+	'lu.lite.changing': 'Wird umgeschaltet',
+	'lu.lite.issues.title': 'Kann noch nicht eingeschaltet werden',
+	'lu.lite.issues.body':
+		'Die Lite-Version kann einiges nicht, was dieser Mandant nutzt. Beheben Sie dies, um einzuschalten.',
+	'lu.lite.issue.not_released':
+		'Die Lite-Anmeldeoberfläche ist in dieser Umgebung noch nicht freigegeben',
+	'lu.lite.issue.policy_store_unavailable': 'Der Richtlinienspeicher ist nicht erreichbar',
+	'lu.lite.issue.method_unsupported':
+		'Eine Anmeldemethode ist aktiv, die die Lite-Version nicht anbietet',
+	'lu.lite.issue.flow_component_unsupported':
+		'Ein Service-Flow nutzt einen Teil, den die Lite-Version nicht ausführen kann',
+	'lu.lite.issue.flow_screen_missing':
+		'Ein Service-Flow verweist auf eine Seite, die es nicht gibt',
+	'lu.lite.issue.screen_block_unsupported':
+		'Eine Seite enthält einen Block, den die Lite-Version nicht darstellen kann',
+	'lu.lite.issue.screen_method_unsupported':
+		'Eine Seite bietet eine Anmeldemethode, die die Lite-Version nicht kann',
+	'lu.lite.issue.account_block_unsupported':
+		'Die Kontoseite enthält einen Block, den die Lite-Version nicht darstellen kann',
+	'lu.lite.issue.client_login_ui_url': 'Eine App nutzt eine eigene Adresse der Anmeldeoberfläche',
+	'lu.lite.issue.issuer_origin_mismatch':
+		'Der Ursprung des Ausstellers ist nicht der der Anmeldeoberfläche',
+	'lu.lite.issue.account_page_path_custom': 'Der Pfad der Kontoseite ist nicht der Standard',
+	'lu.lite.refused':
+		'Die Lite-Anmeldeoberfläche konnte nicht eingeschaltet werden. Siehe die Gründe.',
+	'lu.lite.inProgress': 'Eine andere Umschaltung läuft. Versuchen Sie es gleich noch einmal.',
+	'lu.lite.notRecorded':
+		'Die Umschaltung ist wirksam, aber der Eintrag in den Einstellungen konnte nicht geschrieben werden. Laden Sie neu, wenn die Seite veraltet wirkt.',
+	'lu.lite.turnedOn': 'Die Lite-Anmeldeoberfläche ist eingeschaltet.',
+	'lu.lite.turnedOff': 'Die Lite-Anmeldeoberfläche ist ausgeschaltet.',
+	'lu.lite.unavailable': 'Der Lite-Zustand kann nicht gelesen werden',
+	'lu.lite.unavailable.body':
+		'Der Richtlinienspeicher ist nicht erreichbar; der Zustand der Lite-Anmeldeoberfläche ist unbekannt.',
+	'lu.lite.confirmOn.title': 'Lite-Anmeldeoberfläche einschalten?',
+	'lu.lite.confirmOn.body':
+		'Die Anmeldeseiten dieses Mandanten wechseln sofort zur Lite-Version. Personen melden sich auf den leichten Seiten an.',
+	'lu.lite.confirmOn.ok': 'Einschalten',
+	'lu.lite.confirmOff.title': 'Lite-Anmeldeoberfläche ausschalten?',
+	'lu.lite.confirmOff.body':
+		'Die Anmeldeseiten dieses Mandanten kehren sofort zu den üblichen zurück.',
+	'lu.lite.confirmOff.ok': 'Ausschalten',
+	'lu.lite.logo': 'Lite-Logo',
+	'lu.lite.logo.desc':
+		'Ein kleines Logo für die Lite-Seiten: PNG oder WebP, höchstens 8 KB und {w}×{h} Pixel. Das Bild wird in den Einstellungen selbst gespeichert.',
+	'lu.lite.logo.unreadable': 'Das Bild konnte nicht gelesen werden.',
+	'lu.lite.logo.refused.not_data_uri': 'Das Bild konnte nicht gelesen werden.',
+	'lu.lite.logo.refused.unsupported_type': 'Wählen Sie ein PNG- oder WebP-Bild.',
+	'lu.lite.logo.refused.invalid_base64': 'Das Bild konnte nicht gelesen werden.',
+	'lu.lite.logo.refused.too_large': 'Das Bild ist zu groß: höchstens 8 KB.',
+	'lu.lite.logo.refused.malformed': 'Das Bild ist beschädigt.',
+	'lu.lite.logo.refused.animated':
+		'Ein animiertes Bild kann nicht verwendet werden: wählen Sie ein Standbild.',
+	'lu.lite.logo.refused.too_wide': 'Das Bild ist zu breit: höchstens {w} Pixel.',
+	'lu.lite.logo.refused.too_tall': 'Das Bild ist zu hoch: höchstens {h} Pixel.',
+	'lu.lite.logo.set': 'gesetzt',
+	'lu.lite.logo.none': 'keins',
+	'lu.stale.title': 'Die Einstellungen konnten nicht neu gelesen werden',
+	'lu.stale.body':
+		'Die Lite-Umschaltung ist wirksam, aber die Einstellungen dieser Seite konnten nicht neu gelesen werden. Laden Sie sie vor dem Speichern erneut; Ihre ungespeicherten Änderungen bleiben erhalten.',
+	'lu.blocks': 'Eigene Inhalte',
+	'lu.blocks.desc':
+		'Eigene Texte, Texte mit Links, Bilder oder Links des Mandanten um das Formular, die Kopf- und die Fußzeile der Anmeldeseiten. Bis zu {max}.',
+	'lu.blocks.none': 'Keine Blöcke.',
+	'lu.blocks.count': '{n} Blöcke',
+	'lu.blocks.add': 'Block hinzufügen',
+	'lu.blocks.remove': 'Block {n} entfernen',
+	'lu.blocks.limit': 'Höchstens {max}.',
+	'lu.blocks.position': 'Ort',
+	'lu.blocks.position.above-header': 'Über der Kopfzeile',
+	'lu.blocks.position.above-form': 'Über dem Formular',
+	'lu.blocks.position.below-form': 'Unter dem Formular',
+	'lu.blocks.position.below-footer': 'Unter der Fußzeile',
+	'lu.blocks.type': 'Art',
+	'lu.blocks.type.text': 'Text',
+	'lu.blocks.type.html': 'Text mit Links',
+	'lu.blocks.type.image': 'Bild',
+	'lu.blocks.type.link': 'Link',
+	'lu.blocks.content.text': 'Text',
+	'lu.blocks.content.html': 'Text (Links erlaubt)',
+	'lu.blocks.content.html.hint':
+		'Einen Link schreiben Sie als a-Tag (href mit einer https-Adresse) um seinen Text. Jedes andere Tag wird entfernt, sein Text bleibt.',
+	'lu.blocks.content.image': 'Bild-URL',
+	'lu.blocks.content.link': 'Linktext',
+	'lu.blocks.url': 'Link-URL',
+	'lu.blocks.alt': 'Bildbeschreibung',
+	'lu.blocks.alt.hint':
+		'Eine kurze Beschreibung, die Personen vorgelesen wird, die das Bild nicht sehen können.',
+	'lu.blocks.problem.content.text': 'Geben Sie den Text ein.',
+	'lu.blocks.problem.content.html': 'Geben Sie den Text ein.',
+	'lu.blocks.problem.content.image':
+		'Geben Sie eine Bild-URL ein, die mit https beginnt (SVG ist nicht erlaubt).',
+	'lu.blocks.problem.content.link': 'Geben Sie den Linktext ein.',
+	'lu.blocks.problem.contentLong': 'Höchstens {max} Zeichen.',
+	'lu.blocks.problem.url': 'Geben Sie eine URL ein, die mit http oder https beginnt.',
+	'lu.blocks.problem.urlLong': 'Die URL darf höchstens {max} Zeichen haben.',
 	'lu.display': 'Darstellung der Sprachen',
 	'lu.conflict':
 		'Ein anderer Administrator hat zuerst gespeichert. Die neuesten Werte wurden geladen; prüfen Sie Ihre Änderungen und speichern Sie erneut.'

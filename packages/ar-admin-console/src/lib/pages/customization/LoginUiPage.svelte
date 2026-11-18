@@ -4,6 +4,7 @@
 	import { settingsLevel, type AccessLevel, type AdminAccess } from '#lib/access/access.js';
 	import { adminAccess } from '#lib/access/admin-access.svelte.js';
 	import { ApiError, ConflictError, RejectedError } from '#lib/api/api-error.js';
+	import type { LiteModeClient } from '#lib/api/login-ui-lite-mode.js';
 	import type { SettingsClient, SettingsGetResult } from '#lib/api/settings.js';
 	import { i18n, t } from '#lib/i18n/i18n.svelte.js';
 	import Callout from '#lib/ui/patterns/Callout.svelte';
@@ -19,8 +20,12 @@
 	import OnOff from '#lib/ui/primitives/OnOff.svelte';
 	import Select from '#lib/ui/primitives/Select.svelte';
 	import { copyValue, Draft } from '#lib/ui/save/draft.svelte.js';
+	import { SaveStopped } from '#lib/ui/save/save-scope.js';
 	import SaveScope from '#lib/ui/save/SaveScope.svelte';
 	import Page from '#lib/ui/templates/Page.svelte';
+	import CustomBlocksEditor from './CustomBlocksEditor.svelte';
+	import { BLOCKS_MAX } from './login-ui-custom-blocks';
+	import LiteLoginUiCard from './LiteLoginUiCard.svelte';
 	import {
 		automaticFirst,
 		changesBetween,
@@ -41,22 +46,31 @@
 	 * 1. which languages are shown (a choice grid; the default one stays on),
 	 * 2. which is the default (a select limited to the languages shown),
 	 * 3. which are listed first (a second grid limited to those shown, up to six, from eleven on),
-	 * 4. whether the switch adds English names.
+	 * 4. whether the switch adds English names,
+	 * the lite Login UI (LiteLoginUiCard): its switch, which takes effect at once through its own
+	 * route, and its logo, saved with the languages; and the tenant's own content blocks around
+	 * the screens (CustomBlocksEditor), saved with them too.
 	 * Read from and saved to the `login-ui` settings of the tenant, with the version read, so
 	 * another admin's save in between is noticed, not overwritten. A language setting the platform
 	 * has fixed, or a page the admin may only look at, is shown as text.
 	 */
 	interface Props {
 		client: SettingsClient;
+		/** The lite Login UI switch; without it the lite section is not shown. */
+		lite?: LiteModeClient;
 		tenantId: string;
 		/** Who is looking; the signed-in admin unless given (Storybook). */
 		access?: AdminAccess;
 	}
 
-	let { client, tenantId, access }: Props = $props();
+	let { client, lite, tenantId, access }: Props = $props();
 
 	const who = $derived(access ?? adminAccess.current);
 	const allowed = $derived<AccessLevel>(settingsLevel(who, 'login-ui', 'tenant'));
+	// Switching the lite Login UI changes the human verification provider too: both edits.
+	const canSwitchLite = $derived(
+		allowed === 'edit' && settingsLevel(who, 'authentication-methods', 'tenant') === 'edit'
+	);
 	const target = $derived({ level: 'tenant', tenantId } as const);
 
 	type Status = 'loading' | 'ready' | 'error' | 'forbidden';
@@ -102,11 +116,15 @@
 	);
 
 	/**
-	 * What the API holds becomes "saved"; the admin's values of `keep` (settings that did not get
-	 * there) go back on the screen, so nothing of theirs is lost and nothing of anyone else's is
-	 * undone. Fails as the page does when the admin may no longer read the settings.
+	 * What the API holds becomes "saved"; the admin's unsaved edits, as they are when the answer
+	 * comes (they may have gone on editing meanwhile), go back on the screen, so nothing of theirs
+	 * is lost and nothing of anyone else's is undone. `drop` names settings whose edits are let
+	 * go (the ones their save just applied are the same as the API's anyway). Fails as the page
+	 * does when the admin may no longer read the settings.
 	 */
-	async function refresh(screen: LanguageValues, keep: Iterable<string>): Promise<void> {
+	async function refresh(
+		dropOf: (current: LanguageValues) => Iterable<string> = () => []
+	): Promise<void> {
 		if (!draft) return;
 		try {
 			loaded = await client.get(target, 'login-ui');
@@ -114,32 +132,60 @@
 			if (error instanceof ApiError && error.forbidden) status = 'forbidden';
 			throw error;
 		}
+		const current = copyValue(draft.value);
+		const dropped = new Set(dropOf(current));
+		const edits = Object.keys(changesBetween(draft.saved, current)).filter(
+			(key) => !dropped.has(key)
+		);
 		draft.reset(valuesFrom(loaded.values));
 		const fixedNow = new Set(loaded.locked);
-		for (const key of keep) {
+		for (const key of edits) {
 			const field = fieldOfKey(key);
 			// A setting fixed meanwhile shows the fixed value, not the admin's.
 			if (field && !fixedNow.has(key)) {
-				draft.value = { ...draft.value, [field]: copyValue(screen[field]) };
+				draft.value = { ...draft.value, [field]: copyValue(current[field]) };
 			}
+		}
+		stale = false;
+	}
+
+	/**
+	 * The settings changed under the page (the lite switch records its mode in the same category,
+	 * with a new version): read them again, keeping the admin's unsaved changes. Until that has
+	 * worked, the page's version is old, so saving waits (`stale`).
+	 */
+	let stale = $state(false);
+	async function reloadKeepingEdits(): Promise<void> {
+		try {
+			await refresh();
+		} catch {
+			stale = true;
 		}
 	}
 
 	async function save(screen: LanguageValues): Promise<void> {
 		if (!draft || !loaded || level !== 'edit') return;
+		if (stale) throw new Error(t('lu.stale.body'));
 		const set = changesBetween(draft.saved, screen, fixedKeys);
 		const changed = Object.keys(set);
 		if (changed.length === 0) return;
 		try {
 			const result = await client.patch(target, 'login-ui', { ifMatch: loaded.version, set });
 			const rejected = result.rejected ?? {};
-			await refresh(screen, Object.keys(rejected));
+			// What got there is the API's now (whatever anyone did to it since): its edits are let
+			// go. What it refused, and anything typed meanwhile, stays as the admin has it.
+			await refresh((current) => {
+				const editedSince = new Set(Object.keys(changesBetween(screen, current)));
+				return changed.filter((key) => !(key in rejected) && !editedSince.has(key));
+			});
 			const reasons = Object.values(rejected);
 			if (reasons.length > 0) throw new Error(t('settings.rejected', { reason: reasons[0] }));
+			// Edits made while saving are not saved: the bar stays up for them.
+			if (draft.dirty) throw new SaveStopped();
 		} catch (error) {
 			if (error instanceof ConflictError) {
-				// Their values become "saved"; only what the admin changed stays on the screen.
-				await refresh(screen, changed);
+				// Their values become \"saved\"; what the admin changed stays on the screen.
+				await refresh();
 				throw new Error(t('lu.conflict'));
 			}
 			if (error instanceof RejectedError) {
@@ -148,7 +194,7 @@
 			}
 			if (error instanceof ApiError && error.forbidden) {
 				refused = true;
-				await refresh(screen, []);
+				await refresh(() => changed);
 			}
 			throw error;
 		}
@@ -225,6 +271,14 @@
 				>{t('settings.readOnly.body')}</Callout
 			>
 		{/if}
+		{#if stale}
+			<Callout tone="warning" title={t('lu.stale.title')} live>
+				{t('lu.stale.body')}
+				<div class="login-ui__retry">
+					<Button size="sm" onclick={reloadKeepingEdits}>{t('load.retry')}</Button>
+				</div>
+			</Callout>
+		{/if}
 		<SaveScope {draft} onsave={save}>
 			<div class="login-ui">
 				<Card title={t('lu.shown')} description={t('lu.shown.desc')}>
@@ -299,6 +353,29 @@
 					{/if}
 				</Card>
 
+				{#if lite}
+					<LiteLoginUiCard
+						client={lite}
+						canSwitch={canSwitchLite && level === 'edit'}
+						logoEditable={editable('liteLogo')}
+						bind:logo={draft.value.liteLogo}
+						onswitched={reloadKeepingEdits}
+					/>
+				{/if}
+
+				<Card title={t('lu.blocks')} description={t('lu.blocks.desc', { max: BLOCKS_MAX })}>
+					{#if editable('customBlocks')}
+						<CustomBlocksEditor field="customBlocks" bind:blocks={draft.value.customBlocks} />
+					{:else}
+						{@render fixed(
+							'customBlocks',
+							draft.value.customBlocks.length === 0
+								? t('lu.blocks.none')
+								: t('lu.blocks.count', { n: draft.value.customBlocks.length })
+						)}
+					{/if}
+				</Card>
+
 				<Card title={t('lu.display')}>
 					{#if editable('englishNames')}
 						<Checkbox
@@ -325,9 +402,17 @@
 </Page>
 
 <!-- A setting shown as text: the admin may only look, or the platform has fixed it. -->
-{#snippet fixed(field: LanguageField, text: string)}
+{#snippet fixed(field: Exclude<LanguageField, 'liteLogo'>, text: string)}
 	<DetailList ruled>
-		<DetailItem label={t(`lu.${field === 'defaultLang' ? 'default' : field}`)}>
+		<DetailItem
+			label={t(
+				field === 'defaultLang'
+					? 'lu.default'
+					: field === 'customBlocks'
+						? 'lu.blocks'
+						: `lu.${field}`
+			)}
+		>
 			{text}
 			{#if locked.has(KEYS[field])}
 				<span class="login-ui__locked">{t('settings.locked.platform')}</span>
@@ -340,6 +425,10 @@
 	.login-ui {
 		display: grid;
 		gap: var(--space-section);
+	}
+
+	.login-ui__retry {
+		margin-top: var(--space-related);
 	}
 
 	.login-ui__first {
