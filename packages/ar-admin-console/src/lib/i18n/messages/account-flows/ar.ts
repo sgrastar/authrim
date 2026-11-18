@@ -383,8 +383,8 @@ export const arAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 	'af.consent.new.open': 'إنشاء بيان',
 	'af.consent.new.title': 'بيان جديد',
 	'af.consent.new.lead':
-		'يُنشر البيان فورًا ويُختار لهذا التدفق، ويمكن للتدفقات الأخرى استخدامه أيضًا. إعداداته الأخرى وإصداراته اللاحقة في صفحة البيان.',
-	'af.consent.new.publish': 'نشر واختيار',
+		'يُنشر البيان فورًا ويُختار لهذا التدفق، ويمكن للتدفقات الأخرى استخدامه أيضًا. تُنشأ الإصدارات اللاحقة في صفحة البيان.',
+	'af.consent.new.publish': 'حفظ ونشر واختيار',
 	'af.consent.new.created': 'تم إنشاء البيان ونشره.',
 	'af.consent.new.noLanguage': 'أضف لغة واحدة على الأقل.',
 	'af.consent.new.unpublished': 'تم إنشاء البيان لكن تعذر نشره. أكمله في صفحة البيان.',

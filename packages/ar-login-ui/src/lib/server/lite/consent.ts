@@ -11,6 +11,7 @@
  * the page relays the browser there.
  */
 import { formatReleaseValue } from '#lib/consent-release.js';
+import { sanitizeRuntimeConsentHtml } from '#lib/consent/runtime-consent-html.js';
 import type { LiteBackendClient } from './backend-client';
 
 /**
@@ -59,6 +60,8 @@ export interface LiteConsentItem {
 	statementId: string;
 	title: string;
 	description: string | null;
+	/** The description as drawn: HTML, through the SPA's consent HTML sanitizer (null when none). */
+	descriptionHtml: string | null;
 	processingPurpose: string | null;
 	withdrawalImpact: string | null;
 	documentUrl: string | null;
@@ -91,6 +94,8 @@ export interface LiteRelease {
 	purpose: {
 		title: string;
 		description: string | null;
+		/** As an item's `descriptionHtml`. */
+		descriptionHtml: string | null;
 		documentUrl: string | null;
 		inlineContent: string | null;
 	} | null;
@@ -162,7 +167,13 @@ function readRelease(raw: unknown): LiteRelease | null | undefined {
 		) {
 			return undefined;
 		}
-		purpose = { title, description, documentUrl, inlineContent };
+		purpose = {
+			title,
+			description,
+			descriptionHtml: description ? sanitizeRuntimeConsentHtml(description) : null,
+			documentUrl,
+			inlineContent
+		};
 	}
 	return items.length > 0 || purpose ? { items, presentationKey, purpose } : null;
 }
@@ -228,6 +239,7 @@ export function readLiteConsent(json: unknown): LiteConsentView | null {
 			statementId,
 			title,
 			description,
+			descriptionHtml: description ? sanitizeRuntimeConsentHtml(description) : null,
 			processingPurpose,
 			withdrawalImpact,
 			documentUrl,

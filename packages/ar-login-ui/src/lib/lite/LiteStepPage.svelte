@@ -141,9 +141,7 @@
 					</p>{/if}
 			{:else}
 				<div class="statement">
-					{#if item.display !== 'external' || item.kind === 'display'}
-						<p class="statement-title">{item.title}</p>
-					{/if}
+					<p class="statement-title">{item.title}</p>
 					{#if item.descriptionHtml}
 						<!-- eslint-disable-next-line svelte/no-at-html-tags -- sanitized (runtime-consent-html) -->
 						<p class="statement-description">{@html item.descriptionHtml}</p>
