@@ -6059,9 +6059,14 @@ describe('Admin API Handlers', () => {
 
       await adminClientsListHandler(c);
 
+      // The clients Authrim registered for itself are marked; the tenant's own are not.
       expect(c.json).toHaveBeenCalledWith(
         expect.objectContaining({
-          clients: expect.any(Array),
+          clients: [
+            expect.objectContaining({ client_id: 'client-1', system_managed: false }),
+            expect.objectContaining({ client_id: 'client-2', system_managed: false }),
+            expect.objectContaining({ client_id: 'login-ui-client', system_managed: true }),
+          ],
           pagination: expect.objectContaining({
             page: 1,
             limit: 10,
@@ -6069,15 +6074,6 @@ describe('Admin API Handlers', () => {
           }),
         })
       );
-      // The clients Authrim registered for itself are marked; the tenant's own are not.
-      const { clients } = (c.json as ReturnType<typeof vi.fn>).mock.calls[0][0] as {
-        clients: Array<{ client_id: string; system_managed: boolean }>;
-      };
-      expect(clients.map((client) => [client.client_id, client.system_managed])).toEqual([
-        ['client-1', false],
-        ['client-2', false],
-        ['login-ui-client', true],
-      ]);
     });
 
     it('should support search filtering by client_id or client_name', async () => {
