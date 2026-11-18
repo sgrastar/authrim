@@ -114,6 +114,15 @@ export const jaCustomization = {
 	'th.f.splitWidth': 'フォームの幅',
 	'th.splitWidth.narrow': '狭い（2/5）',
 	'th.splitWidth.wide': '広い（3/5）',
+	'th.f.splitBackground': '背景画像の置き方',
+	'th.f.splitBackground.d':
+		'ページの背景画像をどこに出すかです。「両側に共有」は画面全体の後ろに敷き、フォーム側はすりガラス越しに透かします。「ブランド側だけ」はブランドパネルにだけ出し、フォーム側は塗りつぶします。',
+	'th.splitBackground.shared': '両側に共有',
+	'th.splitBackground.brand': 'ブランド側だけ',
+	'th.splitBackground.panel': 'パネルの画像（旧設定: 「両側に共有」と同じ）',
+	'th.f.loginPanelColor': 'フォーム側の色',
+	'th.f.loginPanelGradient': 'グラデーションの終端色',
+	'th.f.loginPanelGradient.d': '設定すると、フォーム側の色からこの色へのグラデーションになります。',
 	'th.f.brandPosition': '位置',
 	'th.brandPosition.top': '上',
 	'th.brandPosition.center': '中央',
@@ -147,6 +156,12 @@ export const jaCustomization = {
 	'th.t.themeToggle.d': '利用者が配色を選べるようにします。',
 	'th.t.language': '言語の選択を出す',
 	'th.t.language.d': '利用者が画面の言語を切り替えられるようにします。',
+	'th.t.authSwitch': 'サインインと新規登録の切り替えリンクを表示',
+	'th.t.authSwitch.d':
+		'フォームの最後に、サインインと新規登録を行き来するリンクを出します。切ると、利用者は開いた方の画面だけを使います。',
+	'th.t.themeFixed': 'このモードに固定',
+	'th.t.themeFixed.d':
+		'端末の設定や利用者の切り替えに関わらず、選んだライト／ダークのままにします。ライト／ダークの切り替えボタンは出ません。',
 	'th.f.mode': 'モード',
 	'th.f.mode.d':
 		'「自動」は、訪問者の端末の設定（ライト／ダーク）に合わせます。ライトかダークを選ぶと、端末がもう一方の設定でも、その見た目に固定します。',
@@ -201,6 +216,9 @@ export const jaCustomization = {
 		'画面の最下部に出る文です。リンクは「a」タグと https のアドレスで書けて、新しいウインドウで開きます。',
 	'th.f.tagline': 'タグライン',
 	'th.f.footerText': 'フッターの文言',
+	'th.t.poweredBy': 'フッターの文言を表示',
+	'th.t.poweredBy.d':
+		'フッターの文（既定では「Powered by Authrim」、下で書き換えた文も含む）を出します。切ると、フッターにはリンクだけが残ります。',
 	'th.g.logo': 'ロゴ',
 	'th.g.logo.d': '正方形の画像です（PNG・SVG・WebP）。',
 	'th.g.logo.dark.d': 'ダーク用のロゴです。設定しない場合は、ライト用のロゴを使います。',

@@ -1486,3 +1486,98 @@
 		<Page><ThemeEditor /></Page>
 	{/snippet}
 </Story>
+
+<Story
+	name="Screen switches: fixed mode, sign-up link and footer text"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const outline = () => canvasElement.querySelector('.outline') as HTMLElement;
+		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.look') }));
+		// "Keep this mode" is offered with a fixed mode only: it means nothing while the mode follows
+		// the device. Fixed, the light/dark toggle is no longer offered on the screens.
+		await expect(canvas.queryByLabelText(t('th.t.themeFixed'))).toBeNull();
+		await userEvent.selectOptions(
+			await canvas.findByRole('combobox', { name: t('th.f.mode') }),
+			'dark'
+		);
+		await waitFor(() => expect(outline().querySelector('.tools__item--icon')).not.toBeNull());
+		await userEvent.click(await canvas.findByLabelText(t('th.t.themeFixed')));
+		await waitFor(() => expect(outline().querySelector('.tools__item--icon')).toBeNull());
+		await expect(outline().querySelector('.tools__item--language')).not.toBeNull();
+		// The sign-in / sign-up switch is the last line of the form; off, the form ends without it.
+		await expect(outline().querySelector('.outline__switch')).not.toBeNull();
+		await userEvent.click(await canvas.findByLabelText(t('th.t.authSwitch')));
+		await waitFor(() => expect(outline().querySelector('.outline__switch')).toBeNull());
+		// The footer text: off, the footer shows no line, and there is no text to write.
+		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.content') }));
+		await expect(outline().querySelector('.outline__footer-text')).not.toBeNull();
+		await expect(
+			await canvas.findByRole('textbox', { name: t('th.f.footerText') })
+		).toBeInTheDocument();
+		await userEvent.click(await canvas.findByLabelText(t('th.t.poweredBy')));
+		await waitFor(() => expect(outline().querySelector('.outline__footer-text')).toBeNull());
+		await expect(canvas.queryByRole('textbox', { name: t('th.f.footerText') })).toBeNull();
+	}}
+>
+	{#snippet template()}
+		<Page><ThemeEditor /></Page>
+	{/snippet}
+</Story>
+
+<Story
+	name="Split shows the page picture on the brand side only, and paints the form side"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const outline = () => canvasElement.querySelector('.outline') as HTMLElement;
+		await userEvent.click(
+			await canvas.findByRole('radio', { name: new RegExp(t('th.tpl.split')) })
+		);
+		// Behind both sides (the default): the picture lies under the whole screen.
+		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.images') }));
+		// Favicon, logo, background: the third file input.
+		const [, , background] = canvasElement.querySelectorAll<HTMLInputElement>('input[type="file"]');
+		await userEvent.upload(background, new File(['x'], 'bg.png', { type: 'image/png' }));
+		await waitFor(() => expect(outline().querySelector(':scope > .outline__image')).not.toBeNull());
+		await expect(outline().querySelector('.outline__panel > .outline__image')).toBeNull();
+		// Brand side only: the picture moves to the brand side and the form side is painted.
+		await userEvent.click(await canvas.findByRole('tab', { name: t('th.tab.layout') }));
+		const mode = await canvas.findByRole('combobox', { name: t('th.f.splitBackground') });
+		// The older "panel picture" value is not offered.
+		await expect([...(mode as HTMLSelectElement).options].map((o) => o.value)).toEqual([
+			'shared',
+			'brand'
+		]);
+		await userEvent.selectOptions(mode, 'brand');
+		await waitFor(() => expect(outline().dataset.splitBackground).toBe('brand'));
+		await expect(outline().querySelector(':scope > .outline__image')).toBeNull();
+		await expect(outline().querySelector('.outline__panel > .outline__image')).not.toBeNull();
+		const main = outline().querySelector('.outline__main') as HTMLElement;
+		await expect(getComputedStyle(main).backdropFilter === 'none').toBe(true);
+		// Its own colours are offered with brand side only: a colour, then a gradient from it.
+		await userEvent.type(
+			await canvas.findByRole('textbox', { name: t('th.f.loginPanelColor') }),
+			'#0f172a'
+		);
+		await waitFor(() =>
+			expect(outline().style.getPropertyValue('--ol-login-panel')).toBe('#0f172a')
+		);
+		await userEvent.type(
+			await canvas.findByRole('textbox', { name: t('th.f.loginPanelGradient') }),
+			'#1e3a8a'
+		);
+		await waitFor(() =>
+			expect(outline().style.getPropertyValue('--ol-login-panel')).toBe(
+				'linear-gradient(135deg, #0f172a, #1e3a8a)'
+			)
+		);
+		// Back to behind both sides, the colours are not offered (they apply to brand side only).
+		await userEvent.selectOptions(mode, 'shared');
+		await waitFor(() =>
+			expect(canvas.queryByRole('textbox', { name: t('th.f.loginPanelColor') })).toBeNull()
+		);
+	}}
+>
+	{#snippet template()}
+		<Page><ThemeEditor /></Page>
+	{/snippet}
+</Story>

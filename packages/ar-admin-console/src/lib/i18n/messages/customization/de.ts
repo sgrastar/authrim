@@ -118,6 +118,16 @@ export const deCustomization: Record<keyof typeof jaCustomization, string> = {
 	'th.f.splitWidth': 'Width',
 	'th.splitWidth.narrow': 'Narrow (2/5)',
 	'th.splitWidth.wide': 'Wide (3/5)',
+	'th.f.splitBackground': 'Hintergrundbild',
+	'th.f.splitBackground.d':
+		'Wo das Hintergrundbild der Seite erscheint. „Hinter beiden Seiten“ legt es hinter den ganzen Bildschirm, auf der Formularseite mattiert. „Nur Markenseite“ zeigt es allein auf dem Markenbereich und füllt die Formularseite mit Farbe.',
+	'th.splitBackground.shared': 'Hinter beiden Seiten',
+	'th.splitBackground.brand': 'Nur Markenseite',
+	'th.splitBackground.panel': 'Bild des Bereichs (ältere Einstellung: wie hinter beiden Seiten)',
+	'th.f.loginPanelColor': 'Farbe der Formularseite',
+	'th.f.loginPanelGradient': 'Endfarbe des Verlaufs',
+	'th.f.loginPanelGradient.d':
+		'Wenn gesetzt, verläuft die Formularseite von ihrer Farbe zu dieser.',
 	'th.f.brandPosition': 'Position',
 	'th.brandPosition.top': 'Top',
 	'th.brandPosition.center': 'Center',
@@ -152,6 +162,12 @@ export const deCustomization: Record<keyof typeof jaCustomization, string> = {
 	'th.t.themeToggle.d': 'Lets people choose the colour mode.',
 	'th.t.language': 'Offer a language choice',
 	'th.t.language.d': 'Lets people switch the language of the screen.',
+	'th.t.authSwitch': 'Wechsel zwischen Anmeldung und Registrierung anbieten',
+	'th.t.authSwitch.d':
+		'Schließt das Formular mit dem Link zwischen Anmeldung und Registrierung ab. Aus: Nutzer verwenden nur den geöffneten Bildschirm.',
+	'th.t.themeFixed': 'Diesen Modus beibehalten',
+	'th.t.themeFixed.d':
+		'Bleibt im gewählten hellen oder dunklen Modus, unabhängig vom Gerät und von der Wahl des Besuchers. Der Hell/Dunkel-Schalter wird nicht angeboten.',
 	'th.f.mode': 'Mode',
 	'th.f.mode.d':
 		'Auto follows each visitor’s device setting (light or dark). Light or Dark fixes the design to that mode, even when the device uses the other.',
@@ -206,6 +222,9 @@ export const deCustomization: Record<keyof typeof jaCustomization, string> = {
 		'The text along the bottom of the screen. Write a link with an “a” tag and an https address; it opens in a new window.',
 	'th.f.tagline': 'Tagline',
 	'th.f.footerText': 'Footer text',
+	'th.t.poweredBy': 'Fußzeilentext anzeigen',
+	'th.t.poweredBy.d':
+		'Zeigt die Zeile der Fußzeile („Powered by Authrim“ oder der unten geschriebene Text). Aus: Die Fußzeile behält nur ihre Links.',
 	'th.g.logo': 'Logo',
 	'th.g.logo.d': 'A square image (PNG, SVG or WebP).',
 	'th.g.logo.dark.d': 'Das Logo für den dunklen Modus. Ohne eigenes Logo wird das helle verwendet.',
