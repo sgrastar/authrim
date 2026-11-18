@@ -3598,6 +3598,21 @@ export async function deployParallel(
 }
 
 /**
+ * The step name of one `deployAll` call. `update` deploys ar-control first and the rest after it,
+ * so a call for a single Worker is named after that Worker to keep the two apart.
+ */
+export function deployAllPhaseName(
+  options: Pick<DeployOptions, 'dryRun'>,
+  enabledComponents?: readonly WorkerComponent[]
+): string {
+  const only = enabledComponents?.length === 1 ? enabledComponents[0] : undefined;
+  if (options.dryRun) {
+    return only ? `Planning ${only} deployment (dry run)` : 'Planning Worker deployment (dry run)';
+  }
+  return only ? `Deploying ${only}` : 'Deploying API Workers';
+}
+
+/**
  * Deploy all selected workers with a bounded dependency DAG. Timed as one step of the running
  * command, with each Worker's own time (see `phase-timings.ts`).
  */
@@ -3605,9 +3620,7 @@ export async function deployAll(
   options: DeployOptions,
   enabledComponents?: WorkerComponent[]
 ): Promise<DeploymentSummary> {
-  const phase = beginPhase(
-    options.dryRun ? 'Planning Worker deployment (dry run)' : 'Deploying API Workers'
-  );
+  const phase = beginPhase(deployAllPhaseName(options, enabledComponents));
   const clock: WorkerWorkClock = { totals: new Map(), running: new Map() };
   try {
     const summary = await workerWorkClock.run(clock, () =>
@@ -4827,6 +4840,11 @@ export interface UiWorkerDeployResult {
 
 /** Options for deploying a single UI Worker component */
 export interface UiWorkerDeployOptions extends DeployOptions {
+  /**
+   * Time this deployment as its own step (default). Pass false when the caller already times the
+   * whole UI Worker step, so the timings do not list it twice. Per-Worker time is kept either way.
+   */
+  timePhase?: boolean;
   /** Reuse an existing UI build output. Wrangler config is still regenerated. */
   skipBuild?: boolean;
   /** UI Worker name (defaults to {env}-{component}) */
@@ -4920,7 +4938,10 @@ export async function deployUiWorkerComponent(
   component: UiWorkerComponent,
   options: UiWorkerDeployOptions
 ): Promise<UiWorkerDeployResult> {
-  const phase = beginPhase(`${options.dryRun ? 'Planning' : 'Deploying'} ${component}`);
+  const phase =
+    options.timePhase === false
+      ? null
+      : beginPhase(`${options.dryRun ? 'Planning' : 'Deploying'} ${component}`);
   // Counted as running from the start, so a command stopped part way still reports it.
   const reported = beginWorkerTiming(component);
   let success = false;
@@ -4931,7 +4952,7 @@ export async function deployUiWorkerComponent(
   } finally {
     reported.end();
     setWorkerTimingResult(component, success);
-    phase.end(success ? 'ok' : 'failed');
+    phase?.end(success ? 'ok' : 'failed');
   }
 }
 

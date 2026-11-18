@@ -20,6 +20,7 @@ import {
   assertLoginUiBuildClientId,
   cleanupLegacyStaticSecrets,
   deployAll as deployAllCore,
+  deployAllPhaseName,
   deployUiWorkerComponent as deployUiWorkerComponentCore,
   deployUiWorkerBindingTargets as deployUiWorkerBindingTargetsCore,
   deployWorker as deployWorkerCore,
@@ -391,6 +392,18 @@ describe('buildUiWorkerBuildEnv', () => {
 
     expect(result.PUBLIC_API_BASE_URL).toBeUndefined();
     expect(result.PUBLIC_LOGIN_UI_CLIENT_ID).toBeUndefined();
+  });
+});
+
+describe('deployAllPhaseName', () => {
+  it('names a single-Worker call after that Worker, so update lists ar-control apart', () => {
+    expect(deployAllPhaseName({}, ['ar-control'])).toBe('Deploying ar-control');
+    expect(deployAllPhaseName({}, ['ar-auth', 'ar-token'])).toBe('Deploying API Workers');
+    expect(deployAllPhaseName({})).toBe('Deploying API Workers');
+    expect(deployAllPhaseName({ dryRun: true }, ['ar-control'])).toBe(
+      'Planning ar-control deployment (dry run)'
+    );
+    expect(deployAllPhaseName({ dryRun: true })).toBe('Planning Worker deployment (dry run)');
   });
 });
 
