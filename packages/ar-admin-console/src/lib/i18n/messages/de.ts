@@ -102,7 +102,6 @@ export const de = {
 	'nav.auth.protection': 'Angriffsschutz',
 	'nav.custom.branding': 'Designs',
 	'nav.custom.screens': 'Bildschirme',
-	'nav.custom.consent': 'Einwilligungsrichtlinien',
 	'nav.custom.emails': 'E-Mail-Einstellungen',
 	'nav.data.schema': 'Attributschema',
 	'nav.data.mapping': 'Zuordnungsübersicht',
