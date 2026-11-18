@@ -73,7 +73,9 @@ export function isReleasePause(status: number, code: unknown): boolean {
  *
  * `status` is 503 whichever way the API answered (it answers 409 while the release is being
  * verified), so that no page reading `status === 409` takes this for a change made elsewhere.
- * The status the API sent is `httpStatus`.
+ * The status the API sent is `httpStatus`. Only a 409 says for certain that nothing was changed:
+ * the router also answers the 503 code when it could not reach the Admin API, so a caller that
+ * must know whether a change was made (the mapping save) treats that one as an unknown outcome.
  */
 export class ReleasePausedError extends ApiError {
 	readonly httpStatus: number;

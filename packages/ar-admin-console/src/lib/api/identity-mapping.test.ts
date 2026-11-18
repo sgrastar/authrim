@@ -127,19 +127,23 @@ describe('HTTP IdentityMappingClient', () => {
 			expect(fetcher).toHaveBeenCalledTimes(1);
 		}
 	);
-	it.each([
-		{ body: { error: 'ADMIN_MUTATION_PAUSED_FOR_RELEASE', phase: 'verifying' }, status: 409 },
-		{ body: { error: 'CONTROL_PLANE_RELEASE_ROLLOUT_UNAVAILABLE' }, status: 503 }
-	])(
-		'returns paused, not a conflict or an unknown outcome, for $body.error',
-		async ({ body, status }) => {
-			const fetcher = vi.fn().mockResolvedValue(json(body, status));
-			vi.stubGlobal('fetch', fetcher);
-			const result = await httpIdentityMapping().saveSet('t', 'set', request, options);
-			expect(result).toEqual({ kind: 'paused' });
-			expect(fetcher).toHaveBeenCalledTimes(1);
-		}
-	);
+	it('returns paused, not a conflict, for a write refused while a release is verified', async () => {
+		const fetcher = vi
+			.fn()
+			.mockResolvedValue(
+				json({ error: 'ADMIN_MUTATION_PAUSED_FOR_RELEASE', phase: 'verifying' }, 409)
+			);
+		vi.stubGlobal('fetch', fetcher);
+		const result = await httpIdentityMapping().saveSet('t', 'set', request, options);
+		expect(result).toEqual({ kind: 'paused' });
+		expect(fetcher).toHaveBeenCalledTimes(1);
+	});
+	it('keeps the 503 release answer an unknown outcome: the router sends it for a lost call too', async () => {
+		const body = { error: 'CONTROL_PLANE_RELEASE_ROLLOUT_UNAVAILABLE' };
+		vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json(body, 503)));
+		const result = await httpIdentityMapping().saveSet('t', 'set', request, options);
+		expect(result).toMatchObject({ kind: 'outcome_unknown', body });
+	});
 	it('keeps transport and unreadable completion unknown and refuses a missing version before sending', async () => {
 		const fetcher = vi
 			.fn()

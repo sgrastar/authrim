@@ -697,8 +697,11 @@ async function mutateMapping<T>(
 			body: details
 		};
 	}
-	// Refused before anything ran: neither an unknown outcome (503) nor a changed set (409).
-	if (isReleasePause(response.status, details.error)) return { kind: 'paused' };
+	// Only the 409 is a refusal before anything ran. The 503 with the release code also comes
+	// from the router when it could not reach the Admin API, where the change may have been
+	// made: that one stays an unknown outcome, below.
+	if (response.status === 409 && isReleasePause(response.status, details.error))
+		return { kind: 'paused' };
 	if (typeof details.stage_failed === 'string')
 		return { kind: 'stage_failed', stage: details.stage_failed, body: details };
 	if (response.status >= 500)
