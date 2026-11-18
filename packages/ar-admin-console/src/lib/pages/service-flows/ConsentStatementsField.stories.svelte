@@ -1,7 +1,8 @@
 <script module lang="ts">
 	import { defineMeta } from '@storybook/addon-svelte-csf';
 	import { expect, userEvent, waitFor, within } from 'storybook/test';
-	import { t } from '#lib/i18n/i18n.svelte.js';
+	import { i18n, t } from '#lib/i18n/i18n.svelte.js';
+	import { statementPreset } from '#lib/pages/customization/statements/statement-presets.js';
 	import ConsentStatementsFieldHarness from './ConsentStatementsFieldHarness.svelte';
 
 	const { Story } = defineMeta({
@@ -12,7 +13,7 @@
 			docs: {
 				description: {
 					component:
-						'The consent statements a sign-up or sign-in flow asks, in the order they are shown. Statements are added from the tenant’s own (only those turned on and with a published version), each required or optional, moved up and down, or removed. A statement that is no longer there (deleted or retired) or not published stays in the list, flagged, so it can be removed. A chosen statement’s current text can be read in place, in each of its languages. A new statement can be made here, as a sign-in method profile can: its key, kind and text in every language, published at once and chosen (its other settings and later versions are on its own page). A list that cannot be read is told in the field and the rest of the page carries on.'
+						'The consent statements a sign-up or sign-in flow asks, in the order they are shown. Statements are added from the tenant’s own (only those turned on and with a published version), each required or optional, moved up and down, or removed. A statement that is no longer there (deleted or retired) or not published stays in the list, flagged, so it can be removed. A chosen statement’s current text can be read in place, in each of its languages. A new statement can be made here, as a sign-in method profile can: its kind, its text in every language (a link to a document by default, with a preview beside it; a terms of service or privacy policy starts with its name and an agreement sentence, HTML, until they are changed) and its details, published at once and chosen; its key is made up, and later versions are on its own page. A list that cannot be read is told in the field and the rest of the page carries on.'
 				}
 			}
 		}
@@ -76,18 +77,69 @@
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		await userEvent.click(await canvas.findByRole('button', { name: t('af.consent.new.open') }));
+		// No key is asked; a terms of service starts as a link with its words filled in.
+		await expect(canvas.queryByLabelText(t('cs.create.slug'))).toBeNull();
+		const terms = statementPreset('terms', i18n.locale);
+		await expect(canvas.getByLabelText(t('cs.content.name'))).toHaveValue(terms.title);
+		await expect(canvas.getByLabelText(t('cs.content.summary'))).toHaveValue(terms.description);
+		await expect(canvas.getByRole('radio', { name: t('cs.content.typeUrl') })).toBeChecked();
 		const publish = canvas.getByRole('button', { name: t('af.consent.new.publish') });
-		// Nothing is made until the key and the text are there.
+		// Nothing is made until the link is there.
 		await userEvent.click(publish);
 		await expect(await canvas.findByText(t('cs.error.fix'))).toBeInTheDocument();
-		await userEvent.type(canvas.getByLabelText(t('cs.create.slug')), 'newsletter');
-		await userEvent.type(canvas.getByLabelText(t('cs.content.name')), 'Newsletter');
-		await userEvent.type(canvas.getByLabelText(t('cs.content.summary')), 'News by email.');
-		await userEvent.type(canvas.getByLabelText(t('cs.content.body')), 'We send news monthly.');
+		await userEvent.type(canvas.getByLabelText(t('cs.content.url')), 'https://example.com/terms');
+		// The name in the description now links to the document, as the preview shows.
+		await expect(canvas.getByLabelText(t('cs.content.summary'))).toHaveValue(
+			statementPreset('terms', i18n.locale, 'https://example.com/terms').description
+		);
+		const preview = canvas.getByRole('region', { name: t('cs.content.preview') });
+		await expect(within(preview).getByRole('link', { name: terms.title })).toHaveAttribute(
+			'href',
+			'https://example.com/terms'
+		);
+		// A number in the details that does not fit holds the statement back too.
+		await userEvent.click(canvas.getByText(t('cs.details.title')));
+		const retention = canvas.getByLabelText(t('cs.details.retention'));
+		await userEvent.type(retention, '-1');
+		await userEvent.tab();
+		await userEvent.click(publish);
+		await expect(await canvas.findByText(t('cs.error.fix'))).toBeInTheDocument();
+		await expect(canvas.getByTestId('value')).not.toHaveTextContent(/:required$/u);
+		await userEvent.clear(retention);
+		await userEvent.type(retention, '365');
 		await userEvent.click(publish);
 		await waitFor(() => expect(canvas.getByTestId('value')).toHaveTextContent(/:required$/u));
-		await expect(canvas.getByText('Newsletter')).toBeInTheDocument();
+		await expect(canvas.getAllByText(terms.title).length).toBeGreaterThan(0);
 		await expect(canvas.queryByText(t('af.consent.unpublished'))).toBeNull();
+	}}
+></Story>
+
+<!-- Words filled in follow the kind; words changed stay. -->
+<Story
+	name="Making one here: words follow the kind"
+	args={{ answer: 'none' }}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(await canvas.findByRole('button', { name: t('af.consent.new.open') }));
+		const name = canvas.getByLabelText(t('cs.content.name'));
+		const summary = canvas.getByLabelText(t('cs.content.summary'));
+		const kind = canvas.getByRole('combobox', { name: t('cs.basic.kind') });
+		await userEvent.selectOptions(kind, 'privacy');
+		const privacy = statementPreset('privacy', i18n.locale);
+		await expect(name).toHaveValue(privacy.title);
+		await expect(summary).toHaveValue(privacy.description);
+		await userEvent.clear(name);
+		await userEvent.type(name, 'Our privacy notice');
+		await userEvent.selectOptions(kind, 'other');
+		await expect(name).toHaveValue('Our privacy notice');
+		await expect(summary).toHaveValue('');
+		// A name typed stays even when it is the words of another kind.
+		await userEvent.selectOptions(kind, 'privacy');
+		await userEvent.clear(name);
+		await userEvent.type(name, statementPreset('privacy', i18n.locale).title);
+		await userEvent.selectOptions(kind, 'terms');
+		await expect(name).toHaveValue(statementPreset('privacy', i18n.locale).title);
+		await expect(summary).toHaveValue(statementPreset('terms', i18n.locale).description);
 	}}
 ></Story>
 

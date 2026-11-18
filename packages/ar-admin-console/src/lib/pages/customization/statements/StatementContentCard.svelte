@@ -120,7 +120,7 @@
 					<StatementPreview value={shownValue} {contentType} {dir} />
 				</Columns>
 			{:else}
-				<StatementPreview value={shownValue} {contentType} {dir} />
+				<StatementPreview value={shownValue} {contentType} {dir} showUrl />
 			{/if}
 		</div>
 	{/if}

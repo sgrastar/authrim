@@ -892,6 +892,7 @@
 									asks={item.checkbox_mode !== 'none' && item.content_mode !== 'display_only'}
 									checked={consentDecisions[item.statement_id] === true}
 									required={item.is_required || item.checkbox_mode === 'required'}
+									linkDocument={item.content_mode === 'radio'}
 									{disabled}
 									onchange={(checked) => onConsentDecisionChange?.(item.statement_id, checked)}
 								/>

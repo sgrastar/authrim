@@ -1,12 +1,12 @@
 <script lang="ts">
-	import { SUPPORTED_LOCALES } from '#lib/i18n/locales.js';
 	import { t, type MessageKey } from '#lib/i18n/i18n.svelte.js';
 	import Callout from '#lib/ui/patterns/Callout.svelte';
 	import Button from '#lib/ui/primitives/Button.svelte';
 	import RadioGroup from '#lib/ui/primitives/RadioGroup.svelte';
-	import Select from '#lib/ui/primitives/Select.svelte';
 	import TextArea from '#lib/ui/primitives/TextArea.svelte';
 	import TextField from '#lib/ui/primitives/TextField.svelte';
+	import StatementLanguageAdd from './StatementLanguageAdd.svelte';
+	import { STATEMENT_HTML_TAGS } from './statement-html';
 	import {
 		LIMITS,
 		emptyLanguage,
@@ -31,28 +31,26 @@
 		problems?: readonly LanguageProblem[];
 		/** The body's height in rows (a narrow panel shows fewer). */
 		bodyRows?: number;
+		/** Languages are added here (default), or by the caller elsewhere (`StatementLanguageAdd`). */
+		addLanguage?: boolean;
 	}
 
-	let { value = $bindable(), language, onlanguage, problems = [], bodyRows = 10 }: Props = $props();
-
-	let adding = $state('');
-
-	const addable = $derived(
-		SUPPORTED_LOCALES.filter((code) => !(code in value.languages)).map((code) => ({
-			value: code,
-			label: languageName(code)
-		}))
-	);
+	let {
+		value = $bindable(),
+		language,
+		onlanguage,
+		problems = [],
+		bodyRows = 10,
+		addLanguage = true
+	}: Props = $props();
 	const typeOptions = $derived([
 		{ value: 'inline', label: t('cs.content.typeInline') },
 		{ value: 'url', label: t('cs.content.typeUrl') }
 	]);
 
-	function add() {
-		if (!adding) return;
-		value.languages[adding] = emptyLanguage();
-		onlanguage(adding);
-		adding = '';
+	function add(code: string) {
+		value.languages[code] = emptyLanguage();
+		onlanguage(code);
 	}
 
 	function removeLanguage() {
@@ -82,7 +80,7 @@
 		/>
 		<TextArea
 			label={t('cs.content.summary')}
-			hint={t('cs.content.summaryHint')}
+			hint={t('cs.content.summaryHint', { tags: STATEMENT_HTML_TAGS.join(', ') })}
 			rows={3}
 			maxlength={LIMITS.description}
 			field={`languages.${language}.description`}
@@ -117,19 +115,8 @@
 	{:else}
 		<Callout>{t('cs.content.noLanguage')}</Callout>
 	{/if}
-	{#if addable.length > 0}
-		<div class="text-form__add">
-			<Select
-				label={t('cs.content.addLanguage')}
-				size="sm"
-				placeholder={t('cs.content.choose')}
-				options={addable}
-				bind:value={adding}
-			/>
-			<Button size="sm" icon="plus" disabled={!adding} onclick={add}>
-				{t('cs.content.add')}
-			</Button>
-		</div>
+	{#if addLanguage}
+		<StatementLanguageAdd present={Object.keys(value.languages)} onadd={add} />
 	{/if}
 </div>
 
@@ -138,12 +125,5 @@
 		display: grid;
 		gap: var(--space-related);
 		min-inline-size: 0;
-	}
-
-	.text-form__add {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: end;
-		gap: var(--space-related);
 	}
 </style>

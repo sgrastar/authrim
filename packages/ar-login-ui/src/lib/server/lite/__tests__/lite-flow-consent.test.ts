@@ -405,10 +405,12 @@ describe('a consent step', () => {
 		expect(consent.items[0].descriptionHtml).toContain(
 			'<a href="https:&#x2F;&#x2F;d.example&#x2F;t"'
 		);
-		// A document kept elsewhere is a link to it; nothing is framed.
+		// A document kept elsewhere is linked from its description only (the admin writes the
+		// link there); no link is added and nothing is framed.
 		expect(consent.items[0]).toMatchObject({
 			display: 'external',
-			link: 'https://d.example/terms',
+			link: null,
+			documentUrl: 'https://d.example/terms',
 			frame: null
 		});
 		expect(consent.fields).toEqual([{ key: 'email', label: 'Email', required: true }]);

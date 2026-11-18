@@ -78,7 +78,8 @@ export const deStatements: Record<keyof typeof jaStatements, string> = {
 	'cs.content.typeUrl': 'Auf ein Dokument verweisen',
 	'cs.content.name': 'Name',
 	'cs.content.summary': 'Beschreibung',
-	'cs.content.summaryHint': 'Eine kurze Beschreibung dort, wo um Zustimmung gebeten wird.',
+	'cs.content.summaryHint':
+		'Eine kurze Beschreibung dort, wo um Zustimmung gebeten wird. Die HTML-Tags {tags} sind erlaubt.',
 	'cs.content.body': 'Text',
 	'cs.content.url': 'Dokument-URL',
 	'cs.content.urlHint':

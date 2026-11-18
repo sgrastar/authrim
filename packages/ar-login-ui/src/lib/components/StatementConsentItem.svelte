@@ -1,8 +1,11 @@
 <script lang="ts">
 	/**
 	 * One consent statement on the consent step (statement-display.ts): a text kept in Authrim is
-	 * its statement page in a scrolling frame, with a link to open the page; an external document is
-	 * a link to it. Then "I agree to <title>" (or nothing to answer, when it is only shown).
+	 * its statement page in a scrolling frame, with a link to open the page. An external document is
+	 * linked from its description (HTML) only, as the admin writes it: no link is added for it,
+	 * except for a choice of options drawn here (`linkDocument`), whose description is not its
+	 * text. Then
+	 * "I agree to <title>" (or nothing to answer, when it is only shown).
 	 */
 	import { LL, getLocale } from '$i18n/i18n-svelte';
 	import SanitizedHtml from './SanitizedHtml.svelte';
@@ -20,6 +23,8 @@
 		required?: boolean;
 		disabled?: boolean;
 		onchange?: (checked: boolean) => void;
+		/** Add a link to an external document (a choice of options shown as a checkbox here). */
+		linkDocument?: boolean;
 	};
 
 	let {
@@ -28,7 +33,8 @@
 		checked = false,
 		required = false,
 		disabled = false,
-		onchange
+		onchange,
+		linkDocument = false
 	}: Props = $props();
 
 	// In the language the screen is drawn in ($LL follows the locale).
@@ -39,9 +45,7 @@
 </script>
 
 <div class="statement-consent" data-display={presentation.kind}>
-	{#if presentation.kind !== 'external' || !asks}
-		<p class="statement-consent-title">{item.title}</p>
-	{/if}
+	<p class="statement-consent-title">{item.title}</p>
 	{#if item.description}
 		<SanitizedHtml
 			tag="div"
@@ -69,7 +73,7 @@
 			class="statement-consent-text"
 			sanitizedHtml={sanitizeRuntimeConsentHtml(presentation.content)}
 		/>
-	{:else if presentation.kind === 'external'}
+	{:else if presentation.kind === 'external' && linkDocument}
 		<a
 			class="statement-consent-link"
 			href={presentation.href}

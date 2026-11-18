@@ -128,6 +128,7 @@
 										!(choiceItems && item.content_mode === 'display_only')}
 									checked={decisions[item.statement_id] === true}
 									required={item.is_required || item.checkbox_mode === 'required'}
+									linkDocument={item.content_mode === 'radio'}
 									onchange={(checked) => (decisions[item.statement_id] = checked)}
 								/>
 							{/if}
