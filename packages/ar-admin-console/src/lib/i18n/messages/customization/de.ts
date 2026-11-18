@@ -309,5 +309,29 @@ export const deCustomization: Record<keyof typeof jaCustomization, string> = {
 	'th.bg.img.sunlit-japanese-forest': 'Sonnendurchfluteter Wald',
 	'th.bg.img.library-walnut-desk-evening': 'Bibliothek mit Nussbaumtisch, Abend',
 	'th.bg.img.library-walnut-desk-evening-wide': 'Bibliothek mit Nussbaumtisch, Abend (breit)',
-	'th.bg.img.sunlit-library-desk': 'Sonniger Bibliothekstisch'
+	'th.bg.img.sunlit-library-desk': 'Sonniger Bibliothekstisch',
+	'lu.page': 'Anmeldeoberfläche',
+	'lu.page.desc':
+		'Die Sprachen, die die Anmeldeseiten anbieten. Das Aussehen (Vorlage, Farben, Bilder, Texte) gehört zum Design und wird unter „Branding“ bearbeitet.',
+	'lu.shown': 'Angezeigte Sprachen',
+	'lu.shown.desc':
+		'Die Sprachen, die auf den Anmeldeseiten zur Auswahl stehen. Ein Browser mit einer dieser Sprachen sieht die Seiten darin.',
+	'lu.default': 'Standardsprache',
+	'lu.default.desc':
+		'Wird genutzt, wenn weder die Browsersprache noch eine gespeicherte Wahl zu einer angezeigten Sprache passt. Aus den angezeigten Sprachen.',
+	'lu.default.note': 'Standard',
+	'lu.first': 'Zuerst aufgeführte Sprachen',
+	'lu.first.desc':
+		'Bei vielen Sprachen die, die in der Sprachauswahl zuerst stehen (bis zu {max}). Ohne Auswahl stehen die meistgesprochenen der angezeigten Sprachen vorn.',
+	'lu.first.needsMore': 'Verfügbar, wenn {n} oder mehr Sprachen angezeigt werden.',
+	'lu.first.auto': 'Automatisch wählen (meistgesprochene zuerst)',
+	'lu.first.auto.desc':
+		'Die meistgesprochenen der angezeigten Sprachen, in dieser Reihenfolge. Derzeit: {list}.',
+	'lu.first.autoValue': 'Automatisch: {list}',
+	'lu.englishNames': 'Englische Namen zusätzlich anzeigen',
+	'lu.englishNames.desc':
+		'Die Sprachauswahl zeigt z. B. „Japanese (日本語)“. Gleiche Namen erscheinen nur einmal.',
+	'lu.display': 'Darstellung der Sprachen',
+	'lu.conflict':
+		'Ein anderer Administrator hat zuerst gespeichert. Die neuesten Werte wurden geladen; prüfen Sie Ihre Änderungen und speichern Sie erneut.'
 };

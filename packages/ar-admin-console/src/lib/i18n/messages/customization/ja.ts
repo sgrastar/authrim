@@ -303,5 +303,28 @@ export const jaCustomization = {
 	'th.bg.img.sunlit-japanese-forest': '木漏れ日の森',
 	'th.bg.img.library-walnut-desk-evening': '夕暮れの書斎（ウォルナットの机）',
 	'th.bg.img.library-walnut-desk-evening-wide': '夕暮れの書斎（ワイド）',
-	'th.bg.img.sunlit-library-desk': '陽の差す書斎の机'
+	'th.bg.img.sunlit-library-desk': '陽の差す書斎の机',
+	'lu.page': 'ログイン UI',
+	'lu.page.desc':
+		'ログイン画面で選べる言語を決めます。見た目（テンプレート、色、画像、文言）はテーマのもので、「ブランディング」で編集します。',
+	'lu.shown': '表示する言語',
+	'lu.shown.desc':
+		'ログイン画面の言語切り替えに出す言語です。ブラウザの言語がここにあれば、その言語で表示します。',
+	'lu.default': '既定の言語',
+	'lu.default.desc':
+		'ブラウザの言語も保存された選択も表示する言語に合わないときに使います。表示する言語から選びます。',
+	'lu.default.note': '既定',
+	'lu.first': '先頭に表示する言語',
+	'lu.first.desc':
+		'言語が多いとき、言語切り替えの先頭に出す言語です（最大 {max} 件）。選ばなければ、表示する言語のうち話者数の多い順に並びます。',
+	'lu.first.needsMore': '表示する言語が {n} 件以上のときに選べます。',
+	'lu.first.auto': '自動で選ぶ（話者数の多い順）',
+	'lu.first.auto.desc': '表示する言語のうち話者数の多い順に並べます。今は {list} です。',
+	'lu.first.autoValue': '自動: {list}',
+	'lu.englishNames': '英語名を併記する',
+	'lu.englishNames.desc':
+		'言語切り替えで「Japanese（日本語）」のように英語名も出します。同じ名前は 1 回だけ表示します。',
+	'lu.display': '言語の見せ方',
+	'lu.conflict':
+		'ほかの管理者が先に保存しました。最新の値を読み込みました。変更を確かめてから、もう一度保存してください。'
 } as const;
