@@ -17,6 +17,11 @@
       "outputs": ["coverage/**"],
       "cache": false
     },
+    "test:mutation": {
+      "dependsOn": ["^build"],
+      "cache": false,
+      "outputs": []
+    },
     "lint": {
       "dependsOn": ["^build"],
       "outputs": []

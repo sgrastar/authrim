@@ -110,6 +110,8 @@
 	import { Button, Card, Spinner } from '#lib/components/index.js';
 	import { LL } from '$i18n/i18n-svelte';
 	import { isValidImageUrl, isValidLinkUrl } from '#lib/utils/url-validation.js';
+	import SanitizedHtml from '#lib/components/SanitizedHtml.svelte';
+	import { sanitizeRuntimeConsentHtml } from '#lib/consent/runtime-consent-html.js';
 	import {
 		formatReleaseValue,
 		releaseItemLabel,
@@ -376,9 +378,11 @@
 										</span>
 									{/if}
 								</div>
-								<p class="text-xs mt-1" style="color: var(--text-secondary);">
-									{item.description}
-								</p>
+								<SanitizedHtml
+									tag="div"
+									class="text-xs mt-1 consent-item-description"
+									sanitizedHtml={sanitizeRuntimeConsentHtml(item.description)}
+								/>
 								{#if item.processing_purpose}
 									<p class="text-xs mt-1" style="color: var(--text-secondary);">
 										<strong>{$LL.consent_item_processing_purpose()}:</strong>
@@ -390,18 +394,6 @@
 										<strong>{$LL.consent_item_withdrawal_impact()}:</strong>
 										{item.withdrawal_impact}
 									</p>
-								{/if}
-								{#if item.document_url && isValidLinkUrl(item.document_url)}
-									<a
-										href={item.document_url}
-										target="_blank"
-										rel="noopener noreferrer"
-										class="inline-flex items-center gap-1 text-xs mt-1"
-										style="color: var(--primary);"
-									>
-										{$LL.consent_item_view_document()}
-										<span class="i-ph-arrow-square-out h-3 w-3"></span>
-									</a>
 								{/if}
 							</div>
 						</div>
@@ -455,9 +447,11 @@
 										</span>
 									{/if}
 								</div>
-								<p class="text-xs mt-1" style="color: var(--text-secondary);">
-									{item.description}
-								</p>
+								<SanitizedHtml
+									tag="div"
+									class="text-xs mt-1 consent-item-description"
+									sanitizedHtml={sanitizeRuntimeConsentHtml(item.description)}
+								/>
 								{#if item.processing_purpose}
 									<p class="text-xs mt-1" style="color: var(--text-secondary);">
 										<strong>{$LL.consent_item_processing_purpose()}:</strong>
@@ -469,18 +463,6 @@
 										<strong>{$LL.consent_item_withdrawal_impact()}:</strong>
 										{item.withdrawal_impact}
 									</p>
-								{/if}
-								{#if item.document_url && isValidLinkUrl(item.document_url)}
-									<a
-										href={item.document_url}
-										target="_blank"
-										rel="noopener noreferrer"
-										class="inline-flex items-center gap-1 text-xs mt-1"
-										style="color: var(--primary);"
-									>
-										{$LL.consent_item_view_document()}
-										<span class="i-ph-arrow-square-out h-3 w-3"></span>
-									</a>
 								{/if}
 							</div>
 						</div>
@@ -586,9 +568,11 @@
 								{release.purpose.title}
 							</p>
 							{#if release.purpose.description}
-								<p class="text-xs mt-1" style="color: var(--text-secondary);">
-									{release.purpose.description}
-								</p>
+								<SanitizedHtml
+									tag="div"
+									class="text-xs mt-1 consent-item-description"
+									sanitizedHtml={sanitizeRuntimeConsentHtml(release.purpose.description)}
+								/>
 							{/if}
 							{#if release.purpose.inline_content}
 								<p
@@ -597,18 +581,6 @@
 								>
 									{release.purpose.inline_content}
 								</p>
-							{/if}
-							{#if release.purpose.document_url && isValidLinkUrl(release.purpose.document_url)}
-								<a
-									href={release.purpose.document_url}
-									target="_blank"
-									rel="noopener noreferrer"
-									class="inline-flex items-center gap-1 text-xs mt-1"
-									style="color: var(--primary);"
-								>
-									{$LL.consent_item_view_document()}
-									<span class="i-ph-arrow-square-out h-3 w-3"></span>
-								</a>
 							{/if}
 						</div>
 					{/if}
@@ -759,3 +731,19 @@
 		<p style="color: var(--danger-fg, var(--danger));">{error || $LL.error_unknown()}</p>
 	</Card>
 {/if}
+
+<style>
+	/* A statement's description is HTML (runtime-consent-html.ts): its links are the document's. */
+	:global(.consent-item-description) {
+		color: var(--text-secondary);
+	}
+
+	:global(.consent-item-description a) {
+		color: var(--primary);
+		text-decoration: underline;
+	}
+
+	:global(.consent-item-description p) {
+		margin: 0;
+	}
+</style>

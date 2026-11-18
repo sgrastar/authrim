@@ -2,13 +2,14 @@
 	import type { IconName } from '#lib/ui/icons/icons.js';
 
 	export type SubNavRow =
-		| { type: 'scope'; key: string; label: string }
-		| { type: 'group'; key: string; label: string }
+		/** The category heading: its icon in place of a marker. */
+		| { type: 'scope'; key: string; label: string; icon: IconName }
+		/** An area heading inside a merged category, with the area's icon. */
+		| { type: 'group'; key: string; label: string; icon: IconName }
 		| {
 				type: 'item';
 				key: string;
 				label: string;
-				icon: IconName;
 				href: string;
 				active: boolean;
 				/** Short platform-scope tag (e.g. "search", "tenant"). */
@@ -79,9 +80,9 @@
 
 {#snippet row(entry: SubNavRow, index: number, interactive: boolean)}
 	{#if entry.type === 'scope'}
-		<p class="subnav__scope" style:--fi={index}>{entry.label}</p>
+		<p class="subnav__scope" style:--fi={index}><Icon name={entry.icon} />{entry.label}</p>
 	{:else if entry.type === 'group'}
-		<p class="subnav__group" style:--fi={index}>{entry.label}</p>
+		<p class="subnav__group" style:--fi={index}><Icon name={entry.icon} />{entry.label}</p>
 	{:else if interactive}
 		<a
 			class="subnav__item"
@@ -91,7 +92,6 @@
 			aria-current={entry.active ? 'page' : undefined}
 			style:--fi={index}
 		>
-			<Icon name={entry.icon} />
 			<span class="subnav__label">{entry.label}</span>
 			{#if entry.tag}<span class="subnav__tag subnav__tag--{entry.tagTone}">{entry.tag}</span>{/if}
 			{#if entry.badge}<span class="subnav__badge"><CountBadge value={entry.badge} /></span>{/if}
@@ -101,7 +101,6 @@
 		</a>
 	{:else}
 		<span class="subnav__item" class:is-active={entry.active} style:--fi={index}>
-			<Icon name={entry.icon} />
 			<span class="subnav__label">{entry.label}</span>
 		</span>
 	{/if}
@@ -168,22 +167,29 @@
 		font-weight: var(--fw-bold);
 		letter-spacing: 0.06em;
 		text-transform: uppercase;
+		--icon-size: var(--icon-sm);
 	}
 
-	.subnav__scope::before {
-		content: '';
-		width: 8px;
-		height: 8px;
-		border-radius: 2px;
-		background: var(--scope-color, var(--primary));
+	/* The category's icon takes the accent colour the square marker had. */
+	.subnav__scope :global(svg) {
+		flex: none;
+		color: var(--scope-color, var(--primary));
 	}
 
 	.subnav__group {
+		display: flex;
+		align-items: center;
+		gap: 6px;
 		margin: 14px 0 0;
 		padding: 0 8px 6px;
 		color: var(--text-muted);
 		font-size: var(--fs-small);
 		font-weight: var(--fw-semibold);
+		--icon-size: var(--icon-xs);
+	}
+
+	.subnav__group :global(svg) {
+		flex: none;
 	}
 
 	.subnav__item {
@@ -196,11 +202,6 @@
 		color: var(--text-secondary);
 		font-size: var(--fs-body);
 		line-height: var(--lh-snug);
-		--icon-size: var(--icon-md);
-	}
-
-	.subnav__item :global(svg) {
-		opacity: 0.7;
 	}
 
 	a.subnav__item:hover {
@@ -225,10 +226,6 @@
 	   text keeps readable contrast. */
 	.subnav__item.is-dim {
 		color: var(--text-muted);
-	}
-
-	.subnav__item.is-dim :global(svg) {
-		opacity: 0.45;
 	}
 
 	/* A single long German compound breaks inside the word instead of overflowing. */

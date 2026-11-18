@@ -7,6 +7,7 @@
 	import { i18n, t } from '#lib/i18n/i18n.svelte.js';
 	import { toast } from '#lib/ui/toast/toast.svelte.js';
 	import { guide } from './guide.svelte';
+	import { saveFailedKey } from './progress.svelte';
 	import { onGuideSignal } from './signals';
 
 	/**
@@ -29,7 +30,7 @@
 				pathname: () => window.location.pathname,
 				goto: (path) => goto(path),
 				home: target,
-				onsavefailed: () => toast.error(t('ob.saveFailed'))
+				onsavefailed: () => toast.error(t(saveFailedKey()))
 			});
 			const unlisten = onGuideSignal((signal) => guide.signal(signal));
 			return () => {

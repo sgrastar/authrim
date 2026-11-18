@@ -76,7 +76,8 @@ export const arStatements: Record<keyof typeof jaStatements, string> = {
 	'cs.content.typeUrl': 'رابط إلى مستند',
 	'cs.content.name': 'الاسم',
 	'cs.content.summary': 'الوصف',
-	'cs.content.summaryHint': 'وصف قصير يظهر حيث يُطلب من الأشخاص الموافقة.',
+	'cs.content.summaryHint':
+		'وصف قصير يظهر حيث يُطلب من الأشخاص الموافقة. يمكنك استخدام وسوم HTML التالية: {tags}.',
 	'cs.content.body': 'النص',
 	'cs.content.url': 'رابط المستند',
 	'cs.content.urlHint': 'صفحة عامة يمكن للأشخاص قراءتها، تبدأ بـ https://.',

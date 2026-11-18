@@ -6,6 +6,8 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     include: ['src/**/*.test.ts'],
+    // Test files share module-level state (caches, fakes); keep them serial like `pnpm test` does.
+    fileParallelism: false,
     coverage: {
       thresholds: {
         branches: 75,

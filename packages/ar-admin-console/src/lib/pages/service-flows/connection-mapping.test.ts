@@ -1,3 +1,4 @@
+import { ReleasePausedError } from '#lib/api/api-error.js';
 import { describe, expect, it } from 'vitest';
 import { ConnectionMappingState } from './connection-mapping.svelte';
 import { connectionMappingFixture } from './connection-mapping.fixture';
@@ -137,6 +138,67 @@ describe('connection Mapping Set save and binding', () => {
 			expect(state.form.dirty).toBe(true);
 			expect(fixture.events).toEqual(['save']);
 		}
+	});
+	it('leaves the form open after a save refused for a release, and sends the next save anew', async () => {
+		const fixture = connectionMappingFixture();
+		const save = fixture.resources.client.saveSet;
+		let paused = true;
+		fixture.resources.client.saveSet = async (...args) =>
+			paused ? { kind: 'paused' } : save(...args);
+		const state = new ConnectionMappingState(fixture.resources);
+		await state.load();
+		state.form.value.name += ' updated';
+		await state.save();
+		expect(state.phase).toBe('paused');
+		expect(state.locked).toBe(false);
+		expect(state.form.dirty).toBe(true);
+		paused = false;
+		await state.save();
+		expect(state.phase).toBe('saved');
+	});
+	it('leaves the form open when the check before a save is refused for a release', async () => {
+		const fixture = connectionMappingFixture();
+		const preview = fixture.resources.client.previewSave;
+		let paused = true;
+		fixture.resources.client.previewSave = async (...args) => {
+			if (paused) throw new ReleasePausedError(409, 'ADMIN_MUTATION_PAUSED_FOR_RELEASE', '');
+			return preview(...args);
+		};
+		const state = new ConnectionMappingState(fixture.resources);
+		await state.load();
+		state.form.value.name += ' updated';
+		await state.save();
+		expect(state.phase).toBe('paused');
+		expect(state.locked).toBe(false);
+		expect(state.form.dirty).toBe(true);
+		expect(fixture.events).toEqual([]);
+		paused = false;
+		await state.save();
+		expect(state.phase).toBe('saved');
+	});
+	it('keeps an attempt with an unknown result when its retry is refused for a release', async () => {
+		const fixture = connectionMappingFixture('unknown');
+		const save = fixture.resources.client.saveSet;
+		const keys: string[] = [];
+		let paused = false;
+		fixture.resources.client.saveSet = async (...args) => {
+			keys.push(args[3].idempotencyKey);
+			return paused ? { kind: 'paused' } : save(...args);
+		};
+		const state = new ConnectionMappingState(fixture.resources);
+		await state.load();
+		state.form.value.name += ' updated';
+		await state.save();
+		expect(state.phase).toBe('outcome_unknown');
+		paused = true;
+		await state.write();
+		// Still unresolved: the attempt is kept, with the key of the first try.
+		expect(state.phase).toBe('outcome_unknown');
+		expect(state.pending).not.toBeNull();
+		paused = false;
+		await state.write();
+		expect(state.phase).toBe('saved');
+		expect(new Set(keys).size).toBe(1);
 	});
 	it('can inspect the server record after a lost save answer without announcing success or binding', async () => {
 		const fixture = connectionMappingFixture();

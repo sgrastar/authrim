@@ -8,7 +8,9 @@
  * one after another, each to the tenant that was selected when it was made; when another tenant
  * is selected, what was read and what still waits belong to the old one and are dropped.
  */
+import { ReleasePausedError } from '#lib/api/api-error.js';
 import { httpOnboarding, type OnboardingClient } from '#lib/api/onboarding.js';
+import type { MessageKey } from '#lib/i18n/i18n.svelte.js';
 import { tenantScope } from '#lib/auth/tenant-scope.svelte.js';
 
 export type ProgressPhase = 'idle' | 'loading' | 'ready' | 'failed';
@@ -30,6 +32,8 @@ let tenant: string | null = null;
 /** Changes with the tenant (and the client): what an older one started is dropped. */
 let generation = 0;
 let queue: Promise<unknown> = Promise.resolve();
+/** The last change answered was refused because the environment is being updated. */
+let paused = $state(false);
 
 const completed = $derived(
 	waiting.reduce<readonly string[]>((ids, change) => {
@@ -74,8 +78,10 @@ function change(itemId: string, done: boolean): Promise<boolean> {
 		let answer: string[] | null = null;
 		try {
 			answer = await (done ? using.complete(itemId, tenantId) : using.reopen(itemId, tenantId));
-		} catch {
+			paused = false;
+		} catch (error) {
 			answer = null;
+			paused = error instanceof ReleasePausedError;
 		}
 		if (mine !== generation) return false;
 		waiting = waiting.filter((entry) => entry !== asked);
@@ -92,6 +98,13 @@ export const onboardingProgress = {
 	},
 	get completed(): readonly string[] {
 		return completed;
+	},
+	/**
+	 * Why the change just answered was not kept: true when the environment is being updated
+	 * (it works a little later), false for any other reason.
+	 */
+	get pausedForRelease(): boolean {
+		return paused;
 	},
 	has(itemId: string): boolean {
 		return completed.includes(itemId);
@@ -129,3 +142,8 @@ export const onboardingProgress = {
 	/** Marks an item not finished. */
 	reopen: (itemId: string) => change(itemId, false)
 };
+
+/** What to tell the admin when a change to the progress was not kept. */
+export function saveFailedKey(): MessageKey {
+	return paused ? 'common.releasePaused' : 'ob.saveFailed';
+}

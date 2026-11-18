@@ -52,6 +52,8 @@
 
 	const EXIT_MS = 220;
 	const MOVE = { duration: 240, easing: cubicOut };
+	/** With reduced motion the steps take their new places at once. */
+	const STILL = { duration: 0 };
 
 	type SceneSegment = FlowSegment & { exiting?: boolean };
 
@@ -98,7 +100,11 @@
 </script>
 
 {#each scene as segment, index (segment.key)}
-	<div class="seq__item" class:is-held={held !== null} animate:flip={MOVE}>
+	<div
+		class="seq__item"
+		class:is-held={held !== null}
+		animate:flip={reducedMotion() ? STILL : MOVE}
+	>
 		{#if segment.kind === 'step'}
 			{@render step(segment.id, { exiting: segment.exiting === true })}
 		{:else if segment.options.length > 0}

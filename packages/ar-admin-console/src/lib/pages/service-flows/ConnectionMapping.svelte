@@ -144,6 +144,8 @@
 					<Button size="sm" onclick={() => choose(shared.selected)}>{t('cm.reload')}</Button
 					></Callout
 				>{/if}
+			{#if shared.phase === 'paused'}<Callout tone="info" live>{t('common.releasePaused')}</Callout
+				>{/if}
 			{#if shared.phase === 'stage_failed'}<Callout tone="warning" live
 					>{t('cm.stageFailed', { stage: shared.stage })}
 					<Button size="sm" onclick={() => choose(shared.selected)}>{t('cm.reload')}</Button
