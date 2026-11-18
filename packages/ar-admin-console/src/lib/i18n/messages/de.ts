@@ -102,7 +102,6 @@ export const de = {
 	'nav.auth.protection': 'Angriffsschutz',
 	'nav.custom.branding': 'Designs',
 	'nav.custom.screens': 'Bildschirme',
-	'nav.custom.consent': 'Einwilligungsrichtlinien',
 	'nav.custom.emails': 'E-Mail-Einstellungen',
 	'nav.data.schema': 'Attributschema',
 	'nav.data.mapping': 'Zuordnungsübersicht',
@@ -287,6 +286,8 @@ export const de = {
 	'common.saving': 'Wird gespeichert…',
 	'common.saveFailed':
 		'Die Änderungen konnten nicht gespeichert werden. Bitte versuchen Sie es erneut.',
+	'common.releasePaused':
+		'Diese Umgebung wird gerade aktualisiert. Bis die Aktualisierung abgeschlossen ist, können keine Änderungen gespeichert werden. Warten Sie einen Moment und versuchen Sie es erneut.',
 	'common.moreInfo': 'Weitere Informationen',
 	'common.fixErrors':
 		'Einige Werte können nicht gespeichert werden. Korrigieren Sie die Felder mit Fehlern.',

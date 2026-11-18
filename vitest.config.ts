@@ -16,6 +16,9 @@ export default defineConfig({
       'node_modules/',
       'dist/',
       '**/node_modules/**',
+      // Stryker mutation-testing sandboxes (created during `pnpm test:mutation`)
+      '**/.stryker-tmp/**',
+      '**/.mutator/**',
       // E2E tests are run separately with Playwright
       'test-e2e/**',
       // High-volume security matrices use their dedicated deterministic runner.

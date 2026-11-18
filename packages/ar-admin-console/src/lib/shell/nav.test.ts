@@ -78,7 +78,6 @@ describe('navigation model', () => {
 			expect(ICON_PATHS).toHaveProperty(area.icon);
 			for (const item of area.children) {
 				expect(ja, `${area.id}/${item.id}`).toHaveProperty([item.label]);
-				expect(ICON_PATHS, `${area.id}/${item.id}`).toHaveProperty(item.icon);
 			}
 		}
 		for (const kind of ['tenant', 'platform'] as const) {

@@ -33,6 +33,8 @@
     "lint:prune-suppressions": "eslint src --prune-suppressions",
     "test": "vitest run --fileParallelism=false",
     "test:property": "vitest run -c vitest.property.config.ts",
+    "test:mutation": "stryker run",
+    "test:mutation:diff": "mutator --since develop --include-test-changes",
     "clean": "rm -rf dist"
   },
   "dependencies": {

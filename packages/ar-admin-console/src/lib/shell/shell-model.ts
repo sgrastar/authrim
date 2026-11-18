@@ -61,20 +61,25 @@ export function subNavRows(location: NavLocation, t: Translate, access?: AdminAc
 	const areas = areasOfTop(kind, top);
 	if (areas.length === 0) return [];
 	const rows: SubNavRow[] = [
-		{ type: 'scope', key: `scope:${top.id}`, label: t(topLabel(kind, top)) }
+		{
+			type: 'scope',
+			key: `scope:${top.id}`,
+			label: t(topLabel(kind, top)),
+			icon: topIcon(kind, top)
+		}
 	];
 	const merged = (top.merges?.length ?? 0) > 1;
 	for (const area of areas) {
 		const items = visibleItems(area.children, access, kind);
 		if (items.length === 0) continue;
-		if (merged) rows.push({ type: 'group', key: `group:${area.id}`, label: t(area.label) });
+		if (merged)
+			rows.push({ type: 'group', key: `group:${area.id}`, label: t(area.label), icon: area.icon });
 		for (const item of items) {
 			const treatment = kind === 'platform' ? (item.platform ?? 'inherit') : 'inherit';
 			rows.push({
 				type: 'item',
 				key: `item:${area.id}:${item.id}`,
 				label: t(item.label),
-				icon: item.icon,
 				href: navHref(kind, area.id, item.id),
 				active: location.area.id === area.id && location.item?.id === item.id,
 				tag: treatment === 'inherit' ? undefined : t(TAG_KEY[treatment]),

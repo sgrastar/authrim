@@ -147,3 +147,10 @@ load-testing/seeds/
 
 # Wrangler/Miniflare remote storage cache
 remote/
+
+# Stryker mutation testing (sandboxes and reports)
+.stryker-tmp/
+**/stryker-setup-*.js
+**/reports/mutation/
+# mutator (@mizchi/mutator) cache and reports
+.mutator/

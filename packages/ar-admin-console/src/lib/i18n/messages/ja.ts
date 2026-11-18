@@ -105,7 +105,6 @@ export const ja = {
 	'nav.auth.protection': '攻撃対策',
 	'nav.custom.branding': 'テーマ',
 	'nav.custom.screens': 'スクリーン',
-	'nav.custom.consent': '同意ポリシー',
 	'nav.custom.emails': 'メール送信設定',
 	'nav.data.schema': '属性スキーマ',
 	'nav.data.mapping': 'マッピング概要',
@@ -288,6 +287,8 @@ export const ja = {
 	'common.unsaved': '保存していない変更があります',
 	'common.saving': '保存中…',
 	'common.saveFailed': '保存できませんでした。もう一度お試しください。',
+	'common.releasePaused':
+		'環境を更新しています。更新が終わるまで変更は保存できません。少し待ってから、もう一度お試しください。',
 	'common.moreInfo': '詳しい説明',
 	'common.fixErrors': '保存できない値があります。エラーの出ている項目を直してください。',
 	'common.changed': '変更あり',

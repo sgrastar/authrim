@@ -8,6 +8,7 @@ tags:
   - authrim
   - testing
 ---
+
 # Testing Guide
 
 This guide covers Authrim's comprehensive testing strategy including unit tests, integration tests, E2E tests, conformance tests, and load testing.
@@ -17,6 +18,7 @@ This guide covers Authrim's comprehensive testing strategy including unit tests,
 - [Test Overview](#test-overview)
 - [Unit Tests](#unit-tests)
 - [Integration Tests](#integration-tests)
+- [Mutation Tests](#mutation-tests)
 - [E2E Tests](#e2e-tests)
 - [Accessibility Tests](#accessibility-tests)
 - [Performance Tests](#performance-tests)
@@ -111,6 +113,105 @@ pnpm test -- --filter=integration
 | `authorization-flow.test.ts` | Complete OAuth 2.0/OIDC flows with PKCE   |
 | `durable-objects.test.ts`    | Cross-DO communication, state consistency |
 | `security-headers.test.ts`   | CSP, HSTS, X-Frame-Options, CORS          |
+
+---
+
+## Mutation Tests
+
+Mutation testing ([StrykerJS](https://stryker-mutator.io/)) checks how well the unit tests detect
+behaviour changes: Stryker makes small edits ("mutants") to the production code, runs the tests
+that cover each edit, and reports every mutant the tests failed to notice. It is a manual,
+pre-PR check and is intentionally **not** part of `pnpm test` or CI (a full run of one package
+takes minutes to hours).
+
+```bash
+# Dependencies must be built first on a fresh checkout (the tests import their dist/)
+pnpm turbo run build --filter='@authrim/ar-saml^...'
+
+# Whole package (run from the package directory)
+cd packages/ar-saml
+pnpm test:mutation
+
+# A single file: much faster, use this while iterating on tests
+# (pnpm 9 forwards the flags as-is; do not add `--`)
+pnpm test:mutation --mutate src/sp/acs.ts
+
+# Every package that has opted in (from the repository root)
+pnpm test:mutation
+```
+
+Reports are written to `reports/mutation/` inside the package (`index.html` to browse,
+`mutation.json` for tooling); both are git-ignored. Runs are **incremental**: the result of the
+previous run is kept in `reports/mutation/incremental.json` and only mutants whose source or
+tests changed are re-tested. The incremental check only looks at the mutated file and the test
+files: after changing a shared test helper, a fixture, a dependency or an environment variable,
+or when you want a score to compare against, add `--force` to re-test everything. The reported
+score excludes static mutants (`ignoreStatic`), which is why it is comparable between runs.
+
+**How it works in this repository**
+
+- The shared configuration lives in `stryker.base.mjs` at the repository root. A package opts in
+  with a two-line `stryker.config.mjs` and a `"test:mutation": "stryker run"` script.
+- Sources are mutated **in place** (not in a copied sandbox) because tests read sibling resources
+  such as `../../migrations`. Stryker restores the original files when the run finishes or is
+  interrupted with Ctrl+C. Do not edit the package while a run is active, and do not run another
+  test watcher or dev server against it. After a hard kill (not Ctrl+C) the run cannot restore
+  the files: copy them back from the backup directory the run announced at start
+  (`.stryker-tmp/backup-*`) and check `git diff`. Do not use `git checkout -- <package>`, which
+  would also discard your own uncommitted edits. A dedicated worktree avoids both problems.
+- The TypeScript checker discards mutants that do not compile, so they do not count against the
+  score.
+
+**Working through survivors**
+
+A surviving mutant means the current tests cannot tell the mutated code from the original.
+Sort each one into one of three buckets:
+
+1. **Add a test** that observes the behaviour (usually by asserting an exact error message, a
+   persisted value, an emitted event or a header rather than only an HTTP status).
+2. **Delete the code**: if no observable behaviour changes, the branch or expression is dead.
+3. **Accept it** as an equivalent mutant (for example `/\s+/` vs `/\s/` after trimming) and move
+   on; do not write brittle tests just to kill it.
+
+**Fast reruns with mutator**
+
+[mutator](https://github.com/mizchi/mutator) (`@mizchi/mutator`) is installed alongside Stryker
+for the inner loop. It produces the same kind of score and report but instruments sources in
+memory (no in-place rewrite, no sandbox) and caches results per function, so a rerun with no
+change takes seconds instead of a full dry run. Stryker remains the reference run for a whole
+package; use mutator while writing tests.
+
+```bash
+cd packages/ar-saml
+pnpm test:mutation:diff                              # mutants in `git diff develop`, plus the code
+                                                     # covered by added or changed tests
+npx mutator --include 'src/common/key-utils.ts'      # one file, whole file
+mkdir -p .mutator && npx mutator --reporter agent --since develop --include-test-changes > .mutator/agent.json
+npx mutator --only <key>                             # re-check one mutant after adding a test
+```
+
+mutator needs Node.js 24 or later (the rest of the repository runs on Node 22). It is a root
+devDependency; `pnpm install` on Node 22 only warns about the engine, but the `mutator` command
+itself requires Node 24. The excluded paths (`__tests__`, `__fixtures__`, `src/index.ts`) are
+kept in step with Stryker in `packages/ar-saml/mutator.config.json`. Note that editing a
+`package.json` or the lockfile invalidates the whole mutator cache; source and test edits only
+re-run the affected functions.
+
+Undetected mutants are grouped by where the tests stopped short: _not reached_ (no test runs the
+code), _not infected_ (tests run it, but never with an input that changes the value, for example
+a boundary) and _not detected_ (tests run it, nothing fails). Mutants judged equivalent are
+recorded with `npx mutator accept <key> --reason "..."` in `mutator.accepted.json` (committed).
+The cache and reports live in `.mutator/` (git-ignored). mutator officially targets Vitest 5;
+it currently runs on this repository's Vitest 4.1 as well.
+
+Opting another package in:
+
+```bash
+cd packages/<name>
+printf "import { createStrykerConfig } from '../../stryker.base.mjs';\n\nexport default createStrykerConfig();\n" > stryker.config.mjs
+# add "test:mutation": "stryker run" to the package's scripts, then:
+pnpm test:mutation --dryRunOnly   # verifies the test suite runs under Stryker
+```
 
 ---
 
@@ -211,12 +312,12 @@ Authrim supports running against the OpenID Foundation certification tests.
 
 ### Test Plans
 
-| Plan         | Description                 | Status |
-| ------------ | --------------------------- | ------ |
-| Basic OP     | Standard OIDC Provider      | ✓      |
-| Config OP    | Configuration endpoint      | ✓      |
-| Dynamic OP   | Dynamic client registration | ✓      |
-| FAPI 2.0     | Financial-grade API 2.0     | Testing |
+| Plan       | Description                 | Status  |
+| ---------- | --------------------------- | ------- |
+| Basic OP   | Standard OIDC Provider      | ✓       |
+| Config OP  | Configuration endpoint      | ✓       |
+| Dynamic OP | Dynamic client registration | ✓       |
+| FAPI 2.0   | Financial-grade API 2.0     | Testing |
 
 ### Running Conformance Tests
 
