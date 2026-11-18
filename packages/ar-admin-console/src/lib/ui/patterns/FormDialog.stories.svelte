@@ -3,6 +3,7 @@
 	import { expect, fn, userEvent, waitFor, within } from 'storybook/test';
 	import { t } from '#lib/i18n/i18n.svelte.js';
 	import TextField from '../primitives/TextField.svelte';
+	import Checkbox from '../primitives/Checkbox.svelte';
 	import FormDialog from './FormDialog.svelte';
 
 	const { Story } = defineMeta({
@@ -57,6 +58,25 @@
 			oncancel={() => {}}
 		>
 			<TextField label={t('me.passkey.name')} value="Work MacBook" />
+		</FormDialog>
+	{/snippet}
+</Story>
+
+<!-- `size="wide"`: a list to choose from, where each row carries a name, a key and marks. -->
+<Story name="Wide, for a list to choose from">
+	{#snippet template()}
+		<FormDialog
+			open
+			size="wide"
+			title={t('ss.preset.title')}
+			description={t('ss.preset.note')}
+			submitLabel={t('ss.preset.submit')}
+			onsubmit={() => {}}
+			oncancel={() => {}}
+		>
+			{#each ['given_name', 'family_name', 'phone_number', 'birthdate'] as key (key)}
+				<Checkbox checked={key !== 'birthdate'}>{key}</Checkbox>
+			{/each}
 		</FormDialog>
 	{/snippet}
 </Story>

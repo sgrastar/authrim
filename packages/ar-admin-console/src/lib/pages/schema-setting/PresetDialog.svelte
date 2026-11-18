@@ -92,6 +92,7 @@
 	submitLabel={t('ss.preset.submit')}
 	busy={busy || loading}
 	{error}
+	size="wide"
 	onsubmit={submit}
 	{oncancel}
 >

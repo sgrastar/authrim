@@ -132,6 +132,9 @@ async function driverInstance(dim = true): Promise<Driver> {
 	return driver;
 }
 
+/** Whether an element takes room on the screen (false under `display: none`). */
+const hasBox = (element: Element) => element.getClientRects().length > 0;
+
 /** What the step points at, once it is on the page; null when it does not come in time. */
 function findTarget(selector: string, mine: number): Promise<Element | null> {
 	const found = document.querySelector(selector);
@@ -305,12 +308,23 @@ async function render(): Promise<void> {
 	const d = await driverInstance(step.dim !== false);
 	if (mine !== generation) return;
 
+	// Something that is on the page but takes no room (the navigation on a narrow screen) cannot
+	// be pointed at: the text is shown in the middle instead.
+	const pointed = element && hasBox(element) ? element : null;
 	d.highlight({
-		element: element ?? undefined,
+		element: pointed ?? undefined,
 		popover: popoverOf(item, index, step, pathname, detour ? step.fallback?.action : step.action)
 	});
 
 	const undo: Array<() => void> = [];
+	if (element) {
+		// The window was resized across the width where it appears or goes: show the step again.
+		const onResize = () => {
+			if (mine === generation && hasBox(element) !== (pointed !== null)) void render();
+		};
+		window.addEventListener('resize', onResize);
+		undo.push(() => window.removeEventListener('resize', onResize));
+	}
 	if (step.target) undo.push(watchTarget(step.target, target, detour));
 	if (step.advance === 'click' && target) {
 		const element = target;

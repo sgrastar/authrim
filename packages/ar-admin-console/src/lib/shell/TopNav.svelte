@@ -314,6 +314,7 @@
 		<a
 			bind:this={links[entry.id]}
 			class="topnav__item"
+			data-guide="nav-{entry.id}"
 			class:is-active={entry.id === activeId}
 			class:is-inherited={entry.inherited}
 			class:is-first-inherited={firstInherited(entries, i)}

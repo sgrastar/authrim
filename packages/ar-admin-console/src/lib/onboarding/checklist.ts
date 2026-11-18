@@ -67,8 +67,16 @@ export interface ChecklistItem {
 	steps: readonly GuideStep[];
 }
 
+const OVERVIEW = '/admin';
+const TENANT_BASICS = '/admin/settings/general';
+const THEME_LIST = '/admin/customization/branding';
 const THEME_EDITOR = '/admin/customization/branding/*';
+const SCHEMA_LIST = '/admin/access/schema-setting';
+const SCREEN_LIST = '/admin/customization/screens';
 const SCREEN_EDITOR = '/admin/customization/screens/*';
+
+/** The left navigation's link to a page (its rows carry no name of their own). */
+const subNavLink = (href: string) => `.subnav a.subnav__item[href="${href}"]`;
 
 export const CHECKLIST: readonly ChecklistItem[] = [
 	{
@@ -77,12 +85,26 @@ export const CHECKLIST: readonly ChecklistItem[] = [
 		title: 'ob.signIn.title',
 		description: 'ob.signIn.desc',
 		steps: [
+			// Where things are, before going there: the category in the header (on the overview, so
+			// starting the guide moves nowhere), then its page in the left navigation.
 			{
-				path: '/admin/settings/general',
-				target: '[data-guide="tenant-url-login"]',
+				path: OVERVIEW,
+				target: '[data-guide="nav-settings"]',
 				title: 'ob.signIn.s1.title',
-				body: 'ob.signIn.s1.body',
-				action: 'ob.signIn.s1.action',
+				body: 'ob.signIn.s1.body'
+			},
+			{
+				path: TENANT_BASICS,
+				target: subNavLink(TENANT_BASICS),
+				title: 'ob.signIn.s2.title',
+				body: 'ob.signIn.s2.body'
+			},
+			{
+				path: TENANT_BASICS,
+				target: '[data-guide="tenant-url-login"]',
+				title: 'ob.signIn.s3.title',
+				body: 'ob.signIn.s3.body',
+				action: 'ob.signIn.s3.action',
 				advance: 'click',
 				clickOn: 'a[href]'
 			}
@@ -95,7 +117,19 @@ export const CHECKLIST: readonly ChecklistItem[] = [
 		description: 'ob.theme.desc',
 		steps: [
 			{
-				path: '/admin/customization/branding',
+				path: OVERVIEW,
+				target: '[data-guide="nav-customization"]',
+				title: 'ob.theme.nav.title',
+				body: 'ob.theme.nav.body'
+			},
+			{
+				path: THEME_LIST,
+				target: subNavLink(THEME_LIST),
+				title: 'ob.theme.sub.title',
+				body: 'ob.theme.sub.body'
+			},
+			{
+				path: THEME_LIST,
 				target: '[data-guide="theme-create"]',
 				title: 'ob.theme.s1.title',
 				body: 'ob.theme.s1.body',
@@ -137,12 +171,32 @@ export const CHECKLIST: readonly ChecklistItem[] = [
 			},
 			{
 				path: THEME_EDITOR,
+				// A new theme opens with its name being typed; a saved one shows a pencil to open it.
+				target: '[data-guide="theme-name"]',
+				title: 'ob.theme.name.title',
+				body: 'ob.theme.name.body',
+				action: 'ob.theme.name.action',
+				fallback: {
+					target: '[data-guide="theme-name-edit"]',
+					action: 'ob.theme.name.fallback'
+				}
+			},
+			{
+				path: THEME_EDITOR,
 				target: '[data-guide="theme-save"]',
 				title: 'ob.theme.s6.title',
 				body: 'ob.theme.s6.body',
 				action: 'ob.theme.s6.action',
 				advance: { signal: 'theme.saved' },
 				dim: false
+			},
+			{
+				path: THEME_EDITOR,
+				target: '[data-guide="theme-apply"]',
+				title: 'ob.theme.apply.title',
+				body: 'ob.theme.apply.body',
+				action: 'ob.theme.apply.action',
+				advance: { signal: 'theme.applied' }
 			}
 		]
 	},
@@ -153,12 +207,29 @@ export const CHECKLIST: readonly ChecklistItem[] = [
 		description: 'ob.schema.desc',
 		steps: [
 			{
-				path: '/admin/access/schema-setting',
+				path: OVERVIEW,
+				target: '[data-guide="nav-access"]',
+				title: 'ob.schema.nav.title',
+				body: 'ob.schema.nav.body'
+			},
+			{
+				path: SCHEMA_LIST,
+				target: subNavLink(SCHEMA_LIST),
+				title: 'ob.schema.sub.title',
+				body: 'ob.schema.sub.body'
+			},
+			{
+				path: SCHEMA_LIST,
 				target: '[data-guide="schema-add"]',
 				title: 'ob.schema.s1.title',
-				body: 'ob.schema.s1.body',
-				action: 'ob.schema.s1.action',
-				advance: { signal: 'schema.saved' }
+				body: 'ob.schema.s1.body'
+			},
+			// Read, and done: nothing has to be added to finish this one.
+			{
+				path: SCHEMA_LIST,
+				target: '[data-guide="schema-presets"]',
+				title: 'ob.schema.preset.title',
+				body: 'ob.schema.preset.body'
 			}
 		]
 	},
@@ -169,18 +240,26 @@ export const CHECKLIST: readonly ChecklistItem[] = [
 		description: 'ob.screens.desc',
 		steps: [
 			{
-				path: '/admin/customization/screens',
-				target: '[data-guide="screen-create"]',
-				title: 'ob.screens.s1.title',
-				body: 'ob.screens.s1.body',
-				action: 'ob.screens.s1.action',
-				advance: 'navigate'
+				path: OVERVIEW,
+				target: '[data-guide="nav-customization"]',
+				title: 'ob.screens.nav.title',
+				body: 'ob.screens.nav.body'
 			},
 			{
-				path: '/admin/customization/screens/new',
-				title: 'ob.screens.s2.title',
-				body: 'ob.screens.s2.body',
-				action: 'ob.screens.s2.action',
+				path: SCREEN_LIST,
+				target: subNavLink(SCREEN_LIST),
+				title: 'ob.screens.sub.title',
+				body: 'ob.screens.sub.body'
+			},
+			{
+				path: SCREEN_LIST,
+				// The whole row of the sign-up screen (its name cell carries the mark).
+				target: 'tr:has([data-guide="screen-row-registration"])',
+				title: 'ob.screens.row.title',
+				body: 'ob.screens.row.body',
+				action: 'ob.screens.row.action',
+				// A search or a filter that hides the row: point at where they are cleared.
+				fallback: { target: '.filter-bar', action: 'ob.screens.row.fallback' },
 				advance: 'navigate'
 			},
 			{

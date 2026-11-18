@@ -114,6 +114,70 @@ describe('escapeHtml', () => {
 });
 
 describe('the console’s checklist', () => {
+	it('opens every guide on the overview with the header category, then the left navigation', () => {
+		const category: Record<string, string> = {
+			'sign-in': 'nav-settings',
+			theme: 'nav-customization',
+			schema: 'nav-access',
+			screens: 'nav-customization'
+		};
+		for (const entry of CHECKLIST) {
+			const [first, second] = entry.steps;
+			expect(first.path).toBe('/admin');
+			expect(first.target).toBe(`[data-guide="${category[entry.id]}"]`);
+			expect(isConcretePath(second.path)).toBe(true);
+			expect(second.target).toBe(`.subnav a.subnav__item[href="${second.path}"]`);
+			expect(waitsForPerson(first) || waitsForPerson(second)).toBe(false);
+		}
+	});
+
+	it('ends the theme guide with a name, a save and the apply; the schema guide by reading', () => {
+		const steps = (id: string) => CHECKLIST.find((entry) => entry.id === id)?.steps ?? [];
+		expect(
+			steps('theme')
+				.slice(-3)
+				.map((entry) => entry.target)
+		).toEqual([
+			'[data-guide="theme-name"]',
+			'[data-guide="theme-save"]',
+			'[data-guide="theme-apply"]'
+		]);
+		expect(
+			steps('theme')
+				.slice(-2)
+				.map((entry) => entry.advance)
+		).toEqual([{ signal: 'theme.saved' }, { signal: 'theme.applied' }]);
+		// Nothing has to be added to finish the schema guide: its steps all offer Next.
+		expect(steps('schema').some(waitsForPerson)).toBe(false);
+		expect(steps('schema').at(-1)?.target).toBe('[data-guide="schema-presets"]');
+		// The screens guide opens the sign-up screen from the list.
+		expect(steps('screens')[2]).toMatchObject({
+			target: 'tr:has([data-guide="screen-row-registration"])',
+			advance: 'navigate'
+		});
+	});
+
+	it('starts the sign-in guide on the overview and leads through the navigation to the link', () => {
+		const signIn = CHECKLIST.find((entry) => entry.id === 'sign-in');
+		const steps = signIn?.steps ?? [];
+		expect(steps.map((entry) => entry.path)).toEqual([
+			'/admin',
+			'/admin/settings/general',
+			'/admin/settings/general'
+		]);
+		// Started from the checklist: the first step is on that page, so nothing moves.
+		expect(locateStep(steps, 0, '/admin')).toBe(0);
+		// Next names a page the guide can go to; a person who uses the header instead lands there too.
+		expect(isConcretePath(steps[1].path)).toBe(true);
+		expect(locateStep(steps, 0, '/admin/settings/general')).toBe(1);
+		expect(steps.slice(0, 2).every((entry) => !waitsForPerson(entry))).toBe(true);
+		// Only the link finishes it, and only by being opened.
+		expect(moveOn(signIn as ChecklistItem, 1)).toEqual({ kind: 'step', index: 2 });
+		expect(steps[2]).toMatchObject({ advance: 'click', clickOn: 'a[href]' });
+		expect(canGoBack(steps, 2, '/admin/settings/general')).toBe(true);
+		expect(canGoBack(steps, 1, '/admin/settings/general')).toBe(false);
+	});
+
 	it('has ids the server accepts, each once', () => {
 		const ids = CHECKLIST.map((entry) => entry.id);
 		expect(new Set(ids).size).toBe(ids.length);
@@ -130,7 +194,8 @@ describe('the console’s checklist', () => {
 			expect(isConcretePath(entry.steps[0].path)).toBe(true);
 			for (const key of [entry.title, entry.description]) expect(hasMessage(key)).toBe(true);
 			entry.steps.forEach((entryStep, index) => {
-				expect(entryStep.path.startsWith('/admin/')).toBe(true);
+				// A console page: the overview (where the checklist is) or one below it.
+				expect(entryStep.path).toMatch(/^\/admin(\/|$)/);
 				for (const key of [
 					entryStep.title,
 					entryStep.body,

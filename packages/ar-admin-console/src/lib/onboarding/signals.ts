@@ -6,7 +6,12 @@
  * To add a signal: name it here, call `guideSignal` where it happens, and use it in a step's
  * `advance: { signal }` in `checklist.ts`.
  */
-export type GuideSignal = 'theme.preset-chosen' | 'theme.saved' | 'schema.saved' | 'screen.saved';
+export type GuideSignal =
+	| 'theme.preset-chosen'
+	| 'theme.saved'
+	| 'theme.applied'
+	| 'schema.saved'
+	| 'screen.saved';
 
 type Listener = (signal: GuideSignal) => void;
 

@@ -51,8 +51,9 @@
 			guide.useItems(theme);
 			const disconnect = guide.connect({ pathname: () => path, goto: go, home: HOME });
 			if (startAt !== undefined) {
-				path = startAt === 0 ? LIST : EDITOR;
-				if (startAt >= 4) tab = 'images';
+				// Steps 0 (the header), 1-2 (the list) and the rest (the editor) are on three pages.
+				path = startAt === 0 ? HOME : startAt <= 2 ? LIST : EDITOR;
+				if (startAt >= 6) tab = 'images';
 				guide.start('theme', startAt);
 			}
 			return disconnect;
@@ -71,6 +72,28 @@
 		{ id: 'images', label: 'Images' }
 	];
 </script>
+
+<!-- Stand-ins for the console's header category and left navigation link. -->
+<nav class="subnav stand-in" aria-label="Navigation">
+	<a
+		data-guide="nav-customization"
+		href={LIST}
+		onclick={(event) => {
+			event.preventDefault();
+			go(LIST);
+		}}>{t('nav.customization')}</a
+	>
+	{#if path !== HOME}
+		<a
+			class="subnav__item"
+			href={LIST}
+			onclick={(event) => {
+				event.preventDefault();
+				go(LIST);
+			}}>{t('nav.custom.branding')}</a
+		>
+	{/if}
+</nav>
 
 <Page>
 	{#if path === HOME}
@@ -91,12 +114,21 @@
 		<PageHeader title={t('th.list.create')}>
 			{#snippet actions()}
 				<Button
+					variant="secondary"
+					data-guide="theme-apply"
+					onclick={() => guide.signal('theme.applied')}>{t('th.action.apply')}</Button
+				>
+				<Button
 					variant="primary"
 					data-guide="theme-save"
 					onclick={() => guide.signal('theme.saved')}>{t('th.page.save')}</Button
 				>
 			{/snippet}
 		</PageHeader>
+		<!-- Stand-in for the theme's name being typed. -->
+		<form data-guide="theme-name" onsubmit={(event) => event.preventDefault()}>
+			<input aria-label={t('th.page.name')} value="" />
+		</form>
 		<div class="editor">
 			<Card><p class="preview">{chosen ? '🖼' : '…'}</p></Card>
 			<div data-guide="theme-sections">
@@ -126,6 +158,12 @@
 </Page>
 
 <style>
+	.stand-in {
+		display: flex;
+		gap: var(--space-field);
+		padding: var(--space-related) var(--space-field);
+	}
+
 	.editor {
 		display: grid;
 		grid-template-columns: minmax(0, 1fr) 300px;
