@@ -102,7 +102,6 @@ export const ar = {
 	'nav.auth.protection': 'الحماية من الهجمات',
 	'nav.custom.branding': 'السمات المرئية',
 	'nav.custom.screens': 'الشاشات',
-	'nav.custom.consent': 'سياسات الموافقة',
 	'nav.custom.emails': 'إعدادات البريد',
 	'nav.data.schema': 'مخطط السمات',
 	'nav.data.mapping': 'نظرة عامة على الربط',

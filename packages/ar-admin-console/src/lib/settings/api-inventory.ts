@@ -508,8 +508,9 @@ export const API_GROUPS: readonly ApiGroup[] = [
 		id: 'sign-in-confirmation',
 		name: 'Sign-in confirmation',
 		kind: 'records',
-		page: 'customization/consent',
-		paths: [`${A}/sign-in-confirmation-policies`]
+		page: 'customization/statements',
+		paths: [`${A}/sign-in-confirmation-policies`],
+		note: 'The consent policies page was dropped from the navigation (consent redesign); the API stays with the consent statements until it is removed.'
 	},
 	{
 		id: 'consent-statements',

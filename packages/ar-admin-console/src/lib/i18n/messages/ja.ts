@@ -105,7 +105,6 @@ export const ja = {
 	'nav.auth.protection': '攻撃対策',
 	'nav.custom.branding': 'テーマ',
 	'nav.custom.screens': 'スクリーン',
-	'nav.custom.consent': '同意ポリシー',
 	'nav.custom.emails': 'メール送信設定',
 	'nav.data.schema': '属性スキーマ',
 	'nav.data.mapping': 'マッピング概要',
