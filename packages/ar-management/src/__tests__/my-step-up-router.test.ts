@@ -208,6 +208,14 @@ describe('GET /api/admin/me/step-up/requirements', () => {
       catalog_level: 'L1',
       always_enforced: false,
     });
+    expect(body.operations['client.trust.activate']).toMatchObject({
+      level: 'L2',
+      catalog_level: 'L2',
+    });
+    expect(body.operations['client.trust.disable']).toMatchObject({
+      level: 'L1',
+      catalog_level: 'L1',
+    });
     expect(body.operations['admin.second_factor.add']).toEqual({
       level: 'L2',
       catalog_level: 'L2',

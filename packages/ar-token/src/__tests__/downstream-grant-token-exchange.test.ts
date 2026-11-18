@@ -275,6 +275,114 @@ describe('downstream elevation grant token exchange', () => {
       };
     }
 
+    it('refuses an existing first-party subject token after its client is disabled', async () => {
+      const env = await createVerificationEnv();
+      mocks.mockParseToken.mockReturnValue({
+        client_id: 'disabled-app',
+        sub: 'user-1',
+        token_use: 'access',
+        jti: 'subject-jti-1',
+        aud: 'service-client-1',
+        scope: 'openid',
+      });
+      const requester: unknown = await mocks.mockGetClientCached();
+      mocks.mockGetClientCached.mockImplementation(
+        async (_c: unknown, _env: unknown, id: string) =>
+          id === 'disabled-app' ? { client_id: id, enabled: false } : requester
+      );
+      await expectOAuthError(
+        request({}, env),
+        400,
+        'invalid_grant',
+        'Subject token is invalid or revoked'
+      );
+      expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+    });
+
+    it.each([false, true])(
+      'accepts an unregistered JWT bearer issuer as actor=%s',
+      async (actor) => {
+        const env = await createVerificationEnv();
+        const issuer = 'https://trusted.example';
+        const requester: unknown = await mocks.mockGetClientCached();
+        mocks.mockGetClientCached.mockImplementation(
+          async (_c: unknown, _env: unknown, id: string) => (id === issuer ? null : requester)
+        );
+        const subject = {
+          iss: 'https://auth.example.com',
+          sub: 'external-subject',
+          client_id: actor ? 'service-client-1' : issuer,
+          authrim_subject_issuer: issuer,
+          aud: ['service-client-1'],
+          token_use: 'access',
+          scope: 'openid',
+          jti: 'subject-jti-1',
+        };
+        mocks.mockParseToken.mockReturnValueOnce(subject);
+        if (actor)
+          mocks.mockParseToken.mockReturnValueOnce({
+            ...subject,
+            sub: 'external-actor',
+            client_id: issuer,
+            jti: 'actor-jti',
+          });
+        const response = await request(
+          actor
+            ? {
+                actor_token: 'actor-token',
+                actor_token_type: 'urn:ietf:params:oauth:token-type:access_token',
+              }
+            : {},
+          env
+        );
+        expect(response.status).toBe(200);
+        expect(mocks.mockCreateAccessToken).toHaveBeenCalled();
+        expect(mocks.mockGetClientCached).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.anything(),
+          issuer,
+          { includeDisabled: true }
+        );
+      }
+    );
+
+    it('refuses an actor token from an explicitly disabled client', async () => {
+      const env = await createVerificationEnv();
+      const requester: unknown = await mocks.mockGetClientCached();
+      mocks.mockGetClientCached.mockImplementation(
+        async (_c: unknown, _env: unknown, id: string) =>
+          id === 'disabled-app' ? { client_id: id, enabled: false } : requester
+      );
+      const subject = {
+        iss: 'https://auth.example.com',
+        client_id: 'service-client-1',
+        sub: 'user-1',
+        aud: ['service-client-1'],
+        token_use: 'access',
+        scope: 'openid',
+        jti: 'subject-jti-1',
+      };
+      mocks.mockParseToken.mockReturnValueOnce(subject).mockReturnValueOnce({
+        ...subject,
+        client_id: 'disabled-app',
+        sub: 'actor-1',
+        jti: 'actor-jti',
+      });
+      await expectOAuthError(
+        request(
+          {
+            actor_token: 'actor-token',
+            actor_token_type: 'urn:ietf:params:oauth:token-type:access_token',
+          },
+          env
+        ),
+        400,
+        'invalid_grant',
+        'Actor token is invalid or revoked'
+      );
+      expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+    });
+
     it('rejects token exchange when both environment and settings disable it', async () => {
       await expectOAuthError(
         request({}, { ENABLE_TOKEN_EXCHANGE: 'false' }),
@@ -523,6 +631,7 @@ describe('downstream elevation grant token exchange', () => {
         const env = await createVerificationEnv();
         mocks.mockGetClientCached.mockResolvedValue(clientWithMode(mode));
         mocks.mockParseToken.mockReturnValue({
+          client_id: 'service-client-1',
           sub: 'user-1',
           token_use: 'access',
           jti: 'subject-jti-1',
@@ -629,6 +738,7 @@ describe('downstream elevation grant token exchange', () => {
       await expectOAuthError(request(), 400, 'invalid_request', 'Invalid subject_token format');
 
       mocks.mockParseToken.mockReturnValueOnce({
+        client_id: 'service-client-1',
         sub: 'user-1',
         aud: 'service-client-1',
         token_use: 'access',
@@ -646,6 +756,7 @@ describe('downstream elevation grant token exchange', () => {
     it('rejects expired, revoked, and cross-audience subject tokens', async () => {
       const env = await createVerificationEnv();
       mocks.mockParseToken.mockReturnValueOnce({
+        client_id: 'service-client-1',
         sub: 'user-1',
         token_use: 'access',
         jti: 'subject-jti-1',
@@ -695,6 +806,7 @@ describe('downstream elevation grant token exchange', () => {
     ])('rejects invalid resource parameter %s', async (resource, description) => {
       const env = await createVerificationEnv();
       mocks.mockParseToken.mockReturnValue({
+        client_id: 'service-client-1',
         sub: 'user-1',
         aud: 'service-client-1',
         token_use: 'access',
@@ -711,6 +823,7 @@ describe('downstream elevation grant token exchange', () => {
     it('rejects allowed-resource violations after subject authorization', async () => {
       const env = await createVerificationEnv();
       mocks.mockParseToken.mockReturnValue({
+        client_id: 'service-client-1',
         sub: 'user-1',
         aud: 'service-client-1',
         token_use: 'access',
@@ -727,6 +840,7 @@ describe('downstream elevation grant token exchange', () => {
     it('requires actor_token_type and supports only access tokens as actors', async () => {
       const env = await createVerificationEnv();
       mocks.mockParseToken.mockReturnValue({
+        client_id: 'service-client-1',
         sub: 'user-1',
         aud: 'service-client-1',
         token_use: 'access',
@@ -755,6 +869,7 @@ describe('downstream elevation grant token exchange', () => {
     it('rejects malformed actors and actors without kid or audience', async () => {
       const env = await createVerificationEnv();
       const subject = {
+        client_id: 'service-client-1',
         sub: 'user-1',
         aud: 'service-client-1',
         token_use: 'access',
@@ -825,6 +940,7 @@ describe('downstream elevation grant token exchange', () => {
       });
       mocks.mockParseToken
         .mockReturnValueOnce({
+          client_id: 'service-client-1',
           sub: 'user-1',
           token_use: 'access',
           jti: 'subject-jti-1',
@@ -1267,6 +1383,7 @@ describe('downstream elevation grant token exchange', () => {
         actor_token_type: 'urn:ietf:params:oauth:token-type:access_token',
       };
       const subject = {
+        client_id: 'service-client-1',
         sub: 'user-1',
         aud: 'service-client-1',
         token_use: 'access',
@@ -1327,6 +1444,7 @@ describe('downstream elevation grant token exchange', () => {
     it('fails closed when exchanged access token creation fails', async () => {
       const env = await createVerificationEnv();
       mocks.mockParseToken.mockReturnValue({
+        client_id: 'service-client-1',
         sub: 'user-1',
         aud: 'service-client-1',
         token_use: 'access',
@@ -1344,6 +1462,7 @@ describe('downstream elevation grant token exchange', () => {
     it('rejects invalid DPoP and binds valid DPoP to the exchanged token', async () => {
       const env = await createVerificationEnv();
       mocks.mockParseToken.mockReturnValue({
+        client_id: 'service-client-1',
         sub: 'user-1',
         aud: 'service-client-1',
         token_use: 'access',
@@ -1375,6 +1494,7 @@ describe('downstream elevation grant token exchange', () => {
     it('requires the subject token DPoP key during exchange', async () => {
       const env = await createVerificationEnv();
       mocks.mockParseToken.mockReturnValue({
+        client_id: 'service-client-1',
         sub: 'user-1',
         token_use: 'access',
         jti: 'subject-jti-1',
@@ -1423,6 +1543,7 @@ describe('downstream elevation grant token exchange', () => {
           allowed_subject_token_clients: [],
         });
         mocks.mockParseToken.mockReturnValue({
+          client_id: 'service-client-1',
           sub: 'user-1',
           token_use: 'access',
           jti: 'subject-jti-1',
@@ -1503,6 +1624,7 @@ describe('downstream elevation grant token exchange', () => {
         allowed_subject_token_clients: [],
       });
       mocks.mockParseToken.mockReturnValue({
+        client_id: 'service-client-1',
         sub: 'user-1',
         token_use: 'access',
         jti: 'subject-jti-1',
@@ -1539,6 +1661,7 @@ describe('downstream elevation grant token exchange', () => {
         ],
       });
       mocks.mockParseToken.mockReturnValue({
+        client_id: 'service-client-1',
         sub: 'user-1',
         token_use: 'access',
         jti: 'subject-jti-1',

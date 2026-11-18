@@ -1,3 +1,4 @@
+import { getClientCached } from '@authrim/ar-lib-core';
 import type { Context } from 'hono';
 import type { CIBARequestMetadata, Env } from '@authrim/ar-lib-core';
 import {
@@ -85,6 +86,8 @@ export async function cibaConformanceActionHandler(c: Context<{ Bindings: Env }>
     return c.json({ error: 'invalid_request' }, 400);
   }
 
+  if (action === 'allow' && !(await getClientCached(c, c.env, metadata.client_id)))
+    return c.json({ error: 'invalid_client' }, 400);
   const internalAction = action === 'allow' ? 'approve' : 'deny';
   const actionResponse = await store.fetch(
     new Request(`https://internal/${internalAction}`, {

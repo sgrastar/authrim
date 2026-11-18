@@ -7,6 +7,16 @@ import {
   type AgentDownscopeAuthDependencies,
 } from '../agent-downscope-auth';
 
+const clientState = vi.hoisted(() => ({
+  read: vi.fn(async () => ({ client_id: 'client-1', enabled: true })),
+}));
+vi.mock('@authrim/ar-lib-core', async (original) => ({
+  ...(await original<typeof import('@authrim/ar-lib-core')>()),
+  getClient: clientState.read,
+  resolveAuthCorePersistenceAdapterFromEnv: vi.fn(async () => ({})),
+  createAuthContextFromHono: vi.fn(() => ({ coreAdapter: {} })),
+}));
+
 const grant: AgentGrantContract = {
   grantId: 'grant-1',
   tenantId: 'tenant-1',
@@ -93,6 +103,13 @@ function dependencies(
 }
 
 describe('authenticateAgentDownscopeBearer', () => {
+  it('refuses a downscope token while its issuing client is disabled', async () => {
+    clientState.read.mockResolvedValueOnce(null as never);
+    expect(
+      await authenticateAgentDownscopeBearer(context(), 'token', 'tenant-1', dependencies())
+    ).toBeNull();
+  });
+
   it('returns a permission-bounded Agent admin context after all live fences pass', async () => {
     await expect(
       authenticateAgentDownscopeBearer(context(), 'token', 'tenant-1', dependencies())

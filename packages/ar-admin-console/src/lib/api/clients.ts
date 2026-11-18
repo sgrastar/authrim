@@ -1,3 +1,5 @@
+import { tenantScope } from '#lib/auth/tenant-scope.svelte.js';
+import { StepUpCancelledError, stepUpHeaders, withStepUp } from './admin-step-up';
 import { RP_FIELDS } from '#lib/pages/service-flows/advanced-settings.js';
 import { API_BASE_URL, adminFetch } from './admin-request';
 import { errorFromResponse } from './api-error';
@@ -7,6 +9,7 @@ import { errorFromResponse } from './api-error';
  * its id, its name and the redirect URIs registered for it.
  */
 export interface ClientOption {
+	enabled: boolean;
 	id: string;
 	name: string;
 	redirectUris: string[];
@@ -18,6 +21,7 @@ export interface ClientsClient {
 
 /** Only allowlisted public connection settings are projected; secrets and unknown extensions never enter a draft. */
 export interface ClientDetail extends ClientOption {
+	enableBlockers: string[];
 	applicationType: string | null;
 	authMethod: string | null;
 	pkce: boolean | null;
@@ -27,6 +31,7 @@ export interface ClientDetail extends ClientOption {
 	advanced?: Record<string, unknown>;
 }
 export interface ClientBasicUpdate {
+	enabled?: boolean;
 	client_name?: string;
 	redirect_uris?: string[];
 	token_endpoint_auth_method?: 'client_secret_basic' | 'client_secret_post' | 'private_key_jwt';
@@ -37,12 +42,14 @@ export interface ClientBasicUpdate {
 	require_pkce?: boolean;
 }
 export interface ClientSettingsClient {
+	setEnabled(id: string, enabled: boolean, expectedUpdatedAt: number): Promise<ClientDetail>;
 	get(id: string): Promise<ClientDetail>;
 	updateBasics(id: string, input: ClientBasicUpdate): Promise<ClientDetail>;
 }
 
 /** Creation is separate so list-only consumers and fakes need not implement writes. */
 export interface CreateClientInput {
+	enabled?: boolean;
 	client_name: string;
 	application_type: 'web' | 'spa' | 'native';
 	redirect_uris: string[];
@@ -64,7 +71,7 @@ export interface ClientCreationClient {
 
 export interface ClientMappingClient {
 	mapping(id: string): Promise<{ setId: string; pinned: boolean }>;
-	bindMapping(id: string, setId: string, idempotencyKey?: string): Promise<void>;
+	bindMapping(id: string, setId: string, idempotencyKey?: string): Promise<ClientDetail>;
 }
 
 /** The most clients one page of the list gives (the API's own limit is higher). */
@@ -81,6 +88,7 @@ export function clientFromRow(value: unknown): ClientOption | null {
 	if (!id) return null;
 	return {
 		id,
+		enabled: row.enabled !== false && row.enabled !== 0,
 		name: typeof row.client_name === 'string' && row.client_name.trim() ? row.client_name : id,
 		redirectUris: Array.isArray(row.redirect_uris)
 			? row.redirect_uris.filter((uri): uri is string => typeof uri === 'string')
@@ -99,6 +107,10 @@ function clientDetail(value: unknown): ClientDetail {
 		throw new Error('Invalid client detail response');
 	return {
 		id: row.client_id,
+		enabled: row.enabled !== false && row.enabled !== 0,
+		enableBlockers: Array.isArray(row.enable_blockers)
+			? row.enable_blockers.filter((v): v is string => typeof v === 'string')
+			: [],
 		updatedAt: typeof row.updated_at === 'number' ? row.updated_at : undefined,
 		jwksUri: typeof row.jwks_uri === 'string' ? row.jwks_uri : null,
 		jwks:
@@ -125,6 +137,23 @@ function clientDetail(value: unknown): ClientDetail {
 	};
 }
 
+/** Freeze the body, operation key and tenant across the evidence prompt. */
+function writeClient(path: string, method: 'POST' | 'PUT', body: string, idempotencyKey?: string) {
+	const tenantId = tenantScope.tenantId;
+	const operationKey = idempotencyKey ?? crypto.randomUUID();
+	return withStepUp(async (receipt) => {
+		if (tenantScope.tenantId !== tenantId) throw new StepUpCancelledError();
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/clients${path}`, {
+			method,
+			headers: { ...stepUpHeaders(receipt), 'Idempotency-Key': operationKey },
+			includeJsonContentType: true,
+			body
+		});
+		if (!response.ok) throw await errorFromResponse(response);
+		return response;
+	});
+}
+
 export const httpClients: ClientsClient &
 	ClientMappingClient &
 	ClientCreationClient &
@@ -136,38 +165,39 @@ export const httpClients: ClientsClient &
 		if (!response.ok) throw await errorFromResponse(response);
 		return clientDetail(await response.json());
 	},
-	async updateBasics(id, input) {
-		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/clients/${encodeURIComponent(id)}`,
-			{
-				method: 'PUT',
-				includeJsonContentType: true,
-				body: JSON.stringify({
-					client_name: input.client_name,
-					redirect_uris: input.redirect_uris,
-					token_endpoint_auth_method: input.token_endpoint_auth_method,
-					require_pkce: input.require_pkce,
-					expected_updated_at: input.expected_updated_at,
-					jwks_uri: input.jwks_uri,
-					jwks: input.jwks,
-					...Object.fromEntries(
-						RP_FIELDS.filter(({ key }) => input.advanced && key in input.advanced).map(
-							({ key }) => [key, input.advanced?.[key]]
-						)
-					)
-				})
-			}
+	async setEnabled(id, enabled, expectedUpdatedAt) {
+		const response = await writeClient(
+			`/${encodeURIComponent(id)}`,
+			'PUT',
+			JSON.stringify({ enabled, expected_updated_at: expectedUpdatedAt })
 		);
-		if (!response.ok) throw await errorFromResponse(response);
+		return clientDetail(await response.json());
+	},
+	async updateBasics(id, input) {
+		const response = await writeClient(
+			`/${encodeURIComponent(id)}`,
+			'PUT',
+			JSON.stringify({
+				enabled: input.enabled,
+				client_name: input.client_name,
+				redirect_uris: input.redirect_uris,
+				token_endpoint_auth_method: input.token_endpoint_auth_method,
+				require_pkce: input.require_pkce,
+				expected_updated_at: input.expected_updated_at,
+				jwks_uri: input.jwks_uri,
+				jwks: input.jwks,
+				...Object.fromEntries(
+					RP_FIELDS.filter(({ key }) => input.advanced && key in input.advanced).map(({ key }) => [
+						key,
+						input.advanced?.[key]
+					])
+				)
+			})
+		);
 		return clientDetail(await response.json());
 	},
 	async create(input) {
-		const response = await adminFetch(`${API_BASE_URL}/api/admin/clients`, {
-			method: 'POST',
-			includeJsonContentType: true,
-			body: JSON.stringify(input)
-		});
-		if (!response.ok) throw await errorFromResponse(response);
+		const response = await writeClient('', 'POST', JSON.stringify(input));
 		const client = object(object(await response.json()).client);
 		if (typeof client.client_id !== 'string' || !client.client_id)
 			throw new Error('Invalid client creation response');
@@ -195,29 +225,30 @@ export const httpClients: ClientsClient &
 			`${API_BASE_URL}/api/admin/clients/${encodeURIComponent(id)}`
 		);
 		if (!currentResponse.ok) throw await errorFromResponse(currentResponse);
-		const current = object(object(object(await currentResponse.json()).client).identity_mapping);
+		const row = object(object(await currentResponse.json()).client);
+		const current = object(row.identity_mapping);
+		if (typeof row.updated_at !== 'number' || !Number.isSafeInteger(row.updated_at))
+			throw new Error('A current client version is required');
 		if (current.fieldMappingVersionId) throw new Error('Pinned mappings are read-only');
-		if (current.fieldMappingSetId === setId) return;
-		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/clients/${encodeURIComponent(id)}`,
-			{
-				method: 'PUT',
-				...(idempotencyKey ? { headers: { 'Idempotency-Key': idempotencyKey } } : {}),
-				includeJsonContentType: true,
-				body: JSON.stringify({
-					identity_mapping: {
-						...(typeof current.destinationNamespace === 'string'
-							? { destinationNamespace: current.destinationNamespace }
-							: {}),
-						...(typeof current.sourceProfileId === 'string'
-							? { sourceProfileId: current.sourceProfileId }
-							: {}),
-						fieldMappingSetId: setId
-					}
-				})
-			}
+		if (current.fieldMappingSetId === setId) return clientDetail({ client: row });
+		const response = await writeClient(
+			`/${encodeURIComponent(id)}`,
+			'PUT',
+			JSON.stringify({
+				expected_updated_at: row.updated_at,
+				identity_mapping: {
+					...(typeof current.destinationNamespace === 'string'
+						? { destinationNamespace: current.destinationNamespace }
+						: {}),
+					...(typeof current.sourceProfileId === 'string'
+						? { sourceProfileId: current.sourceProfileId }
+						: {}),
+					fieldMappingSetId: setId
+				}
+			}),
+			idempotencyKey
 		);
-		if (!response.ok) throw await errorFromResponse(response);
+		return clientDetail(await response.json());
 	},
 	async list(signal) {
 		const response = await adminFetch(`${API_BASE_URL}/api/admin/clients?limit=${PAGE}`, {

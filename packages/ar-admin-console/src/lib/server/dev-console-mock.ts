@@ -646,6 +646,12 @@ export async function handleDevAdminMock(
 						...stored,
 						...body,
 						client_id: id,
+						enabled: body.enabled ?? stored?.enabled ?? true,
+						enable_blockers:
+							Array.isArray(body.redirect_uris ?? stored?.redirect_uris) &&
+							((body.redirect_uris ?? stored?.redirect_uris) as unknown[]).length
+								? []
+								: ['redirect_uris'],
 						redirect_uris: body.redirect_uris ?? stored?.redirect_uris ?? [],
 						updated_at: now
 					};
@@ -684,6 +690,8 @@ export async function handleDevAdminMock(
 				),
 				...MOCK_CLIENTS.map((client) => ({
 					client_id: client.id,
+					enabled: true,
+					enable_blockers: [],
 					client_name: client.name,
 					redirect_uris: client.redirectUris
 				}))

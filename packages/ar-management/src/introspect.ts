@@ -489,7 +489,7 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
   const authCtx = createAuthContextFromHono(c, tenantId);
   const clientRecord = await authCtx.repositories.client.findByClientId(client_id);
 
-  if (!clientRecord) {
+  if (!clientRecord || clientRecord.enabled === false) {
     return createErrorResponse(c, AR_ERROR_CODES.CLIENT_AUTH_FAILED);
   }
 
@@ -606,6 +606,8 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
       targetClientId === client_id
         ? clientRecord
         : await authCtx.repositories.client.findByClientId(targetClientId);
+    if (!targetClient || targetClient.enabled === false)
+      return c.json<IntrospectionResponse>({ active: false });
     const platform = normalizeDeviceSecretPlatform(deviceSecret.device_platform);
     const displayName = deviceSecret.device_name ?? '';
 
@@ -824,6 +826,7 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
   const tokenClient = tokenClientId
     ? await authCtx.repositories.client.findByClientId(tokenClientId)
     : null;
+  if (tokenClient?.enabled === false) return c.json<IntrospectionResponse>({ active: false });
   // A client that cannot be read (deleted) is not known to be given the user's id: judged as if pairwise.
   if (
     pairwiseTokenLacksReference(

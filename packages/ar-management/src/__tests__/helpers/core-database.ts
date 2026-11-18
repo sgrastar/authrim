@@ -45,8 +45,9 @@ export function insertOAuthClient(
         : JSON.stringify(input.identityMapping);
   db.prepare(
     `INSERT INTO oauth_clients (client_id, client_name, redirect_uris, grant_types, response_types,
-       tenant_id, identity_mapping, created_at, updated_at)
-     VALUES (?, ?, '[]', '[]', '[]', ?, ?, 1, 1)`
+       token_endpoint_auth_method, require_pkce, tenant_id, identity_mapping, created_at, updated_at)
+     VALUES (?, ?, '["https://example.com/callback"]', '["authorization_code"]', '["code"]',
+       'none', 1, ?, ?, 1, 1)`
   ).run(input.clientId, `Client ${input.clientId}`, input.tenantId, mapping);
 }
 

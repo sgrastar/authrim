@@ -11,6 +11,8 @@ import {
 } from '@authrim/ar-agent-access/core';
 import {
   buildRequestIssuerUrl,
+  getClient,
+  createAuthContextFromHono,
   AdminMachineAccessRepository,
   getPublicKeyByKid,
   hasAdminPermission,
@@ -212,6 +214,15 @@ export async function authenticateAgentDownscopeBearer(
       await dependencies.verifyJwt(c.env, c.req.raw, tenantId, token)
     );
     if (!claims || claims.tenant_id !== tenantId) return null;
+    if (
+      !(await getClient(
+        c.env,
+        tenantId,
+        claims.client_id,
+        createAuthContextFromHono(c, tenantId).coreAdapter
+      ))
+    )
+      return null;
     const grantTenantId = claims.bulk?.control_tenant_id ?? tenantId;
     if (
       claims.bulk &&

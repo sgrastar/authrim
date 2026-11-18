@@ -190,6 +190,8 @@ export const OAUTH_CLIENT_CLONE_COLUMNS = [
  * lifecycle. It must never be materialized as an ordinary OAuth client in another tenant.
  */
 export const OAUTH_CLIENT_NON_CLONE_COLUMNS: ReadonlySet<string> = new Set([
+  // Destination trust is activated separately; ordinary clones are drafts.
+  'enabled',
   'agent_access_registration_mode',
   'agent_access_expires_at',
   'agent_access_last_used_at',
@@ -1195,12 +1197,19 @@ async function cloneClients(
     )
   ).filter((client) => String(client.client_id) !== loginUiClientId);
   const clientIds = new Set(clients.map((client) => String(client.client_id)));
-  const columns = ['tenant_id', ...OAUTH_CLIENT_CLONE_COLUMNS, 'created_at', 'updated_at'];
+  const columns = [
+    'enabled',
+    'tenant_id',
+    ...OAUTH_CLIENT_CLONE_COLUMNS,
+    'created_at',
+    'updated_at',
+  ];
   const placeholders = columns.map(() => '?').join(', ');
   for (const client of clients) {
     await target.execute(
       `INSERT INTO oauth_clients (${columns.join(', ')}) VALUES (${placeholders})`,
       [
+        0,
         targetTenantId,
         ...OAUTH_CLIENT_CLONE_COLUMNS.map((column) => {
           if (!includeCredentials && CLIENT_CREDENTIAL_COLUMNS.has(column)) return null;

@@ -1,3 +1,4 @@
+import { getClientCached } from '@authrim/ar-lib-core';
 /**
  * Device Verification API Handler
  * RFC 8628: Device User Authorization (Headless API)
@@ -173,6 +174,9 @@ export async function deviceVerifyApiHandler(c: Context<{ Bindings: Env }>) {
 
     // Handle approval or denial
     if (approve) {
+      if (!(await getClientCached(c, c.env, metadata.client_id)))
+        return c.json({ error: 'invalid_client' }, 400);
+
       if ((userId || sub) && !mockAuthEnabled) {
         log.warn('Ignoring caller-supplied device approval subject', {
           action: 'approval_subject_ignored',

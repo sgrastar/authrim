@@ -1,6 +1,20 @@
 import type { jaServiceFlows } from './ja';
 
 export const enServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
+	'sf.rp.missing.grant_types': 'Allowed grants',
+	'sf.rp.enableRequires': 'Settings required to enable',
+	'sf.rp.disabledNote':
+		'While disabled, sign-in and token use are unavailable. Revocation and logout remain available.',
+	'sf.rp.missing.redirect_uris': 'Callback URLs',
+	'sf.rp.missing.jwks': 'Public signing keys or JWKS URL',
+	'sf.rp.missing.client_secret': 'Client secret',
+	'sf.rp.missing.require_pkce': 'Required PKCE',
+	'sf.rp.missing.token_endpoint_auth_method': 'Client authentication compatible with the grants',
+	'sf.rp.missing.response_types': 'Response types compatible with the grants',
+	'sf.rp.missing.sector_identifier_uri': 'Pairwise identifier sector',
+	'sf.rp.missing.backchannel_client_notification_endpoint': 'CIBA notification endpoint',
+	'sf.rp.missing.configuration': 'Client configuration',
+
 	'sf.rp.callbacksMissing':
 		'No callback URL has been added, so sign-in is not available yet. Add a callback URL in the connection details.',
 	'sf.draft.skip': 'Skip for now',

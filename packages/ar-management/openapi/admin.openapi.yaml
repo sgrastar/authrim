@@ -1952,16 +1952,21 @@ paths:
       requestBody:
         $ref: '#/components/requestBodies/AdminClientCreate'
       responses:
+        '403':
+          $ref: '#/components/responses/AdminStepUpRequired'
         '201':
           $ref: '#/components/responses/AdminClient'
         '400':
-          $ref: '#/components/responses/Error'
+          $ref: '#/components/responses/ClientConfigurationRequiredToEnable'
         '404':
           $ref: '#/components/responses/Error'
         '503':
           $ref: '#/components/responses/Error'
       description: >-
-        Create a client in the current tenant. Public SPA/native clients use none with PKCE.
+        Create a client in the current tenant. enabled defaults to true (client.trust.activate, L2).
+        enabled=false creates a draft without step-up. Drafts still validate unsafe values.
+        Enabled clients require complete effective settings; missing settings return 400
+        client_configuration_required_to_enable with missing field names. Public SPA/native clients use none with PKCE.
         private_key_jwt registers public keys only and never generates or returns a client secret.
         An inline public JWKS or public HTTPS JWKS URL must supply usable signing keys. Private and
         symmetric material, duplicate kid values and incompatible key algorithms are refused.
@@ -2010,10 +2015,12 @@ paths:
       requestBody:
         $ref: '#/components/requestBodies/AdminClientUpdate'
       responses:
+        '403':
+          $ref: '#/components/responses/AdminStepUpRequired'
         '200':
           $ref: '#/components/responses/AdminClientMutation'
         '400':
-          $ref: '#/components/responses/Error'
+          $ref: '#/components/responses/ClientConfigurationRequiredToEnable'
         '404':
           $ref: '#/components/responses/Error'
         '409':
@@ -2039,7 +2046,19 @@ paths:
                   operation_id:
                     type: string
       description: >-
-        Partially update a client in the current tenant. Requires admin:clients:write in addition to
+        Partially update a client in the current tenant. enabled activates or disables it.
+        Activating and changes to an enabled client's trust settings use client.trust.activate (L2).
+        Disabling alone uses client.trust.disable (L1); disabling with trust changes still uses L2.
+        Display-only edits and drafts are L0; logout destinations and session-required flags use L2
+        even while disabled. Every update uses compare-and-swap against the current DB version.
+        Complete effective settings are required on activation and when an enabled client's trust
+        changes. Display-only edits, unchanged trust settings and disabling do not revalidate
+        completeness, so legacy incomplete enabled clients remain editable.
+        Disabled clients cannot sign in or use tokens through Authrim, including introspection,
+        UserInfo, refresh and token exchange. Revocation and logout remain available. Disabling
+        does not revoke stored tokens or sessions; re-enabling restores unexpired tokens. Issued
+        JWT signatures and expiration do not change: external resource servers using only local
+        JWT verification need introspection or another status check to observe this state. Requires admin:clients:write in addition to
         the declared client update permission. Omitted fields are preserved. expected_updated_at,
         when supplied, must match the raw updated_at from GET; stale or concurrent changes return
         409 and do not update the client row. 404 also answers a client that does not exist.
@@ -2078,11 +2097,13 @@ paths:
         - $ref: '#/components/parameters/TenantIdHeader'
         - $ref: '#/components/parameters/Id'
       responses:
+        '403':
+          $ref: '#/components/responses/AdminStepUpRequired'
         '200':
           $ref: '#/components/responses/AdminDeleteResult'
       description: >-
         Delete Client in the Clients area. The operation changes tenant state and should be
-        protected by the documented admin authorization and audit controls.
+        protected by client.trust.disable (L1), including bulk deletion.
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -2096,10 +2117,12 @@ paths:
       requestBody:
         $ref: '#/components/requestBodies/AdminClientsBulkDelete'
       responses:
+        '403':
+          $ref: '#/components/responses/AdminStepUpRequired'
         '200':
           $ref: '#/components/responses/AdminClientsBulkDelete'
         '400':
-          $ref: '#/components/responses/Error'
+          $ref: '#/components/responses/ClientConfigurationRequiredToEnable'
       description: >-
         Delete Bulk in the Clients area. The operation changes tenant state and should be protected
         by the documented admin authorization and audit controls.
@@ -2111,6 +2134,7 @@ paths:
       tags:
         - Clients
       summary: Regenerate a confidential client's secret.
+      # Active clients also require client.trust.activate (L2); drafts use client.secret.rotate (L1).
       parameters:
         - $ref: '#/components/parameters/TenantIdHeader'
         - $ref: '#/components/parameters/Id'
@@ -2123,7 +2147,26 @@ paths:
         '200':
           $ref: '#/components/responses/AdminClientRegeneratedSecret'
         '400':
-          $ref: '#/components/responses/Error'
+          $ref: '#/components/responses/ClientConfigurationRequiredToEnable'
+        '409':
+          description: The client changed after the secret rotation read its configuration.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - error
+                  - reason
+                properties:
+                  error:
+                    type: string
+                    enum: [conflict]
+                  reason:
+                    type: string
+                    enum: [version_conflict]
+              example:
+                error: conflict
+                reason: version_conflict
       description: >-
         Regenerate secret for Client in the Clients area. The request body is JSON unless the
         detailed schema for this operation states otherwise.
@@ -10235,7 +10278,7 @@ paths:
         '401':
           $ref: '#/components/responses/Error'
         '403':
-          $ref: '#/components/responses/Error'
+          $ref: '#/components/responses/AdminStepUpRequired'
         '500':
           $ref: '#/components/responses/Error'
       security:
@@ -10248,7 +10291,11 @@ paths:
       summary: Upsert a client trust policy.
       description: >-
         Creates or updates the authoritative trust settings for an OIDC client or SAML SP.
-        An OIDC target must already exist in the current tenant.
+        An OIDC target must already exist in the current tenant. Enabled OIDC clients require
+        client.trust.activate (L2), bound to their current version and effective trust settings.
+        Changing an enabled OIDC client's trust flags requires complete client settings;
+        display-only policy edits and unchanged trust flags do not revalidate completeness.
+        A concurrent change returns 409 version_conflict without saving the policy.
       requestBody:
         required: true
         content:
@@ -10279,6 +10326,8 @@ paths:
                 is_active:
                   type: boolean
       responses:
+        '409':
+          $ref: '#/components/responses/Error'
         '200':
           description: Updated client trust policies.
           content:
@@ -10297,7 +10346,7 @@ paths:
         '401':
           $ref: '#/components/responses/Error'
         '403':
-          $ref: '#/components/responses/Error'
+          $ref: '#/components/responses/AdminStepUpRequired'
         '404':
           $ref: '#/components/responses/Error'
         '500':
@@ -45755,6 +45804,22 @@ components:
                   - directory_connectors
                   - external_identity_providers
                   - saml_metadata_url
+    ClientConfigurationRequiredToEnable:
+      description: Invalid settings, or client_configuration_required_to_enable with missing field names on enabled creation, activation, or a trust change while enabled.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [error]
+            properties:
+              error:
+                type: string
+              error_description:
+                type: string
+              missing:
+                type: array
+                items:
+                  type: string
     AdminStepUpRequired:
       description: >-
         The operation needs admin step-up (unless the platform turned
@@ -56102,6 +56167,21 @@ components:
       type: object
       additionalProperties: true
       properties:
+        enabled:
+          type: boolean
+          default: true
+          description: Drafts cannot sign in or use existing tokens through Authrim; revocation and logout remain available. Activation requires complete configuration and L2.
+
+        backchannel_token_delivery_mode:
+          type: [string, 'null']
+          enum: [poll, ping, push, null]
+        backchannel_client_notification_endpoint:
+          type: [string, 'null']
+          format: uri
+        backchannel_authentication_request_signing_alg:
+          type: [string, 'null']
+        backchannel_user_code_parameter:
+          type: boolean
         client_name:
           type: string
           minLength: 1
@@ -56448,6 +56528,13 @@ components:
             - grant_types
             - response_types
           properties:
+            enable_blockers:
+              type: array
+              readOnly: true
+              description: Missing settings that prevent activation; no secret values.
+              items:
+                type: string
+
             client_id:
               type: string
             client_secret:

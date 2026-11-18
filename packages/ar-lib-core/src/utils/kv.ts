@@ -961,12 +961,14 @@ export async function getClient(
   env: Env,
   tenantId: string,
   clientId: string,
-  coreDbSource: DatabaseSource
+  coreDbSource: DatabaseSource,
+  options: { includeDisabled?: boolean } = {}
 ): Promise<ClientMetadata | null> {
   // Client metadata is a security boundary for redirect URIs, secrets, and
   // revocation. Always read it from D1 so admin changes take effect immediately.
   const coreAdapter: DatabaseAdapter = ensureDatabaseAdapter(coreDbSource, 'client-cache');
   const result = await coreAdapter.queryOne<{
+    enabled: number;
     client_id: string;
     client_secret_hash: string | null;
     client_name: string | null;
@@ -1063,13 +1065,14 @@ export async function getClient(
     updated_at: number;
   }>('SELECT * FROM oauth_clients WHERE tenant_id = ? AND client_id = ?', [tenantId, clientId]);
 
-  if (!result) {
+  if (!result || (!options.includeDisabled && result.enabled === 0)) {
     return null;
   }
 
   // Step 3: Convert D1 result to client metadata format
   // Note: ClientMetadata has many optional properties; we construct the subset stored in D1
   const clientData: ClientMetadata = {
+    enabled: result.enabled !== 0,
     client_id: result.client_id,
     client_secret_hash: result.client_secret_hash ?? undefined,
     client_name: result.client_name ?? undefined,

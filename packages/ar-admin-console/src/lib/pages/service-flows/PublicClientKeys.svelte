@@ -6,7 +6,7 @@
 	import Callout from '#lib/ui/patterns/Callout.svelte';
 	import type { RpForm } from './connection-model';
 	import { publicKeyProblem } from './public-client-keys';
-	let { form = $bindable() }: { form: RpForm } = $props();
+	let { form = $bindable(), allowEmpty = false }: { form: RpForm; allowEmpty?: boolean } = $props();
 </script>
 
 <Callout tone="info">{t('cs.live.publicOnly')}</Callout>
@@ -28,14 +28,14 @@
 		maxlength={65536}
 		value={form.publicJwks ?? ''}
 		oninput={(event) => (form.publicJwks = event.currentTarget.value)}
-		error={publicKeyProblem(form)}
+		error={publicKeyProblem(form, allowEmpty)}
 	/>
 {:else}
 	<TextRow
 		label={t('cs.row.jwksUri')}
 		value={form.jwksUri ?? ''}
 		oninput={(event) => (form.jwksUri = event.currentTarget.value)}
-		error={publicKeyProblem(form)}
+		error={publicKeyProblem(form, allowEmpty)}
 		placeholder="https://app.example.com/.well-known/jwks.json"
 		maxlength={2048}
 	/>

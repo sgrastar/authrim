@@ -472,7 +472,11 @@ adminNoticesRouter.post('/', async (c) => {
         c as unknown as Context<{ Bindings: Env }>,
         requestTenantId
       );
-      if (!(await getClient(c.env, requestTenantId, input.client_id ?? '', coreAdapter))) {
+      if (
+        !(await getClient(c.env, requestTenantId, input.client_id ?? '', coreAdapter, {
+          includeDisabled: true,
+        }))
+      ) {
         return invalid(c, 'client_id', 'No such client in this tenant');
       }
     }

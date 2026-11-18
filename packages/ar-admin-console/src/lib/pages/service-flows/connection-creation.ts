@@ -76,6 +76,7 @@ export function rpCreateInput(form: RpForm): CreateClientInput {
 		throw new Error(t('sf.create.invalid'));
 	}
 	return {
+		enabled: false,
 		client_name: form.name.trim(),
 		// The Admin API accepts SPA separately from native redirect and browser policies.
 		application_type: form.appType,
@@ -85,7 +86,7 @@ export function rpCreateInput(form: RpForm): CreateClientInput {
 		scope: 'openid',
 		token_endpoint_auth_method: method,
 		require_pkce: form.pkce,
-		...(method === 'private_key_jwt' ? publicKeyInput(form) : {})
+		...(method === 'private_key_jwt' ? publicKeyInput(form, true) : {})
 	};
 }
 

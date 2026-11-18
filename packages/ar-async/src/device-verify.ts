@@ -1,3 +1,4 @@
+import { getClientCached } from '@authrim/ar-lib-core';
 /**
  * Device Verification Handler (Minimal)
  * RFC 8628: Device User Authorization
@@ -188,6 +189,8 @@ async function handleVerificationSubmission(c: Context<{ Bindings: Env }>) {
     const mockUserId = 'user_' + Date.now();
     const mockSub = 'mock-user@example.com';
 
+    if (!(await getClientCached(c, c.env, metadata.client_id)))
+      return c.json({ error: 'invalid_client' }, 400);
     const approveResponse = await deviceCodeStore.fetch(
       new Request('https://internal/approve', {
         method: 'POST',

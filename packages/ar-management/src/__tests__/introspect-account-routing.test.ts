@@ -280,6 +280,32 @@ beforeEach(() => {
 });
 
 describe('introspection account state (account database)', () => {
+  it('refuses an introspection caller while that client is disabled', async () => {
+    metadataDb.clients.set('client-a', {
+      client_id: 'client-a',
+      client_secret_hash: 'hash_secret-a',
+      enabled: 0,
+    });
+    const result = await introspectToken(accessTokenPayload());
+    expect(result.status).toBe(401);
+    expect(result.body).toMatchObject({ error: 'invalid_client' });
+  });
+  it('reports an existing token inactive while its issuing client is disabled', async () => {
+    metadataDb.clients.set('client-a', {
+      client_id: 'client-a',
+      client_secret_hash: 'hash_secret-a',
+      enabled: 0,
+    });
+    metadataDb.clients.set('client-rs', {
+      client_id: 'client-rs',
+      client_secret_hash: 'hash_secret-rs',
+    });
+    const result = await introspectToken(accessTokenPayload(), {
+      client_id: 'client-rs',
+      client_secret: 'secret-rs',
+    });
+    expect(result.body).toEqual({ active: false });
+  });
   it('answers active for an active account read from the account database', async () => {
     const { status, body } = await introspectToken(accessTokenPayload());
     expect(status).toBe(200);

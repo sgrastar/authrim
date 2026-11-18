@@ -4,6 +4,7 @@ import type { Env, IntrospectionResponse } from '@authrim/ar-lib-core';
 import { DOWNSTREAM_GRANT_AUTHORIZATION_DETAIL_TYPE } from '@authrim/ar-lib-core';
 
 const mocks = vi.hoisted(() => ({
+  client: vi.fn(),
   getPublicKeyByKid: vi.fn(),
   verifyToken: vi.fn(),
   findById: vi.fn(),
@@ -17,6 +18,7 @@ vi.mock('@authrim/ar-lib-core', async () => {
     await vi.importActual<typeof import('@authrim/ar-lib-core')>('@authrim/ar-lib-core');
   return {
     ...actual,
+    getClientCached: mocks.client,
     getPublicKeyByKid: mocks.getPublicKeyByKid,
     verifyToken: mocks.verifyToken,
     introspectTokenFromContext: mocks.introspectTokenFromContext,
@@ -39,8 +41,9 @@ function encode(value: Record<string, unknown>) {
   return Buffer.from(JSON.stringify(value)).toString('base64url');
 }
 
-function grantPayload(redactionLevel: 'masked' | 'raw' = 'masked') {
+function grantPayload(redactionLevel: 'summary_only' | 'masked' | 'raw' = 'masked') {
   return {
+    client_id: 'service-client',
     authorization_details: [
       {
         type: DOWNSTREAM_GRANT_AUTHORIZATION_DETAIL_TYPE,
@@ -156,6 +159,7 @@ describe('protected customer profile default adapters', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     vi.clearAllMocks();
+    mocks.client.mockResolvedValue({ client_id: 'service-client', enabled: true });
     mocks.getPublicKeyByKid.mockResolvedValue({ type: 'public' });
     mocks.verifyToken.mockImplementation(async (value: string) => {
       const [, payload] = value.split('.');
@@ -171,6 +175,20 @@ describe('protected customer profile default adapters', () => {
       accountId: 'user-1',
     });
   });
+
+  it.each(['masked', 'summary_only'] as const)(
+    'refuses an existing %s token while its client is disabled',
+    async (redaction) => {
+      mocks.client.mockResolvedValue(null);
+      const response = await createApp().request(
+        'http://localhost/profiles/user-1',
+        { headers: { Authorization: `Bearer ${token(grantPayload(redaction))}` } },
+        createEnv()
+      );
+      expect(response.status).toBe(403);
+      expect(mocks.findById).not.toHaveBeenCalled();
+    }
+  );
 
   it('verifies the token key and projects canonical PII through the default loader', async () => {
     const response = await createApp().request(

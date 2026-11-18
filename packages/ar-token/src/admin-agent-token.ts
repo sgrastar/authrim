@@ -67,10 +67,10 @@ async function touchSelfServiceClient(
   const now = Date.now();
   try {
     await createAuthContextFromHono(c, tenantId).coreAdapter.execute(
-      `UPDATE oauth_clients SET agent_access_last_used_at = ?, agent_access_expires_at = ?,
-         updated_at = ? WHERE tenant_id = ? AND client_id = ?
+      `UPDATE oauth_clients SET agent_access_last_used_at = ?, agent_access_expires_at = ?
+         WHERE tenant_id = ? AND client_id = ?
          AND agent_access_registration_mode IS NOT NULL`,
-      [now, now + 30 * 24 * 60 * 60 * 1000, now, tenantId, client.client_id]
+      [now, now + 30 * 24 * 60 * 60 * 1000, tenantId, client.client_id]
     );
   } catch {
     // The inactivity marker is lifecycle metadata. Never turn an already-rotated or already-issued
