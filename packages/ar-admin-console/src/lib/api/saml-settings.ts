@@ -211,8 +211,10 @@ export const httpSamlSettings: SamlSettingsClient = {
 			method: 'POST',
 			json: { certificate }
 		}),
+	// Not step-up protected on the server today; the same tenant-bound path keeps it so should
+	// the server start asking, and never exports from a tenant switched to meanwhile.
 	exportDrBundle: (passphrase) =>
-		send(`${BASE}/local-signing/dr-bundle`, { method: 'POST', json: { passphrase } }),
+		protectedWrite(`${BASE}/local-signing/dr-bundle`, 'POST', { passphrase }),
 	importDrBundle: (bundle, passphrase) =>
 		protectedWrite(`${BASE}/local-signing/dr-bundle/import`, 'POST', { bundle, passphrase })
 };

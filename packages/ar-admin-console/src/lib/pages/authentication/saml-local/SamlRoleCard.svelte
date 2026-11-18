@@ -364,18 +364,20 @@
 						{/if}
 
 						{#if canEdit && row.slot !== 'active'}
+							{@const targeted = !!(row.reference?.kid || row.reference?.keyRef)}
+							<!-- Without a key ID the server would act on whichever candidate comes first. -->
 							<div class="slot__actions">
 								{#if row.slot === 'next'}
 									<Button
 										size="sm"
-										disabled={busy}
+										disabled={busy || !targeted}
 										onclick={() => (confirming = { action: 'promote_next', row })}
 										>{t('sl.action.promoteNext')}</Button
 									>
 									<Button
 										size="sm"
 										variant="ghost"
-										disabled={busy}
+										disabled={busy || !targeted}
 										onclick={() => (confirming = { action: 'delete_next', row })}
 										>{t('sl.action.deleteNext')}</Button
 									>
@@ -383,7 +385,7 @@
 									<Button
 										size="sm"
 										variant="ghost"
-										disabled={busy}
+										disabled={busy || !targeted}
 										onclick={() => (confirming = { action: 'retire_backup', row })}
 										>{t('sl.action.retireBackup')}</Button
 									>

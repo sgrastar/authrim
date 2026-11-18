@@ -172,15 +172,21 @@ describe('fake SAML settings', () => {
 
 describe('certificate fingerprints', () => {
 	it('hashes the DER bytes of a PEM certificate', async () => {
-		const pem = '-----BEGIN CERTIFICATE-----\nMAEC\nAw==\n-----END CERTIFICATE-----';
-		expect([...derOfPem(pem)!]).toEqual([0x30, 1, 2, 3]);
+		// SEQUENCE of length 2: 30 02 01 02 (plus the stated content).
+		const pem = '-----BEGIN CERTIFICATE-----\nMAIB\nAg==\n-----END CERTIFICATE-----';
+		expect([...derOfPem(pem)!]).toEqual([0x30, 2, 1, 2]);
 		const prints = await certificateFingerprints(pem);
-		// SHA-256 of 30 01 02 03.
+		// SHA-256 of 30 02 01 02.
 		expect(prints?.sha256).toBe(
-			'6A:35:4D:83:27:00:C1:AB:B0:63:13:2F:E1:C0:64:98:6E:15:FB:94:7C:A1:33:02:5E:99:49:15:34:35:0D:A6'
+			'B7:E3:00:B0:2C:78:74:CC:F9:E9:95:C6:58:51:03:85:2F:84:94:4C:4A:A6:12:E6:BF:67:25:9C:82:ED:7B:A0'
 		);
 		expect(prints?.sha1.split(':')).toHaveLength(20);
 		expect(derOfPem('not a certificate')).toBeNull();
+		// Two certificates in one text, or a header that does not cover the bytes: not one certificate.
+		expect(derOfPem(`${pem}\n${pem}`)).toBeNull();
+		expect(
+			derOfPem('-----BEGIN CERTIFICATE-----\nMAEC\nAw==\n-----END CERTIFICATE-----')
+		).toBeNull();
 		expect(await certificateFingerprints('')).toBeNull();
 	});
 });

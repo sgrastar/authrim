@@ -265,16 +265,36 @@ export function downloadText(filename: string, contents: string, type: string): 
 	URL.revokeObjectURL(url);
 }
 
-/** The DER bytes of a PEM certificate, or null when it is not one. */
+/** The length of a DER SEQUENCE's content as its header states it, with the header's size. */
+function derSequenceLength(der: Uint8Array): { header: number; length: number } | null {
+	if (der[0] !== 0x30 || der.length < 2) return null;
+	const first = der[1];
+	if (first < 0x80) return { header: 2, length: first };
+	const count = first & 0x7f;
+	if (count === 0 || count > 4 || der.length < 2 + count) return null;
+	let length = 0;
+	for (let i = 0; i < count; i++) length = length * 256 + der[2 + i];
+	return { header: 2 + count, length };
+}
+
+/**
+ * The DER bytes of a PEM certificate, or null when it is not exactly one certificate: the text
+ * must hold one CERTIFICATE block (so a fingerprint is never computed over two concatenated
+ * certificates, which no partner would reproduce), and the ASN.1 SEQUENCE must cover the bytes.
+ */
 export function derOfPem(pem: string): Uint8Array<ArrayBuffer> | null {
-	const body = pem.replace(/-----(BEGIN|END)[^-]+-----/g, '').replace(/\s+/g, '');
+	const blocks = [
+		...pem.matchAll(/-----BEGIN CERTIFICATE-----([\s\S]*?)-----END CERTIFICATE-----/g)
+	];
+	if (blocks.length !== 1) return null;
+	const body = blocks[0][1].replace(/\s+/g, '');
 	if (!body) return null;
 	try {
 		const binary = atob(body);
 		const der = new Uint8Array(new ArrayBuffer(binary.length));
 		for (let i = 0; i < binary.length; i++) der[i] = binary.charCodeAt(i);
-		// A certificate is an ASN.1 SEQUENCE; anything else that happens to be base64 is not one.
-		return der[0] === 0x30 ? der : null;
+		const sequence = derSequenceLength(der);
+		return sequence && sequence.header + sequence.length === der.length ? der : null;
 	} catch {
 		return null;
 	}

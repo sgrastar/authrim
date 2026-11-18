@@ -51,7 +51,11 @@ export function fakeCertificate(input: {
 	bits?: number;
 	dnsNames?: string[];
 }): SamlSigningKeyReference {
-	const pem = `-----BEGIN CERTIFICATE-----\n${btoa(`0fake-certificate:${input.kid}`)}\n-----END CERTIFICATE-----`;
+	// A well-formed DER SEQUENCE around a marker (so the console's PEM checks and fingerprints
+	// work), not a real certificate: the preview comes from the table above.
+	const content = new TextEncoder().encode(`fake-certificate:${input.kid}`);
+	const der = new Uint8Array([0x30, 0x81, content.length, ...content]);
+	const pem = `-----BEGIN CERTIFICATE-----\n${btoa(String.fromCharCode(...der))}\n-----END CERTIFICATE-----`;
 	previews.set(pem, {
 		certificate: pem,
 		subject: input.subject,
