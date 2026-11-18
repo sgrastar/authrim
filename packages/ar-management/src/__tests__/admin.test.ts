@@ -6038,6 +6038,17 @@ describe('Admin API Handlers', () => {
             created_at: Date.now(),
             updated_at: Date.now(),
           },
+          {
+            client_id: 'login-ui-client',
+            client_name: 'Login UI',
+            description:
+              'System-managed public OAuth client used by the built-in Authrim Login UI.',
+            redirect_uris: '["https://login.example.com/callback"]',
+            grant_types: '["authorization_code"]',
+            response_types: '["code"]',
+            created_at: Date.now(),
+            updated_at: Date.now(),
+          },
         ],
       });
 
@@ -6048,9 +6059,14 @@ describe('Admin API Handlers', () => {
 
       await adminClientsListHandler(c);
 
+      // The clients Authrim registered for itself are marked; the tenant's own are not.
       expect(c.json).toHaveBeenCalledWith(
         expect.objectContaining({
-          clients: expect.any(Array),
+          clients: [
+            expect.objectContaining({ client_id: 'client-1', system_managed: false }),
+            expect.objectContaining({ client_id: 'client-2', system_managed: false }),
+            expect.objectContaining({ client_id: 'login-ui-client', system_managed: true }),
+          ],
           pagination: expect.objectContaining({
             page: 1,
             limit: 10,
