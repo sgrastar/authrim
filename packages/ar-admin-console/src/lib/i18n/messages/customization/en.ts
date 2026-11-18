@@ -303,5 +303,28 @@ export const enCustomization: Record<keyof typeof jaCustomization, string> = {
 	'th.bg.img.sunlit-japanese-forest': 'Sunlit forest',
 	'th.bg.img.library-walnut-desk-evening': 'Library walnut desk, evening',
 	'th.bg.img.library-walnut-desk-evening-wide': 'Library walnut desk, evening (wide)',
-	'th.bg.img.sunlit-library-desk': 'Sunlit library desk'
+	'th.bg.img.sunlit-library-desk': 'Sunlit library desk',
+	'lu.page': 'Login UI',
+	'lu.page.desc':
+		'The languages the sign-in screens offer. The look (template, colours, images, texts) is a theme’s, edited under Branding.',
+	'lu.shown': 'Languages shown',
+	'lu.shown.desc':
+		'The languages offered in the language switch on the sign-in screens. A browser whose language is among them sees the screens in it.',
+	'lu.default': 'Default language',
+	'lu.default.desc':
+		'Used when neither the browser’s language nor a saved choice matches a language shown. Chosen from the languages shown.',
+	'lu.default.note': 'default',
+	'lu.first': 'Languages listed first',
+	'lu.first.desc':
+		'With many languages, the ones listed first in the language switch (up to {max}). Left unchosen, the most spoken of the languages shown come first.',
+	'lu.first.needsMore': 'Available when {n} or more languages are shown.',
+	'lu.first.auto': 'Choose automatically (most spoken first)',
+	'lu.first.auto.desc': 'The most spoken of the languages shown, in that order. Now: {list}.',
+	'lu.first.autoValue': 'Automatic: {list}',
+	'lu.englishNames': 'Also show English names',
+	'lu.englishNames.desc':
+		'The language switch shows e.g. “Japanese (日本語)”. Names that match are shown once.',
+	'lu.display': 'How languages are shown',
+	'lu.conflict':
+		'Another administrator saved first. The latest values were loaded; check your changes and save again.'
 };
