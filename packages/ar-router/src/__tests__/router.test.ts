@@ -765,6 +765,34 @@ describe('Router Worker', () => {
     });
 
     describe('OP_MANAGEMENT routes', () => {
+      it('should route GET /api/auth/tenant-status to OP_MANAGEMENT, not OP_AUTH', async () => {
+        const req = new Request('https://acme.example.com/api/auth/tenant-status');
+        await app.fetch(req, mockEnv);
+
+        expect(mockEnv.OP_MANAGEMENT.fetch).toHaveBeenCalledTimes(1);
+        expect(mockEnv.OP_AUTH.fetch).not.toHaveBeenCalled();
+        const proxied = mockEnv.OP_MANAGEMENT.fetch.mock.calls[0][0] as Request;
+        expect(new URL(proxied.url).pathname).toBe('/api/auth/tenant-status');
+        expect(proxied.headers.get('X-Authrim-Forwarded-Host')).toBe('acme.example.com');
+      });
+
+      it('should not answer a tenant-status call relayed by the Login UI', async () => {
+        const req = new Request('https://gone.example.com/api/auth/tenant-status', {
+          headers: {
+            'X-Authrim-Ui-Proxy': 'login-ui',
+            'X-Authrim-Forwarded-Host': 'gone.example.com',
+            'X-Authrim-Original-Host': 'gone.example.com',
+          },
+        });
+        // Only the Login UI's private entrypoint keeps the relay marker; the public one strips it.
+        const res = await createLoginUiBackendEntrypoint(mockEnv).fetch(req);
+
+        expect(res.status).toBe(200);
+        expect(await res.json()).toEqual({ status: 'unavailable' });
+        expect(res.headers.get('Cache-Control')).toBe('no-store');
+        expect(mockEnv.OP_MANAGEMENT.fetch).not.toHaveBeenCalled();
+      });
+
       it('should route POST /register to OP_MANAGEMENT', async () => {
         const req = new Request('https://example.com/register', { method: 'POST' });
         await app.fetch(req, mockEnv);
