@@ -18,13 +18,26 @@ interface PackedIndexRow {
   origin: string;
   partial: number;
   sql: string | null;
-  columns: Array<{
-    seqno: number;
-    name: string | null;
-    coll: string;
-    descending: number;
-    key: number;
-  }>;
+  /**
+   * An array, or the same array as JSON text. The query asks for an array (see readSchemas); text
+   * is what a SQLite from 3.54.1 on embeds when a scalar subquery's JSON loses its subtype, and is
+   * still accepted so that a reader in front of an older query does not fail.
+   */
+  columns: PackedIndexColumnRow[] | string;
+}
+
+interface PackedIndexColumnRow {
+  seqno: number;
+  name: string | null;
+  coll: string;
+  descending: number;
+  key: number;
+}
+
+function unpackIndexColumns(columns: PackedIndexColumnRow[] | string): PackedIndexColumnRow[] {
+  const unpacked: unknown = typeof columns === 'string' ? JSON.parse(columns) : columns;
+  if (!Array.isArray(unpacked)) throw new Error('backup_schema_invalid_index_columns');
+  return unpacked as PackedIndexColumnRow[];
 }
 
 interface PackedForeignKeyRow {
@@ -86,7 +99,7 @@ function unpackSchema(packed: PackedSchemaRow): BackupSchemaTable {
       origin: index.origin,
       partial: index.partial === 1,
       sql: index.sql,
-      columns: index.columns.map((column) => ({
+      columns: unpackIndexColumns(index.columns).map((column) => ({
         position: column.seqno,
         name: column.name,
         collation: column.coll ?? 'BINARY',
@@ -116,6 +129,8 @@ async function readSchemas(
   if (!tables.length) return [];
   if (tables.some((table) => !/^[a-z][a-z0-9_]*$/.test(table)))
     throw new Error('backup_schema_invalid_table');
+  // A scalar subquery's result has no JSON subtype from SQLite 3.54.1 on, so the nested index
+  // columns are passed through json() to enter the outer object as an array on every version.
   // SQLite does not reliably correlate an outer column passed to a table-valued PRAGMA.
   // Keep every PRAGMA argument a trusted literal, then combine the independent reads.
   const selects = tables.map(
@@ -131,9 +146,9 @@ async function readSchemas(
       (SELECT json_group_array(json_object(
         'name',il.name,'is_unique',il."unique",'origin',il.origin,'partial',il.partial,
         'sql',(SELECT sql FROM sqlite_schema WHERE type='index' AND name=il.name),
-        'columns',(SELECT json_group_array(json_object(
+        'columns',json((SELECT json_group_array(json_object(
           'seqno',seqno,'name',name,'coll',coll,'descending',"desc",'key',key
-        )) FROM (SELECT * FROM pragma_index_xinfo(il.name) ORDER BY seqno))
+        )) FROM (SELECT * FROM pragma_index_xinfo(il.name) ORDER BY seqno)))
       )) FROM (SELECT * FROM pragma_index_list('${table}') ORDER BY name) AS il) AS indexes_json,
       (SELECT json_group_array(json_object(
         'id',id,'seq',seq,'parent_table',"table",'child_column',"from",
