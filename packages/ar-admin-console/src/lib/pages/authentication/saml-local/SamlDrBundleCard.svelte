@@ -131,7 +131,7 @@
 			type="password"
 			autocomplete="new-password"
 			bind:value={passphrase}
-			hint={t('sl.dr.passphrase.hint', { min: DR_BUNDLE_PASSPHRASE_MIN_LENGTH })}
+			info={t('sl.dr.passphrase.hint', { min: DR_BUNDLE_PASSPHRASE_MIN_LENGTH })}
 			disabled={busy || (!canExport && !canImport)}
 		/>
 		<TextField

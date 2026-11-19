@@ -15,7 +15,7 @@
 			docs: {
 				description: {
 					component:
-						'Authentication → SAML, the lower part of the page: the tenant’s own SAML identity. For each role (IdP, SP) what a partner registers — entity ID, metadata URL and its download — and the signing certificates as slots: in use, next, backup. A rollover is “Issue the next certificate” (a dialog for the subject, validity, key size and DNS names), then “Switch to the next certificate” once partners have it; the previous one stays as the backup until it is retired. Below: the published entity ID style and the interactive sign-in address (with the IDs the other style would give, before saving), the emergency key recreation, and the signing-key DR bundle (export with a passphrase typed twice; import of the JSON file, confirmed, replacing the keys). Operations that the Admin API protects with a step-up are run through `withStepUp`. Without the update permission the page is read-only; the DR bundle part needs its own two permissions, which of the built-in roles only the super admin has.'
+						'Authentication → SAML, the lower part of the page: the tenant’s own SAML identity. For each role (IdP, SP) what a partner registers — entity ID, metadata URL and its download — and the signing certificates as slots: in use, next, backup. A rollover is “Issue the next certificate” (a dialog for the subject, validity, key size and DNS names), then “Switch to the next certificate” once partners have it; the previous one stays as the backup until it is retired. Below: the published entity ID style and the interactive sign-in address (with the IDs the other style would give, before saving), the emergency key recreation, and the signing-key DR bundle (export with a passphrase typed twice; import of the JSON file, confirmed, replacing the keys). Operations that the Admin API protects with a step-up are run through `withStepUp`. Without the update permission the page is read-only; the DR bundle part needs its own two permissions, which the tenant admin and the super admin hold and the viewer does not.'
 				}
 			}
 		}
@@ -23,8 +23,6 @@
 
 	const tenantAdmin = persona('tenant').access;
 	const viewer = persona('viewer').access;
-	// Of the built-in roles only the super admin holds the DR bundle permissions.
-	const platformAdmin = persona('platform').access;
 </script>
 
 <Story
@@ -37,8 +35,8 @@
 		await expect(canvas.getAllByRole('button', { name: t('sl.action.promoteNext') })).toHaveLength(
 			1
 		);
-		// A tenant admin has no DR bundle permissions: that part is not shown.
-		await expect(canvas.queryByText(t('sl.dr.title'))).toBeNull();
+		// The DR bundle of the tenant's own signing keys is the tenant admin's to export and import.
+		await canvas.findByText(t('sl.dr.title'));
 	}}
 >
 	{#snippet template()}
@@ -158,6 +156,6 @@
 	}}
 >
 	{#snippet template()}
-		<SamlLocal client={createFakeSamlSettings()} access={platformAdmin} />
+		<SamlLocal client={createFakeSamlSettings()} access={tenantAdmin} />
 	{/snippet}
 </Story>
