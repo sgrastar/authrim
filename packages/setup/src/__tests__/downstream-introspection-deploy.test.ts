@@ -6,6 +6,7 @@ import type { DeployResult } from '../core/deploy.js';
 import {
   configureDownstreamIntrospectionDeployment,
   createDownstreamIntrospectionFailure,
+  describeDownstreamIntrospectionNextAction,
   resolveDownstreamIntrospectionApiBaseUrl,
   resolveDownstreamIntrospectionKeysDir,
 } from '../core/downstream-introspection-deploy.js';
@@ -115,6 +116,27 @@ describe('configureDownstreamIntrospectionDeployment', () => {
       impact: expect.stringContaining('Core login'),
       nextAction: expect.stringContaining('Rerun deploy'),
     });
+  });
+
+  it('does not tell the operator to wait for routing when the Admin API refused with a step-up', () => {
+    const failure = createDownstreamIntrospectionFailure('https://api.example.com: refused', {
+      diagnosticCode: 'http_403:step_up_human_required',
+      retryable: false,
+    });
+    expect(failure.retryable).toBe(false);
+    expect(failure.nextAction).toContain('step_up_human_required');
+    expect(failure.nextAction).toContain('admin:step_up_exempt:client.trust.activate');
+    expect(failure.nextAction).not.toContain('routing propagation');
+
+    expect(
+      describeDownstreamIntrospectionNextAction({ diagnosticCode: 'http_400', retryable: false })
+    ).not.toContain('routing propagation');
+    expect(
+      describeDownstreamIntrospectionNextAction({
+        diagnosticCode: 'http_404:tenant_not_found',
+        retryable: true,
+      })
+    ).toContain('routing propagation');
   });
 
   it('provisions secrets and redeploys ar-userinfo', async () => {
