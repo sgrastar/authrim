@@ -977,6 +977,325 @@ describe('deployWorker', () => {
     expect(sleep).toHaveBeenCalledTimes(1);
   });
 
+  it('adopts a freshly uploaded Worker whose post-upload readback said it does not exist', async () => {
+    const rootDir = createTempRoot();
+    createWorkerPackage(rootDir, 'ar-discovery', '1.0.0');
+    const activeVersionId = 'discovery-version-after-readback-lag';
+    const sleep = vi.fn(async () => undefined);
+    let deployAttempts = 0;
+    let listAttempts = 0;
+    let triggerAttempts = 0;
+    const notFound =
+      '✘ [ERROR] A request to the Cloudflare API (/accounts/account/workers/workers/test-ar-discovery) failed.\n' +
+      '\n' +
+      '  This Worker does not exist on your account. [code: 10007]\n';
+
+    vi.mocked(execa).mockImplementation(async (_command, args) => {
+      const commandArgs = [...(args ?? [])];
+      if (commandArgs.includes('deployments') && commandArgs.includes('list')) {
+        listAttempts++;
+        if (listAttempts === 1) {
+          // The same propagation lag can hit the deployments read right after the upload.
+          throw commandError(notFound);
+        }
+        return {
+          ...successfulCommandResult(),
+          stdout: JSON.stringify([
+            {
+              id: 'discovery-deployment',
+              versions: [{ version_id: activeVersionId, percentage: 100 }],
+            },
+          ]),
+        } as Awaited<ReturnType<typeof execa>>;
+      }
+      if (commandArgs.includes('triggers') && commandArgs.includes('deploy')) {
+        triggerAttempts++;
+        return successfulCommandResult();
+      }
+      if (commandArgs.includes('deploy')) {
+        deployAttempts++;
+        throw Object.assign(new Error(notFound), {
+          exitCode: 1,
+          stderr: notFound,
+          stdout:
+            'Total Upload: 1628.46 KiB / gzip: 458.50 KiB\nUploaded test-ar-discovery (3.04 sec)\n',
+        });
+      }
+      return successfulCommandResult();
+    });
+
+    const result = await deployWorker('ar-discovery', {
+      env: 'test',
+      rootDir,
+      deploymentStrategy: 'direct',
+      maxRetries: 3,
+      retryDelayMs: 2,
+      random: () => 0.5,
+      sleep,
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({ success: true, cloudflareVersionId: activeVersionId })
+    );
+    expect(deployAttempts).toBe(1);
+    expect(listAttempts).toBe(2);
+    expect(triggerAttempts).toBe(1);
+    expect(sleep).toHaveBeenCalledTimes(1);
+  });
+
+  it('waits out a not-yet-visible Worker when the trigger retry itself reports it missing', async () => {
+    const rootDir = createTempRoot();
+    createWorkerPackage(rootDir, 'ar-discovery', '1.0.0');
+    const activeVersionId = 'discovery-version-after-trigger-lag';
+    const sleep = vi.fn(async () => undefined);
+    let deployAttempts = 0;
+    let triggerAttempts = 0;
+    const notFound = 'This Worker does not exist on your account. [code: 10007]';
+
+    vi.mocked(execa).mockImplementation(async (_command, args) => {
+      const commandArgs = [...(args ?? [])];
+      if (commandArgs.includes('deployments') && commandArgs.includes('list')) {
+        return {
+          ...successfulCommandResult(),
+          stdout: JSON.stringify([
+            {
+              id: 'discovery-deployment',
+              versions: [{ version_id: activeVersionId, percentage: 100 }],
+            },
+          ]),
+        } as Awaited<ReturnType<typeof execa>>;
+      }
+      if (commandArgs.includes('triggers') && commandArgs.includes('deploy')) {
+        if (commandArgs.includes('--dry-run')) return successfulCommandResult();
+        triggerAttempts++;
+        if (triggerAttempts === 1) throw commandError(notFound);
+        return successfulCommandResult();
+      }
+      if (commandArgs.includes('deploy')) {
+        deployAttempts++;
+        throw Object.assign(new Error(notFound), {
+          exitCode: 1,
+          stderr: notFound,
+          stdout: 'Uploaded test-ar-discovery (3.04 sec)\n',
+        });
+      }
+      return successfulCommandResult();
+    });
+
+    const result = await deployWorker('ar-discovery', {
+      env: 'test',
+      rootDir,
+      deploymentStrategy: 'direct',
+      maxRetries: 3,
+      retryDelayMs: 2,
+      random: () => 0.5,
+      sleep,
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({ success: true, cloudflareVersionId: activeVersionId })
+    );
+    expect(deployAttempts).toBe(1);
+    expect(triggerAttempts).toBe(2);
+    expect(sleep).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the Uploaded line visible to recovery when the parent lowers WRANGLER_LOG', async () => {
+    const rootDir = createTempRoot();
+    createWorkerPackage(rootDir, 'ar-discovery', '1.0.0');
+    const previous = process.env.WRANGLER_LOG;
+    process.env.WRANGLER_LOG = 'warn';
+    try {
+      const envs: Array<Record<string, string> | undefined> = [];
+      vi.mocked(execa).mockImplementation(async (_command, args, options) => {
+        const commandArgs = [...(args ?? [])];
+        if (commandArgs.includes('deploy') && !commandArgs.includes('triggers')) {
+          envs.push((options as { env?: Record<string, string> } | undefined)?.env);
+        }
+        return successfulCommandResult();
+      });
+
+      const result = await deployWorker('ar-discovery', {
+        env: 'test',
+        rootDir,
+        deploymentStrategy: 'direct',
+      });
+
+      expect(result.success).toBe(true);
+      expect(envs).toHaveLength(1);
+      expect(envs[0]).toEqual(expect.objectContaining({ WRANGLER_LOG: 'log' }));
+    } finally {
+      if (previous === undefined) delete process.env.WRANGLER_LOG;
+      else process.env.WRANGLER_LOG = previous;
+    }
+  });
+
+  it('waits out an empty deployment list on a freshly uploaded Worker', async () => {
+    const rootDir = createTempRoot();
+    createWorkerPackage(rootDir, 'ar-discovery', '1.0.0');
+    const activeVersionId = 'discovery-version-after-empty-list';
+    const sleep = vi.fn(async () => undefined);
+    let listAttempts = 0;
+    const notFound = 'This Worker does not exist on your account. [code: 10007]';
+
+    vi.mocked(execa).mockImplementation(async (_command, args) => {
+      const commandArgs = [...(args ?? [])];
+      if (commandArgs.includes('deployments') && commandArgs.includes('list')) {
+        listAttempts++;
+        // The Worker is visible now, but its deployment list has not caught up yet.
+        if (listAttempts <= 2) return { ...successfulCommandResult(), stdout: '[]' };
+        return {
+          ...successfulCommandResult(),
+          stdout: JSON.stringify([
+            {
+              id: 'discovery-deployment',
+              versions: [{ version_id: activeVersionId, percentage: 100 }],
+            },
+          ]),
+        } as Awaited<ReturnType<typeof execa>>;
+      }
+      if (commandArgs.includes('triggers') && commandArgs.includes('deploy')) {
+        return successfulCommandResult();
+      }
+      if (commandArgs.includes('deploy')) {
+        throw Object.assign(new Error(notFound), {
+          exitCode: 1,
+          stderr: notFound,
+          stdout: 'Uploaded test-ar-discovery (3.04 sec)\n',
+        });
+      }
+      return successfulCommandResult();
+    });
+
+    const result = await deployWorker('ar-discovery', {
+      env: 'test',
+      rootDir,
+      deploymentStrategy: 'direct',
+      maxRetries: 1,
+      retryDelayMs: 2,
+      random: () => 0.5,
+      sleep,
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({ success: true, cloudflareVersionId: activeVersionId })
+    );
+    expect(listAttempts).toBe(3);
+    // 1 s then 2 s: the wait is a time budget, not the deployment retry count (1 here).
+    expect(sleep.mock.calls.map(([ms]) => ms)).toEqual([1000, 2000]);
+  });
+
+  it('gives up on a freshly uploaded Worker that never becomes visible', async () => {
+    const rootDir = createTempRoot();
+    createWorkerPackage(rootDir, 'ar-discovery', '1.0.0');
+    const sleep = vi.fn(async () => undefined);
+    let deployAttempts = 0;
+    const notFound = 'This Worker does not exist on your account. [code: 10007]';
+
+    vi.mocked(execa).mockImplementation(async (_command, args) => {
+      const commandArgs = [...(args ?? [])];
+      if (commandArgs.includes('deployments') && commandArgs.includes('list')) {
+        throw commandError(notFound);
+      }
+      if (commandArgs.includes('deploy')) {
+        deployAttempts++;
+        throw Object.assign(new Error(notFound), {
+          exitCode: 1,
+          stderr: notFound,
+          stdout: 'Uploaded test-ar-discovery (3.04 sec)\n',
+        });
+      }
+      return successfulCommandResult();
+    });
+
+    const result = await deployWorker('ar-discovery', {
+      env: 'test',
+      rootDir,
+      deploymentStrategy: 'direct',
+      maxRetries: 3,
+      retryDelayMs: 2,
+      random: () => 0.5,
+      sleep,
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('Partial trigger deployment recovery failed');
+    // The upload is live, so the Worker upload is never replayed.
+    expect(deployAttempts).toBe(1);
+    const waited = sleep.mock.calls.reduce((total, [ms]) => total + (ms as number), 0);
+    expect(waited).toBeLessThanOrEqual(90_000);
+    expect(waited).toBeGreaterThan(60_000);
+  });
+
+  it('counts slow reads against the visibility budget, not only the sleeps', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-19T12:00:00.000Z'));
+    const rootDir = createTempRoot();
+    createWorkerPackage(rootDir, 'ar-discovery', '1.0.0');
+    const sleep = vi.fn(async (ms: number) => {
+      vi.advanceTimersByTime(ms);
+    });
+    const notFound = 'This Worker does not exist on your account. [code: 10007]';
+
+    vi.mocked(execa).mockImplementation(async (_command, args) => {
+      const commandArgs = [...(args ?? [])];
+      if (commandArgs.includes('deployments') && commandArgs.includes('list')) {
+        // Each read of the not-yet-visible Worker takes 20 s of wall-clock time.
+        vi.advanceTimersByTime(20_000);
+        throw commandError(notFound);
+      }
+      if (commandArgs.includes('deploy')) {
+        throw Object.assign(new Error(notFound), {
+          exitCode: 1,
+          stderr: notFound,
+          stdout: 'Uploaded test-ar-discovery (3.04 sec)\n',
+        });
+      }
+      return successfulCommandResult();
+    });
+
+    const result = await deployWorker('ar-discovery', {
+      env: 'test',
+      rootDir,
+      deploymentStrategy: 'direct',
+      maxRetries: 1,
+      retryDelayMs: 1000,
+      random: () => 0.5,
+      sleep,
+    });
+
+    expect(result.success).toBe(false);
+    // Reads of 20 s + sleeps of 1, 2, 4 s: the fourth read ends at 87 s, and the next 8 s wait
+    // would pass the 90 s budget, so recovery stops there.
+    expect(sleep.mock.calls.map(([ms]) => ms)).toEqual([1000, 2000, 4000]);
+  });
+
+  it('still fails closed when a Worker is reported missing before any upload', async () => {
+    const rootDir = createTempRoot();
+    createWorkerPackage(rootDir, 'ar-discovery', '1.0.0');
+    let deployAttempts = 0;
+    vi.mocked(execa).mockImplementation(async (_command, args) => {
+      const commandArgs = [...(args ?? [])];
+      if (commandArgs.includes('deploy')) {
+        deployAttempts++;
+        throw commandError('This Worker does not exist on your account. [code: 10007]');
+      }
+      return successfulCommandResult();
+    });
+
+    const result = await deployWorker('ar-discovery', {
+      env: 'test',
+      rootDir,
+      deploymentStrategy: 'direct',
+      maxRetries: 3,
+      retryDelayMs: 1,
+      sleep: async () => undefined,
+    });
+
+    expect(result.success).toBe(false);
+    expect(deployAttempts).toBe(1);
+  });
+
   it('checkpoints fresh ownership before retrying triggers after a partial deployment', async () => {
     const rootDir = createTempRoot();
     createWorkerPackage(rootDir, 'ar-router', '1.0.0');
@@ -2646,6 +2965,137 @@ describe('deployUiWorkerComponent', () => {
       ['test-ar-login-ui', committedVersionId],
       ['test-ar-login-ui', retryVersionId],
     ]);
+    expect(directDeployCalls).toBe(1);
+  });
+
+  it('adopts a freshly uploaded UI Worker whose post-upload readback said it does not exist', async () => {
+    const rootDir = createTempRoot();
+    createUiPackage(rootDir, 'ar-login-ui');
+    const activeVersionId = 'login-ui-version-after-readback-lag';
+    const sleep = vi.fn(async () => undefined);
+    let directDeployCalls = 0;
+    let listAttempts = 0;
+    let triggerCalls = 0;
+    const notFound =
+      '✘ [ERROR] A request to the Cloudflare API (/accounts/account/workers/workers/test-ar-login-ui) failed.\n' +
+      '  This Worker does not exist on your account. [code: 10007]\n';
+    vi.mocked(execa).mockImplementation(async (_command, args) => {
+      const commandArgs = [...(args ?? [])];
+      if (commandArgs.includes('deployments') && commandArgs.includes('list')) {
+        if (commandArgs.includes('--name')) {
+          // Pre-deploy existence check: the Worker is genuinely absent before the upload.
+          return {
+            exitCode: 1,
+            stdout: '',
+            stderr: notFound,
+          } as Awaited<ReturnType<typeof execa>>;
+        }
+        listAttempts++;
+        if (listAttempts === 1) throw commandError(notFound);
+        return {
+          ...successfulCommandResult(),
+          stdout: JSON.stringify([
+            {
+              id: 'login-ui-deployment',
+              versions: [{ version_id: activeVersionId, percentage: 100 }],
+            },
+          ]),
+        } as Awaited<ReturnType<typeof execa>>;
+      }
+      if (commandArgs.includes('triggers') && commandArgs.includes('deploy')) {
+        triggerCalls++;
+        return successfulCommandResult();
+      }
+      if (
+        commandArgs[0] === 'exec' &&
+        commandArgs[1] === 'wrangler' &&
+        commandArgs[2] === 'deploy'
+      ) {
+        directDeployCalls++;
+        return {
+          exitCode: 1,
+          stdout: 'Uploaded test-ar-login-ui (2.10 sec)\n',
+          stderr: notFound,
+        } as Awaited<ReturnType<typeof execa>>;
+      }
+      return successfulCommandResult();
+    });
+
+    const result = await deployUiWorkerComponent('ar-login-ui', {
+      env: 'test',
+      rootDir,
+      skipBuild: true,
+      maxRetries: 3,
+      retryDelayMs: 2,
+      sleep,
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({ success: true, cloudflareVersionId: activeVersionId })
+    );
+    expect(directDeployCalls).toBe(1);
+    expect(listAttempts).toBe(2);
+    expect(triggerCalls).toBe(1);
+    expect(sleep).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports the live UI upload and its version when post-readback recovery fails', async () => {
+    const rootDir = createTempRoot();
+    createUiPackage(rootDir, 'ar-login-ui');
+    const activeVersionId = 'login-ui-version-recovery-fails';
+    let directDeployCalls = 0;
+    const notFound = 'This Worker does not exist on your account. [code: 10007]';
+    vi.mocked(execa).mockImplementation(async (_command, args) => {
+      const commandArgs = [...(args ?? [])];
+      if (commandArgs.includes('deployments') && commandArgs.includes('list')) {
+        if (commandArgs.includes('--name')) {
+          return { exitCode: 1, stdout: '', stderr: notFound } as Awaited<ReturnType<typeof execa>>;
+        }
+        return {
+          ...successfulCommandResult(),
+          stdout: JSON.stringify([
+            {
+              id: 'login-ui-deployment',
+              versions: [{ version_id: activeVersionId, percentage: 100 }],
+            },
+          ]),
+        } as Awaited<ReturnType<typeof execa>>;
+      }
+      if (commandArgs.includes('triggers') && commandArgs.includes('deploy')) {
+        throw commandError('Route pattern conflicts with an existing route [code: 10020]');
+      }
+      if (
+        commandArgs[0] === 'exec' &&
+        commandArgs[1] === 'wrangler' &&
+        commandArgs[2] === 'deploy'
+      ) {
+        directDeployCalls++;
+        return {
+          exitCode: 1,
+          stdout: 'Uploaded test-ar-login-ui (2.10 sec)\n',
+          stderr: notFound,
+        } as Awaited<ReturnType<typeof execa>>;
+      }
+      return successfulCommandResult();
+    });
+
+    const result = await deployUiWorkerComponent('ar-login-ui', {
+      env: 'test',
+      rootDir,
+      skipBuild: true,
+      maxRetries: 3,
+      retryDelayMs: 1,
+      sleep: async () => undefined,
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        success: false,
+        trafficCommitted: true,
+        cloudflareVersionId: activeVersionId,
+      })
+    );
+    expect(result.error).toContain('Partial trigger deployment recovery failed');
     expect(directDeployCalls).toBe(1);
   });
 

@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import {
   ensureDownstreamIntrospectionClient,
   loadDownstreamIntrospectionClientSecrets,
+  toSafeDownstreamIntrospectionDiagnostic,
 } from '../core/downstream-introspection-client.js';
 import { generateAllSecrets, saveKeysToDirectory } from '../core/keys.js';
 
@@ -608,5 +609,21 @@ describe('ensureDownstreamIntrospectionClient', () => {
       success: false,
       error: 'Downstream introspection client create response missing credentials',
     });
+  });
+});
+
+describe('toSafeDownstreamIntrospectionDiagnostic', () => {
+  it('keeps a step-up refusal distinguishable from a routing problem', () => {
+    const diagnostic = toSafeDownstreamIntrospectionDiagnostic(
+      'Failed to create downstream introspection client (403): {"error":"step_up_human_required","error_description":"This operation needs a signed-in admin","required_level":"L2"}'
+    );
+    expect(diagnostic).toBe('http_403:step_up_human_required');
+    expect(diagnostic).not.toContain('signed-in admin');
+  });
+
+  it('still reduces other HTTP failures to their status', () => {
+    expect(toSafeDownstreamIntrospectionDiagnostic('request failed (502): upstream error')).toBe(
+      'http_502'
+    );
   });
 });
