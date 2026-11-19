@@ -1543,6 +1543,37 @@ function isPartialWorkerTriggerDeploymentFailure(error: unknown): boolean {
   return /some triggers failed to deploy for\s+[^:\n]+:/i.test(getErrorText(error));
 }
 
+function escapeRegExpLiteral(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Wrangler printed `Uploaded <worker> (N sec)` and then a Cloudflare read of that same Worker
+ * answered "This Worker does not exist on your account" (code 10007, or its 10090/10092
+ * variants). The upload already committed; a freshly created Worker is simply not yet visible
+ * to the follow-up read. Wrangler aborts before it applies routes, custom domains, or cron
+ * triggers, so the recovery is the same as a partial trigger deployment.
+ */
+function isPostUploadWorkerReadbackNotFound(error: unknown, workerName: string): boolean {
+  const text = getErrorText(error);
+  const uploaded = new RegExp(`^Uploaded ${escapeRegExpLiteral(workerName)} \\(`, 'm');
+  return (
+    uploaded.test(text) &&
+    /does not exist on your account\.?\s*\[code:\s*(?:10007|10090|10092)\]/i.test(text)
+  );
+}
+
+/**
+ * A read of a Worker whose upload just committed answered as if it were not there yet: the
+ * Worker itself is not found, or it is found but its deployment list is still empty. Both are the
+ * same propagation lag seen at different stages.
+ */
+function isFreshWorkerNotYetVisibleError(error: unknown): boolean {
+  return /does not exist on your account|\[code:\s*(?:10007|10090|10092)\]|No active baseline deployment found for/i.test(
+    getErrorText(error)
+  );
+}
+
 function classifyRetry(error: unknown): RetryKind {
   if (
     error instanceof NonRetryableDeploymentError ||
@@ -2027,6 +2058,9 @@ async function deployWorkerDirectUntimed(
                     env: {
                       ...managedEnv,
                       WRANGLER_OUTPUT_FILE_DIRECTORY: outputDirectory,
+                      // Post-upload recovery reads Wrangler's `Uploaded <worker>` line, which a
+                      // parent WRANGLER_LOG=warn would suppress.
+                      WRANGLER_LOG: 'log',
                     },
                   }
                 );
@@ -2067,10 +2101,17 @@ async function deployWorkerDirectUntimed(
             return { stdout: '', adoptedVersionId: structuredVersionId };
           }
 
-          if (isPartialWorkerTriggerDeploymentFailure(error)) {
+          const readbackNotFound = isPostUploadWorkerReadbackNotFound(error, context.workerName);
+          if (isPartialWorkerTriggerDeploymentFailure(error) || readbackNotFound) {
             deploymentMayBeLive = true;
             try {
-              const snapshot = await readWorkerTrafficSnapshot(context, options, throttle);
+              const whileVisible = <T>(operation: () => Promise<T>) =>
+                readbackNotFound
+                  ? retryWhileFreshWorkerInvisible(context.workerName, options, operation)
+                  : operation();
+              const snapshot = await whileVisible(() =>
+                readWorkerTrafficSnapshot(context, options, throttle)
+              );
               const activeVersionId = sourceVersionFromSnapshot(context.workerName, snapshot);
               // Wrangler uploads and activates the Worker before it applies routes, custom
               // domains, or cron triggers. A trigger-only failure therefore turns a fresh
@@ -2086,7 +2127,7 @@ async function deployWorkerDirectUntimed(
               options.onProgress?.(
                 `  ⏳ ${context.workerName} code is active; retrying only its failed triggers...`
               );
-              await applyWorkerTriggers(context, options, throttle);
+              await whileVisible(() => applyWorkerTriggers(context, options, throttle));
               options.onProgress?.(
                 `  ✓ ${context.workerName} triggers reconciled without replaying the Worker upload`
               );
@@ -3133,6 +3174,76 @@ async function readWorkerTrafficSnapshotUntimed(
     deploymentId: activeDeployment?.id,
     specs: activeVersions.map((version) => `${version.version_id}@${version.percentage}%`),
   };
+}
+
+/**
+ * Run a Cloudflare read or trigger mutation against a Worker whose upload just committed but whose
+ * readback still answered "does not exist". The same propagation lag can hit `deployments list`
+ * and `triggers deploy` (both read the Worker first), so a not-found answer is waited out with a
+ * bounded backoff instead of failing the recovery. Any other error propagates unchanged.
+ */
+/** How long a freshly uploaded Worker may take to become readable before recovery gives up. */
+const FRESH_WORKER_VISIBILITY_BUDGET_MS = 90_000;
+const FRESH_WORKER_VISIBILITY_MAX_WAIT_MS = 15_000;
+
+async function retryWhileFreshWorkerInvisible<T>(
+  workerName: string,
+  options: DeployOptions,
+  operation: () => Promise<T>
+): Promise<T> {
+  // The wait is bounded by time, not by the deployment retry count: a 1 s retry budget sized for
+  // transient command failures is far too short for Cloudflare to publish a brand-new Worker.
+  const baseDelayMs = Math.max(1000, options.retryDelayMs ?? 1000);
+  const startedAt = Date.now();
+  let waitedMs = 0;
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await operation();
+    } catch (error) {
+      if (!isFreshWorkerNotYetVisibleError(error)) {
+        throw error;
+      }
+      const delayMs = Math.min(
+        FRESH_WORKER_VISIBILITY_MAX_WAIT_MS,
+        baseDelayMs * 2 ** (attempt - 1)
+      );
+      // The budget covers wall-clock time: the reads themselves (with their own retries) count,
+      // not only the sleeps between them. The sleep total also counts on its own so that a test
+      // with an instant sleep still ends.
+      const spentMs = Math.max(waitedMs, Date.now() - startedAt);
+      if (spentMs + delayMs > FRESH_WORKER_VISIBILITY_BUDGET_MS) {
+        throw error;
+      }
+      waitedMs += delayMs;
+      options.onProgress?.(
+        `  ⏳ ${workerName} is uploaded but not yet visible; waiting ${(delayMs / 1000).toFixed(1)}s...`
+      );
+      await sleepForDeployment(options, delayMs);
+    }
+  }
+}
+
+/** The single active Version at 100% from `wrangler deployments list --json` output. */
+function parseActiveVersionFromDeploymentList(workerName: string, stdout: string): string {
+  const deployments = JSON.parse(stdout) as WranglerDeploymentListItem[];
+  const activeDeployment = deployments.at(-1);
+  const activeVersions = (activeDeployment?.versions ?? []).filter(
+    (version) =>
+      typeof version.version_id === 'string' &&
+      typeof version.percentage === 'number' &&
+      version.percentage > 0
+  );
+  if (activeVersions.length === 0) {
+    throw new Error(`No active baseline deployment found for ${workerName}`);
+  }
+  if (activeVersions.length !== 1 || Math.abs((activeVersions[0].percentage ?? 0) - 100) > 0.001) {
+    throw new Error(
+      `Deployment lease for ${workerName} requires one active source version at 100%; found ${activeVersions
+        .map((version) => `${version.version_id}@${version.percentage}%`)
+        .join(', ')}`
+    );
+  }
+  return activeVersions[0].version_id as string;
 }
 
 function sourceVersionFromSnapshot(workerName: string, snapshot: WorkerTrafficSnapshot): string {
@@ -4680,6 +4791,80 @@ export interface UiWorkerBindingTargets {
   adminUi: boolean;
 }
 
+/**
+ * A UI Worker's `wrangler deploy` committed its upload but the post-upload readback said the
+ * Worker does not exist (fresh-Worker propagation lag). Wrangler stopped before applying routes
+ * and custom domains. Adopt the live Version, journal ownership, then apply only the triggers.
+ * Failures here are not retryable: the upload is live and a replay could not be proven safe.
+ */
+async function recoverUiWorkerAfterReadbackNotFound(
+  uiWorkerName: string,
+  uiDir: string,
+  options: DeployOptions,
+  throttle: DeploymentThrottle,
+  onActiveVersion: (versionId: string) => void
+): Promise<string> {
+  try {
+    const activeVersionId = await retryWhileFreshWorkerInvisible(
+      uiWorkerName,
+      options,
+      async () => {
+        const listed = await runWithAdaptiveRetry(
+          `Reading current deployment for ${uiWorkerName}`,
+          options,
+          throttle,
+          () =>
+            execa(
+              'pnpm',
+              ['exec', 'wrangler', 'deployments', 'list', '--json', '--config', 'wrangler.toml'],
+              {
+                cwd: uiDir,
+                reject: true,
+                cancelSignal: options.signal,
+                env: { WRANGLER_LOG: 'log' },
+              }
+            )
+        );
+        return parseActiveVersionFromDeploymentList(uiWorkerName, String(listed.stdout));
+      }
+    );
+    onActiveVersion(activeVersionId);
+    await options.workerScriptOwnership?.checkpointCommittedVersion(uiWorkerName, activeVersionId);
+    await options.workerScriptOwnership?.captureAfterMutation(uiWorkerName);
+    options.onProgress?.(
+      `  ⏳ ${uiWorkerName} code is active; retrying only its failed triggers...`
+    );
+    await retryWhileFreshWorkerInvisible(uiWorkerName, options, () =>
+      runWithAdaptiveRetry(
+        `Applying UI Worker triggers ${uiWorkerName}`,
+        options,
+        throttle,
+        async () => {
+          await assertDeployConfigLockProof(options);
+          await options.workerScriptOwnership?.assertBeforeMutation(uiWorkerName);
+          const result = await execa(
+            'pnpm',
+            ['exec', 'wrangler', 'triggers', 'deploy', '--config', 'wrangler.toml'],
+            { cwd: uiDir, reject: true, cancelSignal: options.signal }
+          );
+          await assertDeployConfigLockProofAfterMutation(options);
+          return result;
+        }
+      )
+    );
+    options.onProgress?.(
+      `  ✓ ${uiWorkerName} triggers reconciled without replaying the Worker upload`
+    );
+    return activeVersionId;
+  } catch (recoveryError) {
+    throw new NonRetryableDeploymentError(
+      `Partial trigger deployment recovery failed for ${uiWorkerName}: ${sanitizeDeploymentErrorMessage(
+        getErrorText(recoveryError)
+      )}`
+    );
+  }
+}
+
 async function cloudflareWorkerHasActiveDeployment(
   workerName: string,
   cwd: string,
@@ -5182,7 +5367,7 @@ async function deployUiWorkerComponentUntimed(
                   cwd: uiDir,
                   reject: false,
                   cancelSignal: options.signal,
-                  env: { WRANGLER_OUTPUT_FILE_DIRECTORY: outputDirectory },
+                  env: { WRANGLER_OUTPUT_FILE_DIRECTORY: outputDirectory, WRANGLER_LOG: 'log' },
                 }
               );
             } catch (error) {
@@ -5201,6 +5386,21 @@ async function deployUiWorkerComponentUntimed(
                   `  ✓ Adopted committed ${uiWorkerName} deployment ${structuredVersionId} after response loss`
                 );
                 return { stdout: '', adoptedVersionId: structuredVersionId };
+              }
+              if (isPostUploadWorkerReadbackNotFound(error, uiWorkerName)) {
+                // The upload committed before the readback failed: report it as live even if
+                // the recovery below cannot finish, so nothing replays it.
+                uiTrafficCommitted = true;
+                const adoptedVersionId = await recoverUiWorkerAfterReadbackNotFound(
+                  uiWorkerName,
+                  uiDir,
+                  uiDeployOptions,
+                  throttle,
+                  (versionId) => {
+                    uiCommittedVersionId = versionId;
+                  }
+                );
+                return { stdout: '', adoptedVersionId };
               }
               if (isProvenPreMutationDeploymentFailure(error) || classifyRetry(error) === 'fatal') {
                 throw error;
@@ -5230,6 +5430,19 @@ async function deployUiWorkerComponentUntimed(
                   `  ✓ Adopted committed ${uiWorkerName} deployment ${structuredVersionId} after response loss`
                 );
                 return { stdout: '', adoptedVersionId: structuredVersionId };
+              }
+              if (isPostUploadWorkerReadbackNotFound(commandError, uiWorkerName)) {
+                uiTrafficCommitted = true;
+                const adoptedVersionId = await recoverUiWorkerAfterReadbackNotFound(
+                  uiWorkerName,
+                  uiDir,
+                  uiDeployOptions,
+                  throttle,
+                  (versionId) => {
+                    uiCommittedVersionId = versionId;
+                  }
+                );
+                return { stdout: '', adoptedVersionId };
               }
               if (
                 isProvenPreMutationDeploymentFailure(commandError) ||

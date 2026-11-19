@@ -2017,6 +2017,109 @@ describe('setup web worker update API', () => {
     });
   });
 
+  it('recovers Worker ownership on its own when a fresh-name conflict appears at deploy time', async () => {
+    const env = 'headless';
+    await writeEnvironment(env);
+    await markEnvironmentProvisioned(env);
+    const configPath = join(tempDir!, '.authrim', env, 'config.json');
+    const config = createDefaultConfig(env);
+    config.cloudflare.accountId = TEST_ACCOUNT_ID;
+    config.controlPlane.automaticProvisioning = false;
+    config.components.loginUi = false;
+    config.components.adminUi = false;
+    await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`);
+
+    const lockPath = join(tempDir!, '.authrim', env, 'lock.json');
+    const lock = JSON.parse(await readFile(lockPath, 'utf-8'));
+    // The rewritten config must agree with the lock's log-archive resources, as a real
+    // provisioning would leave them, or the post-build resource check stops the deploy first.
+    lock.logArchive = archiveLockFixture(config);
+    const manifest = JSON.parse(
+      await readFile(join(tempDir!, 'migrations', 'releases', '0.2.0.json'), 'utf-8')
+    );
+    lock.releaseUpdate = {
+      targetVersion: '0.2.0',
+      phase: 'schema_applied',
+      manifestChecksum: calculateReleaseManifestChecksum(manifest),
+      startedAt: '2026-05-18T00:00:00.000Z',
+      updatedAt: '2026-05-18T00:01:00.000Z',
+      appliedTargets: [],
+      manualTargets: [],
+    };
+    lock.workerScriptOwnership = {
+      'ar-auth': {
+        name: `${env}-ar-auth`,
+        cloudflareScriptTag: 'immutable-ar-auth-tag',
+        state: 'provisional',
+        updatedAt: '2026-05-18T00:02:00.000Z',
+      },
+    };
+    await writeFile(lockPath, `${JSON.stringify(lock, null, 2)}\n`);
+    // Cloudflare publishes a fresh Worker to the inventory a few seconds late: the first read
+    // (the recovery status the UI relies on) does not show ar-router yet, later reads do.
+    let inventoryReads = 0;
+    listWorkersMock.mockImplementation(async () => {
+      inventoryReads++;
+      return inventoryReads === 1
+        ? [{ name: `${env}-ar-auth`, id: `${env}-ar-auth`, tag: 'immutable-ar-auth-tag' }]
+        : [
+            { name: `${env}-ar-auth`, id: `${env}-ar-auth`, tag: 'immutable-ar-auth-tag' },
+            { name: `${env}-ar-router`, id: `${env}-ar-router`, tag: 'immutable-ar-router-tag' },
+          ];
+    });
+    getWorkerDeploymentsMock.mockImplementation(async (name: string) => ({
+      name,
+      exists: true,
+      lastDeployedAt: '2026-05-18T00:02:30.000Z',
+      author: 'test@example.com',
+      versionId: '00000000-0000-4000-8000-000000000001',
+      source: 'Upload',
+    }));
+    // The ownership guard runs after the build, once the deploy lock is held. It sees the Worker
+    // the recovery status missed and refuses the fresh name; the second preparation, after the
+    // adoption, must pass.
+    const defaultOwnership = prepareManagedWorkerScriptOwnershipMock.getMockImplementation()!;
+    let ownershipPreparations = 0;
+    prepareManagedWorkerScriptOwnershipMock.mockImplementation(async (input) => {
+      ownershipPreparations++;
+      if (ownershipPreparations === 1) {
+        throw new Error(`worker_script_fresh_name_conflict:${env}-ar-router`);
+      }
+      return defaultOwnership(input);
+    });
+    deployAllMock.mockImplementation(async () => {
+      throw new Error('intentional stop after ownership recovery');
+    });
+
+    const session = generateSessionToken();
+    const recoveryStatus = await createApiRoutes().request('/deploy/recovery/' + env);
+    await expect(recoveryStatus.json()).resolves.toMatchObject({
+      canResume: true,
+      requiresWorkerOwnershipRecovery: false,
+    });
+    const response = await createApiRoutes().request('/deploy', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Session-Token': session,
+      },
+      body: JSON.stringify({ env, recoverWorkerOwnership: false }),
+    });
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toMatchObject({
+      error: expect.stringContaining('intentional stop after ownership recovery'),
+    });
+    expect(ownershipPreparations).toBe(2);
+    const persisted = JSON.parse(await readFile(lockPath, 'utf-8'));
+    expect(persisted.workers['ar-router']).toMatchObject({
+      name: `${env}-ar-router`,
+      version: '0.2.0',
+      cloudflareVersionId: '00000000-0000-4000-8000-000000000001',
+      cloudflareScriptTag: 'immutable-ar-router-tag',
+    });
+  });
+
   it('does not offer resume when a lock-recorded Worker is missing', async () => {
     const env = 'test';
     await writeEnvironment(env);

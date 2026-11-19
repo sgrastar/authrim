@@ -171,7 +171,7 @@ function isRetryableDownstreamIntrospectionError(error?: string | null): boolean
   );
 }
 
-function toSafeDownstreamIntrospectionDiagnostic(error: string): string {
+export function toSafeDownstreamIntrospectionDiagnostic(error: string): string {
   const normalized = error.trim().toLowerCase();
   const adminMachineStatus = normalized.match(/admin_machine_token_failed:(\d{3})/u)?.[1];
   if (adminMachineStatus) {
@@ -186,6 +186,11 @@ function toSafeDownstreamIntrospectionDiagnostic(error: string): string {
 
   const httpStatus = normalized.match(/\((\d{3})\)/u)?.[1];
   if (httpStatus) {
+    if (normalized.includes('step_up_human_required')) {
+      // The Admin API wants a signed-in admin (or an exact step-up exemption on the machine
+      // principal); waiting for routing to propagate would not change that answer.
+      return `http_${httpStatus}:step_up_human_required`;
+    }
     if (normalized.includes('tenant_not_found') || normalized.includes('tenant not found')) {
       return `http_${httpStatus}:tenant_not_found`;
     }
