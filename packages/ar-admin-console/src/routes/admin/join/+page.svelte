@@ -6,6 +6,7 @@
 		enrollmentErrorKey,
 		readJoinFragment
 	} from '#lib/api/admin-invitation-enrollment.js';
+	import { rememberPasskeyUserOfRegistration } from '#lib/auth/deleted-tenant.js';
 	import { t, type MessageKey } from '#lib/i18n/i18n.svelte.js';
 	import DisplayMenu from '#lib/shell/DisplayMenu.svelte';
 	import LanguageSwitch from '#lib/shell/LanguageSwitch.svelte';
@@ -84,6 +85,7 @@
 				authentication.challenge_id,
 				credential
 			);
+			rememberPasskeyUserOfRegistration(registration.options);
 			completed = true;
 			enrollmentToken = '';
 		} catch (cause) {

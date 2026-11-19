@@ -8,6 +8,10 @@
 		resolveAdminLoginReturnTo
 	} from '#lib/auth/admin-login-return.js';
 	import { AdminLoginTimeoutError, withAdminLoginTimeout } from '#lib/auth/admin-login-timeout.js';
+	import {
+		leaveForNoticeIfTenantDeleted,
+		rememberPasskeyUserOfAssertion
+	} from '#lib/auth/deleted-tenant.js';
 	import { t, type MessageKey } from '#lib/i18n/i18n.svelte.js';
 	import DisplayMenu from '#lib/shell/DisplayMenu.svelte';
 	import LanguageSwitch from '#lib/shell/LanguageSwitch.svelte';
@@ -33,6 +37,12 @@
 		const resolved = new URL(destination, window.location.origin);
 		await goto(`${resolved.pathname}${resolved.search}${resolved.hash}`);
 	}
+
+	// Nobody can sign in to a deleted tenant. The Login UI, on this same host, says so and clears
+	// the passkeys this browser still holds for it, administrators' included.
+	onMount(async () => {
+		await leaveForNoticeIfTenantDeleted();
+	});
 
 	// An Admin Agent handoff can resume without a new ceremony when a session already exists.
 	onMount(async () => {
@@ -65,6 +75,7 @@
 				adminAuthAPI.verifyLogin(challengeId, credential),
 				ADMIN_API_TIMEOUT_MS
 			);
+			rememberPasskeyUserOfAssertion(credential);
 			await resumeAfterLogin();
 		} catch (error) {
 			errorKey =
