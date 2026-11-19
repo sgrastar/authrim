@@ -193,31 +193,35 @@ package root (committed and reviewed like code). Do not write brittle tests just
   Storybook projects need a different runner setup; and `setup`, whose Wrangler command mocks
   fail under mutator's shared Vitest session even though `pnpm test` passes (to be investigated).
   `ar-lib-core` and `ar-management` run a narrowed scope (one mutant per line, and for
-  `ar-lib-core` `src/types/` excluded; see their `mutator.config.mjs`). Even so, a whole-package
+  `ar-lib-core` `src/test/` excluded; see their `mutator.config.mjs`). Even so, a whole-package
   run of either still fails when mutator writes its JSON report (`RangeError: Invalid string
 length`: the report lists all ~200k mutants, Pending ones included). Diff runs (`--since`,
-  which is what CI does) work; for a full baseline, run them in parts with `--include`.
+  the default of the manual workflow) have worked so far, but the report still lists every
+  mutant, so a diff touching widely covered code can hit the same limit; for a full baseline, run
+  them in parts with `--include`.
 - mutator runs everything in one process and its heap grows with each mutant executed: with the
   default heap, a package of more than roughly 10k mutants dies with `heap out of memory` before
   it writes its snapshot, and the whole run is lost. For a full first pass of a large package,
   give Node more heap and run in chunks that each finish, since the next run continues from the
   cache:
   `NODE_OPTIONS=--max-old-space-size=12288 npx mutator --time-budget 1200` (repeat until no
-  mutants are "not run"). CI sets `NODE_OPTIONS` for the same reason.
+  mutants are "not run"). The manual workflow sets `NODE_OPTIONS` for the same reason.
 - `scripts/ci-mutation-summary.mjs` merges `packages/*/.mutator/report/mutation.json` into one
-  mutation-testing-elements report and prints a Markdown table (appended to the CI step summary).
-- CI job **Mutation Tests (changed packages)**: on every pull request, for the packages with files
-  changed since the PR's base commit (`github.event.pull_request.base.sha`, so a release PR to
-  `main` is compared with `main`; when the event has no base, the first parent of the merge
-  commit is used, and with neither the job writes a note and skips), with a 60 min time budget
-  per package (a rerun continues the Pending mutants from the cache). It is informational
-  (`continue-on-error`), restores the `.mutator` caches of the latest run of the same PR, saves
-  them whatever happened, and uploads the merged report as the `mutation-report` artifact.
-  Mutants that did not fit in the budget stay Pending and are not counted. Packages run one
-  after another, so a PR that changes many large packages (a root `package.json` or lockfile
-  change selects all of them) can reach GitHub's 6 h job limit before the summary; a per-package
-  matrix is the planned fix. mutator officially targets Vitest 5; it currently runs
-  on this repository's Vitest 4.1.
+  mutation-testing-elements report and prints a Markdown table (appended to the workflow step
+  summary).
+- Mutation tests are **not part of the pull-request CI** (a run takes up to an hour per package).
+  The workflow **Mutation Tests** (`.github/workflows/mutation-tests.yml`) is started by hand from
+  the Actions tab on the branch of your choice, with three inputs: `base` (a commit or ref to diff
+  against, default `origin/develop`; empty runs whole packages), `packages` (comma-separated
+  package directory names; empty means the packages changed since `base`, or every opted-in
+  package when there is no base) and `time_budget` (seconds of mutant execution per package,
+  default 3600). It restores the `.mutator` caches of the latest run on the same branch, saves
+  them whatever happened, writes the score table to the step summary and uploads the merged
+  report as the `mutation-report` artifact. Mutants that did not fit in the budget stay Pending
+  and are not counted; a later run on the same branch continues them from the cache. Packages
+  run one after another, so a whole-repository run does not fit in GitHub's 6 h job limit: pick
+  the packages. mutator officially targets Vitest 5; it currently runs on this repository's
+  Vitest 4.1.
 
 Opting another package in:
 
