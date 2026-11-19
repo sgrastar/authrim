@@ -1,0 +1,150 @@
+# Mutation testing with @mizchi/mutator, run by hand from the Actions tab (workflow_dispatch) on
+# the branch picked there. It is not part of the pull-request CI: a run takes up to an hour per
+# package, so it is started when a change to the tests or to security-relevant code warrants it.
+#
+# Inputs:
+#   base         A commit or ref to diff against (for example `origin/develop`). Set: only the
+#                packages with files changed since it run, and within each only the mutants in
+#                the diff plus the code covered by added or changed tests (`--since`
+#                `--include-test-changes`). Empty: the whole package.
+#   packages     Comma-separated package directory names under packages/ (for example
+#                `ar-token,ar-auth`). Empty: with `base`, the changed packages; without it,
+#                every package that opted in.
+#   time_budget  Seconds of mutant execution per package (default 3600; the dry run and the type
+#                check are not counted, so the first run of a large package takes longer).
+#
+# The step summary shows the score table and the merged HTML report is uploaded as the
+# "mutation-report" artifact. The .mutator/ caches are saved per branch, so a later run on the
+# same branch re-runs only the functions that changed. mutator needs Node.js 24, and its heap
+# grows with every mutant executed (about 10k mutants per 8 GB), hence NODE_OPTIONS.
+
+name: Mutation Tests
+
+on:
+  workflow_dispatch:
+    inputs:
+      base:
+        description: 'Commit or ref to diff against (empty: whole packages)'
+        required: false
+        default: 'origin/develop'
+        type: string
+      packages:
+        description: 'Package dirs under packages/, comma-separated (empty: changed, or all without base)'
+        required: false
+        default: ''
+        type: string
+      time_budget:
+        description: 'Seconds of mutant execution per package'
+        required: false
+        default: '3600'
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  mutation-tests:
+    name: Mutation Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    env:
+      NODE_OPTIONS: --max-old-space-size=6144
+      MUTATION_BASE: ${{ inputs.base }}
+      MUTATION_PACKAGES: ${{ inputs.packages }}
+      MUTATION_TIME_BUDGET: ${{ inputs.time_budget }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          # the diff against the base needs the history
+          fetch-depth: 0
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@eae0cfeb286e66ffb5155f1a79b90583a127a68b # v2
+        with:
+          version: 9.0.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Setup environment variables
+        run: |
+          echo "PUBLIC_API_BASE_URL=http://localhost:8786" > packages/ar-login-ui/.env
+          echo "PUBLIC_API_BASE_URL=http://localhost:8786" > packages/ar-admin-ui/.env
+
+      # Turns the inputs into turbo filters and mutator flags. A base that does not resolve is an
+      # error rather than a silent whole-package run.
+      - name: Resolve the base and the package filter
+        run: |
+          if [ -n "$MUTATION_BASE" ]; then
+            if ! git rev-parse --verify --quiet "$MUTATION_BASE^{commit}" >/dev/null; then
+              echo "base '$MUTATION_BASE' does not resolve to a commit" >&2
+              exit 1
+            fi
+            echo "MUTATOR_FLAGS=--since $MUTATION_BASE --include-test-changes --time-budget $MUTATION_TIME_BUDGET" >> "$GITHUB_ENV"
+          else
+            echo "MUTATOR_FLAGS=--time-budget $MUTATION_TIME_BUDGET" >> "$GITHUB_ENV"
+          fi
+          filters=""
+          if [ -n "$MUTATION_PACKAGES" ]; then
+            for name in $(echo "$MUTATION_PACKAGES" | tr ',' ' '); do
+              filters="$filters --filter=./packages/$name"
+            done
+          elif [ -n "$MUTATION_BASE" ]; then
+            filters="--filter=[$MUTATION_BASE]"
+          fi
+          echo "TURBO_FILTERS=$filters" >> "$GITHUB_ENV"
+
+      # mutator reads its cache from .mutator/scopes/<scope hash>.json and keeps the latest run in
+      # snapshot.json. The key carries the run id and attempt so every run saves its progress
+      # (actions/cache skips the save on an exact key hit); restore-keys fall back to the latest
+      # run on the same branch, then to any run with the same lockfile.
+      - name: Restore mutator caches
+        id: mutator-cache
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: |
+            packages/*/.mutator/snapshot.json
+            packages/*/.mutator/scopes/*.json
+          key: mutator-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            mutator-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.ref_name }}-
+            mutator-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-
+
+      # The flags after `--` reach every package's `mutator` through turbo.
+      - name: Run mutation tests
+        continue-on-error: true
+        run: >-
+          pnpm exec turbo run test:mutation $TURBO_FILTERS --concurrency=1 --continue
+          -- $MUTATOR_FLAGS
+
+      - name: Merge reports and write the step summary
+        if: ${{ always() }}
+        run: node scripts/ci-mutation-summary.mjs
+
+      # Saved whatever happened above, so a run that hit the job time limit or a broken report
+      # still leaves its progress for the next one.
+      - name: Save mutator caches
+        if: ${{ always() }}
+        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: |
+            packages/*/.mutator/snapshot.json
+            packages/*/.mutator/scopes/*.json
+          key: ${{ steps.mutator-cache.outputs.cache-primary-key }}
+
+      - name: Upload merged mutation report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: mutation-report
+          path: reports/mutation
+          if-no-files-found: ignore
+          retention-days: 14

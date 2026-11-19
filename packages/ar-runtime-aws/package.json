@@ -27,6 +27,8 @@
     "test:browser-deployment": "node --test scripts/browser-deployment.test.mjs scripts/auth-state-deployment.test.mjs",
     "typecheck": "tsc --noEmit",
     "test": "node --test scripts/setup-plan.test.mjs scripts/aws-preflight.test.mjs scripts/package-serving.test.mjs scripts/browser-deployment.test.mjs scripts/auth-state-deployment.test.mjs scripts/setup-executor.test.mjs scripts/setup-artifacts.test.mjs scripts/setup-plan-adoption.test.mjs scripts/setup-dsql.test.mjs scripts/setup-config.test.mjs scripts/replication-execute.test.mjs scripts/replication-authority-package.test.mjs scripts/replication-authority-deployment.test.mjs && vitest run --fileParallelism=false",
+    "test:mutation": "mutator",
+    "test:mutation:diff": "mutator --since origin/develop --include-test-changes",
     "lint": "eslint src --pass-on-unpruned-suppressions"
   },
   "dependencies": {

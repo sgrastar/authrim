@@ -38,6 +38,8 @@
     "lint:check": "eslint src --ext .ts",
     "format:check": "prettier --check 'src/**/*.ts'",
     "test": "vitest run",
+    "test:mutation": "mutator",
+    "test:mutation:diff": "mutator --since origin/develop --include-test-changes",
     "test:watch": "vitest",
     "clean": "rm -rf dist"
   },
