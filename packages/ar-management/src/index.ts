@@ -729,6 +729,7 @@ import { requireTenantAdminForChanges } from './admin-role-gates';
 import { adminTenantPolicyMiddleware } from './admin-tenant-policy';
 import { userConsentsListHandler, userConsentRevokeHandler } from './user-consents';
 import { getAuthenticationMethodsHandler } from './authentication-methods';
+import { tenantStatusHandler, tenantStatusRateLimit } from './tenant-status';
 import {
   getDiscoveryConfigHandler,
   postDiscoveryGrantHandler,
@@ -1202,6 +1203,12 @@ app.use('*', logger());
 for (const path of MANAGEMENT_REQUEST_DIAGNOSTIC_PATHS) {
   app.use(path, managementRequestDiagnosticCheckpoint('mg_logger'));
 }
+// Tenant status is answered before the request context: it must work on the host of a tenant that
+// no longer resolves, and it reads nothing but the platform record of a deletion. Its rate limit is
+// keyed by client alone, so trying many host names shares one budget.
+app.use('/api/auth/tenant-status', tenantStatusRateLimit);
+app.get('/api/auth/tenant-status', tenantStatusHandler);
+
 app.use('*', requestContextMiddleware());
 for (const path of MANAGEMENT_REQUEST_DIAGNOSTIC_PATHS) {
   app.use(path, managementRequestDiagnosticCheckpoint('mg_request_context'));
