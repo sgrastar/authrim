@@ -771,7 +771,7 @@ describe('Router Worker', () => {
 
         expect(mockEnv.OP_MANAGEMENT.fetch).toHaveBeenCalledTimes(1);
         expect(mockEnv.OP_AUTH.fetch).not.toHaveBeenCalled();
-        const proxied = mockEnv.OP_MANAGEMENT.fetch.mock.calls[0][0] as Request;
+        const proxied: Request = mockEnv.OP_MANAGEMENT.fetch.mock.calls[0][0];
         expect(new URL(proxied.url).pathname).toBe('/api/auth/tenant-status');
         expect(proxied.headers.get('X-Authrim-Forwarded-Host')).toBe('acme.example.com');
       });

@@ -8,12 +8,14 @@
  * route is not a deletion.
  */
 
-import type { Context } from 'hono';
+import type { Context, MiddlewareHandler } from 'hono';
 import {
   ensureDatabaseAdapter,
+  getRateLimitProfileAsync,
   isMultiTenantEnabled,
   isReservedUiHost,
   isValidTenantIdentifier,
+  rateLimitMiddleware,
   type DatabaseSource,
   type Env,
 } from '@authrim/ar-lib-core';
@@ -94,6 +96,17 @@ export function subdomainTenantOf(
   if (isReservedUiHost(env, hostname)) return null;
   return { tenantId, host: hostname };
 }
+
+/** The public-read limit, keyed by client alone so that trying many host names shares one budget. */
+export const tenantStatusRateLimit: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
+  const profile = await getRateLimitProfileAsync(c.env, 'publicRead', c.executionCtx);
+  return rateLimitMiddleware({
+    ...profile,
+    endpoints: [TENANT_STATUS_PATH],
+    endpointClass: 'publicRead',
+    keyScope: 'global',
+  })(c, next);
+};
 
 /**
  * `host` goes with `deleted` so that the page can check the answer is about the host it is on:
