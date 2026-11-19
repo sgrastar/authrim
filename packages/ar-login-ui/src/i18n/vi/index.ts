@@ -576,7 +576,18 @@ const vi = createTranslation({
 	lite_provisioningFailed: 'Không thể thiết lập tài khoản của bạn. Hãy bắt đầu lại.',
 	lite_reauthSessionEnded:
 		'Phiên mà trang này được mở cho đã kết thúc hoặc đã thay đổi. Hãy đăng nhập lại.',
-	lite_reauthAnotherWay: 'Dùng cách khác'
+	lite_reauthAnotherWay: 'Dùng cách khác',
+	tenantDeleted_title: 'Trang đăng nhập này không còn dùng được',
+	tenantDeleted_description:
+		'Dịch vụ của trang này đã bị xoá. Bạn không thể đăng nhập tại đây nữa.',
+	tenantDeleted_autoRemoved:
+		'Chúng tôi đã yêu cầu thiết bị này xoá các khoá truy cập đã lưu cho trang này.',
+	tenantDeleted_chooseHint:
+		'Nếu thiết bị này vẫn còn lưu khoá truy cập của trang này, bạn có thể chọn khoá đó để xoá.',
+	tenantDeleted_chooseButton: 'Xoá khoá truy cập đã lưu',
+	tenantDeleted_chosenRemoved: 'Chúng tôi đã yêu cầu thiết bị này xoá khoá truy cập đó.',
+	tenantDeleted_manualHint:
+		'Khoá truy cập lưu trên khoá bảo mật, hoặc trong ứng dụng mà trình duyệt này không truy cập được, cần được xoá trong phần cài đặt của khoá hoặc ứng dụng đó.'
 });
 
 export default vi;

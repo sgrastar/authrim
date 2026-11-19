@@ -557,7 +557,16 @@ const th = createTranslation({
 	lite_provisioningFailed: 'ไม่สามารถเตรียมบัญชีของคุณได้ โปรดเริ่มใหม่',
 	lite_reauthSessionEnded:
 		'เซสชันที่ใช้เปิดหน้านี้สิ้นสุดลงหรือเปลี่ยนไปแล้ว โปรดลงชื่อเข้าใช้อีกครั้ง',
-	lite_reauthAnotherWay: 'ใช้วิธีอื่น'
+	lite_reauthAnotherWay: 'ใช้วิธีอื่น',
+	tenantDeleted_title: 'หน้าลงชื่อเข้าใช้นี้ไม่พร้อมใช้งานแล้ว',
+	tenantDeleted_description: 'บริการของหน้านี้ถูกลบแล้ว คุณไม่สามารถลงชื่อเข้าใช้ที่นี่ได้อีก',
+	tenantDeleted_autoRemoved: 'เราได้ขอให้อุปกรณ์นี้ลบพาสคีย์ที่บันทึกไว้สำหรับหน้านี้แล้ว',
+	tenantDeleted_chooseHint:
+		'หากยังมีพาสคีย์ของหน้านี้บันทึกอยู่ในอุปกรณ์นี้ คุณสามารถเลือกเพื่อให้ลบออกได้',
+	tenantDeleted_chooseButton: 'ลบพาสคีย์ที่บันทึกไว้',
+	tenantDeleted_chosenRemoved: 'เราได้ขอให้อุปกรณ์นี้ลบพาสคีย์นั้นแล้ว',
+	tenantDeleted_manualHint:
+		'พาสคีย์ที่อยู่ในคีย์ความปลอดภัย หรือในแอปที่เบราว์เซอร์นี้เข้าถึงไม่ได้ ต้องลบจากการตั้งค่าของคีย์หรือแอปนั้น'
 });
 
 export default th;

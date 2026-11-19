@@ -576,7 +576,17 @@ const translation = {
 	lite_provisioningFailed: 'Akaunti yako haikuweza kuandaliwa. Anza upya.',
 	lite_reauthSessionEnded:
 		'Kipindi ambacho ukurasa huu ulifunguliwa kwacho kimeisha au kimebadilika. Ingia tena.',
-	lite_reauthAnotherWay: 'Tumia njia nyingine'
+	lite_reauthAnotherWay: 'Tumia njia nyingine',
+	tenantDeleted_title: 'Ukurasa huu wa kuingia haupatikani tena',
+	tenantDeleted_description: 'Huduma iliyomiliki ukurasa huu imefutwa. Huwezi tena kuingia hapa.',
+	tenantDeleted_autoRemoved:
+		'Tumeomba kifaa hiki kiondoe Passkey zilizohifadhiwa kwa ajili ya ukurasa huu.',
+	tenantDeleted_chooseHint:
+		'Ikiwa Passkey ya ukurasa huu bado imehifadhiwa kwenye kifaa hiki, unaweza kuichagua ili iondolewe.',
+	tenantDeleted_chooseButton: 'Ondoa Passkey iliyohifadhiwa',
+	tenantDeleted_chosenRemoved: 'Tumeomba kifaa hiki kiondoe Passkey hiyo.',
+	tenantDeleted_manualHint:
+		'Passkey zilizo kwenye ufunguo wa usalama, au kwenye programu ambayo kivinjari hiki hakiwezi kuifikia, lazima ziondolewe kupitia mipangilio ya ufunguo au programu hiyo.'
 } satisfies Translation;
 
 export default translation;
