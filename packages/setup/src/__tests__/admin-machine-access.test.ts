@@ -95,6 +95,8 @@ describe('Admin Machine Access setup bootstrap', () => {
     expect(sql).toContain('INSERT INTO admin_machine_principal_permissions');
     expect(sql).toContain('VALUES');
     expect(sql).toContain("'admin:clients:*'");
+    expect(sql).toContain("'admin:step_up_exempt:client.trust.activate'");
+    expect(sql).toContain("'admin:step_up_exempt:client.secret.rotate'");
     expect(sql).not.toContain('UNION ALL');
     expect(sql).toContain('INSERT INTO admin_machine_principal_tenant_scopes');
     expect(sql).toContain("'allow'");
@@ -256,6 +258,15 @@ describe('Admin Machine Access setup bootstrap', () => {
   it('keeps setup scopes explicit and non-root', () => {
     expect(SETUP_MACHINE_DEFAULT_SCOPES).toContain('admin:clients:*');
     expect(SETUP_MACHINE_DEFAULT_SCOPES).not.toContain('*');
+    // Creating an enabled OIDC client is an L2 step-up, and regenerating an enabled client's
+    // secret on a rerun covers both operations; a machine needs each exact exemption.
+    const exemptions = SETUP_MACHINE_DEFAULT_SCOPES.filter((scope) =>
+      scope.startsWith('admin:step_up_exempt:')
+    );
+    expect(exemptions).toEqual([
+      'admin:step_up_exempt:client.trust.activate',
+      'admin:step_up_exempt:client.secret.rotate',
+    ]);
     expect(ADMIN_UI_BFF_SCOPES).toEqual(['admin-ui:proxy']);
     expect(ADMIN_MACHINE_AUDIENCE).toBe('authrim:admin-api');
   });
