@@ -10,14 +10,15 @@ function source(path: string): string {
 }
 
 describe('UI URL sink guards', () => {
-	it('guards consent document and deletion links with link URL validation', () => {
+	it('guards deletion links and draws consent documents only through sanitized descriptions', () => {
 		const consentSource = source('lib/views/ConsentView.svelte');
 
-		expect(consentSource.match(/isValidLinkUrl\(item\.document_url\)/g)).toHaveLength(2);
-		expect(consentSource).toContain('isValidLinkUrl(release.purpose.document_url)');
-		expect(consentSource).toContain('href={release.purpose.document_url}');
+		// A statement's document is linked from its description (sanitized HTML) only.
+		expect(consentSource).not.toContain('href={item.document_url}');
+		expect(consentSource).not.toContain('href={release.purpose.document_url}');
+		expect(consentSource).toContain('sanitizeRuntimeConsentHtml(item.description)');
+		expect(consentSource).toContain('sanitizeRuntimeConsentHtml(release.purpose.description)');
 		expect(consentSource).toContain('isValidLinkUrl(i.deletion_url)');
-		expect(consentSource).toContain('href={item.document_url}');
 		expect(consentSource).toContain('href={deletionItem.deletion_url}');
 	});
 

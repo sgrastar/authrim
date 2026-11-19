@@ -13,8 +13,9 @@ import { chooseLang, langCookie } from './i18n';
 import { logError, logEvent } from './log';
 import * as registry from './registry';
 import { errorResponse, htmlResponse, jsonResponse } from './respond';
+import { readTally } from './tally';
 import { verifyTurnstile } from './turnstile';
-import type { Deps, Env, RegistryRow } from './types';
+import type { Deps, Env, Lifetime, RegistryRow } from './types';
 
 export const COOKIE_NAME = '__Host-demo_ticket';
 const TICKET_LIFETIME_SECONDS = 1800;
@@ -83,8 +84,19 @@ function localizedPage(
   return htmlResponse(render(lang, config), 200, extra);
 }
 
-export function handleStartPage(request: Request, config: Config): Response {
-  return localizedPage(request, config, startPage);
+export async function handleStartPage(
+  request: Request,
+  env: Env,
+  config: Config,
+  deps: Deps,
+  lifetime?: Lifetime
+): Promise<Response> {
+  const tally = await readTally(
+    env,
+    deps,
+    lifetime ? (work) => lifetime.waitUntil(work) : undefined
+  );
+  return localizedPage(request, config, (lang, cfg) => startPage(lang, cfg, tally));
 }
 
 export function handleWaitPage(request: Request, config: Config): Response {

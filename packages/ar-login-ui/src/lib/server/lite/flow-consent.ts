@@ -155,9 +155,13 @@ export function readLiteFlowConsent(
 		);
 		const display = presentation.kind;
 		const frame = presentation.kind === 'embedded' ? presentation.src : null;
+		// An external document is linked from the description only, as the admin writes it; a choice
+		// of options (which shows no description) keeps its link.
 		const link =
 			presentation.kind === 'external'
-				? presentation.href
+				? raw.content_mode === 'radio'
+					? presentation.href
+					: null
 				: presentation.kind === 'embedded'
 					? presentation.pageHref
 					: null;

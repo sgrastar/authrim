@@ -76,7 +76,8 @@ export const jaStatements = {
 	'cs.content.typeUrl': '文書のリンクを示す',
 	'cs.content.name': '名前',
 	'cs.content.summary': '説明',
-	'cs.content.summaryHint': '同意をたずねる画面に表示する短い説明です。',
+	'cs.content.summaryHint':
+		'同意をたずねる画面に表示する短い説明です。HTML のタグ {tags} が使えます。',
 	'cs.content.body': '本文',
 	'cs.content.url': '文書のURL',
 	'cs.content.urlHint': 'https://から始まる、利用者が読める公開ページのリンクです。',

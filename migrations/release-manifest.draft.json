@@ -170,6 +170,10 @@
             {
               "path": "024_admin_onboarding_progress.sql",
               "checksum": "3c3add59e75d76d1be2b08ea481faf4f8c3ddb49a0a3cef12eb60401a0b206f1"
+            },
+            {
+              "path": "025_tenant_admin_saml_dr_bundle.sql",
+              "checksum": "6f4335fd407f35b136677833c2ebebb71f29fbca37819c26267388e26c915dcf"
             }
           ]
         },
@@ -437,6 +441,10 @@
         {
           "path": "024_admin_onboarding_progress.sql",
           "checksum": "3c3add59e75d76d1be2b08ea481faf4f8c3ddb49a0a3cef12eb60401a0b206f1"
+        },
+        {
+          "path": "025_tenant_admin_saml_dr_bundle.sql",
+          "checksum": "6f4335fd407f35b136677833c2ebebb71f29fbca37819c26267388e26c915dcf"
         }
       ]
     },

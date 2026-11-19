@@ -572,7 +572,18 @@ const translation = {
 	lite_provisioningFailed: 'आपका खाता तैयार नहीं किया जा सका। फिर से शुरू करें।',
 	lite_reauthSessionEnded:
 		'जिस सत्र के लिए यह पेज खोला गया था, वह समाप्त हो गया है या बदल गया है। फिर से साइन इन करें।',
-	lite_reauthAnotherWay: 'दूसरा तरीका इस्तेमाल करें'
+	lite_reauthAnotherWay: 'दूसरा तरीका इस्तेमाल करें',
+	tenantDeleted_title: 'यह साइन-इन पेज अब उपलब्ध नहीं है',
+	tenantDeleted_description:
+		'जिस सेवा का यह पेज था, उसे हटा दिया गया है। अब आप यहाँ साइन इन नहीं कर सकते।',
+	tenantDeleted_autoRemoved:
+		'हमने इस डिवाइस से इस पेज के लिए सहेजी गई पासकी हटाने का अनुरोध किया है।',
+	tenantDeleted_chooseHint:
+		'यदि इस पेज की कोई पासकी अभी भी इस डिवाइस पर सहेजी है, तो आप उसे चुनकर हटाने का अनुरोध कर सकते हैं।',
+	tenantDeleted_chooseButton: 'सहेजी गई पासकी हटाएँ',
+	tenantDeleted_chosenRemoved: 'हमने इस डिवाइस से उस पासकी को हटाने का अनुरोध किया है।',
+	tenantDeleted_manualHint:
+		'सुरक्षा कुंजी पर, या ऐसे ऐप में सहेजी गई पासकी जिस तक यह ब्राउज़र नहीं पहुँच सकता, उस कुंजी या ऐप की सेटिंग से हटानी होगी।'
 } satisfies Translation;
 
 export default translation;

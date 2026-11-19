@@ -110,6 +110,50 @@
 		)}{/snippet}
 </Story>
 
+<Story
+	name="Custom content blocks"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		// One block at each of the four places, each drawn as its kind.
+		await expect(canvas.getByText('Welcome back to the campus portal.')).toBeInTheDocument();
+		await expect(canvas.getByRole('link', { name: 'help desk' })).toHaveAttribute(
+			'href',
+			'https://help.example.test/'
+		);
+		await expect(canvas.getByRole('img', { name: 'Campus map' })).toBeInTheDocument();
+		await expect(canvas.getByRole('link', { name: 'Privacy notice' })).toHaveAttribute(
+			'rel',
+			'noopener noreferrer'
+		);
+	}}
+>
+	{#snippet template()}{@render full({
+			appearance: {
+				customBlocks: [
+					{ position: 'above-header', type: 'text', content: 'Welcome back to the campus portal.' },
+					{
+						position: 'above-form',
+						type: 'html',
+						content:
+							'Trouble signing in? Ask the <a href="https://help.example.test/">help desk</a>.'
+					},
+					{
+						position: 'below-form',
+						type: 'image',
+						content: SAMPLE_LOGO_URL,
+						alt: 'Campus map'
+					},
+					{
+						position: 'below-footer',
+						type: 'link',
+						content: 'Privacy notice',
+						url: 'https://example.test/privacy'
+					}
+				]
+			}
+		})}{/snippet}
+</Story>
+
 <Story name="Header: off">
 	{#snippet template()}{@render full(page({ headerEnabled: false }))}{/snippet}
 </Story>

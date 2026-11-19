@@ -9,6 +9,7 @@
 		setupErrorKey,
 		type SetupUserInfo
 	} from '#lib/api/admin-setup.js';
+	import { rememberPasskeyUserOfRegistration } from '#lib/auth/deleted-tenant.js';
 	import { t, type MessageKey } from '#lib/i18n/i18n.svelte.js';
 	import DisplayMenu from '#lib/shell/DisplayMenu.svelte';
 	import LanguageSwitch from '#lib/shell/LanguageSwitch.svelte';
@@ -66,6 +67,7 @@
 			);
 			if (!result.success)
 				throw new SetupError('registration_failed', 'Passkey registration failed.');
+			rememberPasskeyUserOfRegistration(options);
 			status = 'done';
 			setTimeout(() => goto('/admin/login'), 3000);
 		} catch (error) {

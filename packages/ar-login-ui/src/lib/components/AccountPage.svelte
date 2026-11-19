@@ -52,6 +52,10 @@
 		signalUnknownCredential,
 		shouldSignalUnknownCredentialAfterRegistrationFailure
 	} from '#lib/webauthn/signal.js';
+	import {
+		rememberPasskeyUserOfAssertion,
+		rememberPasskeyUserOfRegistration
+	} from '#lib/webauthn/deleted-tenant.js';
 	import { classifyPasskeyRegistrationError } from '#lib/webauthn/passkey-registration-error.js';
 	import { buildTotpDeleteProof } from '#lib/account/totp-proof.js';
 	import { getAuthConfig } from '#lib/auth.js';
@@ -872,6 +876,7 @@
 				reauthError = localizeApiError(completeResult.error, $LL.account_actionFailed());
 				return;
 			}
+			rememberPasskeyUserOfAssertion(credential);
 
 			await finishReauth();
 		} catch (error) {
@@ -1128,6 +1133,7 @@
 				);
 				return;
 			}
+			rememberPasskeyUserOfRegistration(optionsResult.data!.options);
 			await signalAllAcceptedCredentials(completeResult.data?.webauthn_signal);
 			await refreshSecurity();
 		} catch (error) {

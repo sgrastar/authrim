@@ -117,6 +117,56 @@ paths:
         '500':
           $ref: '#/components/responses/Error'
       security: []
+  /api/auth/tenant-status:
+    get:
+      tags:
+        - Frontend Auth Discovery
+      operationId: getApiAuthTenantStatus
+      summary: Tell whether the tenant of this host was deleted.
+      description:
+        Answers for the tenant named by the subdomain of the request host, and is meant for a
+        browser on that host that could not load the tenant. status is deleted only when the
+        platform holds the record of that tenant's deletion; a tenant that never existed, is
+        suspended or is still being deleted, a custom domain, the base domain, a host configured
+        for the Login UI or the Admin UI, a request whose host headers disagree, a call relayed by
+        the Login UI of a shared login host, single-tenant mode and a failed read of that record all
+        give unavailable. With deleted, host is the host the answer is about, and a page must act
+        only when it is on that host. No other tenant information is
+        returned. A browser may act on deleted by telling its passkey provider that the passkeys of
+        this host are no longer accepted, so unavailable is the answer whenever the deletion is not
+        certain. The rate limit is counted per client across all hosts; when the limiter cannot be
+        consulted the request is refused with 503 and no status.
+      responses:
+        '200':
+          description: The status of the tenant of this host.
+          headers:
+            Cache-Control:
+              description: Always no-store.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - status
+                properties:
+                  status:
+                    type: string
+                    enum:
+                      - deleted
+                      - unavailable
+                  host:
+                    type: string
+                    description: Present only with deleted. The tenant host the answer is about.
+              example:
+                status: unavailable
+        '429':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      security: []
   /api/auth/authentication-methods:
     get:
       tags:

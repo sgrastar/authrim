@@ -22,6 +22,7 @@
 		signalUnknownCredential,
 		shouldSignalUnknownCredentialAfterLoginFailure
 	} from '#lib/webauthn/signal.js';
+	import { rememberPasskeyUserOfAssertion } from '#lib/webauthn/deleted-tenant.js';
 
 	const { brandingStore } = useLoginUIStores();
 
@@ -236,6 +237,7 @@
 				}
 				throw loginUiDisplayError($LL.error_server_error());
 			}
+			rememberPasskeyUserOfAssertion(credential);
 
 			/* eslint-disable-next-line @typescript-eslint/no-explicit-any */
 			const redirectUrl = (verifyData as any)?.redirect_url;

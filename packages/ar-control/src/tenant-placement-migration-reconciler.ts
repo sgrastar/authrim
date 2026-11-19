@@ -25,6 +25,7 @@ const INSTALL_BATCH_SIZE = 20;
 const INVENTORY_BATCH_SIZE = 40;
 const PURGE_BATCH_SIZE = 100;
 const EMPTY_CHECKSUM = '0'.repeat(64);
+const DEFAULT_TENANT_ID = 'default';
 
 interface ActiveOperationRow {
   operation_id: string;
@@ -241,6 +242,8 @@ export class TenantPlacementMigrationReconciler {
   private async process(operation: ActiveOperationRow): Promise<void> {
     switch (operation.migration_state) {
       case 'planning':
+        // Refuse the default tenant before a target database is provisioned for it.
+        await this.tenantKey(operation);
         await this.transition(operation, 'planning', 'targets_provisioning');
         return;
       case 'targets_provisioning':
@@ -335,7 +338,7 @@ export class TenantPlacementMigrationReconciler {
       ) {
         throw new Error('control_tenant_placement_purge_capture_invalid');
       }
-      const tenantKey = await this.tenantKey(operation);
+      const tenantKey = (await this.sourceTenant(operation)).tenant_key;
       const table = inventory[tableIndex];
       const capture = await buildTenantMigrationCapturePlan({
         operationId: operation.operation_id,
@@ -833,7 +836,30 @@ export class TenantPlacementMigrationReconciler {
     }));
   }
 
+  /**
+   * The source tenant's key, once it is known to be one that may move. The default tenant (id
+   * `default`, or the one marked default: setup's initial tenant under another id) never moves: a
+   * fresh core database holds its own seeded default tenant, whose rows the copy does not own and
+   * whose default marker is unique per database. Checked on every step up to the write fence, so a
+   * tenant made the default during the move blocks it too.
+   */
   private async tenantKey(operation: ActiveOperationRow): Promise<string> {
+    const tenant = await this.sourceTenant(operation);
+    if (
+      operation.tenant_id === DEFAULT_TENANT_ID ||
+      tenant.is_default !== 0 ||
+      tenant.default_tenant_guard !== null
+    ) {
+      throw new Error('control_tenant_placement_default_tenant_unsupported');
+    }
+    return tenant.tenant_key;
+  }
+
+  private async sourceTenant(operation: ActiveOperationRow): Promise<{
+    tenant_key: string;
+    is_default: unknown;
+    default_tenant_guard: unknown;
+  }> {
     const row = await primary(this.database)
       .prepare(
         `SELECT observed.provider_resource_id AS source_database_id
@@ -857,10 +883,12 @@ export class TenantPlacementMigrationReconciler {
     if (!row) throw new Error('control_tenant_placement_default_source_unavailable');
     const result = await this.d1.queryD1(
       row.source_database_id,
-      'SELECT tenant_key FROM tenants WHERE id = ? LIMIT 1',
+      'SELECT tenant_key, is_default, default_tenant_guard FROM tenants WHERE id = ? LIMIT 1',
       [operation.tenant_id]
     );
-    const tenant = result[0]?.results?.[0] as { tenant_key?: unknown } | undefined;
+    const tenant = result[0]?.results?.[0] as
+      | { tenant_key?: unknown; is_default?: unknown; default_tenant_guard?: unknown }
+      | undefined;
     if (
       result.length !== 1 ||
       result[0]?.success !== true ||
@@ -868,7 +896,11 @@ export class TenantPlacementMigrationReconciler {
     ) {
       throw new Error('control_tenant_placement_tenant_key_unavailable');
     }
-    return tenant.tenant_key;
+    return {
+      tenant_key: tenant.tenant_key,
+      is_default: tenant.is_default ?? null,
+      default_tenant_guard: tenant.default_tenant_guard ?? null,
+    };
   }
 
   private async reconcileCapture(operation: ActiveOperationRow): Promise<void> {

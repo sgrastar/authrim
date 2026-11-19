@@ -29,14 +29,40 @@ export interface TestDb {
 /** A tiny D1-like adapter over real SQLite, with the migration applied. */
 export function createTestDb(): TestDb {
   const sqlite = new DatabaseSync(':memory:');
-  for (const file of ['0001_tenant_registry.sql', '0002_cleanup.sql', '0003_deferred_create.sql']) {
+  for (const file of [
+    '0001_tenant_registry.sql',
+    '0002_cleanup.sql',
+    '0003_deferred_create.sql',
+    '0004_counters.sql',
+  ]) {
     sqlite.exec(
       readFileSync(fileURLToPath(new URL(`../../migrations/${file}`, import.meta.url)), 'utf8')
     );
   }
   const beforeStatement: TestDb['beforeStatement'] = { current: null };
   const statements: string[] = [];
+  /** What `batch` runs for each statement: the same SQL, without the async steps between them. */
+  const direct = new WeakMap<DemoStatement, () => { meta: { changes: number } }>();
+  const sqlOf = new WeakMap<DemoStatement, string>();
   const db: DemoDatabase = {
+    async batch(batchStatements) {
+      await Promise.resolve();
+      for (const item of batchStatements) await beforeStatement.current?.(sqlOf.get(item) ?? '');
+      sqlite.exec('BEGIN IMMEDIATE');
+      try {
+        const results = batchStatements.map((item) => {
+          statements.push(sqlOf.get(item) ?? '');
+          const run = direct.get(item);
+          if (!run) throw new Error('batch: unknown statement');
+          return run();
+        });
+        sqlite.exec('COMMIT');
+        return results;
+      } catch (error) {
+        sqlite.exec('ROLLBACK');
+        throw error;
+      }
+    },
     prepare(sql: string): DemoStatement {
       let params: unknown[] = [];
       const statement: DemoStatement = {
@@ -64,6 +90,10 @@ export function createTestDb(): TestDb {
           return (sqlite.prepare(sql).get(...params) as T | undefined) ?? null;
         },
       };
+      sqlOf.set(statement, sql);
+      direct.set(statement, () => ({
+        meta: { changes: Number(sqlite.prepare(sql).run(...params).changes) },
+      }));
       return statement;
     },
   };

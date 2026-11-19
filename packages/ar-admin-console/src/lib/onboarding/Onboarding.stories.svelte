@@ -88,7 +88,7 @@
 	}}
 >
 	{#snippet template()}
-		<GuideHarness startAt={1} />
+		<GuideHarness startAt={3} />
 	{/snippet}
 </Story>
 
@@ -102,7 +102,7 @@
 	}}
 >
 	{#snippet template()}
-		<GuideHarness startAt={4} />
+		<GuideHarness startAt={6} />
 	{/snippet}
 </Story>
 
@@ -122,7 +122,12 @@
 				name: t('ob.startNamed', { name: t('ob.theme.title') })
 			})
 		);
-		// The guide went to the themes page and waits for a theme to be opened.
+		// It starts where the checklist is, saying where things are; Next leads to the themes page.
+		await text('ob.theme.nav.body');
+		await next();
+		await text('ob.theme.sub.body');
+		await next();
+		// There it waits for a theme to be opened.
 		await text('ob.theme.s1.action');
 		await userEvent.click(canvas.getByRole('button', { name: t('th.list.create') }));
 		await text('ob.theme.s2.body');
@@ -133,9 +138,13 @@
 		await userEvent.click(canvas.getByRole('tab', { name: 'Images' }));
 		await text('ob.theme.s5.action');
 		await userEvent.click(canvas.getByRole('button', { name: t('th.bg.browse') }));
+		await text('ob.theme.name.action');
+		await next();
 		await text('ob.theme.s6.action');
 		await userEvent.click(canvas.getByRole('button', { name: t('th.page.save') }));
-		// Saved: the item is checked, and the guide offers the way back to the list.
+		await text('ob.theme.apply.action');
+		await userEvent.click(canvas.getByRole('button', { name: t('th.action.apply') }));
+		// Applied: the item is checked, and the guide offers the way back to the list.
 		await text('ob.done.title');
 		await userEvent.click(
 			within(await popover(canvasElement)).getByRole('button', { name: t('ob.done.back') })

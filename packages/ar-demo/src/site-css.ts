@@ -57,8 +57,14 @@ form{display:grid;width:min(100%,300px);margin:2rem auto 0}
 .btn:hover,.start-btn:hover{background:var(--btn-hover)}
 .btn:active,.start-btn:active{transform:translateY(1px)}
 .btn:disabled,.start-btn:disabled{cursor:default;opacity:.6}
+/* Two numbers as a footnote: label, then figure, in the size of the language links. */
+.tally{display:flex;flex-wrap:wrap;justify-content:center;gap:.1rem 1.5rem;margin:1.4rem 0 0;color:var(--ink-muted);font-size:.8rem;line-height:1.6}
+.tally div{display:flex;align-items:baseline;gap:.45em}
+.tally dd{margin:0;color:var(--ink-soft);font-weight:620;font-variant-numeric:tabular-nums;direction:ltr}
+.tally dd span{color:var(--ink-muted);font-weight:420}
 .note{color:var(--ink-soft)}
 .lang{margin-top:1.6rem}
+.tally+.lang{margin-top:.7rem}
 .lang ul{list-style:none;display:flex;flex-wrap:wrap;justify-content:center;gap:.1rem .9rem;margin:0;padding:0}
 .lang a{display:inline-block;padding:.35rem 0;font-size:.85rem;color:var(--ink-muted);text-decoration:none}
 .lang a[aria-current]{color:var(--ink);text-decoration:underline;text-decoration-color:var(--accent);text-decoration-thickness:2px;text-underline-offset:.25em}

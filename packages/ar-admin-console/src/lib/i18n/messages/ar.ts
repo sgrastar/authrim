@@ -27,6 +27,7 @@ import { arProfileLayer } from './profile-layer/ar';
 import { arPlatformProfiles } from './platform-profiles/ar';
 import { arLaunchers } from './launchers/ar';
 import { arUsers } from './users/ar';
+import { arSamlLocal } from './saml-local/ar';
 
 export const ar = {
 	...arSettings,
@@ -57,6 +58,7 @@ export const ar = {
 	...arPlatformProfiles,
 	...arLaunchers,
 	...arUsers,
+	...arSamlLocal,
 	'app.adminLabel': 'وحدة التحكم الإدارية',
 	'app.env.dev': 'التطوير',
 	'app.env.prod': 'الإنتاج',
@@ -102,7 +104,6 @@ export const ar = {
 	'nav.auth.protection': 'الحماية من الهجمات',
 	'nav.custom.branding': 'السمات المرئية',
 	'nav.custom.screens': 'الشاشات',
-	'nav.custom.consent': 'سياسات الموافقة',
 	'nav.custom.emails': 'إعدادات البريد',
 	'nav.data.schema': 'مخطط السمات',
 	'nav.data.mapping': 'نظرة عامة على الربط',
@@ -285,6 +286,8 @@ export const ar = {
 	'common.unsaved': 'لديك تغييرات غير محفوظة',
 	'common.saving': 'جارٍ الحفظ…',
 	'common.saveFailed': 'تعذّر حفظ التغييرات. يُرجى المحاولة مرة أخرى.',
+	'common.releasePaused':
+		'يجري تحديث هذه البيئة. لا يمكن حفظ التغييرات حتى ينتهي التحديث. انتظر قليلًا ثم أعد المحاولة.',
 	'common.moreInfo': 'مزيد من المعلومات',
 	'common.fixErrors': 'بعض القيم لا يمكن حفظها. صحّح الحقول التي بها أخطاء.',
 	'common.changed': 'تم التغيير',

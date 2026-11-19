@@ -392,7 +392,18 @@ const pt = createTranslation({
 	lite_provisioningFailed: 'Não foi possível configurar sua conta. Comece novamente.',
 	lite_reauthSessionEnded:
 		'A sessão para a qual esta página foi aberta terminou ou mudou. Entre novamente.',
-	lite_reauthAnotherWay: 'Usar outra forma'
+	lite_reauthAnotherWay: 'Usar outra forma',
+	tenantDeleted_title: 'Esta página de início de sessão já não está disponível',
+	tenantDeleted_description:
+		'O serviço a que esta página pertencia foi eliminado. Já não é possível iniciar sessão aqui.',
+	tenantDeleted_autoRemoved:
+		'Pedimos a este dispositivo que remova as Passkeys guardadas para esta página.',
+	tenantDeleted_chooseHint:
+		'Se ainda houver uma Passkey desta página guardada neste dispositivo, pode escolhê-la para que seja removida.',
+	tenantDeleted_chooseButton: 'Remover uma Passkey guardada',
+	tenantDeleted_chosenRemoved: 'Pedimos a este dispositivo que remova essa Passkey.',
+	tenantDeleted_manualHint:
+		'As Passkeys guardadas numa chave de segurança, ou numa aplicação a que este navegador não chega, têm de ser removidas nas definições dessa chave ou aplicação.'
 });
 
 export default pt;

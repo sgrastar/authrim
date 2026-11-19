@@ -580,7 +580,18 @@ const it = createTranslation({
 	lite_provisioningFailed: 'Non è stato possibile configurare il tuo account. Ricomincia.',
 	lite_reauthSessionEnded:
 		'La sessione per cui è stata aperta questa pagina è terminata o è cambiata. Accedi di nuovo.',
-	lite_reauthAnotherWay: 'Usa un altro metodo'
+	lite_reauthAnotherWay: 'Usa un altro metodo',
+	tenantDeleted_title: 'Questa pagina di accesso non è più disponibile',
+	tenantDeleted_description:
+		'Il servizio a cui apparteneva questa pagina è stato eliminato. Non è più possibile accedere da qui.',
+	tenantDeleted_autoRemoved:
+		'Abbiamo chiesto a questo dispositivo di rimuovere le passkey salvate per questa pagina.',
+	tenantDeleted_chooseHint:
+		'Se su questo dispositivo è ancora salvata una passkey di questa pagina, puoi sceglierla per farla rimuovere.',
+	tenantDeleted_chooseButton: 'Rimuovi una passkey salvata',
+	tenantDeleted_chosenRemoved: 'Abbiamo chiesto a questo dispositivo di rimuovere quella passkey.',
+	tenantDeleted_manualHint:
+		'Le passkey salvate su una chiave di sicurezza, o in un’app che questo browser non può raggiungere, vanno rimosse dalle impostazioni di quella chiave o app.'
 });
 
 export default it;

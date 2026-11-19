@@ -26,7 +26,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const SCOPE = '@authrim/';
 const scoped = (names) => names.map((name) => `${SCOPE}${name}`);
 
-/** Tested by `ui-tests`, not by the API tests. */
+/** Tested by `ui-unit-tests` and `ui-story-tests`, not by the API tests. */
 export const UI_PACKAGES = scoped(['ar-admin-console', 'ar-admin-ui', 'ar-login-ui']);
 
 /**
@@ -36,6 +36,14 @@ export const UI_PACKAGES = scoped(['ar-admin-console', 'ar-admin-ui', 'ar-login-
  * Balanced from the CI timings of the unsharded job: ar-management alone is the longest test
  * (about 15 minutes of the 30), then ar-auth and ar-runtime-aws; the rest is small. Since the
  * split into shards, management (13-17 minutes) is cut into `PARTS` and the others take 5-8.
+ *
+ * The former `services` shard (8 packages, 9 minutes) was the longest unsplit job once management
+ * was cut, so it runs as two shards of packages, `services-a` and `services-b`. They are balanced
+ * by the vitest durations of one CI run (run 44321090660): setup 286 s, ar-saml 207 s,
+ * ar-runtime-aws 115 s, ar-control 44 s, ar-vc 28 s, ar-plugin-runner 24 s, ar-agent-access 23 s,
+ * ar-demo 4 s, which gives about 365 s of tests to each. Unlike a split into `PARTS`, each package
+ * still runs whole, so its coverage needs no merging. Move a package between the two when their
+ * timings drift apart.
  */
 export const SHARDS = {
   management: scoped(['ar-management']),
@@ -50,16 +58,8 @@ export const SHARDS = {
     'ar-bridge',
     'ar-async',
   ]),
-  services: scoped([
-    'ar-runtime-aws',
-    'setup',
-    'ar-saml',
-    'ar-vc',
-    'ar-control',
-    'ar-agent-access',
-    'ar-plugin-runner',
-    'ar-demo',
-  ]),
+  'services-a': scoped(['setup', 'ar-vc', 'ar-agent-access', 'ar-plugin-runner', 'ar-demo']),
+  'services-b': scoped(['ar-saml', 'ar-runtime-aws', 'ar-control']),
 };
 
 /**
@@ -119,7 +119,7 @@ export function checkShards(tested, shards = SHARDS, uiPackages = UI_PACKAGES, p
   }
   for (const name of owner.keys()) {
     if (!tested.includes(name)) problems.push(`${name} is in a shard but has no test script`);
-    if (uiPackages.includes(name)) problems.push(`${name} is a UI package, run by ui-tests`);
+    if (uiPackages.includes(name)) problems.push(`${name} is a UI package, run by the UI jobs`);
   }
   return problems;
 }

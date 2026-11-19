@@ -529,7 +529,15 @@ const translation = {
 	lite_provisioningWait: 'መለያዎ እየተዘጋጀ ነው። ትንሽ ይጠብቁ፣ ከዚያ ቀጥል የሚለውን ይምረጡ።',
 	lite_provisioningFailed: 'መለያዎን ማዘጋጀት አልተቻለም። እንደገና ይጀምሩ።',
 	lite_reauthSessionEnded: 'ይህ ገጽ የተከፈተበት ክፍለ-ጊዜ አብቅቷል ወይም ተቀይሯል። እንደገና ይግቡ።',
-	lite_reauthAnotherWay: 'ሌላ መንገድ ይጠቀሙ'
+	lite_reauthAnotherWay: 'ሌላ መንገድ ይጠቀሙ',
+	tenantDeleted_title: 'ይህ የመግቢያ ገጽ ከአሁን በኋላ አይገኝም',
+	tenantDeleted_description: 'ይህ ገጽ የነበረበት አገልግሎት ተሰርዟል። ከዚህ በኋላ እዚህ መግባት አይችሉም።',
+	tenantDeleted_autoRemoved: 'ለዚህ ገጽ የተቀመጡትን የይለፍ ቁልፎች እንዲያስወግድ ይህን መሣሪያ ጠይቀናል።',
+	tenantDeleted_chooseHint: 'የዚህ ገጽ የይለፍ ቁልፍ አሁንም በዚህ መሣሪያ ላይ ከተቀመጠ፣ እንዲወገድ መምረጥ ይችላሉ።',
+	tenantDeleted_chooseButton: 'የተቀመጠ የይለፍ ቁልፍ አስወግድ',
+	tenantDeleted_chosenRemoved: 'ያንን የይለፍ ቁልፍ እንዲያስወግድ ይህን መሣሪያ ጠይቀናል።',
+	tenantDeleted_manualHint:
+		'በደህንነት ቁልፍ ላይ ወይም ይህ አሳሽ ሊደርስበት በማይችል መተግበሪያ ውስጥ የተቀመጡ የይለፍ ቁልፎች በዚያ ቁልፍ ወይም መተግበሪያ ቅንብሮች ውስጥ መወገድ አለባቸው።'
 } satisfies Translation;
 
 export default translation;

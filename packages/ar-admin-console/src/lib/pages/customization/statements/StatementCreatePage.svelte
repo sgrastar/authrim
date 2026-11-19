@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { STATEMENT_HTML_TAGS } from './statement-html';
 	import type { ConsentStatementsClient } from '#lib/api/consent-statements.js';
 	import { i18n, t, type MessageKey } from '#lib/i18n/i18n.svelte.js';
 	import Callout from '#lib/ui/patterns/Callout.svelte';
@@ -138,7 +139,7 @@
 					/>
 					<TextArea
 						label={t('cs.content.summary')}
-						hint={t('cs.content.summaryHint')}
+						hint={t('cs.content.summaryHint', { tags: STATEMENT_HTML_TAGS.join(', ') })}
 						rows={3}
 						maxlength={LIMITS.description}
 						error={problem('description')}

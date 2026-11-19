@@ -480,8 +480,16 @@ export const API_GROUPS: readonly ApiGroup[] = [
 		name: 'Login UI themes',
 		kind: 'records',
 		page: 'customization/branding',
-		paths: [`${A}/login-ui/themes`, `${A}/login-ui/lite-mode`],
+		paths: [`${A}/login-ui/themes`],
 		note: 'Saved themes; applying one writes its values to the login-ui settings.'
+	},
+	{
+		id: 'login-ui-lite-mode',
+		name: 'Lite Login UI switch',
+		kind: 'actions',
+		page: 'customization/login-ui',
+		paths: [`${A}/login-ui/lite-mode`],
+		note: 'Publishes the mode to the policy store after a readiness check; the settings PATCH refuses login-ui.lite_mode.'
 	},
 	{
 		id: 'login-ui-assets',
@@ -508,8 +516,9 @@ export const API_GROUPS: readonly ApiGroup[] = [
 		id: 'sign-in-confirmation',
 		name: 'Sign-in confirmation',
 		kind: 'records',
-		page: 'customization/consent',
-		paths: [`${A}/sign-in-confirmation-policies`]
+		page: 'customization/statements',
+		paths: [`${A}/sign-in-confirmation-policies`],
+		note: 'The consent policies page was dropped from the navigation (consent redesign); the API stays with the consent statements until it is removed.'
 	},
 	{
 		id: 'consent-statements',

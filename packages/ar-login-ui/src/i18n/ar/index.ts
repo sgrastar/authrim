@@ -549,7 +549,17 @@ const ar = createTranslation({
 	lite_provisioningFailed: 'تعذّر إعداد حسابك. ابدأ من جديد.',
 	lite_reauthSessionEnded:
 		'انتهت الجلسة التي فُتحت لها هذه الصفحة أو تغيّرت. سجّل الدخول مرة أخرى.',
-	lite_reauthAnotherWay: 'استخدم طريقة أخرى'
+	lite_reauthAnotherWay: 'استخدم طريقة أخرى',
+	tenantDeleted_title: 'صفحة تسجيل الدخول هذه لم تعد متاحة',
+	tenantDeleted_description:
+		'تم حذف الخدمة التي تتبعها هذه الصفحة. لم يعد بإمكانك تسجيل الدخول هنا.',
+	tenantDeleted_autoRemoved: 'طلبنا من هذا الجهاز إزالة مفاتيح المرور المحفوظة لهذه الصفحة.',
+	tenantDeleted_chooseHint:
+		'إذا كان مفتاح مرور لهذه الصفحة ما زال محفوظًا على هذا الجهاز، يمكنك اختياره لطلب إزالته.',
+	tenantDeleted_chooseButton: 'إزالة مفتاح مرور محفوظ',
+	tenantDeleted_chosenRemoved: 'طلبنا من هذا الجهاز إزالة مفتاح المرور هذا.',
+	tenantDeleted_manualHint:
+		'مفاتيح المرور المحفوظة على مفتاح أمان، أو في تطبيق لا يستطيع هذا المتصفح الوصول إليه، يجب إزالتها من إعدادات ذلك المفتاح أو التطبيق.'
 });
 
 export default ar;

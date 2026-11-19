@@ -82,11 +82,15 @@ export const DRAFT_PAGES: readonly DraftPage[] = [
 	},
 	{ id: 'users/lifecycle', scope: 'tenant' },
 	{ id: 'users/support', scope: 'tenant' },
-	{ id: 'customization/branding', scope: 'tenant' },
+	{
+		id: 'customization/branding',
+		scope: 'tenant',
+		note: 'A built page (the theme editor, with a live preview): the look of the sign-in screens is set by applying a theme, so its values are not offered as fields.'
+	},
 	{
 		id: 'customization/login-ui',
 		scope: 'tenant',
-		note: 'The theme editor (dedicated UI with a live preview).'
+		note: 'A built page (dedicated UI: the languages as choice grids, the lite Login UI with its own route, and the custom content blocks).'
 	},
 	{ id: 'customization/screens', scope: 'tenant' },
 	{ id: 'customization/account-page', scope: 'tenant' },
@@ -543,21 +547,47 @@ place('customization/branding', 'Brand', {
 	],
 	advanced: ['login-ui.brand_panel_title', 'login-ui.brand_panel_text']
 });
-place('customization/login-ui', 'Theme', {
-	primary: [
+// The look of the sign-in screens is a theme's: the theme editor (Branding) edits these values
+// and applying a theme writes them (LOGIN_UI_THEME_KEYS; a key the theme has no value for is
+// cleared). They are not offered as plain fields anywhere else.
+place(
+	'customization/branding',
+	'Theme values',
+	{
+		hidden: [
+			'login-ui.auth_switch_link_enabled',
+			'login-ui.theme_fixed',
+			'login-ui.powered_by_enabled',
+			'login-ui.logo_layout',
+			'login-ui.split_background_mode',
+			'login-ui.login_panel_background_color',
+			'login-ui.login_panel_background_gradient_color'
+		]
+	},
+	{
+		'login-ui.auth_switch_link_enabled':
+			'A theme key, set in the theme editor (Look → Layout: offer the sign-in / sign-up switch).',
+		'login-ui.theme_fixed':
+			'A theme key, set in the theme editor (Look → Layout: keep this mode, with a fixed mode).',
+		'login-ui.powered_by_enabled':
+			'A theme key, set in the theme editor (Content → Footer: show the footer text).',
+		'login-ui.logo_layout':
+			'A theme key the editor has no control for: it lays out the in-card header only (header_style other than bar), and the editor always writes the bar header.',
+		'login-ui.split_background_mode':
+			'A theme key, set in the theme editor (Layout → Split panel: background picture; "panel" is an older value the screens show as "shared").',
+		'login-ui.login_panel_background_color':
+			'A theme key, set in the theme editor (Layout → Split panel: form side colour, with "brand side only").',
+		'login-ui.login_panel_background_gradient_color':
+			'A theme key, set in the theme editor (Layout → Split panel: gradient end colour, with "brand side only").'
+	}
+);
+place('customization/branding', 'Theme values', {
+	hidden: [
 		'login-ui.theme',
-		'login-ui.theme_fixed',
 		'login-ui.template',
 		'login-ui.palette',
-		'login-ui.theme_template',
-		'login-ui.page_layout',
 		'login-ui.font_family',
-		'login-ui.font_scale'
-	],
-	search: ['login-ui.thumbnail_url']
-});
-place('customization/login-ui', 'Colours', {
-	advanced: [
+		'login-ui.font_scale',
 		'login-ui.background_color',
 		'login-ui.accent_color',
 		'login-ui.title_color',
@@ -575,41 +605,26 @@ place('customization/login-ui', 'Colours', {
 		'login-ui.footer_background_color',
 		'login-ui.footer_text_color',
 		'login-ui.dark_colors',
-		'login-ui.dark_images'
-	]
-});
-place('customization/login-ui', 'Layout', {
-	advanced: [
+		'login-ui.dark_images',
 		'login-ui.header_enabled',
 		'login-ui.subtitle_enabled',
 		'login-ui.footer_enabled',
-		'login-ui.powered_by_enabled',
-		'login-ui.auth_switch_link_enabled',
 		'login-ui.topbar_position',
 		'login-ui.theme_toggle_enabled',
 		'login-ui.language_select_enabled',
-		'login-ui.language_switcher_position',
 		'login-ui.header_style',
 		'login-ui.footer_style',
 		'login-ui.header_align',
 		'login-ui.footer_align',
-		'login-ui.logo_layout',
 		'login-ui.form_frame',
 		'login-ui.background_image_url',
 		'login-ui.background_image_opacity',
 		'login-ui.background_image_dark_dim',
 		'login-ui.background_image_grayscale',
-		'login-ui.background_image_filters'
-	]
-});
-place('customization/login-ui', 'Split layout', {
-	advanced: [
+		'login-ui.background_image_filters',
 		'login-ui.split_frame',
 		'login-ui.split_panel_side',
 		'login-ui.split_panel_width',
-		'login-ui.split_background_mode',
-		'login-ui.login_panel_background_color',
-		'login-ui.login_panel_background_gradient_color',
 		'login-ui.login_panel_background_opacity',
 		'login-ui.login_panel_background_dark_dim',
 		'login-ui.login_panel_background_grayscale',
@@ -623,36 +638,69 @@ place('customization/login-ui', 'Split layout', {
 		'login-ui.brand_panel_image_opacity',
 		'login-ui.brand_panel_image_dark_dim',
 		'login-ui.brand_panel_image_grayscale',
-		'login-ui.brand_panel_image_filters'
-	]
-});
-place('customization/login-ui', 'Text', {
-	advanced: [
+		'login-ui.brand_panel_image_filters',
 		'login-ui.header_text',
 		'login-ui.text_localizations',
 		'login-ui.footer_text',
 		'login-ui.footer_links',
-		'login-ui.custom_blocks'
+		'login-ui.custom_css'
 	]
 });
-place('customization/login-ui', 'Languages', {
-	primary: ['login-ui.supported_locales', 'login-ui.default_locale'],
-	advanced: ['login-ui.primary_locales', 'login-ui.show_english_language_names']
-});
+// The Login UI page (a dedicated UI: choice grids, with the default language locked on).
+place(
+	'customization/login-ui',
+	'Languages',
+	{
+		primary: ['login-ui.supported_locales', 'login-ui.default_locale'],
+		advanced: ['login-ui.primary_locales', 'login-ui.show_english_language_names']
+	},
+	{
+		'login-ui.primary_locales':
+			'A JSON array; null means the most spoken of the languages shown. Offered from 11 languages shown, up to 6.'
+	}
+);
+place(
+	'hidden',
+	'Login UI (no longer read)',
+	{
+		hidden: [
+			'login-ui.language_switcher_position',
+			'login-ui.thumbnail_url',
+			'login-ui.theme_template',
+			'login-ui.page_layout',
+			'login-ui.custom_themes'
+		]
+	},
+	{
+		'login-ui.language_switcher_position':
+			'Fallback for topbar_position, which every theme writes: no effect once a theme is applied.',
+		'login-ui.thumbnail_url': 'The previous Admin UI’s theme preview image; the console has none.',
+		'login-ui.theme_template': 'Deprecated: replaced by palette.',
+		'login-ui.page_layout': 'Deprecated: replaced by template.',
+		'login-ui.custom_themes':
+			'The previous Admin UI’s store of duplicated themes; saved themes have their own API.'
+	}
+);
+place(
+	'customization/login-ui',
+	'Custom content',
+	{ primary: ['login-ui.custom_blocks'] },
+	{
+		'login-ui.custom_blocks':
+			'A JSON array edited as rows on the page (place, kind, text or address); the Login UI draws the blocks around the form, header and footer.'
+	}
+);
 place(
 	'customization/login-ui',
 	'Lite Login UI',
 	{ primary: ['login-ui.lite_mode', 'login-ui.lite_logo'] },
 	{
 		'login-ui.lite_mode':
-			'Switched with PUT /api/admin/login-ui/lite-mode (a compatibility check, then the policy); the settings PATCH refuses it. Show the readiness issues from the GET of that route.',
+			'Switched with PUT /api/admin/login-ui/lite-mode (a compatibility check, then the policy); the settings PATCH refuses it. The page shows the readiness issues from the GET of that route.',
 		'login-ui.lite_logo':
-			'A still PNG or WebP of at most 8 KB and 640x160 px, saved as a data: URI.'
+			'A still PNG or WebP of at most 8 KB and 640x160 px, saved as a data: URI with the page’s other settings.'
 	}
 );
-place('customization/login-ui', 'Custom CSS and themes', {
-	advanced: ['login-ui.custom_css', 'login-ui.custom_themes']
-});
 place('customization/screens', 'Screen flows', {
 	primary: ['feature.enable_flow_engine'],
 	advanced: [

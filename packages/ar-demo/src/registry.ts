@@ -1,7 +1,9 @@
-import type { DemoDatabase, RegistryRow, RegistryState } from './types';
+import { logError } from './log';
+import type { DemoDatabase, DemoRunResult, RegistryRow, RegistryState } from './types';
 
 export const POLL_INTERVAL_SECONDS = 2;
 const DAY_SECONDS = 24 * 60 * 60;
+const TENANTS_CREATED = 'tenants_created';
 
 export interface NewStart {
   id: string;
@@ -251,19 +253,69 @@ export async function markDeleted(db: DemoDatabase, id: string, now: number): Pr
 /**
  * The Admin API accepted the creation: from now on the row is known to own its tenant. Guarded, so
  * a row that left `provisioning` in the meantime is not touched; true only when a row was changed.
+ *
+ * The total of created tenants is counted in the same transaction, BEFORE the row is marked: the
+ * counter moves only for a row that is not marked yet, so a creation is counted exactly once and
+ * never without its mark.
  */
 export async function markCreateAccepted(
   db: DemoDatabase,
   id: string,
   now: number
 ): Promise<boolean> {
-  const result = await db
+  const mark = `UPDATE demo_tenants SET create_accepted_at = ?1 WHERE id = ?2 AND state = 'provisioning'`;
+  const counted = () =>
+    db.batch([
+      db
+        .prepare(
+          `UPDATE demo_counters SET value = value + 1
+            WHERE name = '${TENANTS_CREATED}'
+              AND EXISTS (SELECT 1 FROM demo_tenants
+                           WHERE id = ?1 AND state = 'provisioning' AND create_accepted_at IS NULL)`
+        )
+        .bind(id),
+      db.prepare(mark).bind(now, id),
+    ]);
+  let results: DemoRunResult[];
+  try {
+    results = await counted();
+  } catch (error) {
+    // The code may run before migration 0004 (or beside a Worker of the release before): the
+    // acceptance must be recorded all the same. The migration counts such a row when it is applied,
+    // because it starts the total from the accepted rows.
+    if (!(error instanceof Error) || !/no such table: demo_counters/i.test(error.message)) {
+      throw error;
+    }
+    logError('counter_table_missing');
+    // Only while the table is still absent, checked in the statement itself: a mark written after
+    // the migration ran would be in neither the migration's count nor ours.
+    const plain = await db
+      .prepare(
+        `${mark} AND NOT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'demo_counters')`
+      )
+      .bind(now, id)
+      .run();
+    if (plain.meta.changes === 1) return true;
+    // Nothing was written: the table appeared in between (count it now), or the row left
+    // `provisioning` (the batch changes nothing and says so).
+    results = await counted();
+  }
+  return results[1]?.meta.changes === 1;
+}
+
+/**
+ * The start page's numbers, in one statement: the rows that take a place under the capacity limit
+ * (the very count of `tryInsertStart`) and the total of accepted creations.
+ */
+export async function readTally(db: DemoDatabase): Promise<{ active: number; created: number }> {
+  const row = await db
     .prepare(
-      `UPDATE demo_tenants SET create_accepted_at = ?1 WHERE id = ?2 AND state = 'provisioning'`
+      `SELECT (SELECT COUNT(*) FROM demo_tenants WHERE state <> 'deleted') AS active,
+              (SELECT value FROM demo_counters WHERE name = '${TENANTS_CREATED}') AS created`
     )
-    .bind(now, id)
-    .run();
-  return result.meta.changes === 1;
+    .first<{ active: number; created: number | null }>();
+  if (!row || row.created === null) throw new Error('tally_unavailable');
+  return { active: row.active, created: row.created };
 }
 
 export async function countStuck(db: DemoDatabase, now: number): Promise<number> {

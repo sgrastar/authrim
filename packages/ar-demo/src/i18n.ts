@@ -59,6 +59,12 @@ export interface Copy extends GateTexts {
   start: string;
   /** On the start button while the check is still answering. */
   startChecking: string;
+  /**
+   * Labels of the two numbers on the start page. The first counts every place that is taken
+   * (being prepared, in use, or waiting to be cleaned up), so it does not say "running".
+   */
+  tallyActive: string;
+  tallyCreated: string;
   skipLabel: string;
   sealLabel: string;
   retry: string;
@@ -110,6 +116,8 @@ export const COPY: Record<Lang, Copy> = {
     ],
     start: '開始する',
     startChecking: '確認しています…',
+    tallyActive: p('使用中の|枠'),
+    tallyCreated: p('これまでに|作られた|テナント'),
     gateTitle: p('デモ環境を|準備しています'),
     gateTitleReady: p('デモ環境の|準備が|できました'),
     gateChecking: p('受付を|確認しています'),
@@ -176,6 +184,8 @@ export const COPY: Record<Lang, Copy> = {
     ],
     start: 'Start',
     startChecking: 'Checking…',
+    tallyActive: 'Demo slots in use',
+    tallyCreated: 'Tenants created so far',
     gateTitle: 'Preparing your demo environment',
     gateTitleReady: 'Your demo environment is ready',
     gateChecking: 'Checking your request',
@@ -232,6 +242,8 @@ export const COPY: Record<Lang, Copy> = {
     ],
     start: 'Starten',
     startChecking: 'Wird geprüft…',
+    tallyActive: 'Belegte Demo-Plätze',
+    tallyCreated: 'Bisher angelegte Tenants',
     gateTitle: 'Deine Demo-Umgebung wird vorbereitet',
     gateTitleReady: 'Deine Demo-Umgebung ist bereit',
     gateChecking: 'Deine Anfrage wird geprüft',
@@ -291,6 +303,8 @@ export const COPY: Record<Lang, Copy> = {
     ],
     start: 'ابدأ',
     startChecking: 'جارٍ التحقق…',
+    tallyActive: 'الأماكن المشغولة الآن',
+    tallyCreated: 'المستأجرون المُنشَؤون حتى الآن',
     gateTitle: 'جارٍ تجهيز البيئة التجريبية',
     gateTitleReady: 'البيئة التجريبية جاهزة',
     gateChecking: 'جارٍ التحقق من طلبك',

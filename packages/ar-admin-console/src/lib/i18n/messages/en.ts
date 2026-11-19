@@ -27,6 +27,7 @@ import { enProfileLayer } from './profile-layer/en';
 import { enPlatformProfiles } from './platform-profiles/en';
 import { enLaunchers } from './launchers/en';
 import { enUsers } from './users/en';
+import { enSamlLocal } from './saml-local/en';
 
 export const en = {
 	...enSettings,
@@ -57,6 +58,7 @@ export const en = {
 	...enPlatformProfiles,
 	...enLaunchers,
 	...enUsers,
+	...enSamlLocal,
 	'app.adminLabel': 'Admin',
 	'app.env.dev': 'Development',
 	'app.env.prod': 'Production',
@@ -102,7 +104,6 @@ export const en = {
 	'nav.auth.protection': 'Attack protection',
 	'nav.custom.branding': 'Themes',
 	'nav.custom.screens': 'Screens',
-	'nav.custom.consent': 'Consent policies',
 	'nav.custom.emails': 'Email settings',
 	'nav.data.schema': 'Attribute schema',
 	'nav.data.mapping': 'Mapping overview',
@@ -285,6 +286,8 @@ export const en = {
 	'common.unsaved': 'You have unsaved changes',
 	'common.saving': 'Saving…',
 	'common.saveFailed': 'The changes could not be saved. Please try again.',
+	'common.releasePaused':
+		'This environment is being updated. Changes cannot be saved until the update is finished. Wait a moment, then try again.',
 	'common.moreInfo': 'More information',
 	'common.fixErrors': 'Some values cannot be saved. Fix the fields with an error.',
 	'common.changed': 'Changed',

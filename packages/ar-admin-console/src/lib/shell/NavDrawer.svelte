@@ -75,7 +75,7 @@
 											aria-current={row.active ? 'page' : undefined}
 											onclick={onclose}
 										>
-											<Icon name={row.icon} /><span>{row.label}</span>
+											<span>{row.label}</span>
 										</a>
 									{/if}
 								{/each}
@@ -185,7 +185,6 @@
 		padding-inline: 30px 16px;
 		color: var(--text-secondary);
 		font-size: var(--fs-body);
-		--icon-size: var(--icon-md);
 	}
 
 	.item > span {

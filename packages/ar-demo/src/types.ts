@@ -16,6 +16,8 @@ export interface DemoStatement {
 
 export interface DemoDatabase {
   prepare(sql: string): DemoStatement;
+  /** Runs the statements in order as ONE transaction: all of them take effect or none does. */
+  batch(statements: DemoStatement[]): Promise<DemoRunResult[]>;
 }
 
 /** The one method of a service binding this package uses. */
@@ -54,6 +56,11 @@ export interface Env {
   SWEEP_MACHINE_CLIENT_ID?: string;
   SWEEP_MACHINE_KEY_ID?: string;
   SWEEP_MACHINE_PRIVATE_JWK?: string;
+}
+
+/** The one method of the platform's execution context this package uses. */
+export interface Lifetime {
+  waitUntil(work: Promise<unknown>): void;
 }
 
 /** What the handlers need from the outside world; the tests replace both. */

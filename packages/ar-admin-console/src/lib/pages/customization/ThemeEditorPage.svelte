@@ -291,6 +291,7 @@
 			appliedVersion = active.version;
 			confirming = false;
 			toast.success(t('th.toast.applied', { name: name.trim() }));
+			guideSignal('theme.applied');
 		} catch (error) {
 			toast.error(t(themeErrorKey(error, 'th.error.apply')));
 		} finally {
@@ -314,6 +315,7 @@
 		size="sm"
 		label={t('th.page.editName')}
 		bind:element={editNameButton}
+		data-guide="theme-name-edit"
 		onclick={beginNameEdit}
 	/>
 {/snippet}
@@ -321,6 +323,7 @@
 {#snippet editNameForm()}
 	<form
 		class="name-editor"
+		data-guide="theme-name"
 		onsubmit={(event) => {
 			event.preventDefault();
 			finishNameEdit();
@@ -377,6 +380,7 @@
 						variant="secondary"
 						disabled={busy || dirty}
 						title={dirty ? t('th.page.applyUnsaved') : undefined}
+						data-guide="theme-apply"
 						onclick={() => (confirming = true)}>{t('th.action.apply')}</Button
 					>
 				{/if}

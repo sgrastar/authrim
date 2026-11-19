@@ -36,6 +36,11 @@
       "types": "./src/constants/admin-roles.ts",
       "default": "./src/constants/admin-roles.ts"
     },
+    "./types/login-ui-custom-blocks": {
+      "import": "./src/types/login-ui-custom-blocks.ts",
+      "types": "./src/types/login-ui-custom-blocks.ts",
+      "default": "./src/types/login-ui-custom-blocks.ts"
+    },
     "./types/login-ui-languages": {
       "import": "./src/types/login-ui-languages.ts",
       "types": "./src/types/login-ui-languages.ts",

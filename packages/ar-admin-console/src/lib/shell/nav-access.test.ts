@@ -9,7 +9,6 @@ const tenant = persona('tenant').access;
 const item = (id: string, requires?: NavItem['requires']): NavItem => ({
 	id,
 	label: 'nav.int.plugins',
-	icon: 'plug',
 	requires,
 	legacyRoutes: []
 });

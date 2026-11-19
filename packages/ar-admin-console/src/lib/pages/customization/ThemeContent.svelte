@@ -85,11 +85,19 @@
 {/if}
 
 <ThemeGroup title={t('th.g.footer')} info={t('th.g.footer.d')}>
-	<TextArea
-		label={t('th.f.footerText')}
-		rows={3}
-		maxlength={300}
-		counter
-		bind:value={draft.texts[draft.language].footer}
+	<ToggleRow
+		label={t('th.t.poweredBy')}
+		info={t('th.t.poweredBy.d')}
+		bind:checked={draft.poweredBy}
 	/>
+	<!-- The footer text is the line the switch shows or hides: there is nothing to write while it is off. -->
+	{#if draft.poweredBy}
+		<TextArea
+			label={t('th.f.footerText')}
+			rows={3}
+			maxlength={300}
+			counter
+			bind:value={draft.texts[draft.language].footer}
+		/>
+	{/if}
 </ThemeGroup>

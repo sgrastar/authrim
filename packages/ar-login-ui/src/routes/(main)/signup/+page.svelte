@@ -68,6 +68,8 @@
 		signalUnknownCredential,
 		shouldSignalUnknownCredentialAfterRegistrationFailure
 	} from '#lib/webauthn/signal.js';
+	import { rememberPasskeyUserOfRegistration } from '#lib/webauthn/deleted-tenant.js';
+	import TenantDeletedGate from '#lib/components/TenantDeletedGate.svelte';
 	import {
 		LOGIN_UI_LEGACY_SESSION_STORAGE_KEYS,
 		LOGIN_UI_SESSION_STORAGE_KEYS,
@@ -132,6 +134,8 @@
 	let customFieldErrors = $state<Record<string, string>>({});
 	let error = $state('');
 	let methodsError = $state('');
+	// Each failure to reach the tenant; TenantDeletedGate then asks whether it was deleted.
+	let tenantLoadFailures = $state(0);
 	let passkeyLoading = $state(false);
 	let passkeyProgress = $state<PasskeyProgressPhase>('idle');
 	let emailCodeLoading = $state(false);
@@ -283,10 +287,13 @@
 			typeof window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable === 'function'
 	);
 
-	// This page collects an email. Its passkey signup may attach that address only after the
-	// invitation email proof; ordinary signups verify the mailbox with email code first.
+	// A passkey signup has no mailbox proof of its own, and the server refuses one that carries an
+	// address nothing proved. Two signups are left: an invitation's, once its email is proved, and
+	// an ordinary one that makes an account WITHOUT an address (see `passkeySignupEmail`). An
+	// invitation that asks no proof would attach its address unproved, so it offers no passkey.
+	const passkeyAfterInvitationProof = $derived(Boolean(inviteToken && invitationEmailRequired));
 	const showPasskey = $derived(
-		passkeyEnabled && isPasskeySupported && Boolean(inviteToken && invitationEmailRequired)
+		passkeyEnabled && isPasskeySupported && (passkeyAfterInvitationProof || !inviteToken)
 	);
 	const showRuntimePasskey = $derived(showPasskey && runtimeAllowsAuthenticationHandle('passkey'));
 	const showRuntimeEmailCode = $derived(
@@ -647,11 +654,13 @@
 				applyAuthenticationMethodsToLoginUI(data, loginUIStores);
 			} else {
 				if (!hasVisibleSignupMethod) methodsError = $LL.register_noMethodsAvailable();
+				tenantLoadFailures += 1;
 			}
 		} catch {
 			if (requestSequence === authenticationMethodsRequestSequence && !hasVisibleSignupMethod) {
 				methodsError = $LL.register_noMethodsAvailable();
 			}
+			tenantLoadFailures += 1;
 		} finally {
 			if (requestSequence === authenticationMethodsRequestSequence && showLoading) {
 				methodsLoading = false;
@@ -1460,6 +1469,15 @@
 		}
 	}
 
+	/**
+	 * The address a passkey signup sends: the invited one, which the invitation's proof covers, and
+	 * otherwise none. An address typed or prefilled on this page is proved by nobody, so an ordinary
+	 * passkey signup leaves it out; signing up with that address goes through the email code.
+	 */
+	function passkeySignupEmail(): string | undefined {
+		return passkeyAfterInvitationProof ? email : undefined;
+	}
+
 	async function handlePasskeyRegister() {
 		if (authActionLoading) return;
 		error = '';
@@ -1474,7 +1492,7 @@
 			if (turnstileRequired && !cfTurnstileResponse) return;
 			const submittedCustomFields = getSubmittedCustomFields();
 			const { data: optionsData, error: optionsError } = await passkeyAPI.getRegisterOptions({
-				email,
+				email: passkeySignupEmail(),
 				name: getSubmittedDisplayName(),
 				custom_fields: submittedCustomFields,
 				authorizationChallengeId: authorizationChallengeId || undefined,
@@ -1513,6 +1531,7 @@
 				}
 				throw loginUiDisplayError(getApiErrorMessage(verifyError));
 			}
+			rememberPasskeyUserOfRegistration(optionsData.options);
 
 			// Restore authenticated state from the HttpOnly managed session cookie.
 			await auth.refreshFromSession();
@@ -1957,120 +1976,122 @@
 </svelte:head>
 
 <AuthPageShell wide={runtimeScreenWide} entryMotion={entryMotionEnabled}>
-	<SignupView
-		initialLoading={initialAuthUiLoading}
-		{methodsLoading}
-		{methodsError}
-		title={localizedRegistrationTitle}
-		{inviteTenantName}
-		legacyHeading={!blockLegacyFormLayout}
-		legacyMethods={!blockLegacyAuthLayout}
-		alerts={{
-			error,
-			humanVerificationUnavailable,
-			runtimeFlow: runtimeFlowError,
-			runtimeScreenMissing: runtimeAuthFormMissing,
-			passkeyProgress: passkeyProgressMessage,
-			emailCodeProgress: emailCodeProgressMessage
-		}}
-		runtimeStep={runtimeStepView}
-		runtime={{
-			fieldValues: runtimeScreenFieldValues,
-			methodAvailability: runtimeMethodAvailability,
-			methodLoading: runtimeMethodLoading,
-			destinationFieldDecisions: runtimeDestinationFieldDecisions,
-			consentSelectedValues: runtimeConsentSelectedValues,
-			consentReady: canSubmitRuntimeConsent(),
-			loading: runtimeFlowLoading,
-			backScreens: runtimeBackScreens
-		}}
-		runtimeHumanVerification={showRuntimeFallbackHumanVerification}
-		methods={{
-			passkey: showRuntimePasskey,
-			emailCode: showRuntimeEmailCode,
-			totp: showRuntimeTotp,
-			external: showRuntimeExternal,
-			any: hasVisibleSignupMethod
-		}}
-		loading={{
-			passkey: passkeyLoading,
-			emailCode: emailCodeLoading,
-			totp: totpLoading,
-			externalIdp: externalIdpLoading,
-			invitationEmailCode: invitationCodeLoading
-		}}
-		busy={authActionLoading}
-		registrationFields={registrationFieldViews}
-		{nameError}
-		{emailError}
-		{customFieldErrors}
-		totpSetup={totpSetupView}
-		invitationEmailCode={invitationEmailStep
-			? { maskedEmail: invitationEmailStep.maskedEmail, error: invitationEmailStep.error }
-			: null}
-		externalProviders={runtimeExternalProviders}
-		emailVerification={{
-			enabled: Boolean(emailVerificationChallenge),
-			nonce: emailVerificationChallenge?.nonce ?? null
-		}}
-		humanVerification={{
-			siteKey: turnstileSiteKey,
-			provider: humanVerificationProvider,
-			mode: humanVerificationMode,
-			action: turnstileAction,
-			theme: turnstileTheme,
-			language: turnstileLanguage,
-			resetKey: turnstileResetKey,
-			runtimeRequired: useRuntimeAuthFormLayout && turnstileRequired,
-			runtimeVisible: Boolean(activeTurnstileTarget)
-		}}
-		{showTurnstileFor}
-		loginHref={loginUIPageStore.authSwitchLinkEnabled ? loginHref : null}
-		bind:name
-		bind:email
-		bind:customFieldValues
-		bind:totpCode
-		bind:invitationCode
-		bind:turnstileToken
-		bind:consentDecisions={runtimeConsentDecisions}
-		onSubmit={handleEmailVerificationProtocolSubmit}
-		onDismissError={() => (error = '')}
-		onDismissRuntimeFlowError={() => (runtimeFlowError = '')}
-		onRuntimeFieldValueChange={handleRuntimeScreenFieldValueChange}
-		onRuntimeAuthAction={handleRuntimeScreenAuthAction}
-		onRuntimeBack={goBackRuntimeScreen}
-		onRuntimeExit={(handle) => completeRuntimeOnlyStep(handle)}
-		onConsentDecisionChange={setRuntimeConsentDecision}
-		onDestinationFieldDecisionChange={setRuntimeDestinationFieldDecision}
-		onConsentSelectedValueChange={setRuntimeConsentSelectedValue}
-		onRuntimeContinue={() =>
-			completeRuntimeOnlyStep(
-				getRuntimeScreenContinueHandle(runtimeFlowStep),
-				getRuntimeScreenSubmitInput()
-			)}
-		onRuntimeAccept={() =>
-			completeRuntimeOnlyStep('accepted', getRuntimeConsentItemDecisionPayload())}
-		onRuntimeComplete={() => completeRuntimeOnlyStep('completed')}
-		onCustomFieldChange={setCustomFieldValue}
-		onPasskey={handlePasskeyRegister}
-		onEmailCode={() => handleEmailCodeSignup()}
-		onEmailKeyPress={handleKeyPress}
-		onTotpStart={handleTotpSignupStart}
-		onTotpActivate={handleTotpSignupActivate}
-		onTotpCancel={() => {
-			totpSignup = null;
-			totpActivated = null;
-			totpCode = '';
-		}}
-		onTotpDone={continueAfterTotpBackupCodes}
-		onExternalProvider={handleRuntimeExternalProviderAction}
-		onInvitationCodeVerify={verifyInvitationEmailCode}
-		onInvitationCodeResend={() => {
-			if (invitationEmailStep) void sendInvitationEmailCode(invitationEmailStep.resume);
-		}}
-		onInvitationCodeCancel={() => {
-			invitationEmailStep = null;
-			invitationCode = '';
-		}}
-	/>
+	<TenantDeletedGate failures={tenantLoadFailures}>
+		<SignupView
+			initialLoading={initialAuthUiLoading}
+			{methodsLoading}
+			{methodsError}
+			title={localizedRegistrationTitle}
+			{inviteTenantName}
+			legacyHeading={!blockLegacyFormLayout}
+			legacyMethods={!blockLegacyAuthLayout}
+			alerts={{
+				error,
+				humanVerificationUnavailable,
+				runtimeFlow: runtimeFlowError,
+				runtimeScreenMissing: runtimeAuthFormMissing,
+				passkeyProgress: passkeyProgressMessage,
+				emailCodeProgress: emailCodeProgressMessage
+			}}
+			runtimeStep={runtimeStepView}
+			runtime={{
+				fieldValues: runtimeScreenFieldValues,
+				methodAvailability: runtimeMethodAvailability,
+				methodLoading: runtimeMethodLoading,
+				destinationFieldDecisions: runtimeDestinationFieldDecisions,
+				consentSelectedValues: runtimeConsentSelectedValues,
+				consentReady: canSubmitRuntimeConsent(),
+				loading: runtimeFlowLoading,
+				backScreens: runtimeBackScreens
+			}}
+			runtimeHumanVerification={showRuntimeFallbackHumanVerification}
+			methods={{
+				passkey: showRuntimePasskey,
+				emailCode: showRuntimeEmailCode,
+				totp: showRuntimeTotp,
+				external: showRuntimeExternal,
+				any: hasVisibleSignupMethod
+			}}
+			loading={{
+				passkey: passkeyLoading,
+				emailCode: emailCodeLoading,
+				totp: totpLoading,
+				externalIdp: externalIdpLoading,
+				invitationEmailCode: invitationCodeLoading
+			}}
+			busy={authActionLoading}
+			registrationFields={registrationFieldViews}
+			{nameError}
+			{emailError}
+			{customFieldErrors}
+			totpSetup={totpSetupView}
+			invitationEmailCode={invitationEmailStep
+				? { maskedEmail: invitationEmailStep.maskedEmail, error: invitationEmailStep.error }
+				: null}
+			externalProviders={runtimeExternalProviders}
+			emailVerification={{
+				enabled: Boolean(emailVerificationChallenge),
+				nonce: emailVerificationChallenge?.nonce ?? null
+			}}
+			humanVerification={{
+				siteKey: turnstileSiteKey,
+				provider: humanVerificationProvider,
+				mode: humanVerificationMode,
+				action: turnstileAction,
+				theme: turnstileTheme,
+				language: turnstileLanguage,
+				resetKey: turnstileResetKey,
+				runtimeRequired: useRuntimeAuthFormLayout && turnstileRequired,
+				runtimeVisible: Boolean(activeTurnstileTarget)
+			}}
+			{showTurnstileFor}
+			loginHref={loginUIPageStore.authSwitchLinkEnabled ? loginHref : null}
+			bind:name
+			bind:email
+			bind:customFieldValues
+			bind:totpCode
+			bind:invitationCode
+			bind:turnstileToken
+			bind:consentDecisions={runtimeConsentDecisions}
+			onSubmit={handleEmailVerificationProtocolSubmit}
+			onDismissError={() => (error = '')}
+			onDismissRuntimeFlowError={() => (runtimeFlowError = '')}
+			onRuntimeFieldValueChange={handleRuntimeScreenFieldValueChange}
+			onRuntimeAuthAction={handleRuntimeScreenAuthAction}
+			onRuntimeBack={goBackRuntimeScreen}
+			onRuntimeExit={(handle) => completeRuntimeOnlyStep(handle)}
+			onConsentDecisionChange={setRuntimeConsentDecision}
+			onDestinationFieldDecisionChange={setRuntimeDestinationFieldDecision}
+			onConsentSelectedValueChange={setRuntimeConsentSelectedValue}
+			onRuntimeContinue={() =>
+				completeRuntimeOnlyStep(
+					getRuntimeScreenContinueHandle(runtimeFlowStep),
+					getRuntimeScreenSubmitInput()
+				)}
+			onRuntimeAccept={() =>
+				completeRuntimeOnlyStep('accepted', getRuntimeConsentItemDecisionPayload())}
+			onRuntimeComplete={() => completeRuntimeOnlyStep('completed')}
+			onCustomFieldChange={setCustomFieldValue}
+			onPasskey={handlePasskeyRegister}
+			onEmailCode={() => handleEmailCodeSignup()}
+			onEmailKeyPress={handleKeyPress}
+			onTotpStart={handleTotpSignupStart}
+			onTotpActivate={handleTotpSignupActivate}
+			onTotpCancel={() => {
+				totpSignup = null;
+				totpActivated = null;
+				totpCode = '';
+			}}
+			onTotpDone={continueAfterTotpBackupCodes}
+			onExternalProvider={handleRuntimeExternalProviderAction}
+			onInvitationCodeVerify={verifyInvitationEmailCode}
+			onInvitationCodeResend={() => {
+				if (invitationEmailStep) void sendInvitationEmailCode(invitationEmailStep.resume);
+			}}
+			onInvitationCodeCancel={() => {
+				invitationEmailStep = null;
+				invitationCode = '';
+			}}
+		/>
+	</TenantDeletedGate>
 </AuthPageShell>

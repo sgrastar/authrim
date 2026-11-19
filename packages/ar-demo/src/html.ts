@@ -4,6 +4,7 @@ import { COPY, LANGS, plain, type Copy, type ErrorKind, type GateTexts, type Lan
 
 import { SCENE_JS, WAIT_JS } from './gate-client';
 import { SITE_CSS } from './site-css';
+import type { Tally } from './tally';
 
 export { SCENE_JS, SITE_CSS, WAIT_JS };
 export { LANGS };
@@ -102,7 +103,23 @@ ${body}
 `;
 }
 
-export function startPage(lang: Lang, config: Config): string {
+/** Whole numbers in the page's language, always with Western digits like the rest of the page. */
+function count(lang: Lang, value: number): string {
+  return new Intl.NumberFormat(`${lang}-u-nu-latn`, { maximumFractionDigits: 0 }).format(value);
+}
+
+/** The two numbers under the start button; nothing at all when they could not be read. */
+function tallyBlock(lang: Lang, config: Config, tally: Tally | null): string {
+  if (!tally) return '';
+  const copy = COPY[lang];
+  return `<dl class="tally">
+<div><dt>${esc(copy.tallyActive)}</dt><dd>${esc(count(lang, tally.active))}<span> / ${esc(count(lang, config.maxActiveTenants))}</span></dd></div>
+<div><dt>${esc(copy.tallyCreated)}</dt><dd>${esc(count(lang, tally.created))}</dd></div>
+</dl>
+`;
+}
+
+export function startPage(lang: Lang, config: Config, tally: Tally | null = null): string {
   const copy = COPY[lang];
   const notices = copy
     .notices(config.tenantTtlHours)
@@ -127,7 +144,7 @@ ${notices}
 <div class="check"><div id="check" class="cf-turnstile" data-sitekey="${esc(config.turnstileSiteKey)}" data-language="${esc(copy.turnstile)}"></div></div>
 <button type="submit" class="start-btn" data-wait="${esc(plain(copy.startChecking))}">${esc(copy.start)}</button>
 </form>
-${langNav(lang, '/')}
+${tallyBlock(lang, config, tally)}${langNav(lang, '/')}
 </section>`
   );
 }

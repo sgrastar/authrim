@@ -399,8 +399,8 @@ export const deAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 	'af.consent.new.open': 'Erklärung erstellen',
 	'af.consent.new.title': 'Neue Erklärung',
 	'af.consent.new.lead':
-		'Die Erklärung wird sofort veröffentlicht und für diesen Ablauf ausgewählt. Andere Abläufe können sie ebenfalls verwenden. Weitere Einstellungen und neue Versionen finden Sie auf der Seite der Erklärung.',
-	'af.consent.new.publish': 'Veröffentlichen und auswählen',
+		'Die Erklärung wird sofort veröffentlicht und für diesen Ablauf ausgewählt. Andere Abläufe können sie ebenfalls verwenden. Neue Versionen erstellen Sie auf der Seite der Erklärung.',
+	'af.consent.new.publish': 'Speichern, veröffentlichen und auswählen',
 	'af.consent.new.created': 'Die Erklärung wurde erstellt und veröffentlicht.',
 	'af.consent.new.noLanguage': 'Fügen Sie mindestens eine Sprache hinzu.',
 	'af.consent.new.unpublished':

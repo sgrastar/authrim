@@ -96,8 +96,6 @@ describe('standard Admin roles', () => {
       'admin:logging:platform_defaults:update',
       'admin:logging:dlq:purge',
       'admin:admin_logging:repair:run',
-      'admin:saml_providers:signing:dr_bundle:export',
-      'admin:saml_providers:signing:dr_bundle:import',
       'admin:support_ops:break_glass:request',
       'admin:support_ops:break_glass:reveal',
       'admin:dr_backup:destination:select',
@@ -152,6 +150,9 @@ describe('standard Admin roles', () => {
 describe('migration 054 (ar_ roles)', () => {
   const baseline = 'migrations/admin/d1/001_0_4_0_admin_baseline.sql';
   const migration = 'migrations/admin/d1/054_admin_roles_ar_prefix.sql';
+  // Later changes to the built-in roles' permissions, in order: the TypeScript module is what the
+  // migrations add up to.
+  const later = ['migrations/admin/d1/025_tenant_admin_saml_dr_bundle.sql'];
 
   function prepared(): DatabaseSync {
     const db = new DatabaseSync(':memory:');
@@ -184,16 +185,20 @@ describe('migration 054 (ar_ roles)', () => {
         .all(userId) as { name: string; scope: string }[]
     ).map(({ name, scope }) => `${name}/${scope}`);
 
-  it('seeds exactly the definitions in the TypeScript module', () => {
-    const db = prepared();
-    db.exec(sql(migration));
-    const rows = db
+  function seeded(db: DatabaseSync) {
+    return db
       .prepare(
         `SELECT id, name, display_name, description, permissions_json, hierarchy_level, role_type, is_system
            FROM admin_roles WHERE name LIKE 'ar\\_%' ESCAPE '\\' ORDER BY hierarchy_level DESC`
       )
       .all() as Record<string, unknown>[];
-    expect(rows).toEqual(
+  }
+
+  it('seeds exactly the definitions in the TypeScript module', () => {
+    const db = prepared();
+    db.exec(sql(migration));
+    for (const path of later) db.exec(sql(path));
+    expect(seeded(db)).toEqual(
       ADMIN_ROLE_DEFINITIONS.map((role) => ({
         id: role.id,
         name: role.name,
@@ -205,6 +210,30 @@ describe('migration 054 (ar_ roles)', () => {
         is_system: 1,
       }))
     );
+  });
+
+  it('025 gives the tenant admin the SAML DR bundle permissions once and leaves the other roles alone', () => {
+    const db = prepared();
+    db.exec(sql(migration));
+    const before = seeded(db);
+    const tenantAdminBefore = before.find((row) => row.name === ADMIN_ROLES.TENANT_ADMIN)!;
+    expect(tenantAdminBefore.permissions_json).not.toContain('dr_bundle');
+
+    db.exec(sql(later[0]));
+    db.exec(sql(later[0]));
+
+    const after = seeded(db);
+    expect(after.filter((row) => row.name !== ADMIN_ROLES.TENANT_ADMIN)).toEqual(
+      before.filter((row) => row.name !== ADMIN_ROLES.TENANT_ADMIN)
+    );
+    const permissions = JSON.parse(
+      after.find((row) => row.name === ADMIN_ROLES.TENANT_ADMIN)!.permissions_json as string
+    ) as string[];
+    expect(permissions.filter((permission) => permission.includes('dr_bundle'))).toEqual([
+      'admin:saml_providers:signing:dr_bundle:export',
+      'admin:saml_providers:signing:dr_bundle:import',
+    ]);
+    expect(permissions).toEqual([...byName(ADMIN_ROLES.TENANT_ADMIN).permissions]);
   });
 
   it('removes the old standard roles and keeps the other built-in ones', () => {

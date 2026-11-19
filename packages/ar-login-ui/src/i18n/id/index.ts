@@ -388,7 +388,18 @@ const id = createTranslation({
 	lite_provisioningFailed: 'Akun Anda tidak dapat disiapkan. Mulai lagi.',
 	lite_reauthSessionEnded:
 		'Sesi tempat halaman ini dibuka telah berakhir atau berubah. Masuk lagi.',
-	lite_reauthAnotherWay: 'Gunakan cara lain'
+	lite_reauthAnotherWay: 'Gunakan cara lain',
+	tenantDeleted_title: 'Halaman masuk ini tidak lagi tersedia',
+	tenantDeleted_description:
+		'Layanan pemilik halaman ini telah dihapus. Anda tidak dapat lagi masuk di sini.',
+	tenantDeleted_autoRemoved:
+		'Kami telah meminta perangkat ini menghapus Passkey yang disimpan untuk halaman ini.',
+	tenantDeleted_chooseHint:
+		'Jika Passkey untuk halaman ini masih tersimpan di perangkat ini, Anda dapat memilihnya agar dihapus.',
+	tenantDeleted_chooseButton: 'Hapus Passkey yang tersimpan',
+	tenantDeleted_chosenRemoved: 'Kami telah meminta perangkat ini menghapus Passkey tersebut.',
+	tenantDeleted_manualHint:
+		'Passkey pada kunci keamanan, atau di aplikasi yang tidak dapat dijangkau browser ini, harus dihapus dari pengaturan kunci atau aplikasi tersebut.'
 });
 
 export default id;

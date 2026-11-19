@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { ReleasePausedError } from '#lib/api/api-error.js';
 import { createFakeOnboarding } from '#lib/api/fake/onboarding-fake.js';
 import { completedFromBody, httpOnboarding, type OnboardingClient } from '#lib/api/onboarding.js';
-import { onboardingProgress } from './progress.svelte';
+import { onboardingProgress, saveFailedKey } from './progress.svelte';
 
 afterEach(() => onboardingProgress.use(httpOnboarding));
 
@@ -49,6 +50,32 @@ describe('onboardingProgress', () => {
 		expect(await onboardingProgress.complete('schema')).toBe(false);
 		expect(await onboardingProgress.reopen('theme')).toBe(false);
 		expect([...onboardingProgress.completed]).toEqual(['theme']);
+	});
+
+	it('says when a change was refused because the environment is being updated', async () => {
+		const client = createFakeOnboarding([]);
+		let refuse: Error | null = new ReleasePausedError(409, 'ADMIN_MUTATION_PAUSED_FOR_RELEASE', '');
+		const pausing: OnboardingClient = {
+			...client,
+			complete: (itemId) => (refuse ? Promise.reject(refuse) : client.complete(itemId))
+		};
+		onboardingProgress.use(pausing);
+		await onboardingProgress.load();
+		expect(await onboardingProgress.complete('theme')).toBe(false);
+		expect(onboardingProgress.pausedForRelease).toBe(true);
+		expect(saveFailedKey()).toBe('common.releasePaused');
+
+		refuse = new Error('refused');
+		expect(await onboardingProgress.complete('theme')).toBe(false);
+		expect(onboardingProgress.pausedForRelease).toBe(false);
+		expect(saveFailedKey()).toBe('ob.saveFailed');
+
+		refuse = new ReleasePausedError(503, 'CONTROL_PLANE_RELEASE_ROLLOUT_UNAVAILABLE', '');
+		expect(await onboardingProgress.complete('theme')).toBe(false);
+		expect(saveFailedKey()).toBe('common.releasePaused');
+		refuse = null;
+		expect(await onboardingProgress.complete('theme')).toBe(true);
+		expect(onboardingProgress.pausedForRelease).toBe(false);
 	});
 
 	it('drops an answer that arrives after the tenant changed', async () => {

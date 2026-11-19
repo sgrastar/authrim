@@ -353,7 +353,15 @@ const zhCN = createTranslation({
 	lite_provisioningWait: '正在准备您的账户。请稍候，然后选择“继续”。',
 	lite_provisioningFailed: '无法准备您的账户。请重新开始。',
 	lite_reauthSessionEnded: '打开此页面时的会话已结束或已更改。请重新登录。',
-	lite_reauthAnotherWay: '使用其他方式'
+	lite_reauthAnotherWay: '使用其他方式',
+	tenantDeleted_title: '此登录页面已不可用',
+	tenantDeleted_description: '此页面所属的服务已被删除，无法再从这里登录。',
+	tenantDeleted_autoRemoved: '我们已请求此设备移除为此页面保存的 Passkey。',
+	tenantDeleted_chooseHint: '如果此设备上仍保存着此页面的 Passkey，您可以选择它以请求移除。',
+	tenantDeleted_chooseButton: '移除已保存的 Passkey',
+	tenantDeleted_chosenRemoved: '我们已请求此设备移除该 Passkey。',
+	tenantDeleted_manualHint:
+		'保存在安全密钥中，或保存在此浏览器无法访问的应用中的 Passkey，需要在该密钥或应用的设置中移除。'
 });
 
 export default zhCN;

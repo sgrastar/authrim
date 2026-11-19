@@ -26,7 +26,6 @@ export const TENANT_AREAS: readonly NavArea[] = [
 			{
 				id: 'all',
 				label: 'nav.users.all',
-				icon: 'users',
 				platform: 'lookup',
 				details: true,
 				requires: { permission: 'admin:users:read' },
@@ -35,14 +34,12 @@ export const TENANT_AREAS: readonly NavArea[] = [
 			{
 				id: 'agents',
 				label: 'nav.users.agents',
-				icon: 'robot',
 				platform: 'lookup',
 				legacyRoutes: ['(new) エージェントアカウント']
 			},
 			{
 				id: 'organizations',
 				label: 'nav.users.orgs',
-				icon: 'building',
 				platform: 'tenant',
 				retire: 'retire.org',
 				legacyRoutes: ['/admin/organizations']
@@ -50,42 +47,36 @@ export const TENANT_AREAS: readonly NavArea[] = [
 			{
 				id: 'service-groups',
 				label: 'nav.users.serviceGroups',
-				icon: 'stack',
 				platform: 'tenant',
 				legacyRoutes: ['/admin/service-groups']
 			},
 			{
 				id: 'lifecycle',
 				label: 'nav.users.lifecycle',
-				icon: 'clock',
 				platform: 'tenant',
 				legacyRoutes: ['/admin/account-lifecycle']
 			},
 			{
 				id: 'sessions',
 				label: 'nav.users.sessions',
-				icon: 'clock',
 				platform: 'lookup',
 				legacyRoutes: ['/admin/sessions']
 			},
 			{
 				id: 'invitations',
 				label: 'nav.users.invitations',
-				icon: 'mail',
 				platform: 'tenant',
 				legacyRoutes: ['/admin/tenants/[id]/invitations', '(new) エンドユーザー招待']
 			},
 			{
 				id: 'support',
 				label: 'nav.users.support',
-				icon: 'sparkle',
 				platform: 'lookup',
 				legacyRoutes: ['/admin/support-ops']
 			},
 			{
 				id: 'resolution',
 				label: 'nav.users.resolution',
-				icon: 'check',
 				platform: 'lookup',
 				legacyRoutes: ['/admin/resolution-center', '/admin/field-mapping/resolution-center']
 			}
@@ -101,64 +92,54 @@ export const TENANT_AREAS: readonly NavArea[] = [
 			{
 				id: 'apis',
 				label: 'nav.apps.apis',
-				icon: 'stack',
 				legacyRoutes: ['(new) API / リソース定義']
 			},
 			{
 				id: 'roles',
 				label: 'nav.access.roles',
-				icon: 'shield',
 				legacyRoutes: ['/admin/roles', '/admin/roles/[id]']
 			},
 			{
 				id: 'role-rules',
 				label: 'nav.access.roleRules',
-				icon: 'check',
 				legacyRoutes: ['/admin/role-rules', '/admin/roles (割り当てルール タブ)']
 			},
 			{
 				id: 'attributes',
 				label: 'nav.access.attributes',
-				icon: 'list',
 				legacyRoutes: ['/admin/attributes']
 			},
 			{
 				id: 'relationships',
 				label: 'nav.access.relationships',
-				icon: 'link',
 				legacyRoutes: ['/admin/rebac', '/admin/rebac/definitions', '/admin/rebac/tuples']
 			},
 			{
 				id: 'policies',
 				label: 'nav.access.policies',
-				icon: 'file',
 				legacyRoutes: ['/admin/policies']
 			},
 			{
 				id: 'schema-setting',
 				label: 'nav.data.schema',
-				icon: 'list',
 				platform: 'template',
 				legacyRoutes: ['/admin/custom-claims', '/admin/custom-claims/[id]']
 			},
 			{
 				id: 'profiles',
 				label: 'nav.data.profiles',
-				icon: 'stack',
 				platform: 'template',
 				legacyRoutes: ['/admin/field-mapping/profiles', '/admin/field-mapping/profiles/edit']
 			},
 			{
 				id: 'mapping-sets',
 				label: 'nav.data.mappingSets',
-				icon: 'file',
 				platform: 'template',
 				legacyRoutes: ['/admin/field-mapping/field-mapping-sets', '/admin/field-mapping/edit']
 			},
 			{
 				id: 'simulator',
 				label: 'nav.access.simulator',
-				icon: 'map',
 				platform: 'tenant',
 				legacyRoutes: ['/admin/access-trace', '/admin/rebac (Permission Check)']
 			}
@@ -174,7 +155,6 @@ export const TENANT_AREAS: readonly NavArea[] = [
 			{
 				id: 'all',
 				label: 'nav.apps.all',
-				icon: 'app',
 				platform: 'template',
 				ownsSide: true,
 				legacyRoutes: [
@@ -202,14 +182,12 @@ export const TENANT_AREAS: readonly NavArea[] = [
 			{
 				id: 'methods',
 				label: 'nav.auth.methods',
-				icon: 'fingerprint',
 				details: true,
 				legacyRoutes: ['/admin/authentication-methods', '/admin/authentication-methods/[profileId]']
 			},
 			{
 				id: 'session-profiles',
 				label: 'nav.auth.sessionProfiles',
-				icon: 'clock',
 				// In platform scope: the platform's session profiles and its Default.
 				details: true,
 				// The profiles API answers to the session settings' access (SSO is held with them).
@@ -219,7 +197,6 @@ export const TENANT_AREAS: readonly NavArea[] = [
 			{
 				id: 'logout',
 				label: 'nav.auth.logout',
-				icon: 'logout',
 				platform: 'tenant',
 				requires: { settings: ['session'] },
 				legacyRoutes: []
@@ -227,7 +204,6 @@ export const TENANT_AREAS: readonly NavArea[] = [
 			{
 				id: 'tokens',
 				label: 'nav.auth.tokens',
-				icon: 'key',
 				platform: 'tenant',
 				requires: { settings: ['oauth', 'tokens', 'security', 'federation', 'assurance'] },
 				legacyRoutes: []
@@ -235,27 +211,28 @@ export const TENANT_AREAS: readonly NavArea[] = [
 			{
 				id: 'social',
 				label: 'nav.auth.social',
-				icon: 'globe',
 				legacyRoutes: ['/admin/external-idp', '/admin/external-idp/[id]']
 			},
 			{
 				id: 'token-refresh',
 				label: 'nav.auth.tokenRefresh',
-				icon: 'activity',
 				legacyRoutes: ['/admin/external-token-refresh']
 			},
 			{
 				id: 'enterprise',
 				label: 'nav.auth.enterprise',
-				icon: 'building',
 				platform: 'tenant',
-				requires: { settings: ['federation', 'institution'] },
+				// The SAML settings (those categories), or the tenant's own SAML identity below them
+				// (its read permission): either opens the page.
+				requires: {
+					settings: ['federation', 'institution'],
+					permission: 'admin:saml_providers:read'
+				},
 				legacyRoutes: ['/admin/saml', '/admin/saml/[id]', '/admin/saml/local']
 			},
 			{
 				id: 'directory',
 				label: 'nav.auth.directory',
-				icon: 'stack',
 				legacyRoutes: [
 					'/admin/directory-authentication',
 					'/admin/directory-authentication/fleet',
@@ -265,14 +242,12 @@ export const TENANT_AREAS: readonly NavArea[] = [
 			{
 				id: 'federation-trust',
 				label: 'nav.data.federationTrust',
-				icon: 'building',
 				platform: 'template',
 				legacyRoutes: ['/admin/field-mapping/federation-trust']
 			},
 			{
 				id: 'protection',
 				label: 'nav.auth.protection',
-				icon: 'lock',
 				platform: 'tenant',
 				requires: { settings: ['rate-limit'] },
 				legacyRoutes: ['/admin/security']
@@ -280,7 +255,6 @@ export const TENANT_AREAS: readonly NavArea[] = [
 			{
 				id: 'ip-allowlist',
 				label: 'nav.auth.ipAllowlist',
-				icon: 'shield',
 				legacyRoutes: ['/admin/ip-allowlist']
 			}
 		],
@@ -295,7 +269,6 @@ export const TENANT_AREAS: readonly NavArea[] = [
 			{
 				id: 'branding',
 				label: 'nav.custom.branding',
-				icon: 'brush',
 				// The theme editor: …/branding/new and …/branding/<theme id>.
 				details: true,
 				legacyRoutes: ['/admin/themes']
@@ -303,13 +276,11 @@ export const TENANT_AREAS: readonly NavArea[] = [
 			{
 				id: 'login-ui',
 				label: 'nav.custom.loginUi',
-				icon: 'device',
 				legacyRoutes: ['/admin/login-ui']
 			},
 			{
 				id: 'screens',
 				label: 'nav.custom.screens',
-				icon: 'list',
 				// The screen builder: …/screens/new and …/screens/<screen id>.
 				details: true,
 				legacyRoutes: ['/admin/screens']
@@ -317,27 +288,18 @@ export const TENANT_AREAS: readonly NavArea[] = [
 			{
 				id: 'account-page',
 				label: 'nav.custom.accountPage',
-				icon: 'app',
 				legacyRoutes: ['/admin/account-page']
 			},
 			{
 				id: 'launchers',
 				label: 'nav.custom.launchers',
-				icon: 'sparkle',
 				// The launcher editor: …/launchers/new and …/launchers/<launcher id>.
 				details: true,
 				legacyRoutes: ['/admin/launchers']
 			},
 			{
-				id: 'consent',
-				label: 'nav.custom.consent',
-				icon: 'check',
-				legacyRoutes: []
-			},
-			{
 				id: 'statements',
 				label: 'nav.custom.statements',
-				icon: 'file',
 				// The statement page: …/statements/new and …/statements/<statement id>.
 				details: true,
 				legacyRoutes: ['/admin/consent-statements', '/admin/consent-statements/[id]']
@@ -345,7 +307,6 @@ export const TENANT_AREAS: readonly NavArea[] = [
 			{
 				id: 'emails',
 				label: 'nav.custom.emails',
-				icon: 'mail',
 				legacyRoutes: ['/admin/email-settings']
 			}
 		],
@@ -360,51 +321,43 @@ export const TENANT_AREAS: readonly NavArea[] = [
 			{
 				id: 'audit',
 				label: 'nav.mon.audit',
-				icon: 'file',
 				requires: { permission: 'admin:audit:read' },
 				legacyRoutes: ['/admin/audit-logs', '/admin/audit-logs/[id]']
 			},
 			{
 				id: 'admin-activity',
 				label: 'nav.mon.adminActivity',
-				icon: 'shield',
 				requires: { permission: 'admin:admin_audit:read' },
 				legacyRoutes: ['/admin/admin-audit']
 			},
 			{
 				id: 'admin-logging',
 				label: 'nav.mon.adminLogging',
-				icon: 'lock',
 				legacyRoutes: ['/admin/admin-logging']
 			},
 			{
 				id: 'system',
 				label: 'nav.mon.system',
-				icon: 'activity',
 				legacyRoutes: ['/admin/operational-logs']
 			},
 			{
 				id: 'diagnostics',
 				label: 'nav.mon.diagnostics',
-				icon: 'warning',
 				legacyRoutes: ['/admin/diagnostic-logging', '/admin/diagnostic-logging/export']
 			},
 			{
 				id: 'deliveries',
 				label: 'nav.mon.deliveries',
-				icon: 'mail',
 				legacyRoutes: ['/admin/email-deliveries']
 			},
 			{
 				id: 'log-settings',
 				label: 'nav.mon.settings',
-				icon: 'gear',
 				legacyRoutes: ['/admin/logging-policies']
 			},
 			{
 				id: 'destinations',
 				label: 'nav.mon.destinations',
-				icon: 'database',
 				legacyRoutes: ['/admin/storage-destinations']
 			}
 		],
@@ -419,13 +372,11 @@ export const TENANT_AREAS: readonly NavArea[] = [
 			{
 				id: 'plugins',
 				label: 'nav.int.plugins',
-				icon: 'plug',
 				legacyRoutes: ['/admin/plugins']
 			},
 			{
 				id: 'notifications',
 				label: 'nav.int.notifications',
-				icon: 'bell',
 				legacyRoutes: ['/admin/notifications']
 			}
 		],
@@ -440,27 +391,23 @@ export const TENANT_AREAS: readonly NavArea[] = [
 			{
 				id: 'general',
 				label: 'nav.set.general',
-				icon: 'info',
 				platform: 'tenant',
 				legacyRoutes: ['/admin/info']
 			},
 			{
 				id: 'tenant-config',
 				label: 'nav.set.tenantConfig',
-				icon: 'gear',
 				legacyRoutes: ['/admin/settings', '/admin/settings/[category]']
 			},
 			{
 				id: 'signing-keys',
 				label: 'nav.set.signingKeys',
-				icon: 'key',
 				platform: 'tenant',
 				legacyRoutes: ['/admin/settings/signing-keys']
 			},
 			{
 				id: 'runtime',
 				label: 'nav.set.runtime',
-				icon: 'activity',
 				legacyRoutes: [
 					'/admin/settings/runtime-profiles',
 					'/admin/settings/cache-mode',
@@ -470,20 +417,17 @@ export const TENANT_AREAS: readonly NavArea[] = [
 			{
 				id: 'domains',
 				label: 'nav.set.domains',
-				icon: 'globe',
 				platform: 'tenant',
 				legacyRoutes: ['/admin/tenant-vanity-domains', '/admin/platform/tenant-domain-mappings']
 			},
 			{
 				id: 'compliance',
 				label: 'nav.set.compliance',
-				icon: 'check',
 				legacyRoutes: ['/admin/compliance', '/admin/directory-authentication/compliance']
 			},
 			{
 				id: 'team',
 				label: 'nav.set.team',
-				icon: 'users',
 				platform: 'tenant',
 				// The administrators (their read permission) or how they sign in (those settings).
 				requires: {
@@ -497,7 +441,6 @@ export const TENANT_AREAS: readonly NavArea[] = [
 			{
 				id: 'team-groups',
 				label: 'nav.set.teamGroups',
-				icon: 'users',
 				platform: 'tenant',
 				requires: { permission: 'admin:admin_users:read' },
 				// …/team-groups/<id>: a group's page.
@@ -507,7 +450,6 @@ export const TENANT_AREAS: readonly NavArea[] = [
 			{
 				id: 'team-roles',
 				label: 'nav.set.teamRoles',
-				icon: 'shield',
 				platform: 'tenant',
 				requires: { permission: 'admin:admin_roles:read' },
 				// …/team-roles/<id> and …/team-roles/new: a role's page.
@@ -537,7 +479,6 @@ export const PLATFORM_AREAS: readonly NavArea[] = [
 			{
 				id: 'list',
 				label: 'nav.pt.list',
-				icon: 'building',
 				// Creating a tenant starts from the list; copying one from its page.
 				details: true,
 				legacyRoutes: [
@@ -550,19 +491,16 @@ export const PLATFORM_AREAS: readonly NavArea[] = [
 			{
 				id: 'discovery',
 				label: 'nav.auth.discovery',
-				icon: 'map',
 				legacyRoutes: ['/admin/tenant-discovery']
 			},
 			{
 				id: 'domains',
 				label: 'nav.pt.domains',
-				icon: 'globe',
 				legacyRoutes: ['/admin/tenant-vanity-domains', '/admin/platform/tenant-domain-mappings']
 			},
 			{
 				id: 'invitations',
 				label: 'nav.pt.invitations',
-				icon: 'mail',
 				legacyRoutes: ['/admin/tenants/[id]/invitations']
 			}
 		],
@@ -577,25 +515,21 @@ export const PLATFORM_AREAS: readonly NavArea[] = [
 			{
 				id: 'users',
 				label: 'nav.pa.users',
-				icon: 'users',
 				legacyRoutes: ['/admin/admins (全テナント)', '/admin/admins/[id]']
 			},
 			{
 				id: 'roles',
 				label: 'nav.pa.roles',
-				icon: 'shield',
 				legacyRoutes: ['/admin/admin-rbac', '/admin/admin-rbac/[id]', '/admin/admin-roles']
 			},
 			{
 				id: 'attributes',
 				label: 'nav.pa.attributes',
-				icon: 'list',
 				legacyRoutes: ['/admin/admin-abac']
 			},
 			{
 				id: 'relationships',
 				label: 'nav.pa.relationships',
-				icon: 'link',
 				legacyRoutes: [
 					'/admin/admin-rebac',
 					'/admin/admin-rebac/definitions',
@@ -605,20 +539,17 @@ export const PLATFORM_AREAS: readonly NavArea[] = [
 			{
 				id: 'policies',
 				label: 'nav.pa.policies',
-				icon: 'file',
 				legacyRoutes: ['/admin/admin-policies', '/admin/admin-access-control']
 			},
 			{
 				id: 'machine',
 				label: 'nav.pa.machine',
-				icon: 'robot',
 				details: true,
 				legacyRoutes: ['/admin/machine-access']
 			},
 			{
 				id: 'agents',
 				label: 'nav.pa.agents',
-				icon: 'robot',
 				legacyRoutes: [
 					'/admin/agent-access',
 					'/admin/agent-access/grants',
@@ -644,37 +575,31 @@ export const PLATFORM_AREAS: readonly NavArea[] = [
 			{
 				id: 'releases',
 				label: 'nav.pi.releases',
-				icon: 'stack',
 				legacyRoutes: ['/admin/control-plane']
 			},
 			{
 				id: 'database-connections',
 				label: 'nav.data.sources',
-				icon: 'database',
 				legacyRoutes: ['/admin/database-connections', '/admin/database-connections/[id]']
 			},
 			{
 				id: 'scale',
 				label: 'nav.pi.scale',
-				icon: 'activity',
 				legacyRoutes: ['/admin/scale']
 			},
 			{
 				id: 'storage',
 				label: 'nav.pi.storage',
-				icon: 'database',
 				legacyRoutes: ['/admin/storage-topology']
 			},
 			{
 				id: 'backup',
 				label: 'nav.pi.backup',
-				icon: 'file',
 				legacyRoutes: ['/admin/dr-backup']
 			},
 			{
 				id: 'jobs',
 				label: 'nav.pi.jobs',
-				icon: 'list',
 				legacyRoutes: ['/admin/jobs']
 			}
 		],
@@ -690,14 +615,12 @@ export const PLATFORM_AREAS: readonly NavArea[] = [
 			{
 				id: 'queue',
 				label: 'nav.pv.queue',
-				icon: 'check',
 				badge: '3',
 				legacyRoutes: ['/admin/approvals']
 			},
 			{
 				id: 'elevations',
 				label: 'nav.pv.elevations',
-				icon: 'lock',
 				legacyRoutes: ['/admin/agent-access/elevations/[id]']
 			}
 		],

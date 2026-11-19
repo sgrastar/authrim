@@ -400,6 +400,7 @@ describe('the information release of the lite consent', () => {
 		expect(read.release?.purpose).toEqual({
 			title: 'Account notices',
 			description: 'Used to send account notices.',
+			descriptionHtml: 'Used to send account notices.',
 			documentUrl: 'https://example.com/purpose',
 			inlineContent: '<b>x</b>'
 		});

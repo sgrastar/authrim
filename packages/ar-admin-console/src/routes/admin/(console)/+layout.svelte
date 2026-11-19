@@ -8,6 +8,7 @@
 	import OnboardingGuide from '#lib/onboarding/OnboardingGuide.svelte';
 	import AppShell from '#lib/shell/AppShell.svelte';
 	import EnvironmentBanner from '#lib/shell/EnvironmentBanner.svelte';
+	import ReleasePauseBanner from '#lib/shell/ReleasePauseBanner.svelte';
 	import StepUpDialog from '#lib/shell/StepUpDialog.svelte';
 	import { noticeInbox } from '#lib/shell/notice-inbox.js';
 	import { isStandalonePath, resolveNavPath } from '#lib/shell/nav.js';
@@ -103,6 +104,7 @@
 			textLocalizations={environmentBanner.text_localizations}
 		/>
 	{/if}
+	<ReleasePauseBanner />
 {/snippet}
 
 {#if !ready}
@@ -132,7 +134,7 @@
 		{standalone}
 		notifications={noticeInbox.notifications}
 		ondismiss={(id) => noticeInbox.dismiss(id)}
-		banner={environmentBanner ? banner : undefined}
+		{banner}
 	>
 		{@render children()}
 	</AppShell>

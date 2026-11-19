@@ -233,6 +233,15 @@ describe('tenant placement migration operation', () => {
     ).rejects.toThrow('control_tenant_placement_migration_source_invalid');
   });
 
+  it('refuses to move the baseline default tenant', async () => {
+    await expect(service.start('env-test', { ...request, tenantId: 'default' })).rejects.toThrow(
+      'control_tenant_placement_default_tenant_unsupported'
+    );
+    expect(
+      database.prepare('SELECT COUNT(*) AS count FROM control_tenant_placement_migrations').get()
+    ).toEqual({ count: 0 });
+  });
+
   it('blocks start when any required data role is absent', async () => {
     database
       .prepare(

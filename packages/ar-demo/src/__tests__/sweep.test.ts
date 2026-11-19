@@ -260,6 +260,9 @@ describe('bounded sweep policy', () => {
       prepare() {
         throw new Error('database access forbidden');
       },
+      batch() {
+        throw new Error('database access forbidden');
+      },
     };
     expect(await handleSweep({ ...env, DB: db }, upstream.deps)).toMatchObject({ deleted: 1 });
   });

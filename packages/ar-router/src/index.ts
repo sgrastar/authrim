@@ -1724,6 +1724,18 @@ app.post('/api/v1/diagnostic-logs/ingest', async (c) => {
 app.get('/api/auth/authentication-methods', async (c) => {
   return fetchAuthenticationMethodsWithRouterCache(c);
 });
+// Tenant status (whether this host's tenant was deleted) is answered by OP_MANAGEMENT.
+// Registered before /api/auth/* to take priority.
+// A call relayed by the Login UI is never answered: on a shared login host the Login UI picks the
+// tenant from a parameter or a cookie, so the answer would not be about the browser's own host.
+app.get('/api/auth/tenant-status', async (c) => {
+  if (isLoginUiBackendProxyRequest(c.req.raw)) {
+    c.header('Cache-Control', 'no-store');
+    return c.json({ status: 'unavailable' });
+  }
+  const request = createServiceBindingRequest(c.req.raw);
+  return c.env.OP_MANAGEMENT.fetch(request);
+});
 app.all('/api/auth/discovery', async (c) => {
   const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_MANAGEMENT.fetch(request);
