@@ -354,7 +354,15 @@ const zhTW = createTranslation({
 	lite_provisioningWait: '正在準備您的帳戶。請稍候，然後選擇「繼續」。',
 	lite_provisioningFailed: '無法準備您的帳戶。請重新開始。',
 	lite_reauthSessionEnded: '開啟此頁面時的工作階段已結束或已變更。請重新登入。',
-	lite_reauthAnotherWay: '使用其他方式'
+	lite_reauthAnotherWay: '使用其他方式',
+	tenantDeleted_title: '此登入頁面已無法使用',
+	tenantDeleted_description: '此頁面所屬的服務已被刪除，無法再從這裡登入。',
+	tenantDeleted_autoRemoved: '我們已請求此裝置移除為此頁面儲存的 Passkey。',
+	tenantDeleted_chooseHint: '如果此裝置上仍儲存著此頁面的 Passkey，您可以選擇它以請求移除。',
+	tenantDeleted_chooseButton: '移除已儲存的 Passkey',
+	tenantDeleted_chosenRemoved: '我們已請求此裝置移除該 Passkey。',
+	tenantDeleted_manualHint:
+		'儲存在安全金鑰中，或儲存在此瀏覽器無法存取的應用程式中的 Passkey，需要在該金鑰或應用程式的設定中移除。'
 });
 
 export default zhTW;

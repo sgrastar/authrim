@@ -574,7 +574,18 @@ const translation = {
 	lite_provisioningFailed: 'Hesabınız hazırlanamadı. Baştan başlayın.',
 	lite_reauthSessionEnded:
 		'Bu sayfanın açıldığı oturum sona erdi veya değişti. Yeniden oturum açın.',
-	lite_reauthAnotherWay: 'Başka bir yol kullan'
+	lite_reauthAnotherWay: 'Başka bir yol kullan',
+	tenantDeleted_title: 'Bu oturum açma sayfası artık kullanılamıyor',
+	tenantDeleted_description:
+		'Bu sayfanın ait olduğu hizmet silindi. Artık buradan oturum açamazsınız.',
+	tenantDeleted_autoRemoved:
+		'Bu cihazdan, bu sayfa için kaydedilmiş geçiş anahtarlarını kaldırmasını istedik.',
+	tenantDeleted_chooseHint:
+		'Bu sayfaya ait bir geçiş anahtarı hâlâ bu cihazda kayıtlıysa, kaldırılması için onu seçebilirsiniz.',
+	tenantDeleted_chooseButton: 'Kayıtlı bir geçiş anahtarını kaldır',
+	tenantDeleted_chosenRemoved: 'Bu cihazdan o geçiş anahtarını kaldırmasını istedik.',
+	tenantDeleted_manualHint:
+		'Bir güvenlik anahtarında veya bu tarayıcının erişemediği bir uygulamada kayıtlı geçiş anahtarları, o anahtarın veya uygulamanın ayarlarından kaldırılmalıdır.'
 } satisfies Translation;
 
 export default translation;

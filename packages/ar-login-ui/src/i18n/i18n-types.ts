@@ -2115,6 +2115,34 @@ type RootTranslation = {
 	 * U​s​e​ ​a​n​o​t​h​e​r​ ​w​a​y
 	 */
 	lite_reauthAnotherWay: string;
+	/**
+	 * T​h​i​s​ ​s​i​g​n​-​i​n​ ​p​a​g​e​ ​i​s​ ​n​o​ ​l​o​n​g​e​r​ ​a​v​a​i​l​a​b​l​e
+	 */
+	tenantDeleted_title: string;
+	/**
+	 * T​h​e​ ​s​e​r​v​i​c​e​ ​t​h​i​s​ ​p​a​g​e​ ​b​e​l​o​n​g​e​d​ ​t​o​ ​w​a​s​ ​d​e​l​e​t​e​d​.​ ​Y​o​u​ ​c​a​n​ ​n​o​ ​l​o​n​g​e​r​ ​s​i​g​n​ ​i​n​ ​h​e​r​e​.
+	 */
+	tenantDeleted_description: string;
+	/**
+	 * W​e​ ​a​s​k​e​d​ ​t​h​i​s​ ​d​e​v​i​c​e​ ​t​o​ ​r​e​m​o​v​e​ ​t​h​e​ ​p​a​s​s​k​e​y​s​ ​s​a​v​e​d​ ​f​o​r​ ​t​h​i​s​ ​p​a​g​e​.
+	 */
+	tenantDeleted_autoRemoved: string;
+	/**
+	 * I​f​ ​a​ ​p​a​s​s​k​e​y​ ​f​o​r​ ​t​h​i​s​ ​p​a​g​e​ ​i​s​ ​s​t​i​l​l​ ​s​a​v​e​d​ ​o​n​ ​t​h​i​s​ ​d​e​v​i​c​e​,​ ​y​o​u​ ​c​a​n​ ​p​i​c​k​ ​i​t​ ​t​o​ ​h​a​v​e​ ​i​t​ ​r​e​m​o​v​e​d​.
+	 */
+	tenantDeleted_chooseHint: string;
+	/**
+	 * R​e​m​o​v​e​ ​a​ ​s​a​v​e​d​ ​p​a​s​s​k​e​y
+	 */
+	tenantDeleted_chooseButton: string;
+	/**
+	 * W​e​ ​a​s​k​e​d​ ​t​h​i​s​ ​d​e​v​i​c​e​ ​t​o​ ​r​e​m​o​v​e​ ​t​h​a​t​ ​p​a​s​s​k​e​y​.
+	 */
+	tenantDeleted_chosenRemoved: string;
+	/**
+	 * P​a​s​s​k​e​y​s​ ​o​n​ ​a​ ​s​e​c​u​r​i​t​y​ ​k​e​y​,​ ​o​r​ ​i​n​ ​a​n​ ​a​p​p​ ​t​h​i​s​ ​b​r​o​w​s​e​r​ ​c​a​n​n​o​t​ ​r​e​a​c​h​,​ ​h​a​v​e​ ​t​o​ ​b​e​ ​r​e​m​o​v​e​d​ ​i​n​ ​t​h​e​ ​s​e​t​t​i​n​g​s​ ​o​f​ ​t​h​a​t​ ​k​e​y​ ​o​r​ ​a​p​p​.
+	 */
+	tenantDeleted_manualHint: string;
 };
 
 export type TranslationFunctions = {
@@ -4165,6 +4193,34 @@ export type TranslationFunctions = {
 	 * Use another way
 	 */
 	lite_reauthAnotherWay: () => LocalizedString;
+	/**
+	 * This sign-in page is no longer available
+	 */
+	tenantDeleted_title: () => LocalizedString;
+	/**
+	 * The service this page belonged to was deleted. You can no longer sign in here.
+	 */
+	tenantDeleted_description: () => LocalizedString;
+	/**
+	 * We asked this device to remove the passkeys saved for this page.
+	 */
+	tenantDeleted_autoRemoved: () => LocalizedString;
+	/**
+	 * If a passkey for this page is still saved on this device, you can pick it to have it removed.
+	 */
+	tenantDeleted_chooseHint: () => LocalizedString;
+	/**
+	 * Remove a saved passkey
+	 */
+	tenantDeleted_chooseButton: () => LocalizedString;
+	/**
+	 * We asked this device to remove that passkey.
+	 */
+	tenantDeleted_chosenRemoved: () => LocalizedString;
+	/**
+	 * Passkeys on a security key, or in an app this browser cannot reach, have to be removed in the settings of that key or app.
+	 */
+	tenantDeleted_manualHint: () => LocalizedString;
 };
 
 export type Formatters = {};

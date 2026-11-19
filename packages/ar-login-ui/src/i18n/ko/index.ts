@@ -375,7 +375,17 @@ const ko = createTranslation({
 	lite_provisioningWait: '계정을 준비하고 있습니다. 잠시 기다린 후 계속을 선택하세요.',
 	lite_provisioningFailed: '계정을 준비하지 못했습니다. 처음부터 다시 시작하세요.',
 	lite_reauthSessionEnded: '이 페이지를 연 세션이 종료되었거나 변경되었습니다. 다시 로그인하세요.',
-	lite_reauthAnotherWay: '다른 방법 사용'
+	lite_reauthAnotherWay: '다른 방법 사용',
+	tenantDeleted_title: '이 로그인 페이지는 더 이상 사용할 수 없습니다',
+	tenantDeleted_description:
+		'이 페이지의 서비스가 삭제되었습니다. 여기에서는 더 이상 로그인할 수 없습니다.',
+	tenantDeleted_autoRemoved: '이 페이지용으로 저장된 Passkey를 삭제하도록 이 기기에 요청했습니다.',
+	tenantDeleted_chooseHint:
+		'이 페이지의 Passkey가 이 기기에 아직 저장되어 있다면, 선택하여 삭제를 요청할 수 있습니다.',
+	tenantDeleted_chooseButton: '저장된 Passkey 삭제',
+	tenantDeleted_chosenRemoved: '선택한 Passkey를 삭제하도록 이 기기에 요청했습니다.',
+	tenantDeleted_manualHint:
+		'보안 키나 이 브라우저에서 접근할 수 없는 앱에 저장된 Passkey는 해당 키 또는 앱의 설정에서 삭제해야 합니다.'
 });
 
 export default ko;

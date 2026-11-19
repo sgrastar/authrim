@@ -576,7 +576,18 @@ const translation = {
 	lite_provisioningFailed: 'Nie udało się przygotować konta. Zacznij od nowa.',
 	lite_reauthSessionEnded:
 		'Sesja, dla której otwarto tę stronę, zakończyła się lub zmieniła. Zaloguj się ponownie.',
-	lite_reauthAnotherWay: 'Użyj innej metody'
+	lite_reauthAnotherWay: 'Użyj innej metody',
+	tenantDeleted_title: 'Ta strona logowania nie jest już dostępna',
+	tenantDeleted_description:
+		'Usługa, do której należała ta strona, została usunięta. Nie można się już tutaj zalogować.',
+	tenantDeleted_autoRemoved:
+		'Poprosiliśmy to urządzenie o usunięcie kluczy dostępu zapisanych dla tej strony.',
+	tenantDeleted_chooseHint:
+		'Jeśli na tym urządzeniu nadal jest zapisany klucz dostępu do tej strony, możesz go wybrać, aby został usunięty.',
+	tenantDeleted_chooseButton: 'Usuń zapisany klucz dostępu',
+	tenantDeleted_chosenRemoved: 'Poprosiliśmy to urządzenie o usunięcie tego klucza dostępu.',
+	tenantDeleted_manualHint:
+		'Klucze dostępu zapisane na kluczu bezpieczeństwa lub w aplikacji, do której ta przeglądarka nie ma dostępu, trzeba usunąć w ustawieniach tego klucza lub aplikacji.'
 } satisfies Translation;
 
 export default translation;

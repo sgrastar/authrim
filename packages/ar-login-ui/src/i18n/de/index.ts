@@ -403,7 +403,18 @@ const de = createTranslation({
 	lite_provisioningFailed: 'Ihr Konto konnte nicht eingerichtet werden. Beginnen Sie erneut.',
 	lite_reauthSessionEnded:
 		'Die Sitzung, für die diese Seite geöffnet wurde, ist beendet oder hat sich geändert. Melden Sie sich erneut an.',
-	lite_reauthAnotherWay: 'Anderen Weg verwenden'
+	lite_reauthAnotherWay: 'Anderen Weg verwenden',
+	tenantDeleted_title: 'Diese Anmeldeseite ist nicht mehr verfügbar',
+	tenantDeleted_description:
+		'Der Dienst, zu dem diese Seite gehörte, wurde gelöscht. Hier ist keine Anmeldung mehr möglich.',
+	tenantDeleted_autoRemoved:
+		'Wir haben dieses Gerät gebeten, die für diese Seite gespeicherten Passkeys zu entfernen.',
+	tenantDeleted_chooseHint:
+		'Wenn auf diesem Gerät noch ein Passkey für diese Seite gespeichert ist, können Sie ihn auswählen, um ihn entfernen zu lassen.',
+	tenantDeleted_chooseButton: 'Gespeicherten Passkey entfernen',
+	tenantDeleted_chosenRemoved: 'Wir haben dieses Gerät gebeten, diesen Passkey zu entfernen.',
+	tenantDeleted_manualHint:
+		'Passkeys auf einem Sicherheitsschlüssel oder in einer App, die dieser Browser nicht erreicht, müssen in den Einstellungen des Schlüssels oder der App entfernt werden.'
 });
 
 export default de;

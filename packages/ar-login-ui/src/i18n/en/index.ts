@@ -598,7 +598,17 @@ const en = {
 	lite_provisioningFailed: 'Your account could not be set up. Start again.',
 	lite_reauthSessionEnded:
 		'The session this page was opened for has ended or changed. Sign in again.',
-	lite_reauthAnotherWay: 'Use another way'
+	lite_reauthAnotherWay: 'Use another way',
+	tenantDeleted_title: 'This sign-in page is no longer available',
+	tenantDeleted_description:
+		'The service this page belonged to was deleted. You can no longer sign in here.',
+	tenantDeleted_autoRemoved: 'We asked this device to remove the passkeys saved for this page.',
+	tenantDeleted_chooseHint:
+		'If a passkey for this page is still saved on this device, you can pick it to have it removed.',
+	tenantDeleted_chooseButton: 'Remove a saved passkey',
+	tenantDeleted_chosenRemoved: 'We asked this device to remove that passkey.',
+	tenantDeleted_manualHint:
+		'Passkeys on a security key, or in an app this browser cannot reach, have to be removed in the settings of that key or app.'
 } satisfies BaseTranslation;
 
 export default en;

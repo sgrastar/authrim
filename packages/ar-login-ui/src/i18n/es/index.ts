@@ -400,7 +400,18 @@ const es = createTranslation({
 	lite_provisioningFailed: 'No se pudo configurar tu cuenta. Vuelve a empezar.',
 	lite_reauthSessionEnded:
 		'La sesión para la que se abrió esta página ha terminado o ha cambiado. Vuelve a iniciar sesión.',
-	lite_reauthAnotherWay: 'Usar otro método'
+	lite_reauthAnotherWay: 'Usar otro método',
+	tenantDeleted_title: 'Esta página de inicio de sesión ya no está disponible',
+	tenantDeleted_description:
+		'El servicio al que pertenecía esta página fue eliminado. Ya no puede iniciar sesión aquí.',
+	tenantDeleted_autoRemoved:
+		'Hemos pedido a este dispositivo que elimine las Passkeys guardadas para esta página.',
+	tenantDeleted_chooseHint:
+		'Si todavía hay una Passkey de esta página guardada en este dispositivo, puede elegirla para que se elimine.',
+	tenantDeleted_chooseButton: 'Eliminar una Passkey guardada',
+	tenantDeleted_chosenRemoved: 'Hemos pedido a este dispositivo que elimine esa Passkey.',
+	tenantDeleted_manualHint:
+		'Las Passkeys guardadas en una llave de seguridad, o en una aplicación a la que este navegador no llega, deben eliminarse desde los ajustes de esa llave o aplicación.'
 });
 
 export default es;

@@ -388,7 +388,18 @@ const ru = createTranslation({
 	lite_provisioningFailed: 'Не удалось настроить учётную запись. Начните заново.',
 	lite_reauthSessionEnded:
 		'Сеанс, для которого была открыта эта страница, завершён или изменился. Войдите снова.',
-	lite_reauthAnotherWay: 'Использовать другой способ'
+	lite_reauthAnotherWay: 'Использовать другой способ',
+	tenantDeleted_title: 'Эта страница входа больше недоступна',
+	tenantDeleted_description:
+		'Сервис, которому принадлежала эта страница, был удалён. Войти здесь больше нельзя.',
+	tenantDeleted_autoRemoved:
+		'Мы попросили это устройство удалить Passkey, сохранённые для этой страницы.',
+	tenantDeleted_chooseHint:
+		'Если на этом устройстве ещё сохранён Passkey для этой страницы, вы можете выбрать его, чтобы он был удалён.',
+	tenantDeleted_chooseButton: 'Удалить сохранённый Passkey',
+	tenantDeleted_chosenRemoved: 'Мы попросили это устройство удалить этот Passkey.',
+	tenantDeleted_manualHint:
+		'Passkey, сохранённые на ключе безопасности или в приложении, недоступном этому браузеру, нужно удалить в настройках этого ключа или приложения.'
 });
 
 export default ru;

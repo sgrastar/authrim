@@ -75,6 +75,11 @@
 		signalUnknownCredential,
 		shouldSignalUnknownCredentialAfterLoginFailure
 	} from '#lib/webauthn/signal.js';
+	import {
+		rememberPasskeyUserOfAssertion,
+		rememberPasskeyUserOfRegistration
+	} from '#lib/webauthn/deleted-tenant.js';
+	import TenantDeletedGate from '#lib/components/TenantDeletedGate.svelte';
 	import { useLoginUIStores } from '#lib/stores/login-ui-context.js';
 	import { applyAuthenticationMethodsToLoginUI } from '#lib/stores/login-ui-configuration.js';
 	import { installPageResumeHandler } from '#lib/browser/page-resume.js';
@@ -295,6 +300,8 @@
 			(clientMethodsLoading || (!hasEmbeddedAuthenticationMethods && !clientMethodsLoadAttempted))
 	);
 	let methodsError = $state('');
+	// Each failure to reach the tenant; TenantDeletedGate then asks whether it was deleted.
+	let tenantLoadFailures = $state(0);
 	let authenticationMethodsRequestSequence = 0;
 	const passkeyEnabled = $derived(authenticationMethodsState?.passkeyEnabled ?? false);
 	const emailCodeEnabled = $derived(authenticationMethodsState?.emailCodeEnabled ?? false);
@@ -722,6 +729,7 @@
 			const { data, error: apiError } = result;
 			if (apiError) {
 				if (!authenticationMethodsState) methodsError = $LL.login_methodsLoadFailed();
+				tenantLoadFailures += 1;
 				return;
 			}
 			if (data) {
@@ -732,6 +740,7 @@
 			if (requestSequence === authenticationMethodsRequestSequence && !authenticationMethodsState) {
 				methodsError = $LL.login_methodsLoadFailed();
 			}
+			tenantLoadFailures += 1;
 		} finally {
 			if (requestSequence === authenticationMethodsRequestSequence) {
 				clientMethodsLoading = false;
@@ -1491,6 +1500,7 @@
 				}
 				throw loginUiDisplayError(getApiErrorMessage(verifyError));
 			}
+			rememberPasskeyUserOfAssertion(credential);
 
 			await auth.refreshFromSession();
 
@@ -1938,6 +1948,7 @@
 					verifyError ? getApiErrorMessage(verifyError) : $LL.error_unknown()
 				);
 			}
+			rememberPasskeyUserOfRegistration(optionsData.options);
 			directoryMigrationTransaction = null;
 			directoryMigrationEmailChallengeId = '';
 			directoryMigrationEmailCode = '';
@@ -2389,132 +2400,134 @@
 </svelte:head>
 
 <AuthPageShell wide={runtimeScreenWide} entryMotion={entryMotionEnabled}>
-	<LoginView
-		initialLoading={initialAuthUiLoading}
-		{methodsError}
-		client={{ loading: clientInfoLoading, info: clientInfo }}
-		title={localizedLoginTitle}
-		legacyHeading={!blockLegacyFormLayout}
-		legacyMethods={!blockLegacyAuthLayout}
-		alerts={{
-			externalIdp: externalIdpError,
-			error,
-			humanVerificationUnavailable,
-			runtimeFlow: runtimeFlowError,
-			accountNotFound,
-			runtimeScreenMissing: runtimeAuthFormMissing,
-			passkeyProgress: passkeyProgressMessage,
-			emailCodeProgress: emailCodeProgressMessage
-		}}
-		runtimeStep={runtimeStepView}
-		runtime={{
-			fieldValues: runtimeScreenFieldValues,
-			methodAvailability: runtimeMethodAvailability,
-			methodLoading: runtimeMethodLoading,
-			destinationFieldDecisions: runtimeDestinationFieldDecisions,
-			consentSelectedValues: runtimeConsentSelectedValues,
-			consentReady: canSubmitRuntimeConsent(),
-			loading: runtimeFlowLoading,
-			backScreens: runtimeBackScreens
-		}}
-		guest={{
-			enabled:
-				authenticationMethodsState?.guestEnabled === true &&
-				runtimeAllowsAuthenticationHandle('guest'),
-			retentionDescription: authenticationMethodsState?.guestDeletionAfterDays
-				? $LL.login_guestRetention({
-						days: authenticationMethodsState.guestDeletionAfterDays
-					})
-				: $LL.login_guestNoExpiry()
-		}}
-		methods={{
-			passkey: showRuntimePasskey,
-			directoryPassword: showRuntimeDirectoryPassword,
-			emailCode: showRuntimeEmailCode,
-			totp: showRuntimeTotp,
-			external: showRuntimeExternal,
-			any: hasVisibleAuthenticationMethod
-		}}
-		loading={{
-			passkey: passkeyLoading,
-			emailCode: emailCodeLoading,
-			totp: totpLoading,
-			directoryPassword: directoryPasswordLoading,
-			externalIdp: externalIdpLoading,
-			migrationPasskey: directoryMigrationPasskeyLoading,
-			migrationEmail: directoryMigrationEmailLoading
-		}}
-		busy={authActionLoading}
-		disabled={authActionDisabled}
-		{directoryPasswordLabel}
-		externalProviders={runtimeExternalProviders}
-		{totpCodeRequested}
-		migration={directoryMigrationView}
-		emailVerification={{
-			enabled: Boolean(emailVerificationChallenge),
-			nonce: emailVerificationChallenge?.nonce ?? null
-		}}
-		humanVerification={{
-			siteKey: turnstileSiteKey,
-			provider: humanVerificationProvider,
-			mode: humanVerificationMode,
-			action: turnstileAction,
-			theme: turnstileTheme,
-			language: turnstileLanguage,
-			resetKey: turnstileResetKey,
-			runtimeRequired: useRuntimeAuthFormLayout && turnstileRequired,
-			runtimeVisible: Boolean(activeTurnstileTarget)
-		}}
-		{showTurnstileFor}
-		signupHref={loginUIPageStore.authSwitchLinkEnabled ? signupHref : null}
-		cancel={{ available: runtimeCancelAvailable, loading: cancelLoading }}
-		onCancel={handleRuntimeCancel}
-		bind:email
-		bind:directoryUsername
-		bind:directoryPassword
-		bind:totpIdentifier
-		bind:totpCode
-		bind:migrationEmailCode={directoryMigrationEmailCode}
-		bind:turnstileToken
-		bind:consentDecisions={runtimeConsentDecisions}
-		onSubmit={handleEmailVerificationProtocolSubmit}
-		onDismissExternalIdpError={() => (externalIdpError = null)}
-		onDismissError={() => (error = '')}
-		onDismissRuntimeFlowError={() => (runtimeFlowError = '')}
-		onRuntimeFieldValueChange={handleRuntimeScreenFieldValueChange}
-		onRuntimeAuthAction={handleRuntimeScreenAuthAction}
-		onRuntimeBack={goBackRuntimeScreen}
-		onRuntimeExit={(handle) => completeRuntimeOnlyStep(handle)}
-		onRuntimeEmailKeydown={handleRuntimeEmailKeydown}
-		bind:runtimeShownAuthMethods
-		onConsentDecisionChange={setRuntimeConsentDecision}
-		onDestinationFieldDecisionChange={setRuntimeDestinationFieldDecision}
-		onConsentSelectedValueChange={setRuntimeConsentSelectedValue}
-		onRuntimeContinue={() =>
-			completeRuntimeOnlyStep(
-				getRuntimeScreenContinueHandle(runtimeFlowStep),
-				getRuntimeScreenSubmitInput()
-			)}
-		onRuntimeAccept={() =>
-			completeRuntimeOnlyStep('accepted', getRuntimeConsentItemDecisionPayload())}
-		onRuntimeComplete={() => completeRuntimeOnlyStep('completed')}
-		onGuestLogin={handleGuestLogin}
-		onPasskey={handlePasskeyLogin}
-		onEmailCode={() => handleEmailCodeSend()}
-		onEmailKeyPress={handleKeyPress}
-		onDirectoryPassword={handleDirectoryPasswordLogin}
-		onDirectoryKeyPress={handleDirectoryKeyPress}
-		onTotpStart={handleTotpStart}
-		onTotpVerify={handleTotpVerify}
-		onTotpKeyPress={handleTotpKeyPress}
-		onTotpBack={() => {
-			totpCodeRequested = false;
-			totpChallengeId = '';
-			totpCode = '';
-		}}
-		onExternalProvider={handleRuntimeExternalProviderAction}
-		onMigrationPasskey={handleDirectoryMigrationPasskeyRegistration}
-		onMigrationEmailSend={handleDirectoryMigrationEmailCodeSend}
-		onMigrationEmailVerify={handleDirectoryMigrationEmailCodeVerify}
-	/>
+	<TenantDeletedGate failures={tenantLoadFailures}>
+		<LoginView
+			initialLoading={initialAuthUiLoading}
+			{methodsError}
+			client={{ loading: clientInfoLoading, info: clientInfo }}
+			title={localizedLoginTitle}
+			legacyHeading={!blockLegacyFormLayout}
+			legacyMethods={!blockLegacyAuthLayout}
+			alerts={{
+				externalIdp: externalIdpError,
+				error,
+				humanVerificationUnavailable,
+				runtimeFlow: runtimeFlowError,
+				accountNotFound,
+				runtimeScreenMissing: runtimeAuthFormMissing,
+				passkeyProgress: passkeyProgressMessage,
+				emailCodeProgress: emailCodeProgressMessage
+			}}
+			runtimeStep={runtimeStepView}
+			runtime={{
+				fieldValues: runtimeScreenFieldValues,
+				methodAvailability: runtimeMethodAvailability,
+				methodLoading: runtimeMethodLoading,
+				destinationFieldDecisions: runtimeDestinationFieldDecisions,
+				consentSelectedValues: runtimeConsentSelectedValues,
+				consentReady: canSubmitRuntimeConsent(),
+				loading: runtimeFlowLoading,
+				backScreens: runtimeBackScreens
+			}}
+			guest={{
+				enabled:
+					authenticationMethodsState?.guestEnabled === true &&
+					runtimeAllowsAuthenticationHandle('guest'),
+				retentionDescription: authenticationMethodsState?.guestDeletionAfterDays
+					? $LL.login_guestRetention({
+							days: authenticationMethodsState.guestDeletionAfterDays
+						})
+					: $LL.login_guestNoExpiry()
+			}}
+			methods={{
+				passkey: showRuntimePasskey,
+				directoryPassword: showRuntimeDirectoryPassword,
+				emailCode: showRuntimeEmailCode,
+				totp: showRuntimeTotp,
+				external: showRuntimeExternal,
+				any: hasVisibleAuthenticationMethod
+			}}
+			loading={{
+				passkey: passkeyLoading,
+				emailCode: emailCodeLoading,
+				totp: totpLoading,
+				directoryPassword: directoryPasswordLoading,
+				externalIdp: externalIdpLoading,
+				migrationPasskey: directoryMigrationPasskeyLoading,
+				migrationEmail: directoryMigrationEmailLoading
+			}}
+			busy={authActionLoading}
+			disabled={authActionDisabled}
+			{directoryPasswordLabel}
+			externalProviders={runtimeExternalProviders}
+			{totpCodeRequested}
+			migration={directoryMigrationView}
+			emailVerification={{
+				enabled: Boolean(emailVerificationChallenge),
+				nonce: emailVerificationChallenge?.nonce ?? null
+			}}
+			humanVerification={{
+				siteKey: turnstileSiteKey,
+				provider: humanVerificationProvider,
+				mode: humanVerificationMode,
+				action: turnstileAction,
+				theme: turnstileTheme,
+				language: turnstileLanguage,
+				resetKey: turnstileResetKey,
+				runtimeRequired: useRuntimeAuthFormLayout && turnstileRequired,
+				runtimeVisible: Boolean(activeTurnstileTarget)
+			}}
+			{showTurnstileFor}
+			signupHref={loginUIPageStore.authSwitchLinkEnabled ? signupHref : null}
+			cancel={{ available: runtimeCancelAvailable, loading: cancelLoading }}
+			onCancel={handleRuntimeCancel}
+			bind:email
+			bind:directoryUsername
+			bind:directoryPassword
+			bind:totpIdentifier
+			bind:totpCode
+			bind:migrationEmailCode={directoryMigrationEmailCode}
+			bind:turnstileToken
+			bind:consentDecisions={runtimeConsentDecisions}
+			onSubmit={handleEmailVerificationProtocolSubmit}
+			onDismissExternalIdpError={() => (externalIdpError = null)}
+			onDismissError={() => (error = '')}
+			onDismissRuntimeFlowError={() => (runtimeFlowError = '')}
+			onRuntimeFieldValueChange={handleRuntimeScreenFieldValueChange}
+			onRuntimeAuthAction={handleRuntimeScreenAuthAction}
+			onRuntimeBack={goBackRuntimeScreen}
+			onRuntimeExit={(handle) => completeRuntimeOnlyStep(handle)}
+			onRuntimeEmailKeydown={handleRuntimeEmailKeydown}
+			bind:runtimeShownAuthMethods
+			onConsentDecisionChange={setRuntimeConsentDecision}
+			onDestinationFieldDecisionChange={setRuntimeDestinationFieldDecision}
+			onConsentSelectedValueChange={setRuntimeConsentSelectedValue}
+			onRuntimeContinue={() =>
+				completeRuntimeOnlyStep(
+					getRuntimeScreenContinueHandle(runtimeFlowStep),
+					getRuntimeScreenSubmitInput()
+				)}
+			onRuntimeAccept={() =>
+				completeRuntimeOnlyStep('accepted', getRuntimeConsentItemDecisionPayload())}
+			onRuntimeComplete={() => completeRuntimeOnlyStep('completed')}
+			onGuestLogin={handleGuestLogin}
+			onPasskey={handlePasskeyLogin}
+			onEmailCode={() => handleEmailCodeSend()}
+			onEmailKeyPress={handleKeyPress}
+			onDirectoryPassword={handleDirectoryPasswordLogin}
+			onDirectoryKeyPress={handleDirectoryKeyPress}
+			onTotpStart={handleTotpStart}
+			onTotpVerify={handleTotpVerify}
+			onTotpKeyPress={handleTotpKeyPress}
+			onTotpBack={() => {
+				totpCodeRequested = false;
+				totpChallengeId = '';
+				totpCode = '';
+			}}
+			onExternalProvider={handleRuntimeExternalProviderAction}
+			onMigrationPasskey={handleDirectoryMigrationPasskeyRegistration}
+			onMigrationEmailSend={handleDirectoryMigrationEmailCodeSend}
+			onMigrationEmailVerify={handleDirectoryMigrationEmailCodeVerify}
+		/>
+	</TenantDeletedGate>
 </AuthPageShell>

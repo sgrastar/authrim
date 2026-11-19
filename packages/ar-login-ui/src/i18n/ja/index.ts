@@ -603,7 +603,17 @@ const ja = {
 	lite_provisioningFailed: 'アカウントを準備できませんでした。最初からやり直してください。',
 	lite_reauthSessionEnded:
 		'このページを開いたときのセッションが終了したか、別のものに変わりました。もう一度ログインしてください。',
-	lite_reauthAnotherWay: '別の方法を使う'
+	lite_reauthAnotherWay: '別の方法を使う',
+	tenantDeleted_title: 'このログインページは利用できなくなりました',
+	tenantDeleted_description: 'このページのサービスは削除されました。ここからはログインできません。',
+	tenantDeleted_autoRemoved:
+		'このページ用に保存されていたPasskeyの削除を、この端末に依頼しました。',
+	tenantDeleted_chooseHint:
+		'このページ用のPasskeyがこの端末に残っている場合は、選んで削除を依頼できます。',
+	tenantDeleted_chooseButton: '保存されているPasskeyを削除する',
+	tenantDeleted_chosenRemoved: '選んだPasskeyの削除を、この端末に依頼しました。',
+	tenantDeleted_manualHint:
+		'セキュリティキーや、このブラウザーから操作できないアプリに保存したPasskeyは、そのキーやアプリの設定から削除してください。'
 } satisfies Translation;
 
 export default ja;

@@ -582,7 +582,17 @@ const translation = {
 	lite_provisioningFailed: 'আপনার অ্যাকাউন্ট প্রস্তুত করা যায়নি। আবার শুরু করুন।',
 	lite_reauthSessionEnded:
 		'যে সেশনের জন্য এই পৃষ্ঠা খোলা হয়েছিল, সেটি শেষ হয়েছে বা বদলে গেছে। আবার সাইন ইন করুন।',
-	lite_reauthAnotherWay: 'অন্য উপায় ব্যবহার করুন'
+	lite_reauthAnotherWay: 'অন্য উপায় ব্যবহার করুন',
+	tenantDeleted_title: 'এই সাইন-ইন পৃষ্ঠাটি আর উপলব্ধ নেই',
+	tenantDeleted_description:
+		'এই পৃষ্ঠাটি যে পরিষেবার ছিল, সেটি মুছে ফেলা হয়েছে। এখানে আর সাইন ইন করা যাবে না।',
+	tenantDeleted_autoRemoved: 'এই পৃষ্ঠার জন্য সংরক্ষিত পাসকি সরাতে আমরা এই ডিভাইসকে অনুরোধ করেছি।',
+	tenantDeleted_chooseHint:
+		'এই পৃষ্ঠার কোনো পাসকি যদি এখনও এই ডিভাইসে সংরক্ষিত থাকে, তবে সেটি বেছে নিয়ে সরানোর অনুরোধ করতে পারেন।',
+	tenantDeleted_chooseButton: 'সংরক্ষিত পাসকি সরান',
+	tenantDeleted_chosenRemoved: 'সেই পাসকি সরাতে আমরা এই ডিভাইসকে অনুরোধ করেছি।',
+	tenantDeleted_manualHint:
+		'নিরাপত্তা কী-তে, বা এই ব্রাউজার পৌঁছাতে পারে না এমন অ্যাপে সংরক্ষিত পাসকি সেই কী বা অ্যাপের সেটিংস থেকে সরাতে হবে।'
 } satisfies Translation;
 
 export default translation;

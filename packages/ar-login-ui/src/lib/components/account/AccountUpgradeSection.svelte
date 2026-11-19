@@ -7,6 +7,7 @@
 		type GuestUpgradeAttempt,
 		type GuestUpgradeStatus
 	} from '#lib/api/account.js';
+	import { rememberPasskeyUserOfRegistration } from '#lib/webauthn/deleted-tenant.js';
 	import AccountUpgradeWidget from './widgets/AccountUpgradeWidget.svelte';
 	import type { AccountWidgetHeadingLevel } from './widgets/types';
 
@@ -33,6 +34,10 @@
 	let completed = $state(false);
 	let proof: { code?: string; passkey_response?: RegistrationResponseJSON } = {};
 
+	function rememberUpgradedPasskeyOwner() {
+		if (attempt && proof.passkey_response) rememberPasskeyUserOfRegistration(attempt.options);
+	}
+
 	async function refresh() {
 		const result = await accountAPI.getGuestUpgrade();
 		if (result.data) {
@@ -40,6 +45,8 @@
 				status?.registration_state === 'guest' && result.data.registration_state === 'registered';
 			status = result.data;
 			if (recovered && !completed) {
+				// The upgrade went through although its answer was lost.
+				rememberUpgradedPasskeyOwner();
 				completed = true;
 				await onCompleted();
 			}
@@ -61,6 +68,7 @@
 				collision = result.error.error === 'identity_already_registered';
 				error = !collision;
 			} else if (result.data?.success) {
+				rememberUpgradedPasskeyOwner();
 				completed = true;
 				attempt = null;
 				proof = {};

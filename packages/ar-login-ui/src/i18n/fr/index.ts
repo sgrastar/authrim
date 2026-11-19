@@ -400,7 +400,18 @@ const fr = createTranslation({
 	lite_provisioningFailed: 'Votre compte n’a pas pu être configuré. Recommencez.',
 	lite_reauthSessionEnded:
 		'La session pour laquelle cette page a été ouverte a pris fin ou a changé. Reconnectez-vous.',
-	lite_reauthAnotherWay: 'Utiliser un autre moyen'
+	lite_reauthAnotherWay: 'Utiliser un autre moyen',
+	tenantDeleted_title: 'Cette page de connexion n’est plus disponible',
+	tenantDeleted_description:
+		'Le service auquel cette page appartenait a été supprimé. Vous ne pouvez plus vous connecter ici.',
+	tenantDeleted_autoRemoved:
+		'Nous avons demandé à cet appareil de supprimer les Passkeys enregistrées pour cette page.',
+	tenantDeleted_chooseHint:
+		'Si une Passkey de cette page est encore enregistrée sur cet appareil, vous pouvez la choisir pour la faire supprimer.',
+	tenantDeleted_chooseButton: 'Supprimer une Passkey enregistrée',
+	tenantDeleted_chosenRemoved: 'Nous avons demandé à cet appareil de supprimer cette Passkey.',
+	tenantDeleted_manualHint:
+		'Les Passkeys enregistrées sur une clé de sécurité, ou dans une application que ce navigateur ne peut pas atteindre, doivent être supprimées dans les réglages de cette clé ou de cette application.'
 });
 
 export default fr;
