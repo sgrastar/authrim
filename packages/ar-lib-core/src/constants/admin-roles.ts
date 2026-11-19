@@ -88,8 +88,9 @@ const READ_USERS_AND_SESSIONS = [
  * The tenant admin holds namespaces one by one and never `admin:*`: `admin:*` is what marks a
  * platform administrator. Left out on purpose, as they take effect across tenants: the control
  * plane, database connections and routing, tenants and their domains, runtime profiles, platform
- * settings and plugins, storage destinations, backups, platform logging, the DR key bundle of SAML
- * signing keys, job schedules and the break-glass operations.
+ * settings and plugins, storage destinations, backups, platform logging, job schedules and the
+ * break-glass operations. The DR bundle of the tenant's own SAML signing keys is the tenant's: it
+ * holds only that tenant's keys and imports only into the tenant it was made for.
  */
 const TENANT_ADMIN_PERMISSIONS = [
   // People and sessions
@@ -126,6 +127,8 @@ const TENANT_ADMIN_PERMISSIONS = [
   'admin:saml_providers:signing:publish_next',
   'admin:saml_providers:signing:promote',
   'admin:saml_providers:signing:retire_backup',
+  'admin:saml_providers:signing:dr_bundle:export',
+  'admin:saml_providers:signing:dr_bundle:import',
   'admin:webhooks:*',
   'admin:vc:*',
   'admin:auth_config_plans:*',
