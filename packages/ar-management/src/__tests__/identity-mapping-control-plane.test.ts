@@ -842,6 +842,8 @@ describe('IdentityMappingControlPlaneRepository source profiles', () => {
           source_type: 'csv',
           profile_key: 'workday_csv',
           display_name: 'Workday CSV',
+          lifecycle_state: 'draft',
+          active_version_id: null,
         },
         null,
       ],
@@ -884,6 +886,8 @@ describe('IdentityMappingControlPlaneRepository source profiles', () => {
       1000,
       'tenant_a',
       'source_profile_1',
+      'draft',
+      '',
     ]);
   });
 
@@ -1605,6 +1609,8 @@ describe('IdentityMappingControlPlaneRepository destination profiles', () => {
           owner_scope_type: 'tenant',
           owner_scope_id: null,
           base_profile_id: null,
+          lifecycle_state: 'draft',
+          active_version_id: null,
         },
         null,
       ],
@@ -1664,6 +1670,8 @@ describe('IdentityMappingControlPlaneRepository destination profiles', () => {
       1000,
       'tenant_a',
       'destination_profile_1',
+      'draft',
+      '',
     ]);
   });
 
