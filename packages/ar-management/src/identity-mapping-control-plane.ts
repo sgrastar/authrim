@@ -104,6 +104,7 @@ import type { CsvSourceProfileParserOptions } from '@authrim/ar-lib-field-mappin
 import type { FieldCatalogEntry } from '@authrim/ar-lib-field-mapping/contract';
 import {
   checkDestinationProfileUnreferenced,
+  checkSourceProfileUnreferenced,
   checkMappingSetUnreferenced,
   checkMappingVersionDeactivation,
   checkMappingVersionSwap,
@@ -9636,9 +9637,12 @@ export async function adminIdentityMappingSourceProfileActivateHandler(c: AdminC
 }
 
 export async function adminIdentityMappingSourceProfileDeleteHandler(c: AdminContext) {
-  return handleMutation(c, 'source-profile.delete', async (repository, tenantId) =>
-    repository.deleteSourceProfile(tenantId, requiredParam(c, 'sourceProfileId'))
-  );
+  return handleMutation(c, 'source-profile.delete', async (repository, tenantId) => {
+    const profileId = requiredParam(c, 'sourceProfileId');
+    // A profile that a Mapping Set version or an app still reads from cannot go.
+    refuseIfInUse(await checkSourceProfileUnreferenced(c, { profileId }));
+    return repository.deleteSourceProfile(tenantId, profileId);
+  });
 }
 
 export async function adminIdentityMappingDestinationProfilesListHandler(c: AdminContext) {

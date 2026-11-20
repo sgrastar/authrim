@@ -81,7 +81,8 @@ export type ReferenceKind =
 	| 'saml_provider'
 	| 'credential_profile'
 	| 'federation_trust_source'
-	| 'scim';
+	| 'scim'
+	| 'mapping_set';
 
 /** existing: GET /api/admin/identity-mapping/usage?set_id= */
 export interface MappingSetUsage {
