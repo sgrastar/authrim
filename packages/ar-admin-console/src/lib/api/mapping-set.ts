@@ -197,16 +197,30 @@ export interface MappingDestinationProfile {
 	baseProfileId: string | null;
 	lifecycleState: string;
 	activeVersionId: string | null;
-	version: {
-		id: string;
-		versionLabel: string;
-		lifecycleState: string;
-		schemaHash: string;
-		schema: Record<string, unknown>;
-		validationSummary: Record<string, unknown>;
-		warningSummary: Record<string, unknown>;
-		releaseImpact: Record<string, unknown>;
-	} | null;
+	/** The version changed last: a draft while an edit has not been switched on yet. */
+	version: MappingDestinationProfileVersion | null;
+	/** The version that is serving (what mapping sets send into); absent from older servers. */
+	activeVersion?: MappingDestinationProfileVersion | null;
+}
+export interface MappingDestinationProfileVersion {
+	id: string;
+	versionLabel: string;
+	lifecycleState: string;
+	schemaHash: string;
+	schema: Record<string, unknown>;
+	validationSummary: Record<string, unknown>;
+	warningSummary: Record<string, unknown>;
+	releaseImpact: Record<string, unknown>;
+}
+
+/**
+ * The version of a profile that mapping sets send into: the active one. An edit that has not been
+ * switched on yet is a newer draft in `version`; the profile keeps serving the old one meanwhile.
+ */
+export function servingVersion(
+	profile: Pick<MappingDestinationProfile, 'version' | 'activeVersion'>
+): MappingDestinationProfileVersion | null {
+	return profile.activeVersion ?? profile.version;
 }
 
 export interface MappingChange {

@@ -6,6 +6,7 @@ import type {
 	MappingSetDetail,
 	MappingSetSaveRequest
 } from '#lib/api/mapping-set.js';
+import { servingVersion } from '#lib/api/mapping-set.js';
 import {
 	compileMappingSet,
 	decompileMappingSet,
@@ -130,7 +131,7 @@ export class ConnectionMappingState {
 
 	private setProfiles(all: MappingDestinationProfile[]) {
 		this.allProfiles = all.filter(
-			(profile) => profile.destinationType === this.resources.protocol && profile.version
+			(profile) => profile.destinationType === this.resources.protocol && servingVersion(profile)
 		);
 		this.profiles = this.allProfiles.filter((profile) => profile.lifecycleState === 'active');
 	}

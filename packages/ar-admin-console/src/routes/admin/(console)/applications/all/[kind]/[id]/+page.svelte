@@ -155,6 +155,13 @@
 					canRefresh={hasPermission(adminAccess.current, 'admin:saml_providers:metadata:refresh')}
 					canMaterialize={hasPermission(adminAccess.current, 'admin:saml_providers:create')}
 					loadMappingSets={loadFederationMappingSets}
+					outboundMapping={tenantScope.tenantId
+						? {
+								client: httpIdentityMapping(),
+								profiles: httpDestinationProfiles,
+								tenantId: tenantScope.tenantId
+							}
+						: undefined}
 					onback={() => goto('/admin/applications/all')}
 				/>
 			{:else}

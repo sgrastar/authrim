@@ -205,3 +205,22 @@
 		await waitFor(() => expect(field).toHaveDisplayValue('REFEDS Research and Scholarship'));
 	}}
 />
+
+<Story
+	name="Nothing bound yet: the output source is made first, then a set that sends into it"
+	args={{ scenario: 'unbound', protocol: 'saml' }}
+	play={async ({ canvasElement }) => {
+		await openMapping(canvasElement);
+		const canvas = within(canvasElement);
+		// No set to open and no need to start one: the output source can be made right here.
+		await userEvent.click(await canvas.findByRole('button', { name: t('sf.dp.field.create') }));
+		await userEvent.click(canvas.getByRole('button', { name: /Academic federation/ }));
+		await userEvent.click(canvas.getByRole('button', { name: /REFEDS Research and Scholarship/ }));
+		await userEvent.click(canvas.getByRole('button', { name: t('sf.dp.template.use') }));
+		await canvas.findByDisplayValue('eduPersonPrincipalName');
+		await userEvent.click(canvas.getByRole('button', { name: t('sf.dp.save') }));
+		// A new set is open, and it sends into the output source that was just made.
+		const field = await canvas.findByRole('combobox', { name: t('sf.dp.field.label') });
+		await waitFor(() => expect(field).toHaveDisplayValue('REFEDS Research and Scholarship'));
+	}}
+/>

@@ -28,6 +28,8 @@
 		mappingLoading?: boolean;
 		onreloadmappings?: () => void;
 		disabled?: boolean;
+		/** The SP role's mapping set is made and chosen elsewhere on the page (with its output source): no select here. */
+		spMappingManaged?: boolean;
 	}
 	let {
 		form = $bindable(),
@@ -35,7 +37,8 @@
 		mappingFailed = false,
 		mappingLoading = false,
 		onreloadmappings,
-		disabled = false
+		disabled = false,
+		spMappingManaged = false
 	}: Props = $props();
 
 	const presetOptions = $derived(
@@ -67,14 +70,16 @@
 	/>
 {/if}
 {#if form.spRole}
-	<SelectRow
-		label={t('sf.fed.mappingSet.sp')}
-		placeholder={t('mc.ro.choose')}
-		required
-		options={mappingSets}
-		bind:value={form.spMappingSetId}
-		disabled={disabled || mappingLoading}
-	/>
+	{#if !spMappingManaged}
+		<SelectRow
+			label={t('sf.fed.mappingSet.sp')}
+			placeholder={t('mc.ro.choose')}
+			required
+			options={mappingSets}
+			bind:value={form.spMappingSetId}
+			disabled={disabled || mappingLoading}
+		/>
+	{/if}
 	<SelectRow
 		label={t('sf.fed.preset.label')}
 		options={presetOptions}

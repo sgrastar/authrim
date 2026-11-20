@@ -40,6 +40,8 @@
 		pending?: boolean;
 		guardNavigation?: boolean;
 		connectionDirty?: boolean;
+		/** Show the test-user explanation (not for a federation, which has no one service to test against). */
+		explain?: boolean;
 	}
 
 	let {
@@ -51,7 +53,8 @@
 		disabled = false,
 		pending = $bindable(false),
 		guardNavigation = true,
-		connectionDirty = false
+		connectionDirty = false,
+		explain = true
 	}: Props = $props();
 	const shared = untrack(() => (resources ? new ConnectionMappingState(resources) : null));
 	let invalid = $state(false);
@@ -90,6 +93,21 @@
 		profileUsageUnknown = !used.complete;
 		editorState = { dirty: false, saving: false };
 		profileEditor = kind;
+	}
+	/** An output source was picked with no set open: a new set that sends into it is started. */
+	function startWithProfile(profileId: string) {
+		if (!shared || !profileId) return;
+		shared.create();
+		metadataOpen = true;
+		shared.form.value.profileId = profileId;
+		shared.configure();
+	}
+	/** No output source suits: one is made first, and a new set is started with it. */
+	async function startWithNewProfile() {
+		if (!shared) return;
+		shared.create();
+		metadataOpen = true;
+		await openProfileEditor('new');
 	}
 	async function profileSaved(saved: DestinationProfileSaved) {
 		profileEditor = null;
@@ -198,6 +216,29 @@
 										onclick={() => openProfileEditor('edit')}>{t('sf.dp.field.edit')}</Button
 									>
 								{/if}
+							</div>
+						{/if}
+					</div>
+				{:else if !readonly && !disabled && !shared.locked && !shared.pinned && shared.phase === 'ready'}
+					<!-- Nothing chosen and nothing being made: the output source can be picked or made first;
+					     either one starts a new mapping set that sends into it. -->
+					<div class="profile">
+						<Select
+							label={t('sf.dp.field.label')}
+							hint={t('sf.dp.field.hint')}
+							options={shared.profiles.map((profile) => ({
+								value: profile.id,
+								label: profile.displayName
+							}))}
+							placeholder={t('mc.ro.choose')}
+							value=""
+							onchange={startWithProfile}
+						/>
+						{#if canEditProfiles}
+							<div class="profile__actions">
+								<Button variant="secondary" size="sm" onclick={startWithNewProfile}
+									>{t('sf.dp.field.create')}</Button
+								>
 							</div>
 						{/if}
 					</div>
@@ -326,7 +367,7 @@
 					</BusyScope>
 				{/if}
 			{/if}
-			{#if resources}<Disclosure title={t('mc.ex.form')}
+			{#if resources && explain}<Disclosure title={t('mc.ex.form')}
 					>{#snippet meta()}{#if explainError}<Badge tone="warning">{t('map.sample.failed')}</Badge
 							>{/if}{/snippet}<ConnectionMappingExplain
 						{resources}
