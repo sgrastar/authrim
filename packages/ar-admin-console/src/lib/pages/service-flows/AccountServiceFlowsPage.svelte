@@ -145,7 +145,8 @@
 			systemManaged: false,
 			federation,
 			createdAt: federation.createdAt,
-			updatedAt: federation.updatedAt
+			// What changes in a federation is its metadata: the last fetch is its modification.
+			updatedAt: federation.status?.lastSuccessAt ?? federation.updatedAt
 		}))
 	]);
 	/** The tenant's own apps and services join the service flows; the clients Authrim registered for itself (the Login UI's, downstream introspection) are not service flows and are left out here. */
@@ -156,7 +157,7 @@
 
 	/** Account flows keep their existing editor and navigation. */
 	const columns = $derived([
-		{ key: 'protocol', label: t('sf.mock.col.protocol'), width: '140px' },
+		{ key: 'protocol', label: t('sf.mock.col.protocol'), width: '184px' },
 		{ key: 'kind', label: t('sf.mock.col.kind'), width: '100px' },
 		{ key: 'name', label: t('sf.mock.col.name') },
 		{ key: 'status', label: t('sf.mock.col.status'), width: '216px' },
@@ -424,7 +425,7 @@
 									<FederationRowMeta source={row.connection.federation} />
 								{/if}
 							{:else}
-								{row[column.key as 'protocol' | 'kind']}
+								<span class="nowrap">{row[column.key as 'protocol' | 'kind']}</span>
 							{/if}
 						{/snippet}
 						{#snippet empty()}{t('sf.mock.empty')}{/snippet}
@@ -444,3 +445,9 @@
 		{/if}
 	{/if}
 </Page>
+
+<style>
+	.nowrap {
+		white-space: nowrap;
+	}
+</style>

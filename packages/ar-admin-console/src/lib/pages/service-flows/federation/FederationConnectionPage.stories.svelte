@@ -102,7 +102,11 @@
 	const pagingPage = page();
 	const excludePage = page();
 	const conflictPage = page({ conflictOnSave: true });
-	const rolePage = page({ sources: [{ ...healthy, roles: ['saml_sp'], idpMappingSetId: '' }] });
+	const rolePage = page({
+		sources: [
+			{ ...healthy, roles: ['saml_sp'], spMappingSetId: '', idpMappingSetId: '', automatic: false }
+		]
+	});
 	const certPage = page();
 	const deletePage = page();
 	const raceFake = page();
@@ -164,7 +168,8 @@
 		await expect(
 			canvas.queryByRole('button', { name: t('sf.fed.entities.materialize') })
 		).toBeNull();
-		await expect(canvas.getByRole('switch', { name: t('sf.fed.role.sp') })).toBeDisabled();
+		// A role is what the service flow chose: there is no switch to turn one on or off.
+		await expect(canvas.queryByRole('switch')).toBeNull();
 	}}
 />
 
@@ -252,24 +257,29 @@
 />
 
 <Story
-	name="A role that is turned on needs its mapping set before it can be saved"
+	name="The mapping node holds the roles' mapping sets and switches the federation on"
 	args={rolePage.args}
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		await canvas.findByRole('heading', { name: 'Test federation' });
-		await userEvent.click(canvas.getByRole('switch', { name: t('sf.fed.role.idp') }));
-		await canvas.findAllByText(t('sf.fed.error.idpMapping'));
+		// Not in use yet, and says what is missing; only the role it was made with is asked.
 		await expect(canvas.getByText(t('sf.fed.notInUse.title'))).toBeVisible();
-		await userEvent.click(save(canvas));
-		await expect(rolePage.client.calls.updated).toHaveLength(0);
-		const set = canvas.getByRole('combobox', { name: t('sf.fed.mappingSet.idp') });
+		await userEvent.click(
+			canvas.getByRole('button', { name: new RegExp(t('sf.part.mapping-sets')) })
+		);
+		await expect(canvas.queryByRole('combobox', { name: t('sf.fed.mappingSet.idp') })).toBeNull();
+		const set = canvas.getByRole('combobox', { name: t('sf.fed.mappingSet.sp') });
 		await waitFor(() => expect(set).toBeEnabled());
 		await userEvent.selectOptions(set, 'map-other');
 		await userEvent.click(save(canvas));
 		await waitFor(() => expect(rolePage.client.calls.updated).toHaveLength(1));
 		await expect(rolePage.client.calls.updated[0].input).toMatchObject({
 			payload: {
-				runtimeResolution: { roles: ['saml_idp', 'saml_sp'], idpFieldMappingSetId: 'map-other' }
+				runtimeResolution: {
+					mode: 'automatic',
+					roles: ['saml_sp'],
+					spFieldMappingSetId: 'map-other'
+				}
 			}
 		});
 	}}
@@ -329,7 +339,7 @@
 		await waitFor(() => expect(canvas.queryByText(t('sf.fed.statusCard.expiredTitle'))).toBeNull());
 		await expect(lapsed.status?.sourceState).toBe('expired');
 		// The fetch moved the version; a save after it is still accepted.
-		await canvas.findByText(/of 480|of 1,200/);
+		await canvas.findByText(/of [\d,]+/);
 		const first = canvas.getAllByRole('button', { name: t('sf.fed.entities.exclude') })[0];
 		await userEvent.click(first);
 		await userEvent.click(save(canvas));

@@ -35,6 +35,8 @@
 		onmaterialize?: (entity: FederationEntity) => void;
 		/** Bump to read the page again (an entity was just given a connection of its own). */
 		revision?: number;
+		/** Only entities of this role are listed (the other side of the service flow's role). */
+		onlyRole?: FederationEntityRole;
 	}
 	let {
 		sourceId,
@@ -42,12 +44,15 @@
 		excluded = $bindable(),
 		canEdit,
 		onmaterialize,
-		revision = 0
+		revision = 0,
+		onlyRole
 	}: Props = $props();
 
 	const PAGE_SIZES = [25, 50, 100];
 	let query = $state('');
-	let role = $state('');
+	let chosenRole = $state('');
+	/** The role the service flow fixes, or the one picked in the filter. */
+	const role = $derived(onlyRole ?? chosenRole);
 	let stateFilter = $state('');
 	let pageSize = $state(25);
 	/** The cursor each visited page was read with, so "previous" goes back without a page number. */
@@ -106,6 +111,14 @@
 		void load();
 	}
 	onMount(() => void load());
+	// The role of the federation can change under an open page (another administrator saved it):
+	// the list is read again for the new one, from its first page.
+	let seenRole = untrack(() => onlyRole);
+	$effect(() => {
+		if (onlyRole === seenRole) return;
+		seenRole = onlyRole;
+		untrack(() => restart());
+	});
 	let seenRevision = untrack(() => revision);
 	$effect(() => {
 		if (revision === seenRevision) return;
@@ -126,11 +139,9 @@
 	const columns = $derived([
 		{ key: 'name', label: t('sf.fed.entities.col.name') },
 		{ key: 'entityId', label: t('sf.fed.entities.col.entityId') },
-		{ key: 'role', label: t('sf.fed.entities.col.role'), width: '120px' },
-		{ key: 'authority', label: t('sf.fed.entities.col.authority') },
-		{ key: 'validUntil', label: t('sf.fed.entities.col.validUntil'), width: '150px' },
-		{ key: 'state', label: t('sf.fed.entities.col.state'), width: '170px' },
-		{ key: 'actions', label: t('sf.fed.entities.col.actions'), width: '240px', hideLabel: true }
+		...(onlyRole ? [] : [{ key: 'role', label: t('sf.fed.entities.col.role'), width: '120px' }]),
+		{ key: 'state', label: t('sf.fed.entities.col.state'), width: '150px' },
+		{ key: 'actions', label: t('sf.fed.entities.col.actions'), width: '220px', hideLabel: true }
 	]);
 	const roleOptions = $derived([
 		{ value: '', label: t('sf.fed.entities.role.all') },
@@ -145,7 +156,7 @@
 		{ value: 'explicit', label: t('sf.fed.entities.state.explicit') }
 	]);
 	const pageSizeOptions = PAGE_SIZES.map((size) => ({ value: String(size), label: String(size) }));
-	const active = $derived(query.trim() !== '' || role !== '' || stateFilter !== '');
+	const active = $derived(query.trim() !== '' || (!onlyRole && role !== '') || stateFilter !== '');
 </script>
 
 <Card title={t('sf.fed.entities.title')} description={t('sf.fed.entities.description')} flush>
@@ -156,7 +167,7 @@
 			{active}
 			onclear={() => {
 				query = '';
-				role = '';
+				chosenRole = '';
 				stateFilter = '';
 				restart();
 			}}
@@ -170,14 +181,16 @@
 					onsearch={restart}
 				/>
 			{/snippet}
-			<Select
-				size="sm"
-				hideLabel
-				label={t('sf.fed.entities.col.role')}
-				options={roleOptions}
-				bind:value={role}
-				onchange={restart}
-			/>
+			{#if !onlyRole}
+				<Select
+					size="sm"
+					hideLabel
+					label={t('sf.fed.entities.col.role')}
+					options={roleOptions}
+					bind:value={chosenRole}
+					onchange={restart}
+				/>
+			{/if}
 			<Select
 				size="sm"
 				hideLabel
@@ -204,19 +217,29 @@
 			rowKey={(entity) => entity.entityId}
 			caption={t('sf.fed.entities.title')}
 			dense
+			minWidth="0"
 		>
 			{#snippet cell(entity, column)}
 				{@const state = entityStateIn(entity, excluded)}
 				{#if column.key === 'name'}
-					<strong>{entity.displayName ?? '—'}</strong>
+					<strong class="entities__nowrap" title={entity.displayName ?? undefined}
+						>{entity.displayName ?? '—'}</strong
+					>
 				{:else if column.key === 'entityId'}
-					<code dir="ltr" class="entities__id">{entity.entityId}</code>
+					<code dir="ltr" class="entities__id" title={entity.entityId}>{entity.entityId}</code>
+					{#if entity.registrationAuthority || entity.validUntil}
+						<span class="entities__authority">
+							{#if entity.registrationAuthority}<span
+									dir="ltr"
+									title={t('sf.fed.entities.col.authority')}>{entity.registrationAuthority}</span
+								>{/if}
+							{#if entity.validUntil}<span title={t('sf.fed.entities.col.validUntil')}
+									>{entity.validUntil.slice(0, 10)}</span
+								>{/if}
+						</span>
+					{/if}
 				{:else if column.key === 'role'}
 					<Badge tone="neutral">{t(`sf.fed.entities.role.${entity.role}`)}</Badge>
-				{:else if column.key === 'authority'}
-					<span dir="ltr">{entity.registrationAuthority ?? '—'}</span>
-				{:else if column.key === 'validUntil'}
-					{entity.validUntil ? entity.validUntil.slice(0, 10) : '—'}
 				{:else if column.key === 'state'}
 					{#if state === 'explicit' && entity.explicitProviderId}
 						<a
@@ -292,9 +315,25 @@
 		padding: var(--space-grid);
 	}
 
+	/* One line each: a name or an address that does not fit is cut with an ellipsis (the whole
+	   of it is the tooltip) rather than wrapped, and never makes the table scroll. */
+	.entities__id,
+	.entities__nowrap {
+		display: block;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
 	.entities__id {
-		overflow-wrap: anywhere;
 		font-size: var(--fs-small);
+	}
+	.entities__authority {
+		display: block;
+		overflow: hidden;
+		color: var(--text-secondary);
+		font-size: var(--fs-small);
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 
 	.entities__actions {

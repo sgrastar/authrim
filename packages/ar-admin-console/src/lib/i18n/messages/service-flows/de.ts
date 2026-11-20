@@ -626,6 +626,10 @@ export const deServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 	'sf.fed.statusCard.failedTitle': 'Die letzten Abrufe schlagen fehl',
 	'sf.fed.statusCard.failedBody':
 		'{count} Abrufe in Folge sind fehlgeschlagen. Die zuvor abgerufenen Metadaten bleiben in Gebrauch.',
+	'sf.fed.flow.services': 'Die Dienste der Föderation',
+	'sf.fed.flow.authrim': 'Authrim-Anmeldung',
+	'sf.fed.flow.authrimDetail': 'Die Nutzer der Dienste melden sich über Authrim an',
+	'sf.fed.mappingSet.create': 'Zuordnung erstellen',
 	'sf.fed.notInUse.title': 'Diese Föderation wird noch nicht zur Anmeldung genutzt',
 	'sf.fed.notInUse.body':
 		'Wählen Sie eine Zuordnung und speichern Sie, dann wird sie genutzt. Bis dahin werden nur die Metadaten gesammelt.',

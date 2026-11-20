@@ -391,7 +391,8 @@ export function createFakeFederationSources(
 						(!needle ||
 							entity.entityId.toLowerCase().includes(needle) ||
 							(entity.displayName ?? '').toLowerCase().includes(needle)) &&
-						(!query.role || entity.role === query.role) &&
+						// As the server does: an entity that is both is listed under either role.
+						(!query.role || entity.role === query.role || entity.role === 'ambiguous') &&
 						(!query.state ||
 							(query.state === 'explicit'
 								? entity.explicitProviderId !== null
