@@ -240,12 +240,6 @@ export const TENANT_AREAS: readonly NavArea[] = [
 				]
 			},
 			{
-				id: 'federation-trust',
-				label: 'nav.data.federationTrust',
-				platform: 'template',
-				legacyRoutes: ['/admin/field-mapping/federation-trust']
-			},
-			{
 				id: 'protection',
 				label: 'nav.auth.protection',
 				platform: 'tenant',

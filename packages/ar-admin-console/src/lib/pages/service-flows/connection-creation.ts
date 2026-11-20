@@ -1,6 +1,7 @@
 import { metadataInput } from './metadata-draft';
 import { publicKeyInput } from './public-client-keys';
 import type { ClientCreationClient, CreateClientInput } from '#lib/api/clients.js';
+import type { FederationSourcesClient } from '#lib/api/federation-sources.js';
 import type {
 	ExternalProvidersClient,
 	ExternalProviderCreate,
@@ -16,6 +17,7 @@ import type {
 	SamlMetadataClient
 } from '#lib/api/saml-providers.js';
 import { t } from '#lib/i18n/i18n.svelte.js';
+import { federationCreateInput, type FederationMappingOption } from './federation-model';
 import {
 	entityIdProblem,
 	httpsUrlProblem,
@@ -38,6 +40,10 @@ export interface ConnectionCreationResources {
 	samlProviders: SamlCreationClient;
 	externalProviders?: ExternalProvidersClient;
 	samlIdentityProviders?: SamlIdentityProvidersClient;
+	/** SAML federations (aggregate metadata); absent where the tenant's settings cannot be written. */
+	federationSources?: FederationSourcesClient;
+	/** The mapping sets a federation's roles can be given. */
+	federationMappingSets?: () => Promise<FederationMappingOption[]>;
 	canList?: (kind: ConnectionKind) => boolean;
 	canCreate: (kind: ConnectionKind) => boolean;
 }
@@ -45,6 +51,11 @@ export interface LiveConnectionCreation {
 	previewMetadata?: SamlMetadataClient['preview'];
 	kinds: ConnectionKind[];
 	discover?: (issuer: string, signal?: AbortSignal) => Promise<OidcDiscovery>;
+	/** What the federation steps need: where it is created, refreshed and its sets chosen. */
+	federation?: {
+		client: FederationSourcesClient;
+		mappingSets: () => Promise<FederationMappingOption[]>;
+	};
 	create: (answers: Answers, serviceName: string) => Promise<CreatedConnection>;
 	navigate: (connection: CreatedConnection) => void | Promise<void>;
 }
@@ -224,7 +235,11 @@ export async function createConnection(
 	if (
 		!kind ||
 		!resources.canCreate(kind) ||
-		(kind === 'rp' || kind === 'sp' ? answers.direction !== 'out' : answers.direction !== 'in')
+		(kind === 'federation'
+			? answers.direction === ''
+			: kind === 'rp' || kind === 'sp'
+				? answers.direction !== 'out'
+				: answers.direction !== 'in')
 	) {
 		throw new Error(t('sf.create.unavailable'));
 	}
@@ -239,6 +254,13 @@ export async function createConnection(
 		case 'op':
 			if (resources.externalProviders)
 				return { kind, ...(await resources.externalProviders.create(opCreateInput(answers.op))) };
+			break;
+		case 'federation':
+			if (resources.federationSources)
+				return {
+					kind,
+					...(await resources.federationSources.create(federationCreateInput(answers.federation)))
+				};
 			break;
 		case 'idp':
 			if (resources.samlIdentityProviders)

@@ -3,6 +3,10 @@
 	import { expect, userEvent, waitFor, within } from 'storybook/test';
 	import { t } from '#lib/i18n/i18n.svelte.js';
 	import AccountServiceFlowsHarness from './AccountServiceFlowsHarness.svelte';
+	import {
+		createFakeFederationSources,
+		MOCK_FEDERATION_SOURCES
+	} from '#lib/api/fake/federation-sources-fake.js';
 	import { MOCK_CLIENTS, MOCK_SYSTEM_CLIENTS } from '#lib/api/fake/clients-fake.js';
 	import AccountServiceFlowsPage from './AccountServiceFlowsPage.svelte';
 
@@ -219,4 +223,35 @@
 	}}
 >
 	{#snippet template()}<AccountServiceFlowsHarness answer="no-completion" />{/snippet}
+</Story>
+
+<!-- A SAML federation is one connection among the others: its entity count and last fetch under its name, its standing as a badge. -->
+<Story
+	name="Federations are rows with their entity count and status"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const flows = await canvas.findByRole('table', { name: t('sf.mock.connections') });
+		const healthy = await within(flows).findByRole('button', {
+			name: t('sf.mock.open', { name: 'Test federation' })
+		});
+		const healthyRow = healthy.closest('tr') as HTMLElement;
+		await expect(within(healthyRow).getByText(t('sf.protocol.federationShort'))).toBeVisible();
+		await expect(within(healthyRow).getByText(/1,200 entities/)).toBeVisible();
+		await expect(within(healthyRow).getByText(t('sf.fed.status.active'))).toBeVisible();
+		const lapsedRow = (
+			await within(flows).findByRole('button', {
+				name: t('sf.mock.open', { name: 'Lapsed federation' })
+			})
+		).closest('tr') as HTMLElement;
+		await expect(within(lapsedRow).getByText(/480 entities/)).toBeVisible();
+		await expect(within(lapsedRow).getByText(t('sf.fed.status.expired'))).toBeVisible();
+	}}
+>
+	{#snippet template()}<AccountServiceFlowsHarness
+			answer="seeded"
+			showConnections
+			federationSources={createFakeFederationSources({
+				sources: MOCK_FEDERATION_SOURCES.slice(0, 2)
+			})}
+		/>{/snippet}
 </Story>

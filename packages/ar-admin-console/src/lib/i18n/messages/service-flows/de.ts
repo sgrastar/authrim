@@ -514,5 +514,98 @@ export const deServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 	'sf.mock.users.title': 'Alle Benutzer',
 	'sf.mock.users.description': 'Beispielseite der Mock-App. Die Daten sind erfunden.',
 	'sf.mock.users.card': 'Benutzer',
-	'sf.mock.users.email': 'E-Mail'
+	'sf.mock.users.email': 'E-Mail',
+	// SAML federations (aggregate metadata) as connections
+	'sf.part.federation-source': 'Angaben zur Föderation',
+	'sf.part.federation-participation': 'Teilnehmende Rollen',
+	'sf.protocol.federation': 'SAML-Föderation',
+	'sf.protocol.federationShort': 'SAML-Föderation',
+	'sf.role.fed.badge': 'Föderation',
+	'sf.role.fed.line':
+		'Alle Anbieter in den Aggregat-Metadaten gelten als vertrauenswürdig. Nur ausgenommene Anbieter sind ausgeschlossen.',
+	'sf.name.newFederation': 'Neue Föderation',
+	'sf.blurb.federation': 'SAML-Föderation, der über Aggregat-Metadaten beigetreten wird',
+	'sf.wizard.kind.federation.label':
+		'Eine SAML-Föderation (z. B. eine nationale Forschungsföderation)',
+	'sf.wizard.kind.federation.desc':
+		'Vertraut Hunderten Diensten oder Einrichtungen über ein einziges Metadatendokument, ohne Einzelanlage.',
+	'sf.metadata.addAsFederation': 'Als Föderation hinzufügen',
+	'sf.fed.soon.title': 'Die Seite der Föderation ist noch nicht verfügbar',
+	'sf.fed.soon.body': 'Abrufstatus und Ausnahmen folgen im nächsten Update.',
+	'sf.fed.error.name': 'Geben Sie einen Namen ein.',
+	'sf.fed.error.metadataUrl':
+		'Die Metadaten-URL muss eine einzelne https-Adresse sein (kein * und keine Leerzeichen).',
+	'sf.fed.error.certificates':
+		'Fügen Sie mindestens ein Zertifikat hinzu, gegen das die Metadaten-Signatur geprüft wird.',
+	'sf.fed.error.roles': 'Aktivieren Sie die SP-Rolle, die IdP-Rolle oder beide.',
+	'sf.fed.error.spMapping': 'Wählen Sie das Mapping-Set für die SP-Rolle.',
+	'sf.fed.error.idpMapping': 'Wählen Sie das Mapping-Set für die IdP-Rolle.',
+	'sf.fed.error.dsUrl': 'Die URL des Discovery Service muss eine https-Adresse sein.',
+	'sf.fed.name': 'Name',
+	'sf.fed.metadataUrl': 'URL der Aggregat-Metadaten',
+	'sf.fed.metadataUrlHint':
+		'Die genaue URL, unter der die Föderation ihre Metadaten veröffentlicht. Sie wird regelmäßig neu abgerufen.',
+	'sf.fed.description': 'Beschreibung (optional)',
+	'sf.fed.trustNote':
+		'Nur die hier hinzugefügten Zertifikate prüfen die Signatur der abgerufenen Metadaten. Metadaten mit abweichender Signatur werden nicht importiert.',
+	'sf.fed.remaining': 'Noch erforderlich',
+	'sf.fed.cert.invalid':
+		'Es konnte kein PEM-Zertifikat gelesen werden. Fügen Sie Text ein, der mit „BEGIN CERTIFICATE“ beginnt.',
+	'sf.fed.cert.listLabel': 'Signaturzertifikate',
+	'sf.fed.cert.fingerprint': 'SHA-256-Fingerabdruck',
+	'sf.fed.cert.remove': 'Entfernen',
+	'sf.fed.cert.compare':
+		'Vergleichen Sie ihn mit dem von der Föderation veröffentlichten Fingerabdruck. Verwenden Sie kein Zertifikat, das nicht übereinstimmt.',
+	'sf.fed.cert.paste': 'Zertifikat (PEM)',
+	'sf.fed.cert.pasteHint': 'Einfügen und auf Hinzufügen klicken, um den Fingerabdruck zu sehen.',
+	'sf.fed.cert.add': 'Zertifikat hinzufügen',
+	'sf.fed.cert.file': 'Zertifikatsdatei wählen',
+	'sf.fed.role.sp': 'SP-Rolle',
+	'sf.fed.role.spDesc': 'Die Dienste der Föderation können sich über Authrim anmelden.',
+	'sf.fed.role.idp': 'IdP-Rolle',
+	'sf.fed.role.idpDesc':
+		'Die Personen in Authrim können sich über die Einrichtungen der Föderation anmelden.',
+	'sf.fed.mappingSet.sp': 'Mapping-Set (SP-Rolle)',
+	'sf.fed.mappingSet.idp': 'Mapping-Set (IdP-Rolle)',
+	'sf.fed.mappingSet.failed': 'Die Mapping-Sets konnten nicht geladen werden.',
+	'sf.fed.mappingSet.none': 'Es gibt kein auswählbares Mapping-Set. Legen Sie zuerst eines an.',
+	'sf.fed.preset.label': 'Standardmäßig gesendete Attribute',
+	'sf.fed.preset.hint':
+		'Um es für einen Dienst zu ändern, machen Sie ihn zu einer eigenen Verbindung.',
+	'sf.fed.preset.basic.v1': 'Basis',
+	'sf.fed.preset.enterprise_saas.v1': 'Enterprise-SaaS',
+	'sf.fed.preset.academic_publisher.v1': 'Wissenschaftsverlag',
+	'sf.fed.preset.research_federation.v1': 'Forschungsföderation',
+	'sf.fed.idpSelection.label': 'Wie Personen ihre Einrichtung wählen',
+	'sf.fed.idpSelection.authrim': 'Suchseite von Authrim',
+	'sf.fed.idpSelection.external': 'Externer Discovery Service',
+	'sf.fed.idpSelection.authrimHint':
+		'Personen suchen ihre Einrichtung auf der Anmeldeseite über den Namen.',
+	'sf.fed.idpSelection.externalHint':
+		'Personen wählen ihre Einrichtung im Discovery Service der Föderation.',
+	'sf.fed.idpSelection.dsUrl': 'URL des Discovery Service',
+	'sf.fed.created.failed': 'Die Metadaten konnten nicht abgerufen werden.',
+	'sf.fed.created.failedTitle': 'Der erste Abruf ist fehlgeschlagen',
+	'sf.fed.created.fetching': 'Metadaten werden abgerufen und die Signatur wird geprüft …',
+	'sf.fed.created.ok': 'Die Metadaten wurden importiert',
+	'sf.fed.created.okBody':
+		'Die Signatur stimmt mit dem hinzugefügten Zertifikat überein. Die aktivierten Rollen sind jetzt in Gebrauch.',
+	'sf.fed.created.unverified': 'Die Signatur konnte nicht geprüft werden',
+	'sf.fed.created.unverifiedBody':
+		'Prüfen Sie das Zertifikat anhand des veröffentlichten Werts. Bis zur erfolgreichen Prüfung werden Entitäten nicht verwendet.',
+	'sf.fed.created.entities': 'Importierte Entitäten',
+	'sf.fed.created.signature': 'Signaturprüfung',
+	'sf.fed.created.open': 'Föderation öffnen',
+	'sf.fed.verification.verified': 'Geprüft',
+	'sf.fed.verification.unverified': 'Nicht geprüft',
+	'sf.fed.verification.skipped': 'Nicht geprüft (übersprungen)',
+	'sf.fed.verification.failed': 'Fehlgeschlagen',
+	'sf.fed.status.active': 'In Verwendung',
+	'sf.fed.status.draft': 'Nicht gestartet',
+	'sf.fed.status.expired': 'Abgelaufen',
+	'sf.fed.status.refreshFailed': 'Aktualisierung schlägt fehl',
+	'sf.fed.status.retired': 'Außer Betrieb',
+	'sf.fed.row.entities': '{count} Entitäten',
+	'sf.fed.row.lastFetched': 'zuletzt abgerufen',
+	'sf.fed.row.notFetched': 'Noch nicht abgerufen'
 };

@@ -25,6 +25,7 @@ import { MOCK_CLIENTS, MOCK_SYSTEM_CLIENTS } from '#lib/api/fake/clients-fake.js
 import { MOCK_SAML_SERVICE_PROVIDERS } from '#lib/api/fake/saml-providers-fake.js';
 import { createFakeSettings } from '#lib/api/fake/settings-fake.js';
 import { answerAuditMock } from './dev-audit-mock.js';
+import { answerFederationMock, devFederationSources } from './dev-federation-mock.js';
 import { answerSamlSettingsMock, devSamlSettings } from './dev-saml-settings-mock.js';
 import { createFakeAdminUsers } from '#lib/api/fake/admin-users-fake.js';
 import { answerSessionsMock, answerUserMock } from './dev-users-mock.js';
@@ -618,6 +619,32 @@ export async function handleDevAdminMock(
 			flow.published_version_id = `${flow.id}_v${Date.now()}`;
 			return json({ version: { id: flow.published_version_id } });
 		}
+	}
+	// The SAML federation sources, their entities and "make this an explicit connection".
+	if (segments[0] === 'saml-federation-sources' || segments[1] === 'federation-trust-sources') {
+		const body: unknown =
+			method === 'GET' || method === 'DELETE'
+				? undefined
+				: await event.request.json().catch(() => undefined);
+		const answer = await answerFederationMock(
+			devFederationSources,
+			segments,
+			method,
+			body,
+			event.url.searchParams,
+			(entity) => {
+				// The new connection is one the console can open and list like any other.
+				mockConnections.set(`saml-providers:${entity.providerId}`, {
+					id: entity.providerId,
+					name: entity.name,
+					providerType: entity.input.providerType === 'sp' ? 'saml_sp' : 'saml_idp',
+					config: { entityId: entity.input.entityId },
+					enabled: entity.input.enabled === true,
+					updatedAt: new Date().toISOString()
+				});
+			}
+		);
+		if (answer) return json(answer.body, answer.status);
 	}
 	// The tenant's own SAML identity: settings, signing-key rollover, DR bundle, certificate preview.
 	if (segments[0] === 'saml-settings' || segments[1] === 'certificate-preview') {
