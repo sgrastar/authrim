@@ -4,7 +4,7 @@ import { getDiscoveryRequestHeaders } from '#lib/discovery-entry.js';
 
 const SOURCE_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/u;
 /** What the sign-in screen already knows, handed on to the SAML start unchanged (bounded). */
-export const FEDERATION_FORWARDED_PARAMS = [
+const FEDERATION_FORWARDED_PARAMS = [
 	'return_url',
 	'purpose',
 	'invite_token',
