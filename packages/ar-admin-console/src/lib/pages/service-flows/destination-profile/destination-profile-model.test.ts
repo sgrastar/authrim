@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { jaServiceFlows } from '#lib/i18n/messages/service-flows/ja.js';
 import { mockProfile } from '#lib/api/fake/destination-profiles-fake.js';
 import { codecContext, profileDescriptor } from '../connection-mapping-fields';
 import {
@@ -195,5 +196,14 @@ describe('what a template says reaches the saved schema', () => {
 		expect((schemaFromForm(oidc).claims as Record<string, unknown>[])[0].requiredScopes).toEqual([
 			'email'
 		]);
+	});
+});
+
+describe('the template texts', () => {
+	it('every template has its description in the message catalogue (all four languages are typed against it)', () => {
+		for (const template of destinationTemplates)
+			expect(Object.keys(jaServiceFlows), template.id).toContain(
+				`sf.dp.tpl.${template.id.replace('template_destination_', '')}`
+			);
 	});
 });

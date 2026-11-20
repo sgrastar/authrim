@@ -10,6 +10,7 @@
 	import { t } from '#lib/i18n/i18n.svelte.js';
 	import { fingerprintDisplay } from '../federation-model';
 	import { fingerprintText } from '../federation-fingerprint.fixture';
+	import { connectionMappingFixture } from '../connection-mapping.fixture';
 	import FederationConnectionPage from './FederationConnectionPage.svelte';
 
 	const { Story } = defineMeta({
@@ -48,6 +49,8 @@
 			canEdit?: boolean;
 			canRefresh?: boolean;
 			canMaterialize?: boolean;
+			/** The SP role's mapping set is made and chosen on the page (mapping fixtures behind it). */
+			outbound?: boolean;
 		} = {}
 	) {
 		const client = createFakeFederationSources({
@@ -56,8 +59,10 @@
 		});
 		const onback = fn();
 		const onnavigate = fn(async (_path: string) => {});
+		const mapping = options.outbound ? connectionMappingFixture('shared', 'saml') : null;
 		return {
 			client,
+			mapping,
 			onback,
 			onnavigate,
 			args: {
@@ -67,6 +72,15 @@
 				canRefresh: options.canRefresh ?? true,
 				canMaterialize: options.canMaterialize ?? true,
 				loadMappingSets: async () => SETS,
+				...(mapping
+					? {
+							outboundMapping: {
+								client: mapping.resources.client,
+								profiles: mapping.resources.profiles!,
+								tenantId: 'demo'
+							}
+						}
+					: {}),
 				onback,
 				onnavigate
 			}
@@ -136,6 +150,12 @@
 	const keywordPage = page();
 	const pagePage = page();
 	const flowPage = page();
+	const mappingPage = page({
+		outbound: true,
+		sources: [
+			{ ...healthy, roles: ['saml_sp'], spMappingSetId: '', idpMappingSetId: '', automatic: false }
+		]
+	});
 	const bulkPage = page();
 	const countPage = page({
 		sources: [{ ...healthy, roles: ['saml_sp'], idpMappingSetId: '' }]
@@ -601,5 +621,34 @@
 			canvas.getByRole('heading', { name: t('sf.fed.participation.title') })
 		).toBeVisible();
 		await expect(canvas.queryByRole('heading', { name: t('sf.fed.entities.title') })).toBeNull();
+	}}
+/>
+
+<Story
+	name="The SP role's mapping set is made and chosen on the page, with its output source"
+	args={mappingPage.args}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findByRole('heading', { name: 'Test federation' });
+		await userEvent.click(
+			canvas.getByRole('button', { name: new RegExp(t('sf.part.mapping-sets')) })
+		);
+		// The plain mapping-set select is gone: the connection's own mapping step stands in for it,
+		// with the output source above the mapping set.
+		await expect(canvas.queryByRole('combobox', { name: t('sf.fed.mappingSet.sp') })).toBeNull();
+		await canvas.findByRole('button', { name: t('sf.dp.field.create') });
+		const set = await canvas.findByRole('combobox', {
+			name: new RegExp(`^${t('sf.row.mappingSet')}`)
+		});
+		await waitFor(() => expect(set).toBeEnabled());
+		await userEvent.selectOptions(set, 'set-shared');
+		await userEvent.click(await canvas.findByRole('button', { name: t('cm.saveBind') }));
+		// The choice lands in the federation's form, which is saved with the page.
+		await canvas.findByText(t('cm.saved'));
+		await userEvent.click(canvas.getByRole('button', { name: t('common.save') }));
+		await waitFor(() => expect(mappingPage.client.calls.updated).toHaveLength(1));
+		await expect(mappingPage.client.calls.updated[0].input).toMatchObject({
+			payload: { runtimeResolution: { roles: ['saml_sp'], spFieldMappingSetId: 'set-shared' } }
+		});
 	}}
 />

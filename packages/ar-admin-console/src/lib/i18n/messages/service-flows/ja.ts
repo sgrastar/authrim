@@ -687,12 +687,77 @@ export const jaServiceFlows = {
 	'sf.dp.impact.unknown':
 		'使っているマッピングセットを調べきれませんでした。使用中の可能性があります。保存すると、すぐに反映されます。',
 	'sf.dp.draft.editWarning':
-		'このままでは、この出力ソースに送るマッピングセットが動きません。内容を直して、もう一度保存してください。',
+		'この出力ソースを使うマッピングセットは、保存が完了するまで、前の版のまま動き続けます。内容を直して、もう一度保存してください。',
 	'sf.dp.field.editBlocked':
 		'マッピングを入力した新しいセットでは、出力ソースを変更できません。先にセットを保存してください。',
 	'sf.dp.category.general': '一般設定',
 	'sf.dp.category.academic': '学術フェデレーション',
 	'sf.dp.category.vendor': 'ベンダー固有',
+	'sf.dp.tpl.oidc_standard':
+		'ID トークンと UserInfo に出す、OpenID Connect の標準クレームとプロフィールクレーム。',
+	'sf.dp.tpl.saml_standard': 'SP 向けアサーションの、一般的な SAML NameID と属性の出力。',
+	'sf.dp.tpl.saml_refeds_rs':
+		'識別子、氏名、メール、所属を含む Research and Scholarship の属性セット。',
+	'sf.dp.tpl.saml_gakunin_application_standard':
+		'日本語の氏名や所属組織の属性を含む、学認の属性セット。',
+	'sf.dp.tpl.saml_kafe_attribute_map':
+		'学術フェデレーションの SP 向けに、KAFE の必須、推奨、韓国語拡張の属性。',
+	'sf.dp.tpl.saml_uk_federation_core':
+		'所属、仮名、識別子、権限に関する、UK federation の eduPerson 基本属性。',
+	'sf.dp.tpl.saml_switch_eduid_core': 'Switch edu-ID の属性仕様にある、SAML の基本属性。',
+	'sf.dp.tpl.saml_surfconext_attribute_overview':
+		'識別子、個人情報、組織、グループに関する、SURFconext の一般的な SAML 属性。',
+	'sf.dp.tpl.saml_aaf_core':
+		'オーストラリアの研究・教育フェデレーションのサービス向けに、AAF の基本属性。',
+	'sf.dp.tpl.saml_sifulan_minimum':
+		'マレーシアのアクセスフェデレーション SIFULAN が公開している最小限の属性。',
+	'sf.dp.tpl.saml_enterprise_basic':
+		'業務向け SaaS 連携に使う、一般的な企業向け SAML プロファイル。',
+	'sf.sp.title.new': '入力ソースを作成',
+	'sf.sp.title.edit': '入力ソースを編集',
+	'sf.sp.name': '入力ソース名',
+	'sf.sp.existing.choose': '複製する入力ソース',
+	'sf.sp.existing.none': '複製できる入力ソースがありません。',
+	'sf.sp.template.kind': 'SCIM テンプレート',
+	'sf.sp.table.scim': 'SCIM 属性',
+	'sf.sp.table.csv': 'CSV の列',
+	'sf.sp.col.header': 'ヘッダー名',
+	'sf.sp.col.mappingRequired': '設定必須',
+	'sf.sp.addColumn': '列を追加',
+	'sf.sp.error.rows': '属性（列）を1つ以上追加してください。',
+	'sf.dp.category.workforce': '従業員向け',
+	'sf.sp.tpl.scim_minimal_user':
+		'アカウントのプロビジョニング用に、ユーザー名、状態、表示名、主たるメールを含みます。',
+	'sf.sp.tpl.scim_core_user': 'インバウンドのマッピングが扱う、SCIM 2.0 の User 属性。',
+	'sf.sp.tpl.scim_enterprise_user':
+		'Core User に、従業員番号、組織、部署、コストセンター、上長の属性を加えたもの。',
+	'pf.title': 'プロファイル（入力ソース・出力ソース）',
+	'pf.description':
+		'アプリやサービスに送る属性（出力ソース）と、取り込む属性（入力ソース）を作成・編集します。保存すると有効になります。',
+	'pf.create.saml': '出力ソース（SAML）を作成',
+	'pf.create.oidc': '出力ソース（OIDC）を作成',
+	'pf.create.scim': '入力ソース（SCIM）を作成',
+	'pf.create.csv': '入力ソース（CSV）を作成',
+	'pf.col.name': '名前',
+	'pf.col.kind': '種類',
+	'pf.col.state': '状態',
+	'pf.col.actions': '操作',
+	'pf.kind.saml': '出力ソース · SAML',
+	'pf.kind.oidc': '出力ソース · OIDC',
+	'pf.kind.scim': '入力ソース · SCIM',
+	'pf.kind.csv': '入力ソース · CSV',
+	'pf.state.active': '有効',
+	'pf.state.draft': '下書き',
+	'pf.edit': '編集',
+	'pf.delete': '削除',
+	'pf.actionsFor': '{name} の操作',
+	'pf.deleteTitle': 'プロファイルを削除しますか？',
+	'pf.deleteBody': '「{name}」を削除します。マッピングセットが使っているときは削除できません。',
+	'pf.deleteFailed': '削除できませんでした。',
+	'pf.saved': '保存しました。',
+	'pf.deleted': '削除しました。',
+	'pf.empty': 'プロファイルはまだありません。上のボタンから作成できます。',
+	'pf.loadFailed': 'プロファイルを読み込めませんでした。',
 	'sf.dp.field.label': '出力ソース',
 	'sf.dp.field.create': '出力ソースを作成',
 	'sf.dp.field.edit': '出力ソースを編集',

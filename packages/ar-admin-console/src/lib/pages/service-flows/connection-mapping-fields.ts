@@ -1,9 +1,10 @@
 import type { FieldRef } from '@authrim/ar-lib-field-mapping/contract';
-import type {
-	DestinationDescriptor,
-	MappingCatalog,
-	MappingDestinationProfile,
-	MappingSetContent
+import {
+	servingVersion,
+	type DestinationDescriptor,
+	type MappingCatalog,
+	type MappingDestinationProfile,
+	type MappingSetContent
 } from '#lib/api/mapping-set.js';
 import type { MappingCodecContext, MappingCodecField } from '#lib/ui/patterns/mapping-codec.js';
 import type { MappingType } from '#lib/ui/patterns/mapping-model.js';
@@ -36,12 +37,10 @@ function valueType(value: unknown, multi: boolean): MappingType {
 
 /** Existing profile schemas supply candidates only; this screen never edits their definition. */
 export function profileDescriptor(profile: MappingDestinationProfile): DestinationDescriptor {
-	if (
-		!profile.version ||
-		(profile.destinationType !== 'oidc' && profile.destinationType !== 'saml')
-	)
+	const version = servingVersion(profile);
+	if (!version || (profile.destinationType !== 'oidc' && profile.destinationType !== 'saml'))
 		throw new Error('An active release profile is required');
-	const schema = profile.version.schema;
+	const schema = version.schema;
 	const rows = profile.destinationType === 'oidc' ? schema.claims : schema.attributes;
 	if (!Array.isArray(rows)) throw new Error('Unsupported Destination Profile');
 	const fields = rows.map((row): DestinationDescriptor['fields'][number] => {
@@ -68,7 +67,7 @@ export function profileDescriptor(profile: MappingDestinationProfile): Destinati
 	});
 	return {
 		profileId: profile.id,
-		profileVersionId: profile.version.id,
+		profileVersionId: version.id,
 		destinationType: profile.destinationType,
 		fields,
 		...(isRecord(schema.nameId)

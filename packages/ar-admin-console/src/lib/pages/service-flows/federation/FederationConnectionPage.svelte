@@ -10,6 +10,10 @@
 		FederationSourcesClient
 	} from '#lib/api/federation-sources.js';
 	import { tick, untrack } from 'svelte';
+	import type { DestinationProfilesClient } from '#lib/api/destination-profiles.js';
+	import type { IdentityMappingClient } from '#lib/api/identity-mapping.js';
+	import ConnectionMapping from '../ConnectionMapping.svelte';
+	import type { ConnectionMappingResources } from '../connection-mapping.svelte.js';
 	import { t } from '#lib/i18n/i18n.svelte.js';
 	import FlowCanvas from '#lib/ui/flow/FlowCanvas.svelte';
 	import FlowEdge from '#lib/ui/flow/FlowEdge.svelte';
@@ -62,6 +66,16 @@
 		/** "Make an individual connection" is offered. */
 		canMaterialize: boolean;
 		loadMappingSets: () => Promise<FederationMappingOption[]>;
+		/**
+		 * What the SP role's mapping is made with: the mapping set (and the output source it sends
+		 * into) is made and chosen on this page, like a service's. Absent: only an existing set can be
+		 * chosen.
+		 */
+		outboundMapping?: {
+			client: IdentityMappingClient;
+			profiles: DestinationProfilesClient;
+			tenantId: string;
+		};
 		onback: () => void;
 		onnavigate?: (path: string) => void | Promise<void>;
 	}
@@ -72,6 +86,7 @@
 		canRefresh,
 		canMaterialize,
 		loadMappingSets,
+		outboundMapping,
 		onback,
 		onnavigate = goto
 	}: Props = $props();
@@ -82,6 +97,11 @@
 	let original = $state('');
 	let phase = $state<'loading' | 'ready' | 'failed'>('loading');
 	let saving = $state(false);
+	// The SP role's mapping (a ConnectionMapping with its own save) beside this page's save: they do
+	// not run together, and a discard or a reload starts the mapping again from what the form holds.
+	let mappingEpoch = $state(0);
+	let mappingPending = $state(false);
+	let mappingDirty = $state(false);
 	let refreshing = $state(false);
 	let failure = $state('');
 	let conflict = $state(false);
@@ -107,6 +127,24 @@
 	let current = $state('');
 	let rightPanel = $state<HTMLElement | null>(null);
 	const mappingSelected = $derived(current === 'mapping-sets');
+	/** The SP role sends Authrim's people to the federation's services: its mapping is made here. */
+	const mappingResources = $derived<ConnectionMappingResources | null>(
+		outboundMapping && spRole
+			? {
+					client: outboundMapping.client,
+					profiles: outboundMapping.profiles,
+					tenantId: outboundMapping.tenantId,
+					protocol: 'saml',
+					connectionId: id,
+					connectionName: source?.name,
+					// The federation's own form holds the choice, and is saved with the page.
+					readBinding: async () => ({ setId: form?.spMappingSetId ?? '', pinned: false }),
+					bind: async (set) => {
+						if (form) form.spMappingSetId = set.id;
+					}
+				}
+			: null
+	);
 	const exclusionSelected = $derived(current === 'exclusions');
 	const excludedCount = $derived(form?.excludedEntityIds.length ?? 0);
 	const mappingState = $derived(form && federationInUse(form) ? 'done' : 'todo');
@@ -162,6 +200,7 @@
 			source = read;
 			form = federationFormOf(read);
 			original = snapshotForm(form);
+			mappingEpoch++;
 			phase = 'ready';
 			history = await client.refreshHistory(id, 10).catch(() => []);
 		} catch {
@@ -190,7 +229,7 @@
 	}
 
 	async function save() {
-		if (!source || !form || saving || invalid) return;
+		if (!source || !form || saving || mappingPending || invalid) return;
 		saving = true;
 		failure = '';
 		conflict = false;
@@ -210,6 +249,7 @@
 		if (source) form = federationFormOf(source);
 		failure = '';
 		conflict = false;
+		mappingEpoch++;
 	}
 
 	async function refresh() {
@@ -247,7 +287,7 @@
 	}
 </script>
 
-<LeaveGuard {dirty} />
+<LeaveGuard dirty={dirty || mappingDirty} />
 
 {#snippet back()}<BackLink onclick={onback}>{t('sf.detail.back')}</BackLink>{/snippet}
 
@@ -423,7 +463,21 @@
 					{mappingLoading}
 					onreloadmappings={loadSets}
 					disabled={!canEdit}
+					spMappingManaged={mappingResources !== null}
 				/>
+				{#if mappingResources}
+					{#key `${id}:${mappingEpoch}`}
+						<ConnectionMapping
+							resources={mappingResources}
+							explain={false}
+							readonly={!canEdit}
+							disabled={saving || refreshing}
+							guardNavigation={false}
+							bind:pending={mappingPending}
+							bind:dirty={mappingDirty}
+						/>
+					{/key}
+				{/if}
 			</div>
 		</div>
 	</div>
@@ -443,7 +497,13 @@
 		}}
 	/>
 	{#if canEdit}
-		<SaveBar {dirty} {saving} {invalid} onsave={save} ondiscard={discard} />
+		<SaveBar
+			{dirty}
+			saving={saving || mappingPending}
+			{invalid}
+			onsave={save}
+			ondiscard={discard}
+		/>
 	{/if}
 {/if}
 
