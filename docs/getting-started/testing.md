@@ -199,6 +199,15 @@ length`: the report lists all ~200k mutants, Pending ones included). Diff runs (
   the default of the manual workflow) have worked so far, but the report still lists every
   mutant, so a diff touching widely covered code can hit the same limit; for a full baseline, run
   them in parts with `--include`.
+- `ar-runtime-aws` needs a real PostgreSQL 17 with TLS for its `*.postgres.test.ts` files; without
+  it they are skipped and their code reports as NoCoverage. Start the CI database with
+  `AUTHRIM_CI_PG_PORT=55432 scripts/ci-postgres-tls.sh <dir>` and export the variables the CI
+  job sets (`NODE_EXTRA_CA_CERTS`, `AUTHRIM_TEST_DATABASE_CA`, `AUTHRIM_AWS_TEST_DATABASE_URL`,
+  `AUTHRIM_AWS_MAINTENANCE_TEST_DATABASE_URL`) before running `mutator`. Its
+  `mutator.config.mjs` selects `vitest.mutation.config.ts` (no parallel test files, without the
+  replication initialization tests that need a different URL) and runs one session at a time. The
+  first run spends about 45 minutes type-checking (cached afterwards), and the package has
+  ~26,000 mutants, so a whole-package run takes several `--time-budget` chunks.
 - mutator runs everything in one process and its heap grows with each mutant executed: with the
   default heap, a package of more than roughly 10k mutants dies with `heap out of memory` before
   it writes its snapshot, and the whole run is lost. For a full first pass of a large package,
