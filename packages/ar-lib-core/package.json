@@ -111,6 +111,8 @@
     "lint": "eslint src --pass-on-unpruned-suppressions",
     "lint:prune-suppressions": "eslint src --prune-suppressions",
     "test": "vitest run",
+    "test:mutation": "mutator",
+    "test:mutation:diff": "mutator --since origin/develop --include-test-changes",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "test:property": "vitest run -c vitest.property.config.ts",

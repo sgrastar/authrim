@@ -10,6 +10,8 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint src/",
     "test": "vitest run",
+    "test:mutation": "mutator",
+    "test:mutation:diff": "mutator --since origin/develop --include-test-changes",
     "clean": "rm -rf dist"
   },
   "devDependencies": {

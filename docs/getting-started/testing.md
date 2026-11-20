@@ -118,100 +118,134 @@ pnpm test -- --filter=integration
 
 ## Mutation Tests
 
-Mutation testing ([StrykerJS](https://stryker-mutator.io/)) checks how well the unit tests detect
-behaviour changes: Stryker makes small edits ("mutants") to the production code, runs the tests
-that cover each edit, and reports every mutant the tests failed to notice. It is a manual,
-pre-PR check and is intentionally **not** part of `pnpm test` or CI (a full run of one package
-takes minutes to hours).
+Mutation testing checks how well the unit tests detect behaviour changes: the tool makes small
+edits ("mutants") to the production code, runs the tests that cover each edit, and reports every
+mutant the tests failed to notice. The primary tool is [mutator](https://github.com/mizchi/mutator)
+(`@mizchi/mutator`); StrykerJS is kept in `ar-saml` as a reference run (see below). Mutation tests
+are not part of `pnpm test`; CI runs them on the changed packages of a pull request as an
+informational job.
+
+**Requirements**: Node.js 24 or later (the rest of the repository runs on Node 22; `pnpm install`
+on Node 22 only warns about the engine, but the `mutator` command needs 24). On a fresh checkout
+build the dependencies first, because the tests import their `dist/`:
 
 ```bash
-# Dependencies must be built first on a fresh checkout (the tests import their dist/)
-pnpm turbo run build --filter='@authrim/ar-saml^...'
-
-# Whole package (run from the package directory)
-cd packages/ar-saml
-pnpm test:mutation
-
-# A single file: much faster, use this while iterating on tests
-# (pnpm 9 forwards the flags as-is; do not add `--`)
-pnpm test:mutation --mutate src/sp/acs.ts
-
-# Every package that has opted in (from the repository root)
-pnpm test:mutation
+pnpm turbo run build --filter='@authrim/ar-saml^...'   # or `pnpm build:api` for everything
 ```
 
-Reports are written to `reports/mutation/` inside the package (`index.html` to browse,
-`mutation.json` for tooling); both are git-ignored. Runs are **incremental**: the result of the
-previous run is kept in `reports/mutation/incremental.json` and only mutants whose source or
-tests changed are re-tested. The incremental check only looks at the mutated file and the test
-files: after changing a shared test helper, a fixture, a dependency or an environment variable,
-or when you want a score to compare against, add `--force` to re-test everything. The reported
-score excludes static mutants (`ignoreStatic`), which is why it is comparable between runs.
+**Running**
+
+```bash
+cd packages/ar-saml
+pnpm test:mutation                                   # whole package; writes .mutator/report/
+pnpm test:mutation:diff                              # mutants in `git diff origin/develop`, plus the
+                                                     # code covered by added or changed tests
+npx mutator --include 'src/common/key-utils.ts'      # one file
+npx mutator --only <key>                             # re-check one mutant after adding a test
+mkdir -p .mutator && npx mutator --reporter agent --since origin/develop --include-test-changes > .mutator/agent.json
+
+# From the repository root: every opted-in package, then one merged HTML report
+cd ../..
+pnpm test:mutation:diff                              # or `pnpm test:mutation -- --time-budget 3600`
+pnpm test:mutation:summary                           # -> reports/mutation/index.html + a Markdown table
+```
+
+Per-package reports go to `.mutator/report/` (`index.html`, `mutation.json`); the merged report
+to `reports/mutation/` at the root (self-contained: the viewer component is copied next to it;
+to keep it loadable it omits the per-mutant list of covering tests and keeps the killing test,
+so its test list shows only tests that detected a mutant). A report that cannot be parsed is
+listed in the summary and left out; mutant and test ids are prefixed with the package path.
+Both are git-ignored. The merged page and table are a package-wide snapshot of each package's last
+report: every mutant with a verdict counts, whether run this time or reused from the cache;
+Pending mutants (outside `--since`, or beyond the time budget) and invalid ones (compile or
+runtime error, ignored) do not. The score is (killed + timeout) / (killed + timeout + survived +
+no coverage), as in the mutation-testing-elements report. Results are cached per function in
+`.mutator/snapshot.json`: a rerun with no change takes seconds, and after an edit only the
+affected functions and their tests run. Editing a `package.json` or the lockfile invalidates the
+whole cache of that package.
+
+**Reading the result**
+
+The score is (killed + timeout) / (killed + timeout + survived + no coverage). Undetected mutants
+are grouped by where the tests stopped short:
+
+- _not reached_: no test runs the code. Add a test case.
+- _not infected_: tests run it, but never with an input that changes the value (for example a
+  boundary). Add that input.
+- _not detected_: tests run it, nothing fails. Assert on the value that differs (an exact error
+  message, a persisted value, an emitted event or a header rather than only an HTTP status).
+
+Sort each survivor into one of three buckets: **add a test**, **delete the code** (no observable
+behaviour changes, so the branch is dead), or **accept it** as an equivalent mutant with
+`npx mutator accept <key> --reason "..."`, which records it in `mutator.accepted.json` at the
+package root (committed and reviewed like code). Do not write brittle tests just to kill one.
 
 **How it works in this repository**
 
-- The shared configuration lives in `stryker.base.mjs` at the repository root. A package opts in
-  with a two-line `stryker.config.mjs` and a `"test:mutation": "stryker run"` script.
-- Sources are mutated **in place** (not in a copied sandbox) because tests read sibling resources
-  such as `../../migrations`. Stryker restores the original files when the run finishes or is
-  interrupted with Ctrl+C. Do not edit the package while a run is active, and do not run another
-  test watcher or dev server against it. After a hard kill (not Ctrl+C) the run cannot restore
-  the files: copy them back from the backup directory the run announced at start
-  (`.stryker-tmp/backup-*`) and check `git diff`. Do not use `git checkout -- <package>`, which
-  would also discard your own uncommitted edits. A dedicated worktree avoids both problems.
-- The TypeScript checker discards mutants that do not compile, so they do not count against the
-  score.
-
-**Working through survivors**
-
-A surviving mutant means the current tests cannot tell the mutated code from the original.
-Sort each one into one of three buckets:
-
-1. **Add a test** that observes the behaviour (usually by asserting an exact error message, a
-   persisted value, an emitted event or a header rather than only an HTTP status).
-2. **Delete the code**: if no observable behaviour changes, the branch or expression is dead.
-3. **Accept it** as an equivalent mutant (for example `/\s+/` vs `/\s/` after trimming) and move
-   on; do not write brittle tests just to kill it.
-
-**Fast reruns with mutator**
-
-[mutator](https://github.com/mizchi/mutator) (`@mizchi/mutator`) is installed alongside Stryker
-for the inner loop. It produces the same kind of score and report but instruments sources in
-memory (no in-place rewrite, no sandbox) and caches results per function, so a rerun with no
-change takes seconds instead of a full dry run. Stryker remains the reference run for a whole
-package; use mutator while writing tests.
-
-```bash
-cd packages/ar-saml
-pnpm test:mutation:diff                              # mutants in `git diff develop`, plus the code
-                                                     # covered by added or changed tests
-npx mutator --include 'src/common/key-utils.ts'      # one file, whole file
-mkdir -p .mutator && npx mutator --reporter agent --since develop --include-test-changes > .mutator/agent.json
-npx mutator --only <key>                             # re-check one mutant after adding a test
-```
-
-mutator needs Node.js 24 or later (the rest of the repository runs on Node 22). It is a root
-devDependency; `pnpm install` on Node 22 only warns about the engine, but the `mutator` command
-itself requires Node 24. The excluded paths (`__tests__`, `__fixtures__`, `src/index.ts`) are
-kept in step with Stryker in `packages/ar-saml/mutator.config.json`. Note that editing a
-`package.json` or the lockfile invalidates the whole mutator cache; source and test edits only
-re-run the affected functions.
-
-Undetected mutants are grouped by where the tests stopped short: _not reached_ (no test runs the
-code), _not infected_ (tests run it, but never with an input that changes the value, for example
-a boundary) and _not detected_ (tests run it, nothing fails). Mutants judged equivalent are
-recorded with `npx mutator accept <key> --reason "..."` in `mutator.accepted.json` (committed).
-The cache and reports live in `.mutator/` (git-ignored). mutator officially targets Vitest 5;
-it currently runs on this repository's Vitest 4.1 as well.
+- The shared configuration lives in `mutator.base.mjs` at the repository root (excludes for tests,
+  fixtures and `*.d.ts`; `src/index.ts` is mutated because the API packages wire middleware and
+  routes there; text, JSON and HTML reporters; thresholds 80/60, no break). A package opts in with a two-line `mutator.config.mjs` and the two scripts
+  `test:mutation` (`mutator`) and `test:mutation:diff`
+  (`mutator --since origin/develop --include-test-changes`). The turbo tasks `test:mutation` and
+  `test:mutation:diff` build the dependencies first.
+- Every API package and library is opted in, except: the UI packages (`ar-admin-ui`,
+  `ar-admin-console`, `ar-login-ui`), whose Svelte components are not instrumented and whose
+  Storybook projects need a different runner setup; and `setup`, whose Wrangler command mocks
+  fail under mutator's shared Vitest session even though `pnpm test` passes (to be investigated).
+  `ar-lib-core` and `ar-management` run a narrowed scope (one mutant per line, and for
+  `ar-lib-core` `src/test/` excluded; see their `mutator.config.mjs`). Even so, a whole-package
+  run of either still fails when mutator writes its JSON report (`RangeError: Invalid string
+length`: the report lists all ~200k mutants, Pending ones included). Diff runs (`--since`,
+  the default of the manual workflow) have worked so far, but the report still lists every
+  mutant, so a diff touching widely covered code can hit the same limit; for a full baseline, run
+  them in parts with `--include`.
+- mutator runs everything in one process and its heap grows with each mutant executed: with the
+  default heap, a package of more than roughly 10k mutants dies with `heap out of memory` before
+  it writes its snapshot, and the whole run is lost. For a full first pass of a large package,
+  give Node more heap and run in chunks that each finish, since the next run continues from the
+  cache:
+  `NODE_OPTIONS=--max-old-space-size=12288 npx mutator --time-budget 1200` (repeat until no
+  mutants are "not run"). The manual workflow sets `NODE_OPTIONS` for the same reason.
+- `scripts/ci-mutation-summary.mjs` merges `packages/*/.mutator/report/mutation.json` into one
+  mutation-testing-elements report and prints a Markdown table (appended to the workflow step
+  summary).
+- Mutation tests are **not part of the pull-request CI** (a run takes up to an hour per package).
+  The workflow **Mutation Tests** (`.github/workflows/mutation-tests.yml`) is started by hand from
+  the Actions tab on the branch of your choice, with three inputs: `base` (a commit or ref to diff
+  against, default `origin/develop`; empty runs whole packages), `packages` (comma-separated
+  package directory names; empty means the packages changed since `base`, or every opted-in
+  package when there is no base) and `time_budget` (seconds of mutant execution per package,
+  default 3600). It restores the `.mutator` caches of the latest run on the same branch, saves
+  them whatever happened, writes the score table to the step summary and uploads the merged
+  report as the `mutation-report` artifact. Mutants that did not fit in the budget stay Pending
+  and are not counted; a later run on the same branch continues them from the cache. Packages
+  run one after another, so a whole-repository run does not fit in GitHub's 6 h job limit: pick
+  the packages. mutator officially targets Vitest 5; it currently runs on this repository's
+  Vitest 4.1.
 
 Opting another package in:
 
 ```bash
 cd packages/<name>
-printf "import { createStrykerConfig } from '../../stryker.base.mjs';\n\nexport default createStrykerConfig();\n" > stryker.config.mjs
-# add "test:mutation": "stryker run" to the package's scripts, then:
-pnpm test:mutation --dryRunOnly   # verifies the test suite runs under Stryker
+printf "import { createMutatorConfig } from '../../mutator.base.mjs';\n\nexport default createMutatorConfig();\n" > mutator.config.mjs
+# add to the package's scripts:
+#   "test:mutation": "mutator",
+#   "test:mutation:diff": "mutator --since origin/develop --include-test-changes"
+pnpm test:mutation --time-budget 60   # first run; verifies the suite runs under mutator
 ```
+
+**StrykerJS reference run (ar-saml only)**
+
+`ar-saml` keeps a StrykerJS 10 configuration (`stryker.base.mjs` at the root, `stryker.config.mjs`
+in the package, script `test:mutation:stryker`) as a second opinion while mutator is new. Stryker
+mutates the sources **in place** (tests read sibling resources such as `../../migrations`), so do
+not edit the package or run another watcher while it runs. It restores the files on exit or
+Ctrl+C; after a hard kill copy them back from the backup directory it announced at start
+(`.stryker-tmp/backup-*`) and check `git diff`. Do not use `git checkout -- <package>`, which would
+also discard your own uncommitted edits. Reports go to `reports/mutation/` inside the package;
+runs are incremental (`reports/mutation/incremental.json`), add `--force` after changing shared
+helpers, fixtures or dependencies, or to get a comparable score. pnpm 9 forwards flags as-is:
+`pnpm test:mutation:stryker --mutate src/sp/acs.ts`, no `--`.
 
 ---
 

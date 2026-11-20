@@ -549,6 +549,9 @@ export function sqliteSnapshotPageQuery(
   // last key is the range's last key, one step from the far end. live_first/live_after walk the
   // same keys again for the selected rows.
   // scanLimit adds a fifth bind: how many keys each source may scan. It defaults to page_limit.
+  // The final SELECT reads `page` once, through a LEFT JOIN: an empty page then yields one progress
+  // row (live_end key, NULL body) while keys remain. A second reference (NOT EXISTS ... UNION ALL)
+  // pushed an 8-column key over SQLite 3.54.1's "VIEWs and/or subqueries nested too deep" limit.
   return `WITH params(snapshot_id, tenant_id, after_key, page_limit, scan_limit) AS (
     SELECT ?, ?, ?, ?, ${options.scanLimit ? '?' : 'NULL'}
   ),
@@ -600,10 +603,11 @@ export function sqliteSnapshotPageQuery(
     )
     WHERE ${withinScan('live_last')} AND ${withinScan('preimage_last')}
     ORDER BY ${order} ${limit}
-  ) SELECT record_key, CASE WHEN live_source THEN ${liveBody} ELSE ${preimageBody} END AS row_json,
-    row_number() OVER (ORDER BY ${order}) AS page_order FROM page
-  UNION ALL SELECT (SELECT record_key FROM live_end), NULL, 1
-  WHERE NOT EXISTS (SELECT 1 FROM page) AND EXISTS (SELECT 1 FROM live_end)
+  ) SELECT coalesce(page.record_key, (SELECT record_key FROM live_end)) AS record_key,
+    CASE WHEN live_source THEN ${liveBody} ELSE ${preimageBody} END AS row_json,
+    row_number() OVER (ORDER BY ${order}) AS page_order
+  FROM (SELECT 1) AS anchor LEFT JOIN page ON 1
+  WHERE page.record_key IS NOT NULL OR EXISTS (SELECT 1 FROM live_end)
   ORDER BY page_order`;
 }
 

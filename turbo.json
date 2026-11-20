@@ -22,6 +22,11 @@
       "cache": false,
       "outputs": []
     },
+    "test:mutation:diff": {
+      "dependsOn": ["^build"],
+      "cache": false,
+      "outputs": []
+    },
     "lint": {
       "dependsOn": ["^build"],
       "outputs": []
