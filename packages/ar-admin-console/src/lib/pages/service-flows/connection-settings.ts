@@ -479,7 +479,8 @@ export const SETTINGS_PARTS: Record<ConnectionKind, readonly string[]> = {
 	rp: ['rp-profile', 'rp-grants', 'rp-tokens', 'rp-logout', 'rp-security', 'rp-exchange'],
 	sp: ['sp-endpoints', 'sp-signing', 'sp-encryption', 'sp-assertion', 'sp-metadata'],
 	op: ['op-endpoints', 'op-request', 'op-accounts', 'op-button'],
-	idp: ['idp-endpoints', 'idp-certs', 'idp-assertion', 'idp-accounts', 'idp-metadata']
+	idp: ['idp-endpoints', 'idp-certs', 'idp-assertion', 'idp-accounts', 'idp-metadata'],
+	federation: []
 };
 
 export const SETTINGS_LABELS: Record<string, MessageKey> = {

@@ -1,6 +1,10 @@
 <script lang="ts" generics="T extends ImportForm">
 	import { untrack } from 'svelte';
-	import { SAML_METADATA_MAX_BYTES, type SamlMetadataClient } from '#lib/api/saml-providers.js';
+	import {
+		AggregateMetadataError,
+		SAML_METADATA_MAX_BYTES,
+		type SamlMetadataClient
+	} from '#lib/api/saml-providers.js';
 	import { t } from '#lib/i18n/i18n.svelte.js';
 	import Disclosure from '#lib/ui/patterns/Disclosure.svelte';
 	import Callout from '#lib/ui/patterns/Callout.svelte';
@@ -12,6 +16,7 @@
 	import TextArea from '#lib/ui/primitives/TextArea.svelte';
 	import TextField from '#lib/ui/primitives/TextField.svelte';
 	import { entityIdProblem, httpsUrlProblem, type ImportForm } from './connection-model';
+	import { useAddAsFederation } from './federation-from-metadata-context';
 	import { boundedMetadataXml } from './metadata-draft';
 
 	let {
@@ -25,6 +30,7 @@
 		preview?: SamlMetadataClient['preview'];
 		allowManual?: boolean;
 	} = $props();
+	const addAsFederation = useAddAsFederation();
 	let files = $state<File[]>(untrack(() => (form.metadata?.file ? [form.metadata.file] : [])));
 	let controller: AbortController | undefined;
 	let generation = 0;
@@ -59,6 +65,7 @@
 		const draft = form.metadata;
 		draft.pending = true;
 		draft.error = '';
+		draft.aggregateUrl = undefined;
 		// A failed retry keeps the last successful preview for the same source.
 		controller = new AbortController();
 		const signal = controller.signal;
@@ -99,6 +106,8 @@
 		} catch (error) {
 			if (signal.aborted || turn !== generation) return;
 			draft.error = error instanceof Error ? error.message : t('sf.metadata.failed');
+			if (error instanceof AggregateMetadataError && error.metadataUrl)
+				draft.aggregateUrl = error.metadataUrl;
 		} finally {
 			if (turn === generation) draft.pending = false;
 		}
@@ -194,7 +203,17 @@
 		bind:value={form.acsUrl}
 	/>
 {/if}
-{#if previewState?.error}<Callout tone="warning" live>{previewState.error}</Callout>{/if}
+{#if previewState?.error}
+	<Callout tone="warning" live>
+		{previewState.error}
+		{#if addAsFederation && previewState.aggregateUrl}
+			{@const url = previewState.aggregateUrl}
+			<Button size="sm" onclick={() => addAsFederation(url)}
+				>{t('sf.metadata.addAsFederation')}</Button
+			>
+		{/if}
+	</Callout>
+{/if}
 {#if form.importMode !== 'manual' && previewState?.preview}
 	<Callout tone="info" title={t('sf.import.found')}>
 		<DetailList columns={1} size="sm">

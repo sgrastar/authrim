@@ -444,7 +444,7 @@ export const API_GROUPS: readonly ApiGroup[] = [
 		id: 'federation-trust',
 		name: 'Federation trust sources',
 		kind: 'records',
-		page: 'authentication/federation-trust',
+		page: 'applications/all',
 		paths: [
 			`${A}/field-mapping/federation-trust-sources`,
 			`${A}/field-mapping/federation-metadata-documents`

@@ -23,6 +23,7 @@
 	import LoadingState from '#lib/ui/patterns/LoadingState.svelte';
 	import Callout from '#lib/ui/patterns/Callout.svelte';
 	import Button from '#lib/ui/primitives/Button.svelte';
+	import EmptyState from '#lib/ui/patterns/EmptyState.svelte';
 
 	provideIdentifierMaterials(identifierMaterialsClient);
 	let answers = $state<Answers | null>(null);
@@ -39,7 +40,7 @@
 		const kind = page.params.kind;
 		const id = page.params.id;
 		const tenantId = tenantScope.tenantId;
-		if (kind === 'op' || kind === 'idp') return;
+		if (kind === 'op' || kind === 'idp' || kind === 'federation') return;
 		try {
 			if (!id || !tenantId || (kind !== 'rp' && kind !== 'sp'))
 				throw new Error('Invalid connection');
@@ -139,6 +140,17 @@
 			onback={() => goto('/admin/applications/all')}
 		/>
 	{/key}
+{:else if page.params.kind === 'federation'}
+	<!-- The federation's own page is the next change; until then a link to it shows this. -->
+	<Page>
+		<EmptyState title={t('sf.fed.soon.title')} description={t('sf.fed.soon.body')}>
+			{#snippet action()}
+				<Button variant="secondary" onclick={() => goto('/admin/applications/all')}
+					>{t('sf.detail.back')}</Button
+				>
+			{/snippet}
+		</EmptyState>
+	</Page>
 {:else}
 	<Page withFlow>
 		{#if failed}<Callout tone="warning"

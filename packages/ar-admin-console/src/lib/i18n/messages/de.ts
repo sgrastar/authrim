@@ -143,7 +143,6 @@ export const de = {
 	'nav.custom.statements': 'Einwilligungstexte',
 	'nav.data.profiles': 'Quelle / Ziel',
 	'nav.data.mappingSets': 'Zuordnungssätze',
-	'nav.data.federationTrust': 'Föderationsvertrauen',
 	'nav.data.readiness': 'Schemabereitschaft',
 	'nav.mon.adminLogging': 'Administratorprotokollierung',
 	'nav.mon.diagnostics': 'Diagnoseprotokolle',

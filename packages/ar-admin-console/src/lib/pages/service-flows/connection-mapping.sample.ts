@@ -119,6 +119,13 @@ const SAMPLES: Record<ConnectionKind, () => ConnectionMapping> = {
 			{ id: 'sp3', target: 'displayName', sources: ['name'], steps: [] },
 			{ id: 'sp4', target: 'memberOf', sources: ['groups'], steps: [] }
 		]
+	}),
+	// A federation's mapping is chosen per role on its own page; there is no sample to show.
+	federation: (): ConnectionMapping => ({
+		direction: 'outbound',
+		sources: AUTHRIM,
+		targets: [],
+		mappings: []
 	})
 };
 

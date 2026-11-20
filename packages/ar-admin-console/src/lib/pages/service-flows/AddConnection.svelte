@@ -5,6 +5,11 @@
 	import { provideBusy } from '#lib/ui/busy/busy.js';
 	import Button from '#lib/ui/primitives/Button.svelte';
 	import SecretField from '#lib/ui/primitives/SecretField.svelte';
+	import FederationCreated from './FederationCreated.svelte';
+	import FederationSteps from './FederationSteps.svelte';
+	import type { FederationMappingOption } from './federation-model';
+	import { emptyFederationForm } from './federation-model';
+	import { provideAddAsFederation } from './federation-from-metadata-context';
 	import Callout from '#lib/ui/patterns/Callout.svelte';
 	import {
 		opCreateInput,
@@ -78,6 +83,8 @@
 		/** Explicit real outgoing creation; absent in prototype stories. */
 		live?: LiveConnectionCreation;
 		prefill?: ConnectionKind;
+		/** A metadata address to start a federation from (live only). */
+		prefillMetadataUrl?: string;
 		/** A sign-up, sign-in or sync flow to open with. */
 		prefillAccount?: FlowId;
 		filled?: 'wizard' | 'complete';
@@ -95,6 +102,7 @@
 		accountOnly = false,
 		live,
 		prefill,
+		prefillMetadataUrl,
 		prefillAccount,
 		filled = 'wizard',
 		step = 0,
@@ -117,6 +125,7 @@
 					jitProvisioning: false
 				});
 				initial.idp.certificate = '';
+				if (prefillMetadataUrl) initial.federation.metadataUrl = prefillMetadataUrl;
 			}
 			return initial;
 		})
@@ -173,6 +182,41 @@
 	);
 	provideBusy(() => pending);
 
+	// The mapping sets a federation's roles can be given, read when that step is first reached.
+	let mappingSets = $state<FederationMappingOption[]>([]);
+	let mappingLoading = $state(false);
+	let mappingFailed = $state(false);
+	let mappingsLoaded = false;
+	async function loadMappingSets() {
+		if (!live?.federation) return;
+		mappingLoading = true;
+		mappingFailed = false;
+		try {
+			mappingSets = await live.federation.mappingSets();
+			mappingsLoaded = true;
+		} catch {
+			mappingFailed = true;
+		} finally {
+			mappingLoading = false;
+		}
+	}
+
+	// A metadata address that is an aggregate is added as a federation instead: the wizard turns
+	// into the federation's, with the address already in it.
+	provideAddAsFederation(
+		untrack(() =>
+			live?.federation && live.kinds.includes('federation')
+				? (metadataUrl: string) => {
+						answers.kind = 'federation';
+						answers.federation = {
+							...emptyFederationForm(answers.direction),
+							metadataUrl
+						};
+					}
+				: undefined
+		)
+	);
+
 	async function navigateCreated() {
 		if (!live || !created || pending) return;
 		pending = true;
@@ -208,7 +252,9 @@
 		} finally {
 			pending = false;
 		}
-		if (created && !created.clientSecret && !deferred) await navigateCreated();
+		// A federation first shows what its first fetch found; the others open at once.
+		if (created && !created.clientSecret && !deferred && created.kind !== 'federation')
+			await navigateCreated();
 	}
 
 	const steps = $derived(
@@ -252,6 +298,17 @@
 	}
 	const stepId = $derived(steps[Math.min(current, steps.length - 1)].id);
 
+	$effect(() => {
+		// Read once on reaching the step; after a failure only the Retry button asks again.
+		if (
+			stepId === 'federation-participation' &&
+			!mappingsLoaded &&
+			!mappingLoading &&
+			!mappingFailed
+		)
+			untrack(() => void loadMappingSets());
+	});
+
 	// A kind of flow chosen: the settings that start with a value get it, where nothing is entered
 	// yet (what was typed before a kind was chosen again is kept).
 	$effect.pre(() => {
@@ -276,6 +333,9 @@
 		const direction = value as Direction;
 		answers.direction = direction;
 		if (answers.kind && !KINDS_OF[direction].includes(answers.kind)) answers.kind = '';
+		// A federation starts with the role that goes with the way chosen; later toggles are the person's.
+		answers.federation.spRole = direction === 'out';
+		answers.federation.idpRole = direction === 'in';
 	}
 
 	function canNext(id: string): boolean {
@@ -365,6 +425,12 @@
 			label: t('sf.wizard.kind.idp.label'),
 			description: t('sf.wizard.kind.idp.desc'),
 			badge: 'IdP'
+		},
+		federation: {
+			value: 'federation',
+			label: t('sf.wizard.kind.federation.label'),
+			description: t('sf.wizard.kind.federation.desc'),
+			badge: 'Fed'
 		}
 	});
 
@@ -376,7 +442,16 @@
 	<BackLink onclick={cancel}>{t('sf.detail.back')}</BackLink>
 {/snippet}
 
-{#if created}
+{#if created && created.kind === 'federation' && live?.federation}
+	<PageHeader title={t('sf.create.saved')} />
+	{#if failure}<Callout tone="danger" live>{failure}</Callout>{/if}
+	<FederationCreated
+		sourceId={created.id}
+		client={live.federation.client}
+		onopen={navigateCreated}
+		{pending}
+	/>
+{:else if created}
 	<PageHeader title={t('sf.create.saved')} />
 	{#if (created.kind === 'sp' && answers.sp.skipped) || (created.kind === 'idp' && answers.idp.skipped)}
 		<Callout tone="info" title={t('sf.draft.saved')}>{t('sf.draft.metadataRequired')}</Callout>
@@ -461,8 +536,18 @@
 					columns={2}
 					bind:value={answers.kind}
 					options={KINDS_OF[answers.direction === 'in' ? 'in' : 'out']
-						.filter((kind) => !live || live.kinds.includes(kind))
+						// The prototype pages have no federation to show; the live wizard offers it when it can be saved.
+						.filter((kind) => (live ? live.kinds.includes(kind) : kind !== 'federation'))
 						.map((kind) => kinds[kind])}
+				/>
+			{:else if stepInfo.id.startsWith('federation-')}
+				<FederationSteps
+					step={stepInfo.id}
+					bind:form={answers.federation}
+					{mappingSets}
+					{mappingFailed}
+					{mappingLoading}
+					onreloadmappings={loadMappingSets}
 				/>
 			{:else if stepInfo.id.startsWith('rp-')}
 				<RpSteps live={!!live} step={stepInfo.id} bind:form={answers.rp} />

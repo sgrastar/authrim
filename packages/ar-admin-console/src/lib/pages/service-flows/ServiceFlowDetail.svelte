@@ -183,7 +183,8 @@
 		rp: 'sf.blurb.rp',
 		sp: 'sf.blurb.sp',
 		op: 'sf.blurb.op',
-		idp: 'sf.blurb.idp'
+		idp: 'sf.blurb.idp',
+		federation: 'sf.blurb.federation'
 	};
 	// Words are looked up when shown, so a change of language reaches every one of them.
 	const blurb = $derived(t(BLURB[kind]));

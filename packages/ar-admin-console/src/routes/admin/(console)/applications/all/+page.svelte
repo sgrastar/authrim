@@ -6,6 +6,8 @@
 	import { readAppliedThemeValues } from '#lib/api/login-ui-themes.js';
 	import { httpScreens } from '#lib/api/screens.js';
 	import { httpExternalProviders } from '#lib/api/external-providers.js';
+	import { httpFederationSources } from '#lib/api/federation-sources.js';
+	import { httpIdentityMapping } from '#lib/api/identity-mapping.js';
 	import { httpClients } from '#lib/api/clients.js';
 	import { httpConsentStatements } from '#lib/api/consent-statements.js';
 	import { httpFlows } from '#lib/api/flows.js';
@@ -26,6 +28,15 @@
 			samlProviders: httpSamlProviders,
 			externalProviders: httpExternalProviders,
 			samlIdentityProviders: httpSamlProviders,
+			federationSources: httpFederationSources,
+			federationMappingSets: async () => {
+				const tenantId = tenantScope.tenantId;
+				if (!tenantId) throw new Error('tenant_unknown');
+				const { sets } = await httpIdentityMapping().sets(tenantId);
+				return sets
+					.filter((set) => set.enabled)
+					.map((set) => ({ value: set.id, label: set.display_name ?? set.field_mapping_key }));
+			},
 			canList: (kind) =>
 				hasPermission(
 					adminAccess.current,
@@ -33,7 +44,9 @@
 						? 'admin:clients:read'
 						: kind === 'op'
 							? 'admin:external_providers:read'
-							: 'admin:saml_providers:list'
+							: kind === 'federation'
+								? 'admin:settings:read'
+								: 'admin:saml_providers:list'
 				),
 			canCreate: (kind) =>
 				hasPermission(
@@ -42,7 +55,9 @@
 						? 'admin:clients:create'
 						: kind === 'op'
 							? 'admin:external_providers:write'
-							: 'admin:saml_providers:create'
+							: kind === 'federation'
+								? 'admin:settings:write'
+								: 'admin:saml_providers:create'
 				) &&
 				(kind !== 'op' || !isCapabilityDisabled(adminAccess.current, 'external_identity_providers'))
 		},

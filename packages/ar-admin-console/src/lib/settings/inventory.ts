@@ -55,7 +55,6 @@ export const DRAFT_PAGES: readonly DraftPage[] = [
 		note: 'A built page: these are its settings not placed on it yet (the Artifact binding is not built).'
 	},
 	{ id: 'authentication/directory', scope: 'tenant' },
-	{ id: 'authentication/federation-trust', scope: 'tenant' },
 	{ id: 'authentication/protection', scope: 'tenant' },
 	{ id: 'authentication/ip-allowlist', scope: 'tenant' },
 	{

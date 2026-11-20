@@ -7,6 +7,7 @@
 	} from '#lib/api/fake/consent-statements-fake.js';
 	import { createFakeClients, MOCK_CLIENTS } from '#lib/api/fake/clients-fake.js';
 	import type { ClientOption } from '#lib/api/clients.js';
+	import type { FederationSourcesClient } from '#lib/api/federation-sources.js';
 	import {
 		createFakeSamlProviders,
 		MOCK_SAML_SERVICE_PROVIDERS
@@ -36,6 +37,8 @@
 		showConnections?: boolean;
 		clients?: readonly ClientOption[];
 		samlServiceProviders?: readonly SamlServiceProviderOption[];
+		/** With federations listed among the connections. */
+		federationSources?: FederationSourcesClient;
 	}
 
 	let {
@@ -44,7 +47,8 @@
 		control = {},
 		showConnections = false,
 		clients = MOCK_CLIENTS,
-		samlServiceProviders = MOCK_SAML_SERVICE_PROVIDERS
+		samlServiceProviders = MOCK_SAML_SERVICE_PROVIDERS,
+		federationSources
 	}: Props = $props();
 	let reads = 0;
 
@@ -92,6 +96,15 @@
 	// The fake is built once from the story's clients, on purpose.
 	// svelte-ignore state_referenced_locally
 	provideFlowResources({
+		connectionCreation: federationSources
+			? {
+					clients: { create: async () => ({ id: 'unused' }) },
+					samlProviders: { createServiceProvider: async () => ({ id: 'unused' }) },
+					federationSources,
+					canList: () => true,
+					canCreate: () => false
+				}
+			: undefined,
 		methodProfiles: createFakeAuthenticationMethodProfiles(),
 		sessionProfiles: createFakeSessionProfiles(),
 		screens: createFakeScreens({ screens: MOCK_SCREENS }),

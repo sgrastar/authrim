@@ -8,6 +8,9 @@
 	import DateTime from '#lib/ui/time/DateTime.svelte';
 	import AccountFlowDetail from './AccountFlowDetail.svelte';
 	import AccountFlowStatus from './AccountFlowStatus.svelte';
+	import FederationRowMeta from './FederationRowMeta.svelte';
+	import FederationStatusBadge from './FederationStatusBadge.svelte';
+	import { federationStatus } from './federation-model';
 	import LiveAddConnection from './LiveAddConnection.svelte';
 	import AddConnection from './AddConnection.svelte';
 	import {
@@ -24,6 +27,7 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import type { ExternalProvider } from '#lib/api/external-providers.js';
+	import type { FederationSource } from '#lib/api/federation-sources.js';
 	import type { SamlIdentityProvider } from '#lib/api/saml-providers.js';
 	import type { ClientOption } from '#lib/api/clients.js';
 	import type { SamlServiceProviderOption } from '#lib/api/saml-providers.js';
@@ -55,6 +59,7 @@
 	let serviceProviders = $state<SamlServiceProviderOption[]>([]);
 	let externalProviders = $state<ExternalProvider[]>([]);
 	let identityProviders = $state<SamlIdentityProvider[]>([]);
+	let federations = $state<FederationSource[]>([]);
 	let connectionsFailed = $state(false);
 	let connectionsLoading = $state(false);
 	const resources = useFlowResources();
@@ -64,16 +69,20 @@
 		connectionsFailed = false;
 		try {
 			const creation = resources.connectionCreation;
-			[clients, serviceProviders, externalProviders, identityProviders] = await Promise.all([
-				creation?.canList?.('rp') === false ? [] : resources.clients.list(),
-				creation?.canList?.('sp') === false ? [] : resources.samlProviders.listServiceProviders(),
-				creation?.externalProviders && creation.canList?.('op') !== false
-					? creation.externalProviders.list()
-					: [],
-				creation?.samlIdentityProviders && creation.canList?.('idp') !== false
-					? creation.samlIdentityProviders.listIdentityProviders()
-					: []
-			]);
+			[clients, serviceProviders, externalProviders, identityProviders, federations] =
+				await Promise.all([
+					creation?.canList?.('rp') === false ? [] : resources.clients.list(),
+					creation?.canList?.('sp') === false ? [] : resources.samlProviders.listServiceProviders(),
+					creation?.externalProviders && creation.canList?.('op') !== false
+						? creation.externalProviders.list()
+						: [],
+					creation?.samlIdentityProviders && creation.canList?.('idp') !== false
+						? creation.samlIdentityProviders.listIdentityProviders()
+						: [],
+					creation?.federationSources && creation.canList?.('federation') !== false
+						? creation.federationSources.list()
+						: []
+				]);
 		} catch {
 			connectionsFailed = true;
 		} finally {
@@ -81,7 +90,7 @@
 		}
 	}
 	onMount(() => void loadConnections());
-	type ConnectionKind = 'rp' | 'sp' | 'op' | 'idp';
+	type ConnectionKind = 'rp' | 'sp' | 'op' | 'idp' | 'federation';
 	interface ConnectionRow {
 		id: string;
 		kind: ConnectionKind;
@@ -89,6 +98,10 @@
 		name: string;
 		enabled: boolean;
 		systemManaged: boolean;
+		federation?: FederationSource;
+		/** Milliseconds since the epoch, where the list knows them. */
+		createdAt?: number;
+		updatedAt?: number;
 	}
 	const connections = $derived<ConnectionRow[]>([
 		...clients.map((client) => ({
@@ -122,6 +135,17 @@
 			name: provider.name,
 			enabled: provider.enabled,
 			systemManaged: false
+		})),
+		...federations.map((federation) => ({
+			id: federation.id,
+			kind: 'federation' as const,
+			protocol: t('sf.protocol.federationShort'),
+			name: federation.name,
+			enabled: federation.lifecycleState === 'active',
+			systemManaged: false,
+			federation,
+			createdAt: federation.createdAt,
+			updatedAt: federation.updatedAt
 		}))
 	]);
 	/** The tenant's own apps and services join the service flows; the clients Authrim registered for itself (the Login UI's, downstream introspection) are not service flows and are left out here. */
@@ -166,8 +190,8 @@
 				kind: string;
 				name: string;
 				ready: boolean;
-				created: null;
-				modified: null;
+				created: string | null;
+				modified: string | null;
 				connection: ConnectionRow;
 		  };
 	const flowRows = $derived<ServiceFlowRow[]>(
@@ -191,8 +215,8 @@
 			kind: '—',
 			name: connection.name,
 			ready: connection.enabled,
-			created: null,
-			modified: null,
+			created: connection.createdAt ? new Date(connection.createdAt).toISOString() : null,
+			modified: connection.updatedAt ? new Date(connection.updatedAt).toISOString() : null,
 			connection
 		}))
 	]);
@@ -387,13 +411,18 @@
 						rowOpenLabel={(row) => t('sf.mock.open', { name: row.name })}
 					>
 						{#snippet cell(row, column)}
-							{#if column.key === 'status'}
+							{#if column.key === 'status' && row.row === 'connection' && row.connection.federation}
+								<FederationStatusBadge status={federationStatus(row.connection.federation)} />
+							{:else if column.key === 'status'}
 								<AccountFlowStatus ready={row.ready} />
 							{:else if column.key === 'created' || column.key === 'modified'}
 								{@const stamp = row[column.key]}
 								{#if stamp}<DateTime value={stamp} stacked />{:else}—{/if}
 							{:else if column.key === 'name'}
 								<strong>{row.name}</strong>
+								{#if row.row === 'connection' && row.connection.federation}
+									<FederationRowMeta source={row.connection.federation} />
+								{/if}
 							{:else}
 								{row[column.key as 'protocol' | 'kind']}
 							{/if}
