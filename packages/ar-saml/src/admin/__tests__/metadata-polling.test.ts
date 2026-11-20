@@ -254,6 +254,19 @@ describe('SAML federation metadata polling', () => {
     );
     expect(String(pollingWrite?.[0])).toContain('$.polling.lastAttemptAt');
     expect(pollingWrite?.[1]?.at(-1)).toBe(1_000);
+    // The finished job keeps the verification result, so the Admin API can show it later.
+    const jobFinish = mocks.admin!.execute.mock.calls.find(([sql]) =>
+      String(sql).includes('UPDATE federation_metadata_refresh_jobs')
+    );
+    const cursor = JSON.parse(String(jobFinish?.[1]?.[1])) as Record<string, unknown>;
+    expect(cursor).toMatchObject({ entityCount: 1, verificationStatus: 'verified' });
+    // Trimming the retained jobs never drops the latest one that recorded a verification.
+    const retention = mocks.admin!.execute.mock.calls.find(([sql]) =>
+      String(sql).includes('DELETE FROM federation_metadata_refresh_jobs')
+    );
+    expect(String(retention?.[0])).toContain(
+      "json_extract(cursor_json, '$.verificationStatus') IS NOT NULL"
+    );
   });
 
   it('binds runtime rows to the trust snapshot used for aggregate verification', async () => {

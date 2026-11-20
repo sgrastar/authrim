@@ -2313,6 +2313,78 @@ describe('SAML provider CRUD boundaries', () => {
     expect(runtimeQuery).toContain('d.id = s.active_metadata_document_id');
   });
 
+  it('refuses a federation entity on the exception list, whatever the other rules allow', async () => {
+    const payload = JSON.stringify({
+      runtimeResolution: {
+        mode: 'automatic',
+        roles: ['saml_sp', 'saml_idp'],
+        spFieldMappingSetId: 'mapping-sp',
+        idpFieldMappingSetId: 'mapping-idp',
+        entityCategoryPolicy: {
+          defaultDecision: 'allow',
+          rules: [
+            {
+              entityCategory: 'http://refeds.org/category/research-and-scholarship',
+              decision: 'allow',
+            },
+          ],
+        },
+      },
+      // Stored beside runtimeResolution, so an edit does not retire the runtime directory.
+      exceptions: { excludedEntityIds: ['https://sp.example.test', 'urn:imported:idp'] },
+    });
+    const spRow = {
+      trust_source_id: 'source-a',
+      trust_context_snapshot_hash: 'trust-hash-a',
+      source_url: 'https://metadata.example.test/federation.xml',
+      protocol_payload_json: payload,
+      metadata_xml: validSpMetadata(),
+      entity_categories_json: JSON.stringify([
+        'http://refeds.org/category/research-and-scholarship',
+      ]),
+      registration_authority: 'https://federation.example.test',
+      valid_until: '2099-01-01T00:00:00Z',
+      validated_at: 1_700_000_000_000,
+    };
+    mocks.adapter!.query.mockResolvedValueOnce([]).mockResolvedValueOnce([spRow]);
+    await expect(
+      getSPConfig({ DB_ADMIN: {} } as never, 'tenant-a', 'https://sp.example.test')
+    ).resolves.toBeNull();
+
+    // The same source without the exception resolves the SP: the list is the only difference.
+    mocks.adapter!.query.mockResolvedValueOnce([]).mockResolvedValueOnce([
+      {
+        ...spRow,
+        protocol_payload_json: JSON.stringify({
+          ...(JSON.parse(payload) as Record<string, unknown>),
+          exceptions: { excludedEntityIds: ['urn:imported:idp'] },
+        }),
+      },
+    ]);
+    await expect(
+      getSPConfig({ DB_ADMIN: {} } as never, 'tenant-a', 'https://sp.example.test')
+    ).resolves.toMatchObject({ entityId: 'https://sp.example.test' });
+
+    // IdP role: the explicit lookup finds nothing, and the federation row is excluded.
+    const idpRow = { ...spRow, metadata_xml: validIdpMetadata('VEVTVA==') };
+    mocks.adapter!.query.mockResolvedValueOnce([]).mockResolvedValueOnce([idpRow]);
+    await expect(
+      getIdPConfigByEntityId({ DB_ADMIN: {} } as never, 'tenant-a', 'urn:imported:idp')
+    ).resolves.toBeNull();
+    mocks.adapter!.query.mockResolvedValueOnce([]).mockResolvedValueOnce([
+      {
+        ...idpRow,
+        protocol_payload_json: JSON.stringify({
+          ...(JSON.parse(payload) as Record<string, unknown>),
+          exceptions: { excludedEntityIds: ['https://sp.example.test'] },
+        }),
+      },
+    ]);
+    await expect(
+      getIdPConfigByEntityId({ DB_ADMIN: {} } as never, 'tenant-a', 'urn:imported:idp')
+    ).resolves.toMatchObject({ entityId: 'urn:imported:idp' });
+  });
+
   it('does not treat Entity Category Support as Entity Category membership', async () => {
     mocks.adapter!.query.mockResolvedValueOnce([]).mockResolvedValueOnce([
       {
