@@ -225,12 +225,7 @@ function statusFromPolling(polling: Json, payload: Json): FederationStatus | nul
 	if (Object.keys(polling).length === 0) return null;
 	const state = polling.sourceState;
 	return {
-		sourceState:
-			state === 'healthy'
-				? 'healthy'
-				: state === 'error' || state === 'stale'
-					? 'degraded'
-					: 'unknown',
+		sourceState: state === 'healthy' ? 'healthy' : state === 'error' ? 'degraded' : 'unknown',
 		lastAttemptAt: num(polling.lastAttemptAt),
 		lastSuccessAt: num(polling.lastSuccessAt),
 		nextRefreshAt: num(polling.nextRefreshAt),
