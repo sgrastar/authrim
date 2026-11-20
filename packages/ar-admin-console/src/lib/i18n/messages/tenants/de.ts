@@ -227,5 +227,13 @@ export const deTenants: Record<keyof typeof jaTenants, string> = {
 	'tn.dom.record.howTxt': 'Fügen Sie ihn als TXT-Eintrag im DNS der Domain hinzu.',
 	'tn.dom.record.howHttp': 'Stellen Sie den Inhalt unverändert unter dieser URL bereit.',
 	'tn.dom.record.url': 'URL',
-	'tn.dom.record.body': 'Inhalt'
+	'tn.dom.record.body': 'Inhalt',
+
+	'tn.picker.apply': '{n} auswählen',
+	'tn.picker.tooMany': 'Höchstens {n} können ausgewählt werden.',
+	'tn.picker.noAccess': 'Sie haben keinen Zugriff auf die Mandantenliste.',
+	'tn.picker.loadFailed': 'Die Mandanten konnten nicht geladen werden.',
+	'tn.picker.filter': 'Mandanten filtern',
+	'tn.picker.unlisted': 'Davon {n} nicht in der Liste (z. B. gelöschte Mandanten)',
+	'tn.picker.default': 'Standardmandant'
 };

@@ -175,9 +175,12 @@ const DEFAULT_ROUTER_FORM_BODY_MAX_BYTES = 256 * 1024;
 const MIN_ROUTER_FORM_BODY_MAX_BYTES = 4 * 1024;
 const MAX_ROUTER_FORM_BODY_MAX_BYTES = 1024 * 1024;
 // Paths whose form body is legitimately larger. Keep in step with the downstream
-// bodyLimit (ar-management: 5 MiB for the Login UI public asset upload).
+// bodyLimit (ar-management: a 5 MiB picture, plus room for the multipart form around it, for the
+// Login UI public asset upload and the platform launchers' background upload).
+const IMAGE_UPLOAD_BODY_MAX_BYTES = 5 * 1024 * 1024 + 64 * 1024;
 const ROUTER_FORM_BODY_UPLOAD_PATH_MAX_BYTES: Readonly<Record<string, number>> = {
-  '/api/admin/assets/login-ui': 5 * 1024 * 1024,
+  '/api/admin/assets/login-ui': IMAGE_UPLOAD_BODY_MAX_BYTES,
+  '/api/admin/platform/launchers/assets': IMAGE_UPLOAD_BODY_MAX_BYTES,
 };
 
 const accountPageSettingsCache = new Map<

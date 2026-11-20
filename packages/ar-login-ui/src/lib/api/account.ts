@@ -122,6 +122,12 @@ export type AccountLauncher = {
 	background_color: string;
 	/** The whole tile's background; null keeps the theme's card colour. */
 	tile_background_color?: string | null;
+	/** A picture across the tile's width (an HTTPS URL or a path of this origin); null: none. */
+	background_image_url?: string | null;
+	/** Do not draw the icon. */
+	hide_icon?: boolean;
+	/** Do not draw the name and description (the name stays the link's accessible name). */
+	hide_name?: boolean;
 	grid_width: number;
 	sort_order: number;
 	enabled: boolean;

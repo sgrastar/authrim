@@ -382,6 +382,44 @@ describe('Phase 3 installed SQL reference graph', () => {
     ).toThrow('backup_phase3_structured_reference');
   });
 
+  it('requires the groups a tenant’s copy of a shared launcher is narrowed to', () => {
+    const identity = {
+      module: 'applications' as const,
+      collection: 'core.shared_launcher_states',
+      id: 'state',
+      tenantId: 'tenant-a',
+    };
+    const state = (copy: unknown) =>
+      row({
+        tenant_id: 'tenant-a',
+        launcher_id: 'plc_00000000-0000-4000-8000-000000000001',
+        hidden: 0,
+        sort_order: null,
+        copy_json: copy === null ? null : JSON.stringify(copy),
+        copy_from_version: copy === null ? null : 1,
+        created_at: 1,
+        updated_at: 1,
+      });
+    const references = inspectPhase3SqliteReferences(
+      identity.collection,
+      state({ application_type: 'standalone', visibility: { group_ids: ['group-a'] } }),
+      identity
+    );
+    expect(references.map(({ to }) => [to.collection, to.id])).toEqual([
+      ['core.groups', '[["text","group-a"]]'],
+      ['core.tenants', '[["text","tenant-a"]]'],
+    ]);
+    const plain = inspectPhase3SqliteReferences(identity.collection, state(null), identity);
+    expect(plain.map(({ to }) => to.collection)).toEqual(['core.tenants']);
+    expect(() =>
+      inspectPhase3SqliteReferences(
+        identity.collection,
+        state({ application_type: 'oidc_client', application_id: 'client-a' }),
+        identity
+      )
+    ).toThrow('backup_phase3_structured_reference');
+  });
+
   it('blocks import when a structured reference is absent from the decoded bundles', () => {
     const source = {
       tenantId: 'tenant-a',

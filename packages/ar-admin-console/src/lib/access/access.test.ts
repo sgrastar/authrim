@@ -5,6 +5,7 @@ import {
 	isCapabilityDisabled,
 	NO_ACCESS,
 	permissionLevel,
+	platformLaunchersLevel,
 	settingsLevel,
 	teamAccess,
 	tenantsAccess,
@@ -223,5 +224,14 @@ describe('the tenant pages, as the tenant routes decide them', () => {
 	it('needs a global assignment, whatever the tenant role holds', () => {
 		const tenantSuper = { platform: false, roles: ['ar_super_admin'], permissions: ['*'] };
 		expect(tenantsAccess(tenantSuper).read).toBe(false);
+	});
+});
+
+describe('platform launchers', () => {
+	it('are the platform administrator’s, though the Login UI has no platform settings', () => {
+		expect(settingsLevel(platform, 'login-ui', 'platform')).toBe('none');
+		expect(platformLaunchersLevel(platform)).toBe('edit');
+		expect(platformLaunchersLevel(tenant)).toBe('none');
+		expect(platformLaunchersLevel(NO_ACCESS)).toBe('none');
 	});
 });

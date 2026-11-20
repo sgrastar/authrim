@@ -746,6 +746,22 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     PLATFORM_ADMIN_ROLES
   ),
   ...byMethod(
+    '/api/admin/platform/launchers',
+    ADMIN_PERMISSIONS.SETTINGS_READ,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    'platform application launchers',
+    PLATFORM_ADMIN_ROLES
+  ),
+  ...byMethod(
+    '/api/admin/platform/launchers/*',
+    ADMIN_PERMISSIONS.SETTINGS_READ,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    'platform application launcher',
+    PLATFORM_ADMIN_ROLES
+  ),
+  ...byMethod(
     '/api/admin/platform/session-profiles/*',
     ADMIN_PERMISSIONS.SETTINGS_READ,
     ADMIN_PERMISSIONS.SETTINGS_WRITE,

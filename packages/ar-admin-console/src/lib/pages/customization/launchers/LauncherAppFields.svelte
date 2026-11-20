@@ -30,9 +30,21 @@
 		samlProviders: readonly SamlServiceProviderOption[];
 		errors: Partial<Record<ProblemField, MessageKey>>;
 		disabled?: boolean;
+		/**
+		 * A launcher shared by the platform (or a tenant's copy of one) opens a plain URL: it names
+		 * no tenant's application, so the kind of application is not asked.
+		 */
+		linkOnly?: boolean;
 	}
 
-	let { value = $bindable(), clients, samlProviders, errors, disabled = false }: Props = $props();
+	let {
+		value = $bindable(),
+		clients,
+		samlProviders,
+		errors,
+		disabled = false,
+		linkOnly = false
+	}: Props = $props();
 
 	const error = (field: ProblemField) => (errors[field] ? t(errors[field]) : undefined);
 	const client = $derived(clients.find((entry) => entry.client_id === value.applicationId));
@@ -109,20 +121,22 @@
 	const idpInitiated = $derived(value.launchType === 'saml_idp_initiated');
 </script>
 
-<Card title={t('ln.card.app')}>
+<Card title={t('ln.card.app')} info={linkOnly ? t('ln.field.linkOnlyInfo') : undefined}>
 	<RowStack>
-		<FieldRow label={t('ln.field.appType')} align="text" plain>
-			<RadioGroup
-				label={t('ln.field.appType')}
-				hideLabel
-				orientation="horizontal"
-				options={typeOptions}
-				field="applicationType"
-				{disabled}
-				value={value.applicationType}
-				onchange={chooseType}
-			/>
-		</FieldRow>
+		{#if !linkOnly}
+			<FieldRow label={t('ln.field.appType')} align="text" plain>
+				<RadioGroup
+					label={t('ln.field.appType')}
+					hideLabel
+					orientation="horizontal"
+					options={typeOptions}
+					field="applicationType"
+					{disabled}
+					value={value.applicationType}
+					onchange={chooseType}
+				/>
+			</FieldRow>
+		{/if}
 
 		{#if value.applicationType === 'oidc_client'}
 			<SelectRow

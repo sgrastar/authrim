@@ -3,14 +3,11 @@ import type {
   AccountLauncher,
   ApplicationLauncher,
   Env,
-  LauncherApplicationType,
-  LauncherAttributeMatch,
-  LauncherAttributeOperator,
   LauncherAttributeRule,
-  LauncherIconType,
-  LauncherLaunchType,
   LauncherVisibility,
-  LauncherVisibilityMode,
+  PlatformLauncher,
+  SharedLauncherState,
+  TenantLauncherListItem,
 } from '@authrim/ar-lib-core';
 import {
   CanonicalRuntimeUserStore,
@@ -21,84 +18,49 @@ import {
   createPIIContextFromHono,
   getLogger,
   getTenantIdFromContext,
+  requireDedicatedAdminDatabaseAdapter,
   resolveCustomClaimRuntimeSourcesFromHono,
 } from '@authrim/ar-lib-core';
 import { requireAccountSession } from './account-page';
+import {
+  APPLICATION_TYPES,
+  ATTRIBUTE_MATCHES,
+  ICON_TYPES,
+  LAUNCH_TYPES,
+  PHOSPHOR_ICON_NAMES,
+  VISIBILITY_MODES,
+  readAttributeRules,
+  readBackgroundImageUrl,
+  readBoolean,
+  readColor,
+  readEnum,
+  readHttpsUrl,
+  readInteger,
+  readNullableColor,
+  readRequiredString,
+  readSamlSpEntityId,
+  readString,
+  readSubjectIds,
+  storedLauncher,
+  validateLauncherBody,
+  type NormalizedLauncherInput,
+  type Row,
+} from './launcher-config';
+import {
+  PLATFORM_LAUNCHER_ID_PATTERN,
+  PLATFORM_LAUNCHER_LIMIT,
+  listPlatformLaunchersSharedWith,
+} from './platform-launchers-store';
 import { recordAccountOperation } from './account-operation-log';
 import { getRequestAwareIssuerUrl } from './request-issuer';
 
 type LauncherContext = Context<{ Bindings: Env }>;
-type Row = Record<string, unknown>;
 type LauncherRow = {
   id: string;
   config_json: string;
   created_at: number;
   updated_at: number;
 };
-
-const APPLICATION_TYPES = new Set<LauncherApplicationType>([
-  'standalone',
-  'oidc_client',
-  'saml_sp',
-]);
-const LAUNCH_TYPES = new Set<LauncherLaunchType>([
-  'bookmark',
-  'saml_sp_initiated',
-  'oidc_third_party_initiated',
-  'saml_idp_initiated',
-]);
-const ICON_TYPES = new Set<LauncherIconType>(['phosphor', 'image']);
-const VISIBILITY_MODES = new Set<LauncherVisibilityMode>([
-  'everyone',
-  'users',
-  'groups',
-  'attributes',
-]);
-const ATTRIBUTE_MATCHES = new Set<LauncherAttributeMatch>(['all', 'any']);
-const ATTRIBUTE_OPERATORS = new Set<LauncherAttributeOperator>([
-  'equals',
-  'not_equals',
-  'contains',
-  'starts_with',
-  'ends_with',
-  'exists',
-]);
-const PHOSPHOR_ICON_NAMES = new Set([
-  'airplane-tilt',
-  'bank',
-  'book-open',
-  'books',
-  'briefcase',
-  'browser',
-  'buildings',
-  'calendar',
-  'chart-line-up',
-  'chat-circle-text',
-  'cloud',
-  'code',
-  'compass',
-  'database',
-  'envelope-simple',
-  'folder-open',
-  'gear',
-  'github-logo',
-  'globe',
-  'graduation-cap',
-  'house',
-  'identification-card',
-  'key',
-  'link',
-  'monitor',
-  'notebook',
-  'presentation-chart',
-  'rocket-launch',
-  'shield-check',
-  'shopping-cart',
-  'student',
-  'terminal-window',
-  'users-three',
-  'wrench',
-]);
 
 function invalid(c: LauncherContext, description: string): Response {
   return c.json({ error: 'invalid_request', error_description: description }, 400);
@@ -120,250 +82,32 @@ function notFound(c: LauncherContext): Response {
   return c.json({ error: 'not_found', error_description: 'Launcher not found' }, 404);
 }
 
-function readString(value: unknown, maximum: number): string | null {
-  if (value === undefined || value === null) return null;
-  if (typeof value !== 'string') return null;
-  const normalized = value.trim();
-  return normalized ? normalized.slice(0, maximum) : null;
-}
-
-function readRequiredString(value: unknown, maximum: number): string {
-  return readString(value, maximum) ?? '';
-}
-
-function readBoolean(value: unknown, fallback: boolean): boolean {
-  return typeof value === 'boolean' ? value : fallback;
-}
-
-function readInteger(value: unknown, fallback: number, minimum: number, maximum: number): number {
-  return typeof value === 'number' &&
-    Number.isInteger(value) &&
-    value >= minimum &&
-    value <= maximum
-    ? value
-    : fallback;
-}
-
-function readEnum<T extends string>(value: unknown, allowed: Set<T>, fallback: T): T {
-  return typeof value === 'string' && allowed.has(value as T) ? (value as T) : fallback;
-}
-
-function readHttpsUrl(value: unknown): string | null {
-  const raw = readString(value, 2048);
-  if (!raw) return null;
-  try {
-    const parsed = new URL(raw);
-    return parsed.protocol === 'https:' ? parsed.toString() : null;
-  } catch {
-    return null;
-  }
-}
-
-function readColor(value: unknown, fallback: string): string {
-  return typeof value === 'string' && /^#[0-9a-f]{6}$/iu.test(value)
-    ? value.toLowerCase()
-    : fallback;
-}
-
-/** A colour that may be left unset (null): anything that is not `#rrggbb` reads as unset. */
-function readNullableColor(value: unknown): string | null {
-  return typeof value === 'string' && /^#[0-9a-f]{6}$/iu.test(value) ? value.toLowerCase() : null;
-}
-
-function readSamlSpEntityId(configJson: string): string | null {
-  try {
-    const config = JSON.parse(configJson) as Row;
-    return readString(config.entityId, 2048);
-  } catch {
-    return null;
-  }
-}
-
-function readSubjectIds(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return [
-    ...new Set(
-      value
-        .filter((entry): entry is string => typeof entry === 'string')
-        .map((entry) => entry.trim())
-        .filter((entry) => /^[A-Za-z0-9:._-]{1,200}$/u.test(entry))
-    ),
-  ].slice(0, 500);
-}
-
-function readAttributeRules(value: unknown): LauncherAttributeRule[] {
-  if (!Array.isArray(value)) return [];
-  const rules: LauncherAttributeRule[] = [];
-  for (const entry of value.slice(0, 32)) {
-    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
-    const record = entry as Row;
-    const key = readRequiredString(record.attribute_key, 128);
-    if (!/^[A-Za-z0-9._-]{1,128}$/u.test(key)) continue;
-    const operator = readEnum(record.operator, ATTRIBUTE_OPERATORS, 'equals');
-    const attributeValue = operator === 'exists' ? null : readString(record.attribute_value, 500);
-    if (operator !== 'exists' && attributeValue === null) continue;
-    const rawId = readString(record.id, 100);
-    rules.push({
-      id: rawId && /^[A-Za-z0-9_-]{1,100}$/u.test(rawId) ? rawId : crypto.randomUUID(),
-      attribute_key: key,
-      operator,
-      attribute_value: attributeValue,
-    });
-  }
-  return rules;
-}
-
-type NormalizedLauncherInput = Omit<ApplicationLauncher, 'id' | 'created_at' | 'updated_at'>;
-
-function validateLauncherBody(body: Row): string | null {
-  const stringLimits: Array<[string, number]> = [
-    ['application_id', 500],
-    ['name', 120],
-    ['description', 1000],
-    ['category', 100],
-    ['launch_url', 2048],
-    ['deep_link_url', 2048],
-    ['icon_value', 2048],
-  ];
-  for (const [key, maximum] of stringLimits) {
-    const value = body[key];
-    if (value === undefined || value === null) continue;
-    if (typeof value !== 'string') return `${key} must be a string or null`;
-    if (value.trim().length > maximum) return `${key} must not exceed ${maximum} characters`;
-  }
-
-  const enumInputs: Array<[string, Set<string>]> = [
-    ['application_type', APPLICATION_TYPES],
-    ['launch_type', LAUNCH_TYPES],
-    ['icon_type', ICON_TYPES],
-  ];
-  for (const [key, allowed] of enumInputs) {
-    const value = body[key];
-    if (value !== undefined && (typeof value !== 'string' || !allowed.has(value))) {
-      return `${key} is invalid`;
-    }
-  }
-  if (
-    body.launch_type === 'saml_idp_initiated' &&
-    typeof body.deep_link_url === 'string' &&
-    new TextEncoder().encode(body.deep_link_url.trim()).byteLength > 80
-  ) {
-    return 'deep_link_url for SAML IdP-initiated launch must not exceed 80 UTF-8 bytes';
-  }
-
-  for (const key of ['open_in_new_tab', 'enabled', 'allow_favorite']) {
-    if (body[key] !== undefined && typeof body[key] !== 'boolean') {
-      return `${key} must be a boolean`;
-    }
-  }
-  for (const [key, minimum, maximum] of [
-    ['grid_width', 1, 8],
-    ['sort_order', 0, 1_000_000],
-  ] as const) {
-    const value = body[key];
-    if (
-      value !== undefined &&
-      (typeof value !== 'number' || !Number.isInteger(value) || value < minimum || value > maximum)
-    ) {
-      return `${key} must be an integer from ${minimum} to ${maximum}`;
-    }
-  }
-  for (const key of ['icon_color', 'background_color']) {
-    const value = body[key];
-    if (value !== undefined && (typeof value !== 'string' || !/^#[0-9a-f]{6}$/iu.test(value))) {
-      return `${key} must be a six-digit hexadecimal color`;
-    }
-  }
-  if (
-    body.tile_background_color !== undefined &&
-    body.tile_background_color !== null &&
-    (typeof body.tile_background_color !== 'string' ||
-      !/^#[0-9a-f]{6}$/iu.test(body.tile_background_color))
-  ) {
-    return 'tile_background_color must be null or a six-digit hexadecimal color';
-  }
-
-  if (body.visibility !== undefined) {
-    if (!body.visibility || typeof body.visibility !== 'object' || Array.isArray(body.visibility)) {
-      return 'visibility must be an object';
-    }
-    const visibility = body.visibility as Row;
-    if (
-      visibility.mode !== undefined &&
-      (typeof visibility.mode !== 'string' ||
-        !VISIBILITY_MODES.has(visibility.mode as LauncherVisibilityMode))
-    ) {
-      return 'visibility.mode is invalid';
-    }
-    if (
-      visibility.attribute_match !== undefined &&
-      (typeof visibility.attribute_match !== 'string' ||
-        !ATTRIBUTE_MATCHES.has(visibility.attribute_match as LauncherAttributeMatch))
-    ) {
-      return 'visibility.attribute_match is invalid';
-    }
-    for (const key of ['user_ids', 'group_ids']) {
-      const value = visibility[key];
-      if (
-        value !== undefined &&
-        (!Array.isArray(value) ||
-          value.length > 500 ||
-          value.some(
-            (entry) => typeof entry !== 'string' || !/^[A-Za-z0-9:._-]{1,200}$/u.test(entry)
-          ))
-      ) {
-        return `visibility.${key} must contain at most 500 safe identifiers`;
-      }
-    }
-    const rules = visibility.attribute_rules;
-    if (rules !== undefined) {
-      if (!Array.isArray(rules) || rules.length > 32) {
-        return 'visibility.attribute_rules must contain at most 32 rules';
-      }
-      for (const rule of rules) {
-        if (!rule || typeof rule !== 'object' || Array.isArray(rule)) {
-          return 'Each attribute rule must be an object';
-        }
-        const record = rule as Row;
-        if (
-          typeof record.attribute_key !== 'string' ||
-          !/^[A-Za-z0-9._-]{1,128}$/u.test(record.attribute_key)
-        ) {
-          return 'Attribute rule keys must be safe identifiers';
-        }
-        if (
-          typeof record.operator !== 'string' ||
-          !ATTRIBUTE_OPERATORS.has(record.operator as LauncherAttributeOperator)
-        ) {
-          return 'Attribute rule operators are invalid';
-        }
-        if (
-          record.operator !== 'exists' &&
-          (typeof record.attribute_value !== 'string' ||
-            !record.attribute_value.trim() ||
-            record.attribute_value.trim().length > 500)
-        ) {
-          return 'Attribute rule values must contain 1 to 500 characters';
-        }
-        if (
-          record.id !== undefined &&
-          (typeof record.id !== 'string' || !/^[A-Za-z0-9_-]{1,100}$/u.test(record.id))
-        ) {
-          return 'Attribute rule IDs must be safe identifiers';
-        }
-      }
-    }
-  }
-  return null;
-}
-
-async function normalizeLauncherInput(
+/**
+ * `shared`: a launcher every tenant may show (the platform's, `platform`) or a tenant's copy of one
+ * (`copy`). Both are plain links (`standalone`): they name no application of a tenant. The
+ * platform's is shown to everyone; a tenant's copy may narrow it to its own users, groups or
+ * attributes.
+ */
+export async function normalizeLauncherInput(
   c: LauncherContext,
   body: Row,
-  existing?: ApplicationLauncher
+  existing?: ApplicationLauncher,
+  shared?: 'platform' | 'copy'
 ): Promise<NormalizedLauncherInput | Response> {
   const validationError = validateLauncherBody(body);
   if (validationError) return invalid(c, validationError);
+  if (shared && body.application_type !== undefined && body.application_type !== 'standalone') {
+    return invalid(c, 'Shared launchers are links: application_type must be standalone');
+  }
+  if (
+    shared === 'platform' &&
+    body.visibility &&
+    typeof body.visibility === 'object' &&
+    (body.visibility as Row).mode !== undefined &&
+    (body.visibility as Row).mode !== 'everyone'
+  ) {
+    return invalid(c, 'Platform launchers are shown to everyone: visibility.mode must be everyone');
+  }
   const applicationType = readEnum(
     body.application_type,
     APPLICATION_TYPES,
@@ -531,6 +275,12 @@ async function normalizeLauncherInput(
       body.tile_background_color === undefined
         ? (existing?.tile_background_color ?? null)
         : readNullableColor(body.tile_background_color),
+    background_image_url:
+      body.background_image_url === undefined
+        ? (existing?.background_image_url ?? null)
+        : readBackgroundImageUrl(body.background_image_url),
+    hide_icon: readBoolean(body.hide_icon, existing?.hide_icon ?? false),
+    hide_name: readBoolean(body.hide_name, existing?.hide_name ?? false),
     grid_width: readInteger(body.grid_width, existing?.grid_width ?? 2, 1, 8),
     sort_order: readInteger(body.sort_order, existing?.sort_order ?? 0, 0, 1000000),
     enabled: readBoolean(body.enabled, existing?.enabled ?? true),
@@ -539,126 +289,48 @@ async function normalizeLauncherInput(
   };
 }
 
-function storedLauncher(value: unknown): ApplicationLauncher | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const record = value as Row;
-  if (validateLauncherBody(record)) return null;
-  const id = readRequiredString(record.id, 100);
-  const name = readRequiredString(record.name, 120);
-  const applicationType = readEnum(record.application_type, APPLICATION_TYPES, 'standalone');
-  const launchType = readEnum(record.launch_type, LAUNCH_TYPES, 'bookmark');
-  const iconType = readEnum(record.icon_type, ICON_TYPES, 'phosphor');
-  const iconValue = readRequiredString(record.icon_value, 2048);
-  if (!/^[A-Za-z0-9_-]{1,100}$/u.test(id) || !name) return null;
-  if (iconType === 'phosphor' && !PHOSPHOR_ICON_NAMES.has(iconValue)) return null;
-  if (iconType === 'image' && readHttpsUrl(iconValue) === null) return null;
-  const launchUrl = readHttpsUrl(record.launch_url);
-  const deepLinkUrl = readHttpsUrl(record.deep_link_url);
-  const applicationId =
-    applicationType === 'standalone' ? null : readString(record.application_id, 500);
-  if (launchType !== 'saml_idp_initiated' && !launchUrl) return null;
-  if (
-    launchType === 'saml_idp_initiated' &&
-    deepLinkUrl &&
-    new TextEncoder().encode(deepLinkUrl).byteLength > 80
-  )
-    return null;
-  if (
-    launchType === 'oidc_third_party_initiated' &&
-    (applicationType !== 'oidc_client' || !applicationId)
-  )
-    return null;
-  if (
-    (launchType === 'saml_sp_initiated' || launchType === 'saml_idp_initiated') &&
-    (applicationType !== 'saml_sp' || !applicationId)
-  )
-    return null;
-  const rawVisibility =
-    record.visibility && typeof record.visibility === 'object' && !Array.isArray(record.visibility)
-      ? (record.visibility as Row)
-      : {};
-  const visibility: LauncherVisibility = {
-    mode: readEnum(rawVisibility.mode, VISIBILITY_MODES, 'everyone'),
-    attribute_match: readEnum(rawVisibility.attribute_match, ATTRIBUTE_MATCHES, 'all'),
-    user_ids: readSubjectIds(rawVisibility.user_ids),
-    group_ids: readSubjectIds(rawVisibility.group_ids),
-    attribute_rules: readAttributeRules(rawVisibility.attribute_rules),
-  };
-  return {
-    id,
-    application_type: applicationType,
-    application_id: applicationId,
-    name,
-    description: readString(record.description, 1000),
-    category: readString(record.category, 100),
-    launch_type: launchType,
-    launch_url: launchUrl,
-    deep_link_url: deepLinkUrl,
-    open_in_new_tab: readBoolean(record.open_in_new_tab, false),
-    icon_type: iconType,
-    icon_value: iconValue,
-    icon_color: readColor(record.icon_color, '#ffffff'),
-    background_color: readColor(record.background_color, '#2563eb'),
-    tile_background_color: readNullableColor(record.tile_background_color),
-    grid_width: readInteger(record.grid_width, 2, 1, 8),
-    sort_order: readInteger(record.sort_order, 0, 0, 1000000),
-    enabled: readBoolean(record.enabled, true),
-    allow_favorite: readBoolean(record.allow_favorite, true),
-    visibility,
-    created_at: readInteger(record.created_at, 0, 0, Number.MAX_SAFE_INTEGER),
-    updated_at: readInteger(record.updated_at, 0, 0, Number.MAX_SAFE_INTEGER),
-  };
+/** The most launchers a tenant may have of its own (the platform's shared ones are not counted). */
+const TENANT_LAUNCHER_LIMIT = 500;
+const SHARED_PARTITION = 'platform-launchers';
+
+/**
+ * A tenant's own state of a platform launcher shared with it (core shared_launcher_states): whether
+ * it hides it, its place, and its copy (the tenant changed the launcher) with the platform version
+ * the copy was made from. Each is written on its own, so a move does not undo a change.
+ */
+interface SharedOverlay {
+  hidden: boolean;
+  sort_order: number | null;
+  copy_from_version: number | null;
+  copy: ApplicationLauncher | null;
+  updated_at: number;
 }
 
-async function readLaunchers(
-  c: LauncherContext,
-  enabledOnly: boolean
-): Promise<ApplicationLauncher[]> {
-  const tenantId = getTenantIdFromContext(c);
-  const authCtx = createAuthContextFromHono(c, tenantId);
-  const rows = await authCtx.coreAdapter.query<LauncherRow>(
-    `SELECT id, config_json, created_at, updated_at
-       FROM application_launchers
-      WHERE tenant_id = ?
-      ORDER BY updated_at ASC, id ASC
-      LIMIT 501`,
-    [tenantId]
-  );
-  if (rows.length > 500) {
-    throw new Error('Application launcher limit exceeded');
-  }
-  const launchers = rows.map((row) => {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(row.config_json);
-    } catch {
-      throw new Error(`Invalid application launcher JSON: ${row.id}`);
-    }
-    const launcher = storedLauncher(parsed);
-    if (!launcher || launcher.id !== row.id) {
-      throw new Error(`Invalid application launcher configuration: ${row.id}`);
-    }
-    return { ...launcher, created_at: row.created_at, updated_at: row.updated_at };
-  });
-  return launchers
-    .filter((launcher) => !enabledOnly || launcher.enabled)
-    .sort((left, right) =>
-      left.sort_order === right.sort_order
-        ? left.created_at - right.created_at || left.id.localeCompare(right.id)
-        : left.sort_order - right.sort_order
-    );
+interface SharedStateRow {
+  launcher_id: string;
+  hidden: number;
+  sort_order: number | null;
+  copy_json: string | null;
+  copy_from_version: number | null;
+  updated_at: number;
 }
 
-async function findLauncher(c: LauncherContext, id: string): Promise<ApplicationLauncher | null> {
-  const tenantId = getTenantIdFromContext(c);
-  const authCtx = createAuthContextFromHono(c, tenantId);
-  const row = await authCtx.coreAdapter.queryOne<LauncherRow>(
-    `SELECT id, config_json, created_at, updated_at
-       FROM application_launchers
-      WHERE tenant_id = ? AND id = ?`,
-    [tenantId, id]
-  );
-  if (!row) return null;
+interface TenantLaunchers {
+  /** The tenant's own launchers. */
+  own: ApplicationLauncher[];
+  /** The tenant's state of each shared launcher it has one for, by the platform launcher's id. */
+  overlays: Map<string, SharedOverlay>;
+  /** The platform launchers shared with the tenant. */
+  shared: PlatformLauncher[];
+  /** False when the platform launchers could not be read (lenient reads only). */
+  sharedComplete: boolean;
+  /** Every platform launcher shared with the tenant, offered or turned off for now. */
+  sharedIds: Set<string>;
+  /** What the tenant lists: its own and the shared ones (as the tenant shows them), in order. */
+  items: TenantLauncherListItem[];
+}
+
+function ownLauncher(row: LauncherRow): ApplicationLauncher {
   let parsed: unknown;
   try {
     parsed = JSON.parse(row.config_json);
@@ -671,6 +343,227 @@ async function findLauncher(c: LauncherContext, id: string): Promise<Application
   }
   return { ...launcher, created_at: row.created_at, updated_at: row.updated_at };
 }
+
+/** A stored state; a copy that cannot be read is left out (the platform's launcher shows). */
+function readOverlay(row: SharedStateRow): SharedOverlay {
+  let copy: ApplicationLauncher | null = null;
+  if (row.copy_json !== null && row.copy_from_version !== null) {
+    try {
+      const launcher = storedLauncher(JSON.parse(row.copy_json));
+      copy = launcher && launcher.application_type === 'standalone' ? launcher : null;
+    } catch {
+      copy = null;
+    }
+  }
+  const sortOrder = row.sort_order === null ? null : Number(row.sort_order);
+  return {
+    hidden: Number(row.hidden) === 1,
+    sort_order:
+      sortOrder !== null && Number.isInteger(sortOrder) && sortOrder >= 0 && sortOrder <= 1_000_000
+        ? sortOrder
+        : null,
+    copy_from_version: copy ? Number(row.copy_from_version) : null,
+    copy,
+    updated_at: Number(row.updated_at),
+  };
+}
+
+/** The platform launcher as stored, without the platform's own columns. */
+function platformContent(platform: PlatformLauncher): ApplicationLauncher {
+  const {
+    share_mode: _shareMode,
+    tenant_ids: _tenantIds,
+    tenant_change_allowed: _changeAllowed,
+    version: _version,
+    ...launcher
+  } = platform;
+  return launcher;
+}
+
+/**
+ * A shared launcher as the tenant shows it. While the platform allows tenants to change it, the
+ * tenant's copy (if any) is what is shown and the tenant may hide it; otherwise the platform's is
+ * shown as it is (a copy is kept, set aside). The tenant's place for it applies either way. (A
+ * launcher the platform turned off is not offered at all.)
+ */
+function sharedItem(
+  platform: PlatformLauncher,
+  overlay: SharedOverlay | undefined
+): TenantLauncherListItem {
+  const changeAllowed = platform.tenant_change_allowed;
+  const content = (changeAllowed ? overlay?.copy : null) ?? platformContent(platform);
+  const customized = Boolean(overlay?.copy);
+  const shared: SharedLauncherState = {
+    platform_version: platform.version,
+    tenant_change_allowed: changeAllowed,
+    customized,
+    customized_from_version: customized ? (overlay?.copy_from_version ?? null) : null,
+    platform_updated: customized && (overlay?.copy_from_version ?? 0) < platform.version,
+  };
+  return {
+    ...content,
+    id: platform.id,
+    application_type: 'standalone',
+    application_id: null,
+    enabled: !(changeAllowed && overlay?.hidden === true),
+    sort_order: overlay?.sort_order ?? platform.sort_order,
+    created_at: platform.created_at,
+    updated_at: Math.max(platform.updated_at, overlay?.updated_at ?? 0),
+    shared,
+  };
+}
+
+function byOrder(left: ApplicationLauncher, right: ApplicationLauncher): number {
+  return left.sort_order === right.sort_order
+    ? left.created_at - right.created_at || left.id.localeCompare(right.id)
+    : left.sort_order - right.sort_order;
+}
+
+/**
+ * The platform launchers shared with the request's tenant. `lenient` (the account page): when the
+ * admin database cannot be read, the tenant's own launchers are shown alone rather than none, and
+ * `complete` says so (what depends on knowing every shared launcher must then wait).
+ */
+async function readSharedLaunchers(
+  c: LauncherContext,
+  tenantId: string,
+  lenient: boolean
+): Promise<{ launchers: PlatformLauncher[]; complete: boolean }> {
+  if (!c.env?.DB_ADMIN) return { launchers: [], complete: true };
+  try {
+    return {
+      launchers: await listPlatformLaunchersSharedWith(
+        requireDedicatedAdminDatabaseAdapter(c.env, SHARED_PARTITION),
+        tenantId
+      ),
+      complete: true,
+    };
+  } catch (error) {
+    if (!lenient) throw error;
+    getLogger(c)
+      .module('ACCOUNT_LAUNCHERS')
+      .warn('Failed to read the platform launchers; showing the tenant’s own', {
+        error: error instanceof Error ? error.message : 'unknown',
+      });
+    return { launchers: [], complete: false };
+  }
+}
+
+/** The tenant's states of the shared launchers named (only these: a state left behind is not read). */
+async function readOverlays(
+  c: LauncherContext,
+  tenantId: string,
+  launcherIds: string[]
+): Promise<Map<string, SharedOverlay>> {
+  const overlays = new Map<string, SharedOverlay>();
+  if (launcherIds.length === 0) return overlays;
+  const authCtx = createAuthContextFromHono(c, tenantId);
+  for (const ids of chunks(launcherIds)) {
+    const rows = await authCtx.coreAdapter.query<SharedStateRow>(
+      `SELECT launcher_id, hidden, sort_order, copy_json, copy_from_version, updated_at
+         FROM shared_launcher_states
+        WHERE tenant_id = ? AND launcher_id IN (${ids.map(() => '?').join(', ')})`,
+      [tenantId, ...ids]
+    );
+    for (const row of rows) overlays.set(row.launcher_id, readOverlay(row));
+  }
+  return overlays;
+}
+
+async function readTenantLaunchers(
+  c: LauncherContext,
+  options: { lenient?: boolean } = {}
+): Promise<TenantLaunchers> {
+  const tenantId = getTenantIdFromContext(c);
+  const authCtx = createAuthContextFromHono(c, tenantId);
+  const [rows, shared] = await Promise.all([
+    authCtx.coreAdapter.query<LauncherRow>(
+      `SELECT id, config_json, created_at, updated_at
+         FROM application_launchers
+        WHERE tenant_id = ?
+        ORDER BY updated_at ASC, id ASC
+        LIMIT ?`,
+      [tenantId, TENANT_LAUNCHER_LIMIT + 1]
+    ),
+    readSharedLaunchers(c, tenantId, options.lenient === true),
+  ]);
+  if (rows.length > TENANT_LAUNCHER_LIMIT) {
+    throw new Error('Application launcher limit exceeded');
+  }
+  const own = rows.map(ownLauncher).sort(byOrder);
+  // A launcher the platform turned off is not offered to tenants at all (so a tenant's `enabled`
+  // says only whether it hides it).
+  const offered = shared.launchers.filter((launcher) => launcher.enabled);
+  const sharedIds = new Set(shared.launchers.map((launcher) => launcher.id));
+  const overlays = await readOverlays(
+    c,
+    tenantId,
+    offered.map((launcher) => launcher.id)
+  );
+  const items: TenantLauncherListItem[] = [
+    ...own.map((launcher) => ({ ...launcher, shared: null })),
+    ...offered.map((platform) => sharedItem(platform, overlays.get(platform.id))),
+  ].sort(byOrder);
+  return { own, overlays, shared: offered, sharedIds, sharedComplete: shared.complete, items };
+}
+
+/** The launchers the tenant shows (own and shared, without their sharing state), in order. */
+async function readLaunchers(
+  c: LauncherContext,
+  options: { lenient?: boolean } = {}
+): Promise<{ launchers: ApplicationLauncher[]; sharedComplete: boolean; sharedIds: Set<string> }> {
+  const collection = await readTenantLaunchers(c, options);
+  return {
+    launchers: collection.items.map(({ shared: _shared, ...launcher }) => launcher),
+    sharedComplete: collection.sharedComplete,
+    sharedIds: collection.sharedIds,
+  };
+}
+
+/**
+ * Writes what changed of the tenant's state of a shared launcher, and only that: whether it hides
+ * it (`hidden`), and its copy (`copy`, null to drop it). A field left out keeps its stored value,
+ * so a hide does not bring back a copy dropped meanwhile, nor a change undo a hide. The place is
+ * the order's to write.
+ */
+async function writeSharedState(
+  c: LauncherContext,
+  id: string,
+  state: {
+    hidden?: boolean;
+    copy?: { launcher: ApplicationLauncher; fromVersion: number } | null;
+  },
+  now: number
+): Promise<void> {
+  const tenantId = getTenantIdFromContext(c);
+  const authCtx = createAuthContextFromHono(c, tenantId);
+  const hidden = state.hidden === undefined ? null : state.hidden ? 1 : 0;
+  const copyJson = state.copy ? JSON.stringify(state.copy.launcher) : null;
+  const fromVersion = state.copy ? state.copy.fromVersion : null;
+  const sets = [
+    ...(state.hidden === undefined ? [] : ['hidden = excluded.hidden']),
+    ...(state.copy === undefined
+      ? []
+      : ['copy_json = excluded.copy_json', 'copy_from_version = excluded.copy_from_version']),
+    'updated_at = excluded.updated_at',
+  ];
+  await authCtx.coreAdapter.execute(
+    `INSERT INTO shared_launcher_states
+       (tenant_id, launcher_id, hidden, sort_order, copy_json, copy_from_version,
+        created_at, updated_at)
+     VALUES (?, ?, ?, NULL, ?, ?, ?, ?)
+     ON CONFLICT (tenant_id, launcher_id) DO UPDATE SET ${sets.join(', ')}`,
+    [tenantId, id, hidden ?? 0, copyJson, fromVersion, now, now]
+  );
+}
+
+/** The statement setting a shared launcher's place only (whether it is hidden or copied stays). */
+const sharedOrderSql = `INSERT INTO shared_launcher_states
+    (tenant_id, launcher_id, hidden, sort_order, copy_json, copy_from_version,
+     created_at, updated_at)
+  VALUES (?, ?, 0, ?, NULL, NULL, ?, ?)
+  ON CONFLICT (tenant_id, launcher_id) DO UPDATE
+    SET sort_order = excluded.sort_order, updated_at = excluded.updated_at`;
 
 function chunks<T>(values: T[], size = 90): T[][] {
   const result: T[][] = [];
@@ -764,7 +657,7 @@ async function recordAdminAudit(
 
 export async function adminLaunchersListHandler(c: LauncherContext): Promise<Response> {
   try {
-    return c.json({ launchers: await readLaunchers(c, false) });
+    return c.json({ launchers: (await readTenantLaunchers(c)).items });
   } catch (error) {
     getLogger(c)
       .module('ADMIN_LAUNCHERS')
@@ -777,7 +670,7 @@ export async function adminLauncherGetHandler(c: LauncherContext): Promise<Respo
   try {
     const id = c.req.param('id');
     if (!id) return notFound(c);
-    const launcher = await findLauncher(c, id);
+    const launcher = (await readTenantLaunchers(c)).items.find((entry) => entry.id === id);
     if (!launcher) return notFound(c);
     return c.json({ launcher });
   } catch (error) {
@@ -849,27 +742,33 @@ export async function adminLauncherCreateHandler(c: LauncherContext): Promise<Re
     if (body instanceof Response) return body;
     const input = await normalizeLauncherInput(c, body);
     if (input instanceof Response) return input;
-    const existingLaunchers = await readLaunchers(c, false);
-    if (existingLaunchers.length >= 500) {
-      return invalid(c, 'A tenant can have at most 500 launchers');
+    const { own } = await readTenantLaunchers(c);
+    if (own.length >= TENANT_LAUNCHER_LIMIT) {
+      return invalid(c, `A tenant can have at most ${TENANT_LAUNCHER_LIMIT} launchers`);
     }
     const id = crypto.randomUUID();
     const now = Date.now();
     const launcher: ApplicationLauncher = { id, ...input, created_at: now, updated_at: now };
+    const item: TenantLauncherListItem = { ...launcher, shared: null };
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
-    await authCtx.coreAdapter.execute(
+    // The limit is checked in the statement too, so two created at once cannot pass it together.
+    const inserted = await authCtx.coreAdapter.execute(
       `INSERT INTO application_launchers
         (tenant_id, id, config_json, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?)`,
-      [tenantId, id, JSON.stringify(launcher), now, now]
+       SELECT ?, ?, ?, ?, ?
+        WHERE (SELECT COUNT(*) FROM application_launchers WHERE tenant_id = ?) < ?`,
+      [tenantId, id, JSON.stringify(launcher), now, now, tenantId, TENANT_LAUNCHER_LIMIT]
     );
+    if (inserted.rowsAffected !== 1) {
+      return invalid(c, `A tenant can have at most ${TENANT_LAUNCHER_LIMIT} launchers`);
+    }
     await recordAdminAudit(c, 'launcher.created', id, {
       launch_type: input.launch_type,
       application_type: input.application_type,
       visibility_mode: input.visibility.mode,
     });
-    return c.json({ launcher }, 201);
+    return c.json({ launcher: item }, 201);
   } catch (error) {
     getLogger(c)
       .module('ADMIN_LAUNCHERS')
@@ -878,14 +777,117 @@ export async function adminLauncherCreateHandler(c: LauncherContext): Promise<Re
   }
 }
 
+function sharedLocked(c: LauncherContext): Response {
+  return c.json(
+    {
+      error: 'access_denied',
+      error_description: 'The platform does not allow tenants to change this launcher',
+    },
+    403
+  );
+}
+
+/** The fields a copy is compared on: what the launcher shows, not whether or where. */
+function contentKey(launcher: ApplicationLauncher | NormalizedLauncherInput): string {
+  const { enabled: _enabled, sort_order: _sortOrder, ...content } = launcher as ApplicationLauncher;
+  const { id: _id, created_at: _created, updated_at: _updated, ...rest } = content;
+  return JSON.stringify(
+    Object.fromEntries(Object.entries(rest).sort(([a], [b]) => a.localeCompare(b)))
+  );
+}
+
+/**
+ * A tenant's change to a shared launcher (allowed while the platform allows it): `enabled` false
+ * hides it; any other change makes the tenant's copy (from the platform version it was made from),
+ * and a change back to the platform's launcher drops the copy.
+ */
+async function updateSharedLauncher(
+  c: LauncherContext,
+  body: Row,
+  platform: PlatformLauncher,
+  overlay: SharedOverlay | undefined,
+  current: TenantLauncherListItem
+): Promise<Response> {
+  if (!platform.tenant_change_allowed) return sharedLocked(c);
+  const input = await normalizeLauncherInput(c, body, current, 'copy');
+  if (input instanceof Response) return input;
+  const now = Date.now();
+  const base = platformContent(platform);
+  let copy: ApplicationLauncher | null = null;
+  let copyFromVersion: number | null = null;
+  if (contentKey(input) !== contentKey(base)) {
+    copy = {
+      ...input,
+      id: platform.id,
+      enabled: true,
+      created_at: platform.created_at,
+      updated_at: now,
+    };
+    // A copy keeps the platform version it was first made from: changing it does not take over a
+    // later platform change (reverting does). A new copy is made from the version the admin was
+    // shown (`platform_version`), never a later one they did not see.
+    const shown =
+      typeof body.platform_version === 'number' &&
+      Number.isSafeInteger(body.platform_version) &&
+      body.platform_version >= 1
+        ? Math.min(body.platform_version, platform.version)
+        : platform.version;
+    copyFromVersion = overlay?.copy ? (overlay.copy_from_version ?? shown) : shown;
+  }
+  // Only what this change changes is written (the place is the order's): whether it is hidden,
+  // when that changed, and the copy, when its content changed.
+  const hiddenChanged = input.enabled !== current.enabled;
+  const copyChanged =
+    (copy === null) !== !overlay?.copy ||
+    (copy !== null && overlay?.copy != null && contentKey(copy) !== contentKey(overlay.copy));
+  const next = {
+    hidden: hiddenChanged ? !input.enabled : (overlay?.hidden ?? false),
+    sort_order: overlay?.sort_order ?? null,
+    copy_from_version: copyChanged ? copyFromVersion : (overlay?.copy_from_version ?? null),
+    copy: copyChanged ? copy : (overlay?.copy ?? null),
+  };
+  if (hiddenChanged || copyChanged) {
+    await writeSharedState(
+      c,
+      platform.id,
+      {
+        ...(hiddenChanged ? { hidden: next.hidden } : {}),
+        ...(copyChanged
+          ? {
+              copy: copy
+                ? { launcher: copy, fromVersion: copyFromVersion ?? platform.version }
+                : null,
+            }
+          : {}),
+      },
+      now
+    );
+  }
+  await recordAdminAudit(c, 'launcher.shared_updated', platform.id, {
+    hidden: next.hidden,
+    customized: copy !== null,
+    platform_version: platform.version,
+    visibility_mode: input.visibility.mode,
+  });
+  return c.json({ launcher: sharedItem(platform, { ...next, updated_at: now }) });
+}
+
 export async function adminLauncherUpdateHandler(c: LauncherContext): Promise<Response> {
   try {
     const id = c.req.param('id');
     if (!id) return notFound(c);
-    const existing = await findLauncher(c, id);
-    if (!existing) return notFound(c);
+    const collection = await readTenantLaunchers(c);
+    const platform = collection.shared.find((entry) => entry.id === id);
+    const existing = collection.own.find((entry) => entry.id === id);
+    if (!platform && !existing) return notFound(c);
     const body = await readJsonObject(c);
     if (body instanceof Response) return body;
+    if (platform) {
+      const current = collection.items.find((entry) => entry.id === id);
+      if (!current) return notFound(c);
+      return await updateSharedLauncher(c, body, platform, collection.overlays.get(id), current);
+    }
+    if (!existing) return notFound(c);
     const input = await normalizeLauncherInput(c, body, existing);
     if (input instanceof Response) return input;
     const now = Date.now();
@@ -907,12 +909,53 @@ export async function adminLauncherUpdateHandler(c: LauncherContext): Promise<Re
       launch_type: input.launch_type,
       visibility_mode: input.visibility.mode,
     });
-    return c.json({ launcher: updated });
+    return c.json({ launcher: { ...updated, shared: null } });
   } catch (error) {
     getLogger(c)
       .module('ADMIN_LAUNCHERS')
       .error('Failed to update launcher', {}, error as Error);
     return c.json({ error: 'server_error', error_description: 'Failed to update launcher' }, 500);
+  }
+}
+
+/**
+ * Drops a tenant's copy of a shared launcher: the platform's launcher shows again (whether the
+ * tenant hides it, and its place, are kept). Only while the platform allows changes: otherwise the
+ * copy is kept as it is, set aside (403).
+ */
+export async function adminLauncherCustomizationDeleteHandler(
+  c: LauncherContext
+): Promise<Response> {
+  try {
+    const id = c.req.param('id');
+    if (!id) return notFound(c);
+    const collection = await readTenantLaunchers(c);
+    const platform = collection.shared.find((entry) => entry.id === id);
+    if (!platform) return notFound(c);
+    // While the platform does not allow changes, the tenant's copy is kept as it is (set aside).
+    if (!platform.tenant_change_allowed) return sharedLocked(c);
+    const overlay = collection.overlays.get(id);
+    if (overlay?.copy) {
+      const now = Date.now();
+      const next = { ...overlay, copy: null, copy_from_version: null };
+      const tenantId = getTenantIdFromContext(c);
+      await createAuthContextFromHono(c, tenantId).coreAdapter.execute(
+        `UPDATE shared_launcher_states
+            SET copy_json = NULL, copy_from_version = NULL, updated_at = ?
+          WHERE tenant_id = ? AND launcher_id = ?`,
+        [now, tenantId, id]
+      );
+      await recordAdminAudit(c, 'launcher.shared_reverted', id, {
+        platform_version: platform.version,
+      });
+      return c.json({ launcher: sharedItem(platform, { ...next, updated_at: now }) });
+    }
+    return c.json({ launcher: sharedItem(platform, overlay) });
+  } catch (error) {
+    getLogger(c)
+      .module('ADMIN_LAUNCHERS')
+      .error('Failed to revert launcher', {}, error as Error);
+    return c.json({ error: 'server_error', error_description: 'Failed to revert launcher' }, 500);
   }
 }
 
@@ -923,18 +966,24 @@ export async function adminLauncherOrderHandler(c: LauncherContext): Promise<Res
     if (!Array.isArray(body.launcher_ids)) {
       return invalid(c, 'launcher_ids must be an array');
     }
-    const launcherIds = body.launcher_ids;
+    const rawIds: unknown[] = body.launcher_ids;
     if (
-      launcherIds.length > 500 ||
-      launcherIds.some((id) => typeof id !== 'string' || !/^[A-Za-z0-9_-]{1,100}$/u.test(id)) ||
-      new Set(launcherIds).size !== launcherIds.length
+      rawIds.length > TENANT_LAUNCHER_LIMIT + PLATFORM_LAUNCHER_LIMIT ||
+      rawIds.some((id) => typeof id !== 'string' || !/^[A-Za-z0-9_-]{1,100}$/u.test(id)) ||
+      new Set(rawIds).size !== rawIds.length
     ) {
       return invalid(c, 'launcher_ids must contain unique safe launcher identifiers');
     }
+    const launcherIds = rawIds as string[];
 
-    const launchers = await readLaunchers(c, false);
-    const currentIds = new Set(launchers.map((launcher) => launcher.id));
-    if (launcherIds.length !== launchers.length || launcherIds.some((id) => !currentIds.has(id))) {
+    // The tenant orders its own launchers and the shared ones together (the place of a shared one
+    // is the tenant's even when the platform does not allow changing it).
+    const collection = await readTenantLaunchers(c);
+    const currentIds = new Set(collection.items.map((launcher) => launcher.id));
+    if (
+      launcherIds.length !== collection.items.length ||
+      launcherIds.some((id) => !currentIds.has(id))
+    ) {
       return c.json(
         {
           error: 'conflict',
@@ -944,23 +993,41 @@ export async function adminLauncherOrderHandler(c: LauncherContext): Promise<Res
       );
     }
 
-    const byId = new Map(launchers.map((launcher) => [launcher.id, launcher]));
+    const ownById = new Map(collection.own.map((launcher) => [launcher.id, launcher]));
+    const sharedById = new Map(collection.shared.map((launcher) => [launcher.id, launcher]));
     const now = Date.now();
-    const ordered = launcherIds.map((id, index) => {
-      const launcher = byId.get(id);
-      if (!launcher) throw new Error(`Launcher disappeared while reordering: ${id}`);
-      return { ...launcher, sort_order: index * 10, updated_at: now };
-    });
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
-    await authCtx.coreAdapter.batch(
-      ordered.map((launcher) => ({
-        sql: `UPDATE application_launchers
-                 SET config_json = ?, updated_at = ?
-               WHERE tenant_id = ? AND id = ?`,
-        params: [JSON.stringify(launcher), now, tenantId, launcher.id],
-      }))
-    );
+    const statements: Array<{ sql: string; params: unknown[] }> = [];
+    const ordered: TenantLauncherListItem[] = [];
+    launcherIds.forEach((id, index) => {
+      const sortOrder = index * 10;
+      const own = ownById.get(id);
+      if (own) {
+        const launcher = { ...own, sort_order: sortOrder, updated_at: now };
+        statements.push({
+          sql: `UPDATE application_launchers
+                   SET config_json = ?, updated_at = ?
+                 WHERE tenant_id = ? AND id = ?`,
+          params: [JSON.stringify(launcher), now, tenantId, id],
+        });
+        ordered.push({ ...launcher, shared: null });
+        return;
+      }
+      const platform = sharedById.get(id);
+      if (!platform) throw new Error(`Launcher disappeared while reordering: ${id}`);
+      const overlay = collection.overlays.get(id);
+      // Only the place is written: a hide or copy saved meanwhile stays.
+      const next = {
+        hidden: overlay?.hidden ?? false,
+        sort_order: sortOrder,
+        copy_from_version: overlay?.copy_from_version ?? null,
+        copy: overlay?.copy ?? null,
+      };
+      statements.push({ sql: sharedOrderSql, params: [tenantId, id, sortOrder, now, now] });
+      ordered.push(sharedItem(platform, { ...next, updated_at: now }));
+    });
+    await authCtx.coreAdapter.batch(statements);
     await recordAdminAudit(c, 'launcher.reordered', tenantId, {
       launcher_ids: launcherIds,
     });
@@ -977,10 +1044,31 @@ export async function adminLauncherDeleteHandler(c: LauncherContext): Promise<Re
   try {
     const id = c.req.param('id');
     if (!id) return notFound(c);
-    const existing = await findLauncher(c, id);
-    if (!existing) return notFound(c);
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
+    // Only the launcher itself is read: a tenant that somehow holds more than its most can still
+    // delete its way back under it.
+    const row = await authCtx.coreAdapter.queryOne<LauncherRow>(
+      `SELECT id, config_json, created_at, updated_at
+         FROM application_launchers
+        WHERE tenant_id = ? AND id = ?`,
+      [tenantId, id]
+    );
+    if (!row) {
+      const shared = await readSharedLaunchers(c, tenantId, false);
+      if (shared.launchers.some((entry) => entry.id === id)) {
+        return c.json(
+          {
+            error: 'shared_launcher',
+            error_description:
+              'A launcher the platform shares cannot be deleted by a tenant; hide it instead',
+          },
+          409
+        );
+      }
+      return notFound(c);
+    }
+    const existing = ownLauncher(row);
     await authCtx.coreAdapter.execute(
       'DELETE FROM application_launchers WHERE tenant_id = ? AND id = ?',
       [tenantId, id]
@@ -1133,9 +1221,9 @@ async function visibleAccountLaunchers(
   userId: string,
   definitions?: ApplicationLauncher[]
 ): Promise<ApplicationLauncher[]> {
-  const enabledLaunchers = (definitions ?? (await readLaunchers(c, false))).filter(
-    (launcher) => launcher.enabled
-  );
+  const enabledLaunchers = (
+    definitions ?? (await readLaunchers(c, { lenient: true })).launchers
+  ).filter((launcher) => launcher.enabled);
   const launchers = await filterAvailableLinkedApplications(c, enabledLaunchers);
   if (launchers.every((launcher) => launcher.visibility.mode === 'everyone')) return launchers;
   const audience = await resolveAccountAudience(c, userId, launchers);
@@ -1155,6 +1243,9 @@ export function accountLauncher(launcher: ApplicationLauncher, favorite: boolean
     icon_color: launcher.icon_color,
     background_color: launcher.background_color,
     tile_background_color: launcher.tile_background_color,
+    background_image_url: launcher.background_image_url,
+    hide_icon: launcher.hide_icon,
+    hide_name: launcher.hide_name,
     grid_width: launcher.grid_width,
     sort_order: launcher.sort_order,
     enabled: launcher.enabled,
@@ -1173,7 +1264,11 @@ export async function getAccountLaunchersHandler(c: LauncherContext): Promise<Re
   try {
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAccountAuthContextFromHono(c, tenantId);
-    const definitions = await readLaunchers(c, false);
+    const {
+      launchers: definitions,
+      sharedComplete,
+      sharedIds,
+    } = await readLaunchers(c, { lenient: true });
     const [launchers, favorites] = await Promise.all([
       visibleAccountLaunchers(c, session.userId, definitions),
       authCtx.coreAdapter.query<{ launcher_id: string }>(
@@ -1188,6 +1283,11 @@ export async function getAccountLaunchersHandler(c: LauncherContext): Promise<Re
           .map((entry) => entry.launcher_id)
           .filter((id) => {
             const launcher = definitionsById.get(id);
+            // Without the platform's launchers (their database could not be read), a shared one's
+            // favourite is not known to be stale: it is kept.
+            if (!launcher && !sharedComplete && PLATFORM_LAUNCHER_ID_PATTERN.test(id)) return false;
+            // One the platform turned off for now is still shared: its favourite waits for it.
+            if (!launcher && sharedIds.has(id)) return false;
             return !launcher || !launcher.allow_favorite;
           })
       ),

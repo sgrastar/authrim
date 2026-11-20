@@ -1,12 +1,10 @@
 <script lang="ts">
 	import { onDestroy, tick, untrack } from 'svelte';
 	import { ApiError } from '#lib/api/api-error.js';
-	import type {
-		ApplicationLauncher,
-		LauncherOptions,
-		LaunchersClient
-	} from '#lib/api/launchers.js';
+	import type { ConsoleLauncher, LauncherOptions, LaunchersClient } from '#lib/api/launchers.js';
 	import type { SamlServiceProviderOption } from '#lib/api/saml-providers.js';
+	import type { Tenant } from '#lib/api/tenants.js';
+	import { apiAssetUrl } from '#lib/api/assets.js';
 	import { i18n, t, type MessageKey } from '#lib/i18n/i18n.svelte.js';
 	import Callout from '#lib/ui/patterns/Callout.svelte';
 	import Card from '#lib/ui/patterns/Card.svelte';
@@ -28,6 +26,7 @@
 	import LauncherAppFields from './LauncherAppFields.svelte';
 	import LauncherAudienceFields from './LauncherAudienceFields.svelte';
 	import LauncherPreview from './LauncherPreview.svelte';
+	import LauncherSharingFields from './LauncherSharingFields.svelte';
 	import LauncherTileFields from './LauncherTileFields.svelte';
 	import {
 		LIMITS,
@@ -46,7 +45,14 @@
 	 * edited in place with the pencil (a new launcher opens with it being named). Below the
 	 * preview of its tile come what it opens, how its tile looks and who sees it; every change
 	 * waits for Save. Fields that keep it from being saved say why once Save has been pressed
-	 * (an address that is not HTTPS says so at once).
+	 * (an address that is not HTTPS says so at once). A tile picture chosen is uploaded when the
+	 * page is saved.
+	 *
+	 * The platform's launchers (`client.scope` platform) are links shown to everyone: what they
+	 * open is a URL, there is no audience to choose, and a card says whom they are shared with. A
+	 * platform launcher a tenant lists (`shared`) says so: while the platform allows changes, the
+	 * tenant's change makes its own copy (with a way back to the platform's) and hiding it is
+	 * allowed; otherwise the page is read only. It cannot be deleted from a tenant.
 	 */
 	interface Props {
 		client: LaunchersClient;
@@ -60,16 +66,33 @@
 		oncreated: (id: string) => void;
 		/** The launcher was deleted: back to the list. */
 		ondeleted: () => void;
+		/** The tenants a platform launcher can be shared with (the platform's page only). */
+		loadTenants?: (signal?: AbortSignal) => Promise<Tenant[]>;
 	}
 
-	let { client, loadSamlProviders, id, canWrite, listHref, oncreated, ondeleted }: Props = $props();
+	let {
+		client,
+		loadSamlProviders,
+		id,
+		canWrite,
+		listHref,
+		oncreated,
+		ondeleted,
+		loadTenants = async () => []
+	}: Props = $props();
 
+	const platform = $derived(client.scope === 'platform');
 	const isNew = $derived(id === 'new');
-	const readonly = $derived(!canWrite);
 
 	let phase = $state<'loading' | 'ready' | 'missing' | 'forbidden' | 'failed'>('loading');
 	let draft = $state(new Draft<LauncherEditorValue>(newLauncherValue()));
-	let loaded = $state<ApplicationLauncher | null>(null);
+	let loaded = $state<ConsoleLauncher | null>(null);
+	/** The platform launcher this tenant lists, as it stands to the platform. */
+	const shared = $derived(loaded?.shared ?? null);
+	const sharedLocked = $derived(shared !== null && !shared.tenant_change_allowed);
+	let reverting = $state(false);
+	// While a revert is under way the page waits for it (it puts the platform's launcher back).
+	const readonly = $derived(!canWrite || sharedLocked || reverting);
 	let options = $state<LauncherOptions>({
 		oidc_clients: [],
 		groups: [],
@@ -168,7 +191,8 @@
 		launcherProblems(value, {
 			clients: options.oidc_clients,
 			samlProviderIds: new Set(samlProviders.map((provider) => provider.id)),
-			optionsKnown: !optionsFailed
+			optionsKnown: !optionsFailed,
+			scope: client.scope
 		})
 	);
 	/** Format problems show at once; missing values once Save has been pressed. */
@@ -186,10 +210,13 @@
 	);
 
 	async function save(from: LauncherEditorValue) {
+		// A revert under way puts the platform's launcher back: nothing is saved over it meanwhile.
+		if (reverting) throw new SaveStopped();
 		const found = launcherProblems(from, {
 			clients: options.oidc_clients,
 			samlProviderIds: new Set(samlProviders.map((provider) => provider.id)),
-			optionsKnown: !optionsFailed
+			optionsKnown: !optionsFailed,
+			scope: client.scope
 		});
 		const first = Object.entries(found)[0] as [ProblemField, MessageKey] | undefined;
 		if (first) {
@@ -207,8 +234,27 @@
 		const clientUri =
 			options.oidc_clients.find((entry) => entry.client_id === from.applicationId)
 				?.initiate_login_uri ?? null;
-		const input = launcherInput(from, isNew ? sortOrder : undefined, clientUri);
 		try {
+			// A picture chosen is uploaded first; the launcher stores its address.
+			const picture =
+				from.backgroundImage instanceof File
+					? await client.uploadBackground(from.backgroundImage)
+					: from.backgroundImage;
+			// The page (or its tenant) may have changed while the picture went up: the launcher is
+			// saved only where it was edited.
+			if (gone || visit !== loads || id !== target) throw new SaveStopped();
+			const input = {
+				...launcherInput(
+					{ ...from, backgroundImage: picture },
+					isNew ? sortOrder : undefined,
+					clientUri,
+					client.scope
+				),
+				// A platform launcher is changed from the version this page shows; a tenant's copy of a
+				// shared one is made from the platform version it shows.
+				...(loaded?.sharing && !isNew ? { version: loaded.sharing.version } : {}),
+				...(loaded?.shared && !isNew ? { platform_version: loaded.shared.platform_version } : {})
+			};
 			const saved = isNew ? await client.create(input) : await client.update(target, input);
 			if (gone || visit !== loads) throw new SaveStopped();
 			loaded = saved;
@@ -241,12 +287,30 @@
 		}
 	}
 
+	/** Drops the tenant's copy of a shared launcher: the platform's shows again. */
+	async function revert() {
+		if (!loaded?.shared || reverting) return;
+		const target = loaded.id;
+		reverting = true;
+		try {
+			const saved = await client.revert(target);
+			if (gone || id !== target) return;
+			loaded = saved;
+			draft.reset(launcherValue(saved, { users: new Map(), groups: groupItems(options) }));
+			toast.success(t('ln.shared.reverted'));
+		} catch {
+			toast.error(t('ln.shared.revertFailed'));
+		} finally {
+			reverting = false;
+		}
+	}
+
 	async function remove() {
 		if (!loaded || deletingBusy) return;
 		const target = loaded;
 		deletingBusy = true;
 		try {
-			await client.remove(target.id);
+			await client.remove(target.id, target.sharing?.version);
 		} catch (error) {
 			if (!(error instanceof ApiError && error.notFound)) {
 				// The dialog closes first: behind it the toast could not be read.
@@ -295,6 +359,18 @@
 	}
 
 	const title = $derived(value.name.trim() || t('ln.editor.new'));
+	/** The picture as the preview loads it: a chosen file from memory, a stored one from the API. */
+	const previewImage = $derived.by(() => {
+		const picture = value.backgroundImage;
+		if (picture instanceof File) return URL.createObjectURL(picture);
+		return picture ? apiAssetUrl(picture) : null;
+	});
+	$effect(() => {
+		const url = previewImage;
+		return () => {
+			if (url?.startsWith('blob:')) URL.revokeObjectURL(url);
+		};
+	});
 	const loadMessage: Record<'missing' | 'forbidden' | 'failed', MessageKey> = {
 		missing: 'ln.editor.notFound',
 		forbidden: 'ln.editor.noAccess',
@@ -337,12 +413,20 @@
 		<Page>
 			<PageHeader
 				{title}
-				titleAction={phase === 'ready' && canWrite && !editingName ? nameAction : undefined}
-				titleEditor={phase === 'ready' && canWrite && editingName ? nameEditor : undefined}
+				titleAction={phase === 'ready' && !readonly && !editingName ? nameAction : undefined}
+				titleEditor={phase === 'ready' && !readonly && editingName ? nameEditor : undefined}
 			>
 				{#snippet back()}<BackLink href={listHref}>{t('ln.editor.back')}</BackLink>{/snippet}
 				{#snippet badges()}
 					{#if phase === 'ready'}
+						{#if shared}
+							<Badge tone="info">{t('ln.shared.badge')}</Badge>
+						{/if}
+						{#if platform && loaded?.sharing}
+							<Badge tone={loaded.sharing.share_mode === 'none' ? 'neutral' : 'info'}
+								>{t(`ln.sharing.mode.${loaded.sharing.share_mode}` as MessageKey)}</Badge
+							>
+						{/if}
 						{#if value.enabled}
 							<Badge tone="success" dot>{t('ln.status.shown')}</Badge>
 						{:else}
@@ -351,7 +435,14 @@
 					{/if}
 				{/snippet}
 				{#snippet actions()}
-					{#if phase === 'ready' && loaded && canWrite}
+					{#if phase === 'ready' && shared?.customized && !sharedLocked && canWrite}
+						<Button
+							icon="reset"
+							disabled={controls.saving || reverting}
+							onclick={() => void revert()}>{t('ln.shared.revert')}</Button
+						>
+					{/if}
+					{#if phase === 'ready' && loaded && canWrite && !shared}
 						<Button
 							variant="danger"
 							icon="trash"
@@ -378,7 +469,20 @@
 					{/snippet}
 				</EmptyState>
 			{:else}
-				{#if readonly}
+				{#if shared}
+					{#if sharedLocked}
+						<Callout tone="info">{t('ln.shared.locked')}</Callout>
+					{:else if shared.platform_updated}
+						<Callout tone="warning">{t('ln.shared.platformUpdated')}</Callout>
+					{:else if shared.customized}
+						<Callout tone="info">{t('ln.shared.customized')}</Callout>
+					{:else}
+						<Callout tone="info">{t('ln.shared.fromPlatform')}</Callout>
+					{/if}
+				{:else if platform}
+					<Callout tone="info">{t('ln.platform.intro')}</Callout>
+				{/if}
+				{#if !canWrite}
 					<Callout>{t('ln.editor.readOnly')}</Callout>
 				{/if}
 				{#if optionsFailed}
@@ -396,6 +500,9 @@
 						iconColor={value.iconColor}
 						background={value.backgroundColor}
 						tileBackground={value.tileColored ? value.tileBackground : null}
+						backgroundImage={previewImage}
+						hideIcon={value.hideIcon}
+						hideName={value.hideName}
 						openInNewTab={value.openInNewTab}
 						allowFavorite={value.allowFavorite}
 						legacy={value.launchType === 'saml_idp_initiated'}
@@ -406,12 +513,21 @@
 				</Card>
 
 				<fieldset class="editor__form" disabled={readonly}>
+					{#if platform}
+						<LauncherSharingFields
+							bind:value={draft.value}
+							{loadTenants}
+							errors={shown}
+							disabled={readonly}
+						/>
+					{/if}
 					<LauncherAppFields
 						bind:value={draft.value}
 						clients={options.oidc_clients}
 						{samlProviders}
 						errors={shown}
 						disabled={readonly}
+						linkOnly={platform || shared !== null}
 					/>
 					<LauncherTileFields
 						bind:value={draft.value}
@@ -420,13 +536,15 @@
 						errors={shown}
 						disabled={readonly}
 					/>
-					<LauncherAudienceFields
-						bind:value={draft.value}
-						groups={options.groups}
-						{searchUsers}
-						errors={shown}
-						disabled={readonly}
-					/>
+					{#if !platform}
+						<LauncherAudienceFields
+							bind:value={draft.value}
+							groups={options.groups}
+							{searchUsers}
+							errors={shown}
+							disabled={readonly}
+						/>
+					{/if}
 				</fieldset>
 			{/if}
 		</Page>

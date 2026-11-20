@@ -263,6 +263,26 @@ export const POSTGRES_RESTORE_EXTENSION_CONTRACTS: readonly PostgresRestoreTable
   },
   {
     family: 'core',
+    datasetId: 'core.shared_launcher_states',
+    table: 'shared_launcher_states',
+    columns: [
+      'tenant_id',
+      'launcher_id',
+      'hidden',
+      'sort_order',
+      'copy_json',
+      'copy_from_version',
+      'created_at',
+      'updated_at',
+    ],
+    sqliteIntegerColumns: ['hidden', 'sort_order', 'copy_from_version', 'created_at', 'updated_at'],
+    postgresBooleanColumns: [],
+    postgresJsonbColumns: [],
+    primaryKey: ['tenant_id', 'launcher_id'],
+    tenantColumn: 'tenant_id',
+  },
+  {
+    family: 'core',
     datasetId: 'core.assurance_evidence',
     table: 'assurance_evidence',
     columns: [

@@ -142,6 +142,12 @@ const packageSpecs = [
         },
       },
       {
+        file: 'packages/ar-management/src/routes/platform-launchers.ts',
+        receiverPrefixes: {
+          router: '/api/admin/platform/launchers',
+        },
+      },
+      {
         file: 'packages/ar-management/src/routes/settings-v2/index.ts',
         receiverPrefixes: {
           settingsV2: '/api/admin',
