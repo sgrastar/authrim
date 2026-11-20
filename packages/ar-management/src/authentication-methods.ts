@@ -22,6 +22,7 @@
  */
 
 import { samlDrAll } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
+import { isFederationSourceServable } from '@authrim/ar-lib-core/utils/saml-federation-policy';
 import {
   readLiteModeAuthoritative,
   readLiteModeState,
@@ -68,6 +69,7 @@ import {
   readAuthenticationMethodsCacheRevision,
   resolveSamlEnabled,
   resolveAuthCorePersistenceAdapterFromEnv,
+  requireDedicatedAdminDatabaseAdapter,
   SELF_SERVICE_DEFAULTS,
   VALIDATION_LIMITS,
   validateAccountPagePath,
@@ -2188,6 +2190,69 @@ async function fetchSAMLLoginProviders(
   }
 }
 
+/**
+ * "Sign in through this federation": one entry per source that can serve IdPs to this tenant's
+ * users (active, verified, automatic for the IdP role, not expired). The entry starts the SAML
+ * federation hop, which leads to the institution picker or the source's Discovery Service. The
+ * sign-in and sign-up switches are filed under `saml-federation:<sourceId>`, on by default;
+ * re-authentication is not offered (it asks one known IdP for a new login).
+ */
+async function fetchSAMLFederationLoginSources(
+  env: Env,
+  tenantId: string
+): Promise<ExternalLoginProvider[]> {
+  try {
+    const admin = requireDedicatedAdminDatabaseAdapter(
+      env,
+      'authentication-methods-saml-federation'
+    );
+    const rows = await admin.query<{
+      id: string;
+      display_name: string;
+      protocol_payload_json: string | null;
+    }>(
+      `SELECT s.id, s.display_name, s.protocol_payload_json
+         FROM federation_trust_sources s
+         JOIN federation_metadata_documents d
+           ON d.tenant_id = s.tenant_id AND d.id = s.active_metadata_document_id
+          AND d.document_type = 'saml_aggregate_runtime_snapshot'
+          AND d.validation_state = 'valid'
+        WHERE s.tenant_id = ? AND s.lifecycle_state = 'active'
+        ORDER BY s.display_name ASC, s.id ASC
+        LIMIT ?`,
+      [tenantId, MAX_EXTERNAL_LOGIN_PROVIDERS]
+    );
+    return rows
+      .filter(
+        (row) =>
+          row.id &&
+          row.display_name &&
+          isFederationSourceServable(row.protocol_payload_json, 'saml_idp')
+      )
+      .map((row) => ({
+        id: `saml-federation:${truncateString(row.id)}`,
+        stableId: row.id,
+        name: truncateString(row.display_name),
+        type: 'saml',
+        startMode: 'saml_sp',
+        enabled: true,
+        loginEnabled: true,
+        signupEnabled: true,
+        reauthEnabled: false,
+        accountLinkEnabled: true,
+        autoLinkEmail: true,
+        startUrl: buildSAMLFederationStartUrl(row.id),
+      }));
+  } catch {
+    return [];
+  }
+}
+
+function buildSAMLFederationStartUrl(sourceId: string): string {
+  const params = new URLSearchParams({ federation: sourceId });
+  return `/saml/sp/login?${params.toString()}`;
+}
+
 function getSAMLProviderLogoUrl(configJson: string): string | undefined {
   try {
     const config = JSON.parse(configJson) as { logoUrl?: string };
@@ -3050,6 +3115,7 @@ export async function getAuthenticationMethodsHandler(c: Context<{ Bindings: Env
       samlAvailability,
       bridgeProviders,
       samlProviders,
+      federationProviders,
       configuredProviders,
       directoryPassword,
       humanVerification,
@@ -3061,6 +3127,9 @@ export async function getAuthenticationMethodsHandler(c: Context<{ Bindings: Env
         samlAvailabilityPromise.then(({ enabled }) =>
           enabled ? fetchSAMLLoginProviders(env, tenantId) : []
         ),
+        samlAvailabilityPromise.then(({ enabled }) =>
+          enabled ? fetchSAMLFederationLoginSources(env, tenantId) : []
+        ),
         fetchConfiguredExternalLoginProviders(env, tenantId),
         resolveDirectoryPasswordMethod(env, tenantId),
         resolveHumanVerificationMethod(env, tenantId),
@@ -3070,6 +3139,7 @@ export async function getAuthenticationMethodsHandler(c: Context<{ Bindings: Env
     const mergedProviders = mergeExternalLoginProviders([
       bridgeProviders,
       samlProviders,
+      federationProviders,
       configuredProviders,
     ]);
     const externalProviders = applyExternalProviderUsage(

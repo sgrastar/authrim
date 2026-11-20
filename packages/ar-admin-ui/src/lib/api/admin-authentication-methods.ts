@@ -348,6 +348,23 @@ function serializeExternalProviderUsages(
 	);
 }
 
+/**
+ * The switches of a federation source ("sign in through this federation", id
+ * `saml-federation:<sourceId>`) are saved here too, but this screen lists only providers: saving
+ * what it shows must not drop them (and turn a disabled federation back on).
+ */
+function federationUsagesToKeep(saved: unknown): Array<Record<string, unknown>> {
+	const items =
+		typeof saved === 'string' ? safeParseArray<unknown>(saved) : Array.isArray(saved) ? saved : [];
+	return items.filter(
+		(item): item is Record<string, unknown> =>
+			typeof item === 'object' &&
+			item !== null &&
+			typeof (item as { id?: unknown }).id === 'string' &&
+			(item as { id: string }).id.startsWith('saml-federation:')
+	);
+}
+
 function parseBoolean(value: unknown, fallback: boolean): boolean {
 	if (typeof value === 'boolean') return value;
 	if (typeof value === 'string') {
@@ -529,7 +546,10 @@ export const adminAuthenticationMethodsAPI = {
 						[HUMAN_VERIFICATION_LOGIN_ENABLED_KEY]: humanVerification.loginEnabled,
 						[HUMAN_VERIFICATION_SIGNUP_ENABLED_KEY]: humanVerification.signupEnabled,
 						[HUMAN_VERIFICATION_REAUTH_ENABLED_KEY]: humanVerification.reauthEnabled,
-						[EXTERNAL_PROVIDER_USAGE_KEY]: serializeExternalProviderUsages(externalProviderUsages),
+						[EXTERNAL_PROVIDER_USAGE_KEY]: JSON.stringify([
+							...(JSON.parse(serializeExternalProviderUsages(externalProviderUsages)) as unknown[]),
+							...federationUsagesToKeep(settings.values[EXTERNAL_PROVIDER_USAGE_KEY])
+						]),
 						[EXTERNAL_PROVIDERS_KEY]: serializeProviders(providers)
 					}
 				},

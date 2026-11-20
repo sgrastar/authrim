@@ -583,7 +583,16 @@ const translation = {
 	tenantDeleted_chooseButton: 'सहेजी गई पासकी हटाएँ',
 	tenantDeleted_chosenRemoved: 'हमने इस डिवाइस से उस पासकी को हटाने का अनुरोध किया है।',
 	tenantDeleted_manualHint:
-		'सुरक्षा कुंजी पर, या ऐसे ऐप में सहेजी गई पासकी जिस तक यह ब्राउज़र नहीं पहुँच सकता, उस कुंजी या ऐप की सेटिंग से हटानी होगी।'
+		'सुरक्षा कुंजी पर, या ऐसे ऐप में सहेजी गई पासकी जिस तक यह ब्राउज़र नहीं पहुँच सकता, उस कुंजी या ऐप की सेटिंग से हटानी होगी।',
+	federation_picker_pageTitle: 'Choose your institution',
+	federation_picker_title: 'Choose your institution',
+	federation_picker_subtitle: 'Search for the institution you belong to and sign in through it.',
+	federation_picker_searchLabel: 'Institution name',
+	federation_picker_searchPlaceholder: 'Start typing the institution name',
+	federation_picker_noResults: 'No institution matches your search.',
+	federation_picker_loadError: 'The list of institutions could not be loaded. Try again later.',
+	federation_picker_more: 'Showing the first results. Narrow the search to find others.',
+	federation_picker_back: 'Back to sign in'
 } satisfies Translation;
 
 export default translation;

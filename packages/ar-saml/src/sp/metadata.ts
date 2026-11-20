@@ -40,6 +40,7 @@ import {
   getSAMLLocalEntityIds,
   getSAMLPublicSettings,
 } from '../common/entity-id';
+import { hasExternalDiscoverySource } from '../admin/providers';
 
 /**
  * Handle SP metadata request
@@ -76,11 +77,16 @@ export async function handleSPMetadata(c: Context<{ Bindings: Env }>): Promise<R
   }
 
   // Build metadata XML
-  let metadataXml = buildSPMetadata({
+  // A source that sends users to a Discovery Service needs the SP to say where the DS answers.
+  const metadataXmlOptions = {
     entityId,
     issuerUrl,
     signingCertificates,
-  });
+    ...((await hasExternalDiscoverySource(env, tenantId))
+      ? { discoveryResponseLocation: `${issuerUrl}/saml/sp/login` }
+      : {}),
+  };
+  let metadataXml = buildSPMetadata(metadataXmlOptions);
 
   if (shouldSignSAMLMetadata(env)) {
     try {
@@ -112,6 +118,11 @@ export interface SPMetadataOptions {
   signingCertificates: SAMLMetadataSigningCertificate[];
   encryptionCertificates?: string[];
   validUntil?: string;
+  /**
+   * Publish an `idpdisc:DiscoveryResponse` at this address, so a SAML IdP Discovery Service can
+   * answer to it (for a federation source that sends users to a Discovery Service).
+   */
+  discoveryResponseLocation?: string;
 }
 
 /**
@@ -134,6 +145,7 @@ export function buildSPMetadata(options: SPMetadataOptions): string {
     md: SAML_NAMESPACES.MD,
     ds: SAML_NAMESPACES.DS,
     saml: SAML_NAMESPACES.SAML2,
+    ...(options.discoveryResponseLocation ? { idpdisc: SAML_NAMESPACES.IDPDISC } : {}),
   });
 
   // Create SPSSODescriptor
@@ -145,6 +157,23 @@ export function buildSPMetadata(options: SPMetadataOptions): string {
   );
   setAttribute(spSsoDescriptor, 'AuthnRequestsSigned', 'true');
   setAttribute(spSsoDescriptor, 'WantAssertionsSigned', 'true');
+
+  // Extensions come first in a role descriptor (before the KeyDescriptors).
+  if (options.discoveryResponseLocation) {
+    const extensions: unknown = createElement(doc, SAML_NAMESPACES.MD, 'Extensions', 'md');
+    const discoveryResponse: unknown = createElement(
+      doc,
+      SAML_NAMESPACES.IDPDISC,
+      'DiscoveryResponse',
+      'idpdisc'
+    );
+    setAttribute(discoveryResponse, 'Binding', SAML_NAMESPACES.IDPDISC);
+    setAttribute(discoveryResponse, 'Location', options.discoveryResponseLocation);
+    setAttribute(discoveryResponse, 'index', '1');
+    setAttribute(discoveryResponse, 'isDefault', 'true');
+    appendChild(extensions, discoveryResponse);
+    appendChild(spSsoDescriptor, extensions);
+  }
 
   for (const signingCertificate of signingCertificates) {
     appendChild(spSsoDescriptor, buildSigningKeyDescriptor(doc, signingCertificate));

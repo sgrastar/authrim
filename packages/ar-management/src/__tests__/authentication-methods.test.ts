@@ -30,11 +30,23 @@ const { mockLogger, mockResolveAuthCorePersistenceAdapterFromEnv } = vi.hoisted(
   };
 });
 
+// The admin database the federation sources are read from: unset, the real lookup runs (and
+// finds no binding); a test sets an implementation to serve source rows.
+const mockRequireAdminAdapter = vi.hoisted(() => vi.fn());
+
 // Mock getLogger from ar-lib-core
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   return {
     ...actual,
+    requireDedicatedAdminDatabaseAdapter: (
+      ...args: Parameters<typeof actual.requireDedicatedAdminDatabaseAdapter>
+    ) =>
+      mockRequireAdminAdapter.getMockImplementation()
+        ? (mockRequireAdminAdapter(...args) as ReturnType<
+            typeof actual.requireDedicatedAdminDatabaseAdapter
+          >)
+        : actual.requireDedicatedAdminDatabaseAdapter(...args),
     getLogger: () => mockLogger,
     resolveAuthCorePersistenceAdapterFromEnv: mockResolveAuthCorePersistenceAdapterFromEnv,
     readAuthenticationMethodsCacheRevision: async (
@@ -1495,6 +1507,155 @@ describe('Authentication Methods API', () => {
           startUrl: '/saml/sp/login?idp=saml-idp-1',
         })
       );
+    });
+
+    describe('federation sources as sign-in options', () => {
+      const automaticIdp = JSON.stringify({
+        runtimeResolution: {
+          mode: 'automatic',
+          roles: ['saml_idp'],
+          idpFieldMappingSetId: 'set-1',
+        },
+      });
+      const serve = (rows: Array<Record<string, unknown>>) => {
+        mockResolveAuthCorePersistenceAdapterFromEnv.mockResolvedValue({
+          query: vi.fn(async () => []),
+        });
+        const query = vi.fn(async () => rows);
+        mockRequireAdminAdapter.mockImplementation(() => ({ query }));
+        return query;
+      };
+      const providersOf = async (settingsKV?: KVNamespace) => {
+        const { app, mockEnv } = createTestApp({ settingsKV });
+        const res = await app.request(
+          '/api/auth/authentication-methods',
+          { method: 'GET' },
+          mockEnv
+        );
+        const body = await res.json<{
+          methods?: { external?: { providers?: Array<Record<string, unknown>> } };
+        }>();
+        return body.methods?.external?.providers ?? [];
+      };
+
+      afterEach(() => {
+        mockRequireAdminAdapter.mockReset();
+      });
+
+      it('offers "sign in through this federation" for a source that can serve IdPs', async () => {
+        const query = serve([
+          { id: 'fed_1', display_name: 'Research Federation', protocol_payload_json: automaticIdp },
+        ]);
+        const providers = await providersOf();
+        expect(providers).toContainEqual(
+          expect.objectContaining({
+            id: 'saml-federation:fed_1',
+            name: 'Research Federation',
+            type: 'saml',
+            startMode: 'saml_sp',
+            startUrl: '/saml/sp/login?federation=fed_1',
+            loginEnabled: true,
+            signupEnabled: true,
+            // A re-authentication asks one known IdP; a federation start has not chosen one.
+            reauthEnabled: false,
+          })
+        );
+        // The stable id used for matching the saved switches stays internal.
+        expect(providers.find((p) => p.id === 'saml-federation:fed_1')).not.toHaveProperty(
+          'stableId'
+        );
+        const [sql, params] = query.mock.calls[0] as unknown as [string, unknown[]];
+        expect(sql).toContain("lifecycle_state = 'active'");
+        // Only a verified runtime snapshot: what runtime resolution itself requires.
+        expect(sql).toContain("d.validation_state = 'valid'");
+        expect(sql).toContain("d.document_type = 'saml_aggregate_runtime_snapshot'");
+        expect(params[0]).toBe('default');
+      });
+
+      it('leaves out sources that cannot serve IdPs: inventory only, SP only, no mapping set, expired', async () => {
+        serve([
+          {
+            id: 'inv',
+            display_name: 'Inventory',
+            protocol_payload_json: JSON.stringify({
+              runtimeResolution: { mode: 'inventory_only', roles: [] },
+            }),
+          },
+          {
+            id: 'sp',
+            display_name: 'SP only',
+            protocol_payload_json: JSON.stringify({
+              runtimeResolution: {
+                mode: 'automatic',
+                roles: ['saml_sp'],
+                spFieldMappingSetId: 's',
+              },
+            }),
+          },
+          {
+            id: 'nomap',
+            display_name: 'No mapping',
+            protocol_payload_json: JSON.stringify({
+              runtimeResolution: { mode: 'automatic', roles: ['saml_idp'] },
+            }),
+          },
+          {
+            id: 'old',
+            display_name: 'Expired',
+            protocol_payload_json: JSON.stringify({
+              ...JSON.parse(automaticIdp),
+              polling: { acceptedValidUntil: '2001-01-01T00:00:00Z' },
+            }),
+          },
+        ]);
+        expect(
+          (await providersOf()).filter((p) => String(p.id).startsWith('saml-federation:'))
+        ).toEqual([]);
+      });
+
+      it('applies the saved sign-in and sign-up switches filed under the source', async () => {
+        serve([
+          { id: 'fed_1', display_name: 'Research Federation', protocol_payload_json: automaticIdp },
+        ]);
+        const kv = createMockKV({
+          'settings:tenant:default:authentication-methods': JSON.stringify({
+            'authentication-methods.external_provider_usage': JSON.stringify([
+              {
+                id: 'saml-federation:fed_1',
+                providerId: 'fed_1',
+                loginEnabled: false,
+                signupEnabled: true,
+                reauthEnabled: false,
+              },
+            ]),
+          }),
+        });
+        const entry = (await providersOf(kv)).find((p) => p.id === 'saml-federation:fed_1');
+        expect(entry).toMatchObject({ loginEnabled: false, signupEnabled: true });
+      });
+
+      it('offers no federation while SAML is off, and no entry when the read fails', async () => {
+        serve([
+          { id: 'fed_1', display_name: 'Research Federation', protocol_payload_json: automaticIdp },
+        ]);
+        const off = createMockKV({
+          'settings:tenant:default:federation': JSON.stringify({
+            'federation.saml_enabled': false,
+          }),
+        });
+        expect(
+          (await providersOf(off)).some((p) => String(p.id).startsWith('saml-federation:'))
+        ).toBe(false);
+
+        mockRequireAdminAdapter.mockImplementation(() => ({
+          query: vi.fn(async () => {
+            throw new Error('database unavailable');
+          }),
+        }));
+        expect((await providersOf()).some((p) => String(p.id).startsWith('saml-federation:'))).toBe(
+          false
+        );
+      });
     });
 
     describe('the tenant SAML switch', () => {

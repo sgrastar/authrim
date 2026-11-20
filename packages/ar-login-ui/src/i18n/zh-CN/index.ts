@@ -361,7 +361,16 @@ const zhCN = createTranslation({
 	tenantDeleted_chooseButton: '移除已保存的 Passkey',
 	tenantDeleted_chosenRemoved: '我们已请求此设备移除该 Passkey。',
 	tenantDeleted_manualHint:
-		'保存在安全密钥中，或保存在此浏览器无法访问的应用中的 Passkey，需要在该密钥或应用的设置中移除。'
+		'保存在安全密钥中，或保存在此浏览器无法访问的应用中的 Passkey，需要在该密钥或应用的设置中移除。',
+	federation_picker_pageTitle: 'Choose your institution',
+	federation_picker_title: 'Choose your institution',
+	federation_picker_subtitle: 'Search for the institution you belong to and sign in through it.',
+	federation_picker_searchLabel: 'Institution name',
+	federation_picker_searchPlaceholder: 'Start typing the institution name',
+	federation_picker_noResults: 'No institution matches your search.',
+	federation_picker_loadError: 'The list of institutions could not be loaded. Try again later.',
+	federation_picker_more: 'Showing the first results. Narrow the search to find others.',
+	federation_picker_back: 'Back to sign in'
 });
 
 export default zhCN;

@@ -559,7 +559,16 @@ const ar = createTranslation({
 	tenantDeleted_chooseButton: 'إزالة مفتاح مرور محفوظ',
 	tenantDeleted_chosenRemoved: 'طلبنا من هذا الجهاز إزالة مفتاح المرور هذا.',
 	tenantDeleted_manualHint:
-		'مفاتيح المرور المحفوظة على مفتاح أمان، أو في تطبيق لا يستطيع هذا المتصفح الوصول إليه، يجب إزالتها من إعدادات ذلك المفتاح أو التطبيق.'
+		'مفاتيح المرور المحفوظة على مفتاح أمان، أو في تطبيق لا يستطيع هذا المتصفح الوصول إليه، يجب إزالتها من إعدادات ذلك المفتاح أو التطبيق.',
+	federation_picker_pageTitle: 'Choose your institution',
+	federation_picker_title: 'Choose your institution',
+	federation_picker_subtitle: 'Search for the institution you belong to and sign in through it.',
+	federation_picker_searchLabel: 'Institution name',
+	federation_picker_searchPlaceholder: 'Start typing the institution name',
+	federation_picker_noResults: 'No institution matches your search.',
+	federation_picker_loadError: 'The list of institutions could not be loaded. Try again later.',
+	federation_picker_more: 'Showing the first results. Narrow the search to find others.',
+	federation_picker_back: 'Back to sign in'
 });
 
 export default ar;

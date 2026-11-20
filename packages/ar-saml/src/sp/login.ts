@@ -49,12 +49,21 @@ import {
 } from '../common/xml-utils';
 import { signRedirectBinding } from '../common/signature';
 import { getSAMLSigningMaterial, getSAMLSigningPolicy } from '../common/saml-signing-keys';
-import { getIdPConfig, listIdPConfigs } from '../admin/providers';
+import {
+  getFederationSourceForLogin,
+  getIdPConfig,
+  listIdPConfigs,
+  resolveFederationIdPForLogin,
+} from '../admin/providers';
 import { samlUsageUnavailableResponse } from './usage-gate';
 import { buildSAMLPostBindingResponse } from '../common/post-binding-form';
 import { getSAMLLocalEntityIds } from '../common/entity-id';
 import { assertSAMLRelayStateSize } from '../common/relay-state';
-import { buildSAMLRequestBindingCookie } from './request-browser-binding';
+import {
+  buildSAMLRequestBindingClearCookie,
+  buildSAMLRequestBindingCookie,
+  hasSAMLRequestBrowserBinding,
+} from './request-browser-binding';
 
 function remoteIp(c: Context<{ Bindings: Env }>): string | undefined {
   return (
@@ -105,26 +114,167 @@ async function verifySPLoginHumanVerification(
 /** How much longer than the request itself an invitation reservation lasts (the ACS round trip). */
 const SAML_INVITATION_RESERVATION_MARGIN_SECONDS = 60;
 
+/**
+ * What a federation start hands on to the institution picker (our own Login UI): the screen's own
+ * parameters, bounded. The human-verification token among them is checked, and spent, by the
+ * start that follows the pick.
+ */
+const FEDERATION_PICKER_PARAMS = [
+  'return_url',
+  'purpose',
+  'invite_token',
+  'runtime_interaction_id',
+  'authorization_challenge_id',
+  'human_verification_response',
+  'cf_turnstile_response',
+] as const;
+/** What a start that goes out to an external Discovery Service keeps for its return (server-side). */
+const FEDERATION_START_PARAMS = [
+  'return_url',
+  'purpose',
+  'invite_token',
+  'runtime_interaction_id',
+  'authorization_challenge_id',
+] as const;
+const FEDERATION_SOURCE_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/u;
+const FEDERATION_STATE_ID_PATTERN = /^_[0-9a-f]{32}$/u;
+const FEDERATION_ENTITY_ID_MAX_LENGTH = 1024;
+const FEDERATION_PARAM_MAX_LENGTH = 2048;
+
+function federationParams(
+  c: Context<{ Bindings: Env }>,
+  names: readonly string[]
+): Record<string, string> {
+  const params: Record<string, string> = {};
+  for (const name of names) {
+    const value = c.req.query(name);
+    if (value) params[name] = value.slice(0, FEDERATION_PARAM_MAX_LENGTH);
+  }
+  return params;
+}
+
+/** The store instance a Discovery Service start waits in: one per source, apart from real IdPs. */
+function federationStartStoreKey(sourceId: string): string {
+  return `urn:authrim:federation-start:${sourceId}`;
+}
+
+function newFederationStateId(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  return `_${Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
+}
+
+async function consumeFederationStart(
+  env: Env,
+  tenantId: string,
+  sourceId: string,
+  stateId: string
+): Promise<Record<string, string> | null> {
+  try {
+    const store = env.SAML_REQUEST_STORE.get(
+      env.SAML_REQUEST_STORE.idFromName(
+        buildSAMLRequestStoreInstanceName(tenantId, 'sp', federationStartStoreKey(sourceId))
+      )
+    );
+    const response = await store.fetch(`https://saml-request-store/consume/${stateId}`, {
+      method: 'POST',
+    });
+    if (!response.ok) return null;
+    const stored = await response.json<{ context?: SAMLRequestContext }>();
+    return stored.context?.federationStart?.params ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A start that came back from a Discovery Service spends its state (`fs`) and is done with the
+ * cookie that bound it to this browser, whatever the start then answers. The cookie goes on the
+ * response itself: setting it on the context would replace the cookies the response sets (the
+ * AuthnRequest's) when the framework merges the two.
+ */
 export async function handleSPLogin(c: Context<{ Bindings: Env }>): Promise<Response> {
+  const response = await startSPLogin(c);
+  const stateId = c.req.query('fs');
+  if (stateId === undefined || !FEDERATION_STATE_ID_PATTERN.test(stateId)) return response;
+  const clear = buildSAMLRequestBindingClearCookie(stateId);
+  try {
+    response.headers.append('Set-Cookie', clear);
+    return response;
+  } catch {
+    // Headers that cannot be changed (a response taken from a fetch): answer with a copy.
+    const copy = new Response(response.body, response);
+    copy.headers.append('Set-Cookie', clear);
+    return copy;
+  }
+}
+
+async function startSPLogin(c: Context<{ Bindings: Env }>): Promise<Response> {
   const env = c.env;
   const log = getLogger(c).module('SAML-SP');
 
   try {
     // Get IdP ID from query parameter
-    const idpId = c.req.query('idp');
+    const requestedIdpId = c.req.query('idp');
+    // A start through a federation source: `federation` names the source, `entityID` the IdP the
+    // user picked from its inventory. Without `entityID` this is only the hop to the picker (or
+    // to the source's Discovery Service), which starts nothing. `fs` is the state a start that
+    // went out to a Discovery Service waits in; it comes back with the Discovery Service's answer.
+    const federationId = c.req.query('federation');
+    const federationEntityId = c.req.query('entityID');
+    const federationStateId = c.req.query('fs');
+    if (
+      (federationId !== undefined && requestedIdpId !== undefined) ||
+      (federationId !== undefined && !FEDERATION_SOURCE_ID_PATTERN.test(federationId)) ||
+      (federationId === undefined && federationEntityId !== undefined) ||
+      (federationEntityId !== undefined &&
+        (!federationEntityId || federationEntityId.length > FEDERATION_ENTITY_ID_MAX_LENGTH)) ||
+      (federationStateId !== undefined &&
+        (federationEntityId === undefined || !FEDERATION_STATE_ID_PATTERN.test(federationStateId)))
+    ) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: { field: federationId === undefined ? 'entityID' : 'federation' },
+      });
+    }
+    const federationHop = federationId !== undefined && federationEntityId === undefined;
     const tenantId = resolveSAMLTenantIdFromContext(c);
     // A tenant in lite mode starts SAML sign-in only from the lite Login UI: by the one-time start
     // grant ar-auth made for this browser's transaction after the page's proof of work. It is
     // consumed before anything else; the start then takes nothing from its query.
-    const lite = await consumeLiteSamlStart(c, tenantId, idpId);
+    const lite = await consumeLiteSamlStart(c, tenantId, requestedIdpId);
     if (lite && !lite.ok) return lite.response;
-    const query = (name: string): string | undefined => (lite ? undefined : c.req.query(name));
+    // The start a Discovery Service returned the user to: what the user's screen sent was kept
+    // server-side (nothing of it, not the human-verification token, went to the Discovery
+    // Service), verified when it was kept, and is used up here, from the browser it was kept for.
+    let federationStart: Record<string, string> | null = null;
+    if (federationStateId && federationId) {
+      if (!hasSAMLRequestBrowserBinding(c.req.header('Cookie'), federationStateId)) {
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+          variables: { field: 'fs' },
+        });
+      }
+      federationStart = await consumeFederationStart(
+        env,
+        tenantId,
+        federationId,
+        federationStateId
+      );
+      if (!federationStart) {
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+          variables: { field: 'fs' },
+        });
+      }
+    }
+    const query = (name: string): string | undefined =>
+      lite ? undefined : federationStart ? federationStart[name] : c.req.query(name);
     // What the sign-in is for: a lite start's is its transaction's (server-bound), any other's
     // the one its screen asked for (its human verification token was made for that screen). A
     // re-authentication keeps its own switch, whatever it was asked for.
     const requestedPurpose = samlStartPurpose(lite ? lite.txn.bound.purpose : query('purpose'));
-    // A lite start's proof of work was verified (and spent) when its grant was made.
-    if (!lite) {
+    // Human verification is checked once, by the step that starts something: an ordinary start
+    // here; a federation start once the IdP is chosen (below); a start out to a Discovery Service
+    // at that hop. A lite start's proof of work was verified (and spent) when its grant was made,
+    // and a start a Discovery Service returned was verified when it was kept.
+    if (!lite && federationId === undefined) {
       const turnstileError = await verifySPLoginHumanVerification(c, tenantId, requestedPurpose);
       if (turnstileError) return turnstileError;
     }
@@ -138,7 +288,78 @@ export async function handleSPLogin(c: Context<{ Bindings: Env }>): Promise<Resp
       ? lite.returnUrl
       : (resolveSafeReturnUrl(env, tenantId, requestedReturnUrl) ?? defaultReturnUrl);
 
-    if (!idpId) {
+    // The federation hop: send the user to pick an IdP of the source, and nothing else happens.
+    if (federationHop && federationId) {
+      const source = await getFederationSourceForLogin(env, tenantId, federationId);
+      if (!source) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+      if (source.idpSelection.mode === 'external_ds' && source.idpSelection.discoveryServiceUrl) {
+        // SAML IdP Discovery Protocol: the Discovery Service answers by redirecting back with the
+        // chosen entityID in `entityID`. Its address is the stored one, never the request's.
+        // The user's screen parameters and the human-verification token must not reach an
+        // external party: the token is checked and spent here, the rest is kept server-side
+        // under an opaque id, and the id comes back only for this browser (a cookie).
+        const turnstileError = await verifySPLoginHumanVerification(c, tenantId, requestedPurpose);
+        if (turnstileError) return turnstileError;
+        const stateId = newFederationStateId();
+        const ttlSeconds = await resolveSamlRequestTtlSeconds(env, tenantId);
+        await storeAuthnRequest(
+          env,
+          tenantId,
+          stateId,
+          spEntityId,
+          federationStartStoreKey(federationId),
+          '',
+          ttlSeconds,
+          { federationStart: { params: federationParams(c, FEDERATION_START_PARAMS) } }
+        );
+        const returnTarget = new URL('/saml/sp/login', issuerUrl);
+        returnTarget.searchParams.set('federation', federationId);
+        returnTarget.searchParams.set('fs', stateId);
+        const discovery = new URL(source.idpSelection.discoveryServiceUrl);
+        discovery.searchParams.set('entityID', spEntityId);
+        discovery.searchParams.set('return', returnTarget.toString());
+        discovery.searchParams.set('returnIDParam', 'entityID');
+        if (c.req.query('is_passive') === '1') discovery.searchParams.set('isPassive', 'true');
+        const response = c.redirect(discovery.toString(), 302);
+        response.headers.append('Set-Cookie', buildSAMLRequestBindingCookie(stateId, ttlSeconds));
+        return response;
+      }
+      // On the issuer's own host (which serves the Login UI), like the start that follows the
+      // pick: the browser-bound cookies and the tenant are those of that host.
+      const picker = new URL(`/login/federation/${encodeURIComponent(federationId)}`, issuerUrl);
+      for (const [name, value] of Object.entries(federationParams(c, FEDERATION_PICKER_PARAMS))) {
+        picker.searchParams.set(name, value);
+      }
+      return c.redirect(picker.toString(), 302);
+    }
+
+    // A federation start with an IdP chosen: only an IdP of this source's inventory. An approved
+    // explicit provider with the same entityID takes the start over, here (an ordinary start of
+    // that provider, whose switches and re-authentication rules then apply).
+    let federationLogin: { sourceId: string; config: SAMLIdPConfig } | undefined;
+    let explicitProviderId: string | undefined;
+    if (federationId && federationEntityId) {
+      const source = await getFederationSourceForLogin(env, tenantId, federationId);
+      if (!source) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+      const resolved = await resolveFederationIdPForLogin(
+        env,
+        tenantId,
+        federationId,
+        federationEntityId
+      );
+      if (!resolved) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+      if (resolved.kind === 'explicit') explicitProviderId = resolved.providerId;
+      else federationLogin = { sourceId: federationId, config: resolved.config };
+      // The IdP is chosen: this is the start, so human verification is checked here (once; a
+      // start that came back from a Discovery Service was verified when it went out).
+      if (!lite && !federationStart) {
+        const turnstileError = await verifySPLoginHumanVerification(c, tenantId, requestedPurpose);
+        if (turnstileError) return turnstileError;
+      }
+    }
+    const idpId = requestedIdpId ?? explicitProviderId;
+
+    if (!idpId && !federationLogin) {
       // Return list of available IdPs if no IdP specified
       const idps = await listIdPConfigs(env, tenantId);
       return c.html(
@@ -155,7 +376,11 @@ export async function handleSPLogin(c: Context<{ Bindings: Env }>): Promise<Resp
     }
 
     // Get IdP configuration
-    const idpConfig = await getIdPConfig(env, tenantId, idpId);
+    const idpConfig = federationLogin
+      ? federationLogin.config
+      : idpId
+        ? await getIdPConfig(env, tenantId, idpId)
+        : null;
     if (!idpConfig) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
@@ -190,6 +415,9 @@ export async function handleSPLogin(c: Context<{ Bindings: Env }>): Promise<Resp
             403
           );
         }
+        // A re-authentication asks one known IdP for a new login; a federation start has not
+        // chosen one in advance, so it takes no part in it.
+        if (!idpId) return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);
         const providerIds = [`saml:${idpId}`, idpId];
         const policy = await readExternalProviderReauthPolicy(env, tenantId, {
           providerId: idpId,
@@ -213,9 +441,14 @@ export async function handleSPLogin(c: Context<{ Bindings: Env }>): Promise<Resp
     if (!reauthentication) {
       let usageEnabled: boolean;
       try {
+        // A federation start files its switches under the source (the IdP has no record of its
+        // own); defaults are on, as for any IdP without saved switches.
+        const usageId = federationLogin ? federationLogin.sourceId : idpId;
         const policy = await readExternalProviderUsagePolicy(env, tenantId, {
-          providerId: idpId,
-          ids: [`saml:${idpId}`, idpId],
+          providerId: usageId ?? '',
+          ids: federationLogin
+            ? [`saml-federation:${federationLogin.sourceId}`, federationLogin.sourceId]
+            : [`saml:${idpId}`, idpId ?? ''],
         });
         usageEnabled = requestedPurpose === 'signup' ? policy.signupEnabled : policy.loginEnabled;
       } catch (error) {
@@ -323,12 +556,18 @@ export async function handleSPLogin(c: Context<{ Bindings: Env }>): Promise<Resp
       }
     }
     const requestContext: SAMLRequestContext | undefined =
-      reauthentication || invitation || attemptInteractionId || authorizationChallengeId || lite
+      reauthentication ||
+      invitation ||
+      attemptInteractionId ||
+      authorizationChallengeId ||
+      federationLogin ||
+      lite
         ? {
             ...(reauthentication ? { spReauthentication: reauthentication } : {}),
             ...(invitation ? { invitation } : {}),
             ...(attemptInteractionId ? { attemptInteractionId } : {}),
             ...(authorizationChallengeId ? { flowChallengeId: authorizationChallengeId } : {}),
+            ...(federationLogin ? { federationSourceId: federationLogin.sourceId } : {}),
             ...(lite ? { liteReturn: lite.returnUrl, liteClientId: lite.start.clientId } : {}),
           }
         : undefined;

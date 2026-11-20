@@ -35,6 +35,7 @@ import type {
   SAMLMetadataRefreshPolicy,
   SAMLAttributePresetId,
   SAMLFederationTrustProfile,
+  SAMLFederationIdPSelection,
   SAMLFederationRuntimeResolutionPolicy,
   SAMLMetadataBatchCreateResult,
   SAMLMetadataBatchStatusResponse,
@@ -117,7 +118,9 @@ import {
 } from './aggregate-metadata';
 import {
   evaluateFederationRuntimePolicy,
+  isFederationSourceServable,
   isSAMLAttributePresetId,
+  parseFederationIdPSelection,
   parseFederationRuntimeResolutionPolicy,
 } from '@authrim/ar-lib-core/utils/saml-federation-policy';
 import {
@@ -5790,6 +5793,259 @@ export async function getIdPConfigByEntityId(
   }
 
   return resolveFederationRuntimeConfig(env, tenantId, entityId, 'saml_idp');
+}
+
+/** A federation source the login screen may offer as "sign in through this federation". */
+export interface FederationLoginSource {
+  id: string;
+  displayName: string;
+  idpSelection: SAMLFederationIdPSelection;
+  policy: SAMLFederationRuntimeResolutionPolicy;
+}
+
+/**
+ * The source, when it can serve IdPs to this tenant's users right now: active, with a verified
+ * active document, in automatic mode for the IdP role with its mapping set, and not expired.
+ * Null for anything else (and for any read failure: nothing is offered rather than a guess).
+ */
+export async function getFederationSourceForLogin(
+  env: Env,
+  tenantId: string,
+  sourceId: string
+): Promise<FederationLoginSource | null> {
+  try {
+    const admin = requireDedicatedAdminDatabaseAdapter(env, 'saml-federation-login');
+    const row = await admin.queryOne<{
+      display_name: string;
+      protocol_payload_json: string | null;
+    }>(
+      `SELECT s.display_name, s.protocol_payload_json
+         FROM federation_trust_sources s
+         JOIN federation_metadata_documents d
+           ON d.tenant_id = s.tenant_id AND d.id = s.active_metadata_document_id
+          AND d.document_type = 'saml_aggregate_runtime_snapshot'
+          AND d.validation_state = 'valid'
+        WHERE s.tenant_id = ? AND s.id = ? AND s.lifecycle_state = 'active'`,
+      [tenantId, sourceId]
+    );
+    if (!row || !isFederationSourceServable(row.protocol_payload_json, 'saml_idp')) return null;
+    const policy = parseFederationRuntimeResolutionPolicy(row.protocol_payload_json);
+    if (!policy) return null;
+    return {
+      id: sourceId,
+      displayName: row.display_name,
+      idpSelection: parseFederationIdPSelection(row.protocol_payload_json),
+      policy,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Whether any active source of the tenant sends users to an external Discovery Service. */
+export async function hasExternalDiscoverySource(env: Env, tenantId: string): Promise<boolean> {
+  try {
+    const admin = requireDedicatedAdminDatabaseAdapter(env, 'saml-federation-login');
+    const rows = await admin.query<{ protocol_payload_json: string | null }>(
+      `SELECT s.protocol_payload_json
+         FROM federation_trust_sources s
+         JOIN federation_metadata_documents d
+           ON d.tenant_id = s.tenant_id AND d.id = s.active_metadata_document_id
+          AND d.document_type = 'saml_aggregate_runtime_snapshot'
+          AND d.validation_state = 'valid'
+        WHERE s.tenant_id = ? AND s.lifecycle_state = 'active'
+        LIMIT 50`,
+      [tenantId]
+    );
+    return rows.some(
+      (row) =>
+        isFederationSourceServable(row.protocol_payload_json, 'saml_idp') &&
+        parseFederationIdPSelection(row.protocol_payload_json).mode === 'external_ds'
+    );
+  } catch {
+    return false;
+  }
+}
+
+export type FederationLoginResolution =
+  | { kind: 'explicit'; providerId: string }
+  | { kind: 'federation'; config: SAMLIdPConfig };
+
+/**
+ * The IdP a user picked from one source's inventory. An approved explicit provider with the same
+ * entityID always wins (the start is then the ordinary one, by provider id); otherwise the
+ * entity must be in this source's current verified snapshot and allowed by its policy (the
+ * exception list included). Null for anything else, including an ambiguous explicit match.
+ */
+export async function resolveFederationIdPForLogin(
+  env: Env,
+  tenantId: string,
+  sourceId: string,
+  entityId: string
+): Promise<FederationLoginResolution | null> {
+  const coreAdapter = await resolveSAMLProvidersCoreAdapter(env, tenantId);
+  const explicitRows = await coreAdapter.query<{ id: string; config_json: string }>(
+    `SELECT id, config_json FROM identity_providers
+      WHERE tenant_id = ? AND provider_type = 'saml_idp'`,
+    [tenantId]
+  );
+  const explicit = explicitRows.filter((row) => {
+    const config = JSON.parse(row.config_json) as SAMLIdPConfig;
+    return !isUnapprovedSAMLProvider(config) && config.entityId === entityId;
+  });
+  if (explicit.length > 1) return null;
+  if (explicit.length === 1) return { kind: 'explicit', providerId: explicit[0].id };
+
+  let admin;
+  try {
+    admin = requireDedicatedAdminDatabaseAdapter(env, 'saml-federation-login');
+  } catch {
+    return null;
+  }
+  const rows = await loadFederationRuntimeEntityRows(
+    admin,
+    tenantId,
+    entityId,
+    'saml_idp',
+    sourceId
+  );
+  const row = rows[0];
+  if (!row) return null;
+  const policy = parseFederationRuntimeResolutionPolicy(row.protocol_payload_json);
+  if (
+    !policy ||
+    policy.mode !== 'automatic' ||
+    !policy.roles.includes('saml_idp') ||
+    !policy.idpFieldMappingSetId ||
+    isFederationRuntimeRowExpired(row)
+  ) {
+    return null;
+  }
+  const categories = [...new Set(parseStringArrayJson(row.entity_categories_json))];
+  const evaluation = evaluateFederationRuntimePolicy(
+    policy,
+    categories,
+    row.registration_authority,
+    entityId
+  );
+  if (!evaluation.allowed) return null;
+  try {
+    const config = await buildFederationRuntimeConfig(
+      { row, policy, attributePresetId: evaluation.attributePresetId },
+      entityId,
+      'saml_idp'
+    );
+    if (!config) return null;
+    // The ACS resolves the IdP by entityID across all sources (highest priority wins, a tie is
+    // refused) and checks the answer against the source the user chose. When another source
+    // would be the one resolved, the sign-in could not complete: refuse it here, at the start.
+    const effective = await getIdPConfigByEntityId(env, tenantId, entityId);
+    if (effective?.aggregateImport?.federationTrustProfileId !== sourceId) return null;
+    return { kind: 'federation', config: config as SAMLIdPConfig };
+  } catch {
+    return null;
+  }
+}
+
+export interface FederationIdPSearchItem {
+  entityId: string;
+  displayName: string;
+  logoUrl: string | null;
+}
+
+/**
+ * What the login screen's institution picker shows: IdPs of the source's active document that its
+ * policy lets take part, by name. Only public facts (name, entityID, an https logo) leave here.
+ */
+/** Rows read per step, and the most one search reads, while looking for allowed IdPs. */
+const FEDERATION_SEARCH_BATCH = 150;
+const FEDERATION_SEARCH_MAX_SCANNED = 1500;
+
+export async function searchFederationIdPs(
+  env: Env,
+  tenantId: string,
+  source: FederationLoginSource,
+  query: { q?: string; limit: number }
+): Promise<{ items: FederationIdPSearchItem[]; truncated: boolean } | null> {
+  try {
+    const admin = requireDedicatedAdminDatabaseAdapter(env, 'saml-federation-login');
+    const q = (query.q ?? '').trim().slice(0, 128);
+    const like = `%${q.replace(/[\\%_]/gu, (match) => `\\${match}`)}%`;
+    const items: FederationIdPSearchItem[] = [];
+    let truncated = false;
+    // The policy (exceptions, registration authorities, categories) is applied after the read, so
+    // a page of rows may hold few allowed IdPs: keep reading, in name order, until one more than
+    // the limit is found (that is how a longer list is told from a complete one), the inventory
+    // ends, or the bound on the work is reached (then the list is marked as cut).
+    for (
+      let offset = 0;
+      offset < FEDERATION_SEARCH_MAX_SCANNED;
+      offset += FEDERATION_SEARCH_BATCH
+    ) {
+      const rows = await admin.query<{
+        entity_id: string;
+        display_name: string | null;
+        summary_json: string | null;
+      }>(
+        `SELECT e.entity_id, e.display_name, e.summary_json
+           FROM federation_metadata_entity_summaries e
+           JOIN federation_trust_sources s
+             ON s.tenant_id = e.tenant_id AND s.active_metadata_document_id = e.metadata_document_id
+           JOIN federation_metadata_documents d
+             ON d.tenant_id = s.tenant_id AND d.id = s.active_metadata_document_id
+            AND d.document_type = 'saml_aggregate_runtime_snapshot'
+            AND d.validation_state = 'valid'
+          WHERE e.tenant_id = ? AND s.id = ? AND e.entity_role IN ('saml_idp', 'ambiguous')
+            ${q ? `AND (e.display_name LIKE ? ESCAPE '\\' OR e.entity_id LIKE ? ESCAPE '\\')` : ''}
+          ORDER BY COALESCE(e.display_name, e.entity_id) ASC, e.entity_id ASC
+          LIMIT ? OFFSET ?`,
+        q
+          ? [tenantId, source.id, like, like, FEDERATION_SEARCH_BATCH, offset]
+          : [tenantId, source.id, FEDERATION_SEARCH_BATCH, offset]
+      );
+      for (const row of rows) {
+        let summary: Record<string, unknown> = {};
+        try {
+          summary = row.summary_json
+            ? (JSON.parse(row.summary_json) as Record<string, unknown>)
+            : {};
+        } catch {
+          summary = {};
+        }
+        const categories = Array.isArray(summary.entityCategories)
+          ? summary.entityCategories.filter((item): item is string => typeof item === 'string')
+          : [];
+        const registrationAuthority =
+          typeof summary.registrationAuthority === 'string' ? summary.registrationAuthority : null;
+        if (
+          !evaluateFederationRuntimePolicy(
+            source.policy,
+            categories,
+            registrationAuthority,
+            row.entity_id
+          ).allowed
+        ) {
+          continue;
+        }
+        if (items.length >= query.limit) {
+          return { items, truncated: true };
+        }
+        items.push({
+          entityId: row.entity_id,
+          displayName: row.display_name ?? row.entity_id,
+          logoUrl:
+            typeof summary.logoUrl === 'string' && /^https:\/\//iu.test(summary.logoUrl)
+              ? summary.logoUrl
+              : null,
+        });
+      }
+      if (rows.length < FEDERATION_SEARCH_BATCH) return { items, truncated };
+      truncated = offset + FEDERATION_SEARCH_BATCH >= FEDERATION_SEARCH_MAX_SCANNED;
+    }
+    return { items, truncated };
+  } catch {
+    return null;
+  }
 }
 
 /**

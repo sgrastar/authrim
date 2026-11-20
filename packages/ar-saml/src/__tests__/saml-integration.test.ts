@@ -96,6 +96,8 @@ const mockGetIdPConfigByEntityId = vi.fn();
 const mockGetIdPUsageKeyByEntityId = vi.fn(async (..._args: unknown[]) => null as unknown);
 vi.mock('../admin/providers', () => ({
   getIdPUsageKeyByEntityId: (...args: unknown[]) => mockGetIdPUsageKeyByEntityId(...args),
+  // SP metadata asks whether a federation source uses an external Discovery Service.
+  hasExternalDiscoverySource: async () => false,
   getIdPConfigByEntityId: async (...args: any[]) => {
     const config = await mockGetIdPConfigByEntityId(...args);
     return config

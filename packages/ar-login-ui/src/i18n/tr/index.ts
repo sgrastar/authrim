@@ -585,7 +585,16 @@ const translation = {
 	tenantDeleted_chooseButton: 'Kayıtlı bir geçiş anahtarını kaldır',
 	tenantDeleted_chosenRemoved: 'Bu cihazdan o geçiş anahtarını kaldırmasını istedik.',
 	tenantDeleted_manualHint:
-		'Bir güvenlik anahtarında veya bu tarayıcının erişemediği bir uygulamada kayıtlı geçiş anahtarları, o anahtarın veya uygulamanın ayarlarından kaldırılmalıdır.'
+		'Bir güvenlik anahtarında veya bu tarayıcının erişemediği bir uygulamada kayıtlı geçiş anahtarları, o anahtarın veya uygulamanın ayarlarından kaldırılmalıdır.',
+	federation_picker_pageTitle: 'Choose your institution',
+	federation_picker_title: 'Choose your institution',
+	federation_picker_subtitle: 'Search for the institution you belong to and sign in through it.',
+	federation_picker_searchLabel: 'Institution name',
+	federation_picker_searchPlaceholder: 'Start typing the institution name',
+	federation_picker_noResults: 'No institution matches your search.',
+	federation_picker_loadError: 'The list of institutions could not be loaded. Try again later.',
+	federation_picker_more: 'Showing the first results. Narrow the search to find others.',
+	federation_picker_back: 'Back to sign in'
 } satisfies Translation;
 
 export default translation;

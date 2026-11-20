@@ -45,11 +45,14 @@ import {
  */
 
 import { Hono } from 'hono';
+import type { Context, Next } from 'hono';
 import { cors } from 'hono/cors';
 import type { Env } from '@authrim/ar-lib-core';
 import {
   adminAuthMiddleware,
   adminWriteRateLimitMiddleware,
+  rateLimitMiddleware,
+  getRateLimitProfileAsync,
   requestContextMiddleware,
   pluginContextMiddleware,
   diagnosticLoggingMiddleware,
@@ -67,6 +70,7 @@ import { handleIdPInitiated } from './idp/idp-initiated';
 import { handleIdPSLO } from './idp/slo';
 import { handleSPMetadata } from './sp/metadata';
 import { handleSPLogin } from './sp/login';
+import { handleFederationIdPSearch } from './sp/federation-search';
 import { handleSPACS } from './sp/acs';
 import { handleSPSLO } from './sp/slo';
 import {
@@ -212,6 +216,22 @@ app.get('/saml/sp/metadata', handleSPMetadata);
  * Starts SP-initiated SSO flow
  */
 app.get('/saml/sp/login', handleSPLogin);
+
+/**
+ * Institution picker search for a federation source (public, rate limited like the other
+ * public reads). The Login UI calls it while the user types.
+ */
+const federationSearchRateLimit = async (c: Context<{ Bindings: Env }>, next: Next) => {
+  const profile = await getRateLimitProfileAsync(c.env, 'publicRead', c.executionCtx);
+  return rateLimitMiddleware({
+    ...profile,
+    endpoints: ['/saml/sp/federation'],
+    endpointClass: 'publicRead',
+    nonBlockingRead: true,
+  })(c, next);
+};
+app.use('/saml/sp/federation/*', federationSearchRateLimit);
+app.get('/saml/sp/federation/:sourceId/idps', handleFederationIdPSearch);
 
 /**
  * Assertion Consumer Service (ACS)

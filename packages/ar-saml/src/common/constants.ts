@@ -11,6 +11,8 @@ export const SAML_NAMESPACES = {
   MD: 'urn:oasis:names:tc:SAML:2.0:metadata',
   /** Shibboleth metadata extensions (shibmd:Scope). */
   SHIBMD: 'urn:mace:shibboleth:metadata:1.0',
+  /** SAML V2.0 Identity Provider Discovery Service Protocol (idpdisc:DiscoveryResponse). */
+  IDPDISC: 'urn:oasis:names:tc:SAML:profiles:SSO:idp-discovery-protocol',
   DS: 'http://www.w3.org/2000/09/xmldsig#',
   XENC: 'http://www.w3.org/2001/04/xmlenc#',
   XENC11: 'http://www.w3.org/2009/xmlenc11#',

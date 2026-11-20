@@ -414,7 +414,16 @@ const de = createTranslation({
 	tenantDeleted_chooseButton: 'Gespeicherten Passkey entfernen',
 	tenantDeleted_chosenRemoved: 'Wir haben dieses Gerät gebeten, diesen Passkey zu entfernen.',
 	tenantDeleted_manualHint:
-		'Passkeys auf einem Sicherheitsschlüssel oder in einer App, die dieser Browser nicht erreicht, müssen in den Einstellungen des Schlüssels oder der App entfernt werden.'
+		'Passkeys auf einem Sicherheitsschlüssel oder in einer App, die dieser Browser nicht erreicht, müssen in den Einstellungen des Schlüssels oder der App entfernt werden.',
+	federation_picker_pageTitle: 'Choose your institution',
+	federation_picker_title: 'Choose your institution',
+	federation_picker_subtitle: 'Search for the institution you belong to and sign in through it.',
+	federation_picker_searchLabel: 'Institution name',
+	federation_picker_searchPlaceholder: 'Start typing the institution name',
+	federation_picker_noResults: 'No institution matches your search.',
+	federation_picker_loadError: 'The list of institutions could not be loaded. Try again later.',
+	federation_picker_more: 'Showing the first results. Narrow the search to find others.',
+	federation_picker_back: 'Back to sign in'
 });
 
 export default de;

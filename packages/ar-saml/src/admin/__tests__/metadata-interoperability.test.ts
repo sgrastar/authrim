@@ -103,6 +103,38 @@ describe('SAML metadata interoperability fixtures', () => {
     expect(config.allowedBindings).toEqual(['post']);
   });
 
+  it('publishes an idpdisc:DiscoveryResponse first in the SP descriptor only when asked to', () => {
+    const base = {
+      entityId: 'https://tenant.example.com/saml/sp',
+      issuerUrl: 'https://tenant.example.com',
+      signingCertificates: [
+        {
+          slot: 'active' as const,
+          certificate: '-----BEGIN CERTIFICATE-----\nSPCERT\n-----END CERTIFICATE-----',
+        },
+      ],
+    };
+    expect(buildSPMetadata(base)).not.toContain('DiscoveryResponse');
+
+    const xml = buildSPMetadata({
+      ...base,
+      discoveryResponseLocation: 'https://tenant.example.com/saml/sp/login',
+    });
+    expect(xml).toContain(`xmlns:idpdisc="${SAML_NAMESPACES.IDPDISC}"`);
+    const discovery = xml.match(/<idpdisc:DiscoveryResponse\b[^>]*>/u)?.[0] ?? '';
+    expect(discovery).toContain(`Binding="${SAML_NAMESPACES.IDPDISC}"`);
+    expect(discovery).toContain('Location="https://tenant.example.com/saml/sp/login"');
+    expect(discovery).toContain('isDefault="true"');
+    // Extensions come before the KeyDescriptors, as the metadata schema orders a role descriptor.
+    const order = ['<md:SPSSODescriptor', '<md:Extensions', '<md:KeyDescriptor'].map((tag) =>
+      xml.indexOf(tag)
+    );
+    expect(order.every((position) => position >= 0)).toBe(true);
+    expect([...order].sort((x, y) => x - y)).toEqual(order);
+    // The rest of the descriptor is unchanged and still imports.
+    expect(parseSPMetadata(xml).acsUrl).toBe('https://tenant.example.com/saml/sp/acs');
+  });
+
   it('exports and imports SP encryption certificates separately from signing certificates', () => {
     const xml = buildSPMetadata({
       entityId: 'https://tenant.example.com/saml/sp',
