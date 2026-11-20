@@ -1,4 +1,8 @@
-import { emptyFederationForm, federationProblems, type FederationForm } from './federation-model';
+import {
+	emptyFederationForm,
+	federationSetupProblems,
+	type FederationForm
+} from './federation-model';
 import type { MetadataPreviewDraft } from './metadata-draft';
 import type { OidcDiscovery } from '#lib/api/external-providers.js';
 import { t, type MessageKey } from '#lib/i18n/i18n.svelte.js';
@@ -269,7 +273,6 @@ const LABELS: Record<string, MessageKey> = {
 	'idp-link': 'sf.part.link',
 	'idp-test': 'sf.part.test',
 	'federation-source': 'sf.part.federation-source',
-	'federation-participation': 'sf.part.federation-participation',
 	'mapping-schemas': 'sf.part.mapping-schemas',
 	'mapping-sets': 'sf.part.mapping-sets',
 	additional: 'sf.part.additional',
@@ -292,8 +295,9 @@ const WIZARD: Record<ConnectionKind, readonly string[]> = {
 	sp: ['sp-import', 'sp-attrs'],
 	op: [],
 	idp: ['idp-import'],
-	// The aggregate and its certificate first, then who takes part and with which mapping set.
-	federation: ['federation-source', 'federation-participation']
+	// Only the aggregate and its certificate: the mapping sets are chosen on its own page, where
+	// a missing one can be made (a wizard cannot open the mapping editor).
+	federation: ['federation-source']
 };
 
 /** A step of a connection's flow, and the settings in it. */
@@ -586,11 +590,7 @@ export function canProceed(stepId: string, a: Answers): boolean {
 		case 'idp-test':
 			return a.idp.tested;
 		case 'federation-source':
-			return !federationProblems(a.federation).some((problem) =>
-				['name', 'metadataUrl', 'certificates'].includes(problem.field)
-			);
-		case 'federation-participation':
-			return federationProblems(a.federation).length === 0;
+			return federationSetupProblems(a.federation).length === 0;
 		default:
 			return true;
 	}

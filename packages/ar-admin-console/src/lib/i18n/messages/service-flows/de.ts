@@ -517,7 +517,6 @@ export const deServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 	'sf.mock.users.email': 'E-Mail',
 	// SAML federations (aggregate metadata) as connections
 	'sf.part.federation-source': 'Angaben zur Föderation',
-	'sf.part.federation-participation': 'Zuordnung',
 	'sf.protocol.federation': 'SAML-Föderation',
 	'sf.protocol.federationShort': 'SAML-Föderation',
 	'sf.role.fed.badge': 'Föderation',
@@ -627,6 +626,11 @@ export const deServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 	'sf.fed.statusCard.failedTitle': 'Die letzten Abrufe schlagen fehl',
 	'sf.fed.statusCard.failedBody':
 		'{count} Abrufe in Folge sind fehlgeschlagen. Die zuvor abgerufenen Metadaten bleiben in Gebrauch.',
+	'sf.fed.notInUse.title': 'Diese Föderation wird noch nicht zur Anmeldung genutzt',
+	'sf.fed.notInUse.body':
+		'Wählen Sie eine Zuordnung und speichern Sie, dann wird sie genutzt. Bis dahin werden nur die Metadaten gesammelt.',
+	'sf.fed.created.mappingNeeded':
+		'Wählen Sie die Zuordnung bei den Rollen auf der geöffneten Seite. Gibt es keine, legen Sie dort eine an.',
 	'sf.fed.statusCard.draft': 'Diese Föderation ist noch nicht in Gebrauch.',
 	'sf.fed.statusCard.lastFetched': 'Zuletzt abgerufen',
 	'sf.fed.statusCard.validUntil': 'Metadaten gültig bis',

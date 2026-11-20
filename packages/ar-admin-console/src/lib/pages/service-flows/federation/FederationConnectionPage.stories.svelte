@@ -258,7 +258,8 @@
 		const canvas = within(canvasElement);
 		await canvas.findByRole('heading', { name: 'Test federation' });
 		await userEvent.click(canvas.getByRole('switch', { name: t('sf.fed.role.idp') }));
-		await canvas.findByText(t('sf.fed.error.idpMapping'));
+		await canvas.findAllByText(t('sf.fed.error.idpMapping'));
+		await expect(canvas.getByText(t('sf.fed.notInUse.title'))).toBeVisible();
 		await userEvent.click(save(canvas));
 		await expect(rolePage.client.calls.updated).toHaveLength(0);
 		const set = canvas.getByRole('combobox', { name: t('sf.fed.mappingSet.idp') });

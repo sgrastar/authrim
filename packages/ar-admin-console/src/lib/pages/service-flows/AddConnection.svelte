@@ -7,7 +7,6 @@
 	import SecretField from '#lib/ui/primitives/SecretField.svelte';
 	import FederationCreated from './FederationCreated.svelte';
 	import FederationSteps from './FederationSteps.svelte';
-	import type { FederationMappingOption } from './federation-model';
 	import { emptyFederationForm } from './federation-model';
 	import { provideAddAsFederation } from './federation-from-metadata-context';
 	import Callout from '#lib/ui/patterns/Callout.svelte';
@@ -182,25 +181,6 @@
 	);
 	provideBusy(() => pending);
 
-	// The mapping sets a federation's roles can be given, read when that step is first reached.
-	let mappingSets = $state<FederationMappingOption[]>([]);
-	let mappingLoading = $state(false);
-	let mappingFailed = $state(false);
-	let mappingsLoaded = false;
-	async function loadMappingSets() {
-		if (!live?.federation) return;
-		mappingLoading = true;
-		mappingFailed = false;
-		try {
-			mappingSets = await live.federation.mappingSets();
-			mappingsLoaded = true;
-		} catch {
-			mappingFailed = true;
-		} finally {
-			mappingLoading = false;
-		}
-	}
-
 	// A metadata address that is an aggregate is added as a federation instead: the wizard turns
 	// into the federation's, with the address already in it.
 	provideAddAsFederation(
@@ -297,17 +277,6 @@
 		else asking = true;
 	}
 	const stepId = $derived(steps[Math.min(current, steps.length - 1)].id);
-
-	$effect(() => {
-		// Read once on reaching the step; after a failure only the Retry button asks again.
-		if (
-			stepId === 'federation-participation' &&
-			!mappingsLoaded &&
-			!mappingLoading &&
-			!mappingFailed
-		)
-			untrack(() => void loadMappingSets());
-	});
 
 	// A kind of flow chosen: the settings that start with a value get it, where nothing is entered
 	// yet (what was typed before a kind was chosen again is kept).
@@ -544,11 +513,6 @@
 				<FederationSteps
 					step={stepInfo.id}
 					bind:form={answers.federation}
-					{mappingSets}
-					{mappingFailed}
-					{mappingLoading}
-					onreloadmappings={loadMappingSets}
-					onlyRole={answers.direction === 'in' ? 'idp' : 'sp'}
 					readCertificateUrl={live?.federation
 						? async (url) => (await live.federation!.client.previewCertificateUrl(url)).certificate
 						: undefined}

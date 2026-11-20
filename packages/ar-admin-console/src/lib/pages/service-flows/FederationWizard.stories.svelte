@@ -100,55 +100,55 @@
 </script>
 
 <Story
-	name="From the way out, only the SP role is asked"
+	name="From the way out, the SP role is made and the wizard ends at the source"
 	args={{ resources: out.value, onnavigate: out.navigate }}
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		await toFederation(canvas, 'out');
+		const save = canvas.getByRole('button', { name: t('sf.create.save') });
+		await expect(save).toBeDisabled();
 		await fillSource(canvas);
-		await userEvent.click(next(canvas));
+		// No step asks for a mapping set: it is chosen on the federation's own page.
+		await expect(canvas.queryByRole('combobox', { name: t('sf.fed.mappingSet.sp') })).toBeNull();
 		await expect(canvas.queryByRole('switch')).toBeNull();
-		await expect(canvas.getByRole('combobox', { name: t('sf.fed.mappingSet.sp') })).toBeVisible();
-		await expect(canvas.queryByRole('combobox', { name: t('sf.fed.mappingSet.idp') })).toBeNull();
+		await userEvent.click(save);
+		await canvas.findByText(t('sf.fed.created.ok'));
+		await expect(canvas.getByText(t('sf.fed.created.mappingNeeded'))).toBeVisible();
+		await expect(out.fake.calls.created[0]).toMatchObject({
+			lifecycleState: 'active',
+			payload: { runtimeResolution: { mode: 'inventory_only', roles: ['saml_sp'] } }
+		});
+		// A role with no set has no id at all: the server refuses an empty one.
+		await expect(JSON.stringify(out.fake.calls.created[0])).not.toContain('FieldMappingSetId');
 	}}
 />
 
 <Story
-	name="From the way in, only the IdP role is asked"
+	name="From the way in, the IdP role is made"
 	args={{ resources: inbound.value, onnavigate: inbound.navigate }}
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		await toFederation(canvas, 'in');
 		await fillSource(canvas);
-		await userEvent.click(next(canvas));
-		await expect(canvas.queryByRole('switch')).toBeNull();
-		await expect(canvas.getByRole('combobox', { name: t('sf.fed.mappingSet.idp') })).toBeVisible();
-		await expect(canvas.queryByRole('combobox', { name: t('sf.fed.mappingSet.sp') })).toBeNull();
-		// An IdP role chooses how people pick their institution; Authrim's own search is the default.
-		await expect(
-			canvas.getByRole('combobox', { name: t('sf.fed.idpSelection.label') })
-		).toHaveValue('authrim_search');
+		await userEvent.click(canvas.getByRole('button', { name: t('sf.create.save') }));
+		await canvas.findByText(t('sf.fed.created.ok'));
+		await expect(inbound.fake.calls.created[0]).toMatchObject({
+			payload: {
+				runtimeResolution: { mode: 'inventory_only', roles: ['saml_idp'] },
+				idpSelection: { mode: 'authrim_search' }
+			}
+		});
 	}}
 />
 
 <Story
-	name="SP role: fingerprint, mapping set, saved, first fetch, open"
+	name="Saved, first fetch, open the federation"
 	args={{ resources: happy.value, onnavigate: happy.navigate }}
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		await toFederation(canvas, 'out');
-		await expect(next(canvas)).toBeDisabled();
 		await fillSource(canvas);
-		await expect(next(canvas)).toBeEnabled();
-		await userEvent.click(next(canvas));
-
-		const save = canvas.getByRole('button', { name: t('sf.create.save') });
-		await expect(save).toBeDisabled();
-		const set = canvas.getByRole('combobox', { name: t('sf.fed.mappingSet.sp') });
-		await waitFor(() => expect(set).toBeEnabled());
-		await userEvent.selectOptions(set, 'set-sp');
-		await expect(save).toBeEnabled();
-		await userEvent.click(save);
+		await userEvent.click(canvas.getByRole('button', { name: t('sf.create.save') }));
 
 		// What it made fetches once and says what came in.
 		await canvas.findByText(t('sf.fed.created.ok'));
@@ -157,12 +157,9 @@
 		await expect(happy.fake.calls.created[0]).toMatchObject({
 			sourceKey: URL_OF_FEDERATION,
 			name: 'Test federation',
-			lifecycleState: 'active',
 			payload: {
 				metadataUrl: URL_OF_FEDERATION,
-				runtimeResolution: { mode: 'automatic', roles: ['saml_sp'], spFieldMappingSetId: 'set-sp' },
-				exceptions: { excludedEntityIds: [] },
-				idpSelection: { mode: 'authrim_search' }
+				exceptions: { excludedEntityIds: [] }
 			}
 		});
 		await expect(happy.fake.calls.refreshed).toEqual(['federation-1']);
@@ -215,7 +212,7 @@
 />
 
 <Story
-	name="Each step goes on only when it is complete"
+	name="The federation is saved only when its address and certificate are right"
 	args={{ resources: invalid.value, onnavigate: invalid.navigate }}
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
@@ -228,38 +225,14 @@
 		await canvas.findByText(t('sf.fed.error.metadataUrl'));
 		await addCertificate(canvas, 'not a certificate');
 		await canvas.findByText(t('sf.fed.cert.invalid'));
-		await expect(next(canvas)).toBeDisabled();
+		await expect(canvas.getByRole('button', { name: t('sf.create.save') })).toBeDisabled();
 		const url = canvas.getByRole('textbox', { name: t('sf.fed.metadataUrl') });
 		await userEvent.clear(url);
 		await userEvent.type(url, URL_OF_FEDERATION);
 		await userEvent.clear(canvas.getByRole('textbox', { name: t('sf.fed.cert.paste') }));
 		await addCertificate(canvas);
 		await canvas.findByText(fingerprintText(fingerprintDisplay(MOCK_FEDERATION_FINGERPRINT)));
-		await userEvent.click(next(canvas));
-
-		// The role has no mapping set yet: it says what is missing.
-		const save = canvas.getByRole('button', { name: t('sf.create.save') });
-		await canvas.findByText(t('sf.fed.error.idpMapping'));
-		await expect(save).toBeDisabled();
-		// An external discovery service needs an https address.
-		const set = canvas.getByRole('combobox', { name: t('sf.fed.mappingSet.idp') });
-		await waitFor(() => expect(set).toBeEnabled());
-		await userEvent.selectOptions(set, 'set-idp');
-		await userEvent.selectOptions(
-			canvas.getByRole('combobox', { name: t('sf.fed.idpSelection.label') }),
-			'external_ds'
-		);
-		await expect(save).toBeDisabled();
-		await userEvent.type(
-			canvas.getByRole('textbox', { name: t('sf.fed.idpSelection.dsUrl') }),
-			'http://ds.example'
-		);
-		await canvas.findAllByText(t('sf.fed.error.dsUrl'));
-		await expect(save).toBeDisabled();
-		const ds = canvas.getByRole('textbox', { name: t('sf.fed.idpSelection.dsUrl') });
-		await userEvent.clear(ds);
-		await userEvent.type(ds, 'https://ds.example/discovery');
-		await expect(save).toBeEnabled();
+		await expect(canvas.getByRole('button', { name: t('sf.create.save') })).toBeEnabled();
 		await expect(invalid.fake.calls.created).toHaveLength(0);
 	}}
 />
@@ -305,8 +278,7 @@
 		await userEvent.type(canvas.getByRole('textbox', { name: t('sf.fed.name') }), 'Imported');
 		await addCertificate(canvas);
 		await canvas.findByText(fingerprintText(fingerprintDisplay(MOCK_FEDERATION_FINGERPRINT)));
-		await userEvent.click(next(canvas));
-		await expect(canvas.getByRole('combobox', { name: t('sf.fed.mappingSet.sp') })).toBeVisible();
+		await expect(canvas.getByRole('button', { name: t('sf.create.save') })).toBeEnabled();
 		await expect(MOCK_FEDERATION_SOURCES.length).toBeGreaterThan(0);
 	}}
 />
