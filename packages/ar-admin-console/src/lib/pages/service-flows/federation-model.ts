@@ -40,6 +40,8 @@ export interface FederationForm {
 	discoveryServiceUrl: string;
 	/** Entities set aside (the connection's page edits them; the wizard starts with none). */
 	excludedEntityIds: string[];
+	/** Only entities registered by one of these authorities take part; empty: any (one per line). */
+	registrationAuthorities: string;
 }
 
 /** The attribute-release presets the server accepts for a federation's service providers. */
@@ -65,7 +67,8 @@ export function emptyFederationForm(direction: Direction | '' = ''): FederationF
 		attributePreset: 'basic.v1',
 		idpSelectionMode: 'authrim_search',
 		discoveryServiceUrl: '',
-		excludedEntityIds: []
+		excludedEntityIds: [],
+		registrationAuthorities: ''
 	};
 }
 
@@ -83,7 +86,8 @@ export function federationFormOf(source: FederationSource): FederationForm {
 		attributePreset: source.attributePresetId || 'basic.v1',
 		idpSelectionMode: source.idpSelection.mode,
 		discoveryServiceUrl: source.idpSelection.discoveryServiceUrl,
-		excludedEntityIds: [...source.excludedEntityIds]
+		excludedEntityIds: [...source.excludedEntityIds],
+		registrationAuthorities: source.registrationAuthorities.join('\n')
 	};
 }
 
@@ -95,7 +99,8 @@ export interface FederationProblem {
 		| 'roles'
 		| 'spMappingSet'
 		| 'idpMappingSet'
-		| 'discoveryServiceUrl';
+		| 'discoveryServiceUrl'
+		| 'registrationAuthorities';
 	message: string;
 }
 
@@ -133,7 +138,26 @@ export function federationProblems(form: FederationForm): FederationProblem[] {
 		problems.push({ field: 'idpMappingSet', message: t('sf.fed.error.idpMapping') });
 	if (form.idpRole && form.idpSelectionMode === 'external_ds' && !isHttps(form.discoveryServiceUrl))
 		problems.push({ field: 'discoveryServiceUrl', message: t('sf.fed.error.dsUrl') });
+	if (registrationAuthorityList(form).some((authority) => !isHttps(authority)))
+		problems.push({
+			field: 'registrationAuthorities',
+			message: t('sf.fed.error.registrationAuthorities')
+		});
 	return problems;
+}
+
+/** The registration authorities typed, one per line, without blanks or repeats. */
+export function registrationAuthorityList(
+	form: Pick<FederationForm, 'registrationAuthorities'>
+): string[] {
+	return [
+		...new Set(
+			form.registrationAuthorities
+				.split(/\r?\n/)
+				.map((line) => line.trim())
+				.filter(Boolean)
+		)
+	];
 }
 
 export function federationRoles(form: FederationForm): FederationRole[] {
@@ -167,6 +191,7 @@ export function federationPayload(
 		idpFieldMappingSetId: _idp,
 		spFieldMappingSetId: _sp,
 		defaultAttributePresetId: _preset,
+		registrationAuthorities: _authorities,
 		...keptResolution
 	} = resolution;
 	const preset = FEDERATION_ATTRIBUTE_PRESETS.find(
@@ -186,7 +211,10 @@ export function federationPayload(
 			roles: federationRoles(form),
 			...(form.idpRole ? { idpFieldMappingSetId: form.idpMappingSetId } : {}),
 			...(form.spRole ? { spFieldMappingSetId: form.spMappingSetId } : {}),
-			...(form.spRole && preset ? { defaultAttributePresetId: preset } : {})
+			...(form.spRole && preset ? { defaultAttributePresetId: preset } : {}),
+			...(registrationAuthorityList(form).length > 0
+				? { registrationAuthorities: registrationAuthorityList(form) }
+				: {})
 		},
 		// Siblings the console does not set survive a save, as in the runtime policy above.
 		exceptions: {
@@ -248,7 +276,8 @@ export function federationStatus(source: FederationSource, now = Date.now()): Fe
 		if (status.sourceState === 'expired' || (Number.isFinite(validUntil) && validUntil <= now))
 			return 'expired';
 		if (
-			status.sourceState === 'degraded' ||
+			status.sourceState === 'error' ||
+			status.sourceState === 'missing' ||
 			status.consecutiveFailures > 0 ||
 			status.lastVerification?.status === 'failed'
 		)

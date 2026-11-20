@@ -639,7 +639,7 @@ export async function handleDevAdminMock(
 					name: entity.name,
 					providerType: entity.input.providerType === 'sp' ? 'saml_sp' : 'saml_idp',
 					config: { entityId: entity.input.entityId },
-					enabled: entity.input.enabled === true,
+					enabled: false,
 					updatedAt: new Date().toISOString()
 				});
 			}

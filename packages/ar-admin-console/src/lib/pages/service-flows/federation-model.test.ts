@@ -135,6 +135,7 @@ describe('saving over a source that was read', () => {
 		const stored = {
 			...healthy,
 			updatedAt: 42,
+			registrationAuthorities: ['https://ra.example/'],
 			payload: {
 				policy: 'warn',
 				polling: { mode: 'manual', intervalSeconds: 86400 },
@@ -189,7 +190,7 @@ describe('where a federation stands', () => {
 	it('is failing when the last fetch failed but the metadata is still good', () => {
 		const failing = {
 			...healthy,
-			status: { ...healthy.status!, consecutiveFailures: 2, sourceState: 'degraded' as const }
+			status: { ...healthy.status!, consecutiveFailures: 2, sourceState: 'error' as const }
 		};
 		expect(federationStatus(failing, now)).toBe('refreshFailed');
 		const unverified = {

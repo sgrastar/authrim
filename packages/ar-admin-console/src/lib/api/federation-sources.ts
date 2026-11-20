@@ -22,7 +22,23 @@ import type { SamlCertificatePreview } from './saml-settings';
 
 export type FederationRole = 'saml_idp' | 'saml_sp';
 export type FederationLifecycle = 'draft' | 'active' | 'retired';
-export type FederationSourceState = 'healthy' | 'degraded' | 'expired' | 'unknown';
+/** How the server describes a source's metadata: `stale` is not fetched since saved, `error` a failing fetch. */
+export type FederationSourceState =
+	| 'healthy'
+	| 'stale'
+	| 'error'
+	| 'expired'
+	| 'missing'
+	| 'identity_change_pending'
+	| 'unknown';
+const SOURCE_STATES: readonly FederationSourceState[] = [
+	'healthy',
+	'stale',
+	'error',
+	'expired',
+	'missing',
+	'identity_change_pending'
+];
 export type FederationVerification = 'verified' | 'unverified' | 'skipped' | 'failed';
 /** How a person who signs in through the federation picks their institution. */
 export type FederationIdpSelectionMode = 'authrim_search' | 'external_ds';
@@ -69,6 +85,8 @@ export interface FederationSource {
 	attributePresetId: string;
 	priority: number | null;
 	polling: { mode: 'automatic' | 'manual'; intervalSeconds: number };
+	/** Only entities registered by one of these authorities take part; empty: any. */
+	registrationAuthorities: string[];
 	/** Entities set aside; everything else in the document takes part. */
 	excludedEntityIds: string[];
 	idpSelection: { mode: FederationIdpSelectionMode; discoveryServiceUrl: string };
@@ -116,8 +134,11 @@ export interface FederationEntity {
 }
 export interface FederationEntityPage {
 	items: FederationEntity[];
+	/** Opaque: pass it back as `cursor` for the next page. */
 	nextCursor: string | null;
 	total: number;
+	/** False when the server could not look up explicit connections (they are then not marked). */
+	explicitLookupAvailable: boolean;
 }
 
 export interface FederationRefreshHistoryItem {
@@ -147,7 +168,6 @@ export interface FederationMaterializeInput {
 	fieldMappingSetId?: string;
 	attributePresetId?: string;
 	name?: string;
-	enabled?: boolean;
 }
 export interface FederationMaterialized {
 	providerId: string;
@@ -173,7 +193,11 @@ export interface FederationSourcesClient {
 		limit?: number,
 		signal?: AbortSignal
 	): Promise<FederationRefreshHistoryItem[]>;
-	/** Makes one entity of the federation an explicit connection of its own. */
+	/**
+	 * Makes one entity of the federation an explicit connection of its own. It starts as a draft
+	 * (still resolved through the federation until it is enabled on its own page, where it then
+	 * wins).
+	 */
 	materialize(id: string, input: FederationMaterializeInput): Promise<FederationMaterialized>;
 	previewCertificate(certificate: string): Promise<SamlCertificatePreview>;
 }
@@ -194,10 +218,7 @@ function readStatus(value: unknown): FederationStatus | null {
 	if (typeof row.sourceState !== 'string') return null;
 	const verification = object(row.lastVerification);
 	return {
-		sourceState:
-			(['healthy', 'degraded', 'expired'] as const).find((s) => s === row.sourceState) ??
-			// `stale` is a source not fetched since it was saved, not a failure: only `error` is one.
-			(row.sourceState === 'error' ? 'degraded' : 'unknown'),
+		sourceState: SOURCE_STATES.find((state) => state === row.sourceState) ?? 'unknown',
 		lastAttemptAt: num(row.lastAttemptAt),
 		lastSuccessAt: num(row.lastSuccessAt),
 		nextRefreshAt: num(row.nextRefreshAt),
@@ -225,7 +246,7 @@ function statusFromPolling(polling: Json, payload: Json): FederationStatus | nul
 	if (Object.keys(polling).length === 0) return null;
 	const state = polling.sourceState;
 	return {
-		sourceState: state === 'healthy' ? 'healthy' : state === 'error' ? 'degraded' : 'unknown',
+		sourceState: SOURCE_STATES.find((known) => known === state) ?? 'unknown',
 		lastAttemptAt: num(polling.lastAttemptAt),
 		lastSuccessAt: num(polling.lastSuccessAt),
 		nextRefreshAt: num(polling.nextRefreshAt),
@@ -286,6 +307,7 @@ function readSource(value: unknown, status?: unknown): FederationSource {
 			mode: polling.mode === 'manual' ? 'manual' : 'automatic',
 			intervalSeconds: num(polling.intervalSeconds) ?? 21600
 		},
+		registrationAuthorities: strings(resolution.registrationAuthorities),
 		excludedEntityIds: strings(object(payload.exceptions).excludedEntityIds),
 		idpSelection: {
 			mode: selection.mode === 'external_ds' ? 'external_ds' : 'authrim_search',
@@ -454,7 +476,8 @@ export const httpFederationSources: FederationSourcesClient = {
 		return {
 			items: Array.isArray(result.items) ? result.items.map(readEntity) : [],
 			nextCursor: str(result.nextCursor) || null,
-			total: num(result.total) ?? 0
+			total: num(result.total) ?? 0,
+			explicitLookupAvailable: result.explicitLookupAvailable !== false
 		};
 	},
 	async refreshHistory(id, limit, signal) {
@@ -463,7 +486,7 @@ export const httpFederationSources: FederationSourcesClient = {
 				signal
 			})
 		);
-		return Array.isArray(result.items) ? result.items.map(readHistory) : [];
+		return Array.isArray(result.refreshHistory) ? result.refreshHistory.map(readHistory) : [];
 	},
 	async materialize(id, input) {
 		const result = object(
@@ -472,8 +495,7 @@ export const httpFederationSources: FederationSourcesClient = {
 				providerType: input.providerType === 'sp' ? 'saml_sp' : 'saml_idp',
 				...(input.fieldMappingSetId ? { fieldMappingSetId: input.fieldMappingSetId } : {}),
 				...(input.attributePresetId ? { attributePresetId: input.attributePresetId } : {}),
-				...(input.name ? { name: input.name } : {}),
-				...(input.enabled !== undefined ? { enabled: input.enabled } : {})
+				...(input.name ? { name: input.name } : {})
 			})
 		);
 		if (typeof result.providerId !== 'string') throw new Error('Invalid materialize response');
