@@ -350,6 +350,7 @@ export const ja = {
 	'join.subtitle': '招待メールに書かれたメールアドレスと招待コードを入力してください。',
 	'join.email': 'メールアドレス',
 	'join.code': '招待コード',
+	'join.fromLink': '招待リンクから入力されています。',
 	'join.check': '招待を確認',
 	'join.checking': '確認中…',
 	'join.invitedAs': '{email} を「{role}」として招待しています。',

@@ -135,3 +135,14 @@ export function readJoinFragment(hash: string): { code?: string; email?: string 
 		? null
 		: { ...(code !== undefined ? { code } : {}), ...(email !== undefined ? { email } : {}) };
 }
+
+/**
+ * Whether a join link carried everything the form asks for. Only then are the fields locked: the
+ * person has nothing to type, and typing another address could only fail to match the invitation.
+ * A link with just one of the two values leaves the form open to complete it.
+ */
+export function joinLinkFillsTheForm(
+	link: { code?: string; email?: string } | null
+): link is { code: string; email: string } {
+	return Boolean(link?.code && link.email);
+}
