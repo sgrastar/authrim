@@ -7,7 +7,6 @@
 	import { httpScreens } from '#lib/api/screens.js';
 	import { httpExternalProviders } from '#lib/api/external-providers.js';
 	import { httpFederationSources } from '#lib/api/federation-sources.js';
-	import { httpIdentityMapping } from '#lib/api/identity-mapping.js';
 	import { httpClients } from '#lib/api/clients.js';
 	import { httpConsentStatements } from '#lib/api/consent-statements.js';
 	import { httpFlows } from '#lib/api/flows.js';
@@ -16,6 +15,7 @@
 	import { tenantScope } from '#lib/auth/tenant-scope.svelte.js';
 	import { t } from '#lib/i18n/i18n.svelte.js';
 	import AccountServiceFlowsPage from '#lib/pages/service-flows/AccountServiceFlowsPage.svelte';
+	import { loadFederationMappingSets } from '#lib/pages/service-flows/federation-mapping-sets.js';
 	import { provideFlowResources } from '#lib/pages/service-flows/flow-resources-context.js';
 	import { httpSchemaSetting } from '#lib/api/schema-setting.js';
 	import { loadSchemas } from '#lib/pages/customization/screens/schema-choices.svelte.js';
@@ -29,14 +29,7 @@
 			externalProviders: httpExternalProviders,
 			samlIdentityProviders: httpSamlProviders,
 			federationSources: httpFederationSources,
-			federationMappingSets: async () => {
-				const tenantId = tenantScope.tenantId;
-				if (!tenantId) throw new Error('tenant_unknown');
-				const { sets } = await httpIdentityMapping().sets(tenantId);
-				return sets
-					.filter((set) => set.enabled)
-					.map((set) => ({ value: set.id, label: set.display_name ?? set.field_mapping_key }));
-			},
+			federationMappingSets: loadFederationMappingSets,
 			canList: (kind) =>
 				hasPermission(
 					adminAccess.current,

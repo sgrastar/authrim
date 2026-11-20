@@ -175,16 +175,14 @@ describe('the federation sources client', () => {
 		expect(
 			await httpFederationSources.materialize('f1', {
 				entityId: 'e',
-				providerType: 'idp',
-				enabled: false
+				providerType: 'idp'
 			})
 		).toEqual({ providerId: 'p1', providerType: 'idp' });
 		expect(calls[0].url).toContain('/api/admin/saml-federation-sources/f1/refresh-metadata');
 		expect(calls[1].url).toContain('/api/admin/saml-federation-sources/f1/entities/materialize');
 		expect(calls[1].body).toMatchObject({
 			entityId: 'e',
-			providerType: 'saml_idp',
-			enabled: false
+			providerType: 'saml_idp'
 		});
 	});
 
@@ -215,7 +213,7 @@ describe('the federation sources client', () => {
 		);
 		const [source] = await httpFederationSources.list();
 		expect(source.status).toMatchObject({
-			sourceState: 'degraded',
+			sourceState: 'error',
 			consecutiveFailures: 3,
 			lastSuccessAt: 1_790_000_000_000,
 			lastErrorCode: 'metadata_fetch_failed',

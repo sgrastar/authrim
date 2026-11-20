@@ -530,8 +530,6 @@ export const deServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 	'sf.wizard.kind.federation.desc':
 		'Vertraut Hunderten Diensten oder Einrichtungen über ein einziges Metadatendokument, ohne Einzelanlage.',
 	'sf.metadata.addAsFederation': 'Als Föderation hinzufügen',
-	'sf.fed.soon.title': 'Die Seite der Föderation ist noch nicht verfügbar',
-	'sf.fed.soon.body': 'Abrufstatus und Ausnahmen folgen im nächsten Update.',
 	'sf.fed.error.name': 'Geben Sie einen Namen ein.',
 	'sf.fed.error.metadataUrl':
 		'Die Metadaten-URL muss eine einzelne https-Adresse sein (kein * und keine Leerzeichen).',
@@ -607,5 +605,103 @@ export const deServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 	'sf.fed.status.retired': 'Außer Betrieb',
 	'sf.fed.row.entities': '{count} Entitäten',
 	'sf.fed.row.lastFetched': 'zuletzt abgerufen',
-	'sf.fed.row.notFetched': 'Noch nicht abgerufen'
+	'sf.fed.row.notFetched': 'Noch nicht abgerufen',
+	// SAML federation page: status, exceptions, entities, trust
+	'sf.fed.error.registrationAuthorities':
+		'Registrierungsstellen als https-Adressen eingeben, eine pro Zeile.',
+	'sf.fed.statusCard.title': 'Abrufstatus',
+	'sf.fed.statusCard.refresh': 'Jetzt aktualisieren',
+	'sf.fed.statusCard.expiredTitle': 'Die Metadaten sind abgelaufen',
+	'sf.fed.statusCard.expiredBody':
+		'Abgelaufene Metadaten können nicht für neue Anmeldungen verwendet werden. Prüfen Sie, ob die Föderation neue Metadaten veröffentlicht hat, und aktualisieren Sie.',
+	'sf.fed.statusCard.failedTitle': 'Die letzten Abrufe schlagen fehl',
+	'sf.fed.statusCard.failedBody':
+		'{count} Abrufe in Folge sind fehlgeschlagen. Die zuvor abgerufenen Metadaten bleiben in Gebrauch.',
+	'sf.fed.statusCard.draft': 'Diese Föderation ist noch nicht in Gebrauch.',
+	'sf.fed.statusCard.lastFetched': 'Zuletzt abgerufen',
+	'sf.fed.statusCard.validUntil': 'Metadaten gültig bis',
+	'sf.fed.statusCard.nextRefresh': 'Nächste Aktualisierung',
+	'sf.fed.statusCard.daysAgo': 'vor {count} Tagen abgelaufen',
+	'sf.fed.statusCard.daysLeft': 'noch {count} Tage',
+	'sf.fed.statusCard.entityCount': '{count} ({excluded} ausgenommen)',
+	'sf.fed.history.title': 'Letzte Aktualisierungen',
+	'sf.fed.history.manual': 'manuell',
+	'sf.fed.history.automatic': 'automatisch',
+	'sf.fed.history.running': 'Läuft',
+	'sf.fed.history.failed': 'Fehlgeschlagen',
+	'sf.fed.history.unchanged': 'Keine Änderung',
+	'sf.fed.history.updated': 'Aktualisiert',
+	'sf.fed.participation.title': 'Teilnahme',
+	'sf.fed.participation.description':
+		'Alle Entitäten in den Metadaten der Föderation nehmen teil. Nehmen Sie unerwünschte aus.',
+	'sf.fed.advanced': 'Erweitert',
+	'sf.fed.ra.label': 'Zulässige Registrierungsstellen',
+	'sf.fed.ra.hint':
+		'Eine pro Zeile. Wenn gesetzt, nehmen nur von diesen Stellen registrierte Entitäten teil. Leer bedeutet keine Einschränkung.',
+	'sf.fed.trust.title': 'Vertrauensgrundlage',
+	'sf.fed.trust.description':
+		'Woher die Metadaten abgerufen werden und mit welchen Zertifikaten ihre Signatur geprüft wird. Vergleichen Sie die Fingerabdrücke mit den veröffentlichten Werten.',
+	'sf.fed.exceptions.title': 'Ausnahmen',
+	'sf.fed.exceptions.description':
+		'Ausgenommene Entitäten können nicht über diese Föderation teilnehmen. Eine eigene Verbindung bleibt unberührt.',
+	'sf.fed.exceptions.label': 'Auszunehmende Entitäten',
+	'sf.fed.exceptions.placeholder': 'Nach Name oder Entitäts-ID suchen',
+	'sf.fed.exceptions.hint': 'Bis zu {max}. Änderungen gelten nach dem Speichern.',
+	'sf.fed.exceptions.none': 'Es ist nichts ausgenommen.',
+	'sf.fed.delete.title': 'Föderation löschen',
+	'sf.fed.delete.body':
+		'Beim Löschen endet jede Teilnahme über diese Föderation. Aus Entitäten erstellte Verbindungen bleiben bestehen.',
+	'sf.fed.delete.button': 'Löschen',
+	'sf.fed.delete.confirmTitle': '„{name}“ löschen?',
+	'sf.fed.delete.confirmBody':
+		'Alle Teilnahmen über sie enden. Das kann nicht rückgängig gemacht werden.',
+	'sf.fed.delete.confirmWithExplicit':
+		'Alle Teilnahmen über sie enden. {count} aus Entitäten erstellte Verbindungen bleiben bestehen. Das kann nicht rückgängig gemacht werden.',
+	'sf.fed.delete.failed': 'Die Föderation konnte nicht gelöscht werden.',
+	'sf.fed.entities.title': 'Entitäten',
+	'sf.fed.entities.description':
+		'Die Entitäten in den importierten Metadaten. Suche und Filter laufen auf dem Server.',
+	'sf.fed.entities.search': 'Name oder Entitäts-ID',
+	'sf.fed.entities.col.name': 'Name',
+	'sf.fed.entities.col.entityId': 'Entitäts-ID',
+	'sf.fed.entities.col.role': 'Rolle',
+	'sf.fed.entities.col.authority': 'Registrierungsstelle',
+	'sf.fed.entities.col.validUntil': 'Gültig bis',
+	'sf.fed.entities.col.state': 'Status',
+	'sf.fed.entities.col.actions': 'Aktionen',
+	'sf.fed.entities.role.all': 'Alle Rollen',
+	'sf.fed.entities.role.saml_idp': 'IdP',
+	'sf.fed.entities.role.saml_sp': 'SP',
+	'sf.fed.entities.role.ambiguous': 'IdP / SP',
+	'sf.fed.entities.state.all': 'Alle Status',
+	'sf.fed.entities.state.participating': 'Nimmt teil',
+	'sf.fed.entities.state.excluded': 'Ausgenommen',
+	'sf.fed.entities.state.explicit': 'Eigene Verbindung',
+	'sf.fed.entities.state.explicitLink': 'Eigene Verbindung',
+	'sf.fed.entities.include': 'Wieder aufnehmen',
+	'sf.fed.entities.exclude': 'Ausnehmen',
+	'sf.fed.entities.materialize': 'Eigene Verbindung anlegen',
+	'sf.fed.entities.empty': 'Keine passenden Entitäten.',
+	'sf.fed.entities.noLookup':
+		'Eigene Verbindungen konnten nicht ermittelt werden und sind daher nicht markiert.',
+	'sf.fed.entities.full': 'Es können höchstens 500 Entitäten ausgenommen werden.',
+	'sf.fed.entities.failed': 'Die Entitäten konnten nicht geladen werden.',
+	'sf.fed.entities.pager': 'Seiten der Entitäten',
+	'sf.fed.entities.range': '{from}–{to} von {total}',
+	'sf.fed.entities.perPage': 'Pro Seite',
+	'sf.fed.entities.previous': 'Zurück',
+	'sf.fed.entities.next': 'Weiter',
+	'sf.fed.materialize.title': 'Eigene Verbindung anlegen',
+	'sf.fed.materialize.submit': 'Verbindung anlegen',
+	'sf.fed.materialize.excluded':
+		'Diese Entität ist ausgenommen. Mit einer eigenen Verbindung kann sie unabhängig davon genutzt werden.',
+	'sf.fed.materialize.type': 'Art der Verbindung',
+	'sf.fed.materialize.asSp': 'Als Dienst (SP)',
+	'sf.fed.materialize.asIdp': 'Als Anbieter (IdP)',
+	'sf.fed.materialize.draft':
+		'Die Verbindung wird als Entwurf angelegt. Bis zur Aktivierung wird die Entität wie bisher über die Föderation behandelt; danach hat die Verbindung Vorrang.',
+	'sf.fed.materialize.failed': 'Die Verbindung konnte nicht angelegt werden.',
+	'sf.fed.saveFailed': 'Speichern fehlgeschlagen. Ihre Eingaben bleiben erhalten.',
+	'sf.fed.readonly':
+		'Diese Seite ist schreibgeschützt. Für Änderungen ist die Berechtigung zum Bearbeiten der Einstellungen nötig.'
 };
