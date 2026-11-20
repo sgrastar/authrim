@@ -8,6 +8,7 @@ import {
 	MAX_EXCLUDED,
 	refreshDelta,
 	remainingDays,
+	setExcludedMany,
 	snapshotForm,
 	toggleExcluded
 } from './federation-page-model';
@@ -65,5 +66,26 @@ describe('certificates and numbers', () => {
 		expect(refreshDelta({ entityCountDelta: -2 })).toBe('−2');
 		expect(refreshDelta({ entityCountDelta: 0 })).toBe('±0');
 		expect(refreshDelta({ entityCountDelta: null })).toBe('');
+	});
+});
+
+describe('setting several entities aside at once', () => {
+	it('adds the ones not there yet and takes the others back', () => {
+		expect(setExcludedMany(['a'], ['a', 'b', 'c'], true)).toEqual({
+			list: ['a', 'b', 'c'],
+			left: 0
+		});
+		expect(setExcludedMany(['a', 'b', 'c'], ['a', 'c', 'x'], false)).toEqual({
+			list: ['b'],
+			left: 0
+		});
+	});
+
+	it('stops at the limit and says how many did not fit', () => {
+		const full = Array.from({ length: MAX_EXCLUDED - 1 }, (_, index) => `e${index}`);
+		const result = setExcludedMany(full, ['p', 'q', 'r'], true);
+		expect(result.list).toHaveLength(MAX_EXCLUDED);
+		expect(result.list.at(-1)).toBe('p');
+		expect(result.left).toBe(2);
 	});
 });

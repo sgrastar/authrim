@@ -12268,7 +12268,7 @@ paths:
         The entities of the source's active (verified) aggregate document, one page at a time,
         with their exception state and whether this tenant has an explicit connection for the
         same entityID. Search matches the display name and entityID. Ordered by display name
-        then entityID; follow nextCursor for the next page.
+        then entityID (or by entityID, either way, with sort and direction); follow nextCursor for the next page.
       responses:
         '200':
           $ref: '#/components/responses/FederationTrustSourceEntities'
@@ -12315,6 +12315,38 @@ paths:
               - participating
               - excluded
               - explicit
+        - name: keyword
+          in: query
+          required: false
+          style: form
+          explode: true
+          schema:
+            type: array
+            maxItems: 20
+            items:
+              type: string
+              maxLength: 256
+          description: >-
+            Keyword tokens (mdui:Keywords, for example category:location:kanto). An entity matches
+            when it carries at least one of them.
+        - name: sort
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - name
+              - entityId
+            default: name
+        - name: direction
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - asc
+              - desc
+            default: asc
         - name: limit
           in: query
           required: false
@@ -12328,7 +12360,50 @@ paths:
           required: false
           schema:
             type: string
-          description: nextCursor of the previous page.
+          description: nextCursor of the previous page (read with the same sort and direction).
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/field-mapping/federation-trust-sources/{trustSourceId}/entity-keywords':
+    get:
+      tags:
+        - Field Mapping
+      operationId: getApiAdminFieldMappingFederationTrustSourcesByTrustSourceIdEntityKeywords
+      summary: List the keywords of the entities of a federation trust source.
+      description: >-
+        The keywords (mdui:Keywords) that the entities of the source's active document carry,
+        grouped by kind (category:location:kanto is the kanto value of the location kind) with how
+        many entities carry each. A role narrows it as it narrows the entity list.
+      responses:
+        '200':
+          $ref: '#/components/responses/FederationTrustSourceEntityKeywords'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      parameters:
+        - name: trustSourceId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Federation trust source identifier.
+        - name: role
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - saml_idp
+              - saml_sp
+              - ambiguous
+          description: saml_idp and saml_sp include entities that carry both roles.
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -46494,6 +46569,12 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/FederationTrustSourceEntitiesResponse'
+    FederationTrustSourceEntityKeywords:
+      description: The keywords of a federation source's entities, grouped by kind.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/FederationTrustSourceEntityKeywordsResponse'
     FederationRefreshHistory:
       description: Recent refresh jobs of a federation source, newest first.
       content:
@@ -69539,6 +69620,41 @@ components:
             - saml_idp
             - saml_sp
             - null
+    FederationTrustSourceEntityKeywordsResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - categories
+      properties:
+        categories:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required:
+              - type
+              - values
+            properties:
+              type:
+                type: string
+                description: The kind of keyword (location, organization_type).
+              values:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: false
+                  required:
+                    - value
+                    - label
+                    - count
+                  properties:
+                    value:
+                      type: string
+                      description: The keyword token, as the entities filter takes it.
+                    label:
+                      type: string
+                    count:
+                      type: integer
     FederationTrustSourceEntitiesResponse:
       type: object
       additionalProperties: false

@@ -1970,8 +1970,28 @@ export interface FederationTrustSourceEntitiesQuery {
   q?: string;
   role?: string;
   state?: string;
+  /** Keyword tokens (mdui:Keywords) an entity must carry at least one of. */
+  keywords?: string[];
+  /** What the page is ordered by (name by default) and which way. */
+  sort?: string;
+  direction?: string;
   limit?: number;
   cursor?: string;
+}
+
+/** One keyword of a federation's entities, with how many entities carry it. */
+export interface FederationEntityKeywordValue {
+  /** The keyword token as it is in the metadata and as the entities filter takes it. */
+  value: string;
+  /** What is shown for it: the token without its category prefix. */
+  label: string;
+  count: number;
+}
+
+/** The keywords of one kind (a location, an organization type), as a federation groups them. */
+export interface FederationEntityKeywordCategory {
+  type: string;
+  values: FederationEntityKeywordValue[];
 }
 
 export interface FederationTrustSourceEntitiesPage {
@@ -2001,6 +2021,39 @@ const FEDERATION_ENTITY_PAGE_MAX = 200;
 const FEDERATION_ENTITY_SEARCH_MAX_LENGTH = 128;
 const FEDERATION_ENTITY_ROLE_FILTERS = new Set(['saml_idp', 'saml_sp', 'ambiguous']);
 const FEDERATION_ENTITY_STATE_FILTERS = new Set(['participating', 'excluded', 'explicit']);
+const FEDERATION_ENTITY_SORTS = new Set(['name', 'entityId']);
+const FEDERATION_ENTITY_DIRECTIONS = new Set(['asc', 'desc']);
+const FEDERATION_ENTITY_KEYWORDS_MAX = 20;
+const FEDERATION_ENTITY_KEYWORD_MAX_LENGTH = 256;
+const FEDERATION_ENTITY_KEYWORD_FACET_MAX = 2000;
+
+/**
+ * Groups keyword tokens by kind. A federation writes them as `category:<kind>:<value>`
+ * (GakuNin: category:location:kanto); any other `a:b…` token is grouped by its first part, and a
+ * token with no colon is not a category and is left out.
+ */
+export function groupFederationEntityKeywords(
+  rows: ReadonlyArray<{ keyword: string; count: number }>
+): FederationEntityKeywordCategory[] {
+  const groups = new Map<string, FederationEntityKeywordValue[]>();
+  for (const { keyword, count } of rows) {
+    const parts = keyword.split(':');
+    if (parts.length < 2 || parts.some((part, index) => index > 0 && part === '')) continue;
+    const prefixed = parts[0] === 'category' && parts.length >= 3;
+    const type = prefixed ? parts[1] : parts[0];
+    const label = (prefixed ? parts.slice(2) : parts.slice(1)).join(':');
+    if (!type || !label) continue;
+    const values = groups.get(type) ?? [];
+    values.push({ value: keyword, label, count });
+    groups.set(type, values);
+  }
+  return [...groups.entries()]
+    .map(([type, values]) => ({
+      type,
+      values: values.sort((a, b) => b.count - a.count || a.label.localeCompare(b.label)),
+    }))
+    .sort((a, b) => a.type.localeCompare(b.type));
+}
 const SAML_METADATA_SOURCE_STATES = new Set<SAMLMetadataSourceState>([
   'healthy',
   'stale',
@@ -2112,6 +2165,17 @@ function normalizeFederationEntityRole(value: string): 'saml_idp' | 'saml_sp' | 
 
 function encodeFederationEntityCursor(cursor: { sortKey: string; entityId: string }): string {
   return btoa(unescape(encodeURIComponent(JSON.stringify([cursor.sortKey, cursor.entityId]))));
+}
+
+function normalizeFederationEntityKeywords(value: string[] | undefined): string[] {
+  const keywords = [...new Set((value ?? []).map((keyword) => keyword.trim()).filter(Boolean))];
+  if (
+    keywords.length > FEDERATION_ENTITY_KEYWORDS_MAX ||
+    keywords.some((keyword) => keyword.length > FEDERATION_ENTITY_KEYWORD_MAX_LENGTH)
+  ) {
+    throw badRequest('keyword is invalid');
+  }
+  return keywords;
 }
 
 function decodeFederationEntityCursor(
@@ -7662,6 +7726,15 @@ export class IdentityMappingControlPlaneRepository {
     if (query.state !== undefined && !FEDERATION_ENTITY_STATE_FILTERS.has(query.state)) {
       throw badRequest('state must be participating, excluded or explicit');
     }
+    if (query.sort !== undefined && !FEDERATION_ENTITY_SORTS.has(query.sort)) {
+      throw badRequest('sort must be name or entityId');
+    }
+    if (query.direction !== undefined && !FEDERATION_ENTITY_DIRECTIONS.has(query.direction)) {
+      throw badRequest('direction must be asc or desc');
+    }
+    const keywords = normalizeFederationEntityKeywords(query.keywords);
+    const sortByEntityId = query.sort === 'entityId';
+    const descending = query.direction === 'desc';
     const cursor = decodeFederationEntityCursor(query.cursor);
     const source = await this.adapter.queryOne<FederationTrustSourceRow>(
       `SELECT id, source_type, source_key, display_name, lifecycle_state,
@@ -7691,6 +7764,13 @@ export class IdentityMappingControlPlaneRepository {
       where.push(`e.entity_role IN (?, 'ambiguous')`);
       params.push(query.role);
     }
+    if (keywords.length > 0) {
+      where.push(
+        `EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid(e.summary_json) THEN e.summary_json ELSE '{}' END, '$.keywords') k
+                  WHERE k.value IN (SELECT value FROM json_each(?)))`
+      );
+      params.push(JSON.stringify(keywords));
+    }
     if (query.state === 'excluded') {
       where.push(`e.entity_id IN (SELECT value FROM json_each(?))`);
       params.push(JSON.stringify(excludedEntityIds));
@@ -7713,8 +7793,11 @@ export class IdentityMappingControlPlaneRepository {
       `SELECT COUNT(*) AS total FROM federation_metadata_entity_summaries e WHERE ${baseWhere}`,
       params
     );
+    const sortExpression = sortByEntityId ? 'e.entity_id' : 'COALESCE(e.display_name, e.entity_id)';
+    const comparison = descending ? '<' : '>';
+    const direction = descending ? 'DESC' : 'ASC';
     const pageWhere = cursor
-      ? `${baseWhere} AND (COALESCE(e.display_name, e.entity_id) > ? OR (COALESCE(e.display_name, e.entity_id) = ? AND e.entity_id > ?))`
+      ? `${baseWhere} AND (${sortExpression} ${comparison} ? OR (${sortExpression} = ? AND e.entity_id ${comparison} ?))`
       : baseWhere;
     const pageParams = cursor
       ? [...params, cursor.sortKey, cursor.sortKey, cursor.entityId]
@@ -7723,7 +7806,7 @@ export class IdentityMappingControlPlaneRepository {
       `SELECT e.entity_id, e.entity_role, e.display_name, e.summary_json
          FROM federation_metadata_entity_summaries e
         WHERE ${pageWhere}
-        ORDER BY COALESCE(e.display_name, e.entity_id) ASC, e.entity_id ASC
+        ORDER BY ${sortExpression} ${direction}, e.entity_id ${direction}
         LIMIT ?`,
       [...pageParams, limit + 1]
     );
@@ -7775,12 +7858,60 @@ export class IdentityMappingControlPlaneRepository {
       nextCursor:
         rows.length > limit && last
           ? encodeFederationEntityCursor({
-              sortKey: last.display_name ?? last.entity_id,
+              sortKey: sortByEntityId ? last.entity_id : (last.display_name ?? last.entity_id),
               entityId: last.entity_id,
             })
           : null,
       total: Number(totalRow?.total ?? 0),
       explicitLookupAvailable: explicit !== null,
+    };
+  }
+
+  /**
+   * The keywords the entities of a source's active document carry, grouped by kind with how many
+   * entities carry each: what the entity list can be narrowed by. A role narrows it as it does the
+   * list (an entity of both roles counts under either).
+   */
+  async listFederationTrustSourceEntityKeywords(
+    tenantId: string,
+    trustSourceId: string,
+    query: { role?: string }
+  ): Promise<{ categories: FederationEntityKeywordCategory[] }> {
+    validateRequiredString(trustSourceId, 'trustSourceId');
+    if (query.role !== undefined && !FEDERATION_ENTITY_ROLE_FILTERS.has(query.role)) {
+      throw badRequest('role must be saml_idp, saml_sp or ambiguous');
+    }
+    const source = await this.adapter.queryOne<{ active_metadata_document_id: string | null }>(
+      `SELECT active_metadata_document_id
+         FROM federation_trust_sources
+        WHERE tenant_id = ? AND id = ?`,
+      [tenantId, trustSourceId]
+    );
+    if (!source) throw notFound('federation trust source not found');
+    if (!source.active_metadata_document_id) return { categories: [] };
+    const params: unknown[] = [tenantId, source.active_metadata_document_id];
+    let roleWhere = '';
+    if (query.role === 'ambiguous') {
+      roleWhere = ` AND e.entity_role = 'ambiguous'`;
+    } else if (query.role) {
+      roleWhere = ` AND e.entity_role IN (?, 'ambiguous')`;
+      params.push(query.role);
+    }
+    const rows = await this.adapter.query<{ keyword: string; count: number | string }>(
+      `SELECT k.value AS keyword, COUNT(*) AS count
+         FROM federation_metadata_entity_summaries e,
+              json_each(CASE WHEN json_valid(e.summary_json) THEN e.summary_json ELSE '{}' END, '$.keywords') k
+        WHERE e.tenant_id = ? AND e.metadata_document_id = ?${roleWhere}
+          AND typeof(k.value) = 'text'
+        GROUP BY k.value
+        ORDER BY count DESC, k.value ASC
+        LIMIT ?`,
+      [...params, FEDERATION_ENTITY_KEYWORD_FACET_MAX]
+    );
+    return {
+      categories: groupFederationEntityKeywords(
+        rows.map((row) => ({ keyword: row.keyword, count: Number(row.count) }))
+      ),
     };
   }
 
@@ -10043,11 +10174,28 @@ export async function adminIdentityMappingFederationTrustSourceEntitiesHandler(c
         q: c.req.query('q') ?? undefined,
         role: c.req.query('role') ?? undefined,
         state: c.req.query('state') ?? undefined,
+        keywords: c.req.queries('keyword') ?? undefined,
+        sort: c.req.query('sort') ?? undefined,
+        direction: c.req.query('direction') ?? undefined,
         limit: limitParam === undefined ? undefined : Number(limitParam),
         cursor: c.req.query('cursor') ?? undefined,
       }
     );
   });
+}
+
+export async function adminIdentityMappingFederationTrustSourceEntityKeywordsHandler(
+  c: AdminContext
+) {
+  return handleControlPlane(c, async (repository, tenantId) =>
+    repository.listFederationTrustSourceEntityKeywords(
+      tenantId,
+      requiredParam(c, 'trustSourceId'),
+      {
+        role: c.req.query('role') ?? undefined,
+      }
+    )
+  );
 }
 
 export async function adminIdentityMappingFederationTrustSourceRefreshHistoryHandler(

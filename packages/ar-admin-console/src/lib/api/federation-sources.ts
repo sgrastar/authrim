@@ -116,8 +116,18 @@ export interface FederationEntityQuery {
 	q?: string;
 	role?: FederationEntityRole;
 	state?: FederationEntityState;
+	/** Keyword tokens (mdui:Keywords); an entity matches when it carries at least one. */
+	keywords?: string[];
+	/** What the page is ordered by (name when absent) and which way (ascending when absent). */
+	sort?: 'name' | 'entityId';
+	direction?: 'asc' | 'desc';
 	limit?: number;
 	cursor?: string;
+}
+/** The keywords of one kind (a location, an organization type) the entities carry. */
+export interface FederationKeywordCategory {
+	type: string;
+	values: { value: string; label: string; count: number }[];
 }
 export interface FederationEntity {
 	entityId: string;
@@ -188,6 +198,12 @@ export interface FederationSourcesClient {
 		query?: FederationEntityQuery,
 		signal?: AbortSignal
 	): Promise<FederationEntityPage>;
+	/** The keywords the entities carry, by kind, with how many carry each (a role narrows it). */
+	entityKeywords(
+		id: string,
+		query?: { role?: FederationEntityRole },
+		signal?: AbortSignal
+	): Promise<FederationKeywordCategory[]>;
 	refreshHistory(
 		id: string,
 		limit?: number,
@@ -421,10 +437,11 @@ function body(input: FederationWrite | FederationUpdate) {
 	};
 }
 
-function query(params: Record<string, string | number | undefined>): string {
+function query(params: Record<string, string | number | string[] | undefined>): string {
 	const search = new URLSearchParams();
 	for (const [key, value] of Object.entries(params)) {
-		if (value !== undefined && value !== '') search.set(key, String(value));
+		if (Array.isArray(value)) for (const item of value) search.append(key, item);
+		else if (value !== undefined && value !== '') search.set(key, String(value));
 	}
 	const text = search.toString();
 	return text ? `?${text}` : '';
@@ -472,6 +489,9 @@ export const httpFederationSources: FederationSourcesClient = {
 					q: params.q,
 					role: params.role,
 					state: params.state,
+					keyword: params.keywords,
+					sort: params.sort,
+					direction: params.direction,
 					limit: params.limit,
 					cursor: params.cursor
 				})}`,
@@ -484,6 +504,24 @@ export const httpFederationSources: FederationSourcesClient = {
 			total: num(result.total) ?? 0,
 			explicitLookupAvailable: result.explicitLookupAvailable !== false
 		};
+	},
+	async entityKeywords(id, params = {}, signal) {
+		const result = object(
+			await send(
+				`${TRUST}/${encodeURIComponent(id)}/entity-keywords${query({ role: params.role })}`,
+				{ signal }
+			)
+		);
+		return (Array.isArray(result.categories) ? result.categories : []).map((category) => {
+			const row = object(category);
+			return {
+				type: str(row.type),
+				values: (Array.isArray(row.values) ? row.values : []).map((value) => {
+					const item = object(value);
+					return { value: str(item.value), label: str(item.label), count: num(item.count) ?? 0 };
+				})
+			};
+		});
 	},
 	async refreshHistory(id, limit, signal) {
 		const result = object(
