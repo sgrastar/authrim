@@ -64,6 +64,7 @@ function source(
 		priority: null,
 		polling: { mode: 'automatic', intervalSeconds: 6 * 60 * 60 },
 		excludedEntityIds: excluded,
+		registrationAuthorities: [],
 		idpSelection: { mode: 'authrim_search', discoveryServiceUrl: '' },
 		payload: {},
 		createdAt: NOW - 60 * DAY,
@@ -285,6 +286,7 @@ export function createFakeFederationSources(
 				attributePresetId: String(resolution.defaultAttributePresetId ?? ''),
 				priority: null,
 				polling: { mode: 'automatic', intervalSeconds: 6 * 60 * 60 },
+				registrationAuthorities: [],
 				excludedEntityIds: [],
 				idpSelection: { mode: 'authrim_search', discoveryServiceUrl: '' },
 				payload: clone(payload),
@@ -320,6 +322,9 @@ export function createFakeFederationSources(
 				idpMappingSetId: String(resolution.idpFieldMappingSetId ?? ''),
 				spMappingSetId: String(resolution.spFieldMappingSetId ?? ''),
 				attributePresetId: String(resolution.defaultAttributePresetId ?? ''),
+				registrationAuthorities: Array.isArray(resolution.registrationAuthorities)
+					? (resolution.registrationAuthorities as string[])
+					: [],
 				excludedEntityIds: exceptions.excludedEntityIds ?? [],
 				idpSelection: {
 					mode: selection.mode ?? 'authrim_search',
@@ -350,7 +355,9 @@ export function createFakeFederationSources(
 				}),
 				...options.refresh
 			};
-			if (result.status) sources.set(id, { ...row, status: result.status });
+			// A fetch moves the source's version, as on the server.
+			if (result.status)
+				sources.set(id, { ...row, status: result.status, updatedAt: row.updatedAt + 1 });
 			return clone(result);
 		},
 		async entities(id, query: FederationEntityQuery = {}): Promise<FederationEntityPage> {
@@ -383,7 +390,8 @@ export function createFakeFederationSources(
 			return {
 				items,
 				nextCursor: start + limit < matches.length ? String(start + limit) : null,
-				total: matches.length
+				total: matches.length,
+				explicitLookupAvailable: true
 			};
 		},
 		async refreshHistory(id, limit = 20) {

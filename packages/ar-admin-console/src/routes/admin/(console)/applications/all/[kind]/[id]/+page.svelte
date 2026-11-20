@@ -23,7 +23,9 @@
 	import LoadingState from '#lib/ui/patterns/LoadingState.svelte';
 	import Callout from '#lib/ui/patterns/Callout.svelte';
 	import Button from '#lib/ui/primitives/Button.svelte';
-	import EmptyState from '#lib/ui/patterns/EmptyState.svelte';
+	import { httpFederationSources } from '#lib/api/federation-sources.js';
+	import FederationConnectionPage from '#lib/pages/service-flows/federation/FederationConnectionPage.svelte';
+	import { loadFederationMappingSets } from '#lib/pages/service-flows/federation-mapping-sets.js';
 
 	provideIdentifierMaterials(identifierMaterialsClient);
 	let answers = $state<Answers | null>(null);
@@ -141,16 +143,23 @@
 		/>
 	{/key}
 {:else if page.params.kind === 'federation'}
-	<!-- The federation's own page is the next change; until then a link to it shows this. -->
-	<Page>
-		<EmptyState title={t('sf.fed.soon.title')} description={t('sf.fed.soon.body')}>
-			{#snippet action()}
-				<Button variant="secondary" onclick={() => goto('/admin/applications/all')}
-					>{t('sf.detail.back')}</Button
-				>
-			{/snippet}
-		</EmptyState>
-	</Page>
+	{#key `${tenantScope.tenantId}:${page.params.id}`}
+		<Page>
+			{#if hasPermission(adminAccess.current, 'admin:settings:read')}
+				<FederationConnectionPage
+					id={page.params.id ?? ''}
+					client={httpFederationSources}
+					canEdit={hasPermission(adminAccess.current, 'admin:settings:write')}
+					canRefresh={hasPermission(adminAccess.current, 'admin:saml_providers:metadata:refresh')}
+					canMaterialize={hasPermission(adminAccess.current, 'admin:saml_providers:create')}
+					loadMappingSets={loadFederationMappingSets}
+					onback={() => goto('/admin/applications/all')}
+				/>
+			{:else}
+				<Callout tone="warning">{t('mc.loadFailed')}</Callout>
+			{/if}
+		</Page>
+	{/key}
 {:else}
 	<Page withFlow>
 		{#if failed}<Callout tone="warning"
