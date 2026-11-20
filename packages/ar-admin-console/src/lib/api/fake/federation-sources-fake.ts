@@ -299,7 +299,7 @@ export function createFakeFederationSources(
 				metadataUrl: String(payload.metadataUrl ?? ''),
 				certificates: (payload.certificates ?? []) as FederationCertificate[],
 				roles,
-				automatic: true,
+				automatic: resolution.mode === 'automatic',
 				idpMappingSetId: String(resolution.idpFieldMappingSetId ?? ''),
 				spMappingSetId: String(resolution.spFieldMappingSetId ?? ''),
 				attributePresetId: String(resolution.defaultAttributePresetId ?? ''),
@@ -338,6 +338,7 @@ export function createFakeFederationSources(
 				roles: (Array.isArray(resolution.roles)
 					? resolution.roles
 					: row.roles) as FederationSource['roles'],
+				automatic: resolution.mode === 'automatic',
 				idpMappingSetId: String(resolution.idpFieldMappingSetId ?? ''),
 				spMappingSetId: String(resolution.spFieldMappingSetId ?? ''),
 				attributePresetId: String(resolution.defaultAttributePresetId ?? ''),
