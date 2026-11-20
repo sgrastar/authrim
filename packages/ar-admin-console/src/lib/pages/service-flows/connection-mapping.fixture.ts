@@ -25,7 +25,8 @@ export type MappingScenario =
 	| 'stage'
 	| 'unknown'
 	| 'binding'
-	| 'readonly';
+	| 'readonly'
+	| 'unbound';
 
 /** Injected HTTP-contract fixture for the existing connection screen; never installed in a live route. */
 export function connectionMappingFixture(
@@ -145,7 +146,7 @@ export function connectionMappingFixture(
 			}
 		]
 	]);
-	let bound = 'set-portal';
+	let bound = scenario === 'unbound' ? '' : 'set-portal';
 	let failedOnce = false;
 	const unused = async (): Promise<never> => {
 		throw new Error('Not used by the connection screen');

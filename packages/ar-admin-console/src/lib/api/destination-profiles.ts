@@ -1,5 +1,5 @@
 import { API_BASE_URL, adminFetch } from './admin-request';
-import { errorFromResponse } from './api-error';
+import { profileJson, profileRequest, readWritten, reviewAndActivate } from './profile-chain';
 import type { MappingDestinationProfile } from './mapping-set';
 
 /**
@@ -38,36 +38,24 @@ export interface DestinationProfilesClient {
 		kind: DestinationKind,
 		signal?: AbortSignal
 	): Promise<MappingDestinationProfile[]>;
+	/** Every profile of the tenant, of any kind (the profiles page). */
+	listAll(tenantId: string, signal?: AbortSignal): Promise<MappingDestinationProfile[]>;
 	save(tenantId: string, input: DestinationProfileInput): Promise<DestinationProfileSaved>;
+	/** Deletes a profile; refused (409) while a mapping set sends into it. */
+	remove(tenantId: string, id: string): Promise<void>;
 }
 
 const BASE = `${API_BASE_URL}/api/admin/field-mapping/destination-profiles`;
 
-const record = (value: unknown): Record<string, unknown> =>
-	value && typeof value === 'object' && !Array.isArray(value)
-		? (value as Record<string, unknown>)
-		: {};
-
-function post(tenantId: string, url: string, method: string, body: unknown): Promise<Response> {
-	return adminFetch(url, {
-		tenantId,
-		method,
-		headers: { 'Idempotency-Key': crypto.randomUUID() },
-		includeJsonContentType: true,
-		body: JSON.stringify(body)
-	});
-}
-
-async function json(response: Response): Promise<Record<string, unknown>> {
-	if (!response.ok) throw await errorFromResponse(response);
-	return record(await response.json());
-}
-
 export const httpDestinationProfiles: DestinationProfilesClient = {
 	async list(tenantId, kind, signal) {
-		const result = await json(await adminFetch(BASE, { tenantId, signal }));
-		const rows = Array.isArray(result.destinationProfiles) ? result.destinationProfiles : [];
-		return (rows as MappingDestinationProfile[]).filter((row) => row.destinationType === kind);
+		return (await this.listAll(tenantId, signal)).filter((row) => row.destinationType === kind);
+	},
+	async listAll(tenantId, signal) {
+		const result = await profileJson(await adminFetch(BASE, { tenantId, signal }));
+		return (
+			Array.isArray(result.destinationProfiles) ? result.destinationProfiles : []
+		) as MappingDestinationProfile[];
 	},
 	async save(tenantId, input) {
 		const body = {
@@ -76,57 +64,35 @@ export const httpDestinationProfiles: DestinationProfilesClient = {
 			schema: input.schema,
 			...(input.id ? {} : { profileKey: input.profileKey, ownerScopeType: 'tenant' })
 		};
-		const written = record(
-			(
-				await json(
-					await post(
-						tenantId,
-						input.id ? `${BASE}/${encodeURIComponent(input.id)}` : BASE,
-						input.id ? 'PUT' : 'POST',
-						body
-					)
-				)
-			).result
-		) as unknown as MappingDestinationProfile;
-		const id = written.id;
-		const versionId = written.version?.id;
-		let state = written.version?.lifecycleState ?? written.lifecycleState;
-		try {
-			if (state === 'draft' && versionId) {
-				await json(
-					await post(
-						tenantId,
-						`${BASE}/${encodeURIComponent(id)}/versions/${encodeURIComponent(versionId)}/review`,
-						'POST',
-						{}
-					)
-				);
-				state = 'reviewed';
-			}
-			if (state === 'reviewed' && versionId) {
-				await json(
-					await post(
-						tenantId,
-						`${BASE}/${encodeURIComponent(id)}/versions/${encodeURIComponent(versionId)}/activate`,
-						'POST',
-						{}
-					)
-				);
-				state = 'active';
-			}
-		} catch (error) {
-			// Written but not switched on: the draft stays, and the caller says why.
+		const answer = await profileJson(
+			await profileRequest(
+				tenantId,
+				input.id ? `${BASE}/${encodeURIComponent(input.id)}` : BASE,
+				input.id ? 'PUT' : 'POST',
+				body
+			)
+		);
+		const { written, info } = readWritten(answer.result);
+		const outcome = await reviewAndActivate(tenantId, BASE, info);
+		if (!outcome.active) {
 			return {
-				profile: written,
+				profile: written as unknown as MappingDestinationProfile,
 				active: false,
-				reason: error instanceof Error ? error.message : ''
+				reason: outcome.reason
 			};
 		}
 		// A failed re-read after switching on is not a failed save: what was written stands.
 		const profiles = await this.list(tenantId, input.destinationType).catch(() => []);
 		return {
-			profile: profiles.find((row) => row.id === id) ?? written,
-			active: state === 'active'
+			profile:
+				profiles.find((row) => row.id === info.id) ??
+				(written as unknown as MappingDestinationProfile),
+			active: true
 		};
+	},
+	async remove(tenantId, id) {
+		await profileJson(
+			await profileRequest(tenantId, `${BASE}/${encodeURIComponent(id)}`, 'DELETE')
+		);
 	}
 };

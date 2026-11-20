@@ -4,7 +4,7 @@
 		DestinationProfileSaved,
 		DestinationProfilesClient
 	} from '#lib/api/destination-profiles.js';
-	import type { MappingDestinationProfile } from '#lib/api/mapping-set.js';
+	import { servingVersion, type MappingDestinationProfile } from '#lib/api/mapping-set.js';
 	import { t, type MessageKey } from '#lib/i18n/i18n.svelte.js';
 	import ColumnBrowser, { type BrowserItem } from '#lib/ui/patterns/ColumnBrowser.svelte';
 	import Callout from '#lib/ui/patterns/Callout.svelte';
@@ -109,6 +109,12 @@
 						: ('book' as const)
 		}))
 	);
+	/** The template's description in the current language (the catalogue's own English when there is none). */
+	function templateText(template: DestinationTemplate): string {
+		const key = `sf.dp.tpl.${template.id.replace('template_destination_', '')}` as MessageKey;
+		const text = t(key);
+		return text === key ? template.description : text;
+	}
 	function categoryKey(category: string): MessageKey {
 		return category === 'General settings'
 			? 'sf.dp.category.general'
@@ -141,8 +147,9 @@
 
 	function copyExisting(id: string) {
 		const source = profiles.find((row) => row.id === id);
-		if (!source?.version) return;
-		const next = formFromSchema(protocol, '', plain(source.version.schema));
+		const version = source ? servingVersion(source) : null;
+		if (!source || !version) return;
+		const next = formFromSchema(protocol, '', plain(version.schema));
 		form.nameIdFormat = next.nameIdFormat;
 		form.nameIdSource = next.nameIdSource;
 		form.rows = next.rows;
@@ -206,7 +213,9 @@
 		return value.endsWith('emailAddress') ? 'email' : (value.split('-format:')[1] ?? value);
 	}
 	const copyOptions = $derived(
-		profiles.filter((row) => row.version).map((row) => ({ value: row.id, label: row.displayName }))
+		profiles
+			.filter((row) => servingVersion(row))
+			.map((row) => ({ value: row.id, label: row.displayName }))
 	);
 </script>
 
@@ -227,7 +236,7 @@
 					<div class="template">
 						<span class="template__kind">{t(`sf.dp.template.kind.${protocol}`)}</span>
 						<strong>{item.template.displayName}</strong>
-						<p class="template__text">{item.template.description}</p>
+						<p class="template__text">{templateText(item.template)}</p>
 						<dl class="template__facts">
 							<dt>{t('sf.dp.template.version')}</dt>
 							<dd>{item.template.version}</dd>
@@ -297,7 +306,9 @@
 		<Callout tone="warning" live title={t('sf.dp.draft.title')}>
 			{t('sf.dp.draft.body')}
 			{#if draftReason}<code>{draftReason}</code>{/if}
-			{#if editing}<p class="editor__warn">{t('sf.dp.draft.editWarning')}</p>{/if}
+			{#if profile?.lifecycleState === 'active'}<p class="editor__warn">
+					{t('sf.dp.draft.editWarning')}
+				</p>{/if}
 		</Callout>
 	{/if}
 	<div class="editor__actions">

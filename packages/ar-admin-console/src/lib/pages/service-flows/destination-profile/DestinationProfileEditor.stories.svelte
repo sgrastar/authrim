@@ -59,6 +59,9 @@
 		createFakeDestinationProfiles([existing], { blockReview: 'blocking warning' })
 	);
 	const oidc = ready();
+	const stopped = ready(
+		createFakeDestinationProfiles([existing], { blockReview: 'blocking warning' })
+	);
 </script>
 
 <Story
@@ -197,5 +200,18 @@
 		await userEvent.click(canvas.getByRole('button', { name: t('sf.dp.save') }));
 		const dialog = await within(document.body).findByRole('dialog');
 		await expect(dialog).toHaveTextContent(t('sf.dp.impact.unknown'));
+	}}
+/>
+
+<Story
+	name="Changing one that is serving: a stopped save leaves the previous version in use"
+	args={{ ...stopped.args, profile: existing }}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findByDisplayValue('mail');
+		await userEvent.click(canvas.getByRole('button', { name: t('sf.dp.save') }));
+		await canvas.findByText(t('sf.dp.draft.title'));
+		await expect(canvas.getByText(t('sf.dp.draft.editWarning'))).toBeVisible();
+		await expect(stopped.onsaved).not.toHaveBeenCalled();
 	}}
 />

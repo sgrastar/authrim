@@ -670,12 +670,79 @@ export const enServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 	'sf.dp.impact.unknown':
 		'Which mapping sets send into it could not be fully checked. Saving changes what they send right away.',
 	'sf.dp.draft.editWarning':
-		'Until it is saved again, the mapping sets that send into this output source do not work. Fix it and save again.',
+		'The mapping sets that send into this output source keep using its previous version until this one is saved successfully. Fix it and save again.',
 	'sf.dp.field.editBlocked':
 		'The output source cannot be changed while a new set has mappings. Save the set first.',
 	'sf.dp.category.general': 'General settings',
 	'sf.dp.category.academic': 'Academic federation',
 	'sf.dp.category.vendor': 'Vendor specific',
+	'sf.dp.tpl.oidc_standard':
+		'OpenID Connect Core and profile claims for ID Token and UserInfo output.',
+	'sf.dp.tpl.saml_standard': 'Common SAML NameID and attribute release profile for SP assertions.',
+	'sf.dp.tpl.saml_refeds_rs':
+		'Research and Scholarship bundle with identifier, person name, mail, and affiliation.',
+	'sf.dp.tpl.saml_gakunin_application_standard':
+		'GakuNin academic federation attributes including Japanese name and organization attributes.',
+	'sf.dp.tpl.saml_kafe_attribute_map':
+		'KAFE core, recommended, and Korean extension attributes for academic federation SPs.',
+	'sf.dp.tpl.saml_uk_federation_core':
+		'UK federation core eduPerson attributes for affiliation, pseudonym, identifier, and entitlement.',
+	'sf.dp.tpl.saml_switch_eduid_core':
+		'Core SAML attributes from the Switch edu-ID federation attribute specification.',
+	'sf.dp.tpl.saml_surfconext_attribute_overview':
+		'Common SURFconext SAML attributes for identifiers, person data, organization, and groups.',
+	'sf.dp.tpl.saml_aaf_core':
+		'AAF core attributes for Australian research and education federation services.',
+	'sf.dp.tpl.saml_sifulan_minimum':
+		'Minimum attributes published by the SIFULAN Malaysian Access Federation.',
+	'sf.dp.tpl.saml_enterprise_basic':
+		'Common enterprise SAML profile for workforce SaaS integrations.',
+	'sf.sp.title.new': 'Create an input source',
+	'sf.sp.title.edit': 'Edit the input source',
+	'sf.sp.name': 'Input source name',
+	'sf.sp.existing.choose': 'Input source to copy',
+	'sf.sp.existing.none': 'There is no input source to copy.',
+	'sf.sp.template.kind': 'SCIM template',
+	'sf.sp.table.scim': 'SCIM attributes',
+	'sf.sp.table.csv': 'CSV columns',
+	'sf.sp.col.header': 'Header',
+	'sf.sp.col.mappingRequired': 'Mapping required',
+	'sf.sp.addColumn': 'Add a column',
+	'sf.sp.error.rows': 'Add at least one attribute (column).',
+	'sf.dp.category.workforce': 'Workforce',
+	'sf.sp.tpl.scim_minimal_user':
+		'Account provisioning with user name, status, display name, and primary email.',
+	'sf.sp.tpl.scim_core_user':
+		'Common SCIM 2.0 User attributes supported by the inbound mapping adapter.',
+	'sf.sp.tpl.scim_enterprise_user':
+		'Core User plus employee, organization, department, cost center, and manager attributes.',
+	'pf.title': 'Profiles (input and output sources)',
+	'pf.description':
+		'Make and change what is sent to apps and services (output sources) and what comes in (input sources). Saving switches a profile on.',
+	'pf.create.saml': 'New output source (SAML)',
+	'pf.create.oidc': 'New output source (OIDC)',
+	'pf.create.scim': 'New input source (SCIM)',
+	'pf.create.csv': 'New input source (CSV)',
+	'pf.col.name': 'Name',
+	'pf.col.kind': 'Kind',
+	'pf.col.state': 'State',
+	'pf.col.actions': 'Actions',
+	'pf.kind.saml': 'Output · SAML',
+	'pf.kind.oidc': 'Output · OIDC',
+	'pf.kind.scim': 'Input · SCIM',
+	'pf.kind.csv': 'Input · CSV',
+	'pf.state.active': 'Active',
+	'pf.state.draft': 'Draft',
+	'pf.edit': 'Edit',
+	'pf.delete': 'Delete',
+	'pf.actionsFor': 'Actions for {name}',
+	'pf.deleteTitle': 'Delete this profile?',
+	'pf.deleteBody': '“{name}” will be deleted. It cannot be deleted while a mapping set uses it.',
+	'pf.deleteFailed': 'It could not be deleted.',
+	'pf.saved': 'Saved.',
+	'pf.deleted': 'Deleted.',
+	'pf.empty': 'There are no profiles yet. Make one with the buttons above.',
+	'pf.loadFailed': 'The profiles could not be loaded.',
 	'sf.dp.field.label': 'Output source',
 	'sf.dp.field.create': 'Create an output source',
 	'sf.dp.field.edit': 'Edit the output source',

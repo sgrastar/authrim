@@ -697,12 +697,80 @@ export const deServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 	'sf.dp.impact.unknown':
 		'Es konnte nicht vollständig geprüft werden, welche Zuordnungen hineinsenden. Beim Speichern ändert sich sofort, was sie senden.',
 	'sf.dp.draft.editWarning':
-		'Bis zum erneuten Speichern funktionieren die Zuordnungen nicht, die in diese Ausgabequelle senden. Korrigieren und erneut speichern.',
+		'Die Zuordnungen, die in diese Ausgabequelle senden, nutzen bis zum erfolgreichen Speichern weiter die vorherige Version. Korrigieren und erneut speichern.',
 	'sf.dp.field.editBlocked':
 		'Die Ausgabequelle kann nicht geändert werden, solange ein neuer Satz Zuordnungen hat. Speichern Sie zuerst den Satz.',
 	'sf.dp.category.general': 'Allgemeine Einstellungen',
 	'sf.dp.category.academic': 'Akademische Föderation',
 	'sf.dp.category.vendor': 'Herstellerspezifisch',
+	'sf.dp.tpl.oidc_standard':
+		'OpenID-Connect-Core- und Profil-Claims für die Ausgabe im ID-Token und in UserInfo.',
+	'sf.dp.tpl.saml_standard': 'Gängige SAML-NameID und Attributfreigabe für SP-Assertions.',
+	'sf.dp.tpl.saml_refeds_rs':
+		'Research-and-Scholarship-Bündel mit Kennung, Name, E-Mail und Zugehörigkeit.',
+	'sf.dp.tpl.saml_gakunin_application_standard':
+		'Attribute der Wissenschaftsföderation GakuNin, einschließlich japanischer Namen und Organisationsattribute.',
+	'sf.dp.tpl.saml_kafe_attribute_map':
+		'KAFE-Kern-, empfohlene und koreanische Erweiterungsattribute für akademische Föderations-SPs.',
+	'sf.dp.tpl.saml_uk_federation_core':
+		'eduPerson-Kernattribute der UK Federation für Zugehörigkeit, Pseudonym, Kennung und Berechtigung.',
+	'sf.dp.tpl.saml_switch_eduid_core':
+		'SAML-Kernattribute aus der Attributspezifikation der Föderation Switch edu-ID.',
+	'sf.dp.tpl.saml_surfconext_attribute_overview':
+		'Gängige SURFconext-SAML-Attribute für Kennungen, Personendaten, Organisation und Gruppen.',
+	'sf.dp.tpl.saml_aaf_core':
+		'AAF-Kernattribute für Dienste der australischen Forschungs- und Bildungsföderation.',
+	'sf.dp.tpl.saml_sifulan_minimum':
+		'Von der malaysischen Zugangsföderation SIFULAN veröffentlichte Mindestattribute.',
+	'sf.dp.tpl.saml_enterprise_basic':
+		'Gängiges Unternehmens-SAML-Profil für SaaS-Anbindungen der Belegschaft.',
+	'sf.sp.title.new': 'Eingabequelle erstellen',
+	'sf.sp.title.edit': 'Eingabequelle bearbeiten',
+	'sf.sp.name': 'Name der Eingabequelle',
+	'sf.sp.existing.choose': 'Zu kopierende Eingabequelle',
+	'sf.sp.existing.none': 'Es gibt keine Eingabequelle zum Kopieren.',
+	'sf.sp.template.kind': 'SCIM-Vorlage',
+	'sf.sp.table.scim': 'SCIM-Attribute',
+	'sf.sp.table.csv': 'CSV-Spalten',
+	'sf.sp.col.header': 'Kopfzeile',
+	'sf.sp.col.mappingRequired': 'Zuordnung nötig',
+	'sf.sp.addColumn': 'Spalte hinzufügen',
+	'sf.sp.error.rows': 'Fügen Sie mindestens ein Attribut (eine Spalte) hinzu.',
+	'sf.dp.category.workforce': 'Belegschaft',
+	'sf.sp.tpl.scim_minimal_user':
+		'Konto-Provisionierung mit Benutzername, Status, Anzeigename und primärer E-Mail.',
+	'sf.sp.tpl.scim_core_user':
+		'Gängige SCIM-2.0-User-Attribute, die der eingehende Mapping-Adapter unterstützt.',
+	'sf.sp.tpl.scim_enterprise_user':
+		'Core User plus Mitarbeiter-, Organisations-, Abteilungs-, Kostenstellen- und Vorgesetztenattribute.',
+	'pf.title': 'Profile (Eingabe- und Ausgabequellen)',
+	'pf.description':
+		'Erstellen und ändern Sie, was an Apps und Dienste gesendet wird (Ausgabequellen) und was eingeht (Eingabequellen). Speichern aktiviert ein Profil.',
+	'pf.create.saml': 'Neue Ausgabequelle (SAML)',
+	'pf.create.oidc': 'Neue Ausgabequelle (OIDC)',
+	'pf.create.scim': 'Neue Eingabequelle (SCIM)',
+	'pf.create.csv': 'Neue Eingabequelle (CSV)',
+	'pf.col.name': 'Name',
+	'pf.col.kind': 'Art',
+	'pf.col.state': 'Status',
+	'pf.col.actions': 'Aktionen',
+	'pf.kind.saml': 'Ausgabe · SAML',
+	'pf.kind.oidc': 'Ausgabe · OIDC',
+	'pf.kind.scim': 'Eingabe · SCIM',
+	'pf.kind.csv': 'Eingabe · CSV',
+	'pf.state.active': 'Aktiv',
+	'pf.state.draft': 'Entwurf',
+	'pf.edit': 'Bearbeiten',
+	'pf.delete': 'Löschen',
+	'pf.actionsFor': 'Aktionen für {name}',
+	'pf.deleteTitle': 'Dieses Profil löschen?',
+	'pf.deleteBody':
+		'„{name}“ wird gelöscht. Solange eine Zuordnung es verwendet, kann es nicht gelöscht werden.',
+	'pf.deleteFailed': 'Es konnte nicht gelöscht werden.',
+	'pf.saved': 'Gespeichert.',
+	'pf.deleted': 'Gelöscht.',
+	'pf.empty': 'Es gibt noch keine Profile. Erstellen Sie eines mit den Schaltflächen oben.',
+	'pf.loadFailed': 'Die Profile konnten nicht geladen werden.',
 	'sf.dp.field.label': 'Ausgabequelle',
 	'sf.dp.field.create': 'Ausgabequelle erstellen',
 	'sf.dp.field.edit': 'Ausgabequelle bearbeiten',
