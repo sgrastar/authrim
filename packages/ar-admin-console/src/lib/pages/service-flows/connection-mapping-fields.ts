@@ -16,7 +16,8 @@ function valueType(value: unknown, multi: boolean): MappingType {
 		if (value && value !== 'string') throw new Error('Unsupported multi-valued field type');
 		return 'string[]';
 	}
-	if (!value || ['email', 'url', 'uri', 'uuid', 'text'].includes(String(value))) return 'string';
+	if (!value || ['email', 'url', 'uri', 'uuid', 'text', 'phone'].includes(String(value)))
+		return 'string';
 	if (value === 'integer') return 'number';
 	if (value === 'datetime') return 'date';
 	if (
@@ -27,6 +28,9 @@ function valueType(value: unknown, multi: boolean): MappingType {
 		value === 'object'
 	)
 		return value;
+	if (value === 'json') return 'object';
+	// A SAML-specific value kind (a persistent NameID) carries text.
+	if (typeof value === 'string' && value.startsWith('saml:')) return 'string';
 	throw new Error('Unsupported field type');
 }
 
