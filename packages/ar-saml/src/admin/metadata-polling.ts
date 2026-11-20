@@ -626,6 +626,17 @@ async function finishFederationRefreshJob(
            WHERE tenant_id = ? AND trust_source_id = ?
            ORDER BY created_at DESC, id DESC
            LIMIT ?
+        )
+        -- The latest job that recorded a verification result is what the Admin API reports as
+        -- the source's verification; a long run of 304 jobs must not retire it.
+        AND id NOT IN (
+          SELECT id
+            FROM federation_metadata_refresh_jobs
+           WHERE tenant_id = ? AND trust_source_id = ?
+             AND status = 'completed'
+             AND json_extract(cursor_json, '$.verificationStatus') IS NOT NULL
+           ORDER BY created_at DESC, id DESC
+           LIMIT 1
         )`,
     [
       source.tenant_id,
@@ -633,6 +644,8 @@ async function finishFederationRefreshJob(
       source.tenant_id,
       source.id,
       MAX_RETAINED_FEDERATION_REFRESH_JOBS_PER_SOURCE,
+      source.tenant_id,
+      source.id,
     ]
   );
 }
@@ -1374,6 +1387,7 @@ export async function refreshFederationMetadataSource(
         documentId: document.documentId,
         changed: document.changed,
         entityCount: aggregate.entities.length,
+        verificationStatus: verification.status,
         providersUpdated: providers.updated,
         providersMissing: providers.missing,
         providersFailed: providers.failed,
