@@ -1,3 +1,4 @@
+import { emptyFederationForm, federationProblems, type FederationForm } from './federation-model';
 import type { MetadataPreviewDraft } from './metadata-draft';
 import type { OidcDiscovery } from '#lib/api/external-providers.js';
 import { t, type MessageKey } from '#lib/i18n/i18n.svelte.js';
@@ -27,13 +28,14 @@ import {
  * - `sp`  a SAML service, which uses Authrim as its IdP (out)
  * - `op`  an OpenID Connect provider that Authrim signs people in through (in)
  * - `idp` a SAML identity provider that Authrim signs people in through (in)
+ * - `federation` a SAML federation (an aggregate of many providers, trusted as a whole), either way
  *
  * The wizard asks only what a connection cannot start without. Everything else is a part of
  * the connection's flow, set on its detail screen, where the parts the wizard did not ask are
  * shown as not set yet.
  */
 export type Direction = 'out' | 'in';
-export type ConnectionKind = 'rp' | 'sp' | 'op' | 'idp';
+export type ConnectionKind = 'rp' | 'sp' | 'op' | 'idp' | 'federation';
 export type AppType = 'web' | 'spa' | 'native';
 export type ImportMode = 'url' | 'xml' | 'file' | 'manual';
 /** How a person who signs in through an upstream provider is matched to an Authrim account. */
@@ -44,8 +46,8 @@ export type ImportMode = 'url' | 'xml' | 'file' | 'manual';
 export type LinkRule = 'verified-email' | 'manual';
 
 export const KINDS_OF: Record<Direction, readonly ConnectionKind[]> = {
-	out: ['rp', 'sp'],
-	in: ['op', 'idp']
+	out: ['rp', 'sp', 'federation'],
+	in: ['op', 'idp', 'federation']
 };
 
 /** What reading the other side's details needs, for a SAML partner in either direction. */
@@ -122,6 +124,7 @@ export interface Answers {
 	sp: SpForm;
 	op: OpForm;
 	idp: IdpForm;
+	federation: FederationForm;
 	/** "Activate" was pressed on the detail screen. */
 	active: boolean;
 	/** The optional steps of the flow that were added with its "+" (see FlowGroup.optional). */
@@ -237,7 +240,8 @@ export function emptyAnswers(live = false): Answers {
 			attributePreset: 'standard',
 			link: 'verified-email',
 			tested: false
-		}
+		},
+		federation: emptyFederationForm()
 	};
 }
 
@@ -264,6 +268,8 @@ const LABELS: Record<string, MessageKey> = {
 	'idp-attrs': 'sf.part.attrsTaken',
 	'idp-link': 'sf.part.link',
 	'idp-test': 'sf.part.test',
+	'federation-source': 'sf.part.federation-source',
+	'federation-participation': 'sf.part.federation-participation',
 	'mapping-schemas': 'sf.part.mapping-schemas',
 	'mapping-sets': 'sf.part.mapping-sets',
 	additional: 'sf.part.additional',
@@ -285,7 +291,9 @@ const WIZARD: Record<ConnectionKind, readonly string[]> = {
 	rp: ['rp-app', 'rp-signin'],
 	sp: ['sp-import', 'sp-attrs'],
 	op: [],
-	idp: ['idp-import']
+	idp: ['idp-import'],
+	// The aggregate and its certificate first, then who takes part and with which mapping set.
+	federation: ['federation-source', 'federation-participation']
 };
 
 /** A step of a connection's flow, and the settings in it. */
@@ -355,7 +363,9 @@ export const FLOW_GROUPS: Record<ConnectionKind, readonly FlowGroup[]> = {
 			optional: true
 		},
 		{ id: 'role', label: 'sf.group.role', parts: ['role'], optional: true }
-	]
+	],
+	// A federation is set on its own page (its roles, exceptions and entities), not as a flow.
+	federation: []
 };
 
 /**
@@ -367,7 +377,8 @@ export const SHARE_PART: Record<ConnectionKind, string> = {
 	rp: 'rp-share',
 	sp: 'sp-share',
 	op: 'op-share',
-	idp: 'idp-share'
+	idp: 'idp-share',
+	federation: 'sp-share'
 };
 
 /**
@@ -381,7 +392,8 @@ export const GENERAL_PARTS: Record<ConnectionKind, readonly string[]> = {
 	rp: ['rp-app', 'rp-redirect', 'rp-signin'],
 	sp: ['sp-import', 'sp-test'],
 	op: ['op-details', 'op-test'],
-	idp: ['idp-import', 'idp-test']
+	idp: ['idp-import', 'idp-test'],
+	federation: []
 };
 
 /**
@@ -392,7 +404,8 @@ export const OPEN_SETTINGS_PARTS: Record<ConnectionKind, readonly string[]> = {
 	rp: [],
 	sp: ['sp-attrs'],
 	op: [],
-	idp: []
+	idp: [],
+	federation: []
 };
 
 /** The name of a step of the flow, in the current language. */
@@ -416,14 +429,16 @@ export const FLOW: Record<ConnectionKind, readonly string[]> = {
 	rp: FLOW_GROUPS.rp.flatMap((group) => group.parts),
 	sp: FLOW_GROUPS.sp.flatMap((group) => group.parts),
 	op: FLOW_GROUPS.op.flatMap((group) => group.parts),
-	idp: FLOW_GROUPS.idp.flatMap((group) => group.parts)
+	idp: FLOW_GROUPS.idp.flatMap((group) => group.parts),
+	federation: []
 };
 
 const KIND_PROTOCOL: Record<ConnectionKind, MessageKey> = {
 	rp: 'sf.protocol.rp',
 	sp: 'sf.protocol.sp',
 	op: 'sf.protocol.op',
-	idp: 'sf.protocol.idp'
+	idp: 'sf.protocol.idp',
+	federation: 'sf.protocol.federation'
 };
 
 /** What a kind is, as protocol and role, for the line above the step count. */
@@ -455,7 +470,8 @@ export function kindRole(kind: ConnectionKind): { badge: string; line: string } 
 		rp: { badge: 'sf.role.out.badge', line: 'sf.role.rp.line' },
 		sp: { badge: 'sf.role.out.badge', line: 'sf.role.sp.line' },
 		op: { badge: 'sf.role.in.badge', line: 'sf.role.in.line' },
-		idp: { badge: 'sf.role.in.badge', line: 'sf.role.in.line' }
+		idp: { badge: 'sf.role.in.badge', line: 'sf.role.in.line' },
+		federation: { badge: 'sf.role.fed.badge', line: 'sf.role.fed.line' }
 	};
 	return { badge: t(keys[kind].badge), line: t(keys[kind].line) };
 }
@@ -465,7 +481,8 @@ export const KIND_MARK: Record<ConnectionKind, string> = {
 	rp: 'RP',
 	sp: 'SP',
 	op: 'OP',
-	idp: 'IdP'
+	idp: 'IdP',
+	federation: 'Fed'
 };
 
 export function labelOf(stepId: string): string {
@@ -568,6 +585,12 @@ export function canProceed(stepId: string, a: Answers): boolean {
 			return importReady(a.idp);
 		case 'idp-test':
 			return a.idp.tested;
+		case 'federation-source':
+			return !federationProblems(a.federation).some((problem) =>
+				['name', 'metadataUrl', 'certificates'].includes(problem.field)
+			);
+		case 'federation-participation':
+			return federationProblems(a.federation).length === 0;
 		default:
 			return true;
 	}
@@ -736,7 +759,13 @@ export function missingParts(a: Answers): string[] {
 export function canActivate(a: Answers): boolean {
 	const kind = kindOf(a);
 	if (!kind) return false;
-	const tested = { rp: true, sp: a.sp.tested, op: a.op.tested, idp: a.idp.tested }[kind];
+	const tested = {
+		rp: true,
+		sp: a.sp.tested,
+		op: a.op.tested,
+		idp: a.idp.tested,
+		federation: true
+	}[kind];
 	return missingParts(a).length === 0 && tested;
 }
 
@@ -751,6 +780,8 @@ export function nameOf(a: Answers): string {
 			return a.op.name || t('sf.name.newProvider');
 		case 'idp':
 			return a.idp.name || t('sf.name.newProvider');
+		case 'federation':
+			return a.federation.name || t('sf.name.newFederation');
 		default:
 			return t('sf.name.newConnection');
 	}
@@ -947,6 +978,18 @@ export function sampleAnswers(
 		});
 		settingsFromImport(a.settings, a.idp.importMode);
 		a.idp.tested = full;
+	}
+	if (kind === 'federation') {
+		Object.assign(a.federation, {
+			name: 'Test federation',
+			metadataUrl: 'https://metadata.test-federation.example/federation/aggregate.xml',
+			spRole: a.direction === 'out',
+			idpRole: a.direction === 'in'
+		});
+		if (full) {
+			a.federation.spMappingSetId = a.federation.spRole ? 'tenant-default' : '';
+			a.federation.idpMappingSetId = a.federation.idpRole ? 'tenant-default' : '';
+		}
 	}
 	// A mapping set is the one thing a service and a SAML provider cannot do without.
 	if (full) {

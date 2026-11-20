@@ -146,7 +146,6 @@ export const ja = {
 	'nav.custom.statements': '同意文',
 	'nav.data.profiles': 'Source / Destination',
 	'nav.data.mappingSets': 'マッピングセット',
-	'nav.data.federationTrust': 'フェデレーション信頼',
 	'nav.data.readiness': 'スキーマ準備状況',
 	'nav.mon.adminLogging': '管理ログ運用',
 	'nav.mon.diagnostics': '診断ログ',

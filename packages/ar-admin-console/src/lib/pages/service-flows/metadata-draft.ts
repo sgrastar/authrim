@@ -11,6 +11,8 @@ export interface MetadataPreviewDraft {
 	preview?: SamlMetadataPreview;
 	pending: boolean;
 	error: string;
+	/** The address read was a federation's aggregate: where it can be added as one. */
+	aggregateUrl?: string;
 }
 
 export function metadataInput(form: ImportForm): SamlMetadataInput | undefined {
