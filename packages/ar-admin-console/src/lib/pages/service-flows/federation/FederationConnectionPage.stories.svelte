@@ -80,6 +80,16 @@
 				entityId
 			)
 		).closest('tr') as HTMLElement;
+	/** Opens the exclusion node of the flow: the exceptions and the entities are shown there. */
+	async function openExclusions(canvas: Canvas) {
+		await userEvent.click(
+			await canvas.findByRole('button', { name: new RegExp(t('sf.fed.flow.exclusionsItem')) })
+		);
+	}
+	/** Back to the general settings (the federation's end of the flow): status, trust, deletion. */
+	async function openGeneral(canvas: Canvas) {
+		await userEvent.click(canvas.getAllByRole('button', { name: new RegExp(t('af.general')) })[0]);
+	}
 	/** Opens the row's actions menu and picks one of them. */
 	async function act(canvas: Canvas, target: HTMLElement, label: string) {
 		await userEvent.click(
@@ -125,6 +135,7 @@
 	const noMaterializePage = page({ canMaterialize: false });
 	const keywordPage = page();
 	const pagePage = page();
+	const flowPage = page();
 	const bulkPage = page();
 	const countPage = page({
 		sources: [{ ...healthy, roles: ['saml_sp'], idpMappingSetId: '' }]
@@ -175,8 +186,11 @@
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		await canvas.findByText(t('sf.fed.readonly'));
+		// The general settings are in view: no update, no deletion.
+		await canvas.findByRole('heading', { name: t('sf.fed.statusCard.title') });
 		await expect(canvas.queryByRole('button', { name: t('sf.fed.statusCard.refresh') })).toBeNull();
 		await expect(canvas.queryByRole('button', { name: t('sf.fed.delete.button') })).toBeNull();
+		await openExclusions(canvas);
 		await canvas.findByText('https://sp.excluded-2.example/shibboleth');
 		// Nothing to do to an entity: no selection, no actions menu.
 		await expect(canvas.queryByRole('checkbox')).toBeNull();
@@ -195,6 +209,7 @@
 	args={pagingPage.args}
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
+		await openExclusions(canvas);
 		await canvas.findByText(/1–25 of 1,200/);
 		await expect(canvas.getAllByRole('row').length).toBeLessThanOrEqual(26 + 1);
 		await userEvent.click(canvas.getByRole('button', { name: t('sf.fed.entities.next') }));
@@ -220,6 +235,7 @@
 	args={excludePage.args}
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
+		await openExclusions(canvas);
 		await canvas.findByText(/of 1,200/);
 		await userEvent.type(search(canvas), 'idp.inst-4.example');
 		const target = await row(canvas, 'https://idp.inst-4.example/idp/shibboleth');
@@ -247,6 +263,7 @@
 		]);
 		await expect(payload.runtimeResolution.roles).toEqual(['saml_idp', 'saml_sp']);
 		await expect(expectedUpdatedAt).toBe(healthy.updatedAt);
+		await openGeneral(canvas);
 		await waitFor(() => expect(canvas.getByText(/1,200 \(3 set aside\)/)).toBeVisible());
 	}}
 />
@@ -256,6 +273,7 @@
 	args={conflictPage.args}
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
+		await openExclusions(canvas);
 		await canvas.findByText(/of 1,200/);
 		await userEvent.type(search(canvas), 'idp.inst-4.example');
 		const target = await row(canvas, 'https://idp.inst-4.example/idp/shibboleth');
@@ -352,6 +370,7 @@
 		await waitFor(() => expect(canvas.queryByText(t('sf.fed.statusCard.expiredTitle'))).toBeNull());
 		await expect(lapsed.status?.sourceState).toBe('expired');
 		// The fetch moved the version; a save after it is still accepted.
+		await openExclusions(canvas);
 		await canvas.findByText(/of [\d,]+/);
 		const firstRow = canvas.getAllByRole('row')[1];
 		await act(canvas, firstRow, t('sf.fed.entities.exclude'));
@@ -366,6 +385,7 @@
 	args={ambiguousPage.args}
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
+		await openExclusions(canvas);
 		await canvas.findByText(/of 1,200/);
 		await userEvent.type(search(canvas), 'sp.inst-5.example');
 		const target = await row(canvas, 'https://sp.inst-5.example/shibboleth');
@@ -396,6 +416,7 @@
 	args={spPage.args}
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
+		await openExclusions(canvas);
 		await canvas.findByText(/of 1,200/);
 		await userEvent.type(search(canvas), 'sp.excluded-1.example');
 		const target = await row(canvas, 'https://sp.excluded-1.example/shibboleth');
@@ -425,6 +446,7 @@
 	args={noMaterializePage.args}
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
+		await openExclusions(canvas);
 		await canvas.findByText(/of 1,200/);
 		// The menu holds "set aside" but not "make own connection".
 		await userEvent.click(
@@ -444,10 +466,12 @@
 	args={raceFake.args}
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
+		await openExclusions(canvas);
 		await canvas.findByText(/of 1,200/);
 		await userEvent.type(search(canvas), 'idp.inst-4.example');
 		const target = await row(canvas, 'https://idp.inst-4.example/idp/shibboleth');
 		await act(canvas, target, t('sf.fed.entities.exclude'));
+		await openGeneral(canvas);
 		// Another administrator saves a different change in the meantime.
 		const current = await raceFake.client.get(ID);
 		await raceFake.client.update(ID, {
@@ -472,6 +496,7 @@
 	args={keywordPage.args}
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
+		await openExclusions(canvas);
 		const range = async () =>
 			(await canvas.findByText(/\d+–\d+ of [\d,]+|0 of 0|of [\d,]+/)).textContent;
 		await canvas.findByText(/of [\d,]+/);
@@ -494,6 +519,7 @@
 	args={bulkPage.args}
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
+		await openExclusions(canvas);
 		await canvas.findByText(/of [\d,]+/);
 		// Providers with no connection of their own, so every row can be set aside.
 		await userEvent.type(search(canvas), 'idp.inst-12');
@@ -538,6 +564,7 @@
 	args={pagePage.args}
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
+		await openExclusions(canvas);
 		await canvas.findByText(/1–25 of [\d,]+/);
 		await userEvent.click(within(canvas.getAllByRole('row')[1]).getByRole('checkbox'));
 		await canvas.findByRole('button', { name: t('sf.fed.entities.bulk.exclude') });
@@ -546,5 +573,33 @@
 		await expect(
 			canvas.queryByRole('button', { name: t('sf.fed.entities.bulk.exclude') })
 		).toBeNull();
+	}}
+/>
+
+<Story
+	name="The flow has a required mapping step and a set-aside step that holds the exceptions and entities"
+	args={flowPage.args}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findByRole('heading', { name: 'Test federation' });
+		// The mapping is marked required; the set-aside step lists how many are set aside.
+		await expect(canvas.getByText(t('common.required'))).toBeVisible();
+		const exclusions = canvas.getByRole('button', {
+			name: new RegExp(t('sf.fed.flow.exclusionsItem'))
+		});
+		await expect(exclusions).toHaveTextContent(t('sf.fed.flow.exclusionsCount', { count: 3 }));
+		// Each step opens its own settings in the main area; the others are not shown.
+		await expect(canvas.getByRole('heading', { name: t('sf.fed.statusCard.title') })).toBeVisible();
+		await userEvent.click(exclusions);
+		await expect(canvas.getByRole('heading', { name: t('sf.fed.exceptions.title') })).toBeVisible();
+		await expect(canvas.getByRole('heading', { name: t('sf.fed.entities.title') })).toBeVisible();
+		await expect(canvas.queryByRole('heading', { name: t('sf.fed.statusCard.title') })).toBeNull();
+		await userEvent.click(
+			canvas.getByRole('button', { name: new RegExp(t('sf.part.mapping-sets')) })
+		);
+		await expect(
+			canvas.getByRole('heading', { name: t('sf.fed.participation.title') })
+		).toBeVisible();
+		await expect(canvas.queryByRole('heading', { name: t('sf.fed.entities.title') })).toBeNull();
 	}}
 />

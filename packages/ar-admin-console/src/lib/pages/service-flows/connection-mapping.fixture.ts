@@ -14,6 +14,7 @@ import type {
 } from '#lib/api/mapping-set.js';
 import { compileMapping } from '#lib/ui/patterns/mapping-codec.js';
 import { copyValue } from '#lib/ui/save/draft.svelte.js';
+import { createFakeDestinationProfiles } from '#lib/api/fake/destination-profiles-fake.js';
 import { codecContext } from './connection-mapping-fields.js';
 import type { ConnectionMappingResources } from './connection-mapping.svelte.js';
 
@@ -196,6 +197,8 @@ export function connectionMappingFixture(
 			}
 		};
 	}
+	// The output sources: the one the sets send into, and whatever a story makes.
+	const profileStore = createFakeDestinationProfiles([copyValue(profile)]);
 	const client: IdentityMappingClient = {
 		restoreLevel: async () => undefined,
 		sets: async () => ({ sets: copyValue([...sets.values()]) }),
@@ -205,7 +208,9 @@ export function connectionMappingFixture(
 			return copyValue(set);
 		},
 		catalogs: async () => ({ catalogs: [copyValue(catalog)] }),
-		destinationProfiles: async () => ({ destinationProfiles: [copyValue(profile)] }),
+		destinationProfiles: async () => ({
+			destinationProfiles: await profileStore.list('demo', protocol)
+		}),
 		createSet: async (_tenant, request, key) => save('set-created', request, key, null),
 		saveSet: async (_tenant, id, request, options) =>
 			save(id, request, options.idempotencyKey, options),
@@ -309,6 +314,7 @@ export function connectionMappingFixture(
 	};
 	const resources: ConnectionMappingResources = {
 		client,
+		profiles: profileStore,
 		tenantId: 'demo',
 		protocol,
 		connectionId: 'portal',
