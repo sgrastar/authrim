@@ -586,7 +586,16 @@ const translation = {
 	tenantDeleted_chooseButton: 'Ondoa Passkey iliyohifadhiwa',
 	tenantDeleted_chosenRemoved: 'Tumeomba kifaa hiki kiondoe Passkey hiyo.',
 	tenantDeleted_manualHint:
-		'Passkey zilizo kwenye ufunguo wa usalama, au kwenye programu ambayo kivinjari hiki hakiwezi kuifikia, lazima ziondolewe kupitia mipangilio ya ufunguo au programu hiyo.'
+		'Passkey zilizo kwenye ufunguo wa usalama, au kwenye programu ambayo kivinjari hiki hakiwezi kuifikia, lazima ziondolewe kupitia mipangilio ya ufunguo au programu hiyo.',
+	federation_picker_pageTitle: 'Choose your institution',
+	federation_picker_title: 'Choose your institution',
+	federation_picker_subtitle: 'Search for the institution you belong to and sign in through it.',
+	federation_picker_searchLabel: 'Institution name',
+	federation_picker_searchPlaceholder: 'Start typing the institution name',
+	federation_picker_noResults: 'No institution matches your search.',
+	federation_picker_loadError: 'The list of institutions could not be loaded. Try again later.',
+	federation_picker_more: 'Showing the first results. Narrow the search to find others.',
+	federation_picker_back: 'Back to sign in'
 } satisfies Translation;
 
 export default translation;

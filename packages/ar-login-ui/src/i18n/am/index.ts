@@ -537,7 +537,16 @@ const translation = {
 	tenantDeleted_chooseButton: 'የተቀመጠ የይለፍ ቁልፍ አስወግድ',
 	tenantDeleted_chosenRemoved: 'ያንን የይለፍ ቁልፍ እንዲያስወግድ ይህን መሣሪያ ጠይቀናል።',
 	tenantDeleted_manualHint:
-		'በደህንነት ቁልፍ ላይ ወይም ይህ አሳሽ ሊደርስበት በማይችል መተግበሪያ ውስጥ የተቀመጡ የይለፍ ቁልፎች በዚያ ቁልፍ ወይም መተግበሪያ ቅንብሮች ውስጥ መወገድ አለባቸው።'
+		'በደህንነት ቁልፍ ላይ ወይም ይህ አሳሽ ሊደርስበት በማይችል መተግበሪያ ውስጥ የተቀመጡ የይለፍ ቁልፎች በዚያ ቁልፍ ወይም መተግበሪያ ቅንብሮች ውስጥ መወገድ አለባቸው።',
+	federation_picker_pageTitle: 'Choose your institution',
+	federation_picker_title: 'Choose your institution',
+	federation_picker_subtitle: 'Search for the institution you belong to and sign in through it.',
+	federation_picker_searchLabel: 'Institution name',
+	federation_picker_searchPlaceholder: 'Start typing the institution name',
+	federation_picker_noResults: 'No institution matches your search.',
+	federation_picker_loadError: 'The list of institutions could not be loaded. Try again later.',
+	federation_picker_more: 'Showing the first results. Narrow the search to find others.',
+	federation_picker_back: 'Back to sign in'
 } satisfies Translation;
 
 export default translation;

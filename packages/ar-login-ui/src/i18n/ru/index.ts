@@ -399,7 +399,16 @@ const ru = createTranslation({
 	tenantDeleted_chooseButton: 'Удалить сохранённый Passkey',
 	tenantDeleted_chosenRemoved: 'Мы попросили это устройство удалить этот Passkey.',
 	tenantDeleted_manualHint:
-		'Passkey, сохранённые на ключе безопасности или в приложении, недоступном этому браузеру, нужно удалить в настройках этого ключа или приложения.'
+		'Passkey, сохранённые на ключе безопасности или в приложении, недоступном этому браузеру, нужно удалить в настройках этого ключа или приложения.',
+	federation_picker_pageTitle: 'Choose your institution',
+	federation_picker_title: 'Choose your institution',
+	federation_picker_subtitle: 'Search for the institution you belong to and sign in through it.',
+	federation_picker_searchLabel: 'Institution name',
+	federation_picker_searchPlaceholder: 'Start typing the institution name',
+	federation_picker_noResults: 'No institution matches your search.',
+	federation_picker_loadError: 'The list of institutions could not be loaded. Try again later.',
+	federation_picker_more: 'Showing the first results. Narrow the search to find others.',
+	federation_picker_back: 'Back to sign in'
 });
 
 export default ru;

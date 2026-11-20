@@ -191,6 +191,47 @@ describe('adminAuthenticationMethodsAPI', () => {
 		expect(saved[1]).not.toHaveProperty('reauthAcceptWithoutAuthTime');
 	});
 
+	it('keeps the switches of a federation source when it saves what it shows', async () => {
+		const federation = {
+			id: 'saml-federation:fed_1',
+			providerId: 'fed_1',
+			loginEnabled: false,
+			signupEnabled: true,
+			reauthEnabled: false
+		};
+		mockAdminSettingsAPI.getSettings.mockResolvedValue({
+			version: 'v1',
+			values: {
+				'authentication-methods.external_provider_usage': JSON.stringify([
+					{ id: 'github', providerId: 'p-github', loginEnabled: true },
+					federation
+				])
+			}
+		});
+		const result = await adminAuthenticationMethodsAPI.get('tenant-a');
+		// The screen does not list a federation source.
+		expect(result.externalProviderUsages.map((usage) => usage.id)).not.toContain(
+			'saml-federation:fed_1'
+		);
+
+		mockAdminSettingsAPI.updateSettings.mockResolvedValue({ version: 'v2', values: {} });
+		await adminAuthenticationMethodsAPI.update(
+			result.settings,
+			result.builtIn,
+			result.directoryPassword,
+			result.humanVerification,
+			[],
+			result.externalProviderUsages,
+			'tenant-a'
+		);
+		const saved = JSON.parse(
+			mockAdminSettingsAPI.updateSettings.mock.calls.at(-1)?.[1].set[
+				'authentication-methods.external_provider_usage'
+			]
+		) as Array<Record<string, unknown>>;
+		expect(saved.find((entry) => entry.id === 'saml-federation:fed_1')).toEqual(federation);
+	});
+
 	it("never shows another provider's entry that once had the same slug", async () => {
 		mockAdminSettingsAPI.getSettings.mockResolvedValue({
 			version: 'v1',

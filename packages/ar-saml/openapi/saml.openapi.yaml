@@ -199,7 +199,63 @@ paths:
         The start checks the IdP's sign-in switch, or its sign-up switch for purpose=signup (a lite
         start takes the purpose of its transaction); the ACS then lets a response to it sign in to
         an existing account only while sign-in is on, and create one only while sign-up is on.
+        With a federation parameter (and no idp) the start goes through a federation source.
+        Without entityID it only sends the user on and starts nothing: to the institution picker of
+        the Login UI on the issuer's own host (`/login/federation/{sourceId}`, the same host the
+        start that follows the pick runs on), carrying the screen's parameters, or, when
+        the source is set to an external Discovery Service, to that Discovery Service (SAML IdP
+        Discovery Protocol: `entityID`, `return`, `returnIDParam=entityID`, and `isPassive=true`
+        when `is_passive=1`). A Discovery Service never sees the screen's parameters or the human
+        verification token: that token is checked (and spent) at this hop, the parameters are kept
+        server-side under an opaque `fs` id, and `fs` comes back only for the same browser (a
+        cookie), used up once. With entityID (the IdP the user picked, or the Discovery Service
+        returned together with `fs`) the IdP must be in that source's current verified snapshot and
+        allowed by its policy, the exception list included; human verification is checked here
+        (not for a start that came back with `fs`, which was verified when it went out). An approved
+        explicit provider with the same entityID takes the start over in place, as an ordinary
+        start of that provider. A federation start files its sign-in and sign-up switches under
+        `saml-federation:{sourceId}` (the ACS also files an unsolicited response from an IdP built
+        from a federation source there), and the ACS accepts its response only through that same
+        source; an entity that another source would win by priority (or that two sources hold at the
+        same priority) is refused at the start. Not available to a lite Login UI tenant or for a
+        re-authentication.
       parameters:
+        - name: federation
+          in: query
+          required: false
+          description: >-
+            Federation trust source id (letters, digits, `_`, `-`; up to 128). Not allowed together
+            with idp.
+          schema:
+            type: string
+            maxLength: 128
+        - name: entityID
+          in: query
+          required: false
+          description: >-
+            With federation: the IdP's entityID (up to 1024 characters). Without federation it is
+            refused.
+          schema:
+            type: string
+            maxLength: 1024
+        - name: fs
+          in: query
+          required: false
+          description: >-
+            With federation and entityID, on the return from a Discovery Service: the opaque id of
+            the start kept at the hop (`_` and 32 hex digits). Needs the browser's cookie; used up
+            once. Without entityID it is refused.
+          schema:
+            type: string
+            pattern: '^_[0-9a-f]{32}$'
+        - name: is_passive
+          in: query
+          required: false
+          description: With federation and a Discovery Service, `1` asks it for a passive lookup.
+          schema:
+            type: string
+            enum:
+              - '1'
         - name: purpose
           in: query
           required: false
@@ -253,6 +309,64 @@ paths:
             The tenant turned the IdP off for the start's purpose (sign-in or sign-up), or a lite
             Login UI tenant's start has no start grant it can consume
             (lite_mode_endpoint_unavailable).
+  /saml/sp/federation/{sourceId}/idps:
+    get:
+      tags:
+        - SAML SP
+      operationId: getSamlSpFederationBySourceIdIdps
+      summary: Search the IdPs of a federation source (institution picker).
+      description: >-
+        Public and rate limited (publicRead). The IdPs of the source's active, verified aggregate
+        document that its policy lets take part (the exception list, registration authorities and
+        entity categories applied), by display name or entityID. Only public facts are returned: the
+        display name, the entityID and an https logo. A source that is not offered (unknown, expired,
+        not automatic for the IdP role, or set to an external Discovery Service) answers 404.
+      parameters:
+        - name: sourceId
+          in: path
+          required: true
+          schema:
+            type: string
+            maxLength: 128
+        - name: q
+          in: query
+          required: false
+          description: Substring of the display name or entityID (up to 128 characters).
+          schema:
+            type: string
+            maxLength: 128
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 20
+      responses:
+        '200':
+          description: The matching IdPs. Cached for 60 seconds.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                example: public, max-age=60
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SAMLFederationIdPSearchResponse'
+        '404':
+          description: The source is not offered here.
+        '429':
+          description: Rate limited (publicRead profile). `Retry-After` tells when to retry.
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+        '500':
+          description: The inventory could not be read.
+        '503':
+          description: The rate limiter is unavailable.
   /saml/sp/acs:
     post:
       tags:
@@ -2285,6 +2399,42 @@ components:
         metadataRefreshStatus:
           type: object
           additionalProperties: true
+    SAMLFederationIdPSearchResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - sourceId
+        - displayName
+        - items
+        - truncated
+      properties:
+        sourceId:
+          type: string
+        displayName:
+          type: string
+          description: The source's name, as the tenant calls it.
+        items:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required:
+              - entityId
+              - displayName
+              - logoUrl
+            properties:
+              entityId:
+                type: string
+              displayName:
+                type: string
+              logoUrl:
+                type:
+                  - string
+                  - 'null'
+                description: An https address only.
+        truncated:
+          type: boolean
+          description: More IdPs match than are returned.
     SAMLFederationMaterializeRequest:
       type: object
       additionalProperties: false

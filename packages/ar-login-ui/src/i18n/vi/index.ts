@@ -587,7 +587,16 @@ const vi = createTranslation({
 	tenantDeleted_chooseButton: 'Xoá khoá truy cập đã lưu',
 	tenantDeleted_chosenRemoved: 'Chúng tôi đã yêu cầu thiết bị này xoá khoá truy cập đó.',
 	tenantDeleted_manualHint:
-		'Khoá truy cập lưu trên khoá bảo mật, hoặc trong ứng dụng mà trình duyệt này không truy cập được, cần được xoá trong phần cài đặt của khoá hoặc ứng dụng đó.'
+		'Khoá truy cập lưu trên khoá bảo mật, hoặc trong ứng dụng mà trình duyệt này không truy cập được, cần được xoá trong phần cài đặt của khoá hoặc ứng dụng đó.',
+	federation_picker_pageTitle: 'Choose your institution',
+	federation_picker_title: 'Choose your institution',
+	federation_picker_subtitle: 'Search for the institution you belong to and sign in through it.',
+	federation_picker_searchLabel: 'Institution name',
+	federation_picker_searchPlaceholder: 'Start typing the institution name',
+	federation_picker_noResults: 'No institution matches your search.',
+	federation_picker_loadError: 'The list of institutions could not be loaded. Try again later.',
+	federation_picker_more: 'Showing the first results. Narrow the search to find others.',
+	federation_picker_back: 'Back to sign in'
 });
 
 export default vi;

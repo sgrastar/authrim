@@ -613,7 +613,17 @@ const ja = {
 	tenantDeleted_chooseButton: '保存されているPasskeyを削除する',
 	tenantDeleted_chosenRemoved: '選んだPasskeyの削除を、この端末に依頼しました。',
 	tenantDeleted_manualHint:
-		'セキュリティキーや、このブラウザーから操作できないアプリに保存したPasskeyは、そのキーやアプリの設定から削除してください。'
+		'セキュリティキーや、このブラウザーから操作できないアプリに保存したPasskeyは、そのキーやアプリの設定から削除してください。',
+	federation_picker_pageTitle: '所属機関を選択',
+	federation_picker_title: '所属機関を選択',
+	federation_picker_subtitle: '所属する機関を検索して、その機関でサインインします。',
+	federation_picker_searchLabel: '機関名',
+	federation_picker_searchPlaceholder: '機関名を入力してください',
+	federation_picker_noResults: '一致する機関がありません。',
+	federation_picker_loadError:
+		'機関の一覧を読み込めませんでした。しばらくしてからもう一度お試しください。',
+	federation_picker_more: '先頭の結果のみ表示しています。検索を絞り込んでください。',
+	federation_picker_back: 'サインインに戻る'
 } satisfies Translation;
 
 export default ja;

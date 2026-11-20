@@ -403,7 +403,16 @@ const pt = createTranslation({
 	tenantDeleted_chooseButton: 'Remover uma Passkey guardada',
 	tenantDeleted_chosenRemoved: 'Pedimos a este dispositivo que remova essa Passkey.',
 	tenantDeleted_manualHint:
-		'As Passkeys guardadas numa chave de segurança, ou numa aplicação a que este navegador não chega, têm de ser removidas nas definições dessa chave ou aplicação.'
+		'As Passkeys guardadas numa chave de segurança, ou numa aplicação a que este navegador não chega, têm de ser removidas nas definições dessa chave ou aplicação.',
+	federation_picker_pageTitle: 'Choose your institution',
+	federation_picker_title: 'Choose your institution',
+	federation_picker_subtitle: 'Search for the institution you belong to and sign in through it.',
+	federation_picker_searchLabel: 'Institution name',
+	federation_picker_searchPlaceholder: 'Start typing the institution name',
+	federation_picker_noResults: 'No institution matches your search.',
+	federation_picker_loadError: 'The list of institutions could not be loaded. Try again later.',
+	federation_picker_more: 'Showing the first results. Narrow the search to find others.',
+	federation_picker_back: 'Back to sign in'
 });
 
 export default pt;

@@ -566,7 +566,16 @@ const th = createTranslation({
 	tenantDeleted_chooseButton: 'ลบพาสคีย์ที่บันทึกไว้',
 	tenantDeleted_chosenRemoved: 'เราได้ขอให้อุปกรณ์นี้ลบพาสคีย์นั้นแล้ว',
 	tenantDeleted_manualHint:
-		'พาสคีย์ที่อยู่ในคีย์ความปลอดภัย หรือในแอปที่เบราว์เซอร์นี้เข้าถึงไม่ได้ ต้องลบจากการตั้งค่าของคีย์หรือแอปนั้น'
+		'พาสคีย์ที่อยู่ในคีย์ความปลอดภัย หรือในแอปที่เบราว์เซอร์นี้เข้าถึงไม่ได้ ต้องลบจากการตั้งค่าของคีย์หรือแอปนั้น',
+	federation_picker_pageTitle: 'Choose your institution',
+	federation_picker_title: 'Choose your institution',
+	federation_picker_subtitle: 'Search for the institution you belong to and sign in through it.',
+	federation_picker_searchLabel: 'Institution name',
+	federation_picker_searchPlaceholder: 'Start typing the institution name',
+	federation_picker_noResults: 'No institution matches your search.',
+	federation_picker_loadError: 'The list of institutions could not be loaded. Try again later.',
+	federation_picker_more: 'Showing the first results. Narrow the search to find others.',
+	federation_picker_back: 'Back to sign in'
 });
 
 export default th;

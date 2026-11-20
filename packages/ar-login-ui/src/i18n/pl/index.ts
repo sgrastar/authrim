@@ -587,7 +587,16 @@ const translation = {
 	tenantDeleted_chooseButton: 'Usuń zapisany klucz dostępu',
 	tenantDeleted_chosenRemoved: 'Poprosiliśmy to urządzenie o usunięcie tego klucza dostępu.',
 	tenantDeleted_manualHint:
-		'Klucze dostępu zapisane na kluczu bezpieczeństwa lub w aplikacji, do której ta przeglądarka nie ma dostępu, trzeba usunąć w ustawieniach tego klucza lub aplikacji.'
+		'Klucze dostępu zapisane na kluczu bezpieczeństwa lub w aplikacji, do której ta przeglądarka nie ma dostępu, trzeba usunąć w ustawieniach tego klucza lub aplikacji.',
+	federation_picker_pageTitle: 'Choose your institution',
+	federation_picker_title: 'Choose your institution',
+	federation_picker_subtitle: 'Search for the institution you belong to and sign in through it.',
+	federation_picker_searchLabel: 'Institution name',
+	federation_picker_searchPlaceholder: 'Start typing the institution name',
+	federation_picker_noResults: 'No institution matches your search.',
+	federation_picker_loadError: 'The list of institutions could not be loaded. Try again later.',
+	federation_picker_more: 'Showing the first results. Narrow the search to find others.',
+	federation_picker_back: 'Back to sign in'
 } satisfies Translation;
 
 export default translation;

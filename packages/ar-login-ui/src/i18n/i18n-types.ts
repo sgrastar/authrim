@@ -2143,6 +2143,42 @@ type RootTranslation = {
 	 * P​a​s​s​k​e​y​s​ ​o​n​ ​a​ ​s​e​c​u​r​i​t​y​ ​k​e​y​,​ ​o​r​ ​i​n​ ​a​n​ ​a​p​p​ ​t​h​i​s​ ​b​r​o​w​s​e​r​ ​c​a​n​n​o​t​ ​r​e​a​c​h​,​ ​h​a​v​e​ ​t​o​ ​b​e​ ​r​e​m​o​v​e​d​ ​i​n​ ​t​h​e​ ​s​e​t​t​i​n​g​s​ ​o​f​ ​t​h​a​t​ ​k​e​y​ ​o​r​ ​a​p​p​.
 	 */
 	tenantDeleted_manualHint: string;
+	/**
+	 * C​h​o​o​s​e​ ​y​o​u​r​ ​i​n​s​t​i​t​u​t​i​o​n
+	 */
+	federation_picker_pageTitle: string;
+	/**
+	 * C​h​o​o​s​e​ ​y​o​u​r​ ​i​n​s​t​i​t​u​t​i​o​n
+	 */
+	federation_picker_title: string;
+	/**
+	 * S​e​a​r​c​h​ ​f​o​r​ ​t​h​e​ ​i​n​s​t​i​t​u​t​i​o​n​ ​y​o​u​ ​b​e​l​o​n​g​ ​t​o​ ​a​n​d​ ​s​i​g​n​ ​i​n​ ​t​h​r​o​u​g​h​ ​i​t​.
+	 */
+	federation_picker_subtitle: string;
+	/**
+	 * I​n​s​t​i​t​u​t​i​o​n​ ​n​a​m​e
+	 */
+	federation_picker_searchLabel: string;
+	/**
+	 * S​t​a​r​t​ ​t​y​p​i​n​g​ ​t​h​e​ ​i​n​s​t​i​t​u​t​i​o​n​ ​n​a​m​e
+	 */
+	federation_picker_searchPlaceholder: string;
+	/**
+	 * N​o​ ​i​n​s​t​i​t​u​t​i​o​n​ ​m​a​t​c​h​e​s​ ​y​o​u​r​ ​s​e​a​r​c​h​.
+	 */
+	federation_picker_noResults: string;
+	/**
+	 * T​h​e​ ​l​i​s​t​ ​o​f​ ​i​n​s​t​i​t​u​t​i​o​n​s​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​l​o​a​d​e​d​.​ ​T​r​y​ ​a​g​a​i​n​ ​l​a​t​e​r​.
+	 */
+	federation_picker_loadError: string;
+	/**
+	 * S​h​o​w​i​n​g​ ​t​h​e​ ​f​i​r​s​t​ ​r​e​s​u​l​t​s​.​ ​N​a​r​r​o​w​ ​t​h​e​ ​s​e​a​r​c​h​ ​t​o​ ​f​i​n​d​ ​o​t​h​e​r​s​.
+	 */
+	federation_picker_more: string;
+	/**
+	 * B​a​c​k​ ​t​o​ ​s​i​g​n​ ​i​n
+	 */
+	federation_picker_back: string;
 };
 
 export type TranslationFunctions = {
@@ -4221,6 +4257,42 @@ export type TranslationFunctions = {
 	 * Passkeys on a security key, or in an app this browser cannot reach, have to be removed in the settings of that key or app.
 	 */
 	tenantDeleted_manualHint: () => LocalizedString;
+	/**
+	 * Choose your institution
+	 */
+	federation_picker_pageTitle: () => LocalizedString;
+	/**
+	 * Choose your institution
+	 */
+	federation_picker_title: () => LocalizedString;
+	/**
+	 * Search for the institution you belong to and sign in through it.
+	 */
+	federation_picker_subtitle: () => LocalizedString;
+	/**
+	 * Institution name
+	 */
+	federation_picker_searchLabel: () => LocalizedString;
+	/**
+	 * Start typing the institution name
+	 */
+	federation_picker_searchPlaceholder: () => LocalizedString;
+	/**
+	 * No institution matches your search.
+	 */
+	federation_picker_noResults: () => LocalizedString;
+	/**
+	 * The list of institutions could not be loaded. Try again later.
+	 */
+	federation_picker_loadError: () => LocalizedString;
+	/**
+	 * Showing the first results. Narrow the search to find others.
+	 */
+	federation_picker_more: () => LocalizedString;
+	/**
+	 * Back to sign in
+	 */
+	federation_picker_back: () => LocalizedString;
 };
 
 export type Formatters = {};

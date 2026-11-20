@@ -85,7 +85,11 @@ import {
   hasSignature,
   type VerifiedXmlReference,
 } from '../common/signature';
-import { getIdPConfigByEntityId, getIdPUsageKeyByEntityId } from '../admin/providers';
+import {
+  getIdPConfigByEntityId,
+  getIdPUsageKeyByEntityId,
+  resolveFederationIdPForLogin,
+} from '../admin/providers';
 import { samlUsageUnavailableResponse } from './usage-gate';
 import { liteSamlErrorRedirect, samlSignInMayCreateAccount } from './lite-start';
 import { getSAMLLocalEntityIds } from '../common/entity-id';
@@ -295,6 +299,27 @@ async function handleSPACSFor(
       flowChallengeId = validatedRequest.context?.flowChallengeId ?? null;
       lite.returnUrl = validatedRequest.context?.liteReturn ?? null;
       attemptRequestId = validatedRequest.requestId;
+      // An IdP picked from a federation source must still be one of that source's, and the
+      // signature was checked with that source's own configuration of it: another source (or a
+      // source stopped since the start) holding the same entityID is not the one the user chose.
+      const startedThrough = validatedRequest.context?.federationSourceId;
+      if (startedThrough) {
+        const stillOffered = await resolveFederationIdPForLogin(
+          env,
+          tenantId,
+          startedThrough,
+          issuer
+        ).catch(() => null);
+        const verifiedWithThatSource =
+          stillOffered?.kind === 'explicit' ||
+          idpConfig.aggregateImport?.federationTrustProfileId === startedThrough;
+        if (!stillOffered || !verifiedWithThatSource) {
+          log.error('SAML Response for a federation start no longer matches its source', {
+            inResponseTo,
+          });
+          return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+        }
+      }
     } else if (
       (await getStrictInResponseToSetting(env)) ||
       // A tenant in lite mode takes no unsolicited response, whatever the global setting says:
@@ -316,6 +341,19 @@ async function handleSPACSFor(
     try {
       // Finding the IdP's record is part of reading its switches: failing is "unavailable" too.
       usageKey = await getIdPUsageKeyByEntityId(env, tenantId, issuer);
+      // An IdP picked from a federation source has no record of its own: a start through the
+      // source files its switches under the source, as the start checked them.
+      // A response nobody asked for (IdP-initiated) has no start; an IdP built from a federation
+      // source still answers to that source's switches.
+      const federationSourceId =
+        validatedRequest?.context?.federationSourceId ??
+        idpConfig.aggregateImport?.federationTrustProfileId;
+      if (!usageKey && federationSourceId) {
+        usageKey = {
+          providerId: federationSourceId,
+          ids: [`saml-federation:${federationSourceId}`, federationSourceId],
+        };
+      }
       usagePolicy = usageKey
         ? await readExternalProviderUsagePolicy(env, tenantId, usageKey)
         : { loginEnabled: true, signupEnabled: true };
@@ -366,7 +404,9 @@ async function handleSPACSFor(
         flowInteractionId = resolved.interactionId;
         if (!reauthentication && flowRefs.methodProfileRef !== 'default' && usageKey) {
           const profile = await readAuthenticationProfile(env, tenantId, flowRefs.methodProfileRef);
-          const handle = normalizeMethodHandle(`saml:${usageKey.providerId}`);
+          // The id the login screen lists this IdP under (`saml:<id>`, or `saml-federation:<id>`
+          // for one picked from a federation source), which is what a method profile names.
+          const handle = normalizeMethodHandle(usageKey.ids[0] ?? `saml:${usageKey.providerId}`);
           // Each use as the Flow takes it, on top of the tenant's switches: what the sign-in then
           // does (sign in to an existing account, create one) is held to both.
           usagePolicy = {

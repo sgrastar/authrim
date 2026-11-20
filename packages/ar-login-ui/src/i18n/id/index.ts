@@ -399,7 +399,16 @@ const id = createTranslation({
 	tenantDeleted_chooseButton: 'Hapus Passkey yang tersimpan',
 	tenantDeleted_chosenRemoved: 'Kami telah meminta perangkat ini menghapus Passkey tersebut.',
 	tenantDeleted_manualHint:
-		'Passkey pada kunci keamanan, atau di aplikasi yang tidak dapat dijangkau browser ini, harus dihapus dari pengaturan kunci atau aplikasi tersebut.'
+		'Passkey pada kunci keamanan, atau di aplikasi yang tidak dapat dijangkau browser ini, harus dihapus dari pengaturan kunci atau aplikasi tersebut.',
+	federation_picker_pageTitle: 'Choose your institution',
+	federation_picker_title: 'Choose your institution',
+	federation_picker_subtitle: 'Search for the institution you belong to and sign in through it.',
+	federation_picker_searchLabel: 'Institution name',
+	federation_picker_searchPlaceholder: 'Start typing the institution name',
+	federation_picker_noResults: 'No institution matches your search.',
+	federation_picker_loadError: 'The list of institutions could not be loaded. Try again later.',
+	federation_picker_more: 'Showing the first results. Narrow the search to find others.',
+	federation_picker_back: 'Back to sign in'
 });
 
 export default id;

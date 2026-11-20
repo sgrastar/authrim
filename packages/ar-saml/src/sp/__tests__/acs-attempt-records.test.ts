@@ -18,6 +18,7 @@ type SamlTestEnv = Partial<Env> & {
 const {
   mockSchedule,
   mockUsageKey,
+  mockResolveFederation,
   mockUsagePolicy,
   mockAccountLookup,
   mockFlowRefs,
@@ -27,6 +28,7 @@ const {
   mockMethodProfile: vi.fn(),
   mockSchedule: vi.fn(),
   mockUsageKey: vi.fn(),
+  mockResolveFederation: vi.fn(),
   mockUsagePolicy: vi.fn(),
   mockAccountLookup: vi.fn(),
 }));
@@ -48,6 +50,7 @@ const TEST_REGION_CONFIG = buildPolicyConstrainedRegionShardConfig({
 const mockGetIdPConfigByEntityId = vi.fn();
 vi.mock('../../admin/providers', () => ({
   getIdPUsageKeyByEntityId: (...args: unknown[]): unknown => mockUsageKey(...args),
+  resolveFederationIdPForLogin: (...args: unknown[]): unknown => mockResolveFederation(...args),
   getIdPConfigByEntityId: async (...args: unknown[]): Promise<unknown> => {
     const config: unknown = await mockGetIdPConfigByEntityId(...args);
     return config
@@ -230,6 +233,7 @@ describe('SAML ACS records failed sign-ins against the start interaction', () =>
     storedContext = { attemptInteractionId: 'int-1' };
     assertionStore = 'new';
     mockUsageKey.mockResolvedValue(null);
+    mockResolveFederation.mockResolvedValue({ kind: 'federation', config: {} });
     mockUsagePolicy.mockResolvedValue({ loginEnabled: true, signupEnabled: true });
     mockFlowRefs.mockResolvedValue({
       refs: { methodProfileRef: 'default', sessionProfileRef: 'default' },
@@ -356,6 +360,157 @@ describe('SAML ACS records failed sign-ins against the start interaction', () =>
       interactionId: 'int-1',
       method: 'saml',
       reasonCode: 'method_disabled',
+    });
+  });
+
+  const fromSource = (sourceId: string) =>
+    mockGetIdPConfigByEntityId.mockResolvedValue({
+      entityId: 'https://idp.example.com',
+      ssoUrl: 'https://idp.example.com/sso',
+      certificate: 'mock-certificate',
+      attributeMapping: { email: 'email' },
+      aggregateImport: { federationTrustProfileId: sourceId },
+    });
+
+  it('files the switches of an IdP picked from a federation source under the source', async () => {
+    // The IdP has no record of its own, so no key is found by its entityID; the start's context
+    // names the source it went through.
+    mockUsageKey.mockResolvedValue(null);
+    fromSource('fed_1');
+    storedContext = { attemptInteractionId: 'int-1', federationSourceId: 'fed_1' };
+
+    const res = await callACS();
+
+    expect(res.status).toBe(302);
+    expect(mockUsagePolicy).toHaveBeenCalledWith(expect.anything(), 'tenant-a', {
+      providerId: 'fed_1',
+      ids: ['saml-federation:fed_1', 'fed_1'],
+    });
+  });
+
+  it('refuses a federation sign-in the tenant switched off for the source', async () => {
+    mockUsageKey.mockResolvedValue(null);
+    fromSource('fed_1');
+    storedContext = { attemptInteractionId: 'int-1', federationSourceId: 'fed_1' };
+    mockUsagePolicy.mockResolvedValue({ loginEnabled: false, signupEnabled: true });
+
+    const res = await callACS();
+
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    expect(scheduledFailures()[0]).toMatchObject({ reasonCode: 'method_disabled' });
+  });
+
+  it('refuses a response verified with another source’s configuration of the IdP', async () => {
+    // Two sources hold the same entityID: the user chose it through fed_1, but the IdP resolved
+    // from fed_2's snapshot (its certificates, its mapping set) checked the signature.
+    mockUsageKey.mockResolvedValue(null);
+    fromSource('fed_2');
+    storedContext = { attemptInteractionId: 'int-1', federationSourceId: 'fed_1' };
+
+    const res = await callACS();
+
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    expect(mockUsagePolicy).not.toHaveBeenCalled();
+  });
+
+  it('refuses a response for an IdP its source no longer offers', async () => {
+    // Stopped, expired, excluded or no longer allowed since the start.
+    mockUsageKey.mockResolvedValue(null);
+    fromSource('fed_1');
+    mockResolveFederation.mockResolvedValue(null);
+    storedContext = { attemptInteractionId: 'int-1', federationSourceId: 'fed_1' };
+
+    const res = await callACS();
+
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    expect(mockResolveFederation).toHaveBeenCalledWith(
+      expect.anything(),
+      'tenant-a',
+      'fed_1',
+      'https://idp.example.com'
+    );
+  });
+
+  it('lets an approved explicit provider that appeared since the start take over', async () => {
+    mockUsageKey.mockResolvedValue({ providerId: 'idp-9', ids: ['saml:idp-9', 'idp-9'] });
+    mockGetIdPConfigByEntityId.mockResolvedValue({
+      entityId: 'https://idp.example.com',
+      ssoUrl: 'https://idp.example.com/sso',
+      certificate: 'mock-certificate',
+      attributeMapping: { email: 'email' },
+    });
+    mockResolveFederation.mockResolvedValue({ kind: 'explicit', providerId: 'idp-9' });
+    storedContext = { attemptInteractionId: 'int-1', federationSourceId: 'fed_1' };
+
+    const res = await callACS();
+
+    expect(res.status).toBe(302);
+    expect(mockUsagePolicy).toHaveBeenCalledWith(expect.anything(), 'tenant-a', {
+      providerId: 'idp-9',
+      ids: ['saml:idp-9', 'idp-9'],
+    });
+  });
+
+  it('holds a federation sign-in to the Flow profile under the federation id', async () => {
+    mockUsageKey.mockResolvedValue(null);
+    fromSource('fed_1');
+    storedContext = { attemptInteractionId: 'int-1', federationSourceId: 'fed_1' };
+    mockFlowRefs.mockResolvedValue({
+      refs: { methodProfileRef: 'members', sessionProfileRef: 'default' },
+      interactionId: 'int-1',
+    });
+    // The profile names the entry the login screen lists: saml-federation:<sourceId>.
+    mockMethodProfile.mockResolvedValue({
+      kind: 'profile',
+      values: {
+        'authentication-methods.external_provider_usage': [
+          {
+            id: 'saml-federation:fed_1',
+            enabled: true,
+            loginEnabled: false,
+            signupEnabled: false,
+          },
+        ],
+      },
+    });
+
+    const res = await callACS();
+
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    expect(scheduledFailures()[0]).toMatchObject({ reasonCode: 'method_disabled' });
+  });
+
+  it('holds an IdP-initiated response from a federation-built IdP to its source’s switches', async () => {
+    // No start (so no stored context, no federationSourceId) and no record of the IdP's own: the
+    // source the signing configuration was built from still holds the switches.
+    mockUsageKey.mockResolvedValue(null);
+    fromSource('fed_1');
+    // IdP-initiated responses are taken (the global strict setting is off, lite is off).
+    mockUsagePolicy.mockResolvedValue({ loginEnabled: false, signupEnabled: false });
+
+    const refused = await callACS('');
+
+    expect(mockUsagePolicy).toHaveBeenCalledWith(expect.anything(), 'tenant-a', {
+      providerId: 'fed_1',
+      ids: ['saml-federation:fed_1', 'fed_1'],
+    });
+    expect(refused.status).toBeGreaterThanOrEqual(400);
+
+    // With the switches on (their default) the same response goes through.
+    mockUsagePolicy.mockResolvedValue({ loginEnabled: true, signupEnabled: true });
+    expect((await callACS('')).status).toBe(302);
+  });
+
+  it('does not use the source for an IdP that has its own record', async () => {
+    mockUsageKey.mockResolvedValue({ providerId: 'idp-1', ids: ['saml:idp-1', 'idp-1'] });
+    mockResolveFederation.mockResolvedValue({ kind: 'explicit', providerId: 'idp-1' });
+    storedContext = { attemptInteractionId: 'int-1', federationSourceId: 'fed_1' };
+
+    await callACS();
+
+    expect(mockUsagePolicy).toHaveBeenCalledWith(expect.anything(), 'tenant-a', {
+      providerId: 'idp-1',
+      ids: ['saml:idp-1', 'idp-1'],
     });
   });
 

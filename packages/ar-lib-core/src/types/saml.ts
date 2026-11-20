@@ -951,6 +951,20 @@ export interface SAMLRequestContext {
    */
   flowChallengeId?: string;
   /**
+   * The federation source this SP-initiated sign-in was started through (the IdP was picked from
+   * its verified inventory, not from an explicit provider record): the ACS files the sign-in/
+   * sign-up switches under the source, as the IdP has no record of its own.
+   */
+  federationSourceId?: string;
+  /**
+   * A federation start that went out to an external Discovery Service and is waiting for it to
+   * answer: what the user's screen sent (return target, purpose, invitation, interaction), kept
+   * here so none of it, and not the human-verification token, travels to the Discovery Service.
+   * The start was verified when it was stored. Used up once by the start the Discovery Service
+   * returns the user to, from the browser it was stored for.
+   */
+  federationStart?: { params: Record<string, string> };
+  /**
    * When the IdP sent the person to sign in for this request (milliseconds). A session made since
    * answers it only if it was made in an interaction started for it (`sessionAnswersSAMLRequest`).
    */
