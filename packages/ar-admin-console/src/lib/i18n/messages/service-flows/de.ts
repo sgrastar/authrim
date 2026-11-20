@@ -517,7 +517,7 @@ export const deServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 	'sf.mock.users.email': 'E-Mail',
 	// SAML federations (aggregate metadata) as connections
 	'sf.part.federation-source': 'Angaben zur Föderation',
-	'sf.part.federation-participation': 'Teilnehmende Rollen',
+	'sf.part.federation-participation': 'Zuordnung',
 	'sf.protocol.federation': 'SAML-Föderation',
 	'sf.protocol.federationShort': 'SAML-Föderation',
 	'sf.role.fed.badge': 'Föderation',
@@ -525,8 +525,7 @@ export const deServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 		'Alle Anbieter in den Aggregat-Metadaten gelten als vertrauenswürdig. Nur ausgenommene Anbieter sind ausgeschlossen.',
 	'sf.name.newFederation': 'Neue Föderation',
 	'sf.blurb.federation': 'SAML-Föderation, der über Aggregat-Metadaten beigetreten wird',
-	'sf.wizard.kind.federation.label':
-		'Eine SAML-Föderation (z. B. eine nationale Forschungsföderation)',
+	'sf.wizard.kind.federation.label': 'Eine SAML-Föderation',
 	'sf.wizard.kind.federation.desc':
 		'Vertraut Hunderten Diensten oder Einrichtungen über ein einziges Metadatendokument, ohne Einzelanlage.',
 	'sf.metadata.addAsFederation': 'Als Föderation hinzufügen',
@@ -551,13 +550,26 @@ export const deServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 		'Es konnte kein PEM-Zertifikat gelesen werden. Fügen Sie Text ein, der mit „BEGIN CERTIFICATE“ beginnt.',
 	'sf.fed.cert.listLabel': 'Signaturzertifikate',
 	'sf.fed.cert.fingerprint': 'SHA-256-Fingerabdruck',
-	'sf.fed.cert.remove': 'Entfernen',
+	'sf.fed.cert.fingerprintSha1': 'SHA-1-Fingerabdruck',
+	'sf.fed.cert.remove': 'Zertifikat entfernen',
 	'sf.fed.cert.compare':
 		'Vergleichen Sie ihn mit dem von der Föderation veröffentlichten Fingerabdruck. Verwenden Sie kein Zertifikat, das nicht übereinstimmt.',
 	'sf.fed.cert.paste': 'Zertifikat (PEM)',
 	'sf.fed.cert.pasteHint': 'Einfügen und auf Hinzufügen klicken, um den Fingerabdruck zu sehen.',
 	'sf.fed.cert.add': 'Zertifikat hinzufügen',
 	'sf.fed.cert.file': 'Zertifikatsdatei wählen',
+	'sf.fed.cert.fileHint': 'PEM- und DER-Dateien (binär) werden gelesen.',
+	'sf.fed.cert.required':
+		'Nötig, um die Signatur der Metadaten zu prüfen. Einfügen, aus einer Datei oder von einer URL hinzufügen.',
+	'sf.fed.cert.url': 'Zertifikats-URL',
+	'sf.fed.cert.urlHint':
+		'Die https-Adresse, unter der das Zertifikat (.cer / .pem) veröffentlicht ist. Beim Lesen werden die Fingerabdrücke angezeigt.',
+	'sf.fed.cert.urlRead': 'Von URL lesen',
+	'sf.fed.cert.urlReading': 'Wird gelesen…',
+	'sf.fed.cert.urlFailed':
+		'Das Zertifikat konnte von dieser URL nicht gelesen werden. Prüfen Sie, ob es eine https-Adresse ist, die das Zertifikat selbst liefert.',
+	'sf.fed.error.metadataUrlFragment':
+		'Die Metadaten-URL darf keinen #-Teil (Link innerhalb einer Seite) enthalten. Geben Sie die Adresse der Metadaten selbst ein.',
 	'sf.fed.role.sp': 'SP-Rolle',
 	'sf.fed.role.spDesc': 'Die Dienste der Föderation können sich über Authrim anmelden.',
 	'sf.fed.role.idp': 'IdP-Rolle',

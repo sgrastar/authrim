@@ -6,6 +6,7 @@ import {
 	mockEntities
 } from '#lib/api/fake/federation-sources-fake.js';
 import type { FederationForm } from './federation-model';
+import { fingerprintGroups, metadataUrlProblem, pemFromFileBytes } from './federation-model';
 import {
 	certificateFromPem,
 	emptyFederationForm,
@@ -238,6 +239,63 @@ describe('a certificate', () => {
 
 	it('is shown as colon-separated pairs, as federations publish it', () => {
 		expect(fingerprintDisplay('aa7bc7')).toBe('AA:7B:C7');
+	});
+
+	it('breaks into runs of bytes, never inside a byte pair, and joins back unchanged', () => {
+		const sha256 = fingerprintDisplay(MOCK_FEDERATION_FINGERPRINT);
+		const groups = fingerprintGroups(sha256);
+		// 32 bytes: four runs of eight, each but the last ending in its colon.
+		expect(groups).toHaveLength(4);
+		expect(groups.slice(0, 3).every((group) => group.endsWith(':'))).toBe(true);
+		expect(groups[3]?.endsWith(':')).toBe(false);
+		expect(groups.every((group) => /^([0-9A-F]{2}:?)+$/.test(group))).toBe(true);
+		expect(groups.join('')).toBe(sha256);
+		// SHA-1 (20 bytes): eight, eight, four.
+		expect(
+			fingerprintGroups('AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD')
+		).toEqual(['AA:BB:CC:DD:EE:FF:00:11:', '22:33:44:55:66:77:88:99:', 'AA:BB:CC:DD']);
+		expect(fingerprintGroups('')).toEqual([]);
+	});
+
+	it('is read from a file as PEM text or as DER bytes', async () => {
+		const asText = new TextEncoder().encode(`${MOCK_FEDERATION_CERTIFICATE}\n`);
+		expect((await certificateFromPem(pemFromFileBytes(asText)))?.fingerprintSha256).toBe(
+			MOCK_FEDERATION_FINGERPRINT
+		);
+		// The same certificate as binary DER (what a .cer file often is).
+		const base64 = MOCK_FEDERATION_CERTIFICATE.replace(/-----[A-Z ]+-----|\s/g, '');
+		const der = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
+		expect(der[0]).toBe(0x30);
+		const wrapped = pemFromFileBytes(der);
+		expect(wrapped).toMatch(/^-----BEGIN CERTIFICATE-----\n/);
+		expect((await certificateFromPem(wrapped))?.fingerprintSha256).toBe(
+			MOCK_FEDERATION_FINGERPRINT
+		);
+		// Neither: not a certificate once read.
+		expect(await certificateFromPem(pemFromFileBytes(new Uint8Array([1, 2, 3])))).toBeNull();
+	});
+});
+
+describe('the metadata address', () => {
+	it('says nothing for an empty or a good one', () => {
+		expect(metadataUrlProblem('')).toBeUndefined();
+		expect(metadataUrlProblem('https://metadata.example.org/aggregate.xml')).toBeUndefined();
+	});
+
+	it('refuses a link with a # part (a link copied from a page), with its own message', () => {
+		const copied =
+			'https://www.example.org/join/rule#:~:text=https%3A//metadata.example.org/aggregate.xml';
+		expect(metadataUrlProblem(copied)).toBeTruthy();
+		expect(metadataUrlProblem(copied)).not.toBe(metadataUrlProblem('http://plain.example/a.xml'));
+	});
+
+	it('refuses http, patterns and spaces', () => {
+		for (const bad of [
+			'http://a.example/x.xml',
+			'https://a.example/*.xml',
+			'https://a.example/a b'
+		])
+			expect(metadataUrlProblem(bad), bad).toBeTruthy();
 	});
 });
 

@@ -513,7 +513,7 @@ export const jaServiceFlows = {
 	'sf.mock.users.email': 'メールアドレス',
 	// SAML federations (aggregate metadata) as connections
 	'sf.part.federation-source': 'フェデレーションの情報',
-	'sf.part.federation-participation': '参加するロール',
+	'sf.part.federation-participation': 'マッピング',
 	'sf.protocol.federation': 'SAML フェデレーション',
 	'sf.protocol.federationShort': 'SAML フェデレーション',
 	'sf.role.fed.badge': 'フェデレーション',
@@ -521,7 +521,7 @@ export const jaServiceFlows = {
 		'集約メタデータに載っているすべてのプロバイダーを信頼します。除外したものだけが参加しません。',
 	'sf.name.newFederation': '新しいフェデレーション',
 	'sf.blurb.federation': '集約メタデータで参加する SAML フェデレーション',
-	'sf.wizard.kind.federation.label': 'SAML フェデレーション（学認など）',
+	'sf.wizard.kind.federation.label': 'SAML フェデレーション',
 	'sf.wizard.kind.federation.desc':
 		'数百のサービスや機関を 1 つのメタデータで信頼します。個別の登録は要りません。',
 	'sf.metadata.addAsFederation': 'フェデレーションとして追加',
@@ -545,13 +545,26 @@ export const jaServiceFlows = {
 		'PEM 形式の証明書を読み取れませんでした。「BEGIN CERTIFICATE」から始まるテキストを貼り付けてください。',
 	'sf.fed.cert.listLabel': '署名証明書',
 	'sf.fed.cert.fingerprint': 'SHA-256 指紋',
-	'sf.fed.cert.remove': '削除',
+	'sf.fed.cert.fingerprintSha1': 'SHA-1 指紋',
+	'sf.fed.cert.remove': '証明書を削除',
 	'sf.fed.cert.compare':
 		'フェデレーションが公表している指紋と見比べてください。一致しない証明書は使わないでください。',
 	'sf.fed.cert.paste': '証明書（PEM）',
 	'sf.fed.cert.pasteHint': '貼り付けて「追加」を押すと、指紋を計算して表示します。',
 	'sf.fed.cert.add': '証明書を追加',
 	'sf.fed.cert.file': '証明書ファイルを選ぶ',
+	'sf.fed.cert.fileHint': 'PEM でも DER（バイナリ）でも読み込めます。',
+	'sf.fed.cert.required':
+		'メタデータの署名を確かめるために必要です。貼り付け、ファイル、URL のいずれかで追加できます。',
+	'sf.fed.cert.url': '証明書の URL',
+	'sf.fed.cert.urlHint':
+		'証明書（.cer / .pem）が公開されている https のアドレス。読み込むと指紋を表示します。',
+	'sf.fed.cert.urlRead': 'URL から読み込む',
+	'sf.fed.cert.urlReading': '読み込み中…',
+	'sf.fed.cert.urlFailed':
+		'この URL から証明書を読み込めませんでした。https のアドレスで、証明書そのものを返すか確認してください。',
+	'sf.fed.error.metadataUrlFragment':
+		'メタデータの URL に # 以降（ページ内リンクの指定）は含められません。メタデータそのものの URL を入れてください。',
 	'sf.fed.role.sp': 'SP ロール',
 	'sf.fed.role.spDesc': 'フェデレーションのサービスが Authrim でサインインできます。',
 	'sf.fed.role.idp': 'IdP ロール',

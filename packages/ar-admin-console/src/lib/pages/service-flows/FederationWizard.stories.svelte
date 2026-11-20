@@ -5,6 +5,7 @@
 		createFakeFederationSources,
 		MOCK_FEDERATION_CERTIFICATE,
 		MOCK_FEDERATION_FINGERPRINT,
+		MOCK_FEDERATION_FINGERPRINT_SHA1,
 		MOCK_FEDERATION_SOURCES
 	} from '#lib/api/fake/federation-sources-fake.js';
 	import { AggregateMetadataError } from '#lib/api/saml-providers.js';
@@ -12,6 +13,7 @@
 	import LiveAddConnection from './LiveAddConnection.svelte';
 	import type { ConnectionCreationResources } from './connection-creation';
 	import { fingerprintDisplay } from './federation-model';
+	import { fingerprintText } from './federation-fingerprint.fixture';
 
 	const { Story } = defineMeta({
 		title: 'Pages/Service flows/Federation wizard',
@@ -86,7 +88,7 @@
 			URL_OF_FEDERATION
 		);
 		await addCertificate(canvas);
-		await canvas.findByText(fingerprintDisplay(MOCK_FEDERATION_FINGERPRINT));
+		await canvas.findByText(fingerprintText(fingerprintDisplay(MOCK_FEDERATION_FINGERPRINT)));
 	}
 
 	const out = resources();
@@ -98,28 +100,30 @@
 </script>
 
 <Story
-	name="From the way out, the SP role starts on"
+	name="From the way out, only the SP role is asked"
 	args={{ resources: out.value, onnavigate: out.navigate }}
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		await toFederation(canvas, 'out');
 		await fillSource(canvas);
 		await userEvent.click(next(canvas));
-		await expect(canvas.getByRole('switch', { name: t('sf.fed.role.sp') })).toBeChecked();
-		await expect(canvas.getByRole('switch', { name: t('sf.fed.role.idp') })).not.toBeChecked();
+		await expect(canvas.queryByRole('switch')).toBeNull();
+		await expect(canvas.getByRole('combobox', { name: t('sf.fed.mappingSet.sp') })).toBeVisible();
+		await expect(canvas.queryByRole('combobox', { name: t('sf.fed.mappingSet.idp') })).toBeNull();
 	}}
 />
 
 <Story
-	name="From the way in, the IdP role starts on"
+	name="From the way in, only the IdP role is asked"
 	args={{ resources: inbound.value, onnavigate: inbound.navigate }}
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		await toFederation(canvas, 'in');
 		await fillSource(canvas);
 		await userEvent.click(next(canvas));
-		await expect(canvas.getByRole('switch', { name: t('sf.fed.role.idp') })).toBeChecked();
-		await expect(canvas.getByRole('switch', { name: t('sf.fed.role.sp') })).not.toBeChecked();
+		await expect(canvas.queryByRole('switch')).toBeNull();
+		await expect(canvas.getByRole('combobox', { name: t('sf.fed.mappingSet.idp') })).toBeVisible();
+		await expect(canvas.queryByRole('combobox', { name: t('sf.fed.mappingSet.sp') })).toBeNull();
 		// An IdP role chooses how people pick their institution; Authrim's own search is the default.
 		await expect(
 			canvas.getByRole('combobox', { name: t('sf.fed.idpSelection.label') })
@@ -170,11 +174,52 @@
 />
 
 <Story
-	name="Each step goes on only when it is complete"
+	name="A certificate read from its address shows both fingerprints"
 	args={{ resources: invalid.value, onnavigate: invalid.navigate }}
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		await toFederation(canvas, 'out');
+		const address = canvas.getByRole('textbox', { name: t('sf.fed.cert.url') });
+		const read = () => canvas.getByRole('button', { name: t('sf.fed.cert.urlRead') });
+		// An address that does not serve a certificate says so, and adds nothing.
+		await userEvent.type(address, 'https://federation.example/unreachable.cer');
+		await userEvent.click(read());
+		await canvas.findByText(t('sf.fed.cert.urlFailed'));
+		await expect(canvas.queryByText(t('sf.fed.cert.fingerprint'))).toBeNull();
+		// One that does: the certificate is kept, with SHA-256 and SHA-1 worked out from it.
+		await userEvent.clear(address);
+		await userEvent.type(address, 'https://federation.example/signer.cer');
+		await userEvent.click(read());
+		await canvas.findByText(fingerprintText(fingerprintDisplay(MOCK_FEDERATION_FINGERPRINT)));
+		await canvas.findByText(fingerprintText(fingerprintDisplay(MOCK_FEDERATION_FINGERPRINT_SHA1)));
+		await canvas.findByText(t('sf.fed.cert.fingerprintSha1'));
+		// The delete button says what it deletes.
+		await expect(
+			canvas.getByRole('button', { name: new RegExp(`^${t('sf.fed.cert.remove')} \\(AA:7B`) })
+		).toBeVisible();
+	}}
+/>
+
+<Story
+	name="A link copied from a page is not the metadata's address"
+	args={{ resources: invalid.value, onnavigate: invalid.navigate }}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await toFederation(canvas, 'out');
+		await userEvent.type(
+			canvas.getByRole('textbox', { name: t('sf.fed.metadataUrl') }),
+			'https://www.example.org/join/rule#:~:text=https%3A//metadata.example.org/a.xml'
+		);
+		await canvas.findByText(t('sf.fed.error.metadataUrlFragment'));
+	}}
+/>
+
+<Story
+	name="Each step goes on only when it is complete"
+	args={{ resources: invalid.value, onnavigate: invalid.navigate }}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await toFederation(canvas, 'in');
 		await userEvent.type(canvas.getByRole('textbox', { name: t('sf.fed.name') }), 'Federation');
 		await userEvent.type(
 			canvas.getByRole('textbox', { name: t('sf.fed.metadataUrl') }),
@@ -189,17 +234,14 @@
 		await userEvent.type(url, URL_OF_FEDERATION);
 		await userEvent.clear(canvas.getByRole('textbox', { name: t('sf.fed.cert.paste') }));
 		await addCertificate(canvas);
-		await canvas.findByText(fingerprintDisplay(MOCK_FEDERATION_FINGERPRINT));
+		await canvas.findByText(fingerprintText(fingerprintDisplay(MOCK_FEDERATION_FINGERPRINT)));
 		await userEvent.click(next(canvas));
 
-		// A role with no mapping set, and no role at all, each say what is missing.
+		// The role has no mapping set yet: it says what is missing.
 		const save = canvas.getByRole('button', { name: t('sf.create.save') });
-		await canvas.findByText(t('sf.fed.error.spMapping'));
-		await userEvent.click(canvas.getByRole('switch', { name: t('sf.fed.role.sp') }));
-		await canvas.findByText(t('sf.fed.error.roles'));
+		await canvas.findByText(t('sf.fed.error.idpMapping'));
 		await expect(save).toBeDisabled();
 		// An external discovery service needs an https address.
-		await userEvent.click(canvas.getByRole('switch', { name: t('sf.fed.role.idp') }));
 		const set = canvas.getByRole('combobox', { name: t('sf.fed.mappingSet.idp') });
 		await waitFor(() => expect(set).toBeEnabled());
 		await userEvent.selectOptions(set, 'set-idp');
@@ -262,9 +304,9 @@
 		);
 		await userEvent.type(canvas.getByRole('textbox', { name: t('sf.fed.name') }), 'Imported');
 		await addCertificate(canvas);
-		await canvas.findByText(fingerprintDisplay(MOCK_FEDERATION_FINGERPRINT));
+		await canvas.findByText(fingerprintText(fingerprintDisplay(MOCK_FEDERATION_FINGERPRINT)));
 		await userEvent.click(next(canvas));
-		await expect(canvas.getByRole('switch', { name: t('sf.fed.role.sp') })).toBeChecked();
+		await expect(canvas.getByRole('combobox', { name: t('sf.fed.mappingSet.sp') })).toBeVisible();
 		await expect(MOCK_FEDERATION_SOURCES.length).toBeGreaterThan(0);
 	}}
 />

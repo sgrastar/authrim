@@ -114,8 +114,20 @@ export function isHttps(value: string): boolean {
 		return false;
 	}
 }
-/** An address the metadata can be fetched from: https, one exact URL (no pattern, no spaces). */
-const exactMetadataUrl = (value: string) => isHttps(value) && !/[*\s]/.test(value.trim());
+/**
+ * An address the metadata can be fetched from: https, one exact URL (no pattern, no spaces), and
+ * no `#` part: a link copied from a page with a highlighted passage ends in one, and it names a
+ * place in that page, not a document.
+ */
+const exactMetadataUrl = (value: string) => isHttps(value) && !/[*\s#]/.test(value.trim());
+
+/** Why an address cannot be the metadata's, in words; undefined when it can (or is empty). */
+export function metadataUrlProblem(value: string): string | undefined {
+	const url = value.trim();
+	if (!url) return undefined;
+	if (url.includes('#')) return t('sf.fed.error.metadataUrlFragment');
+	return exactMetadataUrl(url) ? undefined : t('sf.fed.error.metadataUrl');
+}
 
 /**
  * What is still missing for the federation to be trusted automatically: a name, exactly one
@@ -126,7 +138,10 @@ export function federationProblems(form: FederationForm): FederationProblem[] {
 	const problems: FederationProblem[] = [];
 	if (!form.name.trim()) problems.push({ field: 'name', message: t('sf.fed.error.name') });
 	if (!exactMetadataUrl(form.metadataUrl))
-		problems.push({ field: 'metadataUrl', message: t('sf.fed.error.metadataUrl') });
+		problems.push({
+			field: 'metadataUrl',
+			message: metadataUrlProblem(form.metadataUrl) ?? t('sf.fed.error.metadataUrl')
+		});
 	if (form.certificates.length === 0)
 		problems.push({ field: 'certificates', message: t('sf.fed.error.certificates') });
 	if (!form.spRole && !form.idpRole)
@@ -314,7 +329,34 @@ export async function certificateFromPem(text: string): Promise<FederationCertif
 	};
 }
 
+/**
+ * The PEM of a certificate file's bytes: a PEM file as it is, a DER (binary) one wrapped as PEM.
+ * Federations publish their signer as either. Empty when the bytes are neither.
+ */
+export function pemFromFileBytes(bytes: Uint8Array): string {
+	const firstContent = bytes.find((b) => b !== 0x09 && b !== 0x0a && b !== 0x0d && b !== 0x20);
+	if (firstContent !== 0x30) return new TextDecoder().decode(bytes);
+	let binary = '';
+	for (const byte of bytes) binary += String.fromCharCode(byte);
+	const lines = btoa(binary).match(/.{1,64}/g) ?? [];
+	return `-----BEGIN CERTIFICATE-----\n${lines.join('\n')}\n-----END CERTIFICATE-----`;
+}
+
 /** `AA:BB:…`: how a federation publishes its signing certificate's fingerprint. */
 export function fingerprintDisplay(hex: string): string {
 	return (hex.toUpperCase().match(/.{1,2}/g) ?? []).join(':');
+}
+
+/**
+ * A fingerprint (`AA:BB:…`) in runs of bytes, each ending in its colon but the last, so a
+ * narrow line breaks between runs and never inside a byte pair.
+ */
+export function fingerprintGroups(display: string, bytesPerGroup = 8): string[] {
+	const bytes = display.split(':').filter(Boolean);
+	const groups: string[] = [];
+	for (let i = 0; i < bytes.length; i += bytesPerGroup) {
+		const run = bytes.slice(i, i + bytesPerGroup).join(':');
+		groups.push(i + bytesPerGroup < bytes.length ? `${run}:` : run);
+	}
+	return groups;
 }

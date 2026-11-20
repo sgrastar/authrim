@@ -6,6 +6,7 @@
  * API does and its errors come back in the wire shape.
  */
 import { ApiError } from '#lib/api/api-error.js';
+import { createFakeFederationSources } from '#lib/api/fake/federation-sources-fake.js';
 import { createFakeSamlSettings } from '#lib/api/fake/saml-settings-fake.js';
 import type { SamlLocalSigningRequest, SamlSettingsClient } from '#lib/api/saml-settings.js';
 
@@ -30,6 +31,13 @@ export async function answerSamlSettingsMock(
 	try {
 		if (segments[0] === 'saml-metadata' && segments[1] === 'certificate-preview') {
 			if (method !== 'POST' || segments.length !== 2) return null;
+			// A federation's signing certificate may be read from an https address.
+			if (isObject(body) && typeof body.certificateUrl === 'string') {
+				return {
+					status: 200,
+					body: await createFakeFederationSources().previewCertificateUrl(body.certificateUrl)
+				};
+			}
 			if (!isObject(body) || typeof body.certificate !== 'string')
 				throw new ApiError(400, 'invalid_request', 'certificate is required');
 			return { status: 200, body: await client.previewCertificate(body.certificate) };
