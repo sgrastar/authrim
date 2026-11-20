@@ -495,7 +495,7 @@ export const enServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 	'sf.mock.users.email': 'Email',
 	// SAML federations (aggregate metadata) as connections
 	'sf.part.federation-source': 'Federation details',
-	'sf.part.federation-participation': 'Who takes part',
+	'sf.part.federation-participation': 'Mapping',
 	'sf.protocol.federation': 'SAML federation',
 	'sf.protocol.federationShort': 'SAML federation',
 	'sf.role.fed.badge': 'Federation',
@@ -503,7 +503,7 @@ export const enServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 		'Every provider in the aggregate metadata is trusted. Only the ones you set aside stay out.',
 	'sf.name.newFederation': 'New federation',
 	'sf.blurb.federation': 'A SAML federation joined through aggregate metadata',
-	'sf.wizard.kind.federation.label': 'A SAML federation (such as a national research federation)',
+	'sf.wizard.kind.federation.label': 'A SAML federation',
 	'sf.wizard.kind.federation.desc':
 		'Trust hundreds of services or institutions through one metadata document, with no one-by-one setup.',
 	'sf.metadata.addAsFederation': 'Add as a federation',
@@ -527,13 +527,26 @@ export const enServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 		'No PEM certificate could be read. Paste text that starts with “BEGIN CERTIFICATE”.',
 	'sf.fed.cert.listLabel': 'Signing certificates',
 	'sf.fed.cert.fingerprint': 'SHA-256 fingerprint',
-	'sf.fed.cert.remove': 'Remove',
+	'sf.fed.cert.fingerprintSha1': 'SHA-1 fingerprint',
+	'sf.fed.cert.remove': 'Remove certificate',
 	'sf.fed.cert.compare':
 		'Compare it with the fingerprint the federation publishes. Do not use a certificate that does not match.',
 	'sf.fed.cert.paste': 'Certificate (PEM)',
 	'sf.fed.cert.pasteHint': 'Paste it and press Add to see its fingerprint.',
 	'sf.fed.cert.add': 'Add certificate',
 	'sf.fed.cert.file': 'Choose a certificate file',
+	'sf.fed.cert.fileHint': 'PEM and DER (binary) files are both read.',
+	'sf.fed.cert.required':
+		'Needed to check the metadata’s signature. Add it by pasting, from a file, or from a URL.',
+	'sf.fed.cert.url': 'Certificate URL',
+	'sf.fed.cert.urlHint':
+		'The https address the certificate (.cer / .pem) is published at. Reading it shows its fingerprints.',
+	'sf.fed.cert.urlRead': 'Read from URL',
+	'sf.fed.cert.urlReading': 'Reading…',
+	'sf.fed.cert.urlFailed':
+		'The certificate could not be read from this URL. Check that it is an https address that returns the certificate itself.',
+	'sf.fed.error.metadataUrlFragment':
+		'The metadata URL cannot include a # part (an in-page link). Enter the address of the metadata itself.',
 	'sf.fed.role.sp': 'SP role',
 	'sf.fed.role.spDesc': 'The federation’s services can sign in through Authrim.',
 	'sf.fed.role.idp': 'IdP role',

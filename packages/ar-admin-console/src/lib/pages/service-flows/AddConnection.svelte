@@ -548,6 +548,10 @@
 					{mappingFailed}
 					{mappingLoading}
 					onreloadmappings={loadMappingSets}
+					onlyRole={answers.direction === 'in' ? 'idp' : 'sp'}
+					readCertificateUrl={live?.federation
+						? async (url) => (await live.federation!.client.previewCertificateUrl(url)).certificate
+						: undefined}
 				/>
 			{:else if stepInfo.id.startsWith('rp-')}
 				<RpSteps live={!!live} step={stepInfo.id} bind:form={answers.rp} />

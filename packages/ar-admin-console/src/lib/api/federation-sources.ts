@@ -200,6 +200,11 @@ export interface FederationSourcesClient {
 	 */
 	materialize(id: string, input: FederationMaterializeInput): Promise<FederationMaterialized>;
 	previewCertificate(certificate: string): Promise<SamlCertificatePreview>;
+	/**
+	 * Reads a certificate from an https address (the server fetches it; PEM or DER) and says what
+	 * it holds, with its SHA-1 and SHA-256 fingerprints. `certificate` is the PEM to keep.
+	 */
+	previewCertificateUrl(url: string): Promise<SamlCertificatePreview>;
 }
 
 // -- Reading ---------------------------------------------------------------------------------
@@ -508,5 +513,10 @@ export const httpFederationSources: FederationSourcesClient = {
 		send(`${API_BASE_URL}/api/admin/saml-metadata/certificate-preview`, {
 			method: 'POST',
 			json: { certificate }
+		}),
+	previewCertificateUrl: (url) =>
+		send(`${API_BASE_URL}/api/admin/saml-metadata/certificate-preview`, {
+			method: 'POST',
+			json: { certificateUrl: url }
 		})
 };

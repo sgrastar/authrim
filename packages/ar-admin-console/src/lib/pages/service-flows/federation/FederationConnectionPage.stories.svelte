@@ -9,6 +9,7 @@
 	} from '#lib/api/fake/federation-sources-fake.js';
 	import { t } from '#lib/i18n/i18n.svelte.js';
 	import { fingerprintDisplay } from '../federation-model';
+	import { fingerprintText } from '../federation-fingerprint.fixture';
 	import FederationConnectionPage from './FederationConnectionPage.svelte';
 
 	const { Story } = defineMeta({
@@ -283,15 +284,19 @@
 		await userEvent.click(canvas.getByRole('textbox', { name: t('sf.fed.cert.paste') }));
 		await userEvent.paste(MOCK_FEDERATION_CERTIFICATE);
 		await userEvent.click(canvas.getByRole('button', { name: t('sf.fed.cert.add') }));
-		await expect(canvas.getAllByText(fingerprintDisplay(MOCK_FEDERATION_FINGERPRINT))).toHaveLength(
-			1
+		await expect(
+			canvas.getAllByText(fingerprintText(fingerprintDisplay(MOCK_FEDERATION_FINGERPRINT)))
+		).toHaveLength(1);
+		await userEvent.click(
+			canvas.getByRole('button', { name: new RegExp(`^${t('sf.fed.cert.remove')}`) })
 		);
-		await userEvent.click(canvas.getByRole('button', { name: t('sf.fed.cert.remove') }));
-		await expect(canvas.queryByText(fingerprintDisplay(MOCK_FEDERATION_FINGERPRINT))).toBeNull();
+		await expect(
+			canvas.queryByText(fingerprintText(fingerprintDisplay(MOCK_FEDERATION_FINGERPRINT)))
+		).toBeNull();
 		await userEvent.click(canvas.getByRole('textbox', { name: t('sf.fed.cert.paste') }));
 		await userEvent.paste(MOCK_FEDERATION_CERTIFICATE);
 		await userEvent.click(canvas.getByRole('button', { name: t('sf.fed.cert.add') }));
-		await canvas.findByText(fingerprintDisplay(MOCK_FEDERATION_FINGERPRINT));
+		await canvas.findByText(fingerprintText(fingerprintDisplay(MOCK_FEDERATION_FINGERPRINT)));
 	}}
 />
 

@@ -231,7 +231,13 @@
 			{revision}
 			onmaterialize={canMaterialize ? (entity) => (materializing = entity) : undefined}
 		/>
-		<FederationTrustCard bind:form disabled={!canEdit} />
+		<FederationTrustCard
+			bind:form
+			disabled={!canEdit}
+			readCertificateUrl={canMaterialize
+				? async (url) => (await client.previewCertificateUrl(url)).certificate
+				: undefined}
+		/>
 		{#if canEdit}
 			<FederationDangerZone sourceId={id} name={source.name} {client} ondeleted={onback} />
 		{/if}

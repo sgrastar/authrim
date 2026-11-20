@@ -3,7 +3,7 @@
 	import Card from '#lib/ui/patterns/Card.svelte';
 	import TextRow from '#lib/ui/patterns/TextRow.svelte';
 	import FederationCertificateInput from '../FederationCertificateInput.svelte';
-	import { federationProblems, type FederationForm } from '../federation-model';
+	import { federationProblems, metadataUrlProblem, type FederationForm } from '../federation-model';
 
 	/**
 	 * What the federation is trusted on: the one address its metadata is fetched from and the
@@ -13,11 +13,11 @@
 	interface Props {
 		form: FederationForm;
 		disabled?: boolean;
+		/** Reads a certificate from an https address (PEM back). */
+		readCertificateUrl?: (url: string) => Promise<string>;
 	}
-	let { form = $bindable(), disabled = false }: Props = $props();
-	const urlProblem = $derived(
-		federationProblems(form).find((problem) => problem.field === 'metadataUrl')?.message
-	);
+	let { form = $bindable(), disabled = false, readCertificateUrl }: Props = $props();
+	const urlProblem = $derived(metadataUrlProblem(form.metadataUrl));
 	const certificateProblem = $derived(
 		federationProblems(form).find((problem) => problem.field === 'certificates')?.message
 	);
@@ -31,7 +31,11 @@
 		{disabled}
 		bind:value={form.metadataUrl}
 	/>
-	<FederationCertificateInput bind:certificates={form.certificates} {disabled} />
+	<FederationCertificateInput
+		bind:certificates={form.certificates}
+		{disabled}
+		readUrl={readCertificateUrl}
+	/>
 	{#if certificateProblem}<p class="problem" role="alert">{certificateProblem}</p>{/if}
 </Card>
 

@@ -6,6 +6,7 @@
 	import FederationParticipationFields from './FederationParticipationFields.svelte';
 	import {
 		federationProblems,
+		metadataUrlProblem,
 		type FederationForm,
 		type FederationMappingOption
 	} from './federation-model';
@@ -22,6 +23,10 @@
 		mappingFailed?: boolean;
 		mappingLoading?: boolean;
 		onreloadmappings?: () => void;
+		/** Reads a certificate from an https address (PEM back); absent: no such field. */
+		readCertificateUrl?: (url: string) => Promise<string>;
+		/** The role the way chosen in the wizard asks for; absent: both. */
+		onlyRole?: 'sp' | 'idp';
 	}
 	let {
 		step,
@@ -29,17 +34,15 @@
 		mappingSets = [],
 		mappingFailed = false,
 		mappingLoading = false,
-		onreloadmappings
+		onreloadmappings,
+		readCertificateUrl,
+		onlyRole
 	}: Props = $props();
 
 	const problems = $derived(
 		federationProblems(form).filter((p) => p.field !== 'discoveryServiceUrl')
 	);
-	const urlError = $derived(
-		form.metadataUrl.trim() && problems.some((p) => p.field === 'metadataUrl')
-			? t('sf.fed.error.metadataUrl')
-			: undefined
-	);
+	const urlError = $derived(metadataUrlProblem(form.metadataUrl));
 </script>
 
 {#if step === 'federation-source'}
@@ -53,7 +56,7 @@
 		bind:value={form.metadataUrl}
 	/>
 	<TextRow label={t('sf.fed.description')} bind:value={form.description} />
-	<FederationCertificateInput bind:certificates={form.certificates} />
+	<FederationCertificateInput bind:certificates={form.certificates} readUrl={readCertificateUrl} />
 	<Callout tone="info">{t('sf.fed.trustNote')}</Callout>
 {:else if step === 'federation-participation'}
 	<FederationParticipationFields
@@ -62,6 +65,7 @@
 		{mappingFailed}
 		{mappingLoading}
 		{onreloadmappings}
+		{onlyRole}
 	/>
 	{#if problems.length > 0}
 		<Callout tone="info" title={t('sf.fed.remaining')}>

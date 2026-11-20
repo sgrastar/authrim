@@ -491,14 +491,14 @@ export const arServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 	'sf.mock.users.email': 'Email',
 	// SAML federations (aggregate metadata) as connections
 	'sf.part.federation-source': 'بيانات الاتحاد',
-	'sf.part.federation-participation': 'الأدوار المشاركة',
+	'sf.part.federation-participation': 'Mapping',
 	'sf.protocol.federation': 'اتحاد SAML',
 	'sf.protocol.federationShort': 'اتحاد SAML',
 	'sf.role.fed.badge': 'اتحاد',
 	'sf.role.fed.line': 'يُوثَق بكل مزوّد في البيانات الوصفية المجمّعة. ولا يُستبعد إلا ما تستثنيه.',
 	'sf.name.newFederation': 'اتحاد جديد',
 	'sf.blurb.federation': 'اتحاد SAML ينضم إليه عبر بيانات وصفية مجمّعة',
-	'sf.wizard.kind.federation.label': 'اتحاد SAML (مثل اتحاد بحثي وطني)',
+	'sf.wizard.kind.federation.label': 'اتحاد SAML',
 	'sf.wizard.kind.federation.desc':
 		'الوثوق بمئات الخدمات أو المؤسسات عبر وثيقة بيانات وصفية واحدة دون إعداد كل منها على حدة.',
 	'sf.metadata.addAsFederation': 'إضافة كاتحاد',
@@ -520,12 +520,25 @@ export const arServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 	'sf.fed.cert.invalid': 'تعذّرت قراءة شهادة PEM. الصق نصًا يبدأ بـ BEGIN CERTIFICATE.',
 	'sf.fed.cert.listLabel': 'شهادات التوقيع',
 	'sf.fed.cert.fingerprint': 'بصمة SHA-256',
-	'sf.fed.cert.remove': 'إزالة',
+	'sf.fed.cert.fingerprintSha1': 'بصمة SHA-1',
+	'sf.fed.cert.remove': 'إزالة الشهادة',
 	'sf.fed.cert.compare': 'قارنها بالبصمة التي ينشرها الاتحاد. لا تستخدم شهادة لا تطابقها.',
 	'sf.fed.cert.paste': 'الشهادة (PEM)',
 	'sf.fed.cert.pasteHint': 'الصقها ثم اضغط إضافة لعرض بصمتها.',
 	'sf.fed.cert.add': 'إضافة الشهادة',
 	'sf.fed.cert.file': 'اختر ملف شهادة',
+	'sf.fed.cert.fileHint': 'تُقرأ ملفات PEM وDER (الثنائية).',
+	'sf.fed.cert.required':
+		'مطلوبة للتحقق من توقيع البيانات الوصفية. أضفها بالصق أو من ملف أو من عنوان URL.',
+	'sf.fed.cert.url': 'عنوان URL للشهادة',
+	'sf.fed.cert.urlHint':
+		'عنوان https الذي نُشرت عليه الشهادة (.cer / .pem). تظهر البصمات عند قراءتها.',
+	'sf.fed.cert.urlRead': 'قراءة من URL',
+	'sf.fed.cert.urlReading': 'جارٍ القراءة…',
+	'sf.fed.cert.urlFailed':
+		'تعذّرت قراءة الشهادة من هذا العنوان. تأكد أنه عنوان https يعيد الشهادة نفسها.',
+	'sf.fed.error.metadataUrlFragment':
+		'لا يمكن أن يتضمن عنوان البيانات الوصفية جزء # (رابطًا داخل صفحة). أدخل عنوان البيانات الوصفية نفسها.',
 	'sf.fed.role.sp': 'دور SP',
 	'sf.fed.role.spDesc': 'يمكن لخدمات الاتحاد تسجيل الدخول عبر Authrim.',
 	'sf.fed.role.idp': 'دور IdP',

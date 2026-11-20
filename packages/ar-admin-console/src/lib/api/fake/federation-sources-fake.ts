@@ -26,6 +26,24 @@ AgNHADBEAiArTdLFGgOm3VgeAX9qf+FtHFeTTlZwMXTPunyGHh5LoAIgJwy2RjBM
 -----END CERTIFICATE-----`;
 export const MOCK_FEDERATION_FINGERPRINT =
 	'aa7bc75eef9d0af29978e6cf5a77b4649769dd985d1a92e7de73e8d6c8a28dab';
+export const MOCK_FEDERATION_FINGERPRINT_SHA1 = 'fd21eeb543b37342821d7573f4fc07c5195dd56d';
+
+/** What the server reads from the mock certificate. */
+function mockCertificatePreview(): SamlCertificatePreview {
+	return {
+		certificate: MOCK_FEDERATION_CERTIFICATE,
+		subject: 'CN=Mock Federation Signer',
+		issuer: 'CN=Mock Federation Signer',
+		serialNumber: '513C766BE8218F6D3FA12B9E24FB1EE6616874AD',
+		validFrom: '2026-11-19T23:44:54.000Z',
+		validTo: '2036-11-16T23:44:54.000Z',
+		signatureAlgorithm: 'ecdsa-with-SHA256',
+		publicKeyAlgorithm: 'EC',
+		fingerprintSha1: MOCK_FEDERATION_FINGERPRINT_SHA1,
+		fingerprintSha256: MOCK_FEDERATION_FINGERPRINT,
+		warnings: []
+	};
+}
 
 /** A copy that also takes what a Svelte form hands over (state proxies cannot be structured-cloned). */
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
@@ -416,19 +434,15 @@ export function createFakeFederationSources(
 			await wait();
 			if (pem.trim() !== MOCK_FEDERATION_CERTIFICATE)
 				throw new ApiError(400, 'invalid_certificate', 'Not a certificate');
-			return {
-				certificate: MOCK_FEDERATION_CERTIFICATE,
-				subject: 'CN=Mock Federation Signer',
-				issuer: 'CN=Mock Federation Signer',
-				serialNumber: '513C766BE8218F6D3FA12B9E24FB1EE6616874AD',
-				validFrom: '2026-11-19T23:44:54.000Z',
-				validTo: '2036-11-16T23:44:54.000Z',
-				signatureAlgorithm: 'ecdsa-with-SHA256',
-				publicKeyAlgorithm: 'EC',
-				fingerprintSha1: '',
-				fingerprintSha256: MOCK_FEDERATION_FINGERPRINT,
-				warnings: []
-			};
+			return mockCertificatePreview();
+		},
+		async previewCertificateUrl(url): Promise<SamlCertificatePreview> {
+			await wait();
+			// The server accepts only an external https address, and answers 400 for anything that
+			// does not serve a certificate.
+			if (!/^https:\/\//i.test(url.trim()) || /unreachable|notacert/i.test(url))
+				throw new ApiError(400, 'invalid_request', 'Not a certificate');
+			return mockCertificatePreview();
 		}
 	};
 }
