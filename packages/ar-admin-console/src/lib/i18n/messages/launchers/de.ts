@@ -183,5 +183,57 @@ export const deLaunchers: { [K in keyof typeof jaLaunchers]: string } = {
 	'ln.error.rulesInvalid': 'Prüfen Sie die Attribute und Werte der Attributregeln.',
 	'ln.error.ruleKey': 'Verwenden Sie nur Buchstaben, Ziffern und . _ -',
 	'ln.error.ruleValue': 'Geben Sie einen Wert ein.',
-	'ln.error.ruleValueTooLong': 'Verwenden Sie höchstens 500 Zeichen.'
+	'ln.error.ruleValueTooLong': 'Verwenden Sie höchstens 500 Zeichen.',
+
+	'ln.list.sharing': 'Geteilt mit',
+	'ln.field.backgroundImage': 'Hintergrundbild',
+	'ln.field.backgroundImageInfo':
+		'Wird über die ganze Breite der Kachel angezeigt (die Höhe folgt dem Bild). PNG, JPEG, WebP oder GIF, bis 5 MB. Es wird beim Speichern hochgeladen.',
+	'ln.field.hideIcon': 'Symbol ausblenden',
+	'ln.field.hideName':
+		'Name und Beschreibung ausblenden (Screenreader lesen den Namen weiterhin vor)',
+	'ln.field.linkOnlyInfo':
+		'Ein von der Plattform geteilter Launcher öffnet eine URL. Er kann keine Anwendung eines Mandanten nennen.',
+	'ln.error.tileEmpty': 'Um Symbol und Namen auszublenden, legen Sie ein Hintergrundbild fest.',
+	'ln.error.tenantsRequired': 'Wählen Sie mindestens einen Mandanten aus.',
+	'ln.error.tenantsTooMany': 'Er kann mit höchstens 1.000 Mandanten geteilt werden.',
+	'ln.card.sharing': 'Freigabe',
+	'ln.card.sharingInfo': 'Welche Mandanten diesen Launcher zeigen und ob sie ihn ändern dürfen.',
+	'ln.sharing.target': 'Teilen mit',
+	'ln.sharing.all': 'Mit allen Mandanten teilen',
+	'ln.sharing.selected': 'Mit ausgewählten Mandanten teilen',
+	'ln.sharing.count': '{n} Mandanten',
+	'ln.sharing.none': 'Keine Mandanten ausgewählt',
+	'ln.sharing.choose': 'Mandanten auswählen',
+	'ln.sharing.notShared': 'Ist keines angehakt, zeigt ihn kein Mandant.',
+	'ln.sharing.change': 'Änderungen durch Mandanten',
+	'ln.sharing.changeAllowed': 'Mandanten dürfen ihn ändern',
+	'ln.sharing.changeHint':
+		'Ohne Haken können Mandanten diesen Launcher weder ändern noch ausblenden. Änderungen eines Mandanten bleiben erhalten, werden aber nicht verwendet. Die Reihenfolge kann jeder Mandant weiterhin selbst festlegen.',
+	'ln.sharing.pickTitle': 'Mandanten zum Teilen auswählen',
+	'ln.sharing.pickBody':
+		'Nur die hier ausgewählten Mandanten zeigen ihn. Später angelegte Mandanten werden nicht hinzugefügt.',
+	'ln.sharing.mode.none': 'Nicht geteilt',
+	'ln.sharing.mode.all': 'Alle Mandanten',
+	'ln.sharing.mode.selected': 'Ausgewählte Mandanten',
+	'ln.sharing.lockedBadge': 'Nicht änderbar',
+	'ln.shared.badge': 'Von der Plattform geteilt',
+	'ln.shared.updatedBadge': 'Von der Plattform aktualisiert',
+	'ln.shared.locked':
+		'Die Plattform teilt diesen Launcher und erlaubt keine Änderungen, daher ist er hier schreibgeschützt. In der Liste können Sie ihn weiterhin verschieben.',
+	'ln.shared.platformUpdated':
+		'Die Plattform hat diesen Launcher aktualisiert, nachdem dieser Mandant ihn geändert hat. Mit „Auf die Plattform zurücksetzen“ übernehmen Sie den neuesten Stand.',
+	'ln.shared.customized': 'Dieser Mandant hat einen von der Plattform geteilten Launcher geändert.',
+	'ln.shared.fromPlatform':
+		'Die Plattform teilt diesen Launcher. Eine Änderung macht ihn zu einer eigenen Fassung dieses Mandanten; Sie können jederzeit auf die Plattform zurücksetzen. Löschen ist nicht möglich, Ausblenden schon.',
+	'ln.shared.revert': 'Auf die Plattform zurücksetzen',
+	'ln.shared.reverted': 'Auf den Launcher der Plattform zurückgesetzt.',
+	'ln.shared.revertFailed': 'Zurücksetzen fehlgeschlagen. Bitte erneut versuchen.',
+	'ln.platform.title': 'Geteilte Launcher',
+	'ln.platform.description':
+		'Launcher auf der Kontoseite aller Mandanten oder der ausgewählten Mandanten.',
+	'ln.platform.info':
+		'Die Reihenfolge der Plattform. Jeder Mandant kann sie zwischen seinen eigenen Launchern neu anordnen.',
+	'ln.platform.intro':
+		'Plattform-Launcher sind URL-Links für alle Nutzer, auf der Kontoseite der Mandanten, mit denen sie geteilt werden.'
 };

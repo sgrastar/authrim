@@ -656,6 +656,7 @@ paths:
                     - panel-background
                     - favicon
                     - thumbnail
+                    - launcher-background
                 file:
                   type: string
                   format: binary
@@ -16134,7 +16135,9 @@ paths:
       tags: [Launchers]
       operationId: getApiAdminLaunchers
       summary: List application launchers.
-      description: Lists every launcher definition for the current tenant, including disabled entries and audience rules.
+      description: >-
+        Lists every launcher of the current tenant, including disabled entries and audience rules,
+        and the platform launchers shared with it (each with `shared`), as the tenant shows them.
       responses:
         '200':
           description: Tenant launcher definitions.
@@ -16147,7 +16150,7 @@ paths:
                   launchers:
                     type: array
                     items:
-                      $ref: '#/components/schemas/ApplicationLauncher'
+                      $ref: '#/components/schemas/TenantLauncher'
         '401': { $ref: '#/components/responses/Error' }
         '403': { $ref: '#/components/responses/Error' }
         '500': { $ref: '#/components/responses/Error' }
@@ -16175,7 +16178,7 @@ paths:
                 required: [launcher]
                 properties:
                   launcher:
-                    $ref: '#/components/schemas/ApplicationLauncher'
+                    $ref: '#/components/schemas/TenantLauncher'
         '400': { $ref: '#/components/responses/Error' }
         '401': { $ref: '#/components/responses/Error' }
         '403': { $ref: '#/components/responses/Error' }
@@ -16249,7 +16252,10 @@ paths:
               properties:
                 launcher_ids:
                   type: array
-                  maxItems: 500
+                  maxItems: 600
+                  description: >-
+                    Every launcher the tenant lists, its own and the shared ones (the place of a
+                    shared one is the tenant's, even when the platform does not allow changing it).
                   uniqueItems: true
                   items:
                     type: string
@@ -16266,7 +16272,7 @@ paths:
                   launchers:
                     type: array
                     items:
-                      $ref: '#/components/schemas/ApplicationLauncher'
+                      $ref: '#/components/schemas/TenantLauncher'
         '400': { $ref: '#/components/responses/Error' }
         '401': { $ref: '#/components/responses/Error' }
         '403': { $ref: '#/components/responses/Error' }
@@ -16293,7 +16299,7 @@ paths:
                 required: [launcher]
                 properties:
                   launcher:
-                    $ref: '#/components/schemas/ApplicationLauncher'
+                    $ref: '#/components/schemas/TenantLauncher'
         '401': { $ref: '#/components/responses/Error' }
         '403': { $ref: '#/components/responses/Error' }
         '404': { $ref: '#/components/responses/Error' }
@@ -16305,6 +16311,11 @@ paths:
       tags: [Launchers]
       operationId: putApiAdminLaunchersById
       summary: Update an application launcher.
+      description: >-
+        Updates one of the tenant's launchers, or the tenant's state of a shared platform launcher
+        while the platform allows changes (403 otherwise): `enabled` false hides it, and any other
+        change makes the tenant's copy (a change back to the platform's launcher drops it). A shared
+        launcher stays a link (`standalone`); its copy may narrow who sees it.
       parameters:
         - $ref: '#/components/parameters/Id'
       requestBody:
@@ -16323,7 +16334,7 @@ paths:
                 required: [launcher]
                 properties:
                   launcher:
-                    $ref: '#/components/schemas/ApplicationLauncher'
+                    $ref: '#/components/schemas/TenantLauncher'
         '400': { $ref: '#/components/responses/Error' }
         '401': { $ref: '#/components/responses/Error' }
         '403': { $ref: '#/components/responses/Error' }
@@ -16336,10 +16347,41 @@ paths:
       tags: [Launchers]
       operationId: deleteApiAdminLaunchersById
       summary: Delete an application launcher.
+      description: Deletes one of the tenant's launchers. A shared platform launcher cannot be deleted (409); hide it instead.
       parameters:
         - $ref: '#/components/parameters/Id'
       responses:
         '204': { description: Launcher deleted. }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/launchers/{id}/customization':
+    delete:
+      tags: [Launchers]
+      operationId: deleteApiAdminLaunchersByIdCustomization
+      summary: Revert a shared launcher to the platform's.
+      description: >-
+        Drops the tenant's copy of a shared platform launcher, so the platform's launcher shows
+        again (whether the tenant hides it, and its place, are kept). Only while the platform
+        allows changes; otherwise the copy is kept as it is, set aside (403).
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: The shared launcher as the tenant now shows it.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [launcher]
+                properties:
+                  launcher:
+                    $ref: '#/components/schemas/TenantLauncher'
         '401': { $ref: '#/components/responses/Error' }
         '403': { $ref: '#/components/responses/Error' }
         '404': { $ref: '#/components/responses/Error' }
@@ -36513,6 +36555,256 @@ paths:
           $ref: '#/components/responses/Error'
       security:
         - adminSessionCookie: []
+  /api/admin/platform/launchers:
+    get:
+      tags: [Launchers]
+      operationId: getApiAdminPlatformLaunchers
+      summary: List the platform's application launchers.
+      description: >-
+        Lists the launchers the platform defines, in the platform's order, with whom each is
+        shared. Platform administrators with a global assignment only.
+      responses:
+        '200':
+          description: The platform's launchers.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [launchers]
+                properties:
+                  launchers:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PlatformLauncher'
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+    post:
+      tags: [Launchers]
+      operationId: postApiAdminPlatformLaunchers
+      summary: Create a platform application launcher.
+      description: >-
+        Creates a launcher the platform may share with tenants: a plain link (`standalone`,
+        `bookmark`) shown to everyone. It is not shared until `share_mode` says so.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlatformLauncherCreate'
+      responses:
+        '201':
+          description: Created launcher.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [launcher]
+                properties:
+                  launcher:
+                    $ref: '#/components/schemas/PlatformLauncher'
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  /api/admin/platform/launchers/options:
+    get:
+      tags: [Launchers]
+      operationId: getApiAdminPlatformLauncherOptions
+      summary: List the icons a platform launcher may use.
+      responses:
+        '200':
+          description: Editor options.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [phosphor_icons]
+                properties:
+                  phosphor_icons:
+                    type: array
+                    items: { type: string }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  /api/admin/platform/launchers/order:
+    put:
+      tags: [Launchers]
+      operationId: putApiAdminPlatformLaunchersOrder
+      summary: Replace the platform's launcher order.
+      description: >-
+        Sets the place of every platform launcher (not a change of the launchers: their versions
+        stay). A tenant's own order of the shared ones is the tenant's.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [launcher_ids]
+              properties:
+                launcher_ids:
+                  type: array
+                  maxItems: 100
+                  uniqueItems: true
+                  items: { type: string }
+      responses:
+        '200':
+          description: The platform's launchers in their new order.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [launchers]
+                properties:
+                  launchers:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PlatformLauncher'
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  /api/admin/platform/launchers/assets:
+    post:
+      tags: [Launchers]
+      operationId: postApiAdminPlatformLauncherAssets
+      summary: Upload a platform launcher background image.
+      description: >-
+        Uploads a raster image (at most 5 MB) as one of the platform's own launcher backgrounds.
+        The answer's `url` (`/api/assets/_platform/login-ui/launcher-background/<file>`) is what a
+        launcher's `background_image_url` takes.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '200':
+          description: Uploaded asset metadata.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, kind, url]
+                properties:
+                  success: { type: boolean }
+                  kind: { type: string, enum: [launcher-background] }
+                  url: { type: string }
+                  contentType: { type: string }
+                  size: { type: integer }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/platform/launchers/{id}':
+    get:
+      tags: [Launchers]
+      operationId: getApiAdminPlatformLaunchersById
+      summary: Get a platform application launcher.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: The launcher.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [launcher]
+                properties:
+                  launcher:
+                    $ref: '#/components/schemas/PlatformLauncher'
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+    put:
+      tags: [Launchers]
+      operationId: putApiAdminPlatformLaunchersById
+      summary: Change a platform application launcher.
+      description: >-
+        Changes the launcher and whom it is shared with, made from `version` (409 with
+        `current_version` when it changed meanwhile). Fields left out keep their values.
+        `tenant_change_allowed` off sets tenants' copies aside and stops them hiding it.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlatformLauncherUpdate'
+      responses:
+        '200':
+          description: The changed launcher.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [launcher]
+                properties:
+                  launcher:
+                    $ref: '#/components/schemas/PlatformLauncher'
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+    delete:
+      tags: [Launchers]
+      operationId: deleteApiAdminPlatformLaunchersById
+      summary: Delete a platform application launcher.
+      description: Deletes it by version; tenants stop showing it (their own state of it is left unused).
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - name: version
+          in: query
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        '204': { description: Launcher deleted. }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
   /api/admin/platform/session-profiles:
     get:
       tags:
@@ -55358,6 +55650,21 @@ components:
             Background of the whole tile. Null (or omitted when creating) keeps the theme's card
             colour; omitted on update keeps the stored value. Text on the tile is drawn in black or
             white, whichever contrasts more.
+        background_image_url:
+          type: [string, 'null']
+          maxLength: 2048
+          description: >-
+            An image filling the tile's width (its height follows the image): an HTTPS URL or an
+            uploaded launcher background (`/api/assets/<tenant or _platform>/login-ui/
+            launcher-background/<file>`). Null: none. Omitted on update keeps the stored value.
+        hide_icon:
+          type: boolean
+          description: The icon is not drawn. Default false.
+        hide_name:
+          type: boolean
+          description: >-
+            The name and description are not drawn (the name stays the tile's accessible name).
+            Default false.
         grid_width: { type: integer, minimum: 1, maximum: 8 }
         sort_order:
           type: integer
@@ -55371,15 +55678,160 @@ components:
         allow_favorite: { type: boolean }
         visibility:
           $ref: '#/components/schemas/LauncherVisibility'
+        platform_version:
+          type: integer
+          minimum: 1
+          description: >-
+            A shared platform launcher only: the platform version the admin was shown. A first
+            change makes the tenant's copy from it (so a later platform change is still noticed).
     ApplicationLauncher:
       allOf:
         - $ref: '#/components/schemas/ApplicationLauncherInput'
         - type: object
-          required: [id, sort_order, tile_background_color, created_at, updated_at]
+          required:
+            [
+              id,
+              sort_order,
+              tile_background_color,
+              background_image_url,
+              hide_icon,
+              hide_name,
+              created_at,
+              updated_at,
+            ]
           properties:
             id: { type: string }
             created_at: { type: integer, format: int64 }
             updated_at: { type: integer, format: int64 }
+    SharedLauncherState:
+      type: object
+      additionalProperties: false
+      description: How a launcher the tenant lists stands to the platform launcher it is.
+      required:
+        [
+          platform_version,
+          tenant_change_allowed,
+          customized,
+          customized_from_version,
+          platform_updated,
+        ]
+      properties:
+        platform_version: { type: integer, minimum: 1 }
+        tenant_change_allowed:
+          type: boolean
+          description: Off, the tenant shows the platform's launcher as it is and cannot hide it.
+        customized:
+          type: boolean
+          description: The tenant has a copy (shown only while changes are allowed).
+        customized_from_version:
+          type: [integer, 'null']
+          description: The platform version the tenant's copy was made from.
+        platform_updated:
+          type: boolean
+          description: The platform changed the launcher after the tenant's copy was made.
+    TenantLauncher:
+      allOf:
+        - $ref: '#/components/schemas/ApplicationLauncher'
+        - type: object
+          required: [shared]
+          properties:
+            shared:
+              description: Null for the tenant's own launcher.
+              oneOf:
+                - type: 'null'
+                - $ref: '#/components/schemas/SharedLauncherState'
+    PlatformLauncherInput:
+      type: object
+      additionalProperties: false
+      description: >-
+        A platform launcher: a link (`standalone`, `bookmark`) shown to everyone, and whom it is
+        shared with. On a change, fields left out keep their values.
+      properties:
+        application_type:
+          type: string
+          enum: [standalone]
+        application_id:
+          type: 'null'
+        name: { type: string, minLength: 1, maxLength: 120 }
+        description: { type: [string, 'null'], maxLength: 1000 }
+        category: { type: [string, 'null'], maxLength: 100 }
+        launch_type:
+          type: string
+          enum: [bookmark]
+        launch_url: { type: string, format: uri, description: An HTTPS URL. }
+        deep_link_url: { type: [string, 'null'], format: uri }
+        open_in_new_tab: { type: boolean }
+        icon_type:
+          type: string
+          enum: [phosphor, image]
+        icon_value: { type: string, minLength: 1, maxLength: 2048 }
+        icon_color: { type: string, pattern: '^#[0-9A-Fa-f]{6}$' }
+        background_color: { type: string, pattern: '^#[0-9A-Fa-f]{6}$' }
+        tile_background_color: { type: [string, 'null'], pattern: '^#[0-9A-Fa-f]{6}$' }
+        background_image_url:
+          type: [string, 'null']
+          maxLength: 2048
+          description: >-
+            An HTTPS URL, or a platform launcher background uploaded with POST
+            /api/admin/platform/launchers/assets.
+        hide_icon: { type: boolean }
+        hide_name: { type: boolean }
+        grid_width: { type: integer, minimum: 1, maximum: 8 }
+        sort_order:
+          type: integer
+          minimum: 0
+          maximum: 1000000
+          description: >-
+            The platform's place for it. Omitted on a change keeps the current place (the order is
+            normally changed with PUT /api/admin/platform/launchers/order).
+        enabled: { type: boolean }
+        allow_favorite: { type: boolean }
+        visibility:
+          type: object
+          properties:
+            mode:
+              type: string
+              enum: [everyone]
+        share_mode:
+          type: string
+          enum: [none, all, selected]
+          description: >-
+            Not shared yet, shared with every tenant, or with `tenant_ids` (tenants that exist when
+            it is saved; a tenant made later is not added). Default none.
+        tenant_ids:
+          type: array
+          maxItems: 1000
+          items: { type: string }
+          description: The tenants for `selected` (at least one); ignored otherwise.
+        tenant_change_allowed:
+          type: boolean
+          description: Tenants may change (their own copy) or hide it. Default true.
+        version:
+          type: integer
+          minimum: 1
+          description: Required on a change; the version it is made from.
+    PlatformLauncherCreate:
+      allOf:
+        - $ref: '#/components/schemas/PlatformLauncherInput'
+        - type: object
+          required: [name, launch_url, icon_value]
+    PlatformLauncherUpdate:
+      allOf:
+        - $ref: '#/components/schemas/PlatformLauncherInput'
+        - type: object
+          required: [version]
+    PlatformLauncher:
+      allOf:
+        - $ref: '#/components/schemas/ApplicationLauncher'
+        - type: object
+          required: [share_mode, tenant_ids, tenant_change_allowed, version]
+          properties:
+            share_mode: { type: string, enum: [none, all, selected] }
+            tenant_ids:
+              type: array
+              items: { type: string }
+            tenant_change_allowed: { type: boolean }
+            version: { type: integer, minimum: 1 }
     AdminControlReleaseRolloutStatus:
       type: object
       additionalProperties: false

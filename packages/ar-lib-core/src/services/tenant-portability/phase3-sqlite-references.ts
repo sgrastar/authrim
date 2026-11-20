@@ -255,6 +255,27 @@ function jsonObject(row: PortableSqliteRow, column: string): Readonly<Record<str
   }
 }
 
+/** The groups a launcher's audience names (`visibility.group_ids`), as dependencies. */
+function launcherGroupDependencies(
+  visibility: unknown,
+  identity: TenantPortableRecordIdentity
+): TenantPortableDependency[] {
+  if (visibility === undefined) return [];
+  if (!visibility || typeof visibility !== 'object' || Array.isArray(visibility))
+    throw new Error('backup_phase3_structured_reference');
+  const groupIds = (visibility as Record<string, unknown>).group_ids;
+  if (groupIds === undefined) return [];
+  if (
+    !Array.isArray(groupIds) ||
+    groupIds.length > 500 ||
+    groupIds.some((groupId) => typeof groupId !== 'string' || !groupId || groupId.length > 200)
+  )
+    throw new Error('backup_phase3_structured_reference');
+  return [...new Set(groupIds as string[])].map((groupId) =>
+    installedIdDependency(identity, 'core', 'groups', groupId)
+  );
+}
+
 function optionalJsonObject(
   row: PortableSqliteRow,
   column: string
@@ -420,6 +441,16 @@ function inspectStructuredReferences(
     return dependencies;
   }
 
+  if (datasetId === 'core.shared_launcher_states') {
+    // A tenant's copy of a platform launcher is a link: what it names of the tenant is only the
+    // groups it may be narrowed to. (The platform launcher itself is the environment's.)
+    const copy = optionalJsonObject(row, 'copy_json');
+    if (!copy) return [];
+    if (copy.application_type !== 'standalone')
+      throw new Error('backup_phase3_structured_reference');
+    return launcherGroupDependencies(copy.visibility, identity);
+  }
+
   if (datasetId === 'core.application_launchers') {
     const config = jsonObject(row, 'config_json');
     const id = requiredTextValue(row, 'id');
@@ -445,24 +476,7 @@ function inspectStructuredReferences(
         })
       );
     }
-    const visibility = config.visibility;
-    if (visibility !== undefined) {
-      if (!visibility || typeof visibility !== 'object' || Array.isArray(visibility))
-        throw new Error('backup_phase3_structured_reference');
-      const groupIds = (visibility as Record<string, unknown>).group_ids;
-      if (groupIds !== undefined) {
-        if (
-          !Array.isArray(groupIds) ||
-          groupIds.length > 500 ||
-          groupIds.some(
-            (groupId) => typeof groupId !== 'string' || !groupId || groupId.length > 200
-          )
-        )
-          throw new Error('backup_phase3_structured_reference');
-        for (const groupId of new Set(groupIds as string[]))
-          dependencies.push(installedIdDependency(identity, 'core', 'groups', groupId));
-      }
-    }
+    dependencies.push(...launcherGroupDependencies(config.visibility, identity));
     return dependencies;
   }
 

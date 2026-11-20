@@ -577,6 +577,7 @@ import {
 import { adminScreenResponsesHandler } from './admin-screen-responses';
 import {
   adminLauncherCreateHandler,
+  adminLauncherCustomizationDeleteHandler,
   adminLauncherDeleteHandler,
   adminLauncherGetHandler,
   adminLauncherOptionsHandler,
@@ -883,6 +884,7 @@ import { processLegacySettingsImport } from './legacy-settings-import';
 import policyRouter from './routes/policy';
 import adminManagementRouter from './routes/admin-management';
 import { createPlatformProfilesRouter } from './routes/platform-profiles';
+import { createPlatformLaunchersRouter } from './routes/platform-launchers';
 import diagnosticLoggingRouter from './routes/diagnostic-logging';
 import diagnosticLogIngestRouter from './routes/diagnostic-logging/ingest';
 import {
@@ -2243,6 +2245,7 @@ app.route(
   createPlatformProfilesRouter('method')
 );
 app.route('/api/admin/platform/session-profiles', createPlatformProfilesRouter('session'));
+app.route('/api/admin/platform/launchers', createPlatformLaunchersRouter());
 app.route('/api/admin', adminManagementRouter);
 app.route('/api/approval-artifacts', approvalArtifactsRouter);
 app.route('/api/approval-receipts', approvalReceiptsRouter);
@@ -2727,6 +2730,11 @@ app.delete(
   '/api/admin/launchers/:id',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
   adminLauncherDeleteHandler
+);
+app.delete(
+  '/api/admin/launchers/:id/customization',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminLauncherCustomizationDeleteHandler
 );
 
 app.get(

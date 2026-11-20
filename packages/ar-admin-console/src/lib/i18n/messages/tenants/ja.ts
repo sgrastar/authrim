@@ -223,5 +223,13 @@ export const jaTenants = {
 	'tn.dom.record.howTxt': 'ドメインの DNS に TXT レコードとして追加します。',
 	'tn.dom.record.howHttp': '次の URL で、本文をそのまま返すように公開します。',
 	'tn.dom.record.url': 'URL',
-	'tn.dom.record.body': '本文'
+	'tn.dom.record.body': '本文',
+
+	'tn.picker.apply': '{n} 件を選ぶ',
+	'tn.picker.tooMany': '選べるのは {n} 件までです。',
+	'tn.picker.noAccess': 'テナントの一覧を表示する権限がありません。',
+	'tn.picker.loadFailed': 'テナントを読み込めませんでした。',
+	'tn.picker.filter': 'テナントを絞り込む',
+	'tn.picker.unlisted': 'うち {n} 件は一覧にありません（削除されたテナントなど）',
+	'tn.picker.default': '既定のテナント'
 };

@@ -510,7 +510,7 @@ export const API_GROUPS: readonly ApiGroup[] = [
 		name: 'App launchers',
 		kind: 'records',
 		page: 'customization/launchers',
-		paths: [`${A}/launchers`]
+		paths: [`${A}/launchers`, `${A}/platform/launchers`]
 	},
 	{
 		id: 'sign-in-confirmation',

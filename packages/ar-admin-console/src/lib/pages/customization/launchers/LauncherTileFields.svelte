@@ -1,5 +1,7 @@
 <script lang="ts">
+	import { apiAssetUrl } from '#lib/api/assets.js';
 	import { t, type MessageKey } from '#lib/i18n/i18n.svelte.js';
+	import ImageUpload from '#lib/ui/patterns/ImageUpload.svelte';
 	import Card from '#lib/ui/patterns/Card.svelte';
 	import CheckRow from '#lib/ui/patterns/CheckRow.svelte';
 	import Columns from '#lib/ui/patterns/Columns.svelte';
@@ -14,6 +16,7 @@
 	import LauncherIconPicker from './LauncherIconPicker.svelte';
 	import Checkbox from '#lib/ui/primitives/Checkbox.svelte';
 	import {
+		BACKGROUND_ACCEPT,
 		BACKGROUND_PRESETS,
 		TILE_PRESETS,
 		GRID_COLUMNS,
@@ -25,8 +28,10 @@
 	/**
 	 * How a launcher's tile looks: its icon (one of the allowed Phosphor icons in the tile's
 	 * colours, or a picture), the background and icon colours (the icon colour checked for
-	 * contrast against the background), the description and category under the name, how many
-	 * of the account page's eight columns it spans, and whether users may star it.
+	 * contrast against the background), a picture across the tile's width (uploaded when the page
+	 * is saved) and whether the icon or the name is hidden, the description and category under
+	 * the name, how many of the account page's eight columns it spans, and whether users may star
+	 * it.
 	 */
 	interface Props {
 		value: LauncherEditorValue;
@@ -131,6 +136,35 @@
 						{disabled}
 						bind:value={value.tileBackground}
 					/>
+				{/if}
+			</div>
+		</FieldRow>
+
+		<FieldRow
+			label={t('ln.field.backgroundImage')}
+			info={t('ln.field.backgroundImageInfo')}
+			align="text"
+			plain
+		>
+			<div class="tile-fields__tile">
+				<ImageUpload
+					label={t('ln.field.backgroundImage')}
+					shape="wide"
+					accept={BACKGROUND_ACCEPT}
+					maxBytes={LIMITS.backgroundBytes}
+					resolveUrl={apiAssetUrl}
+					field="backgroundImage"
+					{disabled}
+					bind:value={value.backgroundImage}
+				/>
+				<Checkbox field="hideIcon" {disabled} bind:checked={value.hideIcon}
+					>{t('ln.field.hideIcon')}</Checkbox
+				>
+				<Checkbox field="hideName" {disabled} bind:checked={value.hideName}
+					>{t('ln.field.hideName')}</Checkbox
+				>
+				{#if errors.tile}
+					<p class="tile-fields__error" role="alert">{t(errors.tile)}</p>
 				{/if}
 			</div>
 		</FieldRow>

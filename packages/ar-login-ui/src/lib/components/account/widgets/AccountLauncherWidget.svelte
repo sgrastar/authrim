@@ -6,7 +6,7 @@
 	 */
 	import { LL, getLocale } from '$i18n/i18n-svelte';
 	import type { AccountLauncher } from '#lib/api/account.js';
-	import { launcherMatchesSearch } from '../account-launcher-filter';
+	import { launcherMatchesSearch, launcherPicture } from '../account-launcher-filter';
 	import { accentTextColor, normalizeAccentColor } from '#lib/utils/accent-text.js';
 	import AccountWidgetPanel from './AccountWidgetPanel.svelte';
 	import type { AccountWidgetHeadingLevel } from './types';
@@ -113,9 +113,11 @@
 			<ul class="launcher-grid">
 				{#each filteredLaunchers as launcher (launcher.id)}
 					{@const tileBackground = normalizeAccentColor(launcher.tile_background_color)}
+					{@const picture = launcherPicture(launcher.background_image_url)}
 					<li
 						class="launcher-tile"
 						class:launcher-tile--colored={tileBackground !== null}
+						class:launcher-tile--picture={picture !== null}
 						data-width={launcher.grid_width}
 						style:--tile-bg={tileBackground}
 						style:--tile-fg={accentTextColor(tileBackground)}
@@ -126,26 +128,37 @@
 							target={launcher.open_in_new_tab ? '_blank' : undefined}
 							rel={launcher.open_in_new_tab ? 'noopener noreferrer' : undefined}
 						>
-							<span class="launcher-tile__top">
-								<span
-									class="launcher-icon"
-									style:--launcher-bg={launcher.background_color}
-									style:--launcher-color={launcher.icon_color}
-								>
-									{#if launcher.icon_type === 'image'}
-										<img
-											src={launcher.icon_value}
-											alt=""
-											loading="lazy"
-											referrerpolicy="no-referrer"
-										/>
-									{:else}
-										<span class={`i-ph-${launcher.icon_value}`} aria-hidden="true"></span>
-									{/if}
+							{#if picture}
+								<img
+									class="launcher-picture"
+									src={picture}
+									alt=""
+									loading="lazy"
+									referrerpolicy="no-referrer"
+								/>
+							{/if}
+							{#if !launcher.hide_icon}
+								<span class="launcher-tile__top">
+									<span
+										class="launcher-icon"
+										style:--launcher-bg={launcher.background_color}
+										style:--launcher-color={launcher.icon_color}
+									>
+										{#if launcher.icon_type === 'image'}
+											<img
+												src={launcher.icon_value}
+												alt=""
+												loading="lazy"
+												referrerpolicy="no-referrer"
+											/>
+										{:else}
+											<span class={`i-ph-${launcher.icon_value}`} aria-hidden="true"></span>
+										{/if}
+									</span>
 								</span>
-							</span>
-							<span class="launcher-name">{launcher.name}</span>
-							{#if launcher.description}
+							{/if}
+							<span class="launcher-name" class:sr-only={launcher.hide_name}>{launcher.name}</span>
+							{#if launcher.description && !launcher.hide_name}
 								<span class="launcher-description">{launcher.description}</span>
 							{/if}
 							<span class="launcher-meta">
@@ -366,6 +379,19 @@
 	.favorite-button:disabled {
 		opacity: 0.5;
 		cursor: wait;
+	}
+	/* The picture spans the tile's whole width, its height following the picture. */
+	.launcher-picture {
+		display: block;
+		width: calc(100% + 28px);
+		max-width: none;
+		height: auto;
+		margin: -14px -14px 2px;
+		border-radius: 9px 9px 0 0;
+	}
+	/* Over a picture the star keeps a face of its own, so it reads on any picture. */
+	.launcher-tile--picture .favorite-button {
+		background: color-mix(in srgb, var(--bg-card) 88%, transparent);
 	}
 	.launcher-link {
 		display: grid;

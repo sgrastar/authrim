@@ -176,5 +176,58 @@ export const jaLaunchers = {
 	'ln.error.rulesInvalid': '属性ルールの属性と値を確認してください。',
 	'ln.error.ruleKey': '英数字と . _ - で入力してください。',
 	'ln.error.ruleValue': '値を入力してください。',
-	'ln.error.ruleValueTooLong': '500 文字以内にしてください。'
+	'ln.error.ruleValueTooLong': '500 文字以内にしてください。',
+
+	'ln.list.sharing': '共有先',
+	'ln.field.backgroundImage': '背景画像',
+	'ln.field.backgroundImageInfo':
+		'タイルの横幅に合わせて表示します（高さは画像の比率に従います）。PNG・JPEG・WebP・GIF、5 MB まで。保存したときにアップロードされます。',
+	'ln.field.hideIcon': 'アイコンを表示しない',
+	'ln.field.hideName': '名前と説明を表示しない（読み上げでは名前が使われます）',
+	'ln.field.linkOnlyInfo':
+		'プラットフォームが共有するランチャーは URL を開くリンクです。テナントのアプリケーションは指定できません。',
+	'ln.error.tileEmpty': 'アイコンも名前も表示しない場合は、背景画像を指定してください。',
+	'ln.error.tenantsRequired': '共有するテナントを 1 つ以上選んでください。',
+	'ln.error.tenantsTooMany': '共有できるテナントは 1000 件までです。',
+	'ln.card.sharing': '共有',
+	'ln.card.sharingInfo':
+		'このランチャーを表示するテナントと、テナントによる変更を認めるかを決めます。',
+	'ln.sharing.target': '共有先',
+	'ln.sharing.all': 'すべてのテナントに共有する',
+	'ln.sharing.selected': '指定したテナントに共有する',
+	'ln.sharing.count': 'テナント {n} 件',
+	'ln.sharing.none': 'テナントが選ばれていません',
+	'ln.sharing.choose': 'テナントを選ぶ',
+	'ln.sharing.notShared': 'どちらも選ばないと、どのテナントにも表示されません。',
+	'ln.sharing.change': 'テナントによる変更',
+	'ln.sharing.changeAllowed': '変更可能にする',
+	'ln.sharing.changeHint':
+		'チェックを外すと、テナントはこのランチャーを変更も非表示にもできません。テナントが作った変更は残りますが使われません。並び順はテナントごとに変えられます。',
+	'ln.sharing.pickTitle': '共有するテナントを選ぶ',
+	'ln.sharing.pickBody':
+		'ここで選んだテナントにだけ表示されます。あとから作ったテナントには自動では共有されません。',
+	'ln.sharing.mode.none': '共有していません',
+	'ln.sharing.mode.all': 'すべてのテナント',
+	'ln.sharing.mode.selected': '指定したテナント',
+	'ln.sharing.lockedBadge': '変更不可',
+	'ln.shared.badge': 'プラットフォームから共有',
+	'ln.shared.updatedBadge': 'プラットフォームで更新あり',
+	'ln.shared.locked':
+		'プラットフォームが共有しているランチャーです。プラットフォームが変更を認めていないため、表示のみです（並び順は一覧で変えられます）。',
+	'ln.shared.platformUpdated':
+		'このテナント用に変更したあとで、プラットフォームがこのランチャーを更新しました。「プラットフォームの設定に戻す」で最新の内容を使えます。',
+	'ln.shared.customized':
+		'プラットフォームが共有しているランチャーを、このテナント用に変更しています。',
+	'ln.shared.fromPlatform':
+		'プラットフォームが共有しているランチャーです。変更するとこのテナント用の設定になり、いつでもプラットフォームの設定に戻せます。削除はできませんが、非表示にできます。',
+	'ln.shared.revert': 'プラットフォームの設定に戻す',
+	'ln.shared.reverted': 'プラットフォームの設定に戻しました。',
+	'ln.shared.revertFailed': '元に戻せませんでした。もう一度お試しください。',
+	'ln.platform.title': '共有ランチャー',
+	'ln.platform.description':
+		'すべてのテナント、または指定したテナントのアカウントページに並べるランチャーを管理します。',
+	'ln.platform.info':
+		'プラットフォームでの並び順です。各テナントは自分のランチャーとあわせて並べ替えられます。',
+	'ln.platform.intro':
+		'プラットフォームのランチャーは、すべてのユーザーに表示される URL のリンクです。共有したテナントのアカウントページに並びます。'
 };

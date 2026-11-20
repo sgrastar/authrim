@@ -111,6 +111,15 @@ export function settingsLevel(
 	return level;
 }
 
+/**
+ * The platform's launchers (`/api/admin/platform/launchers`). The Admin API judges them by the
+ * Login UI category's platform roles held through a global assignment, though that category has no
+ * platform settings of its own (so `settingsLevel` would answer none).
+ */
+export function platformLaunchersLevel(access: AdminAccess): AccessLevel {
+	return rolesLevel(access, 'login-ui', 'platform');
+}
+
 function roleSettingsLevel(
 	access: AdminAccess,
 	category: CategoryName,
@@ -118,6 +127,16 @@ function roleSettingsLevel(
 ): AccessLevel {
 	const config = CATEGORY_SCOPE_CONFIG[category];
 	if (!config.allowedScopes.includes(scope)) return 'none';
+	return rolesLevel(access, category, scope);
+}
+
+/** What the roles allow for a category at a scope, the scope's own availability aside. */
+function rolesLevel(
+	access: AdminAccess,
+	category: CategoryName,
+	scope: SettingScopeLevel
+): AccessLevel {
+	const config = CATEGORY_SCOPE_CONFIG[category];
 	if (scope === 'platform' && !access.platform) return 'none';
 	const rules = { ...DEFAULT_SCOPE_PERMISSIONS[scope], ...config.scopePermissions?.[scope] };
 	const writable = rules.editRoles.length > 0;

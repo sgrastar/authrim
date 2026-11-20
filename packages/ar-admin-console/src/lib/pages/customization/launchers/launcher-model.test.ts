@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { FAKE_LAUNCHERS, FAKE_LAUNCHER_OPTIONS } from '#lib/api/fake/launchers-fake.js';
+import { FAKE_PLATFORM_LAUNCHERS } from '#lib/api/fake/platform-launchers-fake.js';
 import {
 	categoriesOf,
 	launcherInput,
@@ -27,7 +28,14 @@ const value = (patch: Partial<LauncherEditorValue> = {}): LauncherEditorValue =>
 describe('launcher editor value', () => {
 	it('round-trips a saved launcher to the same API input', () => {
 		for (const launcher of FAKE_LAUNCHERS) {
-			const { id: _id, created_at: _c, updated_at: _u, ...stored } = launcher;
+			const {
+				id: _id,
+				created_at: _c,
+				updated_at: _u,
+				shared: _shared,
+				sharing: _sharing,
+				...stored
+			} = launcher;
 			const uri =
 				FAKE_LAUNCHER_OPTIONS.oidc_clients.find(
 					(client) => client.client_id === launcher.application_id
@@ -36,6 +44,69 @@ describe('launcher editor value', () => {
 				stored
 			);
 		}
+	});
+
+	it('round-trips a platform launcher with its sharing', () => {
+		for (const launcher of FAKE_PLATFORM_LAUNCHERS) {
+			const {
+				id: _id,
+				created_at: _c,
+				updated_at: _u,
+				shared: _shared,
+				sharing,
+				...stored
+			} = launcher;
+			expect(
+				launcherInput(launcherValue(launcher, noNames), launcher.sort_order, null, 'platform')
+			).toEqual({
+				...stored,
+				share_mode: sharing?.share_mode,
+				tenant_ids: sharing?.tenant_ids,
+				tenant_change_allowed: sharing?.tenant_change_allowed
+			});
+		}
+	});
+
+	it('sends the tile picture and what is hidden; a tenant sends no sharing', () => {
+		const input = launcherInput(
+			value({
+				backgroundImage: ' /api/assets/acme/login-ui/launcher-background/a.png ',
+				hideIcon: true,
+				hideName: true,
+				shareMode: 'all'
+			}),
+			0
+		);
+		expect(input).toMatchObject({
+			background_image_url: '/api/assets/acme/login-ui/launcher-background/a.png',
+			hide_icon: true,
+			hide_name: true
+		});
+		expect(input).not.toHaveProperty('share_mode');
+		// A chosen file is uploaded first: it is never sent as such.
+		const file = new File(['x'], 'a.png', { type: 'image/png' });
+		expect(launcherInput(value({ backgroundImage: file }), 0).background_image_url).toBeNull();
+	});
+
+	it('sends the chosen tenants only when shared with chosen tenants', () => {
+		const chosen = launcherInput(
+			value({ shareMode: 'selected', tenantIds: ['acme'], tenantChangeAllowed: false }),
+			0,
+			null,
+			'platform'
+		);
+		expect(chosen).toMatchObject({
+			share_mode: 'selected',
+			tenant_ids: ['acme'],
+			tenant_change_allowed: false
+		});
+		const all = launcherInput(
+			value({ shareMode: 'all', tenantIds: ['acme'] }),
+			0,
+			null,
+			'platform'
+		);
+		expect(all).toMatchObject({ share_mode: 'all', tenant_ids: [] });
 	});
 
 	it('keeps the picture address and the Phosphor icon apart', () => {
@@ -236,5 +307,31 @@ describe('launcher list helpers', () => {
 	it('moves one entry by one place and stays put at the ends', () => {
 		expect(moved(['a', 'b', 'c'], 1, -1)).toEqual(['b', 'a', 'c']);
 		expect(moved(['a', 'b', 'c'], 2, 1)).toEqual(['a', 'b', 'c']);
+	});
+});
+
+describe('launcher problems of the new tile and sharing settings', () => {
+	it('asks for a picture when both the icon and the name are hidden', () => {
+		expect(launcherProblems(value({ hideIcon: true, hideName: true }), choices).tile).toBe(
+			'ln.error.tileEmpty'
+		);
+		expect(
+			launcherProblems(
+				value({ hideIcon: true, hideName: true, backgroundImage: 'https://a.example/b.png' }),
+				choices
+			).tile
+		).toBeUndefined();
+	});
+
+	it('asks for a tenant when a platform launcher is shared with chosen tenants', () => {
+		const platform = { ...choices, scope: 'platform' as const };
+		expect(launcherProblems(value({ shareMode: 'selected' }), platform).tenants).toBe(
+			'ln.error.tenantsRequired'
+		);
+		expect(
+			launcherProblems(value({ shareMode: 'selected', tenantIds: ['acme'] }), platform).tenants
+		).toBeUndefined();
+		// A tenant's own launcher has no sharing to check.
+		expect(launcherProblems(value({ shareMode: 'selected' }), choices).tenants).toBeUndefined();
 	});
 });

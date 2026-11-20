@@ -5,9 +5,11 @@
 	import { tileTextColor } from './launcher-model';
 
 	/**
-	 * One launcher as a user sees it on the account page: its icon, name, description and
-	 * category, how it opens (in a new tab or in place), the legacy mark of IdP-initiated SAML
-	 * and the favourite star. A picture of the tile, not a link: nothing here can be pressed.
+	 * One launcher as a user sees it on the account page: its picture across the tile's width
+	 * (its height follows the picture), its icon, name, description and category, how it opens
+	 * (in a new tab or in place), the legacy mark of IdP-initiated SAML and the favourite star.
+	 * The icon, and the name with the description, can be hidden (the name is still read out). A
+	 * picture of the tile, not a link: nothing here can be pressed.
 	 */
 	interface Props {
 		name: string;
@@ -22,6 +24,10 @@
 		openInNewTab: boolean;
 		allowFavorite: boolean;
 		legacy?: boolean;
+		/** The picture's address as the browser loads it; none: no picture. */
+		backgroundImage?: string | null;
+		hideIcon?: boolean;
+		hideName?: boolean;
 	}
 
 	let {
@@ -35,7 +41,10 @@
 		tileBackground = null,
 		openInNewTab,
 		allowFavorite,
-		legacy = false
+		legacy = false,
+		backgroundImage = null,
+		hideIcon = false,
+		hideName = false
 	}: Props = $props();
 </script>
 
@@ -45,16 +54,25 @@
 	style:--tile-bg={tileBackground || undefined}
 	style:--tile-fg={tileBackground ? tileTextColor(tileBackground) : undefined}
 >
-	<div class="launcher-tile__top">
-		<LauncherIcon {iconType} value={iconValue} {background} color={iconColor} />
-		{#if allowFavorite}
-			<span class="launcher-tile__star" title={t('ln.preview.favorite')}>
-				<Icon name="star" label={t('ln.preview.favorite')} />
-			</span>
-		{/if}
-	</div>
-	<span class="launcher-tile__name">{name || t('ln.preview.unnamed')}</span>
-	{#if description}<span class="launcher-tile__description">{description}</span>{/if}
+	{#if backgroundImage}
+		<img class="launcher-tile__image" src={backgroundImage} alt="" />
+	{/if}
+	{#if !hideIcon || allowFavorite}
+		<div class="launcher-tile__top" class:launcher-tile__top--star-only={hideIcon}>
+			{#if !hideIcon}
+				<LauncherIcon {iconType} value={iconValue} {background} color={iconColor} />
+			{/if}
+			{#if allowFavorite}
+				<span class="launcher-tile__star" title={t('ln.preview.favorite')}>
+					<Icon name="star" label={t('ln.preview.favorite')} />
+				</span>
+			{/if}
+		</div>
+	{/if}
+	<span class="launcher-tile__name" class:visually-hidden={hideName}
+		>{name || t('ln.preview.unnamed')}</span
+	>
+	{#if description && !hideName}<span class="launcher-tile__description">{description}</span>{/if}
 	<span class="launcher-tile__meta">
 		{#if category}<span class="launcher-tile__category">{category}</span>{/if}
 		{#if legacy}<span class="launcher-tile__legacy">{t('ln.preview.legacy')}</span>{/if}
@@ -69,6 +87,8 @@
 
 <style>
 	.launcher-tile {
+		position: relative;
+		overflow: hidden;
 		display: grid;
 		gap: 6px;
 		align-content: start;
@@ -95,6 +115,30 @@
 	.launcher-tile--colored .launcher-tile__star {
 		/* The same black or white: a lighter mix would fall below 4.5:1 on mid-tone tiles. */
 		color: var(--tile-fg);
+	}
+
+	/* The picture spans the tile's whole width, its height following the picture. */
+	.launcher-tile__image {
+		display: block;
+		inline-size: calc(100% + 2 * var(--tile-pad));
+		max-inline-size: none;
+		block-size: auto;
+		margin: calc(-1 * var(--tile-pad)) calc(-1 * var(--tile-pad)) 4px;
+		border-start-start-radius: calc(var(--radius-panel) - 1px);
+		border-start-end-radius: calc(var(--radius-panel) - 1px);
+	}
+
+	.launcher-tile__top.launcher-tile__top--star-only {
+		justify-content: flex-end;
+	}
+
+	.visually-hidden {
+		position: absolute;
+		inline-size: 1px;
+		block-size: 1px;
+		overflow: hidden;
+		clip-path: inset(50%);
+		white-space: nowrap;
 	}
 
 	.launcher-tile__top {
