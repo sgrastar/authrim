@@ -11820,8 +11820,12 @@ paths:
       operationId: putApiAdminFieldMappingDestinationProfilesByDestinationProfileId
       summary: Update a destination profile.
       description: >-
-        Updates mutable destination profile fields and creates or replaces profile version metadata
-        from the supplied schema payload.
+        Adds a new draft version built from the supplied schema payload. A profile that is not yet
+        active becomes (or stays) a draft. A profile that is already active stays active with its
+        activeVersionId unchanged: the previous version keeps serving everything that uses the
+        profile until the new version is reviewed and activated, and a failed or abandoned edit
+        leaves it in effect. The destination type, owner scope and profile key of an active profile
+        cannot be changed (409).
       responses:
         '200':
           $ref: '#/components/responses/FieldMappingDestinationProfileMutation'
@@ -11858,8 +11862,9 @@ paths:
         postApiAdminFieldMappingDestinationProfilesByDestinationProfileIdVersionsByDestinationProfileVersionIdActivate
       summary: Activate a destination profile version.
       description: >-
-        Transitions a destination profile version to active state and returns a lifecycle transition
-        result envelope.
+        Transitions a reviewed destination profile version to active state and returns a lifecycle
+        transition result envelope. In one step the profile's activeVersionId moves to this version
+        and the previously active version is set back to reviewed.
       responses:
         '200':
           $ref: '#/components/responses/FieldMappingLifecycleTransition'
@@ -11902,8 +11907,9 @@ paths:
         postApiAdminFieldMappingDestinationProfilesByDestinationProfileIdVersionsByDestinationProfileVersionIdReview
       summary: Move a destination profile version to review.
       description: >-
-        Transitions a destination profile version into review state and returns a lifecycle
-        transition result envelope.
+        Transitions a draft destination profile version into review state and returns a lifecycle
+        transition result envelope. The version that is currently active cannot be reviewed again
+        (409).
       responses:
         '200':
           $ref: '#/components/responses/FieldMappingLifecycleTransition'
@@ -15853,8 +15859,10 @@ paths:
       operationId: putApiAdminFieldMappingSourceProfilesBySourceProfileId
       summary: Replace a source profile.
       description: >-
-        Replaces source profile metadata and version input for the selected source profile id,
-        returning the updated profile in a result envelope.
+        Adds a new draft version for the selected source profile id and returns the updated profile
+        in a result envelope. A source profile that is already active stays active with its
+        activeVersionId unchanged until the new version is reviewed and activated; its source type
+        and profile key cannot be changed while it is active (409).
       responses:
         '200':
           $ref: '#/components/responses/FieldMappingSourceProfileMutation'
@@ -66403,6 +66411,16 @@ components:
             - string
             - 'null'
         version:
+          description: >-
+            The version changed most recently, the one an editor works on. For an active profile with a pending
+            edit this is the draft.
+          oneOf:
+            - $ref: '#/components/schemas/FieldMappingDestinationProfileVersion'
+            - type: 'null'
+        activeVersion:
+          description: >-
+            Listing only: the version that is serving what uses the profile (the one activeVersionId
+            names), or null while the profile has none.
           oneOf:
             - $ref: '#/components/schemas/FieldMappingDestinationProfileVersion'
             - type: 'null'

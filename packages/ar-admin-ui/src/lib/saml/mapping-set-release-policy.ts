@@ -75,17 +75,22 @@ function resolveSAMLMappingSetDestinationProfiles(input: {
 	const activeVersion = input.versions.find((version) => version.lifecycleState === 'active');
 	if (!activeVersion) return [];
 	const destinationProfileIds = new Set(activeVersion.destinationProfileIds ?? []);
-	return input.destinationProfiles.filter(
-		(
-			profile
-		): profile is IdentityMappingDestinationProfileSummary & {
-			version: { schema: Record<string, unknown> };
-		} =>
-			profile.destinationType === 'saml' &&
-			(destinationProfileIds.has(profile.id) ||
-				destinationProfileIds.has(`destination-profile-${profile.id}`)) &&
-			Boolean(profile.version?.schema)
-	);
+	// The release policy is checked against the version that serves; `version` can be a pending
+	// draft of an active profile.
+	return input.destinationProfiles.flatMap((profile) => {
+		const serving = profile.activeVersion ?? profile.version;
+		if (
+			profile.destinationType !== 'saml' ||
+			!(
+				destinationProfileIds.has(profile.id) ||
+				destinationProfileIds.has(`destination-profile-${profile.id}`)
+			) ||
+			!serving?.schema
+		) {
+			return [];
+		}
+		return [{ ...profile, version: { ...serving, schema: serving.schema } }];
+	});
 }
 
 function readString(value: unknown): string | undefined {
