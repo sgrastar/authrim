@@ -6,6 +6,41 @@ import {
 } from './mapping-set-release-policy';
 
 describe('SAML Mapping Set release policy', () => {
+	it('lists attributes of the serving version while a draft edit is pending', () => {
+		const fields = resolveSAMLMappingSetReleaseFields({
+			versions: [
+				{
+					id: 'version-1',
+					tenantId: 'tenant-1',
+					fieldMappingSetId: 'set-1',
+					versionLabel: 'v1',
+					lifecycleState: 'active',
+					destinationProfileIds: ['saml-profile']
+				}
+			],
+			destinationProfiles: [
+				{
+					id: 'saml-profile',
+					tenantId: 'tenant-1',
+					destinationType: 'saml',
+					profileKey: 'saml',
+					displayName: 'SAML',
+					ownerScopeType: 'tenant',
+					lifecycleState: 'active',
+					activeVersionId: 'v-active',
+					activeVersion: { id: 'v-active', schema: { attributes: [{ name: 'mail' }] } },
+					version: {
+						id: 'v-draft',
+						lifecycleState: 'draft',
+						schema: { attributes: [{ name: 'department' }] }
+					}
+				}
+			]
+		});
+
+		expect(fields.map((field) => field.key)).toEqual(['mail']);
+	});
+
 	it('lists attributes from the active SAML destination profile only', () => {
 		const fields = resolveSAMLMappingSetReleaseFields({
 			versions: [

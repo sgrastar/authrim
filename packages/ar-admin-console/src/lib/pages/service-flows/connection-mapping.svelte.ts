@@ -15,6 +15,7 @@ import type { Mapping } from '#lib/ui/patterns/mapping-model.js';
 import { copyValue, Draft } from '#lib/ui/save/draft.svelte.js';
 import { codecContext, profileDescriptor } from './connection-mapping-fields.js';
 import { ApiError, ReleasePausedError } from '#lib/api/api-error.js';
+import type { DestinationProfilesClient } from '#lib/api/destination-profiles.js';
 
 export interface ConnectionMappingResources {
 	client: IdentityMappingClient;
@@ -25,6 +26,8 @@ export interface ConnectionMappingResources {
 	entityId?: string;
 	readBinding: () => Promise<{ setId: string; pinned: boolean }>;
 	bind: (set: MappingSetDetail, idempotencyKey: string) => Promise<void>;
+	/** Makes and changes output sources (destination profiles); absent: only the existing ones can be chosen. */
+	profiles?: DestinationProfilesClient;
 }
 export interface MappingForm {
 	name: string;
@@ -51,7 +54,10 @@ export class ConnectionMappingState {
 	phase = $state<Phase>('loading');
 	sets = $state<MappingSetSummary[]>([]);
 	catalogs = $state<MappingCatalog[]>([]);
+	/** The output sources that can be chosen (switched on). */
 	profiles = $state<MappingDestinationProfile[]>([]);
+	/** Every output source of this kind that has a schema: what can be copied or changed. */
+	allProfiles = $state<MappingDestinationProfile[]>([]);
 	selected = $state('');
 	bound = $state('');
 	pinned = $state(false);
@@ -113,18 +119,49 @@ export class ConnectionMappingState {
 			]);
 			this.sets = sets.sets;
 			this.catalogs = catalogs.catalogs;
-			this.profiles = profiles.destinationProfiles.filter(
-				(profile) =>
-					profile.destinationType === this.resources.protocol &&
-					profile.version &&
-					profile.lifecycleState === 'active'
-			);
+			this.setProfiles(profiles.destinationProfiles);
 			this.bound = binding.setId;
 			this.pinned = binding.pinned;
 			await this.select(binding.setId);
 		} catch {
 			this.phase = 'failed';
 		}
+	}
+
+	private setProfiles(all: MappingDestinationProfile[]) {
+		this.allProfiles = all.filter(
+			(profile) => profile.destinationType === this.resources.protocol && profile.version
+		);
+		this.profiles = this.allProfiles.filter((profile) => profile.lifecycleState === 'active');
+	}
+
+	/** Reads the output sources again (one was just made or changed). */
+	async reloadProfiles() {
+		const { client, tenantId } = this.resources;
+		this.setProfiles((await client.destinationProfiles(tenantId)).destinationProfiles);
+	}
+
+	/**
+	 * The names of the mapping sets that send into an output source, read one by one. `complete`
+	 * is false when a set could not be read: what sends into the profile is then not known, and the
+	 * caller treats it as in use.
+	 */
+	async setsUsing(profileId: string): Promise<{ names: string[]; complete: boolean }> {
+		const { client, tenantId } = this.resources;
+		const names: string[] = [];
+		let complete = true;
+		await Promise.all(
+			this.sets.map(async (set) => {
+				try {
+					const detail = await client.setContent(tenantId, set.id);
+					if (detail.destination_profile_id === profileId)
+						names.push(set.display_name ?? set.field_mapping_key);
+				} catch {
+					complete = false;
+				}
+			})
+		);
+		return { names: names.sort((a, b) => a.localeCompare(b)), complete };
 	}
 
 	async select(id: string) {
