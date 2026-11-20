@@ -158,7 +158,6 @@
 	/** Account flows keep their existing editor and navigation. */
 	const columns = $derived([
 		{ key: 'protocol', label: t('sf.mock.col.protocol'), width: '184px' },
-		{ key: 'kind', label: t('sf.mock.col.kind'), width: '100px' },
 		{ key: 'name', label: t('sf.mock.col.name') },
 		{ key: 'status', label: t('sf.mock.col.status'), width: '216px' },
 		{ key: 'created', label: t('sf.mock.col.created'), width: '208px' },
@@ -178,7 +177,6 @@
 				row: 'flow';
 				id: AccountFlowId;
 				protocol: string;
-				kind: string;
 				name: string;
 				ready: boolean;
 				created: string;
@@ -188,7 +186,6 @@
 				row: 'connection';
 				id: string;
 				protocol: string;
-				kind: string;
 				name: string;
 				ready: boolean;
 				created: string | null;
@@ -200,7 +197,6 @@
 			row: 'flow' as const,
 			id,
 			protocol: t(FLOWS[id].title),
-			kind: '—',
 			name: flowName(id, flowStates[id]),
 			ready: isReady(id, flowStates[id]),
 			...dates[id]
@@ -213,7 +209,6 @@
 			row: 'connection' as const,
 			id: `${connection.kind}:${connection.id}`,
 			protocol: connection.protocol,
-			kind: '—',
 			name: connection.name,
 			ready: connection.enabled,
 			created: connection.createdAt ? new Date(connection.createdAt).toISOString() : null,
@@ -420,12 +415,12 @@
 								{@const stamp = row[column.key]}
 								{#if stamp}<DateTime value={stamp} stacked />{:else}—{/if}
 							{:else if column.key === 'name'}
-								<strong>{row.name}</strong>
+								<strong class="nowrap">{row.name}</strong>
 								{#if row.row === 'connection' && row.connection.federation}
 									<FederationRowMeta source={row.connection.federation} />
 								{/if}
 							{:else}
-								<span class="nowrap">{row[column.key as 'protocol' | 'kind']}</span>
+								<span class="nowrap">{row[column.key as 'protocol']}</span>
 							{/if}
 						{/snippet}
 						{#snippet empty()}{t('sf.mock.empty')}{/snippet}

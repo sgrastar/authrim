@@ -19,6 +19,7 @@ import {
   adminIdentityMappingFederationMetadataDocumentsListHandler,
   adminIdentityMappingFederationTrustSourceEntitiesHandler,
   adminIdentityMappingFederationTrustSourceGetHandler,
+  groupFederationEntityKeywords,
   adminIdentityMappingFederationTrustSourceRefreshHistoryHandler,
   adminIdentityMappingFederationTrustSourceUpdateHandler,
   adminIdentityMappingReviewTasksListHandler,
@@ -6412,6 +6413,153 @@ describe('federation trust source exceptions, IdP selection and inventory reads'
         () => 1000
       ).listFederationTrustSourceEntities('tenant_b', 'trust-source-1', {})
     ).rejects.toMatchObject({ status: 404 });
+  });
+
+  it('orders the entities by name or entityID, either way, and pages in that order', async () => {
+    const run = async (query: Record<string, string>, cursor?: string) => {
+      const admin = createAdapter({
+        queryOneRows: [sourceRow, { total: 3 }],
+        queryRowSets: [
+          [
+            {
+              entity_id: 'https://b.example.test/sp',
+              entity_role: 'saml_sp',
+              display_name: 'B',
+              summary_json: '{}',
+            },
+            {
+              entity_id: 'https://a.example.test/sp',
+              entity_role: 'saml_sp',
+              display_name: null,
+              summary_json: '{}',
+            },
+          ],
+        ],
+      });
+      const page = await new IdentityMappingControlPlaneRepository(
+        admin,
+        () => 1000,
+        createAdapter({ queryRows: [] })
+      ).listFederationTrustSourceEntities('tenant_a', 'trust-source-1', {
+        ...query,
+        cursor,
+        limit: 1,
+      });
+      return { admin, page };
+    };
+    const byName = await run({});
+    expect(byName.admin.queries.find((item) => item.sql.includes('ORDER BY'))?.sql).toContain(
+      'ORDER BY COALESCE(e.display_name, e.entity_id) ASC, e.entity_id ASC'
+    );
+    const byIdDesc = await run({ sort: 'entityId', direction: 'desc' });
+    const idQuery = byIdDesc.admin.queries.find((item) => item.sql.includes('ORDER BY'));
+    expect(idQuery?.sql).toContain('ORDER BY e.entity_id DESC, e.entity_id DESC');
+    // The cursor of an entityID order is the last entityID, and the next page goes the other way round.
+    const next = byIdDesc.page.nextCursor!;
+    const follow = await run({ sort: 'entityId', direction: 'desc' }, next);
+    const followQuery = follow.admin.queries.find((item) => item.sql.includes('ORDER BY'));
+    expect(followQuery?.sql).toContain(
+      '(e.entity_id < ? OR (e.entity_id = ? AND e.entity_id < ?))'
+    );
+    expect(followQuery?.params.slice(-4, -1)).toEqual([
+      'https://b.example.test/sp',
+      'https://b.example.test/sp',
+      'https://b.example.test/sp',
+    ]);
+    await expect(run({ sort: 'size' })).rejects.toMatchObject({ status: 400 });
+    await expect(run({ direction: 'up' })).rejects.toMatchObject({ status: 400 });
+  });
+
+  it('narrows the entities by keyword and refuses too many or too long ones', async () => {
+    const admin = createAdapter({
+      queryOneRows: [sourceRow, { total: 1 }],
+      queryRowSets: [[]],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(admin, () => 1000);
+    await repository.listFederationTrustSourceEntities('tenant_a', 'trust-source-1', {
+      keywords: ['category:location:kanto', ' category:location:kanto ', 'category:location:kinki'],
+    });
+    const keywordQuery = admin.queries.find((item) => item.sql.includes("'$.keywords'"));
+    expect(keywordQuery?.params).toContain(
+      JSON.stringify(['category:location:kanto', 'category:location:kinki'])
+    );
+    await expect(
+      repository.listFederationTrustSourceEntities('tenant_a', 'trust-source-1', {
+        keywords: Array.from({ length: 21 }, (_, index) => `category:x:${index}`),
+      })
+    ).rejects.toMatchObject({ status: 400 });
+    await expect(
+      repository.listFederationTrustSourceEntities('tenant_a', 'trust-source-1', {
+        keywords: ['x'.repeat(257)],
+      })
+    ).rejects.toMatchObject({ status: 400 });
+  });
+
+  it('lists the keywords of the active document grouped by kind, narrowed by role', async () => {
+    const admin = createAdapter({
+      queryOneRows: [{ active_metadata_document_id: 'doc-1' }],
+      queryRowSets: [
+        [
+          { keyword: 'category:location:kanto', count: '194' },
+          { keyword: 'category:location:kinki', count: 67 },
+        ],
+      ],
+    });
+    const result = await new IdentityMappingControlPlaneRepository(
+      admin,
+      () => 1000
+    ).listFederationTrustSourceEntityKeywords('tenant_a', 'trust-source-1', { role: 'saml_idp' });
+    expect(result.categories).toEqual([
+      {
+        type: 'location',
+        values: [
+          { value: 'category:location:kanto', label: 'kanto', count: 194 },
+          { value: 'category:location:kinki', label: 'kinki', count: 67 },
+        ],
+      },
+    ]);
+    const query = admin.queries.find((item) => item.sql.includes("'$.keywords'"));
+    expect(query?.sql).toContain("e.entity_role IN (?, 'ambiguous')");
+    expect(query?.params.slice(0, 3)).toEqual(['tenant_a', 'doc-1', 'saml_idp']);
+
+    await expect(
+      new IdentityMappingControlPlaneRepository(
+        createAdapter({ queryOneRows: [null] }),
+        () => 1000
+      ).listFederationTrustSourceEntityKeywords('tenant_b', 'trust-source-1', {})
+    ).rejects.toMatchObject({ status: 404 });
+    await expect(
+      new IdentityMappingControlPlaneRepository(
+        createAdapter({ queryOneRows: [{ active_metadata_document_id: null }] }),
+        () => 1000
+      ).listFederationTrustSourceEntityKeywords('tenant_a', 'trust-source-1', {})
+    ).resolves.toEqual({ categories: [] });
+  });
+
+  it('groups keyword tokens by kind and leaves out what is not a category', () => {
+    expect(
+      groupFederationEntityKeywords([
+        { keyword: 'category:organization_type:university', count: 3 },
+        { keyword: 'category:location:kanto', count: 5 },
+        { keyword: 'category:location:kinki', count: 5 },
+        { keyword: 'category:location:', count: 1 },
+        { keyword: 'plainword', count: 9 },
+        { keyword: 'sector:health', count: 2 },
+      ])
+    ).toEqual([
+      {
+        type: 'location',
+        values: [
+          { value: 'category:location:kanto', label: 'kanto', count: 5 },
+          { value: 'category:location:kinki', label: 'kinki', count: 5 },
+        ],
+      },
+      {
+        type: 'organization_type',
+        values: [{ value: 'category:organization_type:university', label: 'university', count: 3 }],
+      },
+      { type: 'sector', values: [{ value: 'sector:health', label: 'health', count: 2 }] },
+    ]);
   });
 
   it('keeps IdP and SP connections apart when they share an entityID', async () => {

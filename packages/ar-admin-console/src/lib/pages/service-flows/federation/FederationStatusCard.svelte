@@ -27,6 +27,9 @@
 		/** Why the last "Update now" failed. */
 		failure?: string;
 		onrefresh: () => void;
+		/** The entities of the side the service flow works with (not the whole document), and how many of them are set aside. */
+		entityCount?: number | null;
+		excludedCount?: number | null;
 	}
 	let {
 		source,
@@ -34,8 +37,17 @@
 		canRefresh,
 		refreshing = false,
 		failure = '',
-		onrefresh
+		onrefresh,
+		entityCount,
+		excludedCount
 	}: Props = $props();
+
+	const shownCount = $derived(
+		entityCount !== undefined ? entityCount : (source.status?.entityCount ?? null)
+	);
+	const shownExcluded = $derived(
+		excludedCount !== undefined ? excludedCount : (source.status?.excludedCount ?? 0)
+	);
 
 	const status = $derived(source.status);
 	const standing = $derived(federationStatus(source));
@@ -66,7 +78,7 @@
 	{/if}
 	{#if failure}<Callout tone="danger" live>{failure}</Callout>{/if}
 	{#if status}
-		<DetailList columns={2} size="sm">
+		<DetailList ruled>
 			<DetailItem label={t('sf.fed.statusCard.lastFetched')}>
 				{#if iso(status.lastSuccessAt)}<DateTime value={iso(status.lastSuccessAt)!} />{:else}{t(
 						'sf.fed.row.notFetched'
@@ -95,11 +107,11 @@
 				{#if iso(status.nextRefreshAt)}<DateTime value={iso(status.nextRefreshAt)!} />{:else}—{/if}
 			</DetailItem>
 			<DetailItem label={t('sf.fed.created.entities')}>
-				{status.entityCount === null
+				{shownCount === null
 					? '—'
 					: t('sf.fed.statusCard.entityCount', {
-							count: status.entityCount,
-							excluded: status.excludedCount
+							count: shownCount,
+							excluded: shownExcluded ?? 0
 						})}
 			</DetailItem>
 		</DetailList>

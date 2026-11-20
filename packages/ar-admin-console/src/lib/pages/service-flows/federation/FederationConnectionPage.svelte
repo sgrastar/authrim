@@ -9,7 +9,7 @@
 		FederationSource,
 		FederationSourcesClient
 	} from '#lib/api/federation-sources.js';
-	import { tick } from 'svelte';
+	import { tick, untrack } from 'svelte';
 	import { t } from '#lib/i18n/i18n.svelte.js';
 	import FlowCanvas from '#lib/ui/flow/FlowCanvas.svelte';
 	import FlowEdge from '#lib/ui/flow/FlowEdge.svelte';
@@ -108,6 +108,34 @@
 	let rightPanel = $state<HTMLElement | null>(null);
 	const mappingSelected = $derived(current === 'mapping-sets');
 	const mappingState = $derived(form && federationInUse(form) ? 'done' : 'todo');
+	/** How many entities of the side the service flow works with, and how many of them are set aside. */
+	let counts = $state<{ total: number; excluded: number } | null>(null);
+	let countsTurn = 0;
+	async function loadCounts() {
+		const turn = ++countsTurn;
+		if (!entityRole) {
+			counts = null;
+			return;
+		}
+		try {
+			const [total, excluded] = await Promise.all([
+				client.entities(id, { role: entityRole, limit: 1 }),
+				client.entities(id, { role: entityRole, state: 'excluded', limit: 1 })
+			]);
+			// Only the latest read counts: an older one finishing last would show a stale number.
+			if (turn === countsTurn) counts = { total: total.total, excluded: excluded.total };
+		} catch {
+			if (turn === countsTurn) counts = null;
+		}
+	}
+	$effect(() => {
+		// The role or a fresh read of the federation (a fetch, a save) changes what is counted.
+		void entityRole;
+		void revision;
+		void source?.updatedAt;
+		void (source?.status?.lastSuccessAt ?? null);
+		untrack(() => void loadCounts());
+	});
 	async function selectNode(node: string) {
 		current = node;
 		await tick();
@@ -328,6 +356,8 @@
 					{refreshing}
 					failure={refreshFailure}
 					onrefresh={refresh}
+					entityCount={entityRole ? (counts?.total ?? null) : undefined}
+					excludedCount={entityRole ? (counts?.excluded ?? null) : undefined}
 				/>
 				<FederationExceptionsCard
 					sourceId={id}

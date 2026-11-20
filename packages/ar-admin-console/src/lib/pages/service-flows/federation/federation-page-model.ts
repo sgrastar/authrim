@@ -44,6 +44,29 @@ export function toggleExcluded(
 	return { list: [...excluded, entityId], full: false };
 }
 
+/**
+ * The exception list with several entities set aside (`on`) or taken back, up to the list's
+ * limit: the ones that did not fit are counted in `left`.
+ */
+export function setExcludedMany(
+	excluded: readonly string[],
+	entityIds: readonly string[],
+	on: boolean
+): { list: string[]; left: number } {
+	if (!on) {
+		const drop = new Set(entityIds);
+		return { list: excluded.filter((id) => !drop.has(id)), left: 0 };
+	}
+	const list = [...excluded];
+	let left = 0;
+	for (const id of entityIds) {
+		if (list.includes(id)) continue;
+		if (list.length >= MAX_EXCLUDED) left += 1;
+		else list.push(id);
+	}
+	return { list, left };
+}
+
 /** A certificate added to the list, unless one with the same fingerprint is there already. */
 export function addCertificate(
 	certificates: readonly FederationCertificate[],

@@ -1038,6 +1038,7 @@ import {
   adminIdentityMappingFederationTrustSourceDeleteHandler,
   adminIdentityMappingFederationTrustSourceGetHandler,
   adminIdentityMappingFederationTrustSourceEntitiesHandler,
+  adminIdentityMappingFederationTrustSourceEntityKeywordsHandler,
   adminIdentityMappingFederationTrustSourceRefreshHistoryHandler,
   adminIdentityMappingFederationTrustSourceUpdateHandler,
   adminIdentityMappingGroupCreateHandler,
@@ -3641,6 +3642,11 @@ app.get(
   '/api/admin/field-mapping/federation-trust-sources/:trustSourceId/entities',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
   adminIdentityMappingFederationTrustSourceEntitiesHandler
+);
+app.get(
+  '/api/admin/field-mapping/federation-trust-sources/:trustSourceId/entity-keywords',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
+  adminIdentityMappingFederationTrustSourceEntityKeywordsHandler
 );
 app.get(
   '/api/admin/field-mapping/federation-trust-sources/:trustSourceId/refresh-history',
