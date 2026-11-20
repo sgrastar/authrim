@@ -353,6 +353,7 @@ export const de = {
 	'join.subtitle': 'Geben Sie die E-Mail-Adresse und den Einladungscode aus Ihrer Einladung ein.',
 	'join.email': 'E-Mail-Adresse',
 	'join.code': 'Einladungscode',
+	'join.fromLink': 'Aus Ihrem Einladungslink übernommen.',
 	'join.check': 'Einladung prüfen',
 	'join.checking': 'Wird geprüft…',
 	'join.invitedAs': '{email} ist als „{role}“ eingeladen.',

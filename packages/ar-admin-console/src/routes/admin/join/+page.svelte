@@ -4,6 +4,7 @@
 	import {
 		adminInvitationEnrollmentAPI,
 		enrollmentErrorKey,
+		joinLinkFillsTheForm,
 		readJoinFragment
 	} from '#lib/api/admin-invitation-enrollment.js';
 	import { rememberPasskeyUserOfRegistration } from '#lib/auth/deleted-tenant.js';
@@ -25,6 +26,8 @@
 
 	let email = $state('');
 	let code = $state('');
+	// Set when the link filled both fields: they are then read-only.
+	let filledFromLink = $state(false);
 	let enrollmentToken = $state('');
 	let invitation = $state<Invitation | null>(null);
 	let checking = $state(false);
@@ -39,6 +42,7 @@
 		if (!fromLink) return;
 		if (fromLink.email) email = fromLink.email;
 		if (fromLink.code) code = fromLink.code;
+		filledFromLink = joinLinkFillsTheForm(fromLink);
 		window.history.replaceState(
 			window.history.state,
 			'',
@@ -123,6 +127,8 @@
 				type="email"
 				autocomplete="email"
 				required
+				readonly={filledFromLink}
+				hint={filledFromLink ? t('join.fromLink') : undefined}
 				bind:value={email}
 			/>
 			<TextField
@@ -130,6 +136,7 @@
 				autocomplete="one-time-code"
 				spellcheck="false"
 				required
+				readonly={filledFromLink}
 				bind:value={code}
 			/>
 			<Button variant="primary" type="submit" block loading={checking}>
