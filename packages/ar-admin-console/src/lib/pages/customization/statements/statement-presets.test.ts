@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { SUPPORTED_LOCALES } from '#lib/i18n/locales.js';
 import { SLUG_PATTERN } from './statement-model';
-import { statementDescriptionHtml } from './statement-html';
 import { generatedStatementSlug, statementPreset } from './statement-presets';
 
 describe('statementPreset', () => {
@@ -20,26 +19,11 @@ describe('statementPreset', () => {
 		});
 	});
 
-	it('links the name to the document once its link is a web address', () => {
-		expect(statementPreset('privacy', 'en', ' https://example.com/privacy?a=1&b=2 ')).toEqual({
-			title: 'Privacy Policy',
-			description:
-				'I have read and agree to the <a href="https://example.com/privacy?a=1&b=2">Privacy Policy</a>.'
-		});
-		// Shown as the sign-in screen shows it, the link goes where it was typed to.
-		const shown = document.createElement('div');
-		shown.innerHTML = statementDescriptionHtml(
-			statementPreset('privacy', 'en', 'https://example.com/privacy?a=1&b=2').description
+	it('adds no link: the description is the admin’s own HTML', () => {
+		expect(statementPreset('privacy', 'en').description).toBe(
+			'I have read and agree to the Privacy Policy.'
 		);
-		expect(shown.querySelector('a')?.getAttribute('href')).toBe(
-			'https://example.com/privacy?a=1&b=2'
-		);
-		expect(statementPreset('terms', 'en', 'https://example.com/"><script>').description).toBe(
-			'I have read and agree to the Terms of Service.'
-		);
-		expect(statementPreset('terms', 'ja', 'javascript:alert(1)').description).toBe(
-			'利用規約を読み、その内容に同意します。'
-		);
+		expect(statementPreset('terms', 'ja').description).not.toContain('<a');
 	});
 
 	it('fills nothing for Other or a language without words', () => {

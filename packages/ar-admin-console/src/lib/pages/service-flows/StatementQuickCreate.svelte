@@ -69,7 +69,7 @@
 	});
 	/**
 	 * What each language was last filled in with, and which of its fields the admin has changed.
-	 * A field not changed is filled in again when the kind or the link changes; once changed it is
+	 * A field not changed is filled in again when the kind changes; once changed it is
 	 * left as it is (until its language is removed).
 	 */
 	let filled: Record<string, StatementPreset> = {};
@@ -83,7 +83,7 @@
 		}
 		for (const code of Object.keys(value.languages)) {
 			const text = value.languages[code];
-			const next = statementPreset(kind, code, text.url);
+			const next = statementPreset(kind, code);
 			const last = filled[code];
 			const mark = (edited[code] ??= { title: false, description: false });
 			if (last && text.title !== last.title) mark.title = true;

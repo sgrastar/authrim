@@ -56,6 +56,10 @@
             {
               "path": "012_oauth_client_enabled.sql",
               "checksum": "add03dc182bd6d94e597740db74f7e54ca5b1e37b63435f1ebcbd3ac8ac380f1"
+            },
+            {
+              "path": "013_default_consent_statements.sql",
+              "checksum": "7a99c9709dbc3c5ec20528bf0c0dc44a7ecef8f2614f309403c26a543599936c"
             }
           ]
         },
@@ -240,6 +244,10 @@
             {
               "path": "012_oauth_client_enabled.sql",
               "checksum": "add03dc182bd6d94e597740db74f7e54ca5b1e37b63435f1ebcbd3ac8ac380f1"
+            },
+            {
+              "path": "013_default_consent_statements.sql",
+              "checksum": "74af3c74eca9aa1174d16887a1bb3fe96399786ac11fd9b7e447f5c58179ed56"
             }
           ]
         },
@@ -319,6 +327,10 @@
         {
           "path": "012_oauth_client_enabled.sql",
           "checksum": "add03dc182bd6d94e597740db74f7e54ca5b1e37b63435f1ebcbd3ac8ac380f1"
+        },
+        {
+          "path": "013_default_consent_statements.sql",
+          "checksum": "7a99c9709dbc3c5ec20528bf0c0dc44a7ecef8f2614f309403c26a543599936c"
         }
       ]
     },
@@ -529,6 +541,10 @@
         {
           "path": "012_oauth_client_enabled.sql",
           "checksum": "add03dc182bd6d94e597740db74f7e54ca5b1e37b63435f1ebcbd3ac8ac380f1"
+        },
+        {
+          "path": "013_default_consent_statements.sql",
+          "checksum": "74af3c74eca9aa1174d16887a1bb3fe96399786ac11fd9b7e447f5c58179ed56"
         }
       ]
     },

@@ -16,6 +16,7 @@ import { samlDrAll } from '@authrim/ar-lib-core/services/tenant-portability/saml
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import {
+  seedDefaultConsentStatements,
   createD1Adapter,
   type DatabaseAdapter,
   createErrorResponse,
@@ -1013,6 +1014,8 @@ function tenantProvisioningDependencies(
       await ensureDefaultScreensIn(tenantAdapter, operation.tenantId);
       await seedDefaultLoginFlow(tenantAdapter, operation.tenantId, now);
       await seedDefaultRegistrationFlow(tenantAdapter, operation.tenantId, now);
+      // Its terms of service and privacy policy, published, for its flows to ask.
+      await seedDefaultConsentStatements(tenantAdapter, operation.tenantId);
       await initTenantKeyManager(env.KEY_MANAGER, operation.tenantId);
       // The client the Login UI signs people in with, so the tenant's own sign-in page works.
       await ensureTenantLoginUiClient(env, tenantAdapter, operation.tenantId);

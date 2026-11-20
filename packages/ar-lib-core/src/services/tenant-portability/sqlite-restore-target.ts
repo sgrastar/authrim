@@ -6,6 +6,7 @@ import { samlDrAll } from './saml-dr-writer';
 import { backupOwnershipPredicate, type BackupRowOwnership } from './row-ownership';
 import { TENANT_BACKUP_SQLITE_RESTORE_MAX_ROW_BYTES } from './container-dataset-reader';
 import { readSqliteRestoreSeedFingerprint } from './sqlite-restore-seed';
+import { installedSeedRowsSupersededBy } from './installed-seed-supersede';
 import type { DatabaseAdapter } from '../../db/adapter';
 import {
   normalizeGuestPiiDeletedMarker,
@@ -470,6 +471,7 @@ export class SqliteRestoreTarget {
       policy: SqliteDatasetInspectionPolicy;
       rowJson: string;
     }> = [];
+    let supersedes = false;
     const seedKeys = new Map<
       string,
       {
@@ -543,6 +545,16 @@ export class SqliteRestoreTarget {
           group.keys.push({ sql: predicate, params: keyInsert.params });
           seedKeys.set(currentPolicy.dataset.id, group);
         }
+        const superseded = seedOwner
+          ? installedSeedRowsSupersededBy(
+              currentPolicy.schema.table,
+              this.identity.tenantId,
+              storedRowJson,
+              { sql: this.guardSql(), params: this.guard() }
+            )
+          : [];
+        if (superseded.length) supersedes = true;
+        statements.push(...superseded);
         statements.push(
           seedOwner
             ? {
@@ -579,8 +591,9 @@ export class SqliteRestoreTarget {
     }
     for (const { table, owner, keys } of seedKeys.values())
       await this.assertSeedKeysOwned(table, keys, owner);
-    // A parent/hold group must preserve dependency order in the same atomic DB transaction.
-    if (activeHolds.length && !this.database.batch) throw error();
+    // A parent/hold group must preserve dependency order in the same atomic DB transaction, and so
+    // must an installed seed row removed for the row taking its place.
+    if ((activeHolds.length || supersedes) && !this.database.batch) throw error();
     await this.authorize();
     const results = this.database.batch
       ? await this.database.batch(statements)
@@ -1139,14 +1152,36 @@ export class SqliteRestoreTarget {
             seedOwner
           );
         await this.assertLive();
-        const result = await this.database.execute(sql, [
-          ...insert.params,
-          ...this.guard(),
-          ...(holdGuard?.params ?? []),
-          ...(!replaceSeed || targetOwnedSeedColumns.size ? keyInsert.params : []),
-          ...(seedOwner?.params ?? []),
-        ]);
-        if (!result.success) throw error();
+        const write = {
+          sql,
+          params: [
+            ...insert.params,
+            ...this.guard(),
+            ...(holdGuard?.params ?? []),
+            ...(!replaceSeed || targetOwnedSeedColumns.size ? keyInsert.params : []),
+            ...(seedOwner?.params ?? []),
+          ],
+        };
+        // An installed seed row this row takes the place of goes in the same write as it.
+        const superseded = seedOwner
+          ? installedSeedRowsSupersededBy(
+              policy.schema.table,
+              this.identity.tenantId,
+              storedRowJson,
+              {
+                sql: this.guardSql(),
+                params: this.guard(),
+              }
+            )
+          : [];
+        const batch = this.database.batch?.bind(this.database);
+        if (superseded.length && !batch) throw error();
+        const results =
+          superseded.length && batch
+            ? await batch([...superseded, write])
+            : [await this.database.execute(write.sql, write.params)];
+        if (results.length !== superseded.length + 1 || results.some(({ success }) => !success))
+          throw error();
       }
       if (holdGuard)
         await this.assertRestoredActiveHolds([

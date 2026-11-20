@@ -611,7 +611,14 @@ export async function activateVersion(
    * is required from this version on). Otherwise they are not (a change that does not alter what
    * they agreed to); the first version published always becomes where agreement starts.
    */
-  options: { reconsent?: boolean } = {}
+  options: {
+    reconsent?: boolean;
+    /**
+     * Publish it only while it is a draft: one already published (by another run) is left as it is
+     * and this succeeds. A draft published meanwhile stops this with `document_changed`.
+     */
+    onlyDraft?: boolean;
+  } = {}
 ): Promise<void> {
   const reconsent = options.reconsent !== false;
   // Validate: version exists and belongs to this statement
@@ -627,6 +634,7 @@ export async function activateVersion(
   if (versionRows.length === 0) {
     throw new Error('Version not found');
   }
+  if (options.onlyDraft && versionRows[0].status !== 'draft') return;
 
   // Validate: at least one localization exists (D8)
   const locCount = await adapter.query<{ cnt: number | string }>(

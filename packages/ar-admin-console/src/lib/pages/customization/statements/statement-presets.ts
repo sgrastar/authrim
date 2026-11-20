@@ -1,10 +1,10 @@
-import { isHttpUrl, type CategoryKind } from './statement-model';
+import type { CategoryKind } from './statement-model';
 
 /**
  * The words a new terms of service or privacy policy starts with, in each language the console
- * writes statements in, from the earlier admin UI's templates. Its `%link1%` (a link to the
- * document) becomes the statement's name, linked to the document once its link is given: the
- * description is HTML where people are asked to agree.
+ * writes statements in, from the earlier admin UI's templates. Its `%link1%` becomes the
+ * statement's name. The description is HTML the admin writes as they like (a link to the
+ * document included); nothing is added to it.
  */
 type PresetKind = Exclude<CategoryKind, 'other'>;
 
@@ -56,20 +56,14 @@ function escapeHtml(value: string): string {
 
 /**
  * The name and description a new statement of this kind starts with in a language (none for
- * "Other", or a language without them). The name in the description links to `url` when it is a
- * web address.
+ * "Other", or a language without them).
  */
-export function statementPreset(kind: CategoryKind, language: string, url = ''): StatementPreset {
+export function statementPreset(kind: CategoryKind, language: string): StatementPreset {
 	if (kind === 'other') return NONE;
 	const title = NAMES[kind][language];
 	const agreement = AGREEMENTS[kind][language];
 	if (!title || !agreement) return NONE;
-	const name = escapeHtml(title);
-	const href = url.trim();
-	// The href is written as typed (an `&` stays `&`): the sign-in screen escapes it once as it
-	// shows it. A link it could not keep whole (a quote, `<`, `>` or a space in it) is left out.
-	const link = isHttpUrl(href) && !/["'<>\s]/u.test(href) ? `<a href="${href}">${name}</a>` : name;
-	return { title, description: agreement.replace('%link1%', link) };
+	return { title, description: agreement.replace('%link1%', escapeHtml(title)) };
 }
 
 /**

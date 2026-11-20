@@ -850,3 +850,4 @@ export * from './services/dynamic-groups';
 export * from './services/statement-consent-writes';
 
 export * from './services/statement-consent-generations';
+export * from './services/default-consent-statements';
