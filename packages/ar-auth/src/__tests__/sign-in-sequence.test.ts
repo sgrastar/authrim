@@ -2149,18 +2149,21 @@ describe('sign-in sequences through the real handlers', () => {
         userId: 'user_1',
       };
 
-      await recordFlowStatementConsents({
-        ...common,
-        decisions: { statement_email: { decision: 'accepted', selectedValue: null } },
-      });
-      await recordFlowStatementConsents({
-        ...common,
-        decisions: { statement_email: { decision: 'rejected', selectedValue: null } },
-      });
-      await recordFlowStatementConsents({
-        ...common,
-        decisions: { statement_email: { decision: 'rejected', selectedValue: null } },
-      });
+      // History rows get a random id and a millisecond created_at, so writes within the same
+      // millisecond would have no stable order: give each decision its own second.
+      vi.useFakeTimers({ toFake: ['Date'] });
+      try {
+        const base = Date.now();
+        for (const [index, decision] of (['accepted', 'rejected', 'rejected'] as const).entries()) {
+          vi.setSystemTime(base + index * 1000);
+          await recordFlowStatementConsents({
+            ...common,
+            decisions: { statement_email: { decision, selectedValue: null } },
+          });
+        }
+      } finally {
+        vi.useRealTimers();
+      }
 
       // One record per statement, the last decision standing, and its history: the agreement, its
       // withdrawal (an agreement declined), then the decline recorded over the withdrawal; the

@@ -48,40 +48,6 @@ import {
 // RP (Relying Party) configuration
 const RP_NAME = 'Authrim';
 
-// Helper type for credential ID conversion
-type CredentialIDLike = string | ArrayBuffer | ArrayBufferView;
-
-/**
- * Convert various credential ID formats to base64url string
- * Handles legacy base64-encoded values saved in D1 as well as ArrayBuffer inputs.
- */
-function toBase64URLString(input: CredentialIDLike): string {
-  if (typeof input === 'string') {
-    // Already a string, check if it needs conversion
-    if (/^[A-Za-z0-9+/]+=*$/.test(input)) {
-      // Standard base64 -> base64url
-      return input.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-    }
-    return input;
-  }
-
-  // Handle ArrayBuffer or TypedArray
-  let bytes: Uint8Array;
-  if (input instanceof ArrayBuffer) {
-    bytes = new Uint8Array(input);
-  } else {
-    bytes = new Uint8Array(input.buffer, input.byteOffset, input.byteLength);
-  }
-
-  // Convert to base64url using btoa (available in Workers)
-  let binary = '';
-  for (let i = 0; i < bytes.length; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
-  const base64 = btoa(binary);
-  return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-
 /**
  * Get allowed origins from environment variables or KV
  * Priority: env (ALLOWED_ORIGINS) > KV > ISSUER_URL
