@@ -703,6 +703,52 @@ paths:
           schema:
             type: string
       security: *a1
+  /api/admin/saml-federation-sources/{id}/entities/materialize:
+    post:
+      tags:
+        - SAML Admin
+      operationId: postApiAdminSamlFederationSourcesByIdEntitiesMaterialize
+      summary: Give one federation entity its own connection.
+      description: >-
+        Creates an explicit SAML provider (always a draft) for one entity of the federation source,
+        from the source's verified runtime snapshot; nothing is fetched. A draft is not
+        authoritative, so the entity keeps resolving through the federation until the draft is
+        configured and enabled on the connection page; enabling it (which asks for a step-up like
+        any provider) makes the explicit provider win for that entityID. Entities on the source's
+        exception list may be materialised. Requires `admin:saml_providers:create`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SAMLFederationMaterializeRequest'
+      responses:
+        '201':
+          $ref: '#/components/responses/SAMLFederationMaterialize'
+        '400':
+          description: The request is invalid (including a body that is not a JSON object).
+        '403':
+          description: The caller lacks `admin:saml_providers:create`.
+        '404':
+          description: The source, or the entity in its current verified snapshot, does not exist.
+        '409':
+          description: >-
+            `saml_explicit_provider_exists`: this tenant already has its own provider for the
+            entityID. `saml_federation_entity_unusable`: the stored metadata does not describe
+            the entityID.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Federation trust source id.
+          schema:
+            type: string
+      security: *a1
   /api/admin/saml-providers/{id}/signing-rollover/promote-next:
     post:
       tags:
@@ -1341,6 +1387,19 @@ components:
             metadataRefreshStatus:
               diff:
                 changed: true
+    SAMLFederationMaterialize:
+      description: The explicit provider created for the federation entity (a draft).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/SAMLFederationMaterializeResponse'
+          example:
+            providerId: 2f1f1c7e-2d6c-4f73-9f0d-1a9b1c6b8e21
+            providerType: saml_sp
+            entityId: https://sp.example.test/shibboleth
+            name: Example SP
+            enabled: false
+            sourceId: federation_source_123
     SAMLFederationMetadataRefresh:
       description: Federation aggregate metadata refresh result.
       content:
@@ -2226,6 +2285,63 @@ components:
         metadataRefreshStatus:
           type: object
           additionalProperties: true
+    SAMLFederationMaterializeRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - entityId
+        - providerType
+      properties:
+        entityId:
+          type: string
+          maxLength: 1024
+        providerType:
+          type: string
+          enum:
+            - saml_idp
+            - saml_sp
+        fieldMappingSetId:
+          type: string
+          description: Overrides the source's mapping set for this role.
+        attributePresetId:
+          type: string
+          enum:
+            - basic.v1
+            - academic_publisher.v1
+            - enterprise_saas.v1
+            - research_federation.v1
+          description: SP only; overrides the source's default preset.
+        name:
+          type: string
+          description: Defaults to the entity's display name from the metadata, else its entityID.
+    SAMLFederationMaterializeResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - providerId
+        - providerType
+        - entityId
+        - name
+        - enabled
+        - sourceId
+      properties:
+        providerId:
+          type: string
+        providerType:
+          type: string
+          enum:
+            - saml_idp
+            - saml_sp
+        entityId:
+          type: string
+        name:
+          type: string
+        enabled:
+          type: boolean
+          enum:
+            - false
+        sourceId:
+          type: string
     SAMLFederationMetadataRefreshResponse:
       type: object
       additionalProperties: false

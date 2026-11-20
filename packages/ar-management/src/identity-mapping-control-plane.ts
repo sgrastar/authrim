@@ -58,7 +58,23 @@ import {
   toMappingSourceReference,
   validateExternalUrl,
   ADMIN_ROLES,
+  bumpAuthenticationMethodsCacheRevision,
+  createAuditLogFromContext,
+  getLogger,
+  SAML_FEDERATION_MAX_ENTITY_ID_LENGTH,
+  SAML_FEDERATION_MAX_EXCLUDED_ENTITY_IDS,
 } from '@authrim/ar-lib-core';
+import type {
+  SAMLFederationIdPSelection,
+  SAMLMetadataSourceState,
+  SAMLMetadataVerificationStatus,
+} from '@authrim/ar-lib-core';
+import {
+  evaluateFederationRuntimePolicy,
+  parseFederationExceptions,
+  parseFederationIdPSelection,
+  parseFederationRuntimeResolutionPolicy,
+} from '@authrim/ar-lib-core/utils/saml-federation-policy';
 import {
   isProtectedIdentityMappingDestinationClaim,
   OIDC_PROTOCOL_ENVELOPE_CLAIMS,
@@ -1558,6 +1574,138 @@ function validateSAMLFederationProtocolPayload(payload: Record<string, unknown>)
     metadataUrl,
     exactPatternUrls
   );
+  validateSAMLFederationExceptionsPayload(payload.exceptions);
+  validateSAMLFederationIdPSelectionPayload(payload.idpSelection);
+}
+
+/**
+ * `protocolPayload.exceptions`: the entityIDs this source never resolves. A sibling of
+ * `runtimeResolution` on purpose: the runtime policy is hashed into the trust context, and a
+ * changed hash drops the verified runtime directory until the next refresh. Editing an exception
+ * must take effect at once without that.
+ */
+function validateSAMLFederationExceptionsPayload(input: unknown): void {
+  if (input === undefined) return;
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    throw badRequest('protocolPayload.exceptions must be an object');
+  }
+  const value = input as Record<string, unknown>;
+  const ids = value.excludedEntityIds;
+  if (!Array.isArray(ids)) {
+    throw badRequest('protocolPayload.exceptions.excludedEntityIds must be an array');
+  }
+  if (ids.length > SAML_FEDERATION_MAX_EXCLUDED_ENTITY_IDS) {
+    throw badRequest(
+      `protocolPayload.exceptions.excludedEntityIds holds more than ${SAML_FEDERATION_MAX_EXCLUDED_ENTITY_IDS} entries`
+    );
+  }
+  const seen = new Set<string>();
+  for (const item of ids) {
+    if (typeof item !== 'string') {
+      throw badRequest('protocolPayload.exceptions.excludedEntityIds must contain strings');
+    }
+    const entityId = item.trim();
+    if (!entityId || entityId.length > SAML_FEDERATION_MAX_ENTITY_ID_LENGTH) {
+      throw badRequest('protocolPayload.exceptions.excludedEntityIds contains an invalid entityID');
+    }
+    if (seen.has(entityId)) {
+      throw badRequest('protocolPayload.exceptions.excludedEntityIds must be unique');
+    }
+    seen.add(entityId);
+  }
+}
+
+/** `protocolPayload.idpSelection`: how a user picks one of this source's IdPs (SP side). */
+function validateSAMLFederationIdPSelectionPayload(input: unknown): void {
+  if (input === undefined) return;
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    throw badRequest('protocolPayload.idpSelection must be an object');
+  }
+  const value = input as Record<string, unknown>;
+  if (value.mode !== 'authrim_search' && value.mode !== 'external_ds') {
+    throw badRequest('protocolPayload.idpSelection.mode is not supported');
+  }
+  const url = value.discoveryServiceUrl;
+  if (value.mode === 'external_ds') {
+    if (typeof url !== 'string' || validateExternalUrl(url)) {
+      throw badRequest(
+        'protocolPayload.idpSelection.discoveryServiceUrl must be an external HTTPS URL'
+      );
+    }
+  } else if (url !== undefined && url !== null) {
+    // A stale address left behind after switching back would be a surprise later.
+    throw badRequest(
+      'protocolPayload.idpSelection.discoveryServiceUrl is only allowed with external_ds'
+    );
+  }
+}
+
+/** The stored shape of exceptions and IdP selection: trimmed, de-duplicated, minimal. */
+function normalizeSAMLFederationProtocolPayload(
+  payload: Record<string, unknown>
+): Record<string, unknown> {
+  const normalized = { ...payload };
+  if (payload.exceptions !== undefined) {
+    const { excludedEntityIds } = parseFederationExceptions(payload);
+    if (excludedEntityIds.length > 0) normalized.exceptions = { excludedEntityIds };
+    else delete normalized.exceptions;
+  }
+  if (payload.idpSelection !== undefined) {
+    const selection = parseFederationIdPSelection(payload);
+    if (selection.mode === 'external_ds') normalized.idpSelection = selection;
+    else delete normalized.idpSelection;
+  }
+  return normalized;
+}
+
+/** Polling fields that describe what happened, as opposed to what the admin asked for. */
+const FEDERATION_POLLING_RUNTIME_FIELDS = [
+  'nextRefreshAt',
+  'lastAttemptAt',
+  'lastSuccessAt',
+  'consecutiveFailures',
+  'sourceState',
+  'lastErrorCode',
+  'etag',
+  'lastModified',
+  'validatorSourceUrl',
+  'acceptedValidUntil',
+] as const;
+
+/**
+ * Keep the polling runtime state of the stored payload when a save does not touch the trust
+ * context: an exception or display change must not make the source look never fetched.
+ */
+function carrySAMLFederationPollingRuntimeState(
+  next: Record<string, unknown>,
+  previousJson: string | null
+): Record<string, unknown> {
+  const previous = previousJson ? parseJsonObject(previousJson, {}) : {};
+  const previousPolling = previous.polling;
+  const nextPolling = next.polling;
+  if (
+    !previousPolling ||
+    typeof previousPolling !== 'object' ||
+    Array.isArray(previousPolling) ||
+    !nextPolling ||
+    typeof nextPolling !== 'object' ||
+    Array.isArray(nextPolling)
+  ) {
+    return next;
+  }
+  const carried: Record<string, unknown> = { ...(nextPolling as Record<string, unknown>) };
+  const previousRecord = previousPolling as Record<string, unknown>;
+  // The next fetch time follows the schedule the admin asked for: a changed mode or interval
+  // must not wait out the old one (7 days to 15 minutes would otherwise fetch a week late).
+  const scheduleUnchanged =
+    previousRecord.mode === carried.mode &&
+    previousRecord.intervalSeconds === carried.intervalSeconds;
+  for (const field of FEDERATION_POLLING_RUNTIME_FIELDS) {
+    if (field === 'nextRefreshAt' && !scheduleUnchanged) continue;
+    const value = previousRecord[field];
+    if (value !== undefined) carried[field] = value;
+  }
+  return { ...next, polling: carried };
 }
 
 function resetSAMLFederationPollingRuntimeState(
@@ -1586,6 +1734,10 @@ function buildSAMLFederationTrustContext(
   delete trustPayload.description;
   delete trustPayload.polling;
   delete trustPayload.certificates;
+  // Enforcement and UI knobs, not trust anchors: changing them must not retire the verified
+  // runtime directory (see validateSAMLFederationExceptionsPayload).
+  delete trustPayload.exceptions;
+  delete trustPayload.idpSelection;
   const trustCertificates = Array.isArray(certificates)
     ? certificates
         .flatMap((entry) => {
@@ -1750,6 +1902,236 @@ function validateSAMLFederationRuntimeResolutionPayload(
       throw badRequest('automatic federation runtime resolution requires one exact metadata URL');
     }
   }
+}
+
+interface FederationTrustSourceRow {
+  id: string;
+  source_type: string;
+  source_key: string;
+  display_name: string;
+  lifecycle_state: string;
+  protocol_payload_json: string | null;
+  active_metadata_document_id: string | null;
+  created_at: number;
+  updated_at: number;
+}
+
+interface FederationEntitySummaryRow {
+  entity_id: string;
+  entity_role: string;
+  display_name: string | null;
+  summary_json: string | null;
+}
+
+interface FederationRefreshJobRow {
+  id: string;
+  status: string;
+  refresh_mode: string;
+  cursor_json: string | null;
+  created_at: number;
+  updated_at: number;
+}
+
+/** What the console shows at a glance for a federation source. */
+export interface FederationTrustSourceStatus {
+  sourceState: SAMLMetadataSourceState | 'unknown';
+  lastAttemptAt: number | null;
+  lastSuccessAt: number | null;
+  nextRefreshAt: number | null;
+  consecutiveFailures: number;
+  lastErrorCode: string | null;
+  acceptedValidUntil: string | null;
+  activeMetadataDocumentId: string | null;
+  /** Entities of the active document. */
+  entityCount: number;
+  excludedCount: number;
+  idpSelection: SAMLFederationIdPSelection;
+  lastVerification: { status: SAMLMetadataVerificationStatus; at: number | null } | null;
+}
+
+export interface FederationTrustSourceEntityView {
+  entityId: string;
+  role: 'saml_idp' | 'saml_sp' | 'ambiguous';
+  displayName: string | null;
+  logoUrl: string | null;
+  registrationAuthority: string | null;
+  entityCategories: string[];
+  validUntil: string | null;
+  /** On the source's exception list. */
+  excluded: boolean;
+  /** Allowed by the registration-authority and entity-category rules (the exception list aside). */
+  policyAllowed: boolean;
+  /** An explicit connection of this tenant with the same entityID, which always wins. */
+  explicitProviderId: string | null;
+  explicitProviderType: 'saml_idp' | 'saml_sp' | null;
+}
+
+export interface FederationTrustSourceEntitiesQuery {
+  q?: string;
+  role?: string;
+  state?: string;
+  limit?: number;
+  cursor?: string;
+}
+
+export interface FederationTrustSourceEntitiesPage {
+  items: FederationTrustSourceEntityView[];
+  nextCursor: string | null;
+  total: number;
+  /** False when explicit connections could not be looked up (no tenant core database here). */
+  explicitLookupAvailable: boolean;
+}
+
+export interface FederationRefreshHistoryItem {
+  jobId: string;
+  trigger: 'automatic' | 'manual';
+  status: 'completed' | 'failed' | 'running';
+  startedAt: number;
+  finishedAt: number | null;
+  changed: boolean | null;
+  entityCount: number | null;
+  /** Against the previous completed job in the retained history; null for the oldest. */
+  entityCountDelta: number | null;
+  verificationStatus: SAMLMetadataVerificationStatus | null;
+  errorCode: string | null;
+  documentId: string | null;
+}
+
+const FEDERATION_ENTITY_PAGE_MAX = 200;
+const FEDERATION_ENTITY_SEARCH_MAX_LENGTH = 128;
+const FEDERATION_ENTITY_ROLE_FILTERS = new Set(['saml_idp', 'saml_sp', 'ambiguous']);
+const FEDERATION_ENTITY_STATE_FILTERS = new Set(['participating', 'excluded', 'explicit']);
+const SAML_METADATA_SOURCE_STATES = new Set<SAMLMetadataSourceState>([
+  'healthy',
+  'stale',
+  'error',
+  'expired',
+  'missing',
+  'identity_change_pending',
+]);
+const SAML_METADATA_VERIFICATION_STATUSES = new Set<SAMLMetadataVerificationStatus>([
+  'verified',
+  'unverified',
+  'skipped',
+  'failed',
+]);
+
+function escapeLike(value: string): string {
+  return value.replace(/[\\%_]/gu, (match) => `\\${match}`);
+}
+
+function mapFederationTrustSourceRow(tenantId: string, row: FederationTrustSourceRow) {
+  return {
+    id: row.id,
+    tenantId,
+    sourceType: row.source_type,
+    sourceKey: row.source_key,
+    displayName: row.display_name,
+    lifecycleState: row.lifecycle_state,
+    protocolPayload: row.protocol_payload_json
+      ? parseJsonObject(row.protocol_payload_json, {})
+      : null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function federationTrustSourceStatus(
+  row: FederationTrustSourceRow,
+  lastCompletedJob: FederationRefreshJobRow | null,
+  entityCount: number
+): FederationTrustSourceStatus {
+  const payload = row.protocol_payload_json ? parseJsonObject(row.protocol_payload_json, {}) : {};
+  const polling =
+    payload.polling && typeof payload.polling === 'object' && !Array.isArray(payload.polling)
+      ? (payload.polling as Record<string, unknown>)
+      : {};
+  const numberOrNull = (value: unknown) =>
+    typeof value === 'number' && Number.isFinite(value) ? value : null;
+  const stringOrNull = (value: unknown) => (typeof value === 'string' ? value : null);
+  const sourceState = SAML_METADATA_SOURCE_STATES.has(
+    polling.sourceState as SAMLMetadataSourceState
+  )
+    ? (polling.sourceState as SAMLMetadataSourceState)
+    : 'unknown';
+  const lastJob = lastCompletedJob ? mapFederationRefreshJobRow(lastCompletedJob) : null;
+  return {
+    sourceState,
+    lastAttemptAt: numberOrNull(polling.lastAttemptAt),
+    lastSuccessAt: numberOrNull(polling.lastSuccessAt),
+    nextRefreshAt: numberOrNull(polling.nextRefreshAt),
+    consecutiveFailures: numberOrNull(polling.consecutiveFailures) ?? 0,
+    lastErrorCode: stringOrNull(polling.lastErrorCode),
+    acceptedValidUntil: stringOrNull(polling.acceptedValidUntil),
+    activeMetadataDocumentId: row.active_metadata_document_id ?? null,
+    entityCount,
+    excludedCount: parseFederationExceptions(payload).excludedEntityIds.length,
+    idpSelection: parseFederationIdPSelection(payload),
+    lastVerification:
+      lastJob?.verificationStatus !== null && lastJob?.verificationStatus !== undefined
+        ? { status: lastJob.verificationStatus, at: lastJob.finishedAt }
+        : null,
+  };
+}
+
+function mapFederationRefreshJobRow(row: FederationRefreshJobRow): FederationRefreshHistoryItem {
+  const cursor = row.cursor_json ? parseJsonObject(row.cursor_json, {}) : {};
+  const status: FederationRefreshHistoryItem['status'] =
+    row.status === 'completed' || row.status === 'failed' ? row.status : 'running';
+  const verification = cursor.verificationStatus;
+  return {
+    jobId: row.id,
+    trigger: row.refresh_mode === 'automatic' ? 'automatic' : 'manual',
+    status,
+    startedAt: row.created_at,
+    finishedAt: status === 'running' ? null : row.updated_at,
+    changed:
+      typeof cursor.changed === 'boolean'
+        ? cursor.changed
+        : cursor.notModified === true
+          ? false
+          : null,
+    entityCount:
+      typeof cursor.entityCount === 'number' && Number.isFinite(cursor.entityCount)
+        ? cursor.entityCount
+        : null,
+    entityCountDelta: null,
+    verificationStatus: SAML_METADATA_VERIFICATION_STATUSES.has(
+      verification as SAMLMetadataVerificationStatus
+    )
+      ? (verification as SAMLMetadataVerificationStatus)
+      : null,
+    errorCode: typeof cursor.errorCode === 'string' ? cursor.errorCode : null,
+    documentId: typeof cursor.documentId === 'string' ? cursor.documentId : null,
+  };
+}
+
+function normalizeFederationEntityRole(value: string): 'saml_idp' | 'saml_sp' | 'ambiguous' {
+  return value === 'saml_idp' || value === 'saml_sp' ? value : 'ambiguous';
+}
+
+function encodeFederationEntityCursor(cursor: { sortKey: string; entityId: string }): string {
+  return btoa(unescape(encodeURIComponent(JSON.stringify([cursor.sortKey, cursor.entityId]))));
+}
+
+function decodeFederationEntityCursor(
+  value: string | undefined
+): { sortKey: string; entityId: string } | null {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(decodeURIComponent(escape(atob(value)))) as unknown;
+    if (
+      Array.isArray(parsed) &&
+      parsed.length === 2 &&
+      typeof parsed[0] === 'string' &&
+      typeof parsed[1] === 'string'
+    ) {
+      return { sortKey: parsed[0], entityId: parsed[1] };
+    }
+  } catch {
+    // fall through
+  }
+  throw badRequest('cursor is invalid');
 }
 
 export class IdentityMappingControlPlaneRepository {
@@ -6820,7 +7202,9 @@ export class IdentityMappingControlPlaneRepository {
       validateSAMLFederationProtocolPayload(input.protocolPayload);
     }
     const protocolPayload = input.protocolPayload
-      ? resetSAMLFederationPollingRuntimeState(input.protocolPayload)
+      ? resetSAMLFederationPollingRuntimeState(
+          normalizeSAMLFederationProtocolPayload(input.protocolPayload)
+        )
       : undefined;
     if (input.anchors !== undefined && !Array.isArray(input.anchors)) {
       throw badRequest('anchors must be an array');
@@ -6949,8 +7333,10 @@ export class IdentityMappingControlPlaneRepository {
       assertNoSensitiveMetadata(input.protocolPayload, 'protocolPayload');
       validateSAMLFederationProtocolPayload(input.protocolPayload);
     }
-    const protocolPayload = input.protocolPayload
-      ? resetSAMLFederationPollingRuntimeState(input.protocolPayload)
+    const requestedPayload = input.protocolPayload
+      ? resetSAMLFederationPollingRuntimeState(
+          normalizeSAMLFederationProtocolPayload(input.protocolPayload)
+        )
       : undefined;
     if (input.anchors !== undefined && !Array.isArray(input.anchors)) {
       throw badRequest('anchors must be an array');
@@ -6970,13 +7356,15 @@ export class IdentityMappingControlPlaneRepository {
     }
 
     const now = this.now();
-    const trustContext = buildSAMLFederationTrustContext(input, protocolPayload);
+    const trustContext = buildSAMLFederationTrustContext(input, requestedPayload);
     const snapshotHash = await hashStableJson(trustContext);
     const current = await this.adapter.queryOne<{
       updated_at: number;
+      protocol_payload_json: string | null;
       snapshot_hash: string | null;
     }>(
       `SELECT source.updated_at,
+              source.protocol_payload_json,
               (
                 SELECT snapshot.snapshot_hash
                   FROM federation_trust_context_snapshots snapshot
@@ -6994,6 +7382,26 @@ export class IdentityMappingControlPlaneRepository {
       throw conflict('federation trust source was modified by another operation');
     }
     const trustContextChanged = current.snapshot_hash !== snapshotHash;
+    // The same trust context keeps its fetch history; a new one starts stale, as on create.
+    const protocolPayload =
+      requestedPayload && !trustContextChanged
+        ? carrySAMLFederationPollingRuntimeState(requestedPayload, current.protocol_payload_json)
+        : requestedPayload;
+    const previousExceptions = parseFederationExceptions(current.protocol_payload_json);
+    const nextExceptions = parseFederationExceptions(protocolPayload ?? null);
+    const exceptionsChange = {
+      added: nextExceptions.excludedEntityIds.filter(
+        (entityId) => !previousExceptions.excludedEntityIds.includes(entityId)
+      ),
+      removed: previousExceptions.excludedEntityIds.filter(
+        (entityId) => !nextExceptions.excludedEntityIds.includes(entityId)
+      ),
+    };
+    const previousSelection = parseFederationIdPSelection(current.protocol_payload_json);
+    const nextSelection = parseFederationIdPSelection(protocolPayload ?? null);
+    const idpSelectionChanged =
+      previousSelection.mode !== nextSelection.mode ||
+      previousSelection.discoveryServiceUrl !== nextSelection.discoveryServiceUrl;
     const writeTime = Math.max(now, input.expectedUpdatedAt + 1);
     await beforeWrite?.();
     await this.adapter.transaction(async (tx) => {
@@ -7115,6 +7523,9 @@ export class IdentityMappingControlPlaneRepository {
       lifecycleState,
       snapshotHash,
       updatedAt: writeTime,
+      trustContextChanged,
+      exceptionsChange,
+      idpSelectionChanged,
     };
   }
 
@@ -7193,36 +7604,308 @@ export class IdentityMappingControlPlaneRepository {
   }
 
   async listFederationTrustSources(tenantId: string) {
-    const rows = await this.adapter.query<{
-      id: string;
-      source_type: string;
-      source_key: string;
-      display_name: string;
-      lifecycle_state: string;
-      protocol_payload_json: string | null;
-      created_at: number;
-      updated_at: number;
-    }>(
+    const rows = await this.adapter.query<FederationTrustSourceRow>(
       `SELECT id, source_type, source_key, display_name, lifecycle_state,
-              protocol_payload_json, created_at, updated_at
+              protocol_payload_json, active_metadata_document_id, created_at, updated_at
          FROM federation_trust_sources
         WHERE tenant_id = ?
         ORDER BY updated_at DESC`,
       [tenantId]
     );
-    return rows.map((row) => ({
-      id: row.id,
+    const statuses = await this.federationTrustSourceStatuses(
       tenantId,
-      sourceType: row.source_type,
-      sourceKey: row.source_key,
-      displayName: row.display_name,
-      lifecycleState: row.lifecycle_state,
-      protocolPayload: row.protocol_payload_json
-        ? parseJsonObject(row.protocol_payload_json, {})
-        : null,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
+      rows.map((row) => row.id)
+    );
+    return rows.map((row) => ({
+      ...mapFederationTrustSourceRow(tenantId, row),
+      status: statuses.get(row.id) ?? federationTrustSourceStatus(row, null, 0),
     }));
+  }
+
+  /** One source with its status, or 404. */
+  async getFederationTrustSource(tenantId: string, trustSourceId: string) {
+    validateRequiredString(trustSourceId, 'trustSourceId');
+    const row = await this.adapter.queryOne<FederationTrustSourceRow>(
+      `SELECT id, source_type, source_key, display_name, lifecycle_state,
+              protocol_payload_json, active_metadata_document_id, created_at, updated_at
+         FROM federation_trust_sources
+        WHERE tenant_id = ? AND id = ?`,
+      [tenantId, trustSourceId]
+    );
+    if (!row) throw notFound('federation trust source not found');
+    const statuses = await this.federationTrustSourceStatuses(tenantId, [row.id]);
+    return {
+      federationTrustSource: mapFederationTrustSourceRow(tenantId, row),
+      status: statuses.get(row.id) ?? federationTrustSourceStatus(row, null, 0),
+    };
+  }
+
+  /**
+   * The entities of a source's active (verified) document, one page at a time. Search is a
+   * substring match on the display name and entityID; the page is keyed by name then entityID so
+   * a page never repeats or skips a row while the inventory stays the same.
+   */
+  async listFederationTrustSourceEntities(
+    tenantId: string,
+    trustSourceId: string,
+    query: FederationTrustSourceEntitiesQuery
+  ): Promise<FederationTrustSourceEntitiesPage> {
+    validateRequiredString(trustSourceId, 'trustSourceId');
+    const limit = Math.min(
+      Math.max(Number.isInteger(query.limit) ? (query.limit as number) : 50, 1),
+      FEDERATION_ENTITY_PAGE_MAX
+    );
+    const q = (query.q ?? '').trim().slice(0, FEDERATION_ENTITY_SEARCH_MAX_LENGTH);
+    if (query.role !== undefined && !FEDERATION_ENTITY_ROLE_FILTERS.has(query.role)) {
+      throw badRequest('role must be saml_idp, saml_sp or ambiguous');
+    }
+    if (query.state !== undefined && !FEDERATION_ENTITY_STATE_FILTERS.has(query.state)) {
+      throw badRequest('state must be participating, excluded or explicit');
+    }
+    const cursor = decodeFederationEntityCursor(query.cursor);
+    const source = await this.adapter.queryOne<FederationTrustSourceRow>(
+      `SELECT id, source_type, source_key, display_name, lifecycle_state,
+              protocol_payload_json, active_metadata_document_id, created_at, updated_at
+         FROM federation_trust_sources
+        WHERE tenant_id = ? AND id = ?`,
+      [tenantId, trustSourceId]
+    );
+    if (!source) throw notFound('federation trust source not found');
+    const { excludedEntityIds } = parseFederationExceptions(source.protocol_payload_json);
+    const policy = parseFederationRuntimeResolutionPolicy(source.protocol_payload_json);
+    const explicit = await this.explicitSamlProvidersByEntityId(tenantId);
+    if (!source.active_metadata_document_id) {
+      return { items: [], nextCursor: null, total: 0, explicitLookupAvailable: explicit !== null };
+    }
+
+    const where: string[] = ['e.tenant_id = ?', 'e.metadata_document_id = ?'];
+    const params: unknown[] = [tenantId, source.active_metadata_document_id];
+    if (q) {
+      const like = `%${escapeLike(q)}%`;
+      where.push(`(e.display_name LIKE ? ESCAPE '\\' OR e.entity_id LIKE ? ESCAPE '\\')`);
+      params.push(like, like);
+    }
+    if (query.role === 'ambiguous') {
+      where.push(`e.entity_role = 'ambiguous'`);
+    } else if (query.role) {
+      where.push(`e.entity_role IN (?, 'ambiguous')`);
+      params.push(query.role);
+    }
+    if (query.state === 'excluded') {
+      where.push(`e.entity_id IN (SELECT value FROM json_each(?))`);
+      params.push(JSON.stringify(excludedEntityIds));
+    } else if (query.state === 'participating') {
+      where.push(`e.entity_id NOT IN (SELECT value FROM json_each(?))`);
+      params.push(JSON.stringify(excludedEntityIds));
+    } else if (query.state === 'explicit') {
+      // An entity counts as explicit in a role when a provider of that role has its entityID;
+      // a role filter narrows that to the role asked for.
+      const idpIds = query.role === 'saml_sp' || !explicit ? [] : [...explicit.idp.keys()];
+      const spIds = query.role === 'saml_idp' || !explicit ? [] : [...explicit.sp.keys()];
+      where.push(
+        `((e.entity_role IN ('saml_idp', 'ambiguous') AND e.entity_id IN (SELECT value FROM json_each(?)))
+          OR (e.entity_role IN ('saml_sp', 'ambiguous') AND e.entity_id IN (SELECT value FROM json_each(?))))`
+      );
+      params.push(JSON.stringify(idpIds), JSON.stringify(spIds));
+    }
+    const baseWhere = where.join(' AND ');
+    const totalRow = await this.adapter.queryOne<{ total: number | string }>(
+      `SELECT COUNT(*) AS total FROM federation_metadata_entity_summaries e WHERE ${baseWhere}`,
+      params
+    );
+    const pageWhere = cursor
+      ? `${baseWhere} AND (COALESCE(e.display_name, e.entity_id) > ? OR (COALESCE(e.display_name, e.entity_id) = ? AND e.entity_id > ?))`
+      : baseWhere;
+    const pageParams = cursor
+      ? [...params, cursor.sortKey, cursor.sortKey, cursor.entityId]
+      : params;
+    const rows = await this.adapter.query<FederationEntitySummaryRow>(
+      `SELECT e.entity_id, e.entity_role, e.display_name, e.summary_json
+         FROM federation_metadata_entity_summaries e
+        WHERE ${pageWhere}
+        ORDER BY COALESCE(e.display_name, e.entity_id) ASC, e.entity_id ASC
+        LIMIT ?`,
+      [...pageParams, limit + 1]
+    );
+    const page = rows.slice(0, limit);
+    const last = page.at(-1);
+    const items = page.map((row) => {
+      const summary = row.summary_json ? parseJsonObject(row.summary_json, {}) : {};
+      const categories = Array.isArray(summary.entityCategories)
+        ? summary.entityCategories.filter((item): item is string => typeof item === 'string')
+        : [];
+      const registrationAuthority =
+        typeof summary.registrationAuthority === 'string' ? summary.registrationAuthority : null;
+      const policyAllowed = policy
+        ? evaluateFederationRuntimePolicy(
+            { ...policy, excludedEntityIds: [] },
+            categories,
+            registrationAuthority,
+            row.entity_id
+          ).allowed
+        : false;
+      const role = normalizeFederationEntityRole(row.entity_role);
+      // A row of one role shows that role's provider. An ambiguous row shows the provider of the
+      // role filter when there is one, else the IdP's, else the SP's.
+      const wantsIdp = role !== 'saml_sp' && query.role !== 'saml_sp';
+      const wantsSp = role !== 'saml_idp' && query.role !== 'saml_idp';
+      const explicitIdp = wantsIdp ? (explicit?.idp.get(row.entity_id) ?? null) : null;
+      const explicitSp = wantsSp ? (explicit?.sp.get(row.entity_id) ?? null) : null;
+      const explicitProvider = explicitIdp
+        ? { id: explicitIdp, providerType: 'saml_idp' as const }
+        : explicitSp
+          ? { id: explicitSp, providerType: 'saml_sp' as const }
+          : null;
+      return {
+        entityId: row.entity_id,
+        role,
+        displayName: row.display_name,
+        logoUrl: typeof summary.logoUrl === 'string' ? summary.logoUrl : null,
+        registrationAuthority,
+        entityCategories: categories,
+        validUntil: typeof summary.validUntil === 'string' ? summary.validUntil : null,
+        excluded: excludedEntityIds.includes(row.entity_id),
+        policyAllowed,
+        explicitProviderId: explicitProvider?.id ?? null,
+        explicitProviderType: explicitProvider?.providerType ?? null,
+      } satisfies FederationTrustSourceEntityView;
+    });
+    return {
+      items,
+      nextCursor:
+        rows.length > limit && last
+          ? encodeFederationEntityCursor({
+              sortKey: last.display_name ?? last.entity_id,
+              entityId: last.entity_id,
+            })
+          : null,
+      total: Number(totalRow?.total ?? 0),
+      explicitLookupAvailable: explicit !== null,
+    };
+  }
+
+  /** The most recent refresh jobs of a source, newest first, with the entity-count change. */
+  async listFederationRefreshHistory(
+    tenantId: string,
+    trustSourceId: string,
+    limit?: number
+  ): Promise<FederationRefreshHistoryItem[]> {
+    validateRequiredString(trustSourceId, 'trustSourceId');
+    await this.ensureFederationTrustSource(tenantId, trustSourceId);
+    const bounded = Math.min(Math.max(Number.isInteger(limit) ? (limit as number) : 20, 1), 100);
+    const rows = await this.adapter.query<FederationRefreshJobRow>(
+      `SELECT id, status, refresh_mode, cursor_json, created_at, updated_at
+         FROM federation_metadata_refresh_jobs
+        WHERE tenant_id = ? AND trust_source_id = ?
+        ORDER BY created_at DESC, id DESC
+        LIMIT ?`,
+      [tenantId, trustSourceId, bounded]
+    );
+    const items = rows.map(mapFederationRefreshJobRow);
+    // Walk oldest to newest so each completed job compares with the completed one before it.
+    let previousCount: number | null = null;
+    for (let index = items.length - 1; index >= 0; index -= 1) {
+      const item = items[index];
+      if (item.status === 'completed' && item.entityCount !== null) {
+        item.entityCountDelta = previousCount === null ? null : item.entityCount - previousCount;
+        previousCount = item.entityCount;
+      }
+    }
+    return items;
+  }
+
+  private async federationTrustSourceStatuses(
+    tenantId: string,
+    sourceIds: string[]
+  ): Promise<Map<string, FederationTrustSourceStatus>> {
+    const statuses = new Map<string, FederationTrustSourceStatus>();
+    if (sourceIds.length === 0) return statuses;
+    const sources = await this.adapter.query<FederationTrustSourceRow>(
+      `SELECT id, source_type, source_key, display_name, lifecycle_state,
+              protocol_payload_json, active_metadata_document_id, created_at, updated_at
+         FROM federation_trust_sources
+        WHERE tenant_id = ? AND id IN (SELECT value FROM json_each(?))`,
+      [tenantId, JSON.stringify(sourceIds)]
+    );
+    const counts = await this.adapter.query<{ trust_source_id: string; total: number | string }>(
+      `SELECT s.id AS trust_source_id, COUNT(e.id) AS total
+         FROM federation_trust_sources s
+         JOIN federation_metadata_entity_summaries e
+           ON e.tenant_id = s.tenant_id AND e.metadata_document_id = s.active_metadata_document_id
+        WHERE s.tenant_id = ? AND s.id IN (SELECT value FROM json_each(?))
+        GROUP BY s.id`,
+      [tenantId, JSON.stringify(sourceIds)]
+    );
+    const lastJobs = await this.adapter.query<
+      FederationRefreshJobRow & { trust_source_id: string }
+    >(
+      `SELECT j.id, j.trust_source_id, j.status, j.refresh_mode, j.cursor_json, j.created_at, j.updated_at
+         FROM federation_metadata_refresh_jobs j
+        WHERE j.tenant_id = ? AND j.trust_source_id IN (SELECT value FROM json_each(?))
+          AND j.status = 'completed'
+          AND j.id = (
+            -- A 304 (not modified) job records no verification; the last one that did is still
+            -- the source's current verification result.
+            SELECT k.id FROM federation_metadata_refresh_jobs k
+             WHERE k.tenant_id = j.tenant_id AND k.trust_source_id = j.trust_source_id
+               AND k.status = 'completed'
+               AND json_extract(k.cursor_json, '$.verificationStatus') IS NOT NULL
+             ORDER BY k.created_at DESC, k.id DESC
+             LIMIT 1
+          )`,
+      [tenantId, JSON.stringify(sourceIds)]
+    );
+    const countBySource = new Map<string, number>();
+    for (const row of counts) {
+      if (typeof row.trust_source_id === 'string') {
+        countBySource.set(row.trust_source_id, Number(row.total ?? 0));
+      }
+    }
+    const lastJobBySource = new Map<string, FederationRefreshJobRow>();
+    for (const row of lastJobs) {
+      if (typeof row.trust_source_id === 'string') lastJobBySource.set(row.trust_source_id, row);
+    }
+    for (const row of sources) {
+      if (typeof row.id !== 'string') continue;
+      statuses.set(
+        row.id,
+        federationTrustSourceStatus(
+          row,
+          lastJobBySource.get(row.id) ?? null,
+          countBySource.get(row.id) ?? 0
+        )
+      );
+    }
+    return statuses;
+  }
+
+  /**
+   * Explicit SAML providers of the tenant by entityID (from the core database), so an inventory
+   * row can say "this one has its own connection". null when this repository has no core adapter.
+   */
+  private async explicitSamlProvidersByEntityId(
+    tenantId: string
+  ): Promise<{ idp: Map<string, string>; sp: Map<string, string> } | null> {
+    if (!this.coreAdapter) return null;
+    const rows = await this.coreAdapter.query<{
+      id: string;
+      provider_type: string;
+      config_json: string;
+    }>(
+      `SELECT id, provider_type, config_json
+         FROM identity_providers
+        WHERE tenant_id = ? AND provider_type IN ('saml_idp', 'saml_sp')`,
+      [tenantId]
+    );
+    // Resolution looks providers up per role, so an IdP and an SP may share an entityID.
+    const byRole = { idp: new Map<string, string>(), sp: new Map<string, string>() };
+    for (const row of rows) {
+      if (row.provider_type !== 'saml_idp' && row.provider_type !== 'saml_sp') continue;
+      const config = parseJsonObject(row.config_json, {});
+      if (typeof config.entityId !== 'string' || !config.entityId) continue;
+      byRole[row.provider_type === 'saml_idp' ? 'idp' : 'sp'].set(config.entityId, row.id);
+    }
+    return byRole;
   }
 
   async registerFederationMetadataDocument(
@@ -9305,14 +9988,37 @@ function federationTrustStepUp(
   };
 }
 
+/**
+ * A federation source can appear on the login screen (as the SP-side "sign in through this
+ * federation" entry), so every write invalidates the authentication-methods cache. A failed bump
+ * is logged, not raised: the write itself succeeded and the cache expires on its own.
+ */
+async function bumpAuthenticationMethodsAfterFederationWrite(
+  c: AdminContext,
+  tenantId: string
+): Promise<void> {
+  try {
+    await bumpAuthenticationMethodsCacheRevision(c.env, tenantId);
+  } catch (error) {
+    getLogger(c)
+      .module('IDENTITY-MAPPING')
+      .warn('Failed to bump authentication methods cache after federation write', {
+        tenantId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+  }
+}
+
 export async function adminIdentityMappingFederationTrustSourceCreateHandler(c: AdminContext) {
-  return handleMutation(c, 'federation-trust-source.create', async (repository, tenantId, body) =>
-    repository.createFederationTrustSource(
+  return handleMutation(c, 'federation-trust-source.create', async (repository, tenantId, body) => {
+    const result = await repository.createFederationTrustSource(
       tenantId,
       body as CreateFederationTrustSourceRequest,
       federationTrustStepUp(c, tenantId, 'create', null, body)
-    )
-  );
+    );
+    await bumpAuthenticationMethodsAfterFederationWrite(c, tenantId);
+    return result;
+  });
 }
 
 export async function adminIdentityMappingFederationTrustSourcesListHandler(c: AdminContext) {
@@ -9321,25 +10027,95 @@ export async function adminIdentityMappingFederationTrustSourcesListHandler(c: A
   }));
 }
 
-export async function adminIdentityMappingFederationTrustSourceUpdateHandler(c: AdminContext) {
-  return handleMutation(c, 'federation-trust-source.update', async (repository, tenantId, body) =>
-    repository.updateFederationTrustSource(
-      tenantId,
-      requiredParam(c, 'trustSourceId'),
-      body as UpdateFederationTrustSourceRequest,
-      federationTrustStepUp(c, tenantId, 'update', requiredParam(c, 'trustSourceId'), body)
-    )
+export async function adminIdentityMappingFederationTrustSourceGetHandler(c: AdminContext) {
+  return handleControlPlane(c, async (repository, tenantId) =>
+    repository.getFederationTrustSource(tenantId, requiredParam(c, 'trustSourceId'))
   );
 }
 
+export async function adminIdentityMappingFederationTrustSourceEntitiesHandler(c: AdminContext) {
+  return handleControlPlane(c, async (repository, tenantId) => {
+    const limitParam = c.req.query('limit');
+    return repository.listFederationTrustSourceEntities(
+      tenantId,
+      requiredParam(c, 'trustSourceId'),
+      {
+        q: c.req.query('q') ?? undefined,
+        role: c.req.query('role') ?? undefined,
+        state: c.req.query('state') ?? undefined,
+        limit: limitParam === undefined ? undefined : Number(limitParam),
+        cursor: c.req.query('cursor') ?? undefined,
+      }
+    );
+  });
+}
+
+export async function adminIdentityMappingFederationTrustSourceRefreshHistoryHandler(
+  c: AdminContext
+) {
+  return handleControlPlane(c, async (repository, tenantId) => {
+    const limitParam = c.req.query('limit');
+    return {
+      refreshHistory: await repository.listFederationRefreshHistory(
+        tenantId,
+        requiredParam(c, 'trustSourceId'),
+        limitParam === undefined ? undefined : Number(limitParam)
+      ),
+    };
+  });
+}
+
+export async function adminIdentityMappingFederationTrustSourceUpdateHandler(c: AdminContext) {
+  return handleMutation(c, 'federation-trust-source.update', async (repository, tenantId, body) => {
+    const trustSourceId = requiredParam(c, 'trustSourceId');
+    const result = await repository.updateFederationTrustSource(
+      tenantId,
+      trustSourceId,
+      body as UpdateFederationTrustSourceRequest,
+      federationTrustStepUp(c, tenantId, 'update', trustSourceId, body)
+    );
+    await bumpAuthenticationMethodsAfterFederationWrite(c, tenantId);
+    // The trust-context flag is internal; the response keeps the documented fields only.
+    const { exceptionsChange, idpSelectionChanged, trustContextChanged, ...response } = result;
+    void trustContextChanged;
+    if (exceptionsChange.added.length > 0 || exceptionsChange.removed.length > 0) {
+      // An exception changes who may authenticate without a trust-context change, so it gets
+      // its own, searchable audit entry.
+      await createAuditLogFromContext(
+        c,
+        'saml.federation.exceptions_updated',
+        'federation_trust_source',
+        trustSourceId,
+        {
+          added_entity_ids: exceptionsChange.added,
+          removed_entity_ids: exceptionsChange.removed,
+        },
+        'warning'
+      );
+    }
+    if (idpSelectionChanged) {
+      await createAuditLogFromContext(
+        c,
+        'saml.federation.idp_selection_updated',
+        'federation_trust_source',
+        trustSourceId,
+        {}
+      );
+    }
+    return response;
+  });
+}
+
 export async function adminIdentityMappingFederationTrustSourceDeleteHandler(c: AdminContext) {
-  return handleMutation(c, 'federation-trust-source.delete', async (repository, tenantId) =>
-    repository.deleteFederationTrustSource(
+  return handleMutation(c, 'federation-trust-source.delete', async (repository, tenantId) => {
+    const result = await repository.deleteFederationTrustSource(
       tenantId,
       requiredParam(c, 'trustSourceId'),
       federationTrustStepUp(c, tenantId, 'delete', requiredParam(c, 'trustSourceId'), null)
-    )
-  );
+    );
+    await bumpAuthenticationMethodsAfterFederationWrite(c, tenantId);
+    return result;
+  });
 }
 
 export async function adminIdentityMappingFederationMetadataDocumentsListHandler(c: AdminContext) {
