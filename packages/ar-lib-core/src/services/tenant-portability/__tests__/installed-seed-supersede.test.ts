@@ -254,4 +254,34 @@ describe('a restored statement taking the place of an installed default one', ()
       { id: 'csv_default_terms:default', status: 'archived', is_current: 0 },
     ]);
   });
+
+  it('stops at a default statement that is no longer as installed', async () => {
+    const { target, policy, manifest, restorer, row } = await restoring();
+    await target.adapter.execute(
+      `UPDATE consent_statement_versions SET content_hash = 'changed'
+        WHERE id = 'csv_default_terms:default'`
+    );
+    await expect(
+      restorer.writeRows(policy, manifest, [
+        row('own-terms', 'terms-of-service', 'terms_of_service'),
+      ])
+    ).rejects.toThrow();
+  });
+
+  it('changes nothing where the database cannot write them together', async () => {
+    const { target, policy, manifest, restorer, row, remaining } = await restoring();
+    const before = await remaining('consent_statements', 'id');
+    const batch = target.adapter.batch;
+    (target.adapter as { batch?: unknown }).batch = undefined;
+    await expect(
+      restorer.writeRows(policy, manifest, [
+        row('own-terms', 'terms-of-service', 'terms_of_service'),
+      ])
+    ).rejects.toThrow();
+    await expect(
+      restorer.writeRow(policy, manifest, row('own-terms', 'terms-of-service', 'terms_of_service'))
+    ).rejects.toThrow();
+    (target.adapter as { batch?: unknown }).batch = batch;
+    expect(await remaining('consent_statements', 'id')).toEqual(before);
+  });
 });

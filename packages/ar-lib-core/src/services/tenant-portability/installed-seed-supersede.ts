@@ -1,4 +1,8 @@
 import type { PreparedStatement } from '../../db/adapter';
+import {
+  DEFAULT_CONSENT_STATEMENT_CONTENT_HASH,
+  DEFAULT_CONSENT_STATEMENT_VERSION,
+} from '../default-consent-statement-version';
 
 /**
  * Installed seed rows a restored row takes the place of, though their ids differ.
@@ -14,6 +18,10 @@ import type { PreparedStatement } from '../../db/adapter';
  * a current version other than the installed one (`UNIQUE (tenant_id, current_statement_guard)`):
  * restoring that version removes the installed current version first, with its texts. The backup
  * restores its own copy of the installed version, if it holds one, afterwards.
+ *
+ * A row counts as installed only while it is as installed: its id prefix, and only the installed
+ * first version (its label and content hash). Anything else stops the restore at the key, as any
+ * other conflicting destination row does.
  */
 const DEFAULT_STATEMENT_PREFIX = 'cst_default_';
 const DEFAULT_VERSION_PREFIX = 'csv_default_';
@@ -40,8 +48,20 @@ export function installedSeedRowsSupersededBy(
   if (!id || !slug) return [];
   const installed = `SELECT s.id FROM consent_statements s
     WHERE s.tenant_id = ? AND s.slug = ? AND s.id <> ?
-      AND substr(s.id, 1, ${DEFAULT_STATEMENT_PREFIX.length}) = ?`;
-  const installedParams = [tenantId, slug, id, DEFAULT_STATEMENT_PREFIX];
+      AND substr(s.id, 1, ${DEFAULT_STATEMENT_PREFIX.length}) = ?
+      AND NOT EXISTS (
+        SELECT 1 FROM consent_statement_versions v
+         WHERE v.tenant_id = s.tenant_id AND v.statement_id = s.id
+           AND (v.version <> ? OR v.content_hash IS NOT ?)
+      )`;
+  const installedParams = [
+    tenantId,
+    slug,
+    id,
+    DEFAULT_STATEMENT_PREFIX,
+    DEFAULT_CONSENT_STATEMENT_VERSION,
+    DEFAULT_CONSENT_STATEMENT_CONTENT_HASH,
+  ];
   const where = (sql: string, params: unknown[]) => ({
     sql: `${sql} AND ${guard.sql}`,
     params: [...params, ...guard.params],
@@ -81,8 +101,16 @@ function versionsSupersededBy(
   const installed = `SELECT v.id FROM consent_statement_versions v
     WHERE v.tenant_id = ? AND v.statement_id = ? AND v.id <> ?
       AND v.current_statement_guard IS NOT NULL
-      AND substr(v.id, 1, ${DEFAULT_VERSION_PREFIX.length}) = ?`;
-  const installedParams = [tenantId, statementId, id, DEFAULT_VERSION_PREFIX];
+      AND substr(v.id, 1, ${DEFAULT_VERSION_PREFIX.length}) = ?
+      AND v.version = ? AND v.content_hash = ?`;
+  const installedParams = [
+    tenantId,
+    statementId,
+    id,
+    DEFAULT_VERSION_PREFIX,
+    DEFAULT_CONSENT_STATEMENT_VERSION,
+    DEFAULT_CONSENT_STATEMENT_CONTENT_HASH,
+  ];
   return [
     {
       sql: `DELETE FROM consent_statement_localizations WHERE tenant_id = ? AND version_id IN (${installed}) AND ${guard.sql}`,
