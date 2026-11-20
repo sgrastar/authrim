@@ -327,12 +327,48 @@ export interface SAMLFederationTrustProfile {
   policy?: SAMLMetadataVerificationPolicy;
   polling?: SAMLMetadataRefreshPolicy;
   runtimeResolution?: SAMLFederationRuntimeResolutionPolicy;
+  /** Entities of this source that never take part, whatever the rest of the policy says. */
+  exceptions?: SAMLFederationExceptions;
+  /** How a user picks one of this source's IdPs when this tenant acts as the SP. */
+  idpSelection?: SAMLFederationIdPSelection;
   /** Immutable hash of the currently active trust context used to verify metadata. */
   trustContextSnapshotHash?: string;
   enabled: boolean;
   createdAt: number;
   updatedAt: number;
 }
+
+/**
+ * Per-entity exceptions of a federation source. Stored at `protocolPayload.exceptions`, beside
+ * `runtimeResolution` rather than inside it: the runtime policy is part of the trust-context hash,
+ * and changing that hash takes the source's verified runtime directory offline until the next
+ * refresh. An exception is an enforcement knob, not a trust anchor, so it must not do that.
+ */
+export interface SAMLFederationExceptions {
+  /** entityIDs never resolved from this source (deny wins over every allow rule). */
+  excludedEntityIds: string[];
+}
+
+export const SAML_FEDERATION_MAX_EXCLUDED_ENTITY_IDS = 500;
+export const SAML_FEDERATION_MAX_ENTITY_ID_LENGTH = 1024;
+
+export type SAMLFederationIdPSelectionMode = 'authrim_search' | 'external_ds';
+
+/**
+ * How the tenant, acting as a SAML SP, lets a user choose one of the source's IdPs. Stored at
+ * `protocolPayload.idpSelection` (outside the trust-context hash, like `exceptions`).
+ * `authrim_search` is the login UI's own search over the verified inventory; `external_ds` sends
+ * the user to a SAML IdP Discovery Service (for example a federation's WAYF).
+ */
+export interface SAMLFederationIdPSelection {
+  mode: SAMLFederationIdPSelectionMode;
+  /** Required for `external_ds`: the Discovery Service address (external HTTPS). */
+  discoveryServiceUrl?: string;
+}
+
+export const SAML_FEDERATION_DEFAULT_IDP_SELECTION: Readonly<SAMLFederationIdPSelection> = {
+  mode: 'authrim_search',
+};
 
 export type SAMLFederationRuntimeResolutionMode = 'inventory_only' | 'automatic';
 export type SAMLFederationRuntimeRole = 'saml_idp' | 'saml_sp';
@@ -361,6 +397,11 @@ export interface SAMLFederationRuntimeResolutionPolicy {
     defaultDecision: SAMLFederationEntityCategoryDecision;
     rules: SAMLFederationEntityCategoryRule[];
   };
+  /**
+   * Merged in when the policy is parsed from `protocolPayload.exceptions.excludedEntityIds`; it is
+   * not stored under `runtimeResolution` (see SAMLFederationExceptions).
+   */
+  excludedEntityIds?: string[];
 }
 
 export interface SAMLMetadataVerificationSummary {

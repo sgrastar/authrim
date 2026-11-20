@@ -116,6 +116,11 @@ import {
   verifyAggregateMetadata,
 } from './aggregate-metadata';
 import {
+  evaluateFederationRuntimePolicy,
+  isSAMLAttributePresetId,
+  parseFederationRuntimeResolutionPolicy,
+} from '@authrim/ar-lib-core/utils/saml-federation-policy';
+import {
   getSAMLNextSigningCertificates,
   promoteSAMLNextSigningCertificate,
   publishSAMLNextSigningCertificate,
@@ -3391,6 +3396,213 @@ export async function handleRefreshFederationMetadataSource(
   }
 }
 
+interface SAMLFederationMaterializeRequest {
+  entityId?: unknown;
+  providerType?: unknown;
+  fieldMappingSetId?: unknown;
+  attributePresetId?: unknown;
+  name?: unknown;
+}
+
+/**
+ * POST /api/admin/saml-federation-sources/:id/entities/materialize
+ *
+ * Turns one entity of a federation source into an explicit SAML provider of this tenant ("give
+ * it its own settings"). The configuration comes from the source's verified runtime snapshot, so
+ * nothing is fetched. The provider is always created as a draft: enabling it needs the release
+ * policy and the rest of a connection's settings, which the connection page collects, and that
+ * step is the one that asks for a step-up (as for any provider). A draft is not an authoritative
+ * explicit provider (resolution skips unapproved drafts), so until it is enabled the entity keeps
+ * resolving through the federation exactly as before; once enabled the explicit row wins. An
+ * entity on the exception list may be materialised: it is how an excluded entity gets its own
+ * connection. Creating a draft needs only the create permission, like creating any draft.
+ */
+export async function handleMaterializeFederationEntity(c: AdminSAMLContext): Promise<Response> {
+  const sourceId = c.req.param('id');
+  const log = getLogger(c).module('SAML');
+  let entityIdForAudit = 'unknown';
+  try {
+    const forbidden = await requireSAMLAdminPermission(c, ADMIN_PERMISSIONS.SAML_PROVIDERS_CREATE);
+    if (forbidden) return forbidden;
+    if (!sourceId) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+    const body = await readSAMLAdminJsonWithLimit<SAMLFederationMaterializeRequest>(
+      c,
+      SINGLE_METADATA_REQUEST_LIMIT_BYTES
+    );
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+        variables: { field: 'entityId, providerType' },
+      });
+    }
+    const entityId = typeof body.entityId === 'string' ? body.entityId.trim() : '';
+    if (!entityId || entityId.length > 1024) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+        variables: { field: 'entityId' },
+      });
+    }
+    entityIdForAudit = entityId;
+    if (body.providerType !== 'saml_idp' && body.providerType !== 'saml_sp') {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: { field: 'providerType' },
+      });
+    }
+    const providerType: 'saml_idp' | 'saml_sp' = body.providerType;
+    if (
+      body.fieldMappingSetId !== undefined &&
+      (typeof body.fieldMappingSetId !== 'string' || !body.fieldMappingSetId.trim())
+    ) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: { field: 'fieldMappingSetId' },
+      });
+    }
+    if (body.attributePresetId !== undefined && !isSAMLAttributePresetId(body.attributePresetId)) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: { field: 'attributePresetId' },
+      });
+    }
+    if (body.name !== undefined && (typeof body.name !== 'string' || !body.name.trim())) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: { field: 'name' },
+      });
+    }
+
+    const tenantId = resolveSAMLTenantIdFromContext(c);
+    const admin = requireDedicatedAdminDatabaseAdapter(c.env, 'saml-federation-materialize');
+    const rows = await loadFederationRuntimeEntityRows(
+      admin,
+      tenantId,
+      entityId,
+      providerType,
+      sourceId
+    );
+    const row = rows[0];
+    if (!row) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+    const sourcePolicy = parseFederationRuntimeResolutionPolicy(row.protocol_payload_json);
+    const fieldMappingSetId =
+      typeof body.fieldMappingSetId === 'string'
+        ? body.fieldMappingSetId.trim()
+        : providerType === 'saml_idp'
+          ? sourcePolicy?.idpFieldMappingSetId
+          : sourcePolicy?.spFieldMappingSetId;
+    const candidate: FederationRuntimeCandidate = {
+      row,
+      policy: {
+        mode: 'automatic',
+        roles: [providerType],
+        ...(providerType === 'saml_idp'
+          ? { idpFieldMappingSetId: fieldMappingSetId }
+          : { spFieldMappingSetId: fieldMappingSetId }),
+      },
+      ...(isSAMLAttributePresetId(body.attributePresetId)
+        ? { attributePresetId: body.attributePresetId }
+        : sourcePolicy?.defaultAttributePresetId
+          ? { attributePresetId: sourcePolicy.defaultAttributePresetId }
+          : {}),
+    };
+    const built = await buildFederationRuntimeConfig(candidate, entityId, providerType, {
+      allowExpiredCertificates: true,
+    });
+    if (!built) {
+      return c.json(
+        {
+          error: 'saml_federation_entity_unusable',
+          error_description:
+            'The entity cannot be turned into a provider: its metadata does not match the entityID or every certificate has expired.',
+        },
+        409
+      );
+    }
+    // The stored metadata XML is the provider's source; the aggregate's URL stays only as the
+    // provenance in aggregateImport. A provider-level metadataUrl would put the draft under URL
+    // polling, which the metadata-URL capability gates for ordinary creation.
+    const config = { ...built, trustApproval: { state: 'draft' as const } };
+    delete config.metadataUrl;
+    const normalizedConfig =
+      providerType === 'saml_sp'
+        ? normalizeSAMLSPConfig(config as SAMLSPConfig, { requireIdentityMapping: false })
+        : normalizeSAMLIdPJitLinkingPolicyConfig(config as SAMLIdPConfig, {
+            requireIdentityMapping: false,
+          });
+    if (isResponseValidationError(normalizedConfig)) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: { field: normalizedConfig.field },
+      });
+    }
+    const coreAdapter = createAuthContextFromHono(c, tenantId).coreAdapter;
+    if (await hasConflictingSAMLProviderEntityId(coreAdapter, tenantId, providerType, entityId)) {
+      return c.json(
+        {
+          error: 'saml_explicit_provider_exists',
+          error_description: 'This entityID already has its own connection in this tenant.',
+        },
+        409
+      );
+    }
+    const summary = await admin.queryOne<{ display_name: string | null }>(
+      `SELECT display_name FROM federation_metadata_entity_summaries
+        WHERE tenant_id = ? AND metadata_document_id = ? AND entity_id = ?
+        ORDER BY entity_role ASC LIMIT 1`,
+      [tenantId, row.metadata_document_id, entityId]
+    );
+    const name =
+      typeof body.name === 'string' && body.name.trim()
+        ? body.name.trim()
+        : (summary?.display_name ?? entityId);
+    const id = crypto.randomUUID();
+    const now = Date.now();
+    await coreAdapter.execute(
+      `INSERT INTO identity_providers (id, tenant_id, name, provider_type, config_json, enabled, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, tenantId, name, providerType, JSON.stringify(normalizedConfig), 0, now, now]
+    );
+    await createSAMLAdminAudit(c, {
+      tenantId,
+      action: 'saml.federation.entity_materialized',
+      resource: 'federation_trust_source',
+      resourceId: sourceId,
+      metadata: {
+        entity_id: entityId,
+        provider_type: providerType,
+        provider_id: id,
+        mapping_configuration_pending: !normalizedConfig.identityMapping?.fieldMappingSetId,
+      },
+    });
+    await invalidateAuthenticationMethodsCacheForSAML(
+      c.env,
+      tenantId,
+      'saml.federation.entity_materialized',
+      c
+    );
+    return c.json({ providerId: id, providerType, entityId, name, enabled: false, sourceId }, 201);
+  } catch (error) {
+    if (error instanceof StepUpRefusal) return error.response;
+    if (error instanceof SAMLMetadataValidationError) {
+      return createSAMLMetadataValidationErrorResponse(c, error);
+    }
+    if (isSAMLProviderEntityConflict(error)) {
+      return c.json(
+        {
+          error: 'saml_explicit_provider_exists',
+          error_description: 'This entityID already has its own connection in this tenant.',
+        },
+        409
+      );
+    }
+    await recordSAMLAdminFailure(c, {
+      action: 'saml.federation.entity_materialized',
+      resource: 'federation_trust_source',
+      resourceId: sourceId ?? 'unknown',
+      error,
+    });
+    log.error(
+      'Materialize federation entity error',
+      { entityId: entityIdForAudit },
+      error as Error
+    );
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+  }
+}
+
 export async function handlePreviewFederationTrustCertificate(
   c: AdminSAMLContext
 ): Promise<Response> {
@@ -5610,8 +5822,10 @@ export async function getIdPUsageKeyByEntityId(
 interface FederationRuntimeEntityRow {
   trust_source_id: string;
   trust_context_snapshot_hash: string;
+  metadata_document_id: string;
   source_url: string | null;
   protocol_payload_json: string | null;
+  source_display_name: string | null;
   metadata_xml: string;
   entity_categories_json: string | null;
   entity_category_support_json: string | null;
@@ -5624,6 +5838,54 @@ interface FederationRuntimeCandidate {
   row: FederationRuntimeEntityRow;
   policy: SAMLFederationRuntimeResolutionPolicy;
   attributePresetId?: SAMLAttributePresetId;
+}
+
+/**
+ * The verified runtime rows for one entityID and role: only rows of an active source, from its
+ * active and valid aggregate snapshot, under the source's current trust context. `sourceId`
+ * narrows the lookup to one source (login start and materialisation); without it the rows of all
+ * sources come back ordered by the sources' priority, with a bound the caller checks.
+ */
+export async function loadFederationRuntimeEntityRows(
+  admin: DatabaseAdapter,
+  tenantId: string,
+  entityId: string,
+  role: 'saml_idp' | 'saml_sp',
+  sourceId?: string
+): Promise<FederationRuntimeEntityRow[]> {
+  return admin.query<FederationRuntimeEntityRow>(
+    `SELECT r.trust_source_id, r.trust_context_snapshot_hash, r.metadata_document_id,
+            d.source_url, s.protocol_payload_json, s.display_name AS source_display_name,
+            r.metadata_xml, r.entity_categories_json, r.entity_category_support_json,
+            r.registration_authority, r.valid_until, d.validated_at
+       FROM federation_saml_runtime_entities r
+       JOIN federation_metadata_documents d
+         ON d.tenant_id = r.tenant_id AND d.id = r.metadata_document_id
+       JOIN federation_trust_sources s
+         ON s.tenant_id = r.tenant_id AND s.id = r.trust_source_id
+      WHERE r.tenant_id = ? AND r.entity_id = ?
+        AND r.entity_role IN (?, 'ambiguous')
+        ${sourceId ? 'AND r.trust_source_id = ?' : ''}
+        AND s.lifecycle_state = 'active'
+        AND d.document_type = 'saml_aggregate_runtime_snapshot'
+        AND d.validation_state = 'valid'
+        AND r.trust_context_snapshot_hash = (
+          SELECT current.snapshot_hash
+            FROM federation_trust_context_snapshots current
+           WHERE current.tenant_id = r.tenant_id
+             AND current.trust_source_id = r.trust_source_id
+             AND current.lifecycle_state = 'active'
+           ORDER BY current.activated_at DESC, current.created_at DESC, current.id DESC
+           LIMIT 1
+        )
+        AND d.id = s.active_metadata_document_id
+      ORDER BY COALESCE(
+        CAST(json_extract(s.protocol_payload_json, '$.runtimeResolution.priority') AS INTEGER),
+        0
+      ) DESC, s.id ASC
+      LIMIT 101`,
+    sourceId ? [tenantId, entityId, role, sourceId] : [tenantId, entityId, role]
+  );
 }
 
 async function resolveFederationRuntimeConfig(
@@ -5652,38 +5914,7 @@ async function resolveFederationRuntimeConfig(
   }
   let rows: FederationRuntimeEntityRow[];
   try {
-    rows = await admin.query<FederationRuntimeEntityRow>(
-      `SELECT r.trust_source_id, r.trust_context_snapshot_hash,
-            d.source_url, s.protocol_payload_json, r.metadata_xml,
-            r.entity_categories_json, r.entity_category_support_json,
-            r.registration_authority, r.valid_until, d.validated_at
-       FROM federation_saml_runtime_entities r
-       JOIN federation_metadata_documents d
-         ON d.tenant_id = r.tenant_id AND d.id = r.metadata_document_id
-       JOIN federation_trust_sources s
-         ON s.tenant_id = r.tenant_id AND s.id = r.trust_source_id
-      WHERE r.tenant_id = ? AND r.entity_id = ?
-        AND r.entity_role IN (?, 'ambiguous')
-        AND s.lifecycle_state = 'active'
-        AND d.document_type = 'saml_aggregate_runtime_snapshot'
-        AND d.validation_state = 'valid'
-        AND r.trust_context_snapshot_hash = (
-          SELECT current.snapshot_hash
-            FROM federation_trust_context_snapshots current
-           WHERE current.tenant_id = r.tenant_id
-             AND current.trust_source_id = r.trust_source_id
-             AND current.lifecycle_state = 'active'
-           ORDER BY current.activated_at DESC, current.created_at DESC, current.id DESC
-           LIMIT 1
-        )
-        AND d.id = s.active_metadata_document_id
-      ORDER BY COALESCE(
-        CAST(json_extract(s.protocol_payload_json, '$.runtimeResolution.priority') AS INTEGER),
-        0
-      ) DESC, s.id ASC
-      LIMIT 101`,
-      [tenantId, entityId, role]
-    );
+    rows = await loadFederationRuntimeEntityRows(admin, tenantId, entityId, role);
   } catch (error) {
     createLogger()
       .module('SAML')
@@ -5712,7 +5943,8 @@ async function resolveFederationRuntimeConfig(
     const evaluation = evaluateFederationRuntimePolicy(
       policy,
       categories,
-      row.registration_authority
+      row.registration_authority,
+      entityId
     );
     if (!evaluation.allowed) return [];
     const mappingSetId =
@@ -5750,131 +5982,6 @@ async function resolveFederationRuntimeConfig(
   }
 }
 
-function parseFederationRuntimeResolutionPolicy(
-  protocolPayloadJson: string | null
-): SAMLFederationRuntimeResolutionPolicy | null {
-  try {
-    const payload = protocolPayloadJson ? (JSON.parse(protocolPayloadJson) as unknown) : null;
-    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return null;
-    const payloadRecord = payload as Record<string, unknown>;
-    const polling = payloadRecord.polling;
-    if (
-      polling &&
-      typeof polling === 'object' &&
-      !Array.isArray(polling) &&
-      (polling as Record<string, unknown>).sourceState === 'expired'
-    ) {
-      return null;
-    }
-    if (polling && typeof polling === 'object' && !Array.isArray(polling)) {
-      const acceptedValidUntil = (polling as Record<string, unknown>).acceptedValidUntil;
-      if (acceptedValidUntil !== undefined) {
-        const expiresAt =
-          typeof acceptedValidUntil === 'string' ? Date.parse(acceptedValidUntil) : NaN;
-        if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) return null;
-      }
-    }
-    const runtimeResolution = payloadRecord.runtimeResolution;
-    if (
-      !runtimeResolution ||
-      typeof runtimeResolution !== 'object' ||
-      Array.isArray(runtimeResolution)
-    ) {
-      return null;
-    }
-    const value = runtimeResolution as Record<string, unknown>;
-    if (
-      !Array.isArray(value.roles) ||
-      value.roles.some((item) => item !== 'saml_idp' && item !== 'saml_sp') ||
-      new Set(value.roles).size !== value.roles.length
-    ) {
-      return null;
-    }
-    const roles = value.roles as Array<'saml_idp' | 'saml_sp'>;
-    const mode = value.mode === 'automatic' ? 'automatic' : 'inventory_only';
-    const entityCategoryPolicy = parseFederationEntityCategoryPolicy(value.entityCategoryPolicy);
-    if (entityCategoryPolicy === null) return null;
-    if (
-      value.registrationAuthorities !== undefined &&
-      (!Array.isArray(value.registrationAuthorities) ||
-        value.registrationAuthorities.some((item) => typeof item !== 'string' || item.length === 0))
-    ) {
-      return null;
-    }
-    return {
-      mode,
-      roles,
-      ...(typeof value.priority === 'number' && Number.isInteger(value.priority)
-        ? { priority: value.priority }
-        : {}),
-      ...(typeof value.idpFieldMappingSetId === 'string' && value.idpFieldMappingSetId
-        ? { idpFieldMappingSetId: value.idpFieldMappingSetId }
-        : {}),
-      ...(typeof value.spFieldMappingSetId === 'string' && value.spFieldMappingSetId
-        ? { spFieldMappingSetId: value.spFieldMappingSetId }
-        : {}),
-      ...(isSAMLAttributePresetId(value.defaultAttributePresetId)
-        ? { defaultAttributePresetId: value.defaultAttributePresetId }
-        : {}),
-      ...(Array.isArray(value.registrationAuthorities)
-        ? {
-            registrationAuthorities: value.registrationAuthorities.filter(
-              (item): item is string => typeof item === 'string' && item.length > 0
-            ),
-          }
-        : {}),
-      ...(entityCategoryPolicy ? { entityCategoryPolicy } : {}),
-    };
-  } catch {
-    return null;
-  }
-}
-
-function parseFederationEntityCategoryPolicy(
-  input: unknown
-): SAMLFederationRuntimeResolutionPolicy['entityCategoryPolicy'] | null | undefined {
-  if (input === undefined) return undefined;
-  if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
-  const value = input as Record<string, unknown>;
-  if (value.defaultDecision !== 'allow' && value.defaultDecision !== 'deny') return null;
-  if (!Array.isArray(value.rules)) return null;
-  const rules: NonNullable<SAMLFederationRuntimeResolutionPolicy['entityCategoryPolicy']>['rules'] =
-    [];
-  const seenCategories = new Set<string>();
-  for (const item of value.rules) {
-    if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
-    const rule = item as Record<string, unknown>;
-    if (
-      typeof rule.entityCategory !== 'string' ||
-      !rule.entityCategory ||
-      (rule.decision !== 'allow' && rule.decision !== 'deny') ||
-      (rule.attributePresetId !== undefined && !isSAMLAttributePresetId(rule.attributePresetId))
-    ) {
-      return null;
-    }
-    if (seenCategories.has(rule.entityCategory)) return null;
-    seenCategories.add(rule.entityCategory);
-    const decision: 'allow' | 'deny' = rule.decision;
-    rules.push({
-      entityCategory: rule.entityCategory,
-      decision,
-      ...(isSAMLAttributePresetId(rule.attributePresetId)
-        ? { attributePresetId: rule.attributePresetId }
-        : {}),
-    });
-  }
-  return { defaultDecision: value.defaultDecision, rules };
-}
-
-function isSAMLAttributePresetId(value: unknown): value is SAMLAttributePresetId {
-  return (
-    value === 'basic.v1' ||
-    value === 'academic_publisher.v1' ||
-    value === 'enterprise_saas.v1' ||
-    value === 'research_federation.v1'
-  );
-}
-
 function parseStringArrayJson(value: string | null): string[] {
   try {
     const parsed = value ? (JSON.parse(value) as unknown) : [];
@@ -5886,47 +5993,6 @@ function parseStringArrayJson(value: string | null): string[] {
   }
 }
 
-function evaluateFederationRuntimePolicy(
-  policy: SAMLFederationRuntimeResolutionPolicy,
-  categories: string[],
-  registrationAuthority: string | null
-): { allowed: boolean; attributePresetId?: SAMLAttributePresetId } {
-  if (
-    policy.registrationAuthorities?.length &&
-    (!registrationAuthority || !policy.registrationAuthorities.includes(registrationAuthority))
-  ) {
-    return { allowed: false };
-  }
-  const categoryPolicy = policy.entityCategoryPolicy;
-  if (!categoryPolicy) {
-    return {
-      allowed: true,
-      ...(policy.defaultAttributePresetId
-        ? { attributePresetId: policy.defaultAttributePresetId }
-        : {}),
-    };
-  }
-  const matching = categoryPolicy.rules.filter((rule) => categories.includes(rule.entityCategory));
-  if (matching.some((rule) => rule.decision === 'deny')) return { allowed: false };
-  const allow = matching.filter((rule) => rule.decision === 'allow');
-  const effectivePresets = new Set(
-    allow
-      .map((rule) => rule.attributePresetId ?? policy.defaultAttributePresetId)
-      .filter((preset): preset is SAMLAttributePresetId => Boolean(preset))
-  );
-  if (effectivePresets.size > 1) return { allowed: false };
-  const allowed = allow.length > 0 || categoryPolicy.defaultDecision === 'allow';
-  const attributePresetId = effectivePresets.values().next().value;
-  return {
-    allowed,
-    ...(attributePresetId
-      ? { attributePresetId }
-      : policy.defaultAttributePresetId
-        ? { attributePresetId: policy.defaultAttributePresetId }
-        : {}),
-  };
-}
-
 function isFederationRuntimeRowExpired(row: FederationRuntimeEntityRow): boolean {
   if (!row.valid_until) return false;
   const expiresAt = Date.parse(row.valid_until);
@@ -5936,7 +6002,8 @@ function isFederationRuntimeRowExpired(row: FederationRuntimeEntityRow): boolean
 async function buildFederationRuntimeConfig(
   candidate: FederationRuntimeCandidate,
   entityId: string,
-  role: 'saml_idp' | 'saml_sp'
+  role: 'saml_idp' | 'saml_sp',
+  options: { allowExpiredCertificates?: boolean } = {}
 ): Promise<SAMLIdPConfig | SAMLSPConfig | null> {
   const now = Date.now();
   const analysis = analyzeSAMLMetadata(candidate.row.metadata_xml);
@@ -5971,16 +6038,16 @@ async function buildFederationRuntimeConfig(
   if (role === 'saml_idp') {
     config = {
       ...(config as SAMLIdPConfig),
-      identityMapping: {
-        fieldMappingSetId: candidate.policy.idpFieldMappingSetId!,
-      },
+      ...(candidate.policy.idpFieldMappingSetId
+        ? { identityMapping: { fieldMappingSetId: candidate.policy.idpFieldMappingSetId } }
+        : {}),
     };
   } else {
     let spConfig: SAMLSPConfig = {
       ...(config as SAMLSPConfig),
-      identityMapping: {
-        fieldMappingSetId: candidate.policy.spFieldMappingSetId!,
-      },
+      ...(candidate.policy.spFieldMappingSetId
+        ? { identityMapping: { fieldMappingSetId: candidate.policy.spFieldMappingSetId } }
+        : {}),
     };
     if (candidate.attributePresetId) {
       spConfig = applySAMLAttributePresetToSPConfig(spConfig, candidate.attributePresetId);
@@ -5988,7 +6055,10 @@ async function buildFederationRuntimeConfig(
     config = spConfig;
   }
   const validated = await withProviderCertificateValidation(config);
-  return validated.certificateValidation?.allExpired ? null : validated;
+  if (validated.certificateValidation?.allExpired && !options.allowExpiredCertificates) {
+    return null;
+  }
+  return validated;
 }
 
 /**
