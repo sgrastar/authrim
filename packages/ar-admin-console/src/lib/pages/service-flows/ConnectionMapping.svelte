@@ -22,6 +22,8 @@
 	import TextField from '#lib/ui/primitives/TextField.svelte';
 	import TextArea from '#lib/ui/primitives/TextArea.svelte';
 	import LeaveGuard from './LeaveGuard.svelte';
+	import DestinationProfileEditor from './destination-profile/DestinationProfileEditor.svelte';
+	import type { DestinationProfileSaved } from '#lib/api/destination-profiles.js';
 
 	/**
 	 * A connection's one mapping, on its service flow's main screen: a provider's attributes into
@@ -57,13 +59,51 @@
 	let metadataOpen = $state(false);
 	let explainError = $state(false);
 	$effect(() => {
-		dirty = shared?.dirty ?? false;
-		pending = shared?.phase === 'saving' || shared?.phase === 'impact';
+		dirty = (shared?.dirty ?? false) || editorState.dirty;
+		pending = shared?.phase === 'saving' || shared?.phase === 'impact' || editorState.saving;
 		bound = shared?.bound ?? '';
 	});
 	onMount(() => {
 		if (shared) void shared.load();
 	});
+	// The output source of the connection's mapping: made or changed here, in place of the mapping
+	// until it is saved or left.
+	let profileEditor = $state<'new' | 'edit' | null>(null);
+	let profileUsedBy = $state<string[]>([]);
+	let profileUsageUnknown = $state(false);
+	let editorState = $state({ dirty: false, saving: false });
+	/** A new set with mappings in it cannot have its output source changed under them. */
+	const profileEditBlocked = $derived(
+		!!shared && !!shared.newKey && shared.form.value.mappings.length > 0
+	);
+	const canEditProfiles = $derived(!!resources?.profiles && !readonly && !disabled);
+	const chosenProfile = $derived(
+		shared?.allProfiles.find((profile) => profile.id === shared.form.value.profileId)
+	);
+	async function openProfileEditor(kind: 'new' | 'edit') {
+		if (!shared) return;
+		const used =
+			kind === 'edit' && chosenProfile
+				? await shared.setsUsing(chosenProfile.id)
+				: { names: [], complete: true };
+		profileUsedBy = used.names;
+		profileUsageUnknown = !used.complete;
+		editorState = { dirty: false, saving: false };
+		profileEditor = kind;
+	}
+	async function profileSaved(saved: DestinationProfileSaved) {
+		profileEditor = null;
+		editorState = { dirty: false, saving: false };
+		if (!shared) return;
+		await shared.reloadProfiles();
+		if (shared.newKey) {
+			shared.form.value.profileId = saved.profile.id;
+			shared.configure();
+		} else if (shared.selected) {
+			// What the set sends into has changed under it: read it again.
+			await shared.select(shared.selected);
+		}
+	}
 	function choose(value: string) {
 		if (!shared || readonly || disabled) return;
 		if (shared.dirty) changeTo = value;
@@ -102,89 +142,31 @@
 
 <Card title={t(copy.title)} description={t(copy.description)}>
 	{#if shared}
-		<LeaveGuard dirty={guardNavigation && shared.dirty} />
+		<LeaveGuard dirty={guardNavigation && (shared.dirty || editorState.dirty)} />
 		<div class="mapping">
 			{#if shared.phase === 'loading'}<LoadingState label={t('common.loading')} />{/if}
-			<Select
-				label={t('sf.row.mappingSet')}
-				placeholder={t('mc.ro.choose')}
-				options={shared.sets.map((set) => ({
-					value: set.id,
-					label: set.display_name ?? set.field_mapping_key
-				}))}
-				value={shared.selected}
-				onchange={choose}
-				disabled={readonly ||
-					disabled ||
-					shared.locked ||
-					shared.phase === 'loading' ||
-					shared.pinned}
-				changed={shared.selected !== shared.bound}
-			/>
-			{#if !readonly}<div>
-					<Button
-						variant="secondary"
-						size="sm"
-						onclick={() => choose('__new')}
-						disabled={disabled || shared.locked || shared.pinned}>{t('cm.create')}</Button
-					>
-				</div>{/if}
-			{#if shared.dirty}<Badge tone="changed">{t('common.changed')}</Badge>{/if}
-			{#if shared.readonlyReason}<Callout tone="warning">{t('cm.readonly')}</Callout>{/if}
-			{#if shared.phase === 'failed'}<Callout tone="warning" live
-					>{t('mc.actionFailed')}
-					<Button
-						size="sm"
-						onclick={() => (shared.sets.length ? choose(shared.selected) : shared.load())}
-						>{t('common.retry')}</Button
-					></Callout
-				>{/if}
-			{#if shared.phase === 'conflict'}<Callout tone="warning" live
-					>{t('cm.conflict')}
-					<Button size="sm" onclick={() => choose(shared.selected)}>{t('cm.reload')}</Button
-					></Callout
-				>{/if}
-			{#if shared.phase === 'paused'}<Callout tone="info" live>{t('common.releasePaused')}</Callout
-				>{/if}
-			{#if shared.phase === 'stage_failed'}<Callout tone="warning" live
-					>{t('cm.stageFailed', { stage: shared.stage })}
-					<Button size="sm" onclick={() => choose(shared.selected)}>{t('cm.reload')}</Button
-					></Callout
-				>{/if}
-			{#if shared.phase === 'outcome_unknown'}<Callout tone="warning" live
-					>{t('cm.unknown')}
-					<Button size="sm" disabled={disabled || readonly} onclick={() => shared.write()}
-						>{t('common.retry')}</Button
-					>
-					<Button size="sm" onclick={() => choose('__inspect')}>{t('cm.reload')}</Button></Callout
-				>{/if}
-			{#if shared.phase === 'binding_failed'}<Callout tone="warning" live
-					>{t('cm.bindingFailed')}
-					<Button size="sm" disabled={disabled || readonly} onclick={() => shared.retryBinding()}
-						>{t('cm.retryBinding')}</Button
-					></Callout
-				>{/if}
-			{#if shared.phase === 'saved' && !shared.dirty}<Callout tone="info" live
-					>{t('cm.saved')}</Callout
-				>{/if}
-			{#if shared.detail || shared.newKey}
-				<BusyScope busy={disabled || readonly || shared.locked || shared.readonlyReason}>
-					<Disclosure title={t('cm.options')} bind:open={metadataOpen}>
-						{#snippet meta()}{#if !shared.form.value.name.trim() || !shared.form.value.profileId || !shared.form.value.catalogVersionId}<RequiredBadge
-								/>{/if}{/snippet}
-						<TextField
-							label={t('sf.row.name')}
-							bind:value={shared.form.value.name}
-							field="name"
-							required
-						/>
-						<TextArea
-							label={t('cm.description')}
-							bind:value={shared.form.value.description}
-							field="description"
-						/>
+			{#if profileEditor && shared && resources?.profiles}
+				<DestinationProfileEditor
+					protocol={resources.protocol}
+					tenantId={resources.tenantId}
+					client={resources.profiles}
+					profiles={shared.allProfiles}
+					profile={profileEditor === 'edit' ? chosenProfile : undefined}
+					usedBy={profileUsedBy}
+					usageUnknown={profileUsageUnknown}
+					onstate={(state) => (editorState = state)}
+					onsaved={profileSaved}
+					oncancel={() => {
+						profileEditor = null;
+						editorState = { dirty: false, saving: false };
+					}}
+				/>
+			{:else}
+				{#if shared.detail || shared.newKey}
+					<div class="profile">
 						<Select
-							label={t('cm.profile')}
+							label={t('sf.dp.field.label')}
+							hint={t('sf.dp.field.hint')}
 							options={shared.profiles.map((profile) => ({
 								value: profile.id,
 								label: profile.displayName
@@ -195,50 +177,154 @@
 								shared.form.value.profileId = value;
 								shared.configure();
 							}}
-							disabled={!!shared.detail}
+							disabled={!!shared.detail || readonly || disabled || shared.locked}
 							field="profileId"
 						/>
-						<Select
-							label={t('cm.catalog')}
-							options={shared.catalogs.flatMap((catalog) =>
-								catalog.versionId ? [{ value: catalog.versionId, label: catalog.displayName }] : []
-							)}
-							placeholder={shared.detail?.content?.catalogVersionId ?? t('mc.ro.choose')}
-							value={shared.form.value.catalogVersionId}
-							onchange={(value) => {
-								shared.form.value.catalogVersionId = value;
-								shared.configure();
-							}}
-							disabled={!!shared.detail}
-							field="catalogVersionId"
-						/>
-					</Disclosure>
-					{#if shared.context && !shared.readonlyReason}
-						<MappingEditor
-							label={t(copy.label)}
-							direction="outbound"
-							sources={shared.context.sources}
-							targets={shared.context.targets}
-							bind:mappings={shared.form.value.mappings}
-							bind:invalid
-							field="mappings"
-						/>
-					{/if}
-					{#if !readonly && !shared.readonlyReason}
-						<div>
-							<Button
-								onclick={() => shared.save()}
-								loading={shared.phase === 'saving'}
-								disabled={invalid ||
-									!shared.context ||
-									((shared.form.dirty || !shared.detail) && !shared.form.value.name.trim()) ||
-									!shared.form.value.mappings.length ||
-									(!shared.form.dirty && shared.selected === shared.bound)}
-								>{t('cm.saveBind')}</Button
-							>
-						</div>
-					{/if}
-				</BusyScope>
+						{#if canEditProfiles && !shared.locked}
+							<div class="profile__actions">
+								{#if shared.newKey}
+									<Button variant="secondary" size="sm" onclick={() => openProfileEditor('new')}
+										>{t('sf.dp.field.create')}</Button
+									>
+								{/if}
+								{#if profileEditBlocked}<p class="profile__hint">
+										{t('sf.dp.field.editBlocked')}
+									</p>{/if}
+								{#if chosenProfile}
+									<Button
+										variant="secondary"
+										size="sm"
+										disabled={(shared.dirty && !shared.newKey) || profileEditBlocked}
+										onclick={() => openProfileEditor('edit')}>{t('sf.dp.field.edit')}</Button
+									>
+								{/if}
+							</div>
+						{/if}
+					</div>
+				{/if}
+				<Select
+					label={t('sf.row.mappingSet')}
+					placeholder={t('mc.ro.choose')}
+					options={shared.sets.map((set) => ({
+						value: set.id,
+						label: set.display_name ?? set.field_mapping_key
+					}))}
+					value={shared.selected}
+					onchange={choose}
+					disabled={readonly ||
+						disabled ||
+						shared.locked ||
+						shared.phase === 'loading' ||
+						shared.pinned}
+					changed={shared.selected !== shared.bound}
+				/>
+				{#if !readonly}<div>
+						<Button
+							variant="secondary"
+							size="sm"
+							onclick={() => choose('__new')}
+							disabled={disabled || shared.locked || shared.pinned}>{t('cm.create')}</Button
+						>
+					</div>{/if}
+				{#if shared.dirty}<Badge tone="changed">{t('common.changed')}</Badge>{/if}
+				{#if shared.readonlyReason}<Callout tone="warning">{t('cm.readonly')}</Callout>{/if}
+				{#if shared.phase === 'failed'}<Callout tone="warning" live
+						>{t('mc.actionFailed')}
+						<Button
+							size="sm"
+							onclick={() => (shared.sets.length ? choose(shared.selected) : shared.load())}
+							>{t('common.retry')}</Button
+						></Callout
+					>{/if}
+				{#if shared.phase === 'conflict'}<Callout tone="warning" live
+						>{t('cm.conflict')}
+						<Button size="sm" onclick={() => choose(shared.selected)}>{t('cm.reload')}</Button
+						></Callout
+					>{/if}
+				{#if shared.phase === 'paused'}<Callout tone="info" live
+						>{t('common.releasePaused')}</Callout
+					>{/if}
+				{#if shared.phase === 'stage_failed'}<Callout tone="warning" live
+						>{t('cm.stageFailed', { stage: shared.stage })}
+						<Button size="sm" onclick={() => choose(shared.selected)}>{t('cm.reload')}</Button
+						></Callout
+					>{/if}
+				{#if shared.phase === 'outcome_unknown'}<Callout tone="warning" live
+						>{t('cm.unknown')}
+						<Button size="sm" disabled={disabled || readonly} onclick={() => shared.write()}
+							>{t('common.retry')}</Button
+						>
+						<Button size="sm" onclick={() => choose('__inspect')}>{t('cm.reload')}</Button></Callout
+					>{/if}
+				{#if shared.phase === 'binding_failed'}<Callout tone="warning" live
+						>{t('cm.bindingFailed')}
+						<Button size="sm" disabled={disabled || readonly} onclick={() => shared.retryBinding()}
+							>{t('cm.retryBinding')}</Button
+						></Callout
+					>{/if}
+				{#if shared.phase === 'saved' && !shared.dirty}<Callout tone="info" live
+						>{t('cm.saved')}</Callout
+					>{/if}
+				{#if shared.detail || shared.newKey}
+					<BusyScope busy={disabled || readonly || shared.locked || shared.readonlyReason}>
+						<Disclosure title={t('cm.options')} bind:open={metadataOpen}>
+							{#snippet meta()}{#if !shared.form.value.name.trim() || !shared.form.value.profileId || !shared.form.value.catalogVersionId}<RequiredBadge
+									/>{/if}{/snippet}
+							<TextField
+								label={t('sf.row.name')}
+								bind:value={shared.form.value.name}
+								field="name"
+								required
+							/>
+							<TextArea
+								label={t('cm.description')}
+								bind:value={shared.form.value.description}
+								field="description"
+							/>
+							<Select
+								label={t('cm.catalog')}
+								options={shared.catalogs.flatMap((catalog) =>
+									catalog.versionId
+										? [{ value: catalog.versionId, label: catalog.displayName }]
+										: []
+								)}
+								placeholder={shared.detail?.content?.catalogVersionId ?? t('mc.ro.choose')}
+								value={shared.form.value.catalogVersionId}
+								onchange={(value) => {
+									shared.form.value.catalogVersionId = value;
+									shared.configure();
+								}}
+								disabled={!!shared.detail}
+								field="catalogVersionId"
+							/>
+						</Disclosure>
+						{#if shared.context && !shared.readonlyReason}
+							<MappingEditor
+								label={t(copy.label)}
+								direction="outbound"
+								sources={shared.context.sources}
+								targets={shared.context.targets}
+								bind:mappings={shared.form.value.mappings}
+								bind:invalid
+								field="mappings"
+							/>
+						{/if}
+						{#if !readonly && !shared.readonlyReason}
+							<div>
+								<Button
+									onclick={() => shared.save()}
+									loading={shared.phase === 'saving'}
+									disabled={invalid ||
+										!shared.context ||
+										((shared.form.dirty || !shared.detail) && !shared.form.value.name.trim()) ||
+										!shared.form.value.mappings.length ||
+										(!shared.form.dirty && shared.selected === shared.bound)}
+									>{t('cm.saveBind')}</Button
+								>
+							</div>
+						{/if}
+					</BusyScope>
+				{/if}
 			{/if}
 			{#if resources}<Disclosure title={t('mc.ex.form')}
 					>{#snippet meta()}{#if explainError}<Badge tone="warning">{t('map.sample.failed')}</Badge
@@ -283,6 +369,23 @@
 </Card>
 
 <style>
+	.profile {
+		display: grid;
+		gap: var(--space-related);
+	}
+
+	.profile__hint {
+		margin: 0;
+		color: var(--text-secondary);
+		font-size: var(--fs-small);
+	}
+
+	.profile__actions {
+		display: flex;
+		flex-wrap: wrap;
+		gap: var(--space-related);
+	}
+
 	.mapping {
 		display: flex;
 		flex-direction: column;

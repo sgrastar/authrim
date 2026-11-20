@@ -186,3 +186,22 @@
 		);
 	}}
 />
+
+<Story
+	name="Make the output source while making a mapping set"
+	args={{ protocol: 'saml' }}
+	play={async ({ canvasElement }) => {
+		await openMapping(canvasElement);
+		const canvas = within(canvasElement);
+		await userEvent.click(await canvas.findByRole('button', { name: t('cm.create') }));
+		// Nothing suits: the output source is made here, from a template, and is then the one chosen.
+		await userEvent.click(await canvas.findByRole('button', { name: t('sf.dp.field.create') }));
+		await userEvent.click(canvas.getByRole('button', { name: /Academic federation/ }));
+		await userEvent.click(canvas.getByRole('button', { name: /REFEDS Research and Scholarship/ }));
+		await userEvent.click(canvas.getByRole('button', { name: t('sf.dp.template.use') }));
+		await canvas.findByDisplayValue('eduPersonPrincipalName');
+		await userEvent.click(canvas.getByRole('button', { name: t('sf.dp.save') }));
+		const field = await canvas.findByRole('combobox', { name: t('sf.dp.field.label') });
+		await waitFor(() => expect(field).toHaveDisplayValue('REFEDS Research and Scholarship'));
+	}}
+/>
