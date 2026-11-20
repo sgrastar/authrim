@@ -49,6 +49,14 @@ export const SETUP_MACHINE_DEFAULT_SCOPES = [
   'admin:control_plane:read',
   'admin:control_plane:rotate',
   'admin:control_plane:provision',
+  // Setup creates the Login UI client (and the optional downstream introspection client) as
+  // enabled, which the admin step-up gate guards as `client.trust.activate` (L2), and on a rerun
+  // regenerates the introspection client's secret, guarded as `client.secret.rotate` (L1) and,
+  // for an enabled client, `client.trust.activate` as well. A machine token passes that gate only
+  // with the exact-name exemption for every operation performed; no wildcard implies one. The
+  // setup principal is removed once the deployment finishes, so the exemptions live only that long.
+  'admin:step_up_exempt:client.trust.activate',
+  'admin:step_up_exempt:client.secret.rotate',
 ] as const;
 
 export interface AdminMachineTokenRequest {

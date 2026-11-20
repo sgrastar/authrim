@@ -94,7 +94,8 @@
 		rp: 'OpenID Connect',
 		op: 'OpenID Connect',
 		sp: 'SAML',
-		idp: 'SAML'
+		idp: 'SAML',
+		federation: 'SAML federation'
 	};
 	const FLOW_DATES: Record<FlowId, { created: string; modified: string }> = {
 		registration: { created: '2026-07-01T00:00:00Z', modified: '2026-10-18T06:25:00Z' },

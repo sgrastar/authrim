@@ -675,8 +675,8 @@ export class AgentBaselineRepository {
       },
       ...(await prepareAdminAgentAuditStatements(this.auditWriter, this.adapter, input.audit, {
         from: 'agent_baseline_assignments',
-        where: 'id = ? AND drift_digest = ?',
-        params: [input.assignmentId, input.currentDigest],
+        where: 'id = ? AND last_transition_id = ?',
+        params: [input.assignmentId, input.audit.id],
       })),
     ]);
     return results[0]?.rowsAffected === 1 ? input.status : null;
@@ -723,7 +723,7 @@ export class AgentBaselineRepository {
     const results = await this.adapter.batch([
       {
         sql: `UPDATE agent_baseline_assignments SET last_evaluated_at = ?,
-          drift_status = ?, drift_digest = ? WHERE id = ?
+          drift_status = ?, drift_digest = ?, last_transition_id = ? WHERE id = ?
           AND ${expected === undefined ? 'last_evaluated_at IS NULL' : 'last_evaluated_at = ?'}
           AND EXISTS (SELECT 1 FROM agent_baselines b
             WHERE b.id = agent_baseline_assignments.baseline_id
@@ -733,6 +733,7 @@ export class AgentBaselineRepository {
           input.evaluatedAt,
           input.status,
           input.currentDigest,
+          input.audit.id,
           input.assignmentId,
           ...(expected === undefined ? [] : [expected]),
           input.controlTenantId,

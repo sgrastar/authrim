@@ -433,9 +433,26 @@ export const httpSamlProviders: SamlProvidersClient &
 	}
 };
 
-function metadataPreview(value: unknown, kind: SamlProviderKind): SamlMetadataPreview {
+/**
+ * The document holds many entities (a federation's aggregate), not one connection's. Carries the
+ * address it was read from, so the console can offer to add it as a federation instead.
+ */
+export class AggregateMetadataError extends Error {
+	readonly metadataUrl: string;
+	constructor(metadataUrl = '') {
+		super(t('sf.metadata.aggregate'));
+		this.name = 'AggregateMetadataError';
+		this.metadataUrl = metadataUrl;
+	}
+}
+
+function metadataPreview(
+	value: unknown,
+	kind: SamlProviderKind,
+	metadataUrl = ''
+): SamlMetadataPreview {
 	const row = object(value);
-	if (row.kind === 'aggregate') throw new Error(t('sf.metadata.aggregate'));
+	if (row.kind === 'aggregate') throw new AggregateMetadataError(metadataUrl);
 	if (row.kind !== 'single' || row.providerType !== kind)
 		throw new Error(t(kind === 'saml_sp' ? 'sf.metadata.wrongRoleSp' : 'sf.metadata.wrongRoleIdp'));
 	const config = object(row.config);
@@ -488,10 +505,10 @@ export const httpSamlMetadata: SamlMetadataClient = {
 			if (code === 'metadata_fetch_failed') throw new Error(t('sf.metadata.fetchFailed'));
 			if (code === 'metadata_invalid_xml') throw new Error(t('sf.metadata.invalidXml'));
 			if (code === 'metadata_aggregate_requires_federation')
-				throw new Error(t('sf.metadata.aggregate'));
+				throw new AggregateMetadataError(input.metadataUrl);
 			throw error;
 		}
-		return metadataPreview(await response.json(), kind);
+		return metadataPreview(await response.json(), kind, input.metadataUrl);
 	},
 	async importMetadata(id, input) {
 		const response = await writeProvider(

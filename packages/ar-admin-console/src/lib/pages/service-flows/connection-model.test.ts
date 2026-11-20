@@ -92,9 +92,10 @@ describe('wizard steps', () => {
 });
 
 describe('the flow of a connection', () => {
-	it('is four kinds, two ways', () => {
-		expect(KINDS_OF.out).toEqual(['rp', 'sp']);
-		expect(KINDS_OF.in).toEqual(['op', 'idp']);
+	it('is five kinds, two ways', () => {
+		// A federation is offered both ways: the way chosen decides which of its roles starts on.
+		expect(KINDS_OF.out).toEqual(['rp', 'sp', 'federation']);
+		expect(KINDS_OF.in).toEqual(['op', 'idp', 'federation']);
 	});
 
 	it('has every part the wizard asks, and no "activate" step (it is in the general settings)', () => {

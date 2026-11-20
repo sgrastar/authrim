@@ -57,6 +57,28 @@ const DOWNSTREAM_INTROSPECTION_IMPACT =
   'Core login, Admin UI, and token issuance are available, but downstream grant introspection is not configured.';
 const DOWNSTREAM_INTROSPECTION_NEXT_ACTION =
   'Rerun deploy to retry the optional integration after routing propagation completes.';
+const DOWNSTREAM_INTROSPECTION_STEP_UP_NEXT_ACTION =
+  'The Admin API refused the client operation with step_up_human_required: the setup machine principal lacks the admin step-up exemption for it. Rerunning alone will not help; deploy with a setup build that grants the exemption (admin:step_up_exempt:client.trust.activate and client.secret.rotate), then rerun.';
+const DOWNSTREAM_INTROSPECTION_NON_RETRYABLE_NEXT_ACTION =
+  'The Admin API refused the client operation; see the diagnostic for the reason. Rerunning alone will not help until the cause is fixed.';
+
+/**
+ * What the operator should do next, from how the optional integration failed. A refusal the
+ * Admin API would repeat (a step-up refusal, any other non-retryable answer) must not be dressed
+ * up as "wait for routing propagation".
+ */
+export function describeDownstreamIntrospectionNextAction(input: {
+  diagnosticCode?: string;
+  retryable?: boolean;
+}): string {
+  if (input.diagnosticCode?.endsWith(':step_up_human_required')) {
+    return DOWNSTREAM_INTROSPECTION_STEP_UP_NEXT_ACTION;
+  }
+  if (input.retryable === false) {
+    return DOWNSTREAM_INTROSPECTION_NON_RETRYABLE_NEXT_ACTION;
+  }
+  return DOWNSTREAM_INTROSPECTION_NEXT_ACTION;
+}
 const DEFAULT_DOWNSTREAM_READINESS_BUDGET_MS = 60_000;
 const DEFAULT_DOWNSTREAM_CLIENT_BUDGET_MS = 60_000;
 
@@ -70,7 +92,7 @@ export function createDownstreamIntrospectionFailure(
     error,
     impact: DOWNSTREAM_INTROSPECTION_IMPACT,
     retryable: true,
-    nextAction: DOWNSTREAM_INTROSPECTION_NEXT_ACTION,
+    nextAction: describeDownstreamIntrospectionNextAction(details),
     ...details,
   };
 }

@@ -1036,6 +1036,9 @@ import {
   adminIdentityMappingFederationMetadataDocumentsListHandler,
   adminIdentityMappingFederationTrustSourceCreateHandler,
   adminIdentityMappingFederationTrustSourceDeleteHandler,
+  adminIdentityMappingFederationTrustSourceGetHandler,
+  adminIdentityMappingFederationTrustSourceEntitiesHandler,
+  adminIdentityMappingFederationTrustSourceRefreshHistoryHandler,
   adminIdentityMappingFederationTrustSourceUpdateHandler,
   adminIdentityMappingGroupCreateHandler,
   adminIdentityMappingGroupMembershipCreateHandler,
@@ -3628,6 +3631,21 @@ app.get(
   '/api/admin/field-mapping/federation-trust-sources/:trustSourceId/metadata-documents',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
   adminIdentityMappingFederationMetadataDocumentsListHandler
+);
+app.get(
+  '/api/admin/field-mapping/federation-trust-sources/:trustSourceId',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
+  adminIdentityMappingFederationTrustSourceGetHandler
+);
+app.get(
+  '/api/admin/field-mapping/federation-trust-sources/:trustSourceId/entities',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
+  adminIdentityMappingFederationTrustSourceEntitiesHandler
+);
+app.get(
+  '/api/admin/field-mapping/federation-trust-sources/:trustSourceId/refresh-history',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
+  adminIdentityMappingFederationTrustSourceRefreshHistoryHandler
 );
 app.post(
   '/api/admin/field-mapping/federation-metadata-documents',

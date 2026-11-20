@@ -4763,6 +4763,12 @@ export function createApiRoutes(): Hono {
           !existingDeploymentLock.productVersion &&
           existingDeploymentLock.releaseUpdate !== undefined &&
           existingDeploymentLock.releaseUpdate.phase !== 'verified';
+        // The Workers of the interrupted release were uploaded after this release started. A
+        // draft whose manifest changed since is re-stamped with a new start when its migrations
+        // run below, so the adoption evidence is judged against the start recorded now.
+        const interruptedInitialReleaseStartedAt = interruptedInitialRelease
+          ? existingDeploymentLock.releaseUpdate?.startedAt
+          : undefined;
         if (
           existingDeploymentLock.productVersion ||
           (Object.keys(existingDeploymentLock.workers ?? {}).length > 0 &&
@@ -5089,19 +5095,18 @@ export function createApiRoutes(): Hono {
             expectedPackageVersion: productVersion,
           })),
         ];
-        if (recoverWorkerOwnership) {
-          if (!interruptedInitialRelease || !initialLockPath) {
-            return c.json(
-              { success: false, error: 'Worker ownership recovery is not available.' },
-              409
-            );
-          }
+        // Adopt the Workers this interrupted initial release left on Cloudflare without an
+        // ownership record, under the same evidence checks whichever way the need was detected.
+        const recoverInterruptedInitialWorkerOwnership = async (
+          lock: AuthrimLock,
+          lockPath: string
+        ): Promise<AuthrimLock> => {
           const authenticatedAccountId = await getAccountId();
           if (!authenticatedAccountId) {
             throw new Error('cloudflare_account_verification_unavailable');
           }
           const recovery = await adoptLegacyWorkerDeployments({
-            lock: existingDeploymentLock,
+            lock,
             environment: env,
             authenticatedAccountId,
             configuredAccountId: releaseConfig.cloudflare?.accountId,
@@ -5110,20 +5115,40 @@ export function createApiRoutes(): Hono {
             requireAllTargets: false,
             allowNoop: true,
           });
-          if (recovery.adopted.length > 0) {
-            assertInterruptedInitialWorkerDeploymentEvidence({
-              lock: existingDeploymentLock,
-              evidence: recovery.adopted,
-            });
-            await saveLockFile(recovery.lock, initialLockPath);
-            const persisted = (await loadLockFileAuto(resolvedRootDir, env)).lock;
-            assertLegacyWorkerDeploymentAdoptionPersisted(persisted, env, recovery.adopted);
-            if (!persisted) throw new Error('worker_ownership_recovery_checkpoint_missing');
-            existingDeploymentLock = persisted;
-            addProgress(
-              `Recovered exact Worker ownership for ${recovery.adopted.map((item) => item.component).join(', ')}; all enabled Workers will be redeployed and verified.`
+          if (recovery.adopted.length === 0) return lock;
+          assertInterruptedInitialWorkerDeploymentEvidence({
+            lock:
+              lock.releaseUpdate && interruptedInitialReleaseStartedAt
+                ? {
+                    ...lock,
+                    releaseUpdate: {
+                      ...lock.releaseUpdate,
+                      startedAt: interruptedInitialReleaseStartedAt,
+                    },
+                  }
+                : lock,
+            evidence: recovery.adopted,
+          });
+          await saveLockFile(recovery.lock, lockPath);
+          const persisted = (await loadLockFileAuto(resolvedRootDir, env)).lock;
+          assertLegacyWorkerDeploymentAdoptionPersisted(persisted, env, recovery.adopted);
+          if (!persisted) throw new Error('worker_ownership_recovery_checkpoint_missing');
+          addProgress(
+            `Recovered exact Worker ownership for ${recovery.adopted.map((item) => item.component).join(', ')}; all enabled Workers will be redeployed and verified.`
+          );
+          return persisted;
+        };
+        if (recoverWorkerOwnership) {
+          if (!interruptedInitialRelease || !initialLockPath) {
+            return c.json(
+              { success: false, error: 'Worker ownership recovery is not available.' },
+              409
             );
           }
+          existingDeploymentLock = await recoverInterruptedInitialWorkerOwnership(
+            existingDeploymentLock,
+            initialLockPath
+          );
         }
         if (requestedComponents !== undefined) {
           if (
@@ -5737,21 +5762,51 @@ export function createApiRoutes(): Hono {
           if (!ownershipLockState.lock || !ownershipLockState.path) {
             throw new Error('worker_script_ownership_lock_unavailable');
           }
-          const ownership = await prepareManagedWorkerScriptOwnership({
-            lock: ownershipLockState.lock,
-            lockPath: ownershipLockState.path,
-            targets: [
-              ...enabledComponents.map((component) => ({
-                component,
-                workerName: getWorkerName(env, component),
-              })),
-              ...UI_WORKER_COMPONENTS.filter((component) =>
-                component === 'ar-login-ui'
-                  ? cfg?.components?.loginUi !== false
-                  : cfg?.components?.adminUi !== false
-              ).map((component) => ({ component, workerName: `${env}-${component}` })),
-            ],
-          });
+          const ownershipTargets = [
+            ...enabledComponents.map((component) => ({
+              component,
+              workerName: getWorkerName(env, component),
+            })),
+            ...UI_WORKER_COMPONENTS.filter((component) =>
+              component === 'ar-login-ui'
+                ? cfg?.components?.loginUi !== false
+                : cfg?.components?.adminUi !== false
+            ).map((component) => ({ component, workerName: `${env}-${component}` })),
+          ];
+          let ownershipLock = ownershipLockState.lock;
+          let ownership: Awaited<ReturnType<typeof prepareManagedWorkerScriptOwnership>>;
+          try {
+            ownership = await prepareManagedWorkerScriptOwnership({
+              lock: ownershipLock,
+              lockPath: ownershipLockState.path,
+              targets: ownershipTargets,
+            });
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            if (
+              !interruptedInitialRelease ||
+              !message.startsWith('worker_script_fresh_name_conflict:')
+            ) {
+              throw error;
+            }
+            // The recovery status the UI read earlier can miss a Worker that Cloudflare had not
+            // published yet: a fresh Worker takes seconds to appear in the inventory. By now it
+            // has. A live Worker of this interrupted release without an ownership record is ours
+            // to recover (under the same evidence checks as the explicit recovery), not a
+            // same-name race to refuse. Anything the adoption rejects fails as before.
+            addProgress(
+              `Found ${message.slice('worker_script_fresh_name_conflict:'.length)} from the interrupted initial deployment without an ownership record; recovering exact Worker ownership before deploying.`
+            );
+            ownershipLock = await recoverInterruptedInitialWorkerOwnership(
+              ownershipLock,
+              ownershipLockState.path
+            );
+            ownership = await prepareManagedWorkerScriptOwnership({
+              lock: ownershipLock,
+              lockPath: ownershipLockState.path,
+              targets: ownershipTargets,
+            });
+          }
           if (ownership.changed) {
             await saveLockFile(ownership.lock, ownershipLockState.path);
           }

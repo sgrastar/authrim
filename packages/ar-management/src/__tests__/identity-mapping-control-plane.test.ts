@@ -17,12 +17,31 @@ import {
   adminIdentityFieldMappingSetsListHandler,
   adminIdentityFieldMappingSetCreateHandler,
   adminIdentityMappingFederationMetadataDocumentsListHandler,
+  adminIdentityMappingFederationTrustSourceEntitiesHandler,
+  adminIdentityMappingFederationTrustSourceGetHandler,
+  adminIdentityMappingFederationTrustSourceRefreshHistoryHandler,
+  adminIdentityMappingFederationTrustSourceUpdateHandler,
   adminIdentityMappingReviewTasksListHandler,
   adminIdentityMappingSchemaReadinessHandler,
   IdentityMappingControlPlaneRepository as BaseRepository,
 } from '../identity-mapping-control-plane';
 
 const logCalls = vi.hoisted(() => ({ emit: vi.fn(), prepare: vi.fn(), publication: vi.fn() }));
+const federationSideEffects = vi.hoisted(() => ({
+  bump: vi.fn(async () => {}),
+  audit: vi.fn(async () => {}),
+}));
+vi.mock('@authrim/ar-lib-core', async (original) => ({
+  ...(await original<typeof import('@authrim/ar-lib-core')>()),
+  bumpAuthenticationMethodsCacheRevision: (...args: unknown[]) =>
+    federationSideEffects.bump(...(args as [])),
+  createAuditLogFromContext: (...args: unknown[]) => federationSideEffects.audit(...(args as [])),
+}));
+// The step-up gate has its own tests; here it lets the federation write through.
+vi.mock('../admin-step-up-gate', async (original) => ({
+  ...(await original<typeof import('../admin-step-up-gate')>()),
+  requireAdminStepUp: async () => null,
+}));
 vi.mock('@authrim/ar-lib-core/services/log-iceberg-emitter', () => ({
   emitLogIcebergRow: logCalls.emit,
   prepareLogIcebergRowWrite: async (...args: unknown[]) => {
@@ -5259,6 +5278,13 @@ describe('IdentityMappingControlPlaneRepository federation trust and key lifecyc
         protocolPayload: { policy: 'strict' },
         createdAt: 1000,
         updatedAt: 1100,
+        status: expect.objectContaining({
+          sourceState: 'unknown',
+          entityCount: 0,
+          excludedCount: 0,
+          idpSelection: { mode: 'authrim_search' },
+          lastVerification: null,
+        }),
       },
     ]);
   });
@@ -5942,5 +5968,800 @@ describe('identity mapping control plane Admin API handlers', () => {
       error_description: 'Idempotency-Key header is required',
     });
     expect(adapter.executes).toHaveLength(0);
+  });
+});
+
+describe('federation trust source exceptions, IdP selection and inventory reads', () => {
+  const baseInput = {
+    sourceType: 'saml_aggregate' as const,
+    sourceKey: 'research-federation',
+    displayName: 'Research Federation',
+    lifecycleState: 'active' as const,
+    anchors: [],
+    scopeBindings: [],
+  };
+  const basePayload = {
+    metadataUrl: 'https://metadata.example.test/federation.xml',
+    polling: { mode: 'automatic', intervalSeconds: 21_600 },
+    runtimeResolution: {
+      mode: 'automatic',
+      roles: ['saml_sp'],
+      spFieldMappingSetId: 'set-sp',
+    },
+  };
+
+  beforeEach(() => {
+    federationSideEffects.bump.mockClear();
+    federationSideEffects.audit.mockClear();
+  });
+
+  it('validates the exception list and the IdP selection', async () => {
+    const repository = new IdentityMappingControlPlaneRepository(createAdapter({}), () => 1000);
+    const attempt = (protocolPayload: Record<string, unknown>) =>
+      repository.createFederationTrustSource('tenant_a', { ...baseInput, protocolPayload });
+
+    await expect(
+      attempt({ ...basePayload, exceptions: { excludedEntityIds: 'https://sp.example.test' } })
+    ).rejects.toMatchObject({ status: 400 });
+    await expect(
+      attempt({ ...basePayload, exceptions: { excludedEntityIds: ['https://a', ' https://a '] } })
+    ).rejects.toMatchObject({ status: 400 });
+    await expect(
+      attempt({ ...basePayload, exceptions: { excludedEntityIds: ['https://a', '   '] } })
+    ).rejects.toMatchObject({ status: 400 });
+    await expect(
+      attempt({
+        ...basePayload,
+        exceptions: {
+          excludedEntityIds: Array.from({ length: 501 }, (_, i) => `https://sp${i}.example.test`),
+        },
+      })
+    ).rejects.toMatchObject({ status: 400 });
+    await expect(
+      attempt({ ...basePayload, idpSelection: { mode: 'external_ds' } })
+    ).rejects.toMatchObject({ status: 400 });
+    await expect(
+      attempt({
+        ...basePayload,
+        idpSelection: { mode: 'external_ds', discoveryServiceUrl: 'http://ds.example.test/WAYF' },
+      })
+    ).rejects.toMatchObject({ status: 400 });
+    await expect(
+      attempt({
+        ...basePayload,
+        idpSelection: { mode: 'authrim_search', discoveryServiceUrl: 'https://ds.example.test' },
+      })
+    ).rejects.toMatchObject({ status: 400 });
+    await expect(attempt({ ...basePayload, idpSelection: { mode: 'wayf' } })).rejects.toMatchObject(
+      { status: 400 }
+    );
+  });
+
+  it('stores exceptions trimmed and de-duplicated, outside the trust context', async () => {
+    const adapter = createAdapter({});
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+    const plain = await repository.createFederationTrustSource('tenant_a', {
+      ...baseInput,
+      protocolPayload: basePayload,
+    });
+    const withExceptions = await repository.createFederationTrustSource('tenant_a', {
+      ...baseInput,
+      protocolPayload: {
+        ...basePayload,
+        exceptions: { excludedEntityIds: [' https://b.example.test ', 'https://a.example.test'] },
+        idpSelection: { mode: 'external_ds', discoveryServiceUrl: 'https://ds.example.test/WAYF' },
+      },
+    });
+    // Same trust context: exceptions and IdP selection are not trust anchors.
+    expect(withExceptions.snapshotHash).toBe(plain.snapshotHash);
+    const inserted = adapter.executes.filter((item) =>
+      item.sql.includes('INSERT INTO federation_trust_sources')
+    );
+    const stored = JSON.parse(inserted[1]?.params[6] as string) as Record<string, unknown>;
+    expect(stored.exceptions).toEqual({
+      excludedEntityIds: ['https://b.example.test', 'https://a.example.test'],
+    });
+    expect(stored.idpSelection).toEqual({
+      mode: 'external_ds',
+      discoveryServiceUrl: 'https://ds.example.test/WAYF',
+    });
+  });
+
+  it('keeps the runtime directory and fetch history when only exceptions change', async () => {
+    const seed = new IdentityMappingControlPlaneRepository(createAdapter({}), () => 1000);
+    const created = await seed.createFederationTrustSource('tenant_a', {
+      ...baseInput,
+      protocolPayload: basePayload,
+    });
+    const storedPayload = {
+      ...basePayload,
+      polling: {
+        ...basePayload.polling,
+        lastSuccessAt: 900,
+        nextRefreshAt: 22_500,
+        sourceState: 'healthy',
+        acceptedValidUntil: '2099-01-01T00:00:00Z',
+      },
+      exceptions: { excludedEntityIds: ['https://old.example.test'] },
+    };
+    const adapter = createAdapter({
+      queryOneRows: [
+        {
+          updated_at: 999,
+          snapshot_hash: created.snapshotHash,
+          protocol_payload_json: JSON.stringify(storedPayload),
+        },
+      ],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    const result = await repository.updateFederationTrustSource('tenant_a', 'trust-source-1', {
+      ...baseInput,
+      expectedUpdatedAt: 999,
+      protocolPayload: {
+        ...basePayload,
+        exceptions: {
+          excludedEntityIds: ['https://old.example.test', 'https://new.example.test'],
+        },
+      },
+    });
+
+    expect(result.trustContextChanged).toBe(false);
+    expect(result.exceptionsChange).toEqual({ added: ['https://new.example.test'], removed: [] });
+    expect(result.idpSelectionChanged).toBe(false);
+    expect(
+      adapter.executes.some((item) =>
+        item.sql.includes('DELETE FROM federation_saml_runtime_entities')
+      )
+    ).toBe(false);
+    const update = adapter.executes.find((item) =>
+      item.sql.includes('UPDATE federation_trust_sources')
+    );
+    // active_metadata_document_id is kept (the CASE flag is 0) and the polling history survives.
+    expect(update?.params[5]).toBe(0);
+    const written = JSON.parse(update?.params[4] as string) as {
+      polling: Record<string, unknown>;
+    };
+    expect(written.polling).toMatchObject({
+      mode: 'automatic',
+      intervalSeconds: 21_600,
+      lastSuccessAt: 900,
+      sourceState: 'healthy',
+      acceptedValidUntil: '2099-01-01T00:00:00Z',
+    });
+  });
+
+  it('reschedules the next fetch when the polling interval or mode changes', async () => {
+    const seed = new IdentityMappingControlPlaneRepository(createAdapter({}), () => 1000);
+    const created = await seed.createFederationTrustSource('tenant_a', {
+      ...baseInput,
+      protocolPayload: basePayload,
+    });
+    const stored = {
+      ...basePayload,
+      polling: {
+        mode: 'automatic',
+        intervalSeconds: 604_800,
+        lastSuccessAt: 900,
+        nextRefreshAt: 604_800_000,
+        sourceState: 'healthy',
+      },
+    };
+    const write = async (polling: Record<string, unknown>) => {
+      const adapter = createAdapter({
+        queryOneRows: [
+          {
+            updated_at: 999,
+            snapshot_hash: created.snapshotHash,
+            protocol_payload_json: JSON.stringify(stored),
+          },
+        ],
+      });
+      await new IdentityMappingControlPlaneRepository(
+        adapter,
+        () => 1000
+      ).updateFederationTrustSource('tenant_a', 'trust-source-1', {
+        ...baseInput,
+        expectedUpdatedAt: 999,
+        protocolPayload: { ...basePayload, polling },
+      });
+      const update = adapter.executes.find((item) =>
+        item.sql.includes('UPDATE federation_trust_sources')
+      );
+      return (JSON.parse(update?.params[4] as string) as { polling: Record<string, unknown> })
+        .polling;
+    };
+
+    // Unchanged schedule: the next fetch time and history are kept.
+    expect(await write({ mode: 'automatic', intervalSeconds: 604_800 })).toMatchObject({
+      nextRefreshAt: 604_800_000,
+      lastSuccessAt: 900,
+    });
+    // A shorter interval must not wait out the old one; the history is still kept.
+    const shortened = await write({ mode: 'automatic', intervalSeconds: 900 });
+    expect(shortened.nextRefreshAt).toBeUndefined();
+    expect(shortened).toMatchObject({ intervalSeconds: 900, lastSuccessAt: 900 });
+    // Manual to automatic is a schedule change too.
+    expect(
+      (await write({ mode: 'manual', intervalSeconds: 604_800 })).nextRefreshAt
+    ).toBeUndefined();
+  });
+
+  it('still retires the runtime directory when the runtime policy itself changes', async () => {
+    const seed = new IdentityMappingControlPlaneRepository(createAdapter({}), () => 1000);
+    const created = await seed.createFederationTrustSource('tenant_a', {
+      ...baseInput,
+      protocolPayload: basePayload,
+    });
+    const adapter = createAdapter({
+      queryOneRows: [
+        {
+          updated_at: 999,
+          snapshot_hash: created.snapshotHash,
+          protocol_payload_json: JSON.stringify({
+            ...basePayload,
+            polling: { ...basePayload.polling, lastSuccessAt: 900 },
+          }),
+        },
+      ],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+    const result = await repository.updateFederationTrustSource('tenant_a', 'trust-source-1', {
+      ...baseInput,
+      expectedUpdatedAt: 999,
+      protocolPayload: {
+        ...basePayload,
+        runtimeResolution: { ...basePayload.runtimeResolution, priority: 5 },
+        exceptions: { excludedEntityIds: ['https://new.example.test'] },
+      },
+    });
+    expect(result.trustContextChanged).toBe(true);
+    expect(
+      adapter.executes.some((item) =>
+        item.sql.includes('DELETE FROM federation_saml_runtime_entities')
+      )
+    ).toBe(true);
+    const update = adapter.executes.find((item) =>
+      item.sql.includes('UPDATE federation_trust_sources')
+    );
+    const written = JSON.parse(update?.params[4] as string) as {
+      polling: Record<string, unknown>;
+    };
+    expect(written.polling.lastSuccessAt).toBeUndefined();
+    expect(written.polling.sourceState).toBe('stale');
+  });
+
+  const sourceRow = {
+    id: 'trust-source-1',
+    source_type: 'saml_aggregate',
+    source_key: 'research-federation',
+    display_name: 'Research Federation',
+    lifecycle_state: 'active',
+    protocol_payload_json: JSON.stringify({
+      ...basePayload,
+      polling: {
+        ...basePayload.polling,
+        lastSuccessAt: 900,
+        nextRefreshAt: 22_500,
+        sourceState: 'healthy',
+        acceptedValidUntil: '2099-01-01T00:00:00Z',
+      },
+      runtimeResolution: {
+        ...basePayload.runtimeResolution,
+        registrationAuthorities: ['https://ra.example.test'],
+      },
+      exceptions: { excludedEntityIds: ['https://excluded.example.test/sp'] },
+    }),
+    active_metadata_document_id: 'doc-1',
+    created_at: 1000,
+    updated_at: 1100,
+  };
+
+  it('reads one source with its status from the active document and last completed job', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [sourceRow],
+      queryRowSets: [
+        [sourceRow],
+        [{ trust_source_id: 'trust-source-1', total: 42 }],
+        [
+          {
+            id: 'job-2',
+            trust_source_id: 'trust-source-1',
+            status: 'completed',
+            refresh_mode: 'automatic',
+            cursor_json: JSON.stringify({ entityCount: 42, verificationStatus: 'verified' }),
+            created_at: 5000,
+            updated_at: 5100,
+          },
+        ],
+      ],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+    const read = await repository.getFederationTrustSource('tenant_a', 'trust-source-1');
+    expect(read.federationTrustSource).toMatchObject({ id: 'trust-source-1' });
+    expect(read.status).toEqual({
+      sourceState: 'healthy',
+      lastAttemptAt: null,
+      lastSuccessAt: 900,
+      nextRefreshAt: 22_500,
+      consecutiveFailures: 0,
+      lastErrorCode: null,
+      acceptedValidUntil: '2099-01-01T00:00:00Z',
+      activeMetadataDocumentId: 'doc-1',
+      entityCount: 42,
+      excludedCount: 1,
+      idpSelection: { mode: 'authrim_search' },
+      lastVerification: { status: 'verified', at: 5100 },
+    });
+
+    const missing = new IdentityMappingControlPlaneRepository(
+      createAdapter({ queryOneRows: [null] }),
+      () => 1000
+    );
+    await expect(
+      missing.getFederationTrustSource('tenant_b', 'trust-source-1')
+    ).rejects.toMatchObject({ status: 404 });
+  });
+
+  it('pages and searches the entities of the active document with exclusion and explicit flags', async () => {
+    const summaries = [
+      {
+        entity_id: 'https://a.example.test/sp',
+        entity_role: 'saml_sp',
+        display_name: 'Alpha SP',
+        summary_json: JSON.stringify({
+          registrationAuthority: 'https://ra.example.test',
+          logoUrl: 'https://a.example.test/logo.png',
+          validUntil: '2099-01-01T00:00:00Z',
+        }),
+      },
+      {
+        entity_id: 'https://excluded.example.test/sp',
+        entity_role: 'saml_sp',
+        display_name: 'Excluded SP',
+        summary_json: JSON.stringify({ registrationAuthority: 'https://ra.example.test' }),
+      },
+      {
+        entity_id: 'https://other.example.test/sp',
+        entity_role: 'ambiguous',
+        display_name: null,
+        summary_json: JSON.stringify({ registrationAuthority: 'https://elsewhere.example.test' }),
+      },
+    ];
+    const admin = createAdapter({
+      queryOneRows: [sourceRow, { total: 3 }],
+      queryRowSets: [summaries],
+    });
+    const core = createAdapter({
+      queryRows: [
+        {
+          id: 'provider-1',
+          provider_type: 'saml_sp',
+          config_json: JSON.stringify({ entityId: 'https://a.example.test/sp' }),
+        },
+      ],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(admin, () => 1000, core);
+
+    const page = await repository.listFederationTrustSourceEntities('tenant_a', 'trust-source-1', {
+      q: 'a%b_',
+      role: 'saml_sp',
+      limit: 2,
+    });
+    expect(page.total).toBe(3);
+    expect(page.explicitLookupAvailable).toBe(true);
+    expect(page.items).toEqual([
+      {
+        entityId: 'https://a.example.test/sp',
+        role: 'saml_sp',
+        displayName: 'Alpha SP',
+        logoUrl: 'https://a.example.test/logo.png',
+        registrationAuthority: 'https://ra.example.test',
+        entityCategories: [],
+        validUntil: '2099-01-01T00:00:00Z',
+        excluded: false,
+        policyAllowed: true,
+        explicitProviderId: 'provider-1',
+        explicitProviderType: 'saml_sp',
+      },
+      {
+        entityId: 'https://excluded.example.test/sp',
+        role: 'saml_sp',
+        displayName: 'Excluded SP',
+        logoUrl: null,
+        registrationAuthority: 'https://ra.example.test',
+        entityCategories: [],
+        validUntil: null,
+        excluded: true,
+        policyAllowed: true,
+        explicitProviderId: null,
+        explicitProviderType: null,
+      },
+    ]);
+    // A third row means another page; the cursor carries the last row's sort key and entityID.
+    expect(page.nextCursor).not.toBeNull();
+    const pageQuery = admin.queries.find((item) => item.sql.includes('ORDER BY COALESCE'));
+    expect(pageQuery?.sql).toContain("ESCAPE '\\'");
+    expect(pageQuery?.params[2]).toBe('%a\\%b\\_%');
+    expect(pageQuery?.params[4]).toBe('saml_sp');
+    expect(pageQuery?.params.at(-1)).toBe(3);
+
+    await expect(
+      repository.listFederationTrustSourceEntities('tenant_a', 'trust-source-1', { role: 'idp' })
+    ).rejects.toMatchObject({ status: 400 });
+    await expect(
+      repository.listFederationTrustSourceEntities('tenant_a', 'trust-source-1', {
+        cursor: 'not-base64!',
+      })
+    ).rejects.toMatchObject({ status: 400 });
+
+    const stateFilter = createAdapter({
+      queryOneRows: [sourceRow, { total: 1 }],
+      queryRowSets: [[]],
+    });
+    await new IdentityMappingControlPlaneRepository(
+      stateFilter,
+      () => 1000
+    ).listFederationTrustSourceEntities('tenant_a', 'trust-source-1', { state: 'excluded' });
+    const excludedQuery = stateFilter.queries.find((item) => item.sql.includes('json_each'));
+    expect(excludedQuery?.params).toContain(JSON.stringify(['https://excluded.example.test/sp']));
+
+    await expect(
+      new IdentityMappingControlPlaneRepository(
+        createAdapter({ queryOneRows: [null] }),
+        () => 1000
+      ).listFederationTrustSourceEntities('tenant_b', 'trust-source-1', {})
+    ).rejects.toMatchObject({ status: 404 });
+  });
+
+  it('keeps IdP and SP connections apart when they share an entityID', async () => {
+    const shared = 'https://both.example.test/entity';
+    const summaries = [
+      { entity_id: shared, entity_role: 'saml_sp', display_name: 'Both (SP)', summary_json: '{}' },
+      {
+        entity_id: shared,
+        entity_role: 'saml_idp',
+        display_name: 'Both (IdP)',
+        summary_json: '{}',
+      },
+      {
+        entity_id: 'https://idp-only.example.test',
+        entity_role: 'saml_sp',
+        display_name: 'X',
+        summary_json: '{}',
+      },
+    ];
+    const core = createAdapter({
+      queryRows: [
+        {
+          id: 'idp-1',
+          provider_type: 'saml_idp',
+          config_json: JSON.stringify({ entityId: shared }),
+        },
+        {
+          id: 'idp-2',
+          provider_type: 'saml_idp',
+          config_json: JSON.stringify({ entityId: 'https://idp-only.example.test' }),
+        },
+      ],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(
+      createAdapter({ queryOneRows: [sourceRow, { total: 3 }], queryRowSets: [summaries] }),
+      () => 1000,
+      core
+    );
+    const page = await repository.listFederationTrustSourceEntities(
+      'tenant_a',
+      'trust-source-1',
+      {}
+    );
+    const bySignature = page.items.map((item) => [item.displayName, item.explicitProviderId]);
+    // The SP row has no SP connection (only an IdP one exists), the IdP row has its own.
+    expect(bySignature).toEqual([
+      ['Both (SP)', null],
+      ['Both (IdP)', 'idp-1'],
+      ['X', null],
+    ]);
+
+    // state=explicit is evaluated per role in SQL: one json_each list per role.
+    const stateAdapter = createAdapter({
+      queryOneRows: [sourceRow, { total: 0 }],
+      queryRowSets: [[]],
+    });
+    await new IdentityMappingControlPlaneRepository(
+      stateAdapter,
+      () => 1000,
+      core
+    ).listFederationTrustSourceEntities('tenant_a', 'trust-source-1', { state: 'explicit' });
+    const explicitQuery = stateAdapter.queries.find((item) => item.sql.includes('json_each'));
+    expect(explicitQuery?.params).toEqual(
+      expect.arrayContaining([JSON.stringify([shared, 'https://idp-only.example.test']), '[]'])
+    );
+  });
+
+  it('applies the role filter to explicit connections of an entity with both roles', async () => {
+    const shared = 'https://both.example.test/entity';
+    const ambiguous = [
+      { entity_id: shared, entity_role: 'ambiguous', display_name: 'Both', summary_json: '{}' },
+    ];
+    const connections = [
+      { id: 'idp-1', provider_type: 'saml_idp', config_json: JSON.stringify({ entityId: shared }) },
+      { id: 'sp-1', provider_type: 'saml_sp', config_json: JSON.stringify({ entityId: shared }) },
+    ];
+    const read = async (role: string | undefined, providers = connections) => {
+      const admin = createAdapter({
+        queryOneRows: [sourceRow, { total: 1 }],
+        queryRowSets: [ambiguous],
+      });
+      const page = await new IdentityMappingControlPlaneRepository(
+        admin,
+        () => 1000,
+        createAdapter({ queryRows: providers })
+      ).listFederationTrustSourceEntities('tenant_a', 'trust-source-1', {
+        role,
+        state: 'explicit',
+      });
+      const lists = admin.queries
+        .find((item) => item.sql.includes('json_each'))
+        ?.params.filter((param) => typeof param === 'string' && param.startsWith('['));
+      return { id: page.items[0]?.explicitProviderId, lists };
+    };
+    const both = JSON.stringify([shared]);
+    // No filter: the IdP first. With a role filter: that role's connection, and only its ids.
+    expect(await read(undefined)).toEqual({ id: 'idp-1', lists: [both, both] });
+    expect(await read('saml_sp')).toEqual({ id: 'sp-1', lists: ['[]', both] });
+    expect(await read('saml_idp')).toEqual({ id: 'idp-1', lists: [both, '[]'] });
+    // An IdP-only tenant: asking for the SP side finds no explicit connection.
+    expect(await read('saml_sp', [connections[0]])).toEqual({ id: null, lists: ['[]', '[]'] });
+  });
+
+  it('keeps the last verification result across a 304 and reports it as unchanged', async () => {
+    // The status query picks the latest completed job that recorded a verification.
+    const adapter = createAdapter({
+      queryOneRows: [sourceRow],
+      queryRowSets: [[sourceRow], [], []],
+    });
+    await new IdentityMappingControlPlaneRepository(adapter, () => 1000).getFederationTrustSource(
+      'tenant_a',
+      'trust-source-1'
+    );
+    const lastJobQuery = adapter.queries.find((item) => item.sql.includes('$.verificationStatus'));
+    expect(lastJobQuery?.sql).toContain(
+      "json_extract(k.cursor_json, '$.verificationStatus') IS NOT NULL"
+    );
+
+    // A not-modified job shows as completed with changed=false.
+    const history = new IdentityMappingControlPlaneRepository(
+      createAdapter({
+        queryOneRows: [{ id: 'trust-source-1' }],
+        queryRows: [
+          {
+            id: 'job-2',
+            status: 'completed',
+            refresh_mode: 'automatic',
+            cursor_json: JSON.stringify({ notModified: true }),
+            created_at: 6000,
+            updated_at: 6001,
+          },
+        ],
+      }),
+      () => 1000
+    );
+    const [item] = await history.listFederationRefreshHistory('tenant_a', 'trust-source-1');
+    expect(item).toMatchObject({ status: 'completed', changed: false, entityCount: null });
+  });
+
+  it('lists refresh history newest first with the entity-count change per completed job', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [{ id: 'trust-source-1' }],
+      queryRows: [
+        {
+          id: 'job-3',
+          status: 'failed',
+          refresh_mode: 'manual',
+          cursor_json: JSON.stringify({ errorCode: 'metadata_fetch_failed' }),
+          created_at: 7000,
+          updated_at: 7001,
+        },
+        {
+          id: 'job-2',
+          status: 'completed',
+          refresh_mode: 'automatic',
+          cursor_json: JSON.stringify({
+            documentId: 'doc-2',
+            changed: true,
+            entityCount: 45,
+            verificationStatus: 'verified',
+          }),
+          created_at: 6000,
+          updated_at: 6050,
+        },
+        {
+          id: 'job-1',
+          status: 'completed',
+          refresh_mode: 'automatic',
+          cursor_json: JSON.stringify({ documentId: 'doc-1', changed: true, entityCount: 42 }),
+          created_at: 5000,
+          updated_at: 5050,
+        },
+      ],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+    await expect(
+      repository.listFederationRefreshHistory('tenant_a', 'trust-source-1', 10)
+    ).resolves.toEqual([
+      {
+        jobId: 'job-3',
+        trigger: 'manual',
+        status: 'failed',
+        startedAt: 7000,
+        finishedAt: 7001,
+        changed: null,
+        entityCount: null,
+        entityCountDelta: null,
+        verificationStatus: null,
+        errorCode: 'metadata_fetch_failed',
+        documentId: null,
+      },
+      {
+        jobId: 'job-2',
+        trigger: 'automatic',
+        status: 'completed',
+        startedAt: 6000,
+        finishedAt: 6050,
+        changed: true,
+        entityCount: 45,
+        entityCountDelta: 3,
+        verificationStatus: 'verified',
+        errorCode: null,
+        documentId: 'doc-2',
+      },
+      {
+        jobId: 'job-1',
+        trigger: 'automatic',
+        status: 'completed',
+        startedAt: 5000,
+        finishedAt: 5050,
+        changed: true,
+        entityCount: 42,
+        entityCountDelta: null,
+        verificationStatus: null,
+        errorCode: null,
+        documentId: 'doc-1',
+      },
+    ]);
+    expect(adapter.queries.at(-1)?.params).toEqual(['tenant_a', 'trust-source-1', 10]);
+  });
+
+  it('serves the reads through the Admin API and bumps the login cache and audits on update', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [sourceRow, sourceRow, { total: 0 }, { id: 'trust-source-1' }],
+      queryRowSets: [[sourceRow], [], [], [], []],
+    });
+    const app = createIdentityMappingApiApp(adapter);
+    app.get(
+      '/api/admin/field-mapping/federation-trust-sources/:trustSourceId',
+      adminIdentityMappingFederationTrustSourceGetHandler
+    );
+    app.get(
+      '/api/admin/field-mapping/federation-trust-sources/:trustSourceId/entities',
+      adminIdentityMappingFederationTrustSourceEntitiesHandler
+    );
+    app.get(
+      '/api/admin/field-mapping/federation-trust-sources/:trustSourceId/refresh-history',
+      adminIdentityMappingFederationTrustSourceRefreshHistoryHandler
+    );
+    const env = { DB_ADMIN: adapter } as unknown as Env;
+    const headers = { 'X-Tenant-Id': 'tenant_a' };
+
+    const single = await app.request(
+      '/api/admin/field-mapping/federation-trust-sources/trust-source-1',
+      { headers },
+      env
+    );
+    expect(single.status).toBe(200);
+    await expect(single.json()).resolves.toMatchObject({
+      federationTrustSource: { id: 'trust-source-1' },
+      status: { excludedCount: 1 },
+    });
+
+    const entities = await app.request(
+      '/api/admin/field-mapping/federation-trust-sources/trust-source-1/entities?q=alpha&limit=5',
+      { headers },
+      env
+    );
+    expect(entities.status).toBe(200);
+    await expect(entities.json()).resolves.toEqual({
+      items: [],
+      nextCursor: null,
+      total: 0,
+      explicitLookupAvailable: true,
+    });
+
+    const history = await app.request(
+      '/api/admin/field-mapping/federation-trust-sources/trust-source-1/refresh-history?limit=3',
+      { headers },
+      env
+    );
+    expect(history.status).toBe(200);
+    await expect(history.json()).resolves.toEqual({ refreshHistory: [] });
+
+    // Update through the API: the cache bump and the exceptions audit entry follow the write.
+    const seed = new IdentityMappingControlPlaneRepository(createAdapter({}), () => 1000);
+    const created = await seed.createFederationTrustSource('tenant_a', {
+      ...baseInput,
+      protocolPayload: basePayload,
+    });
+    const writeAdapter = createAdapter({
+      // The idempotency lookup first (no earlier request), then the stored source.
+      queryOneRows: [
+        null,
+        {
+          updated_at: 999,
+          snapshot_hash: created.snapshotHash,
+          protocol_payload_json: JSON.stringify(basePayload),
+        },
+      ],
+    });
+    const writeApp = createIdentityMappingApiApp(writeAdapter);
+    writeApp.use('*', async (c, next) => {
+      c.set('adminAuth' as never, { userId: 'admin-1', permissions: ['admin:*'] } as never);
+      await next();
+    });
+    writeApp.put(
+      '/api/admin/field-mapping/federation-trust-sources/:trustSourceId',
+      adminIdentityMappingFederationTrustSourceUpdateHandler
+    );
+    const update = await writeApp.request(
+      '/api/admin/field-mapping/federation-trust-sources/trust-source-1',
+      {
+        method: 'PUT',
+        headers: {
+          ...headers,
+          'Content-Type': 'application/json',
+          'Idempotency-Key': 'federation-update-1',
+        },
+        body: JSON.stringify({
+          ...baseInput,
+          expectedUpdatedAt: 999,
+          protocolPayload: {
+            ...basePayload,
+            exceptions: { excludedEntityIds: ['https://new.example.test'] },
+            idpSelection: {
+              mode: 'external_ds',
+              discoveryServiceUrl: 'https://ds.example.test/WAYF',
+            },
+          },
+        }),
+      },
+      { DB_ADMIN: writeAdapter }
+    );
+    expect(update.status).toBe(200);
+    const updated = (await update.json()) as { result: Record<string, unknown> };
+    expect(Object.keys(updated.result).sort()).toEqual([
+      'id',
+      'lifecycleState',
+      'snapshotHash',
+      'sourceKey',
+      'sourceType',
+      'tenantId',
+      'updatedAt',
+    ]);
+    expect(federationSideEffects.bump).toHaveBeenCalledWith(expect.anything(), 'tenant_a');
+    expect(federationSideEffects.audit).toHaveBeenCalledWith(
+      expect.anything(),
+      'saml.federation.exceptions_updated',
+      'federation_trust_source',
+      'trust-source-1',
+      { added_entity_ids: ['https://new.example.test'], removed_entity_ids: [] },
+      'warning'
+    );
+    expect(federationSideEffects.audit).toHaveBeenCalledWith(
+      expect.anything(),
+      'saml.federation.idp_selection_updated',
+      'federation_trust_source',
+      'trust-source-1',
+      {}
+    );
   });
 });

@@ -12115,6 +12115,37 @@ paths:
         - adminBearer: []
         - adminSessionCookie: []
   '/api/admin/field-mapping/federation-trust-sources/{trustSourceId}':
+    get:
+      tags:
+        - Field Mapping
+      operationId: getApiAdminFieldMappingFederationTrustSourcesByTrustSourceId
+      summary: Read one federation trust source.
+      description: >-
+        One federation trust source with its status: polling state, entity count of the active
+        document, exception count, IdP selection and the result of the last completed refresh.
+      responses:
+        '200':
+          $ref: '#/components/responses/FieldMappingFederationTrustSourceDetail'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      parameters:
+        - name: trustSourceId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Federation trust source identifier.
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
     delete:
       tags:
         - Field Mapping
@@ -12224,6 +12255,120 @@ paths:
           schema:
             type: string
           description: Federation trust source identifier.
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/field-mapping/federation-trust-sources/{trustSourceId}/entities':
+    get:
+      tags:
+        - Field Mapping
+      operationId: getApiAdminFieldMappingFederationTrustSourcesByTrustSourceIdEntities
+      summary: Search the entities of a federation trust source.
+      description: >-
+        The entities of the source's active (verified) aggregate document, one page at a time,
+        with their exception state and whether this tenant has an explicit connection for the
+        same entityID. Search matches the display name and entityID. Ordered by display name
+        then entityID; follow nextCursor for the next page.
+      responses:
+        '200':
+          $ref: '#/components/responses/FederationTrustSourceEntities'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      parameters:
+        - name: trustSourceId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Federation trust source identifier.
+        - name: q
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 128
+          description: Substring of the display name or entityID.
+        - name: role
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - saml_idp
+              - saml_sp
+              - ambiguous
+          description: saml_idp and saml_sp include entities that carry both roles.
+        - name: state
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - participating
+              - excluded
+              - explicit
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+          description: nextCursor of the previous page.
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/field-mapping/federation-trust-sources/{trustSourceId}/refresh-history':
+    get:
+      tags:
+        - Field Mapping
+      operationId: getApiAdminFieldMappingFederationTrustSourcesByTrustSourceIdRefreshHistory
+      summary: List recent refreshes of a federation trust source.
+      description: >-
+        The most recent refresh jobs of the source, newest first, each with its outcome, entity
+        count and the change in entity count against the previous completed job.
+      responses:
+        '200':
+          $ref: '#/components/responses/FederationRefreshHistory'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      parameters:
+        - name: trustSourceId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Federation trust source identifier.
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -46337,6 +46482,24 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/FieldMappingFederationMetadataDocumentsResponse'
+    FieldMappingFederationTrustSourceDetail:
+      description: One federation trust source with its status.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/FieldMappingFederationTrustSourceDetailResponse'
+    FederationTrustSourceEntities:
+      description: One page of the entities of a federation source's active document.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/FederationTrustSourceEntitiesResponse'
+    FederationRefreshHistory:
+      description: Recent refresh jobs of a federation source, newest first.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/FederationRefreshHistoryResponse'
     FieldMappingFederationTrustSources:
       description: Federation trust source list response.
       content:
@@ -69027,6 +69190,8 @@ components:
           type: integer
         snapshotHash:
           type: string
+        status:
+          $ref: '#/components/schemas/FederationTrustSourceStatus'
     FieldMappingFederationTrustSourcesResponse:
       type: object
       additionalProperties: false
@@ -69178,11 +69343,314 @@ components:
           $ref: '#/components/schemas/SAMLFederationMetadataPollingPolicy'
         runtimeResolution:
           $ref: '#/components/schemas/SAMLFederationRuntimeResolutionPolicy'
+        exceptions:
+          $ref: '#/components/schemas/SAMLFederationExceptions'
+        idpSelection:
+          $ref: '#/components/schemas/SAMLFederationIdPSelection'
         certificates:
           type: array
           items:
             type: object
             additionalProperties: true
+    SAMLFederationExceptions:
+      type: object
+      additionalProperties: false
+      required:
+        - excludedEntityIds
+      description: >-
+        Entities of the source that never take part, whatever the runtime policy allows. Kept
+        beside runtimeResolution (not inside it) so that editing an exception does not change
+        the trust context and does not retire the verified runtime directory. Replaced whole on
+        every write.
+      properties:
+        excludedEntityIds:
+          type: array
+          maxItems: 500
+          uniqueItems: true
+          items:
+            type: string
+            maxLength: 1024
+    SAMLFederationIdPSelection:
+      type: object
+      additionalProperties: false
+      required:
+        - mode
+      description: >-
+        How a user picks one of the source's IdPs when this tenant acts as the SAML SP.
+        authrim_search is the login UI's own search over the verified inventory; external_ds
+        sends the user to a SAML IdP Discovery Service.
+      properties:
+        mode:
+          type: string
+          enum:
+            - authrim_search
+            - external_ds
+        discoveryServiceUrl:
+          type: string
+          format: uri
+          description: Required for external_ds (external HTTPS); not allowed otherwise.
+    FederationTrustSourceStatus:
+      type: object
+      additionalProperties: false
+      description: What the console shows at a glance for a federation source.
+      required:
+        - sourceState
+        - lastAttemptAt
+        - lastSuccessAt
+        - nextRefreshAt
+        - consecutiveFailures
+        - lastErrorCode
+        - acceptedValidUntil
+        - activeMetadataDocumentId
+        - entityCount
+        - excludedCount
+        - idpSelection
+        - lastVerification
+      properties:
+        sourceState:
+          type: string
+          enum:
+            - healthy
+            - stale
+            - error
+            - expired
+            - missing
+            - identity_change_pending
+            - unknown
+        lastAttemptAt:
+          type:
+            - integer
+            - 'null'
+        lastSuccessAt:
+          type:
+            - integer
+            - 'null'
+        nextRefreshAt:
+          type:
+            - integer
+            - 'null'
+        consecutiveFailures:
+          type: integer
+          minimum: 0
+        lastErrorCode:
+          type:
+            - string
+            - 'null'
+        acceptedValidUntil:
+          type:
+            - string
+            - 'null'
+          description: validUntil of the last accepted aggregate (ISO 8601).
+        activeMetadataDocumentId:
+          type:
+            - string
+            - 'null'
+        entityCount:
+          type: integer
+          minimum: 0
+          description: Entities of the active (verified) document.
+        excludedCount:
+          type: integer
+          minimum: 0
+        idpSelection:
+          $ref: '#/components/schemas/SAMLFederationIdPSelection'
+        lastVerification:
+          anyOf:
+            - type: object
+              additionalProperties: false
+              required:
+                - status
+                - at
+              properties:
+                status:
+                  type: string
+                  enum:
+                    - verified
+                    - unverified
+                    - skipped
+                    - failed
+                at:
+                  type:
+                    - integer
+                    - 'null'
+            - type: 'null'
+    FederationTrustSourceEntity:
+      type: object
+      additionalProperties: false
+      required:
+        - entityId
+        - role
+        - displayName
+        - logoUrl
+        - registrationAuthority
+        - entityCategories
+        - validUntil
+        - excluded
+        - policyAllowed
+        - explicitProviderId
+        - explicitProviderType
+      properties:
+        entityId:
+          type: string
+        role:
+          type: string
+          enum:
+            - saml_idp
+            - saml_sp
+            - ambiguous
+        displayName:
+          type:
+            - string
+            - 'null'
+        logoUrl:
+          type:
+            - string
+            - 'null'
+        registrationAuthority:
+          type:
+            - string
+            - 'null'
+        entityCategories:
+          type: array
+          items:
+            type: string
+        validUntil:
+          type:
+            - string
+            - 'null'
+        excluded:
+          type: boolean
+          description: On the source's exception list.
+        policyAllowed:
+          type: boolean
+          description: >-
+            Allowed by the registration-authority and entity-category rules, the exception list
+            aside.
+        explicitProviderId:
+          type:
+            - string
+            - 'null'
+          description: An explicit connection of this tenant with the same entityID; it always wins.
+        explicitProviderType:
+          type:
+            - string
+            - 'null'
+          enum:
+            - saml_idp
+            - saml_sp
+            - null
+    FederationTrustSourceEntitiesResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - items
+        - nextCursor
+        - total
+        - explicitLookupAvailable
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/FederationTrustSourceEntity'
+        nextCursor:
+          type:
+            - string
+            - 'null'
+          description: Opaque; pass back as the cursor query parameter for the next page.
+        total:
+          type: integer
+          minimum: 0
+          description: Rows matching the filters (not only this page).
+        explicitLookupAvailable:
+          type: boolean
+          description: False when explicit connections could not be looked up in this request.
+    FederationRefreshHistoryItem:
+      type: object
+      additionalProperties: false
+      required:
+        - jobId
+        - trigger
+        - status
+        - startedAt
+        - finishedAt
+        - changed
+        - entityCount
+        - entityCountDelta
+        - verificationStatus
+        - errorCode
+        - documentId
+      properties:
+        jobId:
+          type: string
+        trigger:
+          type: string
+          enum:
+            - automatic
+            - manual
+        status:
+          type: string
+          enum:
+            - completed
+            - failed
+            - running
+        startedAt:
+          type: integer
+        finishedAt:
+          type:
+            - integer
+            - 'null'
+        changed:
+          type:
+            - boolean
+            - 'null'
+        entityCount:
+          type:
+            - integer
+            - 'null'
+        entityCountDelta:
+          type:
+            - integer
+            - 'null'
+          description: Against the previous completed job in the retained history; null for the oldest.
+        verificationStatus:
+          type:
+            - string
+            - 'null'
+          enum:
+            - verified
+            - unverified
+            - skipped
+            - failed
+            - null
+        errorCode:
+          type:
+            - string
+            - 'null'
+        documentId:
+          type:
+            - string
+            - 'null'
+    FederationRefreshHistoryResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - refreshHistory
+      properties:
+        refreshHistory:
+          type: array
+          items:
+            $ref: '#/components/schemas/FederationRefreshHistoryItem'
+    FieldMappingFederationTrustSourceDetailResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - federationTrustSource
+        - status
+      properties:
+        federationTrustSource:
+          $ref: '#/components/schemas/FieldMappingFederationTrustSource'
+        status:
+          $ref: '#/components/schemas/FederationTrustSourceStatus'
     SAMLFederationRuntimeResolutionPolicy:
       type: object
       additionalProperties: false
