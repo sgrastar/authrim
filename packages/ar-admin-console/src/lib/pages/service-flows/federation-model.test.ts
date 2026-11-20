@@ -135,6 +135,7 @@ describe('saving over a source that was read', () => {
 		const stored = {
 			...healthy,
 			updatedAt: 42,
+			registrationAuthorities: ['https://ra.example/'],
 			payload: {
 				policy: 'warn',
 				polling: { mode: 'manual', intervalSeconds: 86400 },
@@ -189,7 +190,7 @@ describe('where a federation stands', () => {
 	it('is failing when the last fetch failed but the metadata is still good', () => {
 		const failing = {
 			...healthy,
-			status: { ...healthy.status!, consecutiveFailures: 2, sourceState: 'degraded' as const }
+			status: { ...healthy.status!, consecutiveFailures: 2, sourceState: 'error' as const }
 		};
 		expect(federationStatus(failing, now)).toBe('refreshFailed');
 		const unverified = {
@@ -289,5 +290,21 @@ describe('what is kept and refused when saving', () => {
 			'http://ds.example'
 		])
 			expect(fields({ ...idp, discoveryServiceUrl: url })).toContain('discoveryServiceUrl');
+	});
+
+	it('takes registration authorities as identifiers, not addresses', () => {
+		const form = valid({
+			registrationAuthorities: 'urn:mace:example\nhttp://ra.example/\n\nurn:mace:example'
+		});
+		expect(fields(form)).toEqual([]);
+		expect(federationPayload(form).runtimeResolution).toMatchObject({
+			registrationAuthorities: ['urn:mace:example', 'http://ra.example/']
+		});
+	});
+
+	it('does not turn an inventory-only source back to automatic', () => {
+		const payload = federationPayload(valid(), { runtimeResolution: { mode: 'inventory_only' } });
+		expect(payload.runtimeResolution).toMatchObject({ mode: 'inventory_only' });
+		expect(federationPayload(valid()).runtimeResolution).toMatchObject({ mode: 'automatic' });
 	});
 });

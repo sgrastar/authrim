@@ -140,7 +140,10 @@ export async function answerFederationMock(
 				return {
 					status: 200,
 					body: {
-						items: await client.refreshHistory(id, Number.isFinite(limit) ? limit : undefined)
+						refreshHistory: await client.refreshHistory(
+							id,
+							Number.isFinite(limit) ? limit : undefined
+						)
 					}
 				};
 			}
@@ -159,8 +162,7 @@ export async function answerFederationMock(
 					...(typeof body.fieldMappingSetId === 'string'
 						? { fieldMappingSetId: body.fieldMappingSetId }
 						: {}),
-					...(typeof body.name === 'string' ? { name: body.name } : {}),
-					enabled: body.enabled === true
+					...(typeof body.name === 'string' ? { name: body.name } : {})
 				};
 				const result = await client.materialize(id, input);
 				onMaterialized?.({
@@ -176,7 +178,9 @@ export async function answerFederationMock(
 						providerType: wireType(result.providerType),
 						entityId: input.entityId,
 						name: input.name ?? input.entityId,
-						enabled: input.enabled === true
+						// Always a draft: the person enables it on the connection's own page.
+						enabled: false,
+						sourceId: id
 					}
 				};
 			}
