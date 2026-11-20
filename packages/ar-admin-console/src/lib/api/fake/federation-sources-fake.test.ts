@@ -25,7 +25,10 @@ describe('the fake federation sources', () => {
 		]);
 		const idps = await fake.entities(ID, { role: 'saml_idp', limit: 500 });
 		expect(idps.items).toHaveLength(200);
-		expect(idps.items.every((entity) => entity.role === 'saml_idp')).toBe(true);
+		// An entity that is both is listed under either role, as the server does.
+		expect(
+			idps.items.every((entity) => entity.role === 'saml_idp' || entity.role === 'ambiguous')
+		).toBe(true);
 		expect((await fake.entities(ID, { state: 'excluded' })).total).toBe(3);
 		expect((await fake.entities(ID, { state: 'explicit' })).total).toBe(1);
 		expect((await fake.entities(ID, { state: 'participating', limit: 1 })).total).toBe(1196);
