@@ -102,7 +102,7 @@
       "count": 7
     },
     "@typescript-eslint/no-unsafe-assignment": {
-      "count": 28
+      "count": 27
     },
     "@typescript-eslint/no-unsafe-call": {
       "count": 2
@@ -192,7 +192,7 @@
       "count": 4
     },
     "@typescript-eslint/no-unsafe-assignment": {
-      "count": 85
+      "count": 83
     },
     "@typescript-eslint/no-unsafe-call": {
       "count": 9
@@ -410,7 +410,7 @@
   },
   "src/__tests__/login-runtime-flow.test.ts": {
     "@typescript-eslint/no-unsafe-assignment": {
-      "count": 7
+      "count": 6
     },
     "@typescript-eslint/no-unsafe-member-access": {
       "count": 2
@@ -472,25 +472,22 @@
   },
   "src/__tests__/passkey.test.ts": {
     "@typescript-eslint/no-explicit-any": {
-      "count": 4
+      "count": 3
     },
     "@typescript-eslint/no-unnecessary-type-assertion": {
       "count": 13
     },
     "@typescript-eslint/no-unsafe-argument": {
-      "count": 59
+      "count": 5
     },
     "@typescript-eslint/no-unsafe-assignment": {
-      "count": 88
-    },
-    "@typescript-eslint/no-unsafe-call": {
-      "count": 2
+      "count": 38
     },
     "@typescript-eslint/no-unsafe-member-access": {
-      "count": 36
+      "count": 20
     },
     "@typescript-eslint/no-unsafe-return": {
-      "count": 4
+      "count": 3
     }
   },
   "src/__tests__/registration-field-utils.test.ts": {
@@ -517,7 +514,7 @@
   },
   "src/__tests__/routed-account-storage-real-sql.test.ts": {
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 6
+      "count": 5
     },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 2
@@ -622,11 +619,6 @@
     },
     "@typescript-eslint/no-unsafe-member-access": {
       "count": 9
-    }
-  },
-  "src/authentication-method-settings.ts": {
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 1
     }
   },
   "src/authorize.ts": {
@@ -890,38 +882,6 @@
       "count": 1
     }
   },
-  "src/flow-engine/flows/locale-routing-flow.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 21
-    },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 21
-    }
-  },
-  "src/flow-engine/flows/passkey-fallback-flow.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 19
-    },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 19
-    }
-  },
-  "src/flow-engine/flows/risk-based-flow.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 15
-    },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 15
-    }
-  },
-  "src/flow-engine/flows/social-login-flow.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 12
-    },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 12
-    }
-  },
   "src/flow-engine/types.ts": {
     "@typescript-eslint/no-redundant-type-constituents": {
       "count": 2
@@ -977,7 +937,7 @@
       "count": 1
     },
     "@typescript-eslint/no-unsafe-assignment": {
-      "count": 3
+      "count": 2
     },
     "@typescript-eslint/no-unsafe-call": {
       "count": 2
@@ -1059,12 +1019,12 @@
       "count": 2
     },
     "@typescript-eslint/no-unused-vars": {
-      "count": 3
+      "count": 2
     }
   },
   "src/setup.ts": {
     "@typescript-eslint/no-unused-vars": {
-      "count": 5
+      "count": 4
     },
     "no-control-regex": {
       "count": 1
@@ -1078,7 +1038,7 @@
       "count": 1
     },
     "@typescript-eslint/no-unsafe-assignment": {
-      "count": 6
+      "count": 5
     },
     "@typescript-eslint/no-unsafe-call": {
       "count": 7
