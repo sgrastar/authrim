@@ -195,7 +195,9 @@ function readStatus(value: unknown): FederationStatus | null {
 	const verification = object(row.lastVerification);
 	return {
 		sourceState:
-			(['healthy', 'degraded', 'expired'] as const).find((s) => s === row.sourceState) ?? 'unknown',
+			(['healthy', 'degraded', 'expired'] as const).find((s) => s === row.sourceState) ??
+			// `stale` is a source not fetched since it was saved, not a failure: only `error` is one.
+			(row.sourceState === 'error' ? 'degraded' : 'unknown'),
 		lastAttemptAt: num(row.lastAttemptAt),
 		lastSuccessAt: num(row.lastSuccessAt),
 		nextRefreshAt: num(row.nextRefreshAt),
@@ -223,7 +225,12 @@ function statusFromPolling(polling: Json, payload: Json): FederationStatus | nul
 	if (Object.keys(polling).length === 0) return null;
 	const state = polling.sourceState;
 	return {
-		sourceState: state === 'healthy' ? 'healthy' : state === 'error' ? 'degraded' : 'unknown',
+		sourceState:
+			state === 'healthy'
+				? 'healthy'
+				: state === 'error' || state === 'stale'
+					? 'degraded'
+					: 'unknown',
 		lastAttemptAt: num(polling.lastAttemptAt),
 		lastSuccessAt: num(polling.lastSuccessAt),
 		nextRefreshAt: num(polling.nextRefreshAt),
@@ -255,12 +262,14 @@ function readSource(value: unknown, status?: unknown): FederationSource {
 		description: str(payload.description),
 		metadataUrl: str(payload.metadataUrl) || patterns.find((p) => !p.includes('*')) || '',
 		certificates: Array.isArray(payload.certificates)
-			? payload.certificates.flatMap((entry) => {
+			? payload.certificates.flatMap((entry, index) => {
 					const cert = object(entry);
-					return typeof cert.id === 'string' && typeof cert.certificate === 'string'
+					// Every stored certificate is kept (a save writes the list back whole): one with
+					// no `id` is keyed by its fingerprint.
+					return typeof cert.certificate === 'string'
 						? [
 								{
-									id: cert.id,
+									id: str(cert.id) || str(cert.fingerprintSha256) || `certificate-${index}`,
 									...(typeof cert.name === 'string' ? { name: cert.name } : {}),
 									certificate: cert.certificate,
 									fingerprintSha256: str(cert.fingerprintSha256),

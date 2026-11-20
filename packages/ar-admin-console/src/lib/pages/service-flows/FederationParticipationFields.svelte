@@ -7,6 +7,7 @@
 	import ToggleRow from '#lib/ui/patterns/ToggleRow.svelte';
 	import {
 		FEDERATION_ATTRIBUTE_PRESETS,
+		isHttps,
 		type FederationForm,
 		type FederationMappingOption
 	} from './federation-model';
@@ -106,7 +107,7 @@
 			label={t('sf.fed.idpSelection.dsUrl')}
 			placeholder="https://ds.federation.example/discovery"
 			required
-			error={form.discoveryServiceUrl && !/^https:\/\/[^/\s]+/.test(form.discoveryServiceUrl.trim())
+			error={form.discoveryServiceUrl && !isHttps(form.discoveryServiceUrl)
 				? t('sf.fed.error.dsUrl')
 				: undefined}
 			bind:value={form.discoveryServiceUrl}

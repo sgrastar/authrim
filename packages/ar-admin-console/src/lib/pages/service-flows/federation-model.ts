@@ -99,7 +99,17 @@ export interface FederationProblem {
 	message: string;
 }
 
-const isHttps = (value: string) => /^https:\/\/[^/\s]+/.test(value.trim());
+/** An https address with a host and no embedded credentials, as the URL parser reads it. */
+export function isHttps(value: string): boolean {
+	// The scheme written out with its slashes: the server's pattern check wants exactly that.
+	if (!/^https:\/\//i.test(value.trim())) return false;
+	try {
+		const url = new URL(value.trim());
+		return url.protocol === 'https:' && url.hostname !== '' && !url.username && !url.password;
+	} catch {
+		return false;
+	}
+}
 /** An address the metadata can be fetched from: https, one exact URL (no pattern, no spaces). */
 const exactMetadataUrl = (value: string) => isHttps(value) && !/[*\s]/.test(value.trim());
 
@@ -132,6 +142,11 @@ export function federationRoles(form: FederationForm): FederationRole[] {
 		...(form.spRole ? (['saml_sp'] as const) : [])
 	];
 }
+
+const record = (value: unknown): Record<string, unknown> =>
+	value && typeof value === 'object' && !Array.isArray(value)
+		? (value as Record<string, unknown>)
+		: {};
 
 /**
  * The stored payload for a form, laid over the one the source already has: what the console does
@@ -173,11 +188,21 @@ export function federationPayload(
 			...(form.spRole ? { spFieldMappingSetId: form.spMappingSetId } : {}),
 			...(form.spRole && preset ? { defaultAttributePresetId: preset } : {})
 		},
-		exceptions: { excludedEntityIds: [...new Set(form.excludedEntityIds)] },
+		// Siblings the console does not set survive a save, as in the runtime policy above.
+		exceptions: {
+			...record(base.exceptions),
+			excludedEntityIds: [...new Set(form.excludedEntityIds)]
+		},
 		idpSelection:
 			form.idpRole && form.idpSelectionMode === 'external_ds'
-				? { mode: 'external_ds', discoveryServiceUrl: form.discoveryServiceUrl.trim() }
-				: { mode: 'authrim_search' }
+				? {
+						...record(base.idpSelection),
+						mode: 'external_ds',
+						discoveryServiceUrl: form.discoveryServiceUrl.trim()
+					}
+				: (({ discoveryServiceUrl: _url, ...kept }) => ({ ...kept, mode: 'authrim_search' }))(
+						record(base.idpSelection)
+					)
 	};
 }
 

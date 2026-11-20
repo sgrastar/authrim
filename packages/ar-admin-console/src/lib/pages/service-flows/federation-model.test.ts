@@ -264,3 +264,30 @@ describe('the wizard steps', () => {
 		expect(canProceed('federation-participation', answers)).toBe(true);
 	});
 });
+
+describe('what is kept and refused when saving', () => {
+	it('keeps unknown keys beside the exceptions and the picker', () => {
+		const payload = federationPayload(valid(), {
+			exceptions: { excludedEntityIds: ['old'], note: 'kept' },
+			idpSelection: { mode: 'external_ds', discoveryServiceUrl: 'https://ds.example/', extra: 1 }
+		});
+		expect(payload.exceptions).toEqual({ excludedEntityIds: [], note: 'kept' });
+		expect(payload.idpSelection).toEqual({ mode: 'authrim_search', extra: 1 });
+	});
+
+	it('refuses an address with credentials or no host as a discovery service', () => {
+		const idp = valid({
+			spRole: false,
+			idpRole: true,
+			idpMappingSetId: 's',
+			idpSelectionMode: 'external_ds'
+		});
+		for (const url of [
+			'https://user:pw@ds.example/',
+			'https://',
+			'https:ds.example/',
+			'http://ds.example'
+		])
+			expect(fields({ ...idp, discoveryServiceUrl: url })).toContain('discoveryServiceUrl');
+	});
+});
