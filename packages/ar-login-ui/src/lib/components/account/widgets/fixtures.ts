@@ -174,6 +174,35 @@ export const colouredLaunchers = (): AccountLauncher[] => [
 	...launchers().slice(1, 3)
 ];
 
+/**
+ * Tiles with a picture across their width: one with neither icon nor name drawn (the picture says
+ * it all), one with its name under the picture. The pictures are uploaded launcher backgrounds,
+ * paths of the page's own origin.
+ */
+export const pictureLaunchers = (): AccountLauncher[] => [
+	launcher({
+		id: 'launcher-library',
+		name: 'Library',
+		description: 'Search the catalogue.',
+		category: 'Campus',
+		background_image_url:
+			'/api/assets/_platform/login-ui/launcher-background/0f8fad5b-d9cb-469f-a165-70867728950e.webp',
+		hide_icon: true,
+		hide_name: true,
+		launch_href: '#launch-library'
+	}),
+	launcher({
+		id: 'launcher-help',
+		name: 'IT help desk',
+		description: 'Report a problem.',
+		background_image_url:
+			'/api/assets/acme/login-ui/launcher-background/7c9e6679-7425-40de-944b-e07fc1f90ae7.png',
+		hide_icon: true,
+		launch_href: '#launch-help'
+	}),
+	...launchers().slice(1, 2)
+];
+
 export const guestUpgradeStatus = (
 	overrides: Partial<GuestUpgradeStatus> = {}
 ): GuestUpgradeStatus => ({

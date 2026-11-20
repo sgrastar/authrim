@@ -49,7 +49,7 @@ const TABLE_GROUPS: Partial<
       lookup_retention_policies oauth_clients oidc_scopes org_domain_mappings
       organizations policy_rules presentation_definitions provisioning_assignment_rules
       relation_definitions resource_permissions role_assignment_rules roles
-      saml_attribute_presets scope_mappings screens sign_in_confirmation_policies
+      saml_attribute_presets scope_mappings screens shared_launcher_states sign_in_confirmation_policies
       status_lists tenant_domain_mappings tenant_vanity_domains
       tenants token_claim_rules trusted_issuers upstream_providers
       web_origin_registry webhook_configs
@@ -211,10 +211,13 @@ const TABLE_GROUPS: Partial<
     // the environment's one-time settings import (no tenant identity): the target environment
     // keeps its own, so a tenant backup neither exports nor replaces them. The platform's
     // profiles are the environment's too: a tenant's change to one (a row with base_profile_id)
-    // is the tenant's, and depends on the target environment having that platform profile.
+    // is the tenant's, and depends on the target environment having that platform profile. So are
+    // the platform's launchers and whom they are shared with: a tenant's own state of one (core
+    // application_launchers) is the tenant's.
     external: `
       admin_database_connections admin_storage_destinations platform_settings_documents
       platform_authentication_method_profiles platform_session_profiles
+      platform_launchers platform_launcher_tenants
       settings_legacy_import_state
       admin_machine_credential_permissions admin_machine_credential_tenant_scopes admin_machine_credentials
       admin_machine_principal_permissions admin_machine_principal_tenant_scopes admin_machine_principals

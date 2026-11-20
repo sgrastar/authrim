@@ -20,6 +20,12 @@ export function isMappingSetSavePath(path: string): boolean {
   );
 }
 
+/**
+ * An image upload's whole multipart body: the 5 MB the picture itself may be (the handler checks
+ * that), and room for the form's boundaries and headers around it.
+ */
+export const PUBLIC_ASSET_UPLOAD_BODY_MAX_BYTES = 5 * 1024 * 1024 + 64 * 1024;
+
 export function adminBodyLimitMiddleware(
   userImportMaxUploadBytes: number
 ): MiddlewareHandler<{ Bindings: Env }> {
@@ -28,14 +34,17 @@ export function adminBodyLimitMiddleware(
     const isTenantBackupPart = /^\/api\/admin\/tenant-backups\/uploads\/[^/]+\/parts\/[^/]+$/.test(
       c.req.path
     );
-    const isPublicAssetUpload = c.req.path === '/api/admin/assets/login-ui';
+    // The Login UI's images and the platform launchers' backgrounds (5 MB pictures).
+    const isPublicAssetUpload =
+      c.req.path === '/api/admin/assets/login-ui' ||
+      c.req.path === '/api/admin/platform/launchers/assets';
     const isMappingSetSave = isMappingSetSavePath(c.req.path);
     const maxSize = isTenantBackupPart
       ? 8 * 1024 * 1024
       : isImportUpload
         ? userImportMaxUploadBytes
         : isPublicAssetUpload
-          ? 5 * 1024 * 1024
+          ? PUBLIC_ASSET_UPLOAD_BODY_MAX_BYTES
           : isMappingSetSave
             ? MAPPING_SET_REQUEST_BODY_LIMIT_BYTES
             : 100 * 1024;

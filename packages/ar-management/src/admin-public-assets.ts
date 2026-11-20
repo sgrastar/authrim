@@ -17,7 +17,13 @@ const PUBLIC_ASSET_KINDS = new Set([
   'panel-background',
   'favicon',
   'thumbnail',
+  'launcher-background',
 ]);
+/**
+ * The owner segment of the platform's own assets (launcher backgrounds every tenant may show). No
+ * tenant can have it: tenant IDs start with a lowercase letter or a digit.
+ */
+export const PLATFORM_ASSET_OWNER = '_platform';
 const PUBLIC_ASSET_CONTENT_TYPES: Record<string, string> = {
   gif: 'image/gif',
   ico: 'image/x-icon',
@@ -99,66 +105,18 @@ export async function adminPublicAssetUploadHandler(c: Context<{ Bindings: Env }
 
     const tenantId = getTenantIdFromContext(c);
     const body = await c.req.parseBody();
-    const file = body.file;
     const kind = sanitizeAssetKind(typeof body.kind === 'string' ? body.kind : undefined);
 
     if (!kind) {
       return c.json(
         {
           error: 'invalid_request',
-          error_description:
-            'Asset kind must be one of: logo, background, panel-background, favicon, thumbnail',
+          error_description: `Asset kind must be one of: ${[...PUBLIC_ASSET_KINDS].join(', ')}`,
         },
         400
       );
     }
-    if (!file || !(file instanceof File)) {
-      return c.json(
-        {
-          error: 'invalid_request',
-          error_description: 'Image file is required',
-        },
-        400
-      );
-    }
-    if (file.size > PUBLIC_ASSET_MAX_BYTES) {
-      return c.json(
-        {
-          error: 'invalid_request',
-          error_description: 'File size exceeds 5MB limit',
-        },
-        400
-      );
-    }
-
-    const arrayBuffer = await file.arrayBuffer();
-    const bytes = new Uint8Array(arrayBuffer);
-    const detectedType = detectImageType(bytes);
-    if (!detectedType) {
-      return c.json(
-        {
-          error: 'invalid_request',
-          error_description: 'File content does not appear to be a valid raster image',
-        },
-        400
-      );
-    }
-
-    const filename = `${crypto.randomUUID()}.${detectedType.extension}`;
-    const key = buildAssetKey(tenantId, kind, filename);
-    await bucket.put(key, arrayBuffer, {
-      httpMetadata: {
-        contentType: detectedType.mimeType,
-      },
-    });
-
-    return c.json({
-      success: true,
-      kind,
-      url: `/api/assets/${encodeURIComponent(tenantId)}/login-ui/${kind}/${filename}`,
-      contentType: detectedType.mimeType,
-      size: file.size,
-    });
+    return await storePublicAsset(c, bucket, tenantId, kind, body.file);
   } catch (error) {
     logSanitizedError('Admin public asset upload error', error);
     return c.json(
@@ -169,6 +127,93 @@ export async function adminPublicAssetUploadHandler(c: Context<{ Bindings: Env }
       500
     );
   }
+}
+
+/**
+ * Uploads a launcher background of the platform's own (`/api/assets/_platform/login-ui/
+ * launcher-background/<file>`), for the launchers it shares with tenants. The caller is checked by
+ * the platform launchers router this is mounted on.
+ */
+export async function platformLauncherAssetUploadHandler(c: Context<{ Bindings: Env }>) {
+  try {
+    const bucket = getPublicAssetsBucket(c.env);
+    if (!bucket) {
+      return c.json(
+        { error: 'server_error', error_description: 'Public assets bucket is not configured' },
+        503
+      );
+    }
+    const body = await c.req.parseBody();
+    return await storePublicAsset(
+      c,
+      bucket,
+      PLATFORM_ASSET_OWNER,
+      'launcher-background',
+      body.file
+    );
+  } catch (error) {
+    logSanitizedError('Platform launcher asset upload error', error);
+    return c.json(
+      { error: 'server_error', error_description: 'Failed to upload public asset' },
+      500
+    );
+  }
+}
+
+async function storePublicAsset(
+  c: Context<{ Bindings: Env }>,
+  bucket: R2Bucket,
+  ownerId: string,
+  kind: string,
+  file: unknown
+): Promise<Response> {
+  if (!file || !(file instanceof File)) {
+    return c.json(
+      {
+        error: 'invalid_request',
+        error_description: 'Image file is required',
+      },
+      400
+    );
+  }
+  if (file.size > PUBLIC_ASSET_MAX_BYTES) {
+    return c.json(
+      {
+        error: 'invalid_request',
+        error_description: 'File size exceeds 5MB limit',
+      },
+      400
+    );
+  }
+
+  const arrayBuffer = await file.arrayBuffer();
+  const bytes = new Uint8Array(arrayBuffer);
+  const detectedType = detectImageType(bytes);
+  if (!detectedType) {
+    return c.json(
+      {
+        error: 'invalid_request',
+        error_description: 'File content does not appear to be a valid raster image',
+      },
+      400
+    );
+  }
+
+  const filename = `${crypto.randomUUID()}.${detectedType.extension}`;
+  const key = buildAssetKey(ownerId, kind, filename);
+  await bucket.put(key, arrayBuffer, {
+    httpMetadata: {
+      contentType: detectedType.mimeType,
+    },
+  });
+
+  return c.json({
+    success: true,
+    kind,
+    url: `/api/assets/${encodeURIComponent(ownerId)}/login-ui/${kind}/${filename}`,
+    contentType: detectedType.mimeType,
+    size: file.size,
+  });
 }
 
 /** Presets are replaced in place by a later setup run: cached for a day, not for ever. */

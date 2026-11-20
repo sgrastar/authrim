@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { tick, untrack } from 'svelte';
 	import { ApiError, ConflictError } from '#lib/api/api-error.js';
-	import type { ApplicationLauncher, LaunchersClient } from '#lib/api/launchers.js';
-	import { t } from '#lib/i18n/i18n.svelte.js';
+	import type { ConsoleLauncher, LaunchersClient } from '#lib/api/launchers.js';
+	import { t, type MessageKey } from '#lib/i18n/i18n.svelte.js';
 	import Card from '#lib/ui/patterns/Card.svelte';
 	import CellText from '#lib/ui/patterns/CellText.svelte';
 	import ConfirmDialog from '#lib/ui/patterns/ConfirmDialog.svelte';
@@ -27,6 +27,10 @@
 	 * order is sent, so a list changed by someone else meanwhile is reloaded instead). A row opens
 	 * the launcher; its menu also deletes it. With no launchers yet the page says so and offers to
 	 * create the first.
+	 *
+	 * A tenant's list holds the platform's launchers shared with it too (marked so; they move like
+	 * the others but cannot be deleted). The platform's own list (`client.scope` platform) shows
+	 * whom each is shared with in place of who sees it.
 	 */
 	interface Props {
 		client: LaunchersClient;
@@ -37,10 +41,11 @@
 
 	let { client, canWrite, hrefOf, onopen }: Props = $props();
 
-	let launchers = $state<ApplicationLauncher[]>([]);
+	const platform = $derived(client.scope === 'platform');
+	let launchers = $state<ConsoleLauncher[]>([]);
 	let phase = $state<'loading' | 'ready' | 'forbidden' | 'failed'>('loading');
 	let moving = $state(false);
-	let deleting = $state<ApplicationLauncher | null>(null);
+	let deleting = $state<ConsoleLauncher | null>(null);
 	let busy = $state(false);
 	let root = $state<HTMLElement>();
 
@@ -94,7 +99,7 @@
 		if (!launcher) return;
 		busy = true;
 		try {
-			await client.remove(launcher.id);
+			await client.remove(launcher.id, launcher.sharing?.version);
 			launchers = launchers.filter((item) => item.id !== launcher.id);
 			deleting = null;
 			toast.success(t('ln.list.deleted', { name: launcher.name }));
@@ -112,29 +117,46 @@
 		}
 	}
 
-	function actionsOf(launcher: ApplicationLauncher): MenuAction[] {
+	function actionsOf(launcher: ConsoleLauncher): MenuAction[] {
 		return [
 			{
 				label: t('ln.list.open', { name: launcher.name }),
 				icon: 'pencil',
 				onselect: () => onopen(launcher.id)
 			},
-			{
-				label: t('ln.list.delete'),
-				icon: 'trash',
-				danger: true,
-				disabled: busy || moving,
-				onselect: () => (deleting = launcher)
-			}
+			// A launcher the platform shares is hidden in the tenant, not deleted.
+			...(launcher.shared
+				? []
+				: [
+						{
+							label: t('ln.list.delete'),
+							icon: 'trash' as const,
+							danger: true,
+							disabled: busy || moving,
+							onselect: () => (deleting = launcher)
+						}
+					])
 		];
 	}
+
+	function sharingSummary(launcher: ConsoleLauncher): string {
+		const sharing = launcher.sharing;
+		if (!sharing) return '—';
+		if (sharing.share_mode === 'selected')
+			return t('ln.sharing.count', { n: sharing.tenant_ids.length });
+		return t(`ln.sharing.mode.${sharing.share_mode}` as MessageKey);
+	}
+
+	const title = $derived(platform ? t('ln.platform.title') : t('ln.list.title'));
 
 	const reorderable = $derived(canWrite && launchers.length > 1);
 	const columns = $derived([
 		...(reorderable ? [{ key: 'order', label: t('ln.list.order'), width: '92px' }] : []),
 		{ key: 'launcher', label: t('ln.list.launcher') },
 		{ key: 'opens', label: t('ln.list.opens'), width: '24%' },
-		{ key: 'audience', label: t('ln.list.audience'), width: '17%' },
+		platform
+			? { key: 'sharing', label: t('ln.list.sharing'), width: '17%' }
+			: { key: 'audience', label: t('ln.list.audience'), width: '17%' },
 		{ key: 'status', label: t('ln.list.status'), width: '96px' },
 		{ key: 'updated', label: t('ln.list.updated'), width: '13%' },
 		...(canWrite
@@ -151,7 +173,10 @@
 </script>
 
 <Page>
-	<PageHeader title={t('ln.list.title')} description={t('ln.list.description')}>
+	<PageHeader
+		{title}
+		description={platform ? t('ln.platform.description') : t('ln.list.description')}
+	>
 		{#snippet actions()}
 			{#if canWrite && phase === 'ready'}
 				<Button variant="primary" icon="plus" href={hrefOf('new')}>{t('ln.list.create')}</Button>
@@ -160,7 +185,7 @@
 	</PageHeader>
 
 	<div class="launcher-list" bind:this={root}>
-		<Card title={t('ln.list.title')} info={t('ln.list.info')} flush>
+		<Card {title} info={platform ? t('ln.platform.info') : t('ln.list.info')} flush>
 			{#if phase === 'loading'}
 				<LoadingState label={t('common.loading')} />
 			{:else if phase === 'forbidden'}
@@ -171,7 +196,7 @@
 				</EmptyState>
 			{:else}
 				<DataTable
-					caption={t('ln.list.title')}
+					caption={title}
 					{columns}
 					rows={launchers}
 					rowKey={(launcher) => launcher.id}
@@ -208,13 +233,28 @@
 									color={launcher.icon_color}
 									size="sm"
 								/>
-								<CellText title={launcher.name} description={launcher.category ?? undefined} />
+								<span class="launcher-list__text">
+									<CellText title={launcher.name} description={launcher.category ?? undefined} />
+									{#if launcher.shared}
+										<span class="launcher-list__badges">
+											<Badge tone="info">{t('ln.shared.badge')}</Badge>
+											{#if launcher.shared.platform_updated}
+												<Badge tone="warning">{t('ln.shared.updatedBadge')}</Badge>
+											{/if}
+										</span>
+									{/if}
+								</span>
 							</span>
 						{:else if column.key === 'opens'}
 							{@const opens = opensSummary(launcher)}
 							<CellText title={opens.title} description={opens.description} />
 						{:else if column.key === 'audience'}
 							{audienceSummary(launcher.visibility)}
+						{:else if column.key === 'sharing'}
+							{sharingSummary(launcher)}
+							{#if launcher.sharing && !launcher.sharing.tenant_change_allowed}
+								<Badge>{t('ln.sharing.lockedBadge')}</Badge>
+							{/if}
 						{:else if column.key === 'status'}
 							{#if launcher.enabled}
 								<Badge tone="success" dot>{t('ln.status.shown')}</Badge>
@@ -276,5 +316,18 @@
 		align-items: center;
 		gap: 10px;
 		min-inline-size: 0;
+	}
+
+	.launcher-list__text {
+		display: grid;
+		gap: 4px;
+		justify-items: start;
+		min-inline-size: 0;
+	}
+
+	.launcher-list__badges {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 4px;
 	}
 </style>

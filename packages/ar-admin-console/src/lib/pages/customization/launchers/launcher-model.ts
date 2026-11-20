@@ -1,12 +1,14 @@
 import type {
 	ApplicationLauncher,
+	ConsoleLauncher,
 	LauncherApplicationType,
 	LauncherAttributeOperator,
 	LauncherIconType,
 	LauncherInput,
 	LauncherLaunchType,
 	LauncherOptions,
-	LauncherVisibilityMode
+	LauncherVisibilityMode,
+	PlatformLauncherShareMode
 } from '#lib/api/launchers.js';
 import type { MessageKey } from '#lib/i18n/i18n.svelte.js';
 import type { PickerItem } from '#lib/ui/patterns/EntityPicker.svelte';
@@ -38,6 +40,10 @@ export interface LauncherEditorValue {
 	tileColored: boolean;
 	/** The tile's colour, kept while it is off so turning it back on brings it back. */
 	tileBackground: string;
+	/** The image across the tile's width: its stored address, a file chosen to upload, or none. */
+	backgroundImage: string | File | null;
+	hideIcon: boolean;
+	hideName: boolean;
 	gridWidth: number;
 	enabled: boolean;
 	allowFavorite: boolean;
@@ -46,6 +52,10 @@ export interface LauncherEditorValue {
 	users: PickerItem[];
 	groups: PickerItem[];
 	rules: AttributeRuleRow[];
+	/** The platform's launchers only: whom it is shared with, and whether tenants may change it. */
+	shareMode: PlatformLauncherShareMode;
+	tenantIds: string[];
+	tenantChangeAllowed: boolean;
 }
 
 /** One attribute rule as a row of the rules table. */
@@ -73,8 +83,12 @@ export const LIMITS = {
 	relayStateBytes: 80,
 	subjects: 500,
 	rules: 32,
-	ruleValue: 500
+	ruleValue: 500,
+	tenants: 1000,
+	backgroundBytes: 5 * 1024 * 1024
 } as const;
+/** The raster images a tile background may be (the upload refuses others). */
+export const BACKGROUND_ACCEPT = 'image/png,image/jpeg,image/webp,image/gif';
 export const COLOR_PATTERN = /^#[0-9a-f]{6}$/iu;
 export const ATTRIBUTE_KEY_PATTERN = /^[A-Za-z0-9._-]{1,128}$/u;
 export const GRID_COLUMNS = 8;
@@ -135,6 +149,9 @@ export function newLauncherValue(): LauncherEditorValue {
 		backgroundColor: DEFAULT_BACKGROUND,
 		tileColored: false,
 		tileBackground: DEFAULT_TILE_BACKGROUND,
+		backgroundImage: null,
+		hideIcon: false,
+		hideName: false,
 		gridWidth: 2,
 		enabled: true,
 		allowFavorite: true,
@@ -142,13 +159,16 @@ export function newLauncherValue(): LauncherEditorValue {
 		attributeMatch: 'all',
 		users: [],
 		groups: [],
-		rules: []
+		rules: [],
+		shareMode: 'none',
+		tenantIds: [],
+		tenantChangeAllowed: true
 	};
 }
 
 /** The editor's value for a saved launcher; `names` gives what is known of chosen users and groups. */
 export function launcherValue(
-	launcher: ApplicationLauncher,
+	launcher: ApplicationLauncher & Partial<Pick<ConsoleLauncher, 'sharing'>>,
 	names: { users: ReadonlyMap<string, PickerItem>; groups: ReadonlyMap<string, PickerItem> }
 ): LauncherEditorValue {
 	const image = launcher.icon_type === 'image';
@@ -169,6 +189,9 @@ export function launcherValue(
 		backgroundColor: launcher.background_color,
 		tileColored: launcher.tile_background_color !== null,
 		tileBackground: launcher.tile_background_color ?? DEFAULT_TILE_BACKGROUND,
+		backgroundImage: launcher.background_image_url,
+		hideIcon: launcher.hide_icon,
+		hideName: launcher.hide_name,
 		gridWidth: launcher.grid_width,
 		enabled: launcher.enabled,
 		allowFavorite: launcher.allow_favorite,
@@ -185,7 +208,10 @@ export function launcherValue(
 			attribute_key: rule.attribute_key,
 			operator: rule.operator,
 			attribute_value: rule.attribute_value ?? ''
-		}))
+		})),
+		shareMode: launcher.sharing?.share_mode ?? 'none',
+		tenantIds: [...(launcher.sharing?.tenant_ids ?? [])],
+		tenantChangeAllowed: launcher.sharing?.tenant_change_allowed ?? true
 	};
 }
 
@@ -201,7 +227,9 @@ export function launcherInput(
 	/** Where a new launcher goes; omitted for a change, so the order set in the list is kept. */
 	sortOrder: number | undefined,
 	/** OIDC third-party initiated login starts at the client's own address, never one typed. */
-	initiateLoginUri: string | null = null
+	initiateLoginUri: string | null = null,
+	/** The platform's launchers carry their sharing. */
+	scope: 'tenant' | 'platform' = 'tenant'
 ): LauncherInput {
 	const audience = value.audience;
 	const thirdParty = value.launchType === 'oidc_third_party_initiated';
@@ -228,6 +256,11 @@ export function launcherInput(
 				: value.iconColor,
 		background_color: value.backgroundColor,
 		tile_background_color: value.tileColored ? value.tileBackground : null,
+		// A chosen file is uploaded before this is sent (the page puts its address in its place).
+		background_image_url:
+			typeof value.backgroundImage === 'string' ? value.backgroundImage.trim() || null : null,
+		hide_icon: value.hideIcon,
+		hide_name: value.hideName,
 		grid_width: value.gridWidth,
 		...(sortOrder === undefined ? {} : { sort_order: sortOrder }),
 		enabled: value.enabled,
@@ -246,7 +279,14 @@ export function launcherInput(
 							attribute_value: rule.operator === 'exists' ? null : rule.attribute_value.trim()
 						}))
 					: []
-		}
+		},
+		...(scope === 'platform'
+			? {
+					share_mode: value.shareMode,
+					tenant_ids: value.shareMode === 'selected' ? [...value.tenantIds] : [],
+					tenant_change_allowed: value.tenantChangeAllowed
+				}
+			: {})
 	};
 }
 
@@ -279,7 +319,9 @@ export type ProblemField =
 	| 'colors'
 	| 'users'
 	| 'groups'
-	| 'rules';
+	| 'rules'
+	| 'tile'
+	| 'tenants';
 
 /**
  * What keeps the value from being saved, per field, in the admin's words. `clients` and
@@ -292,6 +334,8 @@ export function launcherProblems(
 		samlProviderIds: ReadonlySet<string>;
 		/** False when the applications could not be read: a chosen one is not called unavailable. */
 		optionsKnown?: boolean;
+		/** The platform's launchers: a link shared with tenants. */
+		scope?: 'tenant' | 'platform';
 	}
 ): Partial<Record<ProblemField, MessageKey>> {
 	const found: Partial<Record<ProblemField, MessageKey>> = {};
@@ -358,6 +402,12 @@ export function launcherProblems(
 			)
 		)
 			found.rules = 'ln.error.rulesInvalid';
+	}
+	// With neither the icon nor the name, only a picture can show what the tile opens.
+	if (value.hideIcon && value.hideName && !value.backgroundImage) found.tile = 'ln.error.tileEmpty';
+	if (choices.scope === 'platform' && value.shareMode === 'selected') {
+		if (value.tenantIds.length === 0) found.tenants = 'ln.error.tenantsRequired';
+		else if (value.tenantIds.length > LIMITS.tenants) found.tenants = 'ln.error.tenantsTooMany';
 	}
 	return found;
 }

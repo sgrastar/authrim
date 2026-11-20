@@ -17,7 +17,7 @@ export function classifyPublicAssetKey(
   }
   if (key.length > 512) return { kind: 'unsupported' };
   const settings =
-    /^public\/([a-zA-Z0-9_-]{1,128})\/login-ui\/(?:logo|background|panel-background|favicon|thumbnail)\/([A-Za-z0-9._-]+\.(?:gif|ico|jpe?g|png|webp))$/.exec(
+    /^public\/([a-zA-Z0-9_-]{1,128})\/login-ui\/(?:logo|background|panel-background|favicon|thumbnail|launcher-background)\/([A-Za-z0-9._-]+\.(?:gif|ico|jpe?g|png|webp))$/.exec(
       key
     );
   const users =

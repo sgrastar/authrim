@@ -91,6 +91,9 @@ function launcher(
     icon_color: '#ffffff',
     background_color: '#2563eb',
     tile_background_color: null,
+    background_image_url: null,
+    hide_icon: false,
+    hide_name: false,
     grid_width: 2,
     sort_order: 10,
     enabled: true,
@@ -152,6 +155,18 @@ function accountApp(): Hono {
   return app;
 }
 
+/** The tenant's launcher rows, as the collection read returns them. */
+function storeRows(...values: ApplicationLauncher[]) {
+  mocked.adapter.query.mockImplementation(async (sql: string) =>
+    sql.includes('FROM application_launchers') ? values.map(launcherRow) : []
+  );
+  mocked.adapter.queryOne.mockImplementation(async (sql: string, params: unknown[] = []) => {
+    if (!sql.includes('FROM application_launchers')) return null;
+    const found = values.find((value) => value.id === params[1]);
+    return found ? launcherRow(found) : null;
+  });
+}
+
 function launcherRow(value: ApplicationLauncher) {
   return {
     id: value.id,
@@ -165,7 +180,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocked.adapter.query.mockResolvedValue([]);
   mocked.adapter.queryOne.mockResolvedValue(null);
-  mocked.adapter.execute.mockResolvedValue({ changes: 1 });
+  mocked.adapter.execute.mockResolvedValue({ changes: 1, rowsAffected: 1, success: true });
   mocked.adapter.batch.mockResolvedValue([]);
   mocked.accountAdapter.query.mockResolvedValue([]);
   mocked.accountAdapter.queryOne.mockResolvedValue(null);
@@ -464,7 +479,7 @@ describe('admin launcher persistence', () => {
 
   it('updates an existing launcher and preserves its identity timestamps', async () => {
     const existing = launcher(baseVisibility);
-    mocked.adapter.queryOne.mockResolvedValue(launcherRow(existing));
+    storeRows(existing);
 
     const response = await adminApp().request(`/launchers/${existing.id}`, {
       method: 'PUT',
@@ -491,7 +506,7 @@ describe('admin launcher persistence', () => {
       application_type: 'oidc_client',
       application_id: 'client-1',
     });
-    mocked.adapter.queryOne.mockResolvedValue(launcherRow(existing));
+    storeRows(existing);
 
     const response = await adminApp().request(`/launchers/${existing.id}`, {
       method: 'PUT',
@@ -533,7 +548,7 @@ describe('admin launcher persistence', () => {
 
   it('keeps the tile colour and place when an update leaves them out', async () => {
     const existing = launcher(baseVisibility, { tile_background_color: '#fde68a', sort_order: 40 });
-    mocked.adapter.queryOne.mockResolvedValue(launcherRow(existing));
+    storeRows(existing);
     const { sort_order: _sort, tile_background_color: _tile, ...body } = createBody();
 
     const response = await adminApp().request(`/launchers/${existing.id}`, {
@@ -550,16 +565,12 @@ describe('admin launcher persistence', () => {
 
   it('reads one launcher definition of the tenant', async () => {
     const existing = launcher(baseVisibility, { name: 'Payroll' });
-    mocked.adapter.queryOne.mockResolvedValue(launcherRow(existing));
+    storeRows(existing);
 
     const response = await adminApp().request(`/launchers/${existing.id}`);
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({ launcher: existing });
-    expect(mocked.adapter.queryOne).toHaveBeenCalledWith(
-      expect.stringContaining('WHERE tenant_id = ? AND id = ?'),
-      ['tenant-a', existing.id]
-    );
+    await expect(response.json()).resolves.toEqual({ launcher: { ...existing, shared: null } });
   });
 
   it('answers 404 for a launcher the tenant does not have', async () => {
@@ -571,7 +582,7 @@ describe('admin launcher persistence', () => {
 
   it('deletes an existing launcher definition', async () => {
     const existing = launcher(baseVisibility);
-    mocked.adapter.queryOne.mockResolvedValue(launcherRow(existing));
+    storeRows(existing);
 
     const response = await adminApp().request(`/launchers/${existing.id}`, {
       method: 'DELETE',

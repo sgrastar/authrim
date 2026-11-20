@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AccountLauncher } from '#lib/api/account.js';
-import { launcherMatchesSearch } from './account-launcher-filter';
+import { launcherMatchesSearch, launcherPicture } from './account-launcher-filter';
 
 const launcher: AccountLauncher = {
 	id: 'launcher-1',
@@ -32,5 +32,28 @@ describe('launcherMatchesSearch', () => {
 	it('searches the description and category', () => {
 		expect(launcherMatchesSearch(launcher, 'engineering', 'en')).toBe(true);
 		expect(launcherMatchesSearch(launcher, 'internal', 'en')).toBe(true);
+	});
+});
+
+describe('launcherPicture', () => {
+	it('draws uploaded launcher backgrounds and HTTPS pictures only', () => {
+		const uploaded =
+			'/api/assets/_platform/login-ui/launcher-background/0f8fad5b-d9cb-469f-a165-70867728950e.webp';
+		expect(launcherPicture(uploaded)).toBe(uploaded);
+		expect(launcherPicture('https://images.example.com/a.png')).toBe(
+			'https://images.example.com/a.png'
+		);
+		for (const value of [
+			null,
+			undefined,
+			'',
+			'http://images.example.com/a.png',
+			'javascript:alert(1)',
+			'data:image/png;base64,AAAA',
+			'/api/assets/acme/login-ui/logo/a.png',
+			'//evil.example/a.png'
+		]) {
+			expect(launcherPicture(value)).toBeNull();
+		}
 	});
 });

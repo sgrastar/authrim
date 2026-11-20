@@ -795,6 +795,10 @@ export type {
   LauncherLaunchType,
   LauncherVisibility,
   LauncherVisibilityMode,
+  PlatformLauncher,
+  PlatformLauncherShareMode,
+  SharedLauncherState,
+  TenantLauncherListItem,
 } from './types/launchers';
 
 export { setBoundedMapEntry } from './utils/bounded-cache';

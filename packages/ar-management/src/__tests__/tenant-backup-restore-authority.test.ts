@@ -59,6 +59,7 @@ function freshDatabase(family: 'core' | 'pii' | 'admin') {
           '021_mapping_transform_step_target.sql',
           '022_mapped_identifier_exceptions.sql',
           '023_mapping_rule_graph.sql',
+          '026_platform_launchers.sql',
         ]
       : []),
     ...(family === 'core'
@@ -66,6 +67,7 @@ function freshDatabase(family: 'core' | 'pii' | 'admin') {
           '007_account_registration_pending.sql',
           '009_consent_policies_removed.sql',
           '011_saml_sp_release_consent.sql',
+          '014_shared_launcher_states.sql',
         ]
       : []),
     ...(family === 'pii'
