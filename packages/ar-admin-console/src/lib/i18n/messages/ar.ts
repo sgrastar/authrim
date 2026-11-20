@@ -347,6 +347,7 @@ export const ar = {
 	'join.subtitle': 'أدخل عنوان البريد الإلكتروني ورمز الدعوة من دعوتك.',
 	'join.email': 'البريد الإلكتروني',
 	'join.code': 'رمز الدعوة',
+	'join.fromLink': 'تمت التعبئة من رابط الدعوة.',
 	'join.check': 'التحقق من الدعوة',
 	'join.checking': 'جارٍ التحقق…',
 	'join.invitedAs': 'تمت دعوة {email} بصفة «{role}».',

@@ -347,6 +347,7 @@ export const en = {
 	'join.subtitle': 'Enter the email address and invitation code from your invitation.',
 	'join.email': 'Email address',
 	'join.code': 'Invitation code',
+	'join.fromLink': 'Filled in from your invitation link.',
 	'join.check': 'Check invitation',
 	'join.checking': 'Checking…',
 	'join.invitedAs': '{email} is invited as “{role}”.',
