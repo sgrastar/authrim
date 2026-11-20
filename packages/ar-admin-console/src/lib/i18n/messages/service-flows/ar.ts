@@ -591,6 +591,10 @@ export const arServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 	'sf.fed.statusCard.failedTitle': 'عمليات الجلب الأخيرة تفشل',
 	'sf.fed.statusCard.failedBody':
 		'فشل {count} عمليات متتالية. تبقى البيانات الوصفية المجلوبة سابقًا قيد الاستخدام.',
+	'sf.fed.flow.services': 'خدمات الاتحاد',
+	'sf.fed.flow.authrim': 'تسجيل الدخول عبر Authrim',
+	'sf.fed.flow.authrimDetail': 'يسجّل مستخدمو الخدمات الدخول عبر Authrim',
+	'sf.fed.mappingSet.create': 'إنشاء مجموعة تعيين',
 	'sf.fed.notInUse.title': 'هذا الاتحاد لا يُستخدم لتسجيل الدخول بعد',
 	'sf.fed.notInUse.body':
 		'اختر مجموعة تعيين واحفظ ليبدأ استخدامه. حتى ذلك الحين يجمع البيانات الوصفية فقط.',

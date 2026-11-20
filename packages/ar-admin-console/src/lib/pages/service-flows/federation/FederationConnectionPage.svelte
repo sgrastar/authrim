@@ -9,7 +9,16 @@
 		FederationSource,
 		FederationSourcesClient
 	} from '#lib/api/federation-sources.js';
+	import { tick } from 'svelte';
 	import { t } from '#lib/i18n/i18n.svelte.js';
+	import FlowCanvas from '#lib/ui/flow/FlowCanvas.svelte';
+	import FlowEdge from '#lib/ui/flow/FlowEdge.svelte';
+	import FlowEndpoint from '#lib/ui/flow/FlowEndpoint.svelte';
+	import FlowScope from '#lib/ui/flow/FlowScope.svelte';
+	import FlowSequence from '#lib/ui/flow/FlowSequence.svelte';
+	import FlowStepGroup from '#lib/ui/flow/FlowStepGroup.svelte';
+	import { revealPanel } from '#lib/ui/flow/reveal-panel.js';
+	import { labelOf } from '../connection-model';
 	import Button from '#lib/ui/primitives/Button.svelte';
 	import BackLink from '#lib/ui/primitives/BackLink.svelte';
 	import Callout from '#lib/ui/patterns/Callout.svelte';
@@ -82,6 +91,28 @@
 	let mappingSets = $state<FederationMappingOption[]>([]);
 	let mappingLoading = $state(false);
 	let mappingFailed = $state(false);
+
+	// The service flow the federation was made with: the roles on decide the flow and what is shown.
+	const spRole = $derived(form?.spRole === true);
+	const idpRole = $derived(form?.idpRole === true);
+	/** The entities listed are the other side of the role: Authrim as IdP (SP role) lists SPs. */
+	const entityRole = $derived(
+		spRole && !idpRole
+			? ('saml_sp' as const)
+			: idpRole && !spRole
+				? ('saml_idp' as const)
+				: undefined
+	);
+	/** The node that is open: '' is the general settings, 'mapping-sets' the mapping node. */
+	let current = $state('');
+	let rightPanel = $state<HTMLElement | null>(null);
+	const mappingSelected = $derived(current === 'mapping-sets');
+	const mappingState = $derived(form && federationInUse(form) ? 'done' : 'todo');
+	async function selectNode(node: string) {
+		current = node;
+		await tick();
+		revealPanel(rightPanel);
+	}
 
 	const dirty = $derived(form !== null && formChanged(form, original));
 	// One in use cannot be saved half-set (a role added without its mapping set would switch the
@@ -219,47 +250,122 @@
 			</ul>
 		</Callout>
 	{/if}
-	<div class="federation">
-		<FederationStatusCard
-			{source}
-			{history}
-			{canRefresh}
-			{refreshing}
-			failure={refreshFailure}
-			onrefresh={refresh}
-		/>
-		<FederationParticipationCard
-			bind:form
-			{mappingSets}
-			{mappingFailed}
-			{mappingLoading}
-			onreloadmappings={loadSets}
-			disabled={!canEdit}
-		/>
-		<FederationExceptionsCard
-			sourceId={id}
-			{client}
-			bind:excluded={form.excludedEntityIds}
-			disabled={!canEdit}
-		/>
-		<FederationEntitiesCard
-			sourceId={id}
-			{client}
-			bind:excluded={form.excludedEntityIds}
-			{canEdit}
-			{revision}
-			onmaterialize={canMaterialize ? (entity) => (materializing = entity) : undefined}
-		/>
-		<FederationTrustCard
-			bind:form
-			disabled={!canEdit}
-			readCertificateUrl={canMaterialize
-				? async (url) => (await client.previewCertificateUrl(url)).certificate
-				: undefined}
-		/>
-		{#if canEdit}
-			<FederationDangerZone sourceId={id} name={source.name} {client} ondeleted={onback} />
-		{/if}
+	<div class="detail">
+		<div class="detail__flow">
+			<FlowCanvas
+				label={source.name}
+				heading={t('sf.detail.signIn')}
+				detail={t(idpRole ? 'sf.role.in.line' : 'sf.role.fed.line')}
+			>
+				{#if idpRole || !spRole}
+					<FlowEndpoint
+						kind="authrim"
+						title={t('sf.detail.signInPage')}
+						detail={t('sf.detail.peopleChoose', { name: source.name })}
+					/>
+				{:else}
+					<FlowEndpoint
+						title={source.name}
+						detail={t('sf.fed.flow.services')}
+						actionLabel={t('af.general')}
+						onselect={() => selectNode('')}
+					/>
+				{/if}
+				<FlowEdge length={24} tip={false} />
+				<FlowScope label={t('sf.detail.authrimDoes')}>
+					<!-- The mapping is not optional: what comes through is the mapping's, so it is always there. -->
+					<FlowSequence
+						order={['mapping']}
+						visible={['mapping']}
+						lead={36}
+						trail={6}
+						menuTitle={source.name}
+						option={(node) => ({ id: node, label: t('sf.group.mapping') })}
+						onadd={selectNode}
+					>
+						{#snippet step(_node, { exiting })}
+							<FlowStepGroup
+								name={t('sf.group.mapping')}
+								state={mappingState}
+								{current}
+								{exiting}
+								onselect={selectNode}
+								items={[
+									{
+										id: 'mapping-sets',
+										label: labelOf('mapping-sets'),
+										state: mappingState,
+										status: t(mappingState === 'done' ? 'sf.status.done' : 'sf.status.todo')
+									}
+								]}
+							/>
+						{/snippet}
+					</FlowSequence>
+				</FlowScope>
+				<FlowEdge length={14} />
+				{#if idpRole || !spRole}
+					<FlowEndpoint
+						title={source.name}
+						detail={t('sf.blurb.federation')}
+						actionLabel={t('af.general')}
+						onselect={() => selectNode('')}
+					/>
+				{:else}
+					<FlowEndpoint
+						kind="authrim"
+						title={t('sf.fed.flow.authrim')}
+						detail={t('sf.fed.flow.authrimDetail')}
+					/>
+				{/if}
+			</FlowCanvas>
+		</div>
+		<div class="detail__side" bind:this={rightPanel}>
+			<div class="detail__general" hidden={mappingSelected}>
+				<FederationStatusCard
+					{source}
+					{history}
+					{canRefresh}
+					{refreshing}
+					failure={refreshFailure}
+					onrefresh={refresh}
+				/>
+				<FederationExceptionsCard
+					sourceId={id}
+					{client}
+					bind:excluded={form.excludedEntityIds}
+					disabled={!canEdit}
+				/>
+				<FederationEntitiesCard
+					sourceId={id}
+					{client}
+					bind:excluded={form.excludedEntityIds}
+					{canEdit}
+					{revision}
+					onlyRole={entityRole}
+					onmaterialize={canMaterialize ? (entity) => (materializing = entity) : undefined}
+				/>
+				<FederationTrustCard
+					bind:form
+					disabled={!canEdit}
+					readCertificateUrl={canMaterialize
+						? async (url) => (await client.previewCertificateUrl(url)).certificate
+						: undefined}
+				/>
+				{#if canEdit}
+					<FederationDangerZone sourceId={id} name={source.name} {client} ondeleted={onback} />
+				{/if}
+			</div>
+			<div class="detail__general" hidden={!mappingSelected}>
+				<FederationParticipationCard
+					bind:form
+					{mappingSets}
+					{mappingFailed}
+					{mappingLoading}
+					onreloadmappings={loadSets}
+					disabled={!canEdit}
+				/>
+			</div>
+		</div>
 	</div>
 	<FederationMaterializeDialog
 		entity={materializing}
@@ -286,8 +392,25 @@
 		margin: 0;
 		padding-inline-start: 1.2em;
 	}
-	.federation {
+	.detail__side > [hidden] {
+		display: none;
+	}
+	.detail {
 		display: grid;
-		gap: var(--space-section, 24px);
+		grid-template-columns: auto minmax(0, 1fr);
+		gap: var(--space-columns);
+		align-items: start;
+	}
+	.detail__side,
+	.detail__general {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-columns);
+		min-width: 0;
+	}
+	@media (max-width: 900px) {
+		.detail {
+			grid-template-columns: minmax(0, 1fr);
+		}
 	}
 </style>

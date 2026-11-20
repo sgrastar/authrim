@@ -95,6 +95,18 @@ describe('shell model', () => {
 		expect(sections.find((section) => section.id === 'overview')?.rows).toEqual([]);
 	});
 
+	it('shows the page of one connection under the service flows', () => {
+		for (const kind of ['rp', 'sp', 'op', 'idp', 'federation']) {
+			const location = resolveNavPath(`/admin/applications/all/${kind}/some-id`)!;
+			expect(location.area.id).toBe('applications');
+			expect(location.item?.id).toBe('all');
+		}
+		expect(resolveNavPath('/admin/applications/all/unknown/some-id')).toBeNull();
+		expect(resolveNavPath('/admin/applications/all/rp/some-id/')?.item?.id).toBe('all');
+		expect(resolveNavPath('/admin/applications/all/rp/some-id/extra')).toBeNull();
+		expect(resolveNavPath('/admin/platform/applications/all/rp/some-id')).toBeNull();
+	});
+
 	it('gives the service flow page the whole width but keeps it in the drawer', () => {
 		const flows = resolveNavPath('/admin/applications/all')!;
 		expect(showsSubNav(flows)).toBe(false);

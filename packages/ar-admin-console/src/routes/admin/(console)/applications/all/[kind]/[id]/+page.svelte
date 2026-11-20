@@ -144,7 +144,7 @@
 	{/key}
 {:else if page.params.kind === 'federation'}
 	{#key `${tenantScope.tenantId}:${page.params.id}`}
-		<Page>
+		<Page withFlow>
 			{#if hasPermission(adminAccess.current, 'admin:settings:read')}
 				<FederationConnectionPage
 					id={page.params.id ?? ''}

@@ -1,11 +1,10 @@
 <script lang="ts">
 	import type { FederationSource } from '#lib/api/federation-sources.js';
 	import { t } from '#lib/i18n/i18n.svelte.js';
-	import DateTime from '#lib/ui/time/DateTime.svelte';
 
 	/**
 	 * The line under a federation's name in the list of connections: how many entities its
-	 * metadata holds and when it was last fetched. Nothing is known before the first fetch.
+	 * metadata holds. When it was last fetched is the list's "modified" column.
 	 */
 	interface Props {
 		source: FederationSource;
@@ -15,13 +14,9 @@
 </script>
 
 <span class="meta">
-	{#if source.status && lastSuccess !== null}
-		{#if source.status.entityCount !== null}{t('sf.fed.row.entities', {
-				count: source.status.entityCount
-			})} ·{/if}
-		{t('sf.fed.row.lastFetched')}
-		<DateTime value={new Date(lastSuccess).toISOString()} />
-	{:else}
+	{#if source.status && source.status.entityCount !== null}
+		{t('sf.fed.row.entities', { count: source.status.entityCount })}
+	{:else if !lastSuccess}
 		{t('sf.fed.row.notFetched')}
 	{/if}
 </span>
