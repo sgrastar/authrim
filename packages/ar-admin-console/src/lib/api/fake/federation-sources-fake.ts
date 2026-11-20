@@ -355,7 +355,9 @@ export function createFakeFederationSources(
 				}),
 				...options.refresh
 			};
-			if (result.status) sources.set(id, { ...row, status: result.status });
+			// A fetch moves the source's version, as on the server.
+			if (result.status)
+				sources.set(id, { ...row, status: result.status, updatedAt: row.updatedAt + 1 });
 			return clone(result);
 		},
 		async entities(id, query: FederationEntityQuery = {}): Promise<FederationEntityPage> {

@@ -32,12 +32,7 @@
 		disabled = false
 	}: Props = $props();
 	/** What still stops the page from being saved, in the words of the wizard. */
-	const problems = $derived(
-		federationProblems(form).filter((problem) => problem.field !== 'registrationAuthorities')
-	);
-	const raProblem = $derived(
-		federationProblems(form).find((problem) => problem.field === 'registrationAuthorities')?.message
-	);
+	const problems = $derived(federationProblems(form));
 </script>
 
 <Card title={t('sf.fed.participation.title')} description={t('sf.fed.participation.description')}>
@@ -56,13 +51,12 @@
 			</ul>
 		</Callout>
 	{/if}
-	<Disclosure title={t('sf.fed.advanced')} open={!!raProblem}>
+	<Disclosure title={t('sf.fed.advanced')}>
 		<TextArea
 			label={t('sf.fed.ra.label')}
 			hint={t('sf.fed.ra.hint')}
 			mono
 			rows={3}
-			error={raProblem}
 			{disabled}
 			bind:value={form.registrationAuthorities}
 		/>

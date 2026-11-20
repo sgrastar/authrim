@@ -571,7 +571,6 @@ export const arServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 	'sf.fed.row.lastFetched': 'آخر جلب',
 	'sf.fed.row.notFetched': 'لم يُجلب بعد',
 	// SAML federation page: status, exceptions, entities, trust
-	'sf.fed.error.registrationAuthorities': 'أدخل جهات التسجيل كعناوين https، واحدًا في كل سطر.',
 	'sf.fed.statusCard.title': 'حالة الجلب',
 	'sf.fed.statusCard.refresh': 'حدّث الآن',
 	'sf.fed.statusCard.expiredTitle': 'انتهت صلاحية البيانات الوصفية',
@@ -639,6 +638,7 @@ export const arServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 	'sf.fed.entities.state.excluded': 'مستثنى',
 	'sf.fed.entities.state.explicit': 'اتصال مستقل',
 	'sf.fed.entities.state.explicitLink': 'اتصال مستقل',
+	'sf.fed.entities.state.policy': 'خارج السياسة',
 	'sf.fed.entities.include': 'إلغاء الاستثناء',
 	'sf.fed.entities.exclude': 'استثناء',
 	'sf.fed.entities.materialize': 'إنشاء اتصال مستقل',

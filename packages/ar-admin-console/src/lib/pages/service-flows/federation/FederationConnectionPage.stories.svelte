@@ -104,6 +104,7 @@
 	const rolePage = page({ sources: [{ ...healthy, roles: ['saml_sp'], idpMappingSetId: '' }] });
 	const certPage = page();
 	const deletePage = page();
+	const raceFake = page();
 	const refreshPage = page({ id: 'lapsed-federation' });
 	const ambiguousPage = page();
 	const spPage = page();
@@ -321,6 +322,13 @@
 		await waitFor(() => expect(refreshPage.client.calls.refreshed).toEqual(['lapsed-federation']));
 		await waitFor(() => expect(canvas.queryByText(t('sf.fed.statusCard.expiredTitle'))).toBeNull());
 		await expect(lapsed.status?.sourceState).toBe('expired');
+		// The fetch moved the version; a save after it is still accepted.
+		await canvas.findByText(/of 480|of 1,200/);
+		const first = canvas.getAllByRole('button', { name: t('sf.fed.entities.exclude') })[0];
+		await userEvent.click(first);
+		await userEvent.click(save(canvas));
+		await waitFor(() => expect(refreshPage.client.calls.updated).toHaveLength(1));
+		await expect(canvas.queryByText(t('sf.live.conflict'))).toBeNull();
 	}}
 />
 
@@ -399,5 +407,35 @@
 		await expect(
 			canvas.getAllByRole('button', { name: t('sf.fed.entities.exclude') }).length
 		).toBeGreaterThan(0);
+	}}
+/>
+
+<Story
+	name="Update now with unsaved edits does not hide a change made by someone else"
+	args={raceFake.args}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findByText(/of 1,200/);
+		await userEvent.type(search(canvas), 'idp.inst-4.example');
+		const target = await row(canvas, 'https://idp.inst-4.example/idp/shibboleth');
+		await userEvent.click(
+			within(target).getByRole('button', { name: t('sf.fed.entities.exclude') })
+		);
+		// Another administrator saves a different change in the meantime.
+		const current = await raceFake.client.get(ID);
+		await raceFake.client.update(ID, {
+			sourceKey: current.sourceKey,
+			name: 'Renamed elsewhere',
+			lifecycleState: current.lifecycleState,
+			payload: current.payload,
+			expectedUpdatedAt: current.updatedAt
+		});
+		await userEvent.click(canvas.getByRole('button', { name: t('sf.fed.statusCard.refresh') }));
+		await canvas.findByText(t('sf.live.conflict'));
+		await userEvent.click(save(canvas));
+		await waitFor(() =>
+			expect(canvas.getAllByText(t('sf.live.conflict')).length).toBeGreaterThan(0)
+		);
+		await expect(raceFake.client.calls.updated).toHaveLength(1);
 	}}
 />

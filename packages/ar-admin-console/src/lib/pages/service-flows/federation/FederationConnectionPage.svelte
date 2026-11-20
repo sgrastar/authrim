@@ -150,8 +150,24 @@
 		try {
 			await client.refresh(id);
 			// Typed-over fields stay: only what the server holds about the fetch is read again.
+			// The fetch moves the version too: take it, or the next save would be refused. With
+			// unsaved edits the new version is adopted only if what is editable is as it was read;
+			// otherwise someone else changed it, and the save must be refused, not silently win.
 			const read = await client.get(id);
-			if (source) source = { ...source, status: read.status };
+			const fresh = snapshotForm(federationFormOf(read));
+			if (!dirty) {
+				source = read;
+				form = federationFormOf(read);
+				original = snapshotForm(form);
+			} else if (fresh === original) {
+				source = read;
+			} else {
+				// The configuration is kept as read, so the save is refused; the fetch's own
+				// standing is still the news it should show.
+				if (source) source = { ...source, status: read.status };
+				conflict = true;
+				failure = t('sf.live.conflict');
+			}
 			history = await client.refreshHistory(id, 10).catch(() => history);
 			revision++;
 		} catch (error) {
