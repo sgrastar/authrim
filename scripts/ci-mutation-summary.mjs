@@ -179,6 +179,42 @@ ${scriptTag}
 `;
 }
 
+/** The package directory of a report: the parent of the `.mutator` directory that holds it. */
+function packageDirOf(reportPath) {
+  let dir = dirname(reportPath);
+  while (basename(dir) !== '.mutator' && dirname(dir) !== dir) dir = dirname(dir);
+  return dirname(dir);
+}
+
+/**
+ * Whole-package report if there is one, plus the per-chunk reports written by
+ * `scripts/mutation-chunks.mjs` (`.mutator/report-chunks/<n>/mutation.json`). A package's chunk
+ * reports are read oldest first, so a file in a newer report replaces the older entry.
+ */
+export function groupReportsByPackage(reportPaths) {
+  const groups = new Map();
+  for (const reportPath of reportPaths) {
+    const dir = packageDirOf(reportPath);
+    if (!groups.has(dir)) groups.set(dir, []);
+    groups.get(dir).push(reportPath);
+  }
+  for (const [dir, list] of groups) {
+    const times = new Map();
+    for (const path of list) {
+      try {
+        times.set(path, statSync(path).mtimeMs);
+      } catch {
+        // Removed since the search: leave it out; a report that cannot be read is listed anyway.
+      }
+    }
+    groups.set(
+      dir,
+      list.filter((path) => times.has(path)).sort((a, b) => times.get(a) - times.get(b))
+    );
+  }
+  return groups;
+}
+
 export function mergeReports(reportPaths) {
   const merged = {
     schemaVersion: '2',
@@ -189,28 +225,50 @@ export function mergeReports(reportPaths) {
   };
   const rows = [];
   const broken = [];
-  for (const reportPath of reportPaths) {
-    const pkgDir = resolve(reportPath, '..', '..', '..');
+  for (const [pkgDir, paths] of groupReportsByPackage(reportPaths)) {
     const prefix = pkgDir.slice(ROOT.length + 1).replaceAll('\\', '/');
-    let report;
-    try {
-      report = JSON.parse(readFileSync(reportPath, 'utf8'));
-      if (!report || typeof report.files !== 'object') throw new Error('no `files` object');
-    } catch (error) {
-      broken.push({
-        package: prefix,
-        reason: error instanceof Error ? error.message : String(error),
-      });
-      continue;
+    const files = {};
+    const testFiles = {};
+    let thresholds = {};
+    let reportedAt = null;
+    let read = 0;
+    for (const reportPath of paths) {
+      let report;
+      try {
+        report = JSON.parse(readFileSync(reportPath, 'utf8'));
+        if (!report || typeof report.files !== 'object') throw new Error('no `files` object');
+      } catch (error) {
+        broken.push({
+          package: prefix,
+          reason: error instanceof Error ? error.message : String(error),
+        });
+        continue;
+      }
+      read++;
+      Object.assign(files, report.files);
+      for (const [path, testFile] of Object.entries(report.testFiles ?? {})) {
+        const tests = new Map((testFiles[path]?.tests ?? []).map((t) => [t.id, t]));
+        for (const test of testFile.tests ?? []) tests.set(test.id, test);
+        testFiles[path] = { ...testFile, tests: [...tests.values()] };
+      }
+      thresholds = { ...thresholds, ...(report.thresholds ?? {}) };
+      const mtime = statSync(reportPath).mtime;
+      if (!reportedAt || mtime > reportedAt) reportedAt = mtime;
     }
-    Object.assign(merged.files, prefixFiles(report.files, prefix));
-    Object.assign(merged.testFiles, prefixTestFiles(report.testFiles, prefix));
-    const counts = countStatuses(report.files ?? {});
+    if (read === 0) continue;
+    // A source file deleted, renamed or excluded since its report was written no longer counts.
+    for (const path of Object.keys(files)) {
+      if (!existsSync(join(pkgDir, path))) delete files[path];
+    }
+    Object.assign(merged.files, prefixFiles(files, prefix));
+    Object.assign(merged.testFiles, prefixTestFiles(testFiles, prefix));
+    const counts = countStatuses(files);
     rows.push({
       package: prefix,
       counts,
-      thresholds: { ...HTML_THRESHOLDS, ...(report.thresholds ?? {}) },
-      reportedAt: statSync(reportPath).mtime,
+      thresholds: { ...HTML_THRESHOLDS, ...thresholds },
+      reportedAt,
+      chunks: paths.length > 1 ? paths.length : undefined,
       ...scoreOf(counts),
     });
   }
@@ -242,7 +300,7 @@ export function markdownTable(rows, total) {
 
 /** Packages that opted in (have a mutator config) but produced no report in this checkout. */
 function packagesWithoutReport(reportPaths) {
-  const reported = new Set(reportPaths.map((p) => basename(resolve(p, '..', '..', '..'))));
+  const reported = new Set(reportPaths.map((p) => basename(packageDirOf(p))));
   return globSync('packages/*/mutator.config.{mjs,js,ts,json}', { cwd: ROOT })
     .map((p) => basename(dirname(p)))
     .filter((name) => !reported.has(name))
@@ -251,7 +309,10 @@ function packagesWithoutReport(reportPaths) {
 
 function main() {
   const { out } = parseArgs(process.argv.slice(2));
-  const reportPaths = globSync('packages/*/.mutator/report/mutation.json', { cwd: ROOT })
+  const reportPaths = [
+    ...globSync('packages/*/.mutator/report/mutation.json', { cwd: ROOT }),
+    ...globSync('packages/*/.mutator/report-chunks/*/mutation.json', { cwd: ROOT }),
+  ]
     .map((p) => join(ROOT, p))
     .sort();
   const { merged, rows, total, broken } = mergeReports(reportPaths);

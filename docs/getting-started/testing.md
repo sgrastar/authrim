@@ -197,8 +197,18 @@ package root (committed and reviewed like code). Do not write brittle tests just
   run of either still fails when mutator writes its JSON report (`RangeError: Invalid string
 length`: the report lists all ~200k mutants, Pending ones included). Diff runs (`--since`,
   the default of the manual workflow) have worked so far, but the report still lists every
-  mutant, so a diff touching widely covered code can hit the same limit; for a full baseline, run
-  them in parts with `--include`.
+  mutant, so a diff touching widely covered code can hit the same limit. For a full baseline of a
+  large package, run it in chunks: `pnpm test:mutation:chunks <package-dir>` (for example
+  `ar-lib-core`) splits the sources into chunks of ~300 KB (`--list` shows them), runs mutator on
+  each with its own report under `.mutator/report-chunks/<n>-<hash>/`, and keeps going when a
+  chunk fails. Pick chunks with `--chunk 3,4` and bound each with `--time-budget 1800` (it stops
+  starting new mutants after that many seconds; setup and type-checking are not counted, and the
+  first type-check of a package can take an hour). Rerun the same command until nothing is
+  Pending: the function cache makes a rerun execute only what is left, but it is keyed by the
+  chunk's include list, so changing `--max-bytes` starts over. A report of an older split stays
+  and is superseded file by file; `--clean` removes them all.
+  `pnpm test:mutation:summary` then merges a package's chunk reports into one row and one HTML
+  page (a file in a newer report replaces its older entry).
 - mutator runs everything in one process and its heap grows with each mutant executed: with the
   default heap, a package of more than roughly 10k mutants dies with `heap out of memory` before
   it writes its snapshot, and the whole run is lost. For a full first pass of a large package,
