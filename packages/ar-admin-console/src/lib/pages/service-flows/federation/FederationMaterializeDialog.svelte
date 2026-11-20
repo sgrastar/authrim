@@ -44,14 +44,16 @@
 		providerType === 'sp' ? source.spMappingSetId : source.idpMappingSetId
 	);
 
-	/** The mapping set chosen; until one is, the federation's own for that kind. */
-	let setId = $derived(defaultSet);
+	/** The set the person picked for this entity; until then the federation's own for that kind. */
+	let pickedSet = $state<string | null>(null);
+	const setId = $derived(pickedSet ?? defaultSet);
 
 	// A new entity starts from the federation's own choices.
 	$effect(() => {
 		if (!entity) return;
 		chosen = source.roles.includes('saml_sp') || !source.roles.includes('saml_idp') ? 'sp' : 'idp';
 		name = entity.displayName ?? '';
+		pickedSet = null;
 		failure = '';
 	});
 
@@ -107,7 +109,8 @@
 		label={t('sf.row.mappingSet')}
 		placeholder={t('mc.ro.choose')}
 		options={mappingSets}
-		bind:value={setId}
+		value={setId}
+		onchange={(value) => (pickedSet = value)}
 	/>
 	<Callout tone="info">{t('sf.fed.materialize.draft')}</Callout>
 </FormDialog>

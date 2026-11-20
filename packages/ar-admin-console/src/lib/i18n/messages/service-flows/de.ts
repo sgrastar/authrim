@@ -607,8 +607,6 @@ export const deServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 	'sf.fed.row.lastFetched': 'zuletzt abgerufen',
 	'sf.fed.row.notFetched': 'Noch nicht abgerufen',
 	// SAML federation page: status, exceptions, entities, trust
-	'sf.fed.error.registrationAuthorities':
-		'Registrierungsstellen als https-Adressen eingeben, eine pro Zeile.',
 	'sf.fed.statusCard.title': 'Abrufstatus',
 	'sf.fed.statusCard.refresh': 'Jetzt aktualisieren',
 	'sf.fed.statusCard.expiredTitle': 'Die Metadaten sind abgelaufen',
@@ -678,6 +676,7 @@ export const deServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 	'sf.fed.entities.state.excluded': 'Ausgenommen',
 	'sf.fed.entities.state.explicit': 'Eigene Verbindung',
 	'sf.fed.entities.state.explicitLink': 'Eigene Verbindung',
+	'sf.fed.entities.state.policy': 'Außerhalb der Richtlinie',
 	'sf.fed.entities.include': 'Wieder aufnehmen',
 	'sf.fed.entities.exclude': 'Ausnehmen',
 	'sf.fed.entities.materialize': 'Eigene Verbindung anlegen',

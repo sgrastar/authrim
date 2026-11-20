@@ -598,8 +598,6 @@ export const jaServiceFlows = {
 	'sf.fed.row.lastFetched': '最終取得',
 	'sf.fed.row.notFetched': 'まだ取得していません',
 	// SAML federation page: status, exceptions, entities, trust
-	'sf.fed.error.registrationAuthorities':
-		'登録機関は https で始まるアドレスを 1 行に 1 つずつ入力してください。',
 	'sf.fed.statusCard.title': '取得の状況',
 	'sf.fed.statusCard.refresh': '今すぐ更新',
 	'sf.fed.statusCard.expiredTitle': 'メタデータの有効期限が切れています',
@@ -668,6 +666,7 @@ export const jaServiceFlows = {
 	'sf.fed.entities.state.excluded': '除外',
 	'sf.fed.entities.state.explicit': '個別設定あり',
 	'sf.fed.entities.state.explicitLink': '個別設定あり',
+	'sf.fed.entities.state.policy': 'ポリシーで対象外',
 	'sf.fed.entities.include': '除外を解除',
 	'sf.fed.entities.exclude': '除外する',
 	'sf.fed.entities.materialize': '個別設定にする',

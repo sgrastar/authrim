@@ -291,4 +291,20 @@ describe('what is kept and refused when saving', () => {
 		])
 			expect(fields({ ...idp, discoveryServiceUrl: url })).toContain('discoveryServiceUrl');
 	});
+
+	it('takes registration authorities as identifiers, not addresses', () => {
+		const form = valid({
+			registrationAuthorities: 'urn:mace:example\nhttp://ra.example/\n\nurn:mace:example'
+		});
+		expect(fields(form)).toEqual([]);
+		expect(federationPayload(form).runtimeResolution).toMatchObject({
+			registrationAuthorities: ['urn:mace:example', 'http://ra.example/']
+		});
+	});
+
+	it('does not turn an inventory-only source back to automatic', () => {
+		const payload = federationPayload(valid(), { runtimeResolution: { mode: 'inventory_only' } });
+		expect(payload.runtimeResolution).toMatchObject({ mode: 'inventory_only' });
+		expect(federationPayload(valid()).runtimeResolution).toMatchObject({ mode: 'automatic' });
+	});
 });

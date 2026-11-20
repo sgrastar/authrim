@@ -99,8 +99,7 @@ export interface FederationProblem {
 		| 'roles'
 		| 'spMappingSet'
 		| 'idpMappingSet'
-		| 'discoveryServiceUrl'
-		| 'registrationAuthorities';
+		| 'discoveryServiceUrl';
 	message: string;
 }
 
@@ -138,11 +137,6 @@ export function federationProblems(form: FederationForm): FederationProblem[] {
 		problems.push({ field: 'idpMappingSet', message: t('sf.fed.error.idpMapping') });
 	if (form.idpRole && form.idpSelectionMode === 'external_ds' && !isHttps(form.discoveryServiceUrl))
 		problems.push({ field: 'discoveryServiceUrl', message: t('sf.fed.error.dsUrl') });
-	if (registrationAuthorityList(form).some((authority) => !isHttps(authority)))
-		problems.push({
-			field: 'registrationAuthorities',
-			message: t('sf.fed.error.registrationAuthorities')
-		});
 	return problems;
 }
 
@@ -207,7 +201,8 @@ export function federationPayload(
 		polling: base.polling ?? { mode: 'automatic', intervalSeconds: DEFAULT_POLLING_SECONDS },
 		runtimeResolution: {
 			...keptResolution,
-			mode: 'automatic',
+			// A source an administrator set to inventory-only stays so: the form does not own the mode.
+			mode: resolution.mode === 'inventory_only' ? 'inventory_only' : 'automatic',
 			roles: federationRoles(form),
 			...(form.idpRole ? { idpFieldMappingSetId: form.idpMappingSetId } : {}),
 			...(form.spRole ? { spFieldMappingSetId: form.spMappingSetId } : {}),

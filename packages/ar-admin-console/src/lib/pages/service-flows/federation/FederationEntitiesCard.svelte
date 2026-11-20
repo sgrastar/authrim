@@ -97,6 +97,7 @@
 		void load();
 	}
 	function go(step: 1 | -1) {
+		if (phase === 'loading') return;
 		if (step === 1) {
 			if (!nextCursor) return;
 			cursors = [...cursors.slice(0, index + 1), nextCursor];
@@ -225,6 +226,8 @@
 								entity.explicitProviderId
 							)}">{t('sf.fed.entities.state.explicitLink')}</a
 						>
+					{:else if state === 'participating' && !entity.policyAllowed}
+						<Badge tone="neutral" dot>{t('sf.fed.entities.state.policy')}</Badge>
 					{:else}
 						<Badge tone={state === 'excluded' ? 'warning' : 'success'} dot
 							>{t(`sf.fed.entities.state.${state}`)}</Badge
@@ -268,11 +271,17 @@
 					restart();
 				}}
 			/>
-			<Button size="sm" variant="secondary" disabled={index === 0} onclick={() => go(-1)}
-				>{t('sf.fed.entities.previous')}</Button
+			<Button
+				size="sm"
+				variant="secondary"
+				disabled={index === 0 || phase === 'loading'}
+				onclick={() => go(-1)}>{t('sf.fed.entities.previous')}</Button
 			>
-			<Button size="sm" variant="secondary" disabled={!nextCursor} onclick={() => go(1)}
-				>{t('sf.fed.entities.next')}</Button
+			<Button
+				size="sm"
+				variant="secondary"
+				disabled={!nextCursor || phase === 'loading'}
+				onclick={() => go(1)}>{t('sf.fed.entities.next')}</Button
 			>
 		</nav>
 	{/if}

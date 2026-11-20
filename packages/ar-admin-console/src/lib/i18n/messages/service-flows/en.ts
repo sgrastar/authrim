@@ -581,8 +581,6 @@ export const enServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 	'sf.fed.row.lastFetched': 'last fetched',
 	'sf.fed.row.notFetched': 'Not fetched yet',
 	// SAML federation page: status, exceptions, entities, trust
-	'sf.fed.error.registrationAuthorities':
-		'Enter registration authorities as https addresses, one per line.',
 	'sf.fed.statusCard.title': 'Fetch status',
 	'sf.fed.statusCard.refresh': 'Update now',
 	'sf.fed.statusCard.expiredTitle': 'The metadata has run out',
@@ -652,6 +650,7 @@ export const enServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 	'sf.fed.entities.state.excluded': 'Set aside',
 	'sf.fed.entities.state.explicit': 'Own connection',
 	'sf.fed.entities.state.explicitLink': 'Own connection',
+	'sf.fed.entities.state.policy': 'Outside the policy',
 	'sf.fed.entities.include': 'Take back',
 	'sf.fed.entities.exclude': 'Set aside',
 	'sf.fed.entities.materialize': 'Make own connection',
