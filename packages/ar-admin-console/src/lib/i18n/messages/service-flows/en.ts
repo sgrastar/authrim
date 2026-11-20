@@ -495,7 +495,6 @@ export const enServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 	'sf.mock.users.email': 'Email',
 	// SAML federations (aggregate metadata) as connections
 	'sf.part.federation-source': 'Federation details',
-	'sf.part.federation-participation': 'Mapping',
 	'sf.protocol.federation': 'SAML federation',
 	'sf.protocol.federationShort': 'SAML federation',
 	'sf.role.fed.badge': 'Federation',
@@ -602,6 +601,11 @@ export const enServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 	'sf.fed.statusCard.failedTitle': 'Recent fetches are failing',
 	'sf.fed.statusCard.failedBody':
 		'{count} in a row have failed. The metadata fetched before stays in use.',
+	'sf.fed.notInUse.title': 'This federation is not used for sign-in yet',
+	'sf.fed.notInUse.body':
+		'Choose a mapping set and save, and it starts to be used. Until then it only collects the metadata.',
+	'sf.fed.created.mappingNeeded':
+		'Choose the mapping set under the roles on the page that opens. If there is none, make one there.',
 	'sf.fed.statusCard.draft': 'This federation is not in use yet.',
 	'sf.fed.statusCard.lastFetched': 'Last fetched',
 	'sf.fed.statusCard.validUntil': 'Metadata valid until',

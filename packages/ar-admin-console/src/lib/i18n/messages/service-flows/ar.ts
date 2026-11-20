@@ -491,7 +491,6 @@ export const arServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 	'sf.mock.users.email': 'Email',
 	// SAML federations (aggregate metadata) as connections
 	'sf.part.federation-source': 'بيانات الاتحاد',
-	'sf.part.federation-participation': 'Mapping',
 	'sf.protocol.federation': 'اتحاد SAML',
 	'sf.protocol.federationShort': 'اتحاد SAML',
 	'sf.role.fed.badge': 'اتحاد',
@@ -592,6 +591,11 @@ export const arServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 	'sf.fed.statusCard.failedTitle': 'عمليات الجلب الأخيرة تفشل',
 	'sf.fed.statusCard.failedBody':
 		'فشل {count} عمليات متتالية. تبقى البيانات الوصفية المجلوبة سابقًا قيد الاستخدام.',
+	'sf.fed.notInUse.title': 'هذا الاتحاد لا يُستخدم لتسجيل الدخول بعد',
+	'sf.fed.notInUse.body':
+		'اختر مجموعة تعيين واحفظ ليبدأ استخدامه. حتى ذلك الحين يجمع البيانات الوصفية فقط.',
+	'sf.fed.created.mappingNeeded':
+		'اختر مجموعة التعيين ضمن الأدوار في الصفحة التي تُفتح. وإن لم توجد فأنشئ واحدة هناك.',
 	'sf.fed.statusCard.draft': 'هذا الاتحاد غير مستخدم بعد.',
 	'sf.fed.statusCard.lastFetched': 'آخر جلب',
 	'sf.fed.statusCard.validUntil': 'البيانات الوصفية صالحة حتى',

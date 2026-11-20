@@ -18,7 +18,9 @@
 	import SaveBar from '#lib/ui/patterns/SaveBar.svelte';
 	import {
 		federationFormOf,
+		federationInUse,
 		federationProblems,
+		federationSetupProblems,
 		federationUpdateInput,
 		type FederationForm,
 		type FederationMappingOption
@@ -82,7 +84,13 @@
 	let mappingFailed = $state(false);
 
 	const dirty = $derived(form !== null && formChanged(form, original));
-	const invalid = $derived(form !== null && federationProblems(form).length > 0);
+	// One in use cannot be saved half-set (a role added without its mapping set would switch the
+	// whole federation off); one that is not yet in use can be saved as far as it is set.
+	const invalid = $derived(
+		form !== null &&
+			(federationSetupProblems(form).length > 0 ||
+				(source?.automatic === true && !federationInUse(form)))
+	);
 
 	/** Reads the federation again; what was typed is replaced by what the server holds. */
 	async function load() {
@@ -200,6 +208,17 @@
 		</Callout>
 	{/if}
 	{#if !canEdit}<Callout tone="info">{t('sf.fed.readonly')}</Callout>{/if}
+	{#if form && !federationInUse(form)}
+		<Callout tone="info" title={t('sf.fed.notInUse.title')}>
+			{t('sf.fed.notInUse.body')}
+			<ul class="remaining">
+				{#each federationProblems(form).filter( (p) => ['spMappingSet', 'idpMappingSet', 'discoveryServiceUrl'].includes(p.field) ) as problem (problem.field)}<li
+					>
+						{problem.message}
+					</li>{/each}
+			</ul>
+		</Callout>
+	{/if}
 	<div class="federation">
 		<FederationStatusCard
 			{source}
@@ -263,6 +282,10 @@
 {/if}
 
 <style>
+	.remaining {
+		margin: 0;
+		padding-inline-start: 1.2em;
+	}
 	.federation {
 		display: grid;
 		gap: var(--space-section, 24px);

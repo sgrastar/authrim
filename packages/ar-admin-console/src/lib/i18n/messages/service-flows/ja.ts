@@ -513,7 +513,6 @@ export const jaServiceFlows = {
 	'sf.mock.users.email': 'メールアドレス',
 	// SAML federations (aggregate metadata) as connections
 	'sf.part.federation-source': 'フェデレーションの情報',
-	'sf.part.federation-participation': 'マッピング',
 	'sf.protocol.federation': 'SAML フェデレーション',
 	'sf.protocol.federationShort': 'SAML フェデレーション',
 	'sf.role.fed.badge': 'フェデレーション',
@@ -619,6 +618,11 @@ export const jaServiceFlows = {
 	'sf.fed.statusCard.failedTitle': '最近の取得に失敗しています',
 	'sf.fed.statusCard.failedBody':
 		'連続 {count} 回失敗しています。以前取得したメタデータを使い続けます。',
+	'sf.fed.notInUse.title': 'このフェデレーションはまだサインインに使われていません',
+	'sf.fed.notInUse.body':
+		'マッピングセットを選んで保存すると、サインインに使われます。それまではメタデータを取り込むだけです。',
+	'sf.fed.created.mappingNeeded':
+		'マッピングセットは、開いたページの「参加するロール」で選びます。選べるものが無いときは、そこからマッピングを作れます。',
 	'sf.fed.statusCard.draft': 'まだ使われていません。',
 	'sf.fed.statusCard.lastFetched': '最終取得',
 	'sf.fed.statusCard.validUntil': 'メタデータの有効期限',

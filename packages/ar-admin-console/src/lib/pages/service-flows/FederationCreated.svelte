@@ -66,6 +66,7 @@
 	>
 		{t(verified ? 'sf.fed.created.okBody' : 'sf.fed.created.unverifiedBody')}
 	</Callout>
+	<Callout tone="info">{t('sf.fed.created.mappingNeeded')}</Callout>
 	<DetailList columns={2} size="sm">
 		<DetailItem label={t('sf.fed.created.entities')}>{result.entityCount}</DetailItem>
 		<DetailItem label={t('sf.fed.created.signature')}>

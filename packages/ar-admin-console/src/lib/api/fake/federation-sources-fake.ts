@@ -49,7 +49,8 @@ function mockCertificatePreview(): SamlCertificatePreview {
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
 const DAY = 24 * 60 * 60 * 1000;
-const NOW = Date.UTC(2026, 10, 20, 9, 0, 0);
+// Relative to the real clock: the status card counts days left against it.
+const NOW = Date.now();
 
 const certificate: FederationCertificate = {
 	id: 'cert-1',
@@ -100,7 +101,7 @@ function status(partial: Partial<FederationStatus>): FederationStatus {
 		nextRefreshAt: NOW + 5 * 3_600_000,
 		consecutiveFailures: 0,
 		lastErrorCode: null,
-		acceptedValidUntil: new Date(NOW + 14 * DAY).toISOString(),
+		acceptedValidUntil: new Date(NOW + 14.5 * DAY).toISOString(),
 		activeMetadataDocumentId: 'doc-1',
 		entityCount: 1200,
 		excludedCount: 3,
@@ -124,7 +125,7 @@ export const MOCK_FEDERATION_SOURCES: readonly FederationSource[] = [
 	source('lapsed-federation', 'Lapsed federation', {
 		status: status({
 			sourceState: 'expired',
-			acceptedValidUntil: new Date(NOW - 2 * DAY).toISOString(),
+			acceptedValidUntil: new Date(NOW - 1.5 * DAY).toISOString(),
 			lastSuccessAt: NOW - 16 * DAY,
 			consecutiveFailures: 4,
 			lastErrorCode: 'metadata_fetch_failed',

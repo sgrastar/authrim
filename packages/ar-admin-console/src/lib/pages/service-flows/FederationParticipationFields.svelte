@@ -28,11 +28,6 @@
 		mappingLoading?: boolean;
 		onreloadmappings?: () => void;
 		disabled?: boolean;
-		/**
-		 * Ask for one role only (the wizard: the way chosen decides it). Absent: both roles, each
-		 * with its own switch, as on the federation's page.
-		 */
-		onlyRole?: 'sp' | 'idp';
 	}
 	let {
 		form = $bindable(),
@@ -40,8 +35,7 @@
 		mappingFailed = false,
 		mappingLoading = false,
 		onreloadmappings,
-		disabled = false,
-		onlyRole
+		disabled = false
 	}: Props = $props();
 
 	const presetOptions = $derived(
@@ -57,15 +51,13 @@
 	const noSets = $derived(!mappingLoading && !mappingFailed && mappingSets.length === 0);
 </script>
 
-{#if !onlyRole}
-	<ToggleRow
-		label={t('sf.fed.role.sp')}
-		description={t('sf.fed.role.spDesc')}
-		bind:checked={form.spRole}
-		{disabled}
-	/>
-{/if}
-{#if form.spRole && onlyRole !== 'idp'}
+<ToggleRow
+	label={t('sf.fed.role.sp')}
+	description={t('sf.fed.role.spDesc')}
+	bind:checked={form.spRole}
+	{disabled}
+/>
+{#if form.spRole}
 	<SelectRow
 		label={t('sf.fed.mappingSet.sp')}
 		placeholder={t('mc.ro.choose')}
@@ -82,15 +74,13 @@
 		{disabled}
 	/>
 {/if}
-{#if !onlyRole}
-	<ToggleRow
-		label={t('sf.fed.role.idp')}
-		description={t('sf.fed.role.idpDesc')}
-		bind:checked={form.idpRole}
-		{disabled}
-	/>
-{/if}
-{#if form.idpRole && onlyRole !== 'sp'}
+<ToggleRow
+	label={t('sf.fed.role.idp')}
+	description={t('sf.fed.role.idpDesc')}
+	bind:checked={form.idpRole}
+	{disabled}
+/>
+{#if form.idpRole}
 	<SelectRow
 		label={t('sf.fed.mappingSet.idp')}
 		placeholder={t('mc.ro.choose')}
