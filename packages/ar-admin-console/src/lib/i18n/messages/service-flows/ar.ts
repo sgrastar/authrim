@@ -591,6 +591,10 @@ export const arServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 	'sf.fed.statusCard.failedTitle': 'عمليات الجلب الأخيرة تفشل',
 	'sf.fed.statusCard.failedBody':
 		'فشل {count} عمليات متتالية. تبقى البيانات الوصفية المجلوبة سابقًا قيد الاستخدام.',
+	'sf.fed.flow.exclusions': 'الاستبعاد',
+	'sf.fed.flow.exclusionsItem': 'الاستبعاد والكيانات',
+	'sf.fed.flow.exclusionsCount': '{count} مستبعد',
+	'sf.fed.flow.exclusionsNone': 'لا شيء',
 	'sf.fed.flow.services': 'خدمات الاتحاد',
 	'sf.fed.flow.authrim': 'تسجيل الدخول عبر Authrim',
 	'sf.fed.flow.authrimDetail': 'يسجّل مستخدمو الخدمات الدخول عبر Authrim',

@@ -107,6 +107,8 @@
 	let current = $state('');
 	let rightPanel = $state<HTMLElement | null>(null);
 	const mappingSelected = $derived(current === 'mapping-sets');
+	const exclusionSelected = $derived(current === 'exclusions');
+	const excludedCount = $derived(form?.excludedEntityIds.length ?? 0);
 	const mappingState = $derived(form && federationInUse(form) ? 'done' : 'todo');
 	/** How many entities of the side the service flow works with, and how many of them are set aside. */
 	let counts = $state<{ total: number; excluded: number } | null>(null);
@@ -303,30 +305,56 @@
 				<FlowScope label={t('sf.detail.authrimDoes')}>
 					<!-- The mapping is not optional: what comes through is the mapping's, so it is always there. -->
 					<FlowSequence
-						order={['mapping']}
-						visible={['mapping']}
+						order={['mapping', 'exclusions']}
+						visible={['mapping', 'exclusions']}
 						lead={36}
 						trail={6}
 						menuTitle={source.name}
-						option={(node) => ({ id: node, label: t('sf.group.mapping') })}
+						option={(node) => ({
+							id: node,
+							label: t(node === 'mapping' ? 'sf.group.mapping' : 'sf.fed.flow.exclusions')
+						})}
 						onadd={selectNode}
 					>
-						{#snippet step(_node, { exiting })}
-							<FlowStepGroup
-								name={t('sf.group.mapping')}
-								state={mappingState}
-								{current}
-								{exiting}
-								onselect={selectNode}
-								items={[
-									{
-										id: 'mapping-sets',
-										label: labelOf('mapping-sets'),
-										state: mappingState,
-										status: t(mappingState === 'done' ? 'sf.status.done' : 'sf.status.todo')
-									}
-								]}
-							/>
+						{#snippet step(node, { exiting })}
+							{#if node === 'mapping'}
+								<FlowStepGroup
+									name={t('sf.group.mapping')}
+									state={mappingState}
+									{current}
+									{exiting}
+									onselect={selectNode}
+									items={[
+										{
+											id: 'mapping-sets',
+											label: labelOf('mapping-sets'),
+											required: true,
+											state: mappingState,
+											status: t(mappingState === 'done' ? 'sf.status.done' : 'sf.status.todo')
+										}
+									]}
+								/>
+							{:else}
+								<!-- Who is set aside and the entities: always there, nothing in it is required. -->
+								<FlowStepGroup
+									name={t('sf.fed.flow.exclusions')}
+									state="done"
+									{current}
+									{exiting}
+									onselect={selectNode}
+									items={[
+										{
+											id: 'exclusions',
+											label: t('sf.fed.flow.exclusionsItem'),
+											state: 'done',
+											status:
+												excludedCount > 0
+													? t('sf.fed.flow.exclusionsCount', { count: excludedCount })
+													: t('sf.fed.flow.exclusionsNone')
+										}
+									]}
+								/>
+							{/if}
 						{/snippet}
 					</FlowSequence>
 				</FlowScope>
@@ -348,7 +376,7 @@
 			</FlowCanvas>
 		</div>
 		<div class="detail__side" bind:this={rightPanel}>
-			<div class="detail__general" hidden={mappingSelected}>
+			<div class="detail__general" hidden={mappingSelected || exclusionSelected}>
 				<FederationStatusCard
 					{source}
 					{history}
@@ -359,6 +387,18 @@
 					entityCount={entityRole ? (counts?.total ?? null) : undefined}
 					excludedCount={entityRole ? (counts?.excluded ?? null) : undefined}
 				/>
+				<FederationTrustCard
+					bind:form
+					disabled={!canEdit}
+					readCertificateUrl={canMaterialize
+						? async (url) => (await client.previewCertificateUrl(url)).certificate
+						: undefined}
+				/>
+				{#if canEdit}
+					<FederationDangerZone sourceId={id} name={source.name} {client} ondeleted={onback} />
+				{/if}
+			</div>
+			<div class="detail__general" hidden={!exclusionSelected}>
 				<FederationExceptionsCard
 					sourceId={id}
 					{client}
@@ -374,16 +414,6 @@
 					onlyRole={entityRole}
 					onmaterialize={canMaterialize ? (entity) => (materializing = entity) : undefined}
 				/>
-				<FederationTrustCard
-					bind:form
-					disabled={!canEdit}
-					readCertificateUrl={canMaterialize
-						? async (url) => (await client.previewCertificateUrl(url)).certificate
-						: undefined}
-				/>
-				{#if canEdit}
-					<FederationDangerZone sourceId={id} name={source.name} {client} ondeleted={onback} />
-				{/if}
 			</div>
 			<div class="detail__general" hidden={!mappingSelected}>
 				<FederationParticipationCard

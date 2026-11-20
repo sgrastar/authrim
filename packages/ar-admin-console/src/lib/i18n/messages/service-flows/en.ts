@@ -601,6 +601,10 @@ export const enServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 	'sf.fed.statusCard.failedTitle': 'Recent fetches are failing',
 	'sf.fed.statusCard.failedBody':
 		'{count} in a row have failed. The metadata fetched before stays in use.',
+	'sf.fed.flow.exclusions': 'Set aside',
+	'sf.fed.flow.exclusionsItem': 'Set aside and entities',
+	'sf.fed.flow.exclusionsCount': '{count} set aside',
+	'sf.fed.flow.exclusionsNone': 'None',
 	'sf.fed.flow.services': 'The federation’s services',
 	'sf.fed.flow.authrim': 'Authrim sign-in',
 	'sf.fed.flow.authrimDetail': 'The services’ users sign in through Authrim',

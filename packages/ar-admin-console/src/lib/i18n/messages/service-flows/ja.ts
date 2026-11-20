@@ -618,6 +618,10 @@ export const jaServiceFlows = {
 	'sf.fed.statusCard.failedTitle': '最近の取得に失敗しています',
 	'sf.fed.statusCard.failedBody':
 		'連続 {count} 回失敗しています。以前取得したメタデータを使い続けます。',
+	'sf.fed.flow.exclusions': '除外',
+	'sf.fed.flow.exclusionsItem': '除外とエンティティ',
+	'sf.fed.flow.exclusionsCount': '{count} 件',
+	'sf.fed.flow.exclusionsNone': 'なし',
 	'sf.fed.flow.services': 'フェデレーションのサービス',
 	'sf.fed.flow.authrim': 'Authrim サインイン',
 	'sf.fed.flow.authrimDetail': 'サービスの利用者が Authrim でサインインします',
