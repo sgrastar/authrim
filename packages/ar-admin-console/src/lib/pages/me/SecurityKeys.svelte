@@ -16,7 +16,8 @@
 		SecondFactor,
 		SecondFactorRecovery,
 		SecondFactorsClient,
-		SecondFactorState
+		SecondFactorState,
+		TotpEnrollment
 	} from '#lib/api/second-factors.js';
 	import { i18n, t, type MessageKey } from '#lib/i18n/i18n.svelte.js';
 	import Callout from '#lib/ui/patterns/Callout.svelte';
@@ -34,6 +35,7 @@
 	import Button from '#lib/ui/primitives/Button.svelte';
 	import IconButton from '#lib/ui/primitives/IconButton.svelte';
 	import TextField from '#lib/ui/primitives/TextField.svelte';
+	import TotpEnrollDialog from './TotpEnrollDialog.svelte';
 	import DateTime from '#lib/ui/time/DateTime.svelte';
 	import { formatTime } from '#lib/ui/time/format-time.js';
 	import { timePreference } from '#lib/ui/time/time-preference.svelte.js';
@@ -116,7 +118,12 @@
 				recovery_requires_last_resort: 'sk.error.lastResort',
 				recovery_notification_unavailable: 'sk.error.noEmail',
 				recovery_notification_failed: 'sk.error.noEmail',
-				recovery_pending: 'sk.error.pending'
+				recovery_pending: 'sk.error.pending',
+				second_factor_kind_not_allowed: 'sk.error.totpNotAllowed',
+				second_factor_kind_in_use: 'sk.error.totpInUse',
+				verification_failed: 'sk.error.totpInvalid',
+				rate_limited: 'sk.error.rateLimited',
+				invalid_challenge: 'sk.error.totpExpired'
 			};
 			if (error.code === 'recovery_waiting' && typeof error.body.not_before === 'number') {
 				return t('sk.error.waiting', { date: when(error.body.not_before) });
@@ -133,6 +140,57 @@
 
 	const nameOf = (key: { label: string | null }) => key.label || t('sk.unnamed');
 	const isKeyring = (key: SecondFactor) => key.kind === 'keyring_holder_key';
+	const isTotp = (key: SecondFactor) => key.kind === 'totp';
+	const kindIcon = (key: SecondFactor) =>
+		isKeyring(key) ? 'deviceMobile' : isTotp(key) ? 'clock' : 'key';
+	const kindLabel = (key: SecondFactor) =>
+		isKeyring(key) ? 'kp.kind.keyring' : isTotp(key) ? 'sk.totp.badge' : 'kp.kind.securityKey';
+	// Offered where the tenant allows it, and while the admin has none (at most one is kept).
+	const canAddTotp = $derived(keyState?.totp?.allowed === true && !activeKeys.some(isTotp));
+
+	// Registering an authenticator app: the step-up (or the first-enrollment rule) is met when the
+	// secret is created; the app's code then confirms it, and a wrong code can be retyped.
+	let totpEnrollment = $state<TotpEnrollment | null>(null);
+	let totpError = $state<string>();
+
+	async function startTotp() {
+		busy = true;
+		try {
+			totpEnrollment = await client.startTotp({});
+			totpError = undefined;
+		} catch (error) {
+			if (error instanceof ApiError && error.code === 'second_factor_recovery_required') {
+				toast.error(t('sk.error.windowClosed'));
+				await load();
+			} else {
+				toast.error(errorText(error));
+			}
+		} finally {
+			busy = false;
+		}
+	}
+
+	async function confirmTotp(code: string) {
+		const target = totpEnrollment;
+		if (!target) return;
+		busy = true;
+		totpError = undefined;
+		try {
+			await client.confirmTotp({ challengeId: target.challengeId, code: code.replace(/\s+/g, '') });
+			totpEnrollment = null;
+			toast.success(t('sk.totp.added'));
+			await load();
+		} catch (error) {
+			totpError = errorText(error);
+			// The challenge is gone (expired, or spent): a new secret is needed.
+			if (error instanceof ApiError && error.code === 'invalid_challenge') {
+				totpEnrollment = null;
+				toast.error(totpError);
+			}
+		} finally {
+			busy = false;
+		}
+	}
 
 	// Registering Keyring: an L2 step-up (or the first-enrollment rule) when the request starts,
 	// then the presentation from Keyring; the server registers the key once it is verified.
@@ -254,6 +312,9 @@
 			<InlineGroup>
 				<Button icon="plus" size="sm" onclick={() => openKeyring()}>{t('kp.enroll.add')}</Button>
 				<Button icon="plus" size="sm" onclick={() => openAdd('key')}>{t('sk.add')}</Button>
+				{#if canAddTotp}
+					<Button icon="plus" size="sm" onclick={startTotp}>{t('sk.addTotp')}</Button>
+				{/if}
 			</InlineGroup>
 		{/if}
 	{/snippet}
@@ -318,9 +379,9 @@
 			{:else}
 				<ItemGrid label={t('sk.title')}>
 					{#each activeKeys as key (key.id)}
-						<ItemCard title={nameOf(key)} icon={isKeyring(key) ? 'deviceMobile' : 'key'}>
+						<ItemCard title={nameOf(key)} icon={kindIcon(key)}>
 							{#snippet meta()}
-								<Badge>{t(isKeyring(key) ? 'kp.kind.keyring' : 'kp.kind.securityKey')}</Badge>
+								<Badge>{t(kindLabel(key))}</Badge>
 								{#if onlyOne}<Badge tone="info">{t('sk.only')}</Badge>{/if}
 							{/snippet}
 							{#snippet actions()}
@@ -380,6 +441,14 @@
 		bind:value={addName}
 	/>
 </FormDialog>
+
+<TotpEnrollDialog
+	enrollment={totpEnrollment}
+	{busy}
+	error={totpError}
+	onsubmit={confirmTotp}
+	oncancel={() => (totpEnrollment = null)}
+/>
 
 <KeyringPresentationDialog
 	open={enrolling !== null}

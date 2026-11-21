@@ -69,6 +69,72 @@
 </Story>
 
 <Story
+	name="Authenticator app"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findByText('Phone (authenticator)');
+		expect(canvas.getByText(t('sk.totp.badge'))).toBeTruthy();
+		// One authenticator app is kept: it cannot be added twice.
+		expect(canvas.queryByRole('button', { name: t('sk.addTotp') })).toBeNull();
+	}}
+>
+	{#snippet template()}
+		<SecurityKeys
+			client={createFakeSecondFactors({
+				totpAllowed: true,
+				keys: [{ label: 'YubiKey 5C (blue)' }, { label: 'Phone (authenticator)', kind: 'totp' }]
+			})}
+		/>
+	{/snippet}
+</Story>
+
+<Story
+	name="Add authenticator app"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const body = within(canvasElement.ownerDocument.body);
+		await userEvent.click(await canvas.findByRole('button', { name: t('sk.addTotp') }));
+		// A wrong code keeps the dialog open with the reason.
+		// The dialog is in the page from the start: wait until it is open before typing.
+		const confirm = await body.findByRole('button', { name: t('sk.totp.confirm') });
+		const field = body.getByLabelText(t('sk.totp.code'));
+		await userEvent.type(field, '000000');
+		await userEvent.click(confirm);
+		await body.findByText(t('sk.error.totpInvalid'));
+		// The right one adds it.
+		await userEvent.clear(field);
+		await userEvent.type(field, '123456');
+		await userEvent.click(await body.findByRole('button', { name: t('sk.totp.confirm') }));
+		// The new factor is listed: its name (the default one) and its kind.
+		await canvas.findAllByText(t('sk.totp.badge'));
+		expect(canvas.queryByRole('button', { name: t('sk.addTotp') })).toBeNull();
+	}}
+>
+	{#snippet template()}
+		<SecurityKeys
+			client={createFakeSecondFactors({
+				totpAllowed: true,
+				keys: [{ label: 'YubiKey 5C (blue)' }]
+			})}
+		/>
+	{/snippet}
+</Story>
+
+<Story
+	name="Authenticator app not allowed"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findByRole('button', { name: t('sk.add') });
+		// The tenant lists hardware only: nothing offers an authenticator app.
+		expect(canvas.queryByRole('button', { name: t('sk.addTotp') })).toBeNull();
+	}}
+>
+	{#snippet template()}
+		<SecurityKeys client={createFakeSecondFactors({ keys: [{ label: 'YubiKey 5C (blue)' }] })} />
+	{/snippet}
+</Story>
+
+<Story
 	name="Add Keyring"
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);

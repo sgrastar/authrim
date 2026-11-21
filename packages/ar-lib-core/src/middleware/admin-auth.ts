@@ -909,7 +909,7 @@ function isPlatformAdminSessionPath(path: string): boolean {
     // second-factor enrollment challenges are kept, under the session's own tenant.
     /^\/api\/admin\/me\/reauth\/(?:passkey|second-factor)\/(?:options|verify)\/?$/u.test(path) ||
     /^\/api\/admin\/me\/step-up\/receipts\/?$/u.test(path) ||
-    /^\/api\/admin\/me\/second-factors(?:\/webauthn\/(?:options|verify)|\/[^/]+)?\/?$/u.test(
+    /^\/api\/admin\/me\/second-factors(?:\/webauthn\/(?:options|verify)|\/totp\/(?:enroll(?:\/verify)?|verify)|\/[^/]+)?\/?$/u.test(
       path
     ) ||
     /^\/api\/admin\/me\/second-factor-recovery(?:\/(?:complete|cancel))?\/?$/u.test(path) ||

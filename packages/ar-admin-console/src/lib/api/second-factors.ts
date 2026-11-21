@@ -17,7 +17,7 @@ import { ApiError, ReleasePausedError, isReleasePause } from '#lib/api/api-error
 
 export interface SecondFactor {
 	id: string;
-	kind: 'webauthn_credential' | 'keyring_holder_key';
+	kind: 'webauthn_credential' | 'keyring_holder_key' | 'totp';
 	label: string | null;
 	aaguid: string | null;
 	created_at: number;
@@ -35,6 +35,11 @@ export interface SecondFactorState {
 	enrollment: { mode: EnrollmentMode; first_enrollment_ends_at: number | null };
 	/** Whether Keyring may be presented through the browser (Digital Credentials API). */
 	keyring?: { dc_api: boolean };
+	/**
+	 * Whether the tenant of the session allows an authenticator app (TOTP) as a second factor
+	 * (`security.admin_second_factor_allowed_kinds`); absent means no.
+	 */
+	totp?: { allowed: boolean };
 	/**
 	 * Whether a recovery can be requested. A sole administrator cannot (nobody could cancel it):
 	 * they recover with the environment owner procedure.
@@ -59,12 +64,26 @@ export interface TenantRecoveryRequest extends SecondFactorRecovery {
 	admin_email: string | null;
 }
 
+/** A secret for an authenticator app, waiting for a code from the app to confirm it. */
+export interface TotpEnrollment {
+	challengeId: string;
+	/** The otpauth:// URI the app scans (shown as a QR code). */
+	otpauthUri: string;
+	/** The same secret for typing into an app that cannot scan; shown once. */
+	secret: string;
+	expiresAt: number;
+}
+
 export type RegisterResult = { second_factor: SecondFactor } | { recovery: SecondFactorRecovery };
 
 export interface SecondFactorsClient {
 	list(): Promise<SecondFactorState>;
 	/** Register a security key, or with `recovery` file a recovery request with it. */
 	register(input: { label?: string; recovery?: boolean }): Promise<RegisterResult>;
+	/** Start registering an authenticator app (an L2 operation once a second factor exists). */
+	startTotp(input: { label?: string }): Promise<TotpEnrollment>;
+	/** Confirm the secret with a code from the app; a wrong code can be tried again. */
+	confirmTotp(input: { challengeId: string; code: string }): Promise<SecondFactor>;
 	remove(id: string): Promise<void>;
 	getRecovery(): Promise<SecondFactorRecovery | null>;
 	completeRecovery(): Promise<void>;
@@ -124,6 +143,32 @@ export const httpSecondFactors: SecondFactorsClient = {
 		return request<RegisterResult>('POST', `${ME}/second-factors/webauthn/verify`, {
 			body: { challenge_id, credential }
 		});
+	},
+
+	async startTotp({ label }) {
+		// Adding a second factor once one exists is L2; the receipt is spent on the start.
+		const started = await withStepUp((receipt) =>
+			request<{ challenge_id: string; otpauth_uri: string; secret: string; expires_at: number }>(
+				'POST',
+				`${ME}/second-factors/totp/enroll`,
+				{ body: label ? { label } : {}, headers: stepUpHeaders(receipt) }
+			)
+		);
+		return {
+			challengeId: started.challenge_id,
+			otpauthUri: started.otpauth_uri,
+			secret: started.secret,
+			expiresAt: started.expires_at
+		};
+	},
+
+	async confirmTotp({ challengeId, code }) {
+		const { second_factor } = await request<{ second_factor: SecondFactor }>(
+			'POST',
+			`${ME}/second-factors/totp/enroll/verify`,
+			{ body: { challenge_id: challengeId, code } }
+		);
+		return second_factor;
 	},
 
 	async remove(id) {

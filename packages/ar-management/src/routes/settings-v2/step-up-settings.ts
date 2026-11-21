@@ -3,6 +3,11 @@
  *
  * - `admin_step_up.policy.relax`: `security.admin_step_up_overrides` lowers or drops the level of
  *   an operation, or `security.admin_step_up_enforced` goes from on (or unset) to off.
+ * - `admin_step_up.policy.relax` also covers `security.admin_second_factor_allowed_kinds` allowing
+ *   a kind of second factor it did not (a weaker one, such as an authenticator app). Needs L2 like
+ *   any relaxation, except where the administrator making the change has no second factor that
+ *   counts under the policy in effect (so could not give L2 for it, as in a tenant that has none yet): then a fresh passkey is enough, the change is
+ *   written to the audit log, and the tenant's other administrators are told by email.
  * - `audit.retention.shorten`: `audit.check_api_retention_days` or `admin-notices.retention_days`
  *   becomes shorter (or is switched off).
  *
@@ -31,6 +36,14 @@ import {
   ADMIN_NOTICES_DEFAULTS,
   ADMIN_STEP_UP_ENFORCED_KEY,
   ADMIN_STEP_UP_OVERRIDES_KEY,
+  ADMIN_SECOND_FACTOR_ALLOWED_KINDS_KEY,
+  AdminSecondFactorRepository,
+  evaluateAdminStepUpEvidence,
+  isAdminSecondFactorKindAllowed,
+  isAdminStepUpHumanSession,
+  requireDedicatedAdminDatabaseAdapter,
+  resolveAdminSecondFactorAllowedKinds,
+  widensAdminSecondFactorKinds,
   ADMIN_INVITATION_CODE_HANDOFF_KEY,
   MACHINE_ACCESS_ALL_SCOPE_EXCLUDED_TENANTS_KEY,
   readMachineExcludedTenants,
@@ -46,7 +59,12 @@ import {
   type SettingsPatchRequest,
 } from '@authrim/ar-lib-core';
 import type { AdminStepUpOperationDescriptor } from '@authrim/ar-lib-core';
-import { requireAdminStepUp } from '../../admin-step-up-gate';
+import { refuseAdminFreshAuth, requireAdminStepUp } from '../../admin-step-up-gate';
+import { writeAdminAuditLog } from '../../admin-shared';
+import {
+  noticeSecondFactorKindsWidened,
+  showSecondFactorKindsWidenedInConsole,
+} from './second-factor-policy-notice';
 import { auditRetentionWeakened } from '../../audit-retention-compare';
 import { createInfrastructureSettingsManager } from '../../runtime-profiles';
 import { auditDeliveryChanged, auditDeliveryDigests } from '../../audit-profile-delivery';
@@ -69,7 +87,11 @@ export const TENANT_PROFILE_KEYS = [
   'tenant.residency_profile_id',
   'tenant.audit_profile_id',
 ] as const;
-const POLICY_KEYS = [ADMIN_STEP_UP_OVERRIDES_KEY, ADMIN_STEP_UP_ENFORCED_KEY] as const;
+const POLICY_KEYS = [
+  ADMIN_STEP_UP_OVERRIDES_KEY,
+  ADMIN_STEP_UP_ENFORCED_KEY,
+  ADMIN_SECOND_FACTOR_ALLOWED_KINDS_KEY,
+] as const;
 const HANDOFF_KEYS = [ADMIN_INVITATION_CODE_HANDOFF_KEY] as const;
 const MACHINE_EXCLUSION_KEYS = [MACHINE_ACCESS_ALL_SCOPE_EXCLUDED_TENANTS_KEY] as const;
 const LEVEL_RANK: Record<string, number> = { L1: 1, L2: 2 };
@@ -103,6 +125,11 @@ export type StepUpSettingsDecision =
         | 'admin_invitation.code_handoff.enable'
         | 'machine_access.excluded_tenants.relax';
       params: Record<string, unknown>;
+      /**
+       * The change only widens the allowed second-factor kinds (nothing else relaxes): where no
+       * administrator can give L2 it is let through on a fresh passkey, with a notice.
+       */
+      widensKindsOnly?: boolean;
     };
 
 /** Whether a PATCH names a setting this module guards (cheap check before any read). */
@@ -143,6 +170,22 @@ export function decideStepUpSettings(input: {
   if (enforcedBefore !== false && enforcedAfter === false) {
     relax = true;
     params.admin_step_up_enforced = false;
+  }
+
+  // Allowing a kind of second factor the tenant did not allow weakens L2 as well.
+  const kindsAfterRaw = effective(after, inherited, ADMIN_SECOND_FACTOR_ALLOWED_KINDS_KEY);
+  const widensKinds = widensAdminSecondFactorKinds(
+    effective(before, inherited, ADMIN_SECOND_FACTOR_ALLOWED_KINDS_KEY),
+    kindsAfterRaw
+  );
+  // Only a widening when nothing else in this change needs a gate: decided below, once every
+  // other relaxation has been evaluated.
+  const relaxesOtherPolicy = relax;
+  if (widensKinds) {
+    relax = true;
+    params.admin_second_factor_allowed_kinds = [
+      ...resolveAdminSecondFactorAllowedKinds(kindsAfterRaw),
+    ].sort();
   }
 
   // An unset value is the default the feature runs with, so a value set below it shortens too.
@@ -188,7 +231,17 @@ export function decideStepUpSettings(input: {
           (excludedAfter.kind === 'list' &&
             [...excludedBefore.tenants].some((tenantId) => !excludedAfter.tenants.has(tenantId))));
 
-  if (relax) return { kind: 'gate', operation: 'admin_step_up.policy.relax', params };
+  if (relax) {
+    // The passkey-only way through is for a change whose only weakening is the allowed kinds.
+    const widensKindsOnly =
+      widensKinds && !relaxesOtherPolicy && !excludedRelaxed && !handoffEnabled && !shorten;
+    return {
+      kind: 'gate',
+      operation: 'admin_step_up.policy.relax',
+      params,
+      ...(widensKindsOnly ? { widensKindsOnly: true } : {}),
+    };
+  }
   if (excludedRelaxed) {
     return {
       kind: 'gate',
@@ -222,7 +275,92 @@ type StepUpNeed = {
   params: Record<string, unknown>;
   /** Further operations this one request needs (delivery changed and retention shortened). */
   alsoCovers?: Array<'audit.retention.shorten'>;
+  /** Only the allowed second-factor kinds are widened (see `decideStepUpSettings`). */
+  widensKindsOnly?: boolean;
 };
+
+/**
+ * Work for after the save has committed. The gate fills it when it let a change through on less
+ * than L2, so the change is recorded and announced only once it took effect.
+ */
+export interface StepUpSettingsPending {
+  afterSave?: () => Promise<void>;
+}
+
+/** Run the work the gate left for after the save; never fails the change that took effect. */
+export async function runStepUpSettingsAfterSave(pending: StepUpSettingsPending): Promise<void> {
+  try {
+    await pending.afterSave?.();
+  } catch {
+    // The change is saved; the audit entry and the notice are best effort.
+  }
+}
+
+/**
+ * The way through for widening the allowed second-factor kinds when the administrator making the
+ * change could not give L2 for it (no second factor that counts under the policy in effect): a fresh passkey is enough. Returns undefined when the normal L2 gate applies (the
+ * admin has a second factor that counts under the policy in effect now, or is not a signed-in
+ * human), the refusal when the passkey is not fresh, or null once the change may go ahead.
+ */
+async function widenKindsWithoutSecondFactor(input: {
+  c: Context<{ Bindings: Env; Variables: { adminAuth?: AdminAuthContext } }, string>;
+  targetTenantId: string;
+  allowedBefore: unknown;
+  allowedAfter: unknown;
+  pending?: StepUpSettingsPending;
+}): Promise<Response | null | undefined> {
+  const { c } = input;
+  const auth = c.get('adminAuth');
+  if (!auth || !isAdminStepUpHumanSession(auth) || !auth.sessionTenantId) return undefined;
+  const factors = await new AdminSecondFactorRepository(
+    requireDedicatedAdminDatabaseAdapter(c.env, 'admin-second-factor-policy')
+  ).listActiveByUser(auth.userId);
+  const allowed = resolveAdminSecondFactorAllowedKinds(input.allowedBefore);
+  if (factors.some((factor) => isAdminSecondFactorKindAllowed(factor.kind, allowed))) {
+    return undefined;
+  }
+  if (evaluateAdminStepUpEvidence(auth, 'L1', Date.now()).missing.length > 0) {
+    return refuseAdminFreshAuth(c);
+  }
+  const kinds = [...resolveAdminSecondFactorAllowedKinds(input.allowedAfter)].sort();
+  // The record that this was let through on a passkey alone is written first, and the change
+  // does not go ahead without it: an unrecorded weakening is the one thing this way through
+  // must never allow. (The notices below follow the save and are best effort.)
+  const recorded = await writeAdminAuditLog(c, {
+    action: 'admin.second_factor_policy.widened_without_second_factor',
+    resourceType: 'tenant',
+    resourceId: input.targetTenantId,
+    result: 'success',
+    severity: 'warn',
+    metadata: { allowed_kinds: kinds, authorized_with: 'passkey_only' },
+  });
+  if (recorded === null) {
+    return c.json(
+      {
+        error: 'audit_unavailable',
+        error_description: 'The change could not be recorded, so it was not made',
+      },
+      503
+    );
+  }
+  if (input.pending) {
+    input.pending.afterSave = async () => {
+      const notice = {
+        tenantId: input.targetTenantId,
+        actor: { id: auth.userId, ...(auth.email ? { email: auth.email } : {}) },
+        kinds,
+        now: Date.now(),
+      };
+      // Two channels, each on its own: the console notice needs no mail setup, the email reaches
+      // administrators who are not looking at the console.
+      await Promise.allSettled([
+        showSecondFactorKindsWidenedInConsole(c.env, notice),
+        noticeSecondFactorKindsWidened(c.env, notice),
+      ]);
+    };
+  }
+  return null;
+}
 
 function profileId(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
@@ -363,6 +501,8 @@ export async function gateStepUpSettingsPatch(input: {
    * a profile that changed after this decision puts the switch back (see profile-switch-verify).
    */
   guard?: ProfileSwitchGuard;
+  /** Filled when the change went through on less than L2: run `afterSave` once it is saved. */
+  pending?: StepUpSettingsPending;
 }): Promise<Response | null> {
   const { c, manager, category, scope, body } = input;
   if (!patchTouchesStepUpSettings(body)) return null;
@@ -406,7 +546,13 @@ export async function gateStepUpSettingsPatch(input: {
   }
   const needed: StepUpNeed[] = [
     ...(settingsOutcome.kind === 'gate'
-      ? [{ operation: settingsOutcome.operation, params: settingsOutcome.params }]
+      ? [
+          {
+            operation: settingsOutcome.operation,
+            params: settingsOutcome.params,
+            ...(settingsOutcome.widensKindsOnly ? { widensKindsOnly: true } : {}),
+          },
+        ]
       : []),
     ...switches,
   ];
@@ -436,6 +582,26 @@ export async function gateStepUpSettingsPatch(input: {
       },
       400
     );
+  }
+  // Widening the allowed second-factor kinds where nobody could give L2 for it: a fresh passkey,
+  // recorded and announced after the save (a request that also relaxes something else keeps L2).
+  if (needed.length === 1 && outcome.widensKindsOnly) {
+    const fallback = await widenKindsWithoutSecondFactor({
+      c,
+      targetTenantId: input.targetTenantId,
+      allowedBefore: effective(
+        decision.candidate.before,
+        state.inherited.values,
+        ADMIN_SECOND_FACTOR_ALLOWED_KINDS_KEY
+      ),
+      allowedAfter: effective(
+        decision.candidate.after,
+        state.inherited.values,
+        ADMIN_SECOND_FACTOR_ALLOWED_KINDS_KEY
+      ),
+      pending: input.pending,
+    });
+    if (fallback !== undefined) return fallback;
   }
   const descriptor: AdminStepUpOperationDescriptor = {
     operation: outcome.operation,

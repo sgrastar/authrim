@@ -52,6 +52,20 @@ export const deKeyringPresentation = {
 		'Verwenden Sie einen registrierten USB- oder NFC-Sicherheitsschlüssel.',
 	'kp.prompt.continue': 'Weiter',
 	'kp.prompt.other': 'Sicherheitsschlüssel verwenden',
+	'kp.prompt.totp': 'Authenticator-App',
+	'kp.prompt.totpHint': 'Geben Sie den 6-stelligen Code aus Ihrer Authenticator-App ein.',
+	'kp.prompt.totpDesc':
+		'Geben Sie den 6-stelligen Code ein, der in Ihrer Authenticator-App angezeigt wird.',
+	'kp.prompt.back': 'Andere Methode wählen',
+	'kp.totp.label': 'Code aus Ihrer Authenticator-App',
+	'kp.totp.verify': 'Bestätigen',
+	'kp.totp.error.invalid':
+		'Der Code wurde nicht akzeptiert. Ein Code gilt nur einmal: Wenn Sie ihn gerade verwendet haben, warten Sie auf den nächsten.',
+	'kp.totp.error.rateLimited':
+		'Zu viele Versuche. Warten Sie einige Minuten und versuchen Sie es erneut.',
+	'kp.totp.error.notAllowed':
+		'Dieser Mandant erlaubt Authenticator-Apps nicht mehr als zweiten Faktor.',
+	'kp.totp.error.unavailable': 'Der Code konnte nicht geprüft werden. Versuchen Sie es erneut.',
 	'kp.enroll.add': 'Keyring hinzufügen',
 	'kp.enroll.title': 'Authrim Keyring als zweiten Faktor hinzufügen',
 	'kp.enroll.body':

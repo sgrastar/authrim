@@ -35231,6 +35231,17 @@ paths:
                         description: >-
                           Whether Keyring may also be presented through the browser (Digital
                           Credentials API; platform setting security.admin_keyring_dc_api).
+                  totp:
+                    type: object
+                    required:
+                      - allowed
+                    properties:
+                      allowed:
+                        type: boolean
+                        description: >-
+                          Whether the tenant of the session lists totp in
+                          security.admin_second_factor_allowed_kinds, so an authenticator app can
+                          be registered and used as a second factor.
                   recovery:
                     type: object
                     required:
@@ -35389,6 +35400,222 @@ paths:
                 $ref: '#/components/schemas/Error'
         '409':
           description: credential_in_use or second_factor_already_enrolled.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
+  /api/admin/me/second-factors/totp/enroll:
+    post:
+      tags:
+        - Admin Passkeys
+      operationId: postApiAdminMeSecondFactorsTotpEnroll
+      summary: Start registering an authenticator app as a second factor
+      description: >-
+        Create a secret for an authenticator app. Allowed only where the tenant of the session
+        lists totp in security.admin_second_factor_allowed_kinds (403
+        second_factor_kind_not_allowed otherwise). When the admin already has a second factor, this
+        is the admin.second_factor.add operation and needs an L2 receipt in the
+        authrim-step-up-receipt header (403 step_up_required otherwise). The first one needs only a
+        fresh passkey (403 admin_fresh_auth_required otherwise), inside the first-enrollment
+        window; after it, 403 second_factor_recovery_required. An admin has at most one
+        authenticator app (409 second_factor_kind_in_use). Never used for a recovery request. The
+        secret is returned once, here; it is stored only after a code from the app confirms it.
+        A selected tenant runtime snapshot is not required.
+      x-authrim-route-coverage: inferred-from-source
+      parameters:
+        - name: authrim-step-up-receipt
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                label:
+                  type: string
+                  maxLength: 64
+      responses:
+        '201':
+          description: The secret and the challenge to confirm it with.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - challenge_id
+                  - otpauth_uri
+                  - secret
+                  - expires_at
+                properties:
+                  challenge_id:
+                    type: string
+                  otpauth_uri:
+                    type: string
+                    description: The otpauth:// URI an authenticator app scans (SHA-1, 6 digits, 30 seconds).
+                  secret:
+                    type: string
+                    description: The same secret in base32, for an app that cannot scan.
+                  expires_at:
+                    type: integer
+                    format: int64
+        '403':
+          description: >-
+            step_up_required, admin_fresh_auth_required, second_factor_recovery_required or
+            second_factor_kind_not_allowed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: second_factor_kind_in_use.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: step_up_unavailable (the policy could not be read) or totp_unavailable (no encryption key).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
+  /api/admin/me/second-factors/totp/enroll/verify:
+    post:
+      tags:
+        - Admin Passkeys
+      operationId: postApiAdminMeSecondFactorsTotpEnrollVerify
+      summary: Register an authenticator app as a second factor
+      description: >-
+        Confirm the secret with a code from the app and store it (encrypted). A wrong code keeps the
+        challenge, so it can be tried again; attempts are limited (429 rate_limited). The code that
+        confirmed the secret cannot be used again to verify. The sign-in evidence the registration
+        rests on must still be fresh (403 step_up_expired), and a factor that approved it must still
+        be active (403 step_up_required).
+        A selected tenant runtime snapshot is not required.
+      x-authrim-route-coverage: inferred-from-source
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - challenge_id
+                - code
+              properties:
+                challenge_id:
+                  type: string
+                code:
+                  type: string
+                  pattern: '^[0-9]{6}$'
+      responses:
+        '201':
+          description: The second factor was registered.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - second_factor
+                properties:
+                  second_factor:
+                    $ref: '#/components/schemas/AdminSecondFactor'
+        '400':
+          description: invalid_challenge or verification_failed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: step_up_required, step_up_expired or second_factor_kind_not_allowed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: >-
+            second_factor_kind_in_use, second_factor_already_enrolled or
+            second_factor_recovery_required.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: rate_limited.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          $ref: '#/components/responses/Error'
+      security:
+        - adminSessionCookie: []
+  /api/admin/me/second-factors/totp/verify:
+    post:
+      tags:
+        - Admin Passkeys
+      operationId: postApiAdminMeSecondFactorsTotpVerify
+      summary: Verify an authenticator app code as the session's second factor
+      description: >-
+        Verify a code from the admin's registered authenticator app and record it on the session as
+        the second factor (the evidence L2 needs). A code verifies once: a code for a step at or
+        before the last accepted one is refused. Where the tenant of the session does not list
+        totp, 403 second_factor_kind_not_allowed. Attempts are limited (429 rate_limited).
+        A selected tenant runtime snapshot is not required.
+      x-authrim-route-coverage: inferred-from-source
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - code
+              properties:
+                code:
+                  type: string
+                  pattern: '^[0-9]{6}$'
+      responses:
+        '200':
+          description: The code was verified and recorded on the session.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - verified
+                  - verified_at
+                properties:
+                  verified:
+                    type: boolean
+                  verified_at:
+                    type: integer
+                    format: int64
+        '400':
+          description: no_second_factor or verification_failed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: second_factor_kind_not_allowed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: rate_limited.
           content:
             application/json:
               schema:
@@ -83759,6 +83986,7 @@ components:
           enum:
             - webauthn_credential
             - keyring_holder_key
+            - totp
         label:
           type:
             - string

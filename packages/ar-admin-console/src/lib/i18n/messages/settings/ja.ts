@@ -67,6 +67,14 @@ export const jaSettings = {
 	'set.k.security.admin_step_up_overrides': '操作ごとの追加確認の引き上げ',
 	'set.k.security.admin_step_up_overrides.desc':
 		'操作名と求める確認（L1: パスキー、L2: パスキーと 2 要素目）の組です。例: {"client.secret.rotate": "L2"}。組み込みのレベルより下げることはできません。',
+	'set.k.security.admin_second_factor_allowed_kinds': '2 つ目の要素として使える種類',
+	'set.k.security.admin_second_factor_allowed_kinds.desc':
+		'管理者が重要な操作（L2）の確認に使える 2 つ目の要素の種類です。セキュリティキーと Keyring は常に使えます。認証アプリを許すと、キーを持たない管理者も L2 を満たせますが、コードを入力させられてしまうおそれがあるため、安全性は下がります。許可を広げる変更には、追加の確認が要ります。',
+	'set.kind.hardware': 'セキュリティキー・Keyring',
+	'set.kind.hardware.desc': '端末に固定された鍵です。常に使えます。',
+	'set.kind.totp': '認証アプリ',
+	'set.kind.totp.desc':
+		'6 桁のコードを使います。フィッシングに弱いため、キーを持てない管理者のためにだけ許可してください。',
 	'set.k.security.admin_step_up_enforced': '管理操作の追加確認を求める',
 	'set.k.security.admin_step_up_enforced.desc':
 		'オフにすると、重要な管理操作の前のパスキーと 2 要素目の確認を省きます。移行作業のあいだだけオフにしてください。オフにする操作にも L2 の確認が必要です。',

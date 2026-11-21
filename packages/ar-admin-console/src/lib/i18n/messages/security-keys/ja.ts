@@ -66,6 +66,25 @@ export const jaSecurityKeys = {
 	'sk.error.waiting': 'まだ完了できません。{date} 以降にお試しください。',
 	'sk.error.cancelled': '確認が取り消されました。',
 	'sk.error.windowClosed': '初回登録の期限が過ぎました。復旧を申請してください。',
+	'sk.addTotp': '認証アプリを追加',
+	'sk.totp.title': '認証アプリを 2 つ目の要素として追加',
+	'sk.totp.body': '認証アプリで QR コードを読み取り、表示された 6 桁のコードを入力してください。',
+	'sk.totp.qrAlt': '認証アプリ用の QR コード',
+	'sk.totp.secret': 'QR コードを読み取れないとき',
+	'sk.totp.secretHint':
+		'この文字列を認証アプリに手で入力します。この画面を閉じると、二度と表示されません。',
+	'sk.totp.code': '認証アプリのコード',
+	'sk.totp.confirm': '追加する',
+	'sk.totp.added': '認証アプリを 2 つ目の要素として追加しました。',
+	'sk.totp.badge': '認証アプリ',
+	'sk.totp.weaker':
+		'認証アプリのコードは、入力させられてしまうおそれがあるため、セキュリティキーより弱い要素です。',
+	'sk.error.totpNotAllowed': 'このテナントでは、認証アプリを 2 つ目の要素として使えません。',
+	'sk.error.totpInUse': '認証アプリはすでに登録されています。先に削除してください。',
+	'sk.error.totpInvalid':
+		'コードを確認できませんでした。認証アプリの最新のコードを入力してください。',
+	'sk.error.rateLimited': '試行が多すぎます。数分待ってからやり直してください。',
+	'sk.error.totpExpired': '時間切れです。もう一度やり直してください。',
 	'sk.others.title': 'ほかの管理者の復旧の申請',
 	'sk.others.info':
 		'このテナントの管理者が、セキュリティキーの入れ替えを申請しています。心当たりがなければ取り消してください。',

@@ -48,6 +48,18 @@ export const jaKeyringPresentation = {
 	'kp.prompt.securityKeyHint': '登録済みの USB か NFC のセキュリティキーを使います。',
 	'kp.prompt.continue': '続ける',
 	'kp.prompt.other': 'セキュリティキーを使う',
+	'kp.prompt.totp': '認証アプリ',
+	'kp.prompt.totpHint': '認証アプリに表示される 6 桁のコードを入力します。',
+	'kp.prompt.totpDesc': '認証アプリに表示されている 6 桁のコードを入力してください。',
+	'kp.prompt.back': 'ほかの方法を選ぶ',
+	'kp.totp.label': '認証アプリのコード',
+	'kp.totp.verify': '確認',
+	'kp.totp.error.invalid':
+		'コードを確認できませんでした。コードは 1 回しか使えません。使ったばかりなら、次のコードに変わるまで待ってください。',
+	'kp.totp.error.rateLimited': '試行が多すぎます。数分待ってからやり直してください。',
+	'kp.totp.error.notAllowed':
+		'このテナントでは、認証アプリを 2 つ目の要素として使えなくなりました。',
+	'kp.totp.error.unavailable': 'コードを確認できませんでした。もう一度お試しください。',
 	'kp.enroll.add': 'Keyring を追加',
 	'kp.enroll.title': 'Authrim Keyring を 2 つ目の要素として追加',
 	'kp.enroll.body':

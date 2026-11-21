@@ -7,7 +7,7 @@ const mocks = vi.hoisted(() => ({
   resolveEffectiveSettings: vi.fn(),
   consumeAdminStepUpReceipt: vi.fn(),
   createAdminStepUpRequirement: vi.fn(),
-  isActive: vi.fn(),
+  findActive: vi.fn(),
 }));
 
 vi.mock('../effective-settings', () => ({
@@ -18,7 +18,7 @@ vi.mock('../admin-database-adapter', () => ({
 }));
 vi.mock('../../repositories/admin/admin-second-factor', () => ({
   AdminSecondFactorRepository: class {
-    isActive = mocks.isActive;
+    findActive = mocks.findActive;
   },
 }));
 vi.mock('../admin-step-up', async (importOriginal) => {
@@ -80,7 +80,7 @@ describe('requireAdminStepUp', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.resolveEffectiveSettings.mockResolvedValue({});
-    mocks.isActive.mockResolvedValue(true);
+    mocks.findActive.mockResolvedValue({ id: 'sf-1', kind: 'webauthn_credential' });
     mocks.createAdminStepUpRequirement.mockResolvedValue({
       stepUpId: 'asr_requirement',
       expiresAt: NOW + 300_000,
@@ -133,8 +133,10 @@ describe('requireAdminStepUp', () => {
 
   it('lets an L1 operation through with a fresh passkey', async () => {
     await expect(run(revokeAll)).resolves.toEqual({ status: 200, body: { ran: true } });
+    // Read fresh: the policy decides what satisfies L2, so it is never taken from the cache.
     expect(mocks.resolveEffectiveSettings).toHaveBeenCalledWith({}, 'security', {
       tenantId: 'tenant-a',
+      fresh: true,
     });
   });
 
@@ -220,7 +222,7 @@ describe('requireAdminStepUp', () => {
   });
 
   it('does not spend a receipt once the second factor behind it was revoked', async () => {
-    mocks.isActive.mockResolvedValue(false);
+    mocks.findActive.mockResolvedValue(null);
 
     const { status, body } = await run(deleteTenant, human({ secondFactorId: 'sf-1' }), {
       'authrim-step-up-receipt': 'asp_receipt',
@@ -228,8 +230,51 @@ describe('requireAdminStepUp', () => {
 
     expect(status).toBe(403);
     expect(body).toMatchObject({ error: 'step_up_required' });
-    expect(mocks.isActive).toHaveBeenCalledWith('admin-1', 'sf-1');
+    expect(mocks.findActive).toHaveBeenCalledWith('admin-1', 'sf-1');
     expect(mocks.consumeAdminStepUpReceipt).not.toHaveBeenCalled();
+  });
+
+  it('does not spend a receipt resting on a TOTP factor the tenant does not allow', async () => {
+    mocks.findActive.mockResolvedValue({ id: 'sf-1', kind: 'totp' });
+    // The tenant never listed totp (hardware only is the default).
+    mocks.resolveEffectiveSettings.mockResolvedValue({});
+
+    const { status, body } = await run(deleteTenant, human({ secondFactorId: 'sf-1' }), {
+      'authrim-step-up-receipt': 'asp_receipt',
+    });
+
+    expect(status).toBe(403);
+    expect(body).toMatchObject({ error: 'step_up_required' });
+    expect(mocks.consumeAdminStepUpReceipt).not.toHaveBeenCalled();
+  });
+
+  it('does not let an unreadable allowed list widen what the gate accepts', async () => {
+    mocks.findActive.mockResolvedValue({ id: 'sf-1', kind: 'totp' });
+    mocks.resolveEffectiveSettings.mockResolvedValue({
+      'security.admin_second_factor_allowed_kinds': ['totp'],
+    });
+
+    const { status } = await run(deleteTenant, human({ secondFactorId: 'sf-1' }), {
+      'authrim-step-up-receipt': 'asp_receipt',
+    });
+
+    expect(status).toBe(403);
+    expect(mocks.consumeAdminStepUpReceipt).not.toHaveBeenCalled();
+  });
+
+  it('spends a receipt resting on a TOTP factor once the tenant allows totp', async () => {
+    mocks.findActive.mockResolvedValue({ id: 'sf-1', kind: 'totp' });
+    mocks.resolveEffectiveSettings.mockResolvedValue({
+      'security.admin_second_factor_allowed_kinds': ['hardware', 'totp'],
+    });
+    mocks.consumeAdminStepUpReceipt.mockResolvedValue(undefined);
+
+    const { status } = await run(deleteTenant, human({ secondFactorId: 'sf-1' }), {
+      'authrim-step-up-receipt': 'asp_receipt',
+    });
+
+    expect(status).toBe(200);
+    expect(mocks.consumeAdminStepUpReceipt).toHaveBeenCalled();
   });
 
   it('does not take a receipt from a session without a verified second factor', async () => {
@@ -410,15 +455,18 @@ describe('readAdminStepUpPolicy / effectiveAdminStepUpLevel', () => {
     mocks.resolveEffectiveSettings.mockResolvedValue({
       'security.admin_step_up_overrides': { 'client.secret.rotate': 'L2' },
       'security.admin_step_up_enforced': false,
+      'security.admin_second_factor_allowed_kinds': ['hardware', 'totp'],
       'security.other': 1,
     });
 
     await expect(readAdminStepUpPolicy({} as Env, 'tenant-a')).resolves.toEqual({
       overrides: { 'client.secret.rotate': 'L2' },
       enforced: false,
+      allowedKinds: ['hardware', 'totp'],
     });
     expect(mocks.resolveEffectiveSettings).toHaveBeenCalledWith({}, 'security', {
       tenantId: 'tenant-a',
+      fresh: true,
     });
   });
 
@@ -429,14 +477,18 @@ describe('readAdminStepUpPolicy / effectiveAdminStepUpLevel', () => {
   });
 
   it('gives the catalog level, raised by the tenant, while enforcement is on', () => {
-    const policy = { overrides: { 'client.secret.rotate': 'L2' }, enforced: undefined };
+    const policy = {
+      overrides: { 'client.secret.rotate': 'L2' },
+      enforced: undefined,
+      allowedKinds: undefined,
+    };
 
     expect(effectiveAdminStepUpLevel('client.secret.rotate', policy)).toBe('L2');
     expect(effectiveAdminStepUpLevel('sessions.revoke_all', policy)).toBe('L1');
   });
 
   it('treats activation and the compatibility trust-update operation identically when enforcement is off', () => {
-    const policy = { overrides: undefined, enforced: false };
+    const policy = { overrides: undefined, enforced: false, allowedKinds: undefined };
     expect(effectiveAdminStepUpLevel('federation.trust.activate', policy)).toBe(
       effectiveAdminStepUpLevel('federation.trust.update', policy)
     );
@@ -444,15 +496,24 @@ describe('readAdminStepUpPolicy / effectiveAdminStepUpLevel', () => {
 
   it('gives L0 only when enforcement is off in so many words, never for always-enforced ones', () => {
     expect(
-      effectiveAdminStepUpLevel('tenant.delete', { overrides: undefined, enforced: false })
+      effectiveAdminStepUpLevel('tenant.delete', {
+        overrides: undefined,
+        enforced: false,
+        allowedKinds: undefined,
+      })
     ).toBe('L0');
     expect(
-      effectiveAdminStepUpLevel('tenant.delete', { overrides: undefined, enforced: 'false' })
+      effectiveAdminStepUpLevel('tenant.delete', {
+        overrides: undefined,
+        enforced: 'false',
+        allowedKinds: undefined,
+      })
     ).toBe('L2');
     expect(
       effectiveAdminStepUpLevel('admin.second_factor.remove', {
         overrides: undefined,
         enforced: false,
+        allowedKinds: undefined,
       })
     ).toBe('L2');
   });

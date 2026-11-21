@@ -85,7 +85,12 @@ import { identityMappingReferenceProblem } from './identity-mapping-reference';
 import { readPlatformIdentityMappingRelations } from '../../identity-mapping-platform-followers';
 import { parsePlatformSettingsPatch } from './platform-patch-guards';
 import { applyTenantSettingsChange } from './tenant-settings-apply';
-import { gateStepUpSettingsPatch, verifyProfileSwitch } from './step-up-settings';
+import {
+  gateStepUpSettingsPatch,
+  runStepUpSettingsAfterSave,
+  verifyProfileSwitch,
+  type StepUpSettingsPending,
+} from './step-up-settings';
 import type { ProfileSwitchGuard } from '../../profile-switch-verify';
 import { bulkApplyHandler, requireBulkApplyAuthority } from './bulk-apply';
 import { bulkApplyIdempotency } from './bulk-apply-idempotency';
@@ -1228,6 +1233,7 @@ settingsV2.patch('/platform/settings/:category', (c) => {
 
           const actor = adminAuth?.userId ?? 'unknown';
           const switchGuard: ProfileSwitchGuard = { compared: [] };
+          const stepUpPending: StepUpSettingsPending = {};
           const refused = await gateStepUpSettingsPatch({
             c,
             manager,
@@ -1237,6 +1243,7 @@ settingsV2.patch('/platform/settings/:category', (c) => {
             body,
             actor,
             guard: switchGuard,
+            pending: stepUpPending,
           });
           if (refused) return refused;
           const result = await manager.patch(category, scope, body, actor, {
@@ -1261,6 +1268,7 @@ settingsV2.patch('/platform/settings/:category', (c) => {
               409
             );
           }
+          await runStepUpSettingsAfterSave(stepUpPending);
           const hasRejections = Object.keys(result.rejected).length > 0;
           // A lock change takes effect like a value change: a category with a cached revision
           // bumps it, the others are read by runtime within its settings cache (60 seconds).

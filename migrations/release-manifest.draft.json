@@ -186,6 +186,10 @@
             {
               "path": "026_platform_launchers.sql",
               "checksum": "c157677036c1bc84590180f8b02c7aa745e8b27cb88729b2ae974ea6cb7e765f"
+            },
+            {
+              "path": "027_admin_totp_second_factor.sql",
+              "checksum": "9dd293d43496d792c306317a6d5dcd83268885f449ce7019a2c350da5697d44e"
             }
           ]
         },
@@ -477,6 +481,10 @@
         {
           "path": "026_platform_launchers.sql",
           "checksum": "c157677036c1bc84590180f8b02c7aa745e8b27cb88729b2ae974ea6cb7e765f"
+        },
+        {
+          "path": "027_admin_totp_second_factor.sql",
+          "checksum": "9dd293d43496d792c306317a6d5dcd83268885f449ce7019a2c350da5697d44e"
         }
       ]
     },

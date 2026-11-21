@@ -90,6 +90,8 @@ export const deNotices: Record<keyof typeof jaNotices, string> = {
 		'Die Step-up-Sicherheitsschlüssel von {email} wurden vom Betreiber der Umgebung zurückgesetzt',
 	'notice.msg.second_factor_recovery_requested':
 		'{email} hat die Wiederherstellung eines Sicherheitsschlüssels beantragt',
+	'notice.msg.second_factor_policy_widened':
+		'{email} hat die erlaubten zweiten Faktoren erweitert ({kinds}), nur mit einem Passkey bestätigt',
 	'notice.msg.storage_registry_security':
 		'In der Speicherregistrierung wurde ein Sicherheitsproblem gefunden',
 	'notice.msg.storage_registry_health': 'Die Speicherregistrierung hat ein Zustandsproblem',

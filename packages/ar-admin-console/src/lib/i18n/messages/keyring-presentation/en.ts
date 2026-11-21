@@ -49,6 +49,17 @@ export const enKeyringPresentation = {
 	'kp.prompt.securityKeyHint': 'Use a registered USB or NFC security key.',
 	'kp.prompt.continue': 'Continue',
 	'kp.prompt.other': 'Use a security key',
+	'kp.prompt.totp': 'Authenticator app',
+	'kp.prompt.totpHint': 'Type the 6-digit code shown in your authenticator app.',
+	'kp.prompt.totpDesc': 'Type the 6-digit code shown in your authenticator app.',
+	'kp.prompt.back': 'Choose another way',
+	'kp.totp.label': 'Code from your authenticator app',
+	'kp.totp.verify': 'Verify',
+	'kp.totp.error.invalid':
+		'The code was not accepted. A code works only once: if you just used it, wait for the next one.',
+	'kp.totp.error.rateLimited': 'Too many attempts. Wait a few minutes and try again.',
+	'kp.totp.error.notAllowed': 'This tenant no longer allows authenticator apps as a second factor.',
+	'kp.totp.error.unavailable': 'The code could not be checked. Try again.',
 	'kp.enroll.add': 'Add Keyring',
 	'kp.enroll.title': 'Add Authrim Keyring as a second factor',
 	'kp.enroll.body':
