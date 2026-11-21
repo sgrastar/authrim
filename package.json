@@ -23,6 +23,7 @@
     "test": "turbo run test --concurrency=4 && pnpm control-plane:test && pnpm conformance:test && pnpm test:integration && pnpm test:security-matrices && pnpm test:scale-out-phase1 && pnpm test:primary-key-integrity",
     "test:mutation": "turbo run test:mutation --concurrency=1 --continue",
     "test:mutation:diff": "turbo run test:mutation:diff --concurrency=1 --continue",
+    "test:mutation:chunks": "node scripts/mutation-chunks.mjs",
     "test:mutation:summary": "node scripts/ci-mutation-summary.mjs",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:security-matrices": "vitest run --config vitest.security-matrices.config.ts",
