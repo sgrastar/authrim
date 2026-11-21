@@ -718,60 +718,6 @@ function buildLines(plan, detail) {
     seg([0, 0.03, z], [0, 0.03, z + 2], clamp01(Math.abs(z) / (EDGE * 1.3)) * 0.8 + 0.05, 1);
   }
 
-  // Figures, as seven strokes each, lying on the sheet and read from the front.
-  const STROKES = {
-    a: [0, 1, 1, 1],
-    b: [1, 1, 1, 0.5],
-    c: [1, 0.5, 1, 0],
-    d: [0, 0, 1, 0],
-    e: [0, 0.5, 0, 0],
-    f: [0, 1, 0, 0.5],
-    g: [0, 0.5, 1, 0.5],
-  };
-  const DIGITS = [
-    'abcdef',
-    'bc',
-    'abged',
-    'abgcd',
-    'fgbc',
-    'afgcd',
-    'afgedc',
-    'abc',
-    'abcdefg',
-    'abfgcd',
-  ];
-  const figure = (text, cx, cz, size, ap) => {
-    const w = size * 0.56;
-    const gap = size * 0.3;
-    let x = cx - (text.length * w + (text.length - 1) * gap) / 2;
-    for (const ch of text) {
-      for (const k of DIGITS[Number(ch)] || '') {
-        const q = STROKES[k];
-        seg([x + q[0] * w, 0.02, cz - q[1] * size], [x + q[2] * w, 0.02, cz - q[3] * size], ap, 3);
-      }
-      x += w + gap;
-    }
-  };
-  // The front and the side of the plan, measured: a line, a tick at every street, the pitch written in.
-  const dimZ = EDGE + 8;
-  seg([-EDGE, 0.02, dimZ], [EDGE, 0.02, dimZ], 0.5, 3);
-  for (let i = -RINGS; i <= RINGS + 1; i++) {
-    const x = (i - 0.5) * PITCH;
-    if (Math.abs(x) > EDGE + 0.1) continue;
-    seg([x, 0.02, dimZ - 1.3], [x, 0.02, dimZ + 1.3], 0.52, 3);
-    if (i <= RINGS && Math.abs(i) % 2 === 1)
-      figure(String(PITCH), x + PITCH / 2, dimZ + 6.4, 3.6, 0.6);
-  }
-  figure(String(Math.round(EDGE * 2)), 0, dimZ + 14.5, 4.8, 0.66);
-  const dimX = -(EDGE + 8);
-  seg([dimX, 0.02, -EDGE], [dimX, 0.02, EDGE], 0.5, 3);
-  for (let i = -RINGS; i <= RINGS + 1; i++) {
-    const z = (i - 0.5) * PITCH;
-    if (Math.abs(z) > EDGE + 0.1) continue;
-    seg([dimX - 1.3, 0.02, z], [dimX + 1.3, 0.02, z], 0.52, 3);
-    if (i <= RINGS && Math.abs(i) % 2 === 0)
-      figure(String(PITCH), dimX - 5.4, z + PITCH / 2 + 1.8, 3.6, 0.6);
-  }
   // North, in the corner of the sheet.
   const nx = EDGE + 12;
   const nz = EDGE + 2;
@@ -1592,7 +1538,7 @@ export function createCity(canvas, options = {}) {
         float px = abs(vSide) * 4.5;
         float core = 1.0 - smoothstep(0.3, 1.0, px);
         float halo = exp(-px * px / 4.0) * 0.1 * (1.0 - uDay);
-        // What is written on the sheet (figures, rings) stays readable further out than the city does.
+        // What is drawn on the sheet (rings, north mark) stays readable further out than the city does.
         float far = vGroup > 2.5 ? smoothstep(uFogNear + 44.0, uFogFar + 64.0, length(vWorld.xz)) : fogAmount(vWorld);
         vec3 color = mix(uColor, uHot, clamp(tip + scan + wave, 0.0, 1.0));
         float alpha = a * (1.0 + tip * 1.4 + scan * 1.6 + wave * 2.2) * (1.0 - far);
