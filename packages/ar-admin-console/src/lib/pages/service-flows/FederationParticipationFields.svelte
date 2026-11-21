@@ -40,7 +40,6 @@
 		{ value: 'authrim_search', label: t('sf.fed.idpSelection.authrim') },
 		{ value: 'external_ds', label: t('sf.fed.idpSelection.external') }
 	]);
-	const noSets = $derived(!mappingLoading && !mappingFailed && mappingSets.length === 0);
 </script>
 
 <!-- A federation with no role at all (made inventory-only by hand) is asked which it takes: the only case with switches. -->
@@ -110,10 +109,5 @@
 		{t('sf.fed.mappingSet.failed')}
 		{#if onreloadmappings}<Button size="sm" onclick={onreloadmappings}>{t('common.retry')}</Button
 			>{/if}
-	</Callout>
-{:else if noSets && (form.spRole || form.idpRole)}
-	<Callout tone="info">
-		{t('sf.fed.mappingSet.none')}
-		<a href="/admin/access/mapping-sets">{t('sf.fed.mappingSet.create')}</a>
 	</Callout>
 {/if}

@@ -76,6 +76,8 @@ export class ConnectionMappingState {
 	impact = $state<{ count: number; incomplete: boolean; connections: string[] } | null>(null);
 	stage = $state('');
 	newKey = $state('');
+	/** The output source picked before any mapping exists: a new mapping starts with it. */
+	chosenProfileId = $state('');
 	base: MappingSetContent | null = null;
 	pending: {
 		request: MappingSetSaveRequest & { field_mapping_key: string };
@@ -211,6 +213,7 @@ export class ConnectionMappingState {
 	}
 
 	async select(id: string) {
+		this.chosenProfileId = '';
 		this.checkGeneration++;
 		this.checking = false;
 		this.changes = null;
@@ -293,10 +296,12 @@ export class ConnectionMappingState {
 		this.form.reset({
 			name: '',
 			description: '',
-			profileId: '',
+			profileId: this.chosenProfileId,
 			catalogVersionId: this.defaultCatalogVersionId(),
 			mappings: []
 		});
+		// With an output source already chosen the mapping can be made at once.
+		this.configure();
 		this.phase = 'ready';
 	}
 

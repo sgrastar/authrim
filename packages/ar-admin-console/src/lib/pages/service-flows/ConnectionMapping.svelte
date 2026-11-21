@@ -17,7 +17,6 @@
 	import BusyScope from '#lib/ui/busy/BusyScope.svelte';
 	import Button from '#lib/ui/primitives/Button.svelte';
 	import Badge from '#lib/ui/primitives/Badge.svelte';
-	import RequiredBadge from '#lib/ui/primitives/RequiredBadge.svelte';
 	import Select from '#lib/ui/primitives/Select.svelte';
 	import TextField from '#lib/ui/primitives/TextField.svelte';
 	import TextArea from '#lib/ui/primitives/TextArea.svelte';
@@ -72,13 +71,12 @@
 	const shared = untrack(() => (resources ? new ConnectionMappingState(resources) : null));
 	let invalid = $state(false);
 	let changeTo = $state<string | null>(null);
-	let metadataOpen = $state(false);
 	let explainError = $state(false);
 	$effect(() => {
 		dirty = (shared?.dirty ?? false) || editorState.dirty;
 		pending = shared?.phase === 'saving' || shared?.phase === 'impact' || editorState.saving;
 		bound = shared?.bound ?? '';
-		outputChosen = !!shared?.form.value.profileId;
+		outputChosen = !!(shared?.form.value.profileId || shared?.chosenProfileId);
 	});
 	onMount(() => {
 		if (shared) void shared.load();
@@ -111,19 +109,13 @@
 		editorState = { dirty: false, saving: false };
 		profileEditor = kind;
 	}
-	/** An output source was picked with no set open: a new set that sends into it is started. */
-	function startWithProfile(profileId: string) {
-		if (!shared || !profileId) return;
-		shared.create();
-		metadataOpen = true;
-		shared.form.value.profileId = profileId;
-		shared.configure();
-	}
-	/** No output source suits: one is made first, and a new set is started with it. */
-	async function startWithNewProfile() {
+	/** An output source was picked before any mapping: it is kept for the mapping to be made. */
+	function chooseProfile(profileId: string) {
 		if (!shared) return;
-		shared.create();
-		metadataOpen = true;
+		shared.chosenProfileId = profileId;
+	}
+	/** No output source suits: one is made first; the mapping to come starts with it. */
+	async function startWithNewProfile() {
 		await openProfileEditor('new');
 	}
 	async function profileSaved(saved: DestinationProfileSaved) {
@@ -135,6 +127,9 @@
 		if (shared.newKey) {
 			shared.form.value.profileId = saved.profile.id;
 			shared.configure();
+		} else if (!shared.selected) {
+			// No mapping yet: the output source just made is the one the mapping will start with.
+			shared.chosenProfileId = saved.profile.id;
 		} else if (edited && shared.selected) {
 			// What the set sends into has changed under it: read it again. An output source made
 			// beside a set leaves the set as it is.
@@ -146,7 +141,6 @@
 		if (shared.dirty) changeTo = value;
 		else if (value === '__new') {
 			shared.create();
-			metadataOpen = true;
 		} else void shared.select(value);
 	}
 	function applyChoice() {
@@ -155,7 +149,6 @@
 		if (value === null || !shared) return;
 		if (value === '__new') {
 			shared.create();
-			metadataOpen = true;
 		} else if (value === '__inspect') void shared.inspectUnknown();
 		else void shared.select(value);
 	}
@@ -298,8 +291,8 @@
 										label: profile.displayName
 									}))}
 									placeholder={t('mc.ro.choose')}
-									value=""
-									onchange={startWithProfile}
+									value={shared.chosenProfileId}
+									onchange={chooseProfile}
 								/>
 								{#if canEditProfiles}
 									<div class="profile__actions">
@@ -326,6 +319,7 @@
 						>{/if}
 					<Select
 						label={t('sf.row.mappingSet')}
+						required
 						placeholder={t('mc.ro.choose')}
 						options={shared.sets.map((set) => ({
 							value: set.id,
@@ -384,21 +378,17 @@
 						<BusyScope
 							busy={disabled || readonly || shared.locked || shared.readonlyReason || profileBusy}
 						>
-							<Disclosure title={t('cm.options')} bind:open={metadataOpen}>
-								{#snippet meta()}{#if !shared.form.value.name.trim() || !shared.form.value.profileId || !shared.form.value.catalogVersionId}<RequiredBadge
-										/>{/if}{/snippet}
-								<TextField
-									label={t('sf.row.name')}
-									bind:value={shared.form.value.name}
-									field="name"
-									required
-								/>
-								<TextArea
-									label={t('cm.description')}
-									bind:value={shared.form.value.description}
-									field="description"
-								/>
-							</Disclosure>
+							<TextField
+								label={t('sf.row.name')}
+								bind:value={shared.form.value.name}
+								field="name"
+								required
+							/>
+							<TextArea
+								label={t('cm.description')}
+								bind:value={shared.form.value.description}
+								field="description"
+							/>
 						</BusyScope>
 					{/if}
 				</div>

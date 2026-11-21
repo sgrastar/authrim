@@ -531,13 +531,7 @@
 	{#if canEdit}
 		<!-- While the SP role's mapping has unsaved changes its own bar is the one shown; the page's
 		     returns once the mapping is saved (which puts the set into this form). -->
-		<SaveBar
-			dirty={dirty && !mappingDirty}
-			saving={saving || mappingPending}
-			{invalid}
-			onsave={save}
-			ondiscard={discard}
-		/>
+		<SaveBar dirty={dirty && !mappingDirty} {saving} {invalid} onsave={save} ondiscard={discard} />
 	{/if}
 {/if}
 
