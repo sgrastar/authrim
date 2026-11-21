@@ -180,13 +180,16 @@ export const SECURITY_SETTINGS_META: Record<keyof SecuritySettings, SettingMeta>
   },
   'security.admin_second_factor_allowed_kinds': {
     key: 'security.admin_second_factor_allowed_kinds',
-    // Per tenant, like the step-up levels it serves.
-    scopes: ['tenant'],
+    // A tenant sets its own list. The platform's (or the deployment's, from the environment
+    // variable) is the default for every tenant that sets none, so authenticator apps can be
+    // allowed everywhere at once. A tenant's own list replaces it, it is not added to it.
+    scopes: ['platform', 'tenant'],
     type: 'json',
     default: ['hardware'],
+    envKey: 'ADMIN_SECOND_FACTOR_ALLOWED_KINDS',
     label: 'Admin Second Factor Kinds',
     description:
-      'Which kinds of second factor satisfy L2 for admins: hardware (a security key or Keyring) is always allowed; totp adds authenticator apps, which are weaker because a person can be tricked into typing the code',
+      'Which kinds of second factor satisfy L2 for admins: hardware (a security key or Keyring) is always allowed; totp adds authenticator apps, which are weaker because a person can be tricked into typing the code. Set at the platform it applies to every tenant that sets none of its own',
     visibility: 'admin',
   },
 

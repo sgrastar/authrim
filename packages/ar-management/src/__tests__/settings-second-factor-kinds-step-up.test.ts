@@ -69,6 +69,29 @@ describe('decideStepUpSettings: allowed second-factor kinds', () => {
     expect(decide({}, { [KEY]: ['totp'] })).toEqual({ kind: 'none' });
   });
 
+  it('is never only a widening at the platform scope: that widens every tenant, so it needs L2', () => {
+    const outcome = decideStepUpSettings({
+      scopeType: 'platform',
+      before: {},
+      after: { [KEY]: ['hardware', 'totp'] },
+      inherited: {},
+    });
+    expect(outcome).toMatchObject({ kind: 'gate', operation: 'admin_step_up.policy.relax' });
+    expect(outcome).not.toHaveProperty('widensKindsOnly');
+  });
+
+  it('reads the platform value a tenant inherits, so a tenant clearing its own list can widen', () => {
+    // The tenant had its own hardware-only list; the platform allows totp. Clearing the tenant's
+    // list lets the platform's apply: a widening.
+    const outcome = decideStepUpSettings({
+      scopeType: 'tenant',
+      before: { [KEY]: ['hardware'] },
+      after: {},
+      inherited: { [KEY]: ['hardware', 'totp'] },
+    });
+    expect(outcome).toMatchObject({ kind: 'gate', widensKindsOnly: true });
+  });
+
   it('is not only a widening when another guarded setting is weakened in the same document', () => {
     const outcome = decide(
       { 'audit.check_api_retention_days': 90 },

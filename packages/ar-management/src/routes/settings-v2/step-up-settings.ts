@@ -7,7 +7,8 @@
  *   a kind of second factor it did not (a weaker one, such as an authenticator app). Needs L2 like
  *   any relaxation, except where the administrator making the change has no second factor that
  *   counts under the policy in effect (so could not give L2 for it, as in a tenant that has none yet): then a fresh passkey is enough, the change is
- *   written to the audit log, and the tenant's other administrators are told by email.
+ *   written to the audit log, and the tenant's other administrators are told by email. Not at the
+ *   platform scope, where the list is the default for every tenant: that always needs L2.
  * - `audit.retention.shorten`: `audit.check_api_retention_days` or `admin-notices.retention_days`
  *   becomes shorter (or is switched off).
  *
@@ -233,8 +234,15 @@ export function decideStepUpSettings(input: {
 
   if (relax) {
     // The passkey-only way through is for a change whose only weakening is the allowed kinds.
+    // Not at the platform: that widens every tenant at once, which a passkey alone never
+    // authorises (and the notice reaches one tenant's administrators only), so it needs L2.
     const widensKindsOnly =
-      widensKinds && !relaxesOtherPolicy && !excludedRelaxed && !handoffEnabled && !shorten;
+      widensKinds &&
+      input.scopeType === 'tenant' &&
+      !relaxesOtherPolicy &&
+      !excludedRelaxed &&
+      !handoffEnabled &&
+      !shorten;
     return {
       kind: 'gate',
       operation: 'admin_step_up.policy.relax',
