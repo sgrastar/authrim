@@ -300,27 +300,25 @@ describe('the metadata address', () => {
 });
 
 describe('the wizard steps', () => {
-	it('asks for the federation, then who takes part', () => {
+	it('asks only for the federation: its mapping sets are chosen on its own page', () => {
 		const answers = emptyAnswers();
 		answers.direction = 'in';
 		answers.kind = 'federation';
 		expect(stepsFor(answers).map((step) => step.id)).toEqual([
 			'where',
 			'kind',
-			'federation-source',
-			'federation-participation'
+			'federation-source'
 		]);
 	});
 
-	it('lets each step go on only when what it asks is complete', () => {
+	it('goes on once the federation can exist, with no mapping set yet', () => {
 		const answers = emptyAnswers();
 		answers.direction = 'out';
 		answers.kind = 'federation';
 		answers.federation = valid({ spMappingSetId: '' });
 		expect(canProceed('federation-source', answers)).toBe(true);
-		expect(canProceed('federation-participation', answers)).toBe(false);
-		answers.federation.spMappingSetId = 'set-sp';
-		expect(canProceed('federation-participation', answers)).toBe(true);
+		answers.federation.certificates = [];
+		expect(canProceed('federation-source', answers)).toBe(false);
 	});
 });
 
@@ -360,9 +358,46 @@ describe('what is kept and refused when saving', () => {
 		});
 	});
 
-	it('does not turn an inventory-only source back to automatic', () => {
+	it('keeps an inventory-only source an administrator set on purpose', () => {
+		// Not waiting for its sets (no marker): choosing them does not switch it on.
 		const payload = federationPayload(valid(), { runtimeResolution: { mode: 'inventory_only' } });
 		expect(payload.runtimeResolution).toMatchObject({ mode: 'inventory_only' });
-		expect(federationPayload(valid()).runtimeResolution).toMatchObject({ mode: 'automatic' });
+		expect(payload).not.toHaveProperty('setupPending');
+	});
+
+	it('waits for the last mapping set across saves, then switches on', () => {
+		const both = { spRole: true, idpRole: true };
+		// Made with no sets: waiting.
+		const made = federationPayload(valid({ ...both, spMappingSetId: '', idpMappingSetId: '' }));
+		expect(made).toMatchObject({
+			setupPending: true,
+			runtimeResolution: { mode: 'inventory_only' }
+		});
+		// One set chosen and saved: still waiting, though an id is stored.
+		const half = federationPayload(valid({ ...both, idpMappingSetId: '' }), made);
+		expect(half).toMatchObject({
+			setupPending: true,
+			runtimeResolution: { mode: 'inventory_only' }
+		});
+		// The last one: on, and no longer waiting.
+		const done = federationPayload(valid({ ...both, idpMappingSetId: 'set-idp' }), half);
+		expect(done.runtimeResolution).toMatchObject({ mode: 'automatic' });
+		expect(done).not.toHaveProperty('setupPending');
+	});
+
+	it('still refuses an external discovery service without an https address', () => {
+		const form = valid({
+			spRole: false,
+			idpRole: true,
+			idpMappingSetId: '',
+			idpSelectionMode: 'external_ds',
+			discoveryServiceUrl: 'http://ds.example'
+		});
+		expect(() => federationCreateInput(form)).toThrow();
+	});
+
+	it('creates a federation with no mapping set', () => {
+		expect(() => federationCreateInput(valid({ spMappingSetId: '' }))).not.toThrow();
+		expect(() => federationCreateInput(valid({ spRole: false, idpRole: false }))).toThrow();
 	});
 });

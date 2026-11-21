@@ -219,5 +219,13 @@ export const arTenants: Record<keyof typeof jaTenants, string> = {
 	'tn.dom.record.howTxt': 'أضفه إلى DNS النطاق كسجل TXT.',
 	'tn.dom.record.howHttp': 'انشر المحتوى كما هو على هذا العنوان.',
 	'tn.dom.record.url': 'العنوان',
-	'tn.dom.record.body': 'المحتوى'
+	'tn.dom.record.body': 'المحتوى',
+
+	'tn.picker.apply': 'اختيار {n}',
+	'tn.picker.tooMany': 'يمكن اختيار {n} كحد أقصى.',
+	'tn.picker.noAccess': 'ليست لديك صلاحية عرض قائمة المستأجرين.',
+	'tn.picker.loadFailed': 'تعذّر تحميل المستأجرين.',
+	'tn.picker.filter': 'تصفية المستأجرين',
+	'tn.picker.unlisted': '{n} منها غير موجودة في القائمة (مثل المستأجرين المحذوفين)',
+	'tn.picker.default': 'المستأجر الافتراضي'
 };

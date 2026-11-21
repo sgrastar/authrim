@@ -50,6 +50,11 @@ const REVIEWED_PLATFORM_ROUTES: Array<[prefix: string, kind: Classification, not
     'guarded',
     'targets are filtered to reachable tenants',
   ],
+  [
+    '/api/admin/platform/launchers',
+    'platform-wide',
+    'shared launcher definitions; the top-level body tenant_ids is judged by the authentication',
+  ],
   ['/api/admin/platform/plugins', 'guarded', 'tenant from body, query or header'],
   ['/api/admin/platform/read-replication', 'platform-wide', 'environment replication'],
   ['/api/admin/platform/service-site', 'platform-wide', 'the platform service site'],
@@ -79,7 +84,10 @@ const REVIEWED_TENANT_READERS: Record<string, string> = {
   'admin-tenant-vanity-domains.ts':
     'platform handlers are human-only; tenant handlers use the request tenant',
   'identity-mapping-set-change-preview.ts': 'helper on the tenant_id query',
+  'launchers.ts':
+    'tenant handlers use the request tenant; tenant_ids is only dropped from a platform launcher',
   'routes/admin-management/admin-last-resort-recovery.ts': 'targets filtered',
+  'platform-launchers-store.ts': 'stores a platform launcher’s tenant list; reads no request',
   'routes/admin-management/agent-baselines.ts':
     'target tenants judged by actorReachesTenants with the exclusion',
   'routes/admin-management/control-plane-operations.ts':
@@ -88,6 +96,8 @@ const REVIEWED_TENANT_READERS: Record<string, string> = {
     'query filters judged by the authentication; with platform authority and no filter it is platform-wide',
   'routes/diagnostic-logging/ingest.ts':
     'ingest endpoint with its own credential, not the Admin API machine token',
+  'routes/platform-launchers.ts':
+    'platform-wide; the top-level body tenant_ids is judged by the authentication',
   'routes/settings-v2/bulk-apply-request.ts': 'bulk apply targets judged by canReachTenant',
   'routes/settings/pii-partitions.ts': 'helper on the tenant_id query',
   'routes/settings/plugins.ts': 'helper after every tenant resolution',

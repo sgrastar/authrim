@@ -8,6 +8,7 @@
 	import { httpClients } from '#lib/api/clients.js';
 	import { httpSamlProviders, httpSamlMetadata } from '#lib/api/saml-providers.js';
 	import { httpIdentityMapping } from '#lib/api/identity-mapping.js';
+	import { httpDestinationProfiles } from '#lib/api/destination-profiles.js';
 	import { identifierMaterialsClient } from '#lib/api/identifier-materials.js';
 	import { tenantScope } from '#lib/auth/tenant-scope.svelte.js';
 	import { t } from '#lib/i18n/i18n.svelte.js';
@@ -76,6 +77,7 @@
 				client: httpIdentityMapping(),
 				tenantId,
 				protocol: kind === 'rp' ? 'oidc' : 'saml',
+				profiles: httpDestinationProfiles,
 				connectionId: id,
 				connectionName: next.rp.name,
 				entityId,
@@ -144,7 +146,7 @@
 	{/key}
 {:else if page.params.kind === 'federation'}
 	{#key `${tenantScope.tenantId}:${page.params.id}`}
-		<Page>
+		<Page withFlow>
 			{#if hasPermission(adminAccess.current, 'admin:settings:read')}
 				<FederationConnectionPage
 					id={page.params.id ?? ''}
@@ -153,6 +155,13 @@
 					canRefresh={hasPermission(adminAccess.current, 'admin:saml_providers:metadata:refresh')}
 					canMaterialize={hasPermission(adminAccess.current, 'admin:saml_providers:create')}
 					loadMappingSets={loadFederationMappingSets}
+					outboundMapping={tenantScope.tenantId
+						? {
+								client: httpIdentityMapping(),
+								profiles: httpDestinationProfiles,
+								tenantId: tenantScope.tenantId
+							}
+						: undefined}
 					onback={() => goto('/admin/applications/all')}
 				/>
 			{:else}

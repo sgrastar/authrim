@@ -81,7 +81,8 @@ export type ReferenceKind =
 	| 'saml_provider'
 	| 'credential_profile'
 	| 'federation_trust_source'
-	| 'scim';
+	| 'scim'
+	| 'mapping_set';
 
 /** existing: GET /api/admin/identity-mapping/usage?set_id= */
 export interface MappingSetUsage {
@@ -332,7 +333,11 @@ export type ClaimChangeKind =
 	| 'renamed'
 	| 'source_changed'
 	| 'transform_changed'
-	| 'type_changed';
+	| 'type_changed'
+	| 'validation_changed'
+	| 'profile_field_added'
+	| 'profile_field_removed'
+	| 'profile_field_changed';
 
 export interface ClaimChange {
 	kind: ClaimChangeKind;
@@ -352,7 +357,7 @@ export interface AppClaimChanges {
 	/** Changes this app would see in its tokens, given the scopes it is granted. */
 	changes: ClaimChange[];
 	/** Changes to the set this app would not see, by the scope that holds them back. */
-	held_back: Array<{ claim: string; scope: string }>;
+	held_back: Array<{ claim: string; scope: string; reason?: string }>;
 }
 
 export interface SampleClaimValue {

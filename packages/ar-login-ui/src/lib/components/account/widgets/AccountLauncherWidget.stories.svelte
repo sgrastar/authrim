@@ -5,7 +5,7 @@
 	import { LL } from '$i18n/i18n-svelte';
 	import LoginUIFrame from '#lib/storybook/LoginUIFrame.svelte';
 	import AccountLauncherWidget from './AccountLauncherWidget.svelte';
-	import { colouredLaunchers, launchers } from './fixtures';
+	import { colouredLaunchers, launchers, pictureLaunchers } from './fixtures';
 
 	const { Story } = defineMeta({
 		title: 'Account/Launcher',
@@ -116,6 +116,23 @@
 			within(canvasElement).getByText(name).closest('li') as HTMLElement;
 		await expect(getComputedStyle(tile('Team calendar')).color).toBe('rgb(255, 255, 255)');
 		await expect(getComputedStyle(tile('Wiki')).color).toBe('rgb(0, 0, 0)');
+	}}
+>
+	{#snippet template(args)}{@render widget(args)}{/snippet}
+</Story>
+
+<!-- A picture across the tile's width; the icon, or the name and description, can be hidden (the
+     name stays the link's accessible name). -->
+<Story
+	name="Tiles with a picture"
+	args={{ launchers: pictureLaunchers() }}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const library = canvas.getByRole('link', { name: /^Library/ });
+		await expect(library.querySelector('.launcher-picture')).not.toBeNull();
+		await expect(library.querySelector('.launcher-icon')).toBeNull();
+		await expect(canvas.queryByText('Search the catalogue.')).toBeNull();
+		await expect(canvas.getByText('Report a problem.')).toBeVisible();
 	}}
 >
 	{#snippet template(args)}{@render widget(args)}{/snippet}

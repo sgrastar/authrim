@@ -22,6 +22,7 @@
 		mappingLoading?: boolean;
 		onreloadmappings?: () => void;
 		disabled?: boolean;
+		spMappingManaged?: boolean;
 	}
 	let {
 		form = $bindable(),
@@ -29,7 +30,8 @@
 		mappingFailed = false,
 		mappingLoading = false,
 		onreloadmappings,
-		disabled = false
+		disabled = false,
+		spMappingManaged = false
 	}: Props = $props();
 	/** What still stops the page from being saved, in the words of the wizard. */
 	const problems = $derived(federationProblems(form));
@@ -43,6 +45,7 @@
 		{mappingLoading}
 		{onreloadmappings}
 		{disabled}
+		{spMappingManaged}
 	/>
 	{#if problems.length > 0}
 		<Callout tone="warning" title={t('sf.fed.remaining')}>

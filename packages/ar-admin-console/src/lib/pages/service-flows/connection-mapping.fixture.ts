@@ -14,6 +14,7 @@ import type {
 } from '#lib/api/mapping-set.js';
 import { compileMapping } from '#lib/ui/patterns/mapping-codec.js';
 import { copyValue } from '#lib/ui/save/draft.svelte.js';
+import { createFakeDestinationProfiles } from '#lib/api/fake/destination-profiles-fake.js';
 import { codecContext } from './connection-mapping-fields.js';
 import type { ConnectionMappingResources } from './connection-mapping.svelte.js';
 
@@ -24,7 +25,8 @@ export type MappingScenario =
 	| 'stage'
 	| 'unknown'
 	| 'binding'
-	| 'readonly';
+	| 'readonly'
+	| 'unbound';
 
 /** Injected HTTP-contract fixture for the existing connection screen; never installed in a live route. */
 export function connectionMappingFixture(
@@ -144,7 +146,7 @@ export function connectionMappingFixture(
 			}
 		]
 	]);
-	let bound = 'set-portal';
+	let bound = scenario === 'unbound' ? '' : 'set-portal';
 	let failedOnce = false;
 	const unused = async (): Promise<never> => {
 		throw new Error('Not used by the connection screen');
@@ -196,6 +198,8 @@ export function connectionMappingFixture(
 			}
 		};
 	}
+	// The output sources: the one the sets send into, and whatever a story makes.
+	const profileStore = createFakeDestinationProfiles([copyValue(profile)]);
 	const client: IdentityMappingClient = {
 		restoreLevel: async () => undefined,
 		sets: async () => ({ sets: copyValue([...sets.values()]) }),
@@ -205,7 +209,9 @@ export function connectionMappingFixture(
 			return copyValue(set);
 		},
 		catalogs: async () => ({ catalogs: [copyValue(catalog)] }),
-		destinationProfiles: async () => ({ destinationProfiles: [copyValue(profile)] }),
+		destinationProfiles: async () => ({
+			destinationProfiles: await profileStore.list('demo', protocol)
+		}),
 		createSet: async (_tenant, request, key) => save('set-created', request, key, null),
 		saveSet: async (_tenant, id, request, options) =>
 			save(id, request, options.idempotencyKey, options),
@@ -309,6 +315,7 @@ export function connectionMappingFixture(
 	};
 	const resources: ConnectionMappingResources = {
 		client,
+		profiles: profileStore,
 		tenantId: 'demo',
 		protocol,
 		connectionId: 'portal',

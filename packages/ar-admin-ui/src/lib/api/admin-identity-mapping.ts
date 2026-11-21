@@ -266,6 +266,8 @@ export interface IdentityMappingDestinationProfileSummary {
 	lifecycleState: string;
 	activeVersionId?: string | null;
 	version?: IdentityMappingDestinationProfileVersion | null;
+	/** Listing only: the version that serves; `version` is the newest one (a pending draft). */
+	activeVersion?: IdentityMappingDestinationProfileVersion | null;
 }
 
 export interface IdentityMappingDestinationProfileCreateRequest {

@@ -1,4 +1,8 @@
-import type { IdentityMappingClient, MappingSetSummary } from '#lib/api/identity-mapping.js';
+import type {
+	IdentityMappingClient,
+	MappingSetSummary,
+	SetChangePreview
+} from '#lib/api/identity-mapping.js';
 import type {
 	MappingCatalog,
 	MappingDestinationProfile,
@@ -6,6 +10,7 @@ import type {
 	MappingSetDetail,
 	MappingSetSaveRequest
 } from '#lib/api/mapping-set.js';
+import { servingVersion } from '#lib/api/mapping-set.js';
 import {
 	compileMappingSet,
 	decompileMappingSet,
@@ -14,7 +19,9 @@ import {
 import type { Mapping } from '#lib/ui/patterns/mapping-model.js';
 import { copyValue, Draft } from '#lib/ui/save/draft.svelte.js';
 import { codecContext, profileDescriptor } from './connection-mapping-fields.js';
+import { setChangePreviewOf } from './connection-mapping-preview.js';
 import { ApiError, ReleasePausedError } from '#lib/api/api-error.js';
+import type { DestinationProfilesClient } from '#lib/api/destination-profiles.js';
 
 export interface ConnectionMappingResources {
 	client: IdentityMappingClient;
@@ -25,6 +32,8 @@ export interface ConnectionMappingResources {
 	entityId?: string;
 	readBinding: () => Promise<{ setId: string; pinned: boolean }>;
 	bind: (set: MappingSetDetail, idempotencyKey: string) => Promise<void>;
+	/** Makes and changes output sources (destination profiles); absent: only the existing ones can be chosen. */
+	profiles?: DestinationProfilesClient;
 }
 export interface MappingForm {
 	name: string;
@@ -51,7 +60,10 @@ export class ConnectionMappingState {
 	phase = $state<Phase>('loading');
 	sets = $state<MappingSetSummary[]>([]);
 	catalogs = $state<MappingCatalog[]>([]);
+	/** The output sources that can be chosen (switched on). */
 	profiles = $state<MappingDestinationProfile[]>([]);
+	/** Every output source of this kind that has a schema: what can be copied or changed. */
+	allProfiles = $state<MappingDestinationProfile[]>([]);
 	selected = $state('');
 	bound = $state('');
 	pinned = $state(false);
@@ -72,6 +84,13 @@ export class ConnectionMappingState {
 	} | null = null;
 	savedSet: MappingSetDetail | null = null;
 	bindingKey = '';
+	/** "See the changes": what the apps that use the set would receive from the draft. */
+	changes = $state<SetChangePreview | null>(null);
+	changesFor = $state('');
+	checking = $state(false);
+	checkFailed = $state(false);
+	/** Each check and each change of set counts up; an answer for an older one is dropped. */
+	private checkGeneration = 0;
 	form = new Draft<MappingForm>({
 		name: '',
 		description: '',
@@ -113,12 +132,7 @@ export class ConnectionMappingState {
 			]);
 			this.sets = sets.sets;
 			this.catalogs = catalogs.catalogs;
-			this.profiles = profiles.destinationProfiles.filter(
-				(profile) =>
-					profile.destinationType === this.resources.protocol &&
-					profile.version &&
-					profile.lifecycleState === 'active'
-			);
+			this.setProfiles(profiles.destinationProfiles);
 			this.bound = binding.setId;
 			this.pinned = binding.pinned;
 			await this.select(binding.setId);
@@ -127,7 +141,77 @@ export class ConnectionMappingState {
 		}
 	}
 
+	private setProfiles(all: MappingDestinationProfile[]) {
+		this.allProfiles = all.filter(
+			(profile) => profile.destinationType === this.resources.protocol && servingVersion(profile)
+		);
+		this.profiles = this.allProfiles.filter((profile) => profile.lifecycleState === 'active');
+	}
+
+	/** Reads the output sources again (one was just made or changed). */
+	async reloadProfiles() {
+		const { client, tenantId } = this.resources;
+		this.setProfiles((await client.destinationProfiles(tenantId)).destinationProfiles);
+	}
+
+	/**
+	 * The names of the mapping sets that send into an output source, read one by one. `complete`
+	 * is false when a set could not be read: what sends into the profile is then not known, and the
+	 * caller treats it as in use.
+	 */
+	async setsUsing(profileId: string): Promise<{ names: string[]; complete: boolean }> {
+		const { client, tenantId } = this.resources;
+		const names: string[] = [];
+		let complete = true;
+		await Promise.all(
+			this.sets.map(async (set) => {
+				try {
+					const detail = await client.setContent(tenantId, set.id);
+					if (detail.destination_profile_id === profileId)
+						names.push(set.display_name ?? set.field_mapping_key);
+				} catch {
+					complete = false;
+				}
+			})
+		);
+		return { names: names.sort((a, b) => a.localeCompare(b)), complete };
+	}
+
+	/** The draft as the check reads it: the answer is stale once this is no longer the same. */
+	get draftKey() {
+		return JSON.stringify($state.snapshot(this.form.value.mappings));
+	}
+
+	/** Asks what the draft would change for every place that uses the set (it saves nothing). */
+	async check() {
+		if (!this.selected || !this.context || !this.base || this.checking) return;
+		const key = this.draftKey;
+		const mine = ++this.checkGeneration;
+		this.checking = true;
+		this.checkFailed = false;
+		try {
+			const content = compileMappingSet(
+				copyValue(this.base),
+				copyValue(this.form.value.mappings),
+				this.context
+			);
+			const { client, tenantId } = this.resources;
+			const answer = await client.previewSetChange(tenantId, this.selected, content);
+			if (mine !== this.checkGeneration) return;
+			this.changes = setChangePreviewOf(answer);
+			this.changesFor = key;
+		} catch {
+			if (mine === this.checkGeneration) this.checkFailed = true;
+		} finally {
+			if (mine === this.checkGeneration) this.checking = false;
+		}
+	}
+
 	async select(id: string) {
+		this.checkGeneration++;
+		this.checking = false;
+		this.changes = null;
+		this.checkFailed = false;
 		this.phase = 'loading';
 		try {
 			const detail = id
@@ -179,6 +263,10 @@ export class ConnectionMappingState {
 	}
 
 	create() {
+		this.checkGeneration++;
+		this.checking = false;
+		this.changes = null;
+		this.checkFailed = false;
 		this.selected = '';
 		this.detail = null;
 		this.base = null;
@@ -350,6 +438,10 @@ export class ConnectionMappingState {
 				// Activation is complete only here. A failed metadata read is also a binding-only retry.
 				this.selected = result.value.id;
 				this.sets = [...this.sets.filter((set) => set.id !== result.value.id), result.value];
+				// The saved content is the baseline now: an answer for the old one no longer applies.
+				this.checkGeneration++;
+				this.checking = false;
+				this.changes = null;
 				this.base = copyValue(attempt.request.content);
 				this.form.commit();
 				this.pending = null;

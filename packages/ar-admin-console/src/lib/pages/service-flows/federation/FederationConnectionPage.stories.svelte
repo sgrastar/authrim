@@ -10,6 +10,7 @@
 	import { t } from '#lib/i18n/i18n.svelte.js';
 	import { fingerprintDisplay } from '../federation-model';
 	import { fingerprintText } from '../federation-fingerprint.fixture';
+	import { connectionMappingFixture } from '../connection-mapping.fixture';
 	import FederationConnectionPage from './FederationConnectionPage.svelte';
 
 	const { Story } = defineMeta({
@@ -48,6 +49,8 @@
 			canEdit?: boolean;
 			canRefresh?: boolean;
 			canMaterialize?: boolean;
+			/** The SP role's mapping set is made and chosen on the page (mapping fixtures behind it). */
+			outbound?: boolean;
 		} = {}
 	) {
 		const client = createFakeFederationSources({
@@ -56,8 +59,10 @@
 		});
 		const onback = fn();
 		const onnavigate = fn(async (_path: string) => {});
+		const mapping = options.outbound ? connectionMappingFixture('shared', 'saml') : null;
 		return {
 			client,
+			mapping,
 			onback,
 			onnavigate,
 			args: {
@@ -67,6 +72,15 @@
 				canRefresh: options.canRefresh ?? true,
 				canMaterialize: options.canMaterialize ?? true,
 				loadMappingSets: async () => SETS,
+				...(mapping
+					? {
+							outboundMapping: {
+								client: mapping.resources.client,
+								profiles: mapping.resources.profiles!,
+								tenantId: 'demo'
+							}
+						}
+					: {}),
 				onback,
 				onnavigate
 			}
@@ -80,6 +94,25 @@
 				entityId
 			)
 		).closest('tr') as HTMLElement;
+	/** Opens the exclusion node of the flow: the exceptions and the entities are shown there. */
+	async function openExclusions(canvas: Canvas) {
+		await userEvent.click(
+			await canvas.findByRole('button', { name: new RegExp(t('sf.fed.flow.exclusionsItem')) })
+		);
+	}
+	/** Back to the general settings (the federation's end of the flow): status, trust, deletion. */
+	async function openGeneral(canvas: Canvas) {
+		await userEvent.click(canvas.getAllByRole('button', { name: new RegExp(t('af.general')) })[0]);
+	}
+	/** Opens the row's actions menu and picks one of them. */
+	async function act(canvas: Canvas, target: HTMLElement, label: string) {
+		await userEvent.click(
+			within(target).getByRole('button', {
+				name: new RegExp(`^${t('sf.fed.entities.actionsFor', { name: '' })}`)
+			})
+		);
+		await userEvent.click(await canvas.findByRole('menuitem', { name: label }));
+	}
 	const search = (canvas: Canvas) => canvas.getByLabelText(t('sf.fed.entities.search'));
 	const save = (canvas: Canvas) => canvas.getByRole('button', { name: t('common.save') });
 
@@ -102,7 +135,11 @@
 	const pagingPage = page();
 	const excludePage = page();
 	const conflictPage = page({ conflictOnSave: true });
-	const rolePage = page({ sources: [{ ...healthy, roles: ['saml_sp'], idpMappingSetId: '' }] });
+	const rolePage = page({
+		sources: [
+			{ ...healthy, roles: ['saml_sp'], spMappingSetId: '', idpMappingSetId: '', automatic: false }
+		]
+	});
 	const certPage = page();
 	const deletePage = page();
 	const raceFake = page();
@@ -110,6 +147,19 @@
 	const ambiguousPage = page();
 	const spPage = page();
 	const noMaterializePage = page({ canMaterialize: false });
+	const keywordPage = page();
+	const pagePage = page();
+	const flowPage = page();
+	const mappingPage = page({
+		outbound: true,
+		sources: [
+			{ ...healthy, roles: ['saml_sp'], spMappingSetId: '', idpMappingSetId: '', automatic: false }
+		]
+	});
+	const bulkPage = page();
+	const countPage = page({
+		sources: [{ ...healthy, roles: ['saml_sp'], idpMappingSetId: '' }]
+	});
 </script>
 
 <Story
@@ -156,15 +206,21 @@
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		await canvas.findByText(t('sf.fed.readonly'));
+		// The general settings are in view: no update, no deletion.
+		await canvas.findByRole('heading', { name: t('sf.fed.statusCard.title') });
 		await expect(canvas.queryByRole('button', { name: t('sf.fed.statusCard.refresh') })).toBeNull();
 		await expect(canvas.queryByRole('button', { name: t('sf.fed.delete.button') })).toBeNull();
+		await openExclusions(canvas);
 		await canvas.findByText('https://sp.excluded-2.example/shibboleth');
-		await expect(canvas.queryByRole('button', { name: t('sf.fed.entities.include') })).toBeNull();
-		await expect(canvas.queryByRole('button', { name: t('sf.fed.entities.exclude') })).toBeNull();
+		// Nothing to do to an entity: no selection, no actions menu.
+		await expect(canvas.queryByRole('checkbox')).toBeNull();
 		await expect(
-			canvas.queryByRole('button', { name: t('sf.fed.entities.materialize') })
+			canvas.queryByRole('button', {
+				name: new RegExp(`^${t('sf.fed.entities.actionsFor', { name: '' })}`)
+			})
 		).toBeNull();
-		await expect(canvas.getByRole('switch', { name: t('sf.fed.role.sp') })).toBeDisabled();
+		// A role is what the service flow chose: there is no switch to turn one on or off.
+		await expect(canvas.queryByRole('switch')).toBeNull();
 	}}
 />
 
@@ -173,6 +229,7 @@
 	args={pagingPage.args}
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
+		await openExclusions(canvas);
 		await canvas.findByText(/1–25 of 1,200/);
 		await expect(canvas.getAllByRole('row').length).toBeLessThanOrEqual(26 + 1);
 		await userEvent.click(canvas.getByRole('button', { name: t('sf.fed.entities.next') }));
@@ -198,19 +255,18 @@
 	args={excludePage.args}
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
+		await openExclusions(canvas);
 		await canvas.findByText(/of 1,200/);
 		await userEvent.type(search(canvas), 'idp.inst-4.example');
 		const target = await row(canvas, 'https://idp.inst-4.example/idp/shibboleth');
-		await userEvent.click(
-			within(target).getByRole('button', { name: t('sf.fed.entities.exclude') })
-		);
+		await act(canvas, target, t('sf.fed.entities.exclude'));
 		await expect(within(target).getByText(t('sf.fed.entities.state.excluded'))).toBeVisible();
 		// The change is held until saved; the exception list now holds it.
 		await expect(excludePage.client.calls.updated).toHaveLength(0);
 		await userEvent.clear(search(canvas));
 		await userEvent.type(search(canvas), 'sp.excluded-1.example');
 		const back = await row(canvas, 'https://sp.excluded-1.example/shibboleth');
-		await userEvent.click(within(back).getByRole('button', { name: t('sf.fed.entities.include') }));
+		await act(canvas, back, t('sf.fed.entities.include'));
 		await userEvent.click(save(canvas));
 		await waitFor(() => expect(excludePage.client.calls.updated).toHaveLength(1));
 		const { payload, expectedUpdatedAt } = excludePage.client.calls.updated[0].input as {
@@ -227,6 +283,7 @@
 		]);
 		await expect(payload.runtimeResolution.roles).toEqual(['saml_idp', 'saml_sp']);
 		await expect(expectedUpdatedAt).toBe(healthy.updatedAt);
+		await openGeneral(canvas);
 		await waitFor(() => expect(canvas.getByText(/1,200 \(3 set aside\)/)).toBeVisible());
 	}}
 />
@@ -236,12 +293,11 @@
 	args={conflictPage.args}
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
+		await openExclusions(canvas);
 		await canvas.findByText(/of 1,200/);
 		await userEvent.type(search(canvas), 'idp.inst-4.example');
 		const target = await row(canvas, 'https://idp.inst-4.example/idp/shibboleth');
-		await userEvent.click(
-			within(target).getByRole('button', { name: t('sf.fed.entities.exclude') })
-		);
+		await act(canvas, target, t('sf.fed.entities.exclude'));
 		await userEvent.click(save(canvas));
 		await canvas.findByText(t('sf.live.conflict'));
 		// What was typed is kept until the reload is asked for.
@@ -252,23 +308,29 @@
 />
 
 <Story
-	name="A role that is turned on needs its mapping set before it can be saved"
+	name="The mapping node holds the roles' mapping sets and switches the federation on"
 	args={rolePage.args}
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		await canvas.findByRole('heading', { name: 'Test federation' });
-		await userEvent.click(canvas.getByRole('switch', { name: t('sf.fed.role.idp') }));
-		await canvas.findByText(t('sf.fed.error.idpMapping'));
-		await userEvent.click(save(canvas));
-		await expect(rolePage.client.calls.updated).toHaveLength(0);
-		const set = canvas.getByRole('combobox', { name: t('sf.fed.mappingSet.idp') });
+		// Not in use yet, and says what is missing; only the role it was made with is asked.
+		await expect(canvas.getByText(t('sf.fed.notInUse.title'))).toBeVisible();
+		await userEvent.click(
+			canvas.getByRole('button', { name: new RegExp(t('sf.part.mapping-sets')) })
+		);
+		await expect(canvas.queryByRole('combobox', { name: t('sf.fed.mappingSet.idp') })).toBeNull();
+		const set = canvas.getByRole('combobox', { name: t('sf.fed.mappingSet.sp') });
 		await waitFor(() => expect(set).toBeEnabled());
 		await userEvent.selectOptions(set, 'map-other');
 		await userEvent.click(save(canvas));
 		await waitFor(() => expect(rolePage.client.calls.updated).toHaveLength(1));
 		await expect(rolePage.client.calls.updated[0].input).toMatchObject({
 			payload: {
-				runtimeResolution: { roles: ['saml_idp', 'saml_sp'], idpFieldMappingSetId: 'map-other' }
+				runtimeResolution: {
+					mode: 'automatic',
+					roles: ['saml_sp'],
+					spFieldMappingSetId: 'map-other'
+				}
 			}
 		});
 	}}
@@ -328,9 +390,10 @@
 		await waitFor(() => expect(canvas.queryByText(t('sf.fed.statusCard.expiredTitle'))).toBeNull());
 		await expect(lapsed.status?.sourceState).toBe('expired');
 		// The fetch moved the version; a save after it is still accepted.
-		await canvas.findByText(/of 480|of 1,200/);
-		const first = canvas.getAllByRole('button', { name: t('sf.fed.entities.exclude') })[0];
-		await userEvent.click(first);
+		await openExclusions(canvas);
+		await canvas.findByText(/of [\d,]+/);
+		const firstRow = canvas.getAllByRole('row')[1];
+		await act(canvas, firstRow, t('sf.fed.entities.exclude'));
 		await userEvent.click(save(canvas));
 		await waitFor(() => expect(refreshPage.client.calls.updated).toHaveLength(1));
 		await expect(canvas.queryByText(t('sf.live.conflict'))).toBeNull();
@@ -342,12 +405,11 @@
 	args={ambiguousPage.args}
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
+		await openExclusions(canvas);
 		await canvas.findByText(/of 1,200/);
 		await userEvent.type(search(canvas), 'sp.inst-5.example');
 		const target = await row(canvas, 'https://sp.inst-5.example/shibboleth');
-		await userEvent.click(
-			within(target).getByRole('button', { name: t('sf.fed.entities.materialize') })
-		);
+		await act(canvas, target, t('sf.fed.entities.materialize'));
 		const dialog = await canvas.findByRole('dialog');
 		await userEvent.click(
 			within(dialog).getByRole('radio', { name: t('sf.fed.materialize.asIdp') })
@@ -374,12 +436,11 @@
 	args={spPage.args}
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
+		await openExclusions(canvas);
 		await canvas.findByText(/of 1,200/);
 		await userEvent.type(search(canvas), 'sp.excluded-1.example');
 		const target = await row(canvas, 'https://sp.excluded-1.example/shibboleth');
-		await userEvent.click(
-			within(target).getByRole('button', { name: t('sf.fed.entities.materialize') })
-		);
+		await act(canvas, target, t('sf.fed.entities.materialize'));
 		const dialog = await canvas.findByRole('dialog');
 		await expect(within(dialog).getByText(t('sf.fed.materialize.excluded'))).toBeVisible();
 		// Its role is known: no choice of kind.
@@ -405,13 +466,18 @@
 	args={noMaterializePage.args}
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
+		await openExclusions(canvas);
 		await canvas.findByText(/of 1,200/);
+		// The menu holds "set aside" but not "make own connection".
+		await userEvent.click(
+			canvas.getAllByRole('button', {
+				name: new RegExp(`^${t('sf.fed.entities.actionsFor', { name: '' })}`)
+			})[0]
+		);
+		await canvas.findByRole('menuitem', { name: t('sf.fed.entities.exclude') });
 		await expect(
-			canvas.queryByRole('button', { name: t('sf.fed.entities.materialize') })
+			canvas.queryByRole('menuitem', { name: t('sf.fed.entities.materialize') })
 		).toBeNull();
-		await expect(
-			canvas.getAllByRole('button', { name: t('sf.fed.entities.exclude') }).length
-		).toBeGreaterThan(0);
 	}}
 />
 
@@ -420,12 +486,12 @@
 	args={raceFake.args}
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
+		await openExclusions(canvas);
 		await canvas.findByText(/of 1,200/);
 		await userEvent.type(search(canvas), 'idp.inst-4.example');
 		const target = await row(canvas, 'https://idp.inst-4.example/idp/shibboleth');
-		await userEvent.click(
-			within(target).getByRole('button', { name: t('sf.fed.entities.exclude') })
-		);
+		await act(canvas, target, t('sf.fed.entities.exclude'));
+		await openGeneral(canvas);
 		// Another administrator saves a different change in the meantime.
 		const current = await raceFake.client.get(ID);
 		await raceFake.client.update(ID, {
@@ -442,5 +508,155 @@
 			expect(canvas.getAllByText(t('sf.live.conflict')).length).toBeGreaterThan(0)
 		);
 		await expect(raceFake.client.calls.updated).toHaveLength(1);
+	}}
+/>
+
+<Story
+	name="A keyword category narrows the list to the values ticked"
+	args={keywordPage.args}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await openExclusions(canvas);
+		const range = async () =>
+			(await canvas.findByText(/\d+–\d+ of [\d,]+|0 of 0|of [\d,]+/)).textContent;
+		await canvas.findByText(/of [\d,]+/);
+		const before = await range();
+		// A kind is picked, its values appear as checkboxes with how many entities carry each.
+		const kind = await canvas.findByRole('combobox', { name: t('sf.fed.entities.kw.category') });
+		await userEvent.selectOptions(kind, 'location');
+		const kanto = await canvas.findByRole('checkbox', { name: /kanto/ });
+		await userEvent.click(kanto);
+		await waitFor(async () => expect(await range()).not.toEqual(before));
+		await expect(kanto).toBeChecked();
+		// Another kind starts with nothing ticked, and the full list is back.
+		await userEvent.selectOptions(kind, 'organization_type');
+		await waitFor(async () => expect(await range()).toEqual(before));
+	}}
+/>
+
+<Story
+	name="Selected entities are set aside together and taken back together"
+	args={bulkPage.args}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await openExclusions(canvas);
+		await canvas.findByText(/of [\d,]+/);
+		// Providers with no connection of their own, so every row can be set aside.
+		await userEvent.type(search(canvas), 'idp.inst-12');
+		await row(canvas, 'https://idp.inst-12.example/idp/shibboleth');
+		const rows = canvas.getAllByRole('row').slice(1, 3);
+		for (const row of rows) await userEvent.click(within(row).getByRole('checkbox'));
+		await userEvent.click(
+			await canvas.findByRole('button', { name: t('sf.fed.entities.bulk.exclude') })
+		);
+		// The row's menu also holds a "set aside" item: only the state badge counts.
+		const stateOf = (row: HTMLElement) =>
+			within(row)
+				.queryAllByText(t('sf.fed.entities.state.excluded'))
+				.filter((element) => !element.closest('[role="menu"]')).length;
+		for (const row of rows) await waitFor(() => expect(stateOf(row)).toBe(1));
+		for (const row of rows) await userEvent.click(within(row).getByRole('checkbox'));
+		await userEvent.click(
+			await canvas.findByRole('button', { name: t('sf.fed.entities.bulk.include') })
+		);
+		for (const row of rows) await waitFor(() => expect(stateOf(row)).toBe(0));
+	}}
+/>
+
+<Story
+	name="The entity count is the side the service flow works with, not the whole document"
+	args={countPage.args}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		// The page is an SP-role federation: the count is the SPs (and the entities that are both).
+		const spOnly = await countPage.client.entities(ID, { role: 'saml_sp', limit: 1 });
+		const all = await countPage.client.entities(ID, { limit: 1 });
+		await expect(spOnly.total).toBeLessThan(all.total);
+		await canvas.findByText(new RegExp(`${spOnly.total.toLocaleString('en-US')} \\(`));
+		await expect(
+			canvas.queryByText(new RegExp(`${all.total.toLocaleString('en-US')} \\(`))
+		).toBeNull();
+	}}
+/>
+
+<Story
+	name="A selection belongs to the page in view"
+	args={pagePage.args}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await openExclusions(canvas);
+		await canvas.findByText(/1–25 of [\d,]+/);
+		await userEvent.click(within(canvas.getAllByRole('row')[1]).getByRole('checkbox'));
+		await canvas.findByRole('button', { name: t('sf.fed.entities.bulk.exclude') });
+		await userEvent.click(canvas.getByRole('button', { name: t('sf.fed.entities.next') }));
+		await canvas.findByText(/26–50 of [\d,]+/);
+		await expect(
+			canvas.queryByRole('button', { name: t('sf.fed.entities.bulk.exclude') })
+		).toBeNull();
+	}}
+/>
+
+<Story
+	name="The flow has a required mapping step and a set-aside step that holds the exceptions and entities"
+	args={flowPage.args}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findByRole('heading', { name: 'Test federation' });
+		// The mapping is marked required; the set-aside step lists how many are set aside.
+		await expect(canvas.getByText(t('common.required'))).toBeVisible();
+		const exclusions = canvas.getByRole('button', {
+			name: new RegExp(t('sf.fed.flow.exclusionsItem'))
+		});
+		await expect(exclusions).toHaveTextContent(t('sf.fed.flow.exclusionsCount', { count: 3 }));
+		// Each step opens its own settings in the main area; the others are not shown.
+		await expect(canvas.getByRole('heading', { name: t('sf.fed.statusCard.title') })).toBeVisible();
+		await userEvent.click(exclusions);
+		await expect(canvas.getByRole('heading', { name: t('sf.fed.exceptions.title') })).toBeVisible();
+		await expect(canvas.getByRole('heading', { name: t('sf.fed.entities.title') })).toBeVisible();
+		await expect(canvas.queryByRole('heading', { name: t('sf.fed.statusCard.title') })).toBeNull();
+		await userEvent.click(
+			canvas.getByRole('button', { name: new RegExp(t('sf.part.mapping-sets')) })
+		);
+		await expect(
+			canvas.getByRole('heading', { name: t('sf.fed.participation.title') })
+		).toBeVisible();
+		await expect(canvas.queryByRole('heading', { name: t('sf.fed.entities.title') })).toBeNull();
+	}}
+/>
+
+<Story
+	name="The SP role's mapping set is made and chosen on the page, with its output source"
+	args={mappingPage.args}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findByRole('heading', { name: 'Test federation' });
+		// The output source has a node of its own, apart from the mapping.
+		await userEvent.click(
+			canvas.getByRole('button', { name: new RegExp(t('sf.part.mapping-schemas')) })
+		);
+		await canvas.findByRole('button', { name: t('sf.dp.field.create') });
+		await expect(
+			canvas.queryByRole('combobox', { name: new RegExp(`^${t('sf.row.mappingSet')}`) })
+		).toBeNull();
+		await userEvent.click(
+			canvas.getByRole('button', { name: new RegExp(t('sf.part.mapping-sets')) })
+		);
+		// The plain mapping-set select is gone: the connection's own mapping step stands in for it,
+		// and the mapping node holds only the mapping.
+		await expect(canvas.queryByRole('combobox', { name: t('sf.fed.mappingSet.sp') })).toBeNull();
+		await expect(canvas.queryByRole('button', { name: t('sf.dp.field.create') })).toBeNull();
+		const set = await canvas.findByRole('combobox', {
+			name: new RegExp(`^${t('sf.row.mappingSet')}`)
+		});
+		await waitFor(() => expect(set).toBeEnabled());
+		await userEvent.selectOptions(set, 'set-shared');
+		await userEvent.click(await canvas.findByRole('button', { name: t('cm.saveBind') }));
+		// The choice lands in the federation's form, which is saved with the page.
+		await canvas.findByText(t('cm.saved'));
+		await userEvent.click(canvas.getByRole('button', { name: t('common.save') }));
+		await waitFor(() => expect(mappingPage.client.calls.updated).toHaveLength(1));
+		await expect(mappingPage.client.calls.updated[0].input).toMatchObject({
+			payload: { runtimeResolution: { roles: ['saml_sp'], spFieldMappingSetId: 'set-shared' } }
+		});
 	}}
 />

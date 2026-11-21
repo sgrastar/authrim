@@ -217,4 +217,48 @@ describe('connection Mapping Set save and binding', () => {
 		expect(state.detail?.content_version).toBe('version-2');
 		expect(fixture.events).toEqual(['save']);
 	});
+
+	it('drops a "see the changes" answer for a set that is no longer the one open', async () => {
+		const fixture = connectionMappingFixture();
+		const state = new ConnectionMappingState(fixture.resources);
+		await state.load();
+		let release = () => {};
+		const delayed = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		const ask = fixture.resources.client.previewSetChange;
+		fixture.resources.client.previewSetChange = async (...args) => {
+			await delayed;
+			return ask(...args);
+		};
+		const checking = state.check();
+		expect(state.checking).toBe(true);
+		await state.select('set-shared');
+		release();
+		await checking;
+		// The answer was for the first set: nothing of it is shown for the second.
+		expect(state.changes).toBeNull();
+		expect(state.checking).toBe(false);
+	});
+	it('shows the answer to the check once nothing has moved', async () => {
+		const fixture = connectionMappingFixture();
+		const state = new ConnectionMappingState(fixture.resources);
+		await state.load();
+		await state.check();
+		expect(state.changes?.apps.length).toBeGreaterThan(0);
+		expect(state.changesFor).toBe(state.draftKey);
+	});
+
+	it('forgets the answer to the check once the content it was about is saved', async () => {
+		const fixture = connectionMappingFixture();
+		const state = new ConnectionMappingState(fixture.resources);
+		await state.load();
+		await state.select('set-shared');
+		await state.check();
+		expect(state.changes).not.toBeNull();
+		state.form.value.mappings[0].steps.push({ id: 'trim-email', transform: 'trim', params: {} });
+		await state.save();
+		expect(state.phase).toBe('saved');
+		expect(state.changes).toBeNull();
+	});
 });

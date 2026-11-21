@@ -176,5 +176,55 @@ export const enLaunchers: { [K in keyof typeof jaLaunchers]: string } = {
 	'ln.error.rulesInvalid': 'Check the attributes and values of the attribute rules.',
 	'ln.error.ruleKey': 'Use letters, digits and . _ - only.',
 	'ln.error.ruleValue': 'Enter a value.',
-	'ln.error.ruleValueTooLong': 'Keep it to 500 characters.'
+	'ln.error.ruleValueTooLong': 'Keep it to 500 characters.',
+
+	'ln.list.sharing': 'Shared with',
+	'ln.field.backgroundImage': 'Background image',
+	'ln.field.backgroundImageInfo':
+		'Shown across the tile’s width (its height follows the image). PNG, JPEG, WebP or GIF, up to 5 MB. It is uploaded when you save.',
+	'ln.field.hideIcon': 'Hide the icon',
+	'ln.field.hideName': 'Hide the name and description (screen readers still read the name)',
+	'ln.field.linkOnlyInfo':
+		'A launcher the platform shares opens a URL. It cannot name a tenant’s application.',
+	'ln.error.tileEmpty': 'To hide both the icon and the name, set a background image.',
+	'ln.error.tenantsRequired': 'Choose at least one tenant to share with.',
+	'ln.error.tenantsTooMany': 'It can be shared with up to 1,000 tenants.',
+	'ln.card.sharing': 'Sharing',
+	'ln.card.sharingInfo': 'Which tenants show this launcher, and whether they may change it.',
+	'ln.sharing.target': 'Share with',
+	'ln.sharing.all': 'Share with every tenant',
+	'ln.sharing.selected': 'Share with chosen tenants',
+	'ln.sharing.count': '{n} tenants',
+	'ln.sharing.none': 'No tenants chosen',
+	'ln.sharing.choose': 'Choose tenants',
+	'ln.sharing.notShared': 'With neither ticked, no tenant shows it.',
+	'ln.sharing.change': 'Changes by tenants',
+	'ln.sharing.changeAllowed': 'Tenants may change it',
+	'ln.sharing.changeHint':
+		'Untick to stop tenants changing or hiding this launcher. Changes a tenant made are kept but not used. Each tenant can still move it in its own order.',
+	'ln.sharing.pickTitle': 'Choose tenants to share with',
+	'ln.sharing.pickBody':
+		'Only the tenants chosen here show it. Tenants created later are not added.',
+	'ln.sharing.mode.none': 'Not shared',
+	'ln.sharing.mode.all': 'Every tenant',
+	'ln.sharing.mode.selected': 'Chosen tenants',
+	'ln.sharing.lockedBadge': 'Cannot be changed',
+	'ln.shared.badge': 'Shared by the platform',
+	'ln.shared.updatedBadge': 'Updated by the platform',
+	'ln.shared.locked':
+		'The platform shares this launcher and does not allow changes, so it is read only here. You can still move it in the list.',
+	'ln.shared.platformUpdated':
+		'The platform updated this launcher after this tenant changed it. Use “Revert to the platform’s” to take the latest.',
+	'ln.shared.customized': 'This tenant has changed a launcher the platform shares.',
+	'ln.shared.fromPlatform':
+		'The platform shares this launcher. A change makes it this tenant’s own, and you can revert to the platform’s at any time. It cannot be deleted, but it can be hidden.',
+	'ln.shared.revert': 'Revert to the platform’s',
+	'ln.shared.reverted': 'Reverted to the platform’s launcher.',
+	'ln.shared.revertFailed': 'Could not revert. Try again.',
+	'ln.platform.title': 'Shared launchers',
+	'ln.platform.description':
+		'Launchers shown on the account page of every tenant, or of the tenants you choose.',
+	'ln.platform.info': 'The platform’s order. Each tenant can reorder them among its own launchers.',
+	'ln.platform.intro':
+		'Platform launchers are URL links shown to every user, on the account page of the tenants they are shared with.'
 };

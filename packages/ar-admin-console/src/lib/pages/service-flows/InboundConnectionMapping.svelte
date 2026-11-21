@@ -5,6 +5,7 @@
 	import type { FieldCatalogEntry } from '@authrim/ar-lib-field-mapping/contract';
 	import { InboundMappingState } from './inbound-mapping.svelte.js';
 	import MappingEditor from '#lib/ui/patterns/MappingEditor.svelte';
+	import { SAMPLE_USER_FEATURES } from './sample-user.js';
 	import Card from '#lib/ui/patterns/Card.svelte';
 	import Disclosure from '#lib/ui/patterns/Disclosure.svelte';
 	import ConfirmDialog from '#lib/ui/patterns/ConfirmDialog.svelte';
@@ -157,21 +158,23 @@
 				<Button onclick={addSource} disabled={!sourcePath.trim()}>{t('cm.in.add')}</Button>
 			</Disclosure>
 		</BusyScope>
-		<Disclosure title={t('cm.in.preview')}>
-			<BusyScope busy={disabled || shared.pending || shared.readonlyReason}>
-				<TextArea label={t('cm.in.sample')} bind:value={sample} />
-				<Button
-					onclick={() => shared.evaluate(sample)}
-					disabled={invalid || !shared.form.value.mappings.length}
-					loading={shared.phase === 'previewing'}>{t('cm.in.evaluate')}</Button
-				>
-			</BusyScope>
-			{#if shared.preview}<pre aria-live="polite">{JSON.stringify(
-						shared.preview,
-						null,
-						2
-					)}</pre>{/if}
-		</Disclosure>
+		{#if SAMPLE_USER_FEATURES}
+			<Disclosure title={t('cm.in.preview')}>
+				<BusyScope busy={disabled || shared.pending || shared.readonlyReason}>
+					<TextArea label={t('cm.in.sample')} bind:value={sample} />
+					<Button
+						onclick={() => shared.evaluate(sample)}
+						disabled={invalid || !shared.form.value.mappings.length}
+						loading={shared.phase === 'previewing'}>{t('cm.in.evaluate')}</Button
+					>
+				</BusyScope>
+				{#if shared.preview}<pre aria-live="polite">{JSON.stringify(
+							shared.preview,
+							null,
+							2
+						)}</pre>{/if}
+			</Disclosure>
+		{/if}
 		{#if !readonly}<Button
 				onclick={save}
 				variant="primary"

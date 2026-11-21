@@ -90,7 +90,12 @@ export function topEntryOf(kind: ScopeKind, areaId: string): TopEntry {
  */
 export function resolveNavPath(pathname: string): NavLocation | null {
 	const trimmed = pathname.replace(/\/+$/, '') || '/';
-	const segments = trimmed.split('/').filter(Boolean);
+	// A connection's own page (…/applications/all/<kind>/<id>) is a service flow: it is shown
+	// under the service flow list, not as a stray path that falls back to the overview.
+	const connection = /^\/admin\/applications\/all\/(?:rp|sp|op|idp|federation)\/[^/]+$/.test(
+		trimmed
+	);
+	const segments = (connection ? '/admin/applications/all' : trimmed).split('/').filter(Boolean);
 	if (segments[0] !== 'admin') return null;
 	const kind: ScopeKind = segments[1] === 'platform' ? 'platform' : 'tenant';
 	const rest = segments.slice(kind === 'platform' ? 2 : 1);

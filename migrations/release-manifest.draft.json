@@ -56,6 +56,14 @@
             {
               "path": "012_oauth_client_enabled.sql",
               "checksum": "add03dc182bd6d94e597740db74f7e54ca5b1e37b63435f1ebcbd3ac8ac380f1"
+            },
+            {
+              "path": "013_default_consent_statements.sql",
+              "checksum": "7a99c9709dbc3c5ec20528bf0c0dc44a7ecef8f2614f309403c26a543599936c"
+            },
+            {
+              "path": "014_shared_launcher_states.sql",
+              "checksum": "c10bb8d2523b6b3c4f3079a4d6111e77fe4e51f360adafc766a52a6a0ee4255f"
             }
           ]
         },
@@ -174,6 +182,10 @@
             {
               "path": "025_tenant_admin_saml_dr_bundle.sql",
               "checksum": "6f4335fd407f35b136677833c2ebebb71f29fbca37819c26267388e26c915dcf"
+            },
+            {
+              "path": "026_platform_launchers.sql",
+              "checksum": "c157677036c1bc84590180f8b02c7aa745e8b27cb88729b2ae974ea6cb7e765f"
             }
           ]
         },
@@ -240,6 +252,14 @@
             {
               "path": "012_oauth_client_enabled.sql",
               "checksum": "add03dc182bd6d94e597740db74f7e54ca5b1e37b63435f1ebcbd3ac8ac380f1"
+            },
+            {
+              "path": "013_default_consent_statements.sql",
+              "checksum": "74af3c74eca9aa1174d16887a1bb3fe96399786ac11fd9b7e447f5c58179ed56"
+            },
+            {
+              "path": "014_shared_launcher_states.sql",
+              "checksum": "efc1392bf0381d0785f564b840608df003f6406aa76293889baea64da2b44e09"
             }
           ]
         },
@@ -319,6 +339,14 @@
         {
           "path": "012_oauth_client_enabled.sql",
           "checksum": "add03dc182bd6d94e597740db74f7e54ca5b1e37b63435f1ebcbd3ac8ac380f1"
+        },
+        {
+          "path": "013_default_consent_statements.sql",
+          "checksum": "7a99c9709dbc3c5ec20528bf0c0dc44a7ecef8f2614f309403c26a543599936c"
+        },
+        {
+          "path": "014_shared_launcher_states.sql",
+          "checksum": "c10bb8d2523b6b3c4f3079a4d6111e77fe4e51f360adafc766a52a6a0ee4255f"
         }
       ]
     },
@@ -445,6 +473,10 @@
         {
           "path": "025_tenant_admin_saml_dr_bundle.sql",
           "checksum": "6f4335fd407f35b136677833c2ebebb71f29fbca37819c26267388e26c915dcf"
+        },
+        {
+          "path": "026_platform_launchers.sql",
+          "checksum": "c157677036c1bc84590180f8b02c7aa745e8b27cb88729b2ae974ea6cb7e765f"
         }
       ]
     },
@@ -529,6 +561,14 @@
         {
           "path": "012_oauth_client_enabled.sql",
           "checksum": "add03dc182bd6d94e597740db74f7e54ca5b1e37b63435f1ebcbd3ac8ac380f1"
+        },
+        {
+          "path": "013_default_consent_statements.sql",
+          "checksum": "74af3c74eca9aa1174d16887a1bb3fe96399786ac11fd9b7e447f5c58179ed56"
+        },
+        {
+          "path": "014_shared_launcher_states.sql",
+          "checksum": "efc1392bf0381d0785f564b840608df003f6406aa76293889baea64da2b44e09"
         }
       ]
     },

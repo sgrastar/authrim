@@ -104,6 +104,7 @@ import type { CsvSourceProfileParserOptions } from '@authrim/ar-lib-field-mappin
 import type { FieldCatalogEntry } from '@authrim/ar-lib-field-mapping/contract';
 import {
   checkDestinationProfileUnreferenced,
+  checkSourceProfileUnreferenced,
   checkMappingSetUnreferenced,
   checkMappingVersionDeactivation,
   checkMappingVersionSwap,
@@ -1970,8 +1971,28 @@ export interface FederationTrustSourceEntitiesQuery {
   q?: string;
   role?: string;
   state?: string;
+  /** Keyword tokens (mdui:Keywords) an entity must carry at least one of. */
+  keywords?: string[];
+  /** What the page is ordered by (name by default) and which way. */
+  sort?: string;
+  direction?: string;
   limit?: number;
   cursor?: string;
+}
+
+/** One keyword of a federation's entities, with how many entities carry it. */
+export interface FederationEntityKeywordValue {
+  /** The keyword token as it is in the metadata and as the entities filter takes it. */
+  value: string;
+  /** What is shown for it: the token without its category prefix. */
+  label: string;
+  count: number;
+}
+
+/** The keywords of one kind (a location, an organization type), as a federation groups them. */
+export interface FederationEntityKeywordCategory {
+  type: string;
+  values: FederationEntityKeywordValue[];
 }
 
 export interface FederationTrustSourceEntitiesPage {
@@ -2001,6 +2022,39 @@ const FEDERATION_ENTITY_PAGE_MAX = 200;
 const FEDERATION_ENTITY_SEARCH_MAX_LENGTH = 128;
 const FEDERATION_ENTITY_ROLE_FILTERS = new Set(['saml_idp', 'saml_sp', 'ambiguous']);
 const FEDERATION_ENTITY_STATE_FILTERS = new Set(['participating', 'excluded', 'explicit']);
+const FEDERATION_ENTITY_SORTS = new Set(['name', 'entityId']);
+const FEDERATION_ENTITY_DIRECTIONS = new Set(['asc', 'desc']);
+const FEDERATION_ENTITY_KEYWORDS_MAX = 20;
+const FEDERATION_ENTITY_KEYWORD_MAX_LENGTH = 256;
+const FEDERATION_ENTITY_KEYWORD_FACET_MAX = 2000;
+
+/**
+ * Groups keyword tokens by kind. A federation writes them as `category:<kind>:<value>`
+ * (GakuNin: category:location:kanto); any other `a:b…` token is grouped by its first part, and a
+ * token with no colon is not a category and is left out.
+ */
+export function groupFederationEntityKeywords(
+  rows: ReadonlyArray<{ keyword: string; count: number }>
+): FederationEntityKeywordCategory[] {
+  const groups = new Map<string, FederationEntityKeywordValue[]>();
+  for (const { keyword, count } of rows) {
+    const parts = keyword.split(':');
+    if (parts.length < 2 || parts.some((part, index) => index > 0 && part === '')) continue;
+    const prefixed = parts[0] === 'category' && parts.length >= 3;
+    const type = prefixed ? parts[1] : parts[0];
+    const label = (prefixed ? parts.slice(2) : parts.slice(1)).join(':');
+    if (!type || !label) continue;
+    const values = groups.get(type) ?? [];
+    values.push({ value: keyword, label, count });
+    groups.set(type, values);
+  }
+  return [...groups.entries()]
+    .map(([type, values]) => ({
+      type,
+      values: values.sort((a, b) => b.count - a.count || a.label.localeCompare(b.label)),
+    }))
+    .sort((a, b) => a.type.localeCompare(b.type));
+}
 const SAML_METADATA_SOURCE_STATES = new Set<SAMLMetadataSourceState>([
   'healthy',
   'stale',
@@ -2112,6 +2166,17 @@ function normalizeFederationEntityRole(value: string): 'saml_idp' | 'saml_sp' | 
 
 function encodeFederationEntityCursor(cursor: { sortKey: string; entityId: string }): string {
   return btoa(unescape(encodeURIComponent(JSON.stringify([cursor.sortKey, cursor.entityId]))));
+}
+
+function normalizeFederationEntityKeywords(value: string[] | undefined): string[] {
+  const keywords = [...new Set((value ?? []).map((keyword) => keyword.trim()).filter(Boolean))];
+  if (
+    keywords.length > FEDERATION_ENTITY_KEYWORDS_MAX ||
+    keywords.some((keyword) => keyword.length > FEDERATION_ENTITY_KEYWORD_MAX_LENGTH)
+  ) {
+    throw badRequest('keyword is invalid');
+  }
+  return keywords;
 }
 
 function decodeFederationEntityCursor(
@@ -2886,8 +2951,10 @@ export class IdentityMappingControlPlaneRepository {
       source_type: string;
       profile_key: string;
       display_name: string;
+      lifecycle_state: string;
+      active_version_id: string | null;
     }>(
-      `SELECT id, source_type, profile_key, display_name
+      `SELECT id, source_type, profile_key, display_name, lifecycle_state, active_version_id
          FROM source_profiles
         WHERE tenant_id = ? AND id = ?`,
       [tenantId, profileId]
@@ -2895,6 +2962,9 @@ export class IdentityMappingControlPlaneRepository {
     if (!existing) {
       throw notFound('source profile not found');
     }
+    // An active profile keeps serving its active version until the edit is reviewed and activated.
+    const keepsActiveVersion =
+      existing.lifecycle_state === 'active' && existing.active_version_id !== null;
     const sourceType =
       input.sourceType ?? (existing.source_type as CreateSourceProfileRequest['sourceType']);
     if (!SOURCE_PROFILE_TYPES.has(sourceType)) {
@@ -2904,6 +2974,12 @@ export class IdentityMappingControlPlaneRepository {
     const displayName = input.displayName ?? existing.display_name;
     validateRequiredString(profileKey, 'profileKey');
     validateRequiredString(displayName, 'displayName');
+    if (
+      keepsActiveVersion &&
+      (sourceType !== existing.source_type || profileKey !== existing.profile_key)
+    ) {
+      throw conflict('source type and profile key cannot be changed while the profile is active');
+    }
     const duplicate = await this.adapter.queryOne<{ id: string }>(
       `SELECT id
          FROM source_profiles
@@ -2954,12 +3030,26 @@ export class IdentityMappingControlPlaneRepository {
     const versionLabel = input.versionLabel ?? 'draft';
 
     await this.adapter.transaction(async (tx) => {
-      await tx.execute(
+      const updatedRow = await tx.execute(
         `UPDATE source_profiles
             SET source_type = ?, profile_key = ?, display_name = ?, lifecycle_state = ?, updated_at = ?
-          WHERE tenant_id = ? AND id = ?`,
-        [sourceType, profileKey, displayName, 'draft', now, tenantId, profileId]
+          WHERE tenant_id = ? AND id = ?
+            AND lifecycle_state = ? AND COALESCE(active_version_id, '') = ?`,
+        [
+          sourceType,
+          profileKey,
+          displayName,
+          keepsActiveVersion ? existing.lifecycle_state : 'draft',
+          now,
+          tenantId,
+          profileId,
+          existing.lifecycle_state,
+          existing.active_version_id ?? '',
+        ]
       );
+      if (updatedRow.rowsAffected === 0) {
+        throw conflict('source profile changed while it was being edited; retry');
+      }
       await tx.execute(
         `INSERT INTO source_profile_versions (
           id, tenant_id, profile_id, version_label, lifecycle_state, schema_hash, schema_json,
@@ -2988,7 +3078,8 @@ export class IdentityMappingControlPlaneRepository {
       sourceType,
       profileKey,
       displayName,
-      lifecycleState: 'draft',
+      lifecycleState: keepsActiveVersion ? existing.lifecycle_state : 'draft',
+      activeVersionId: keepsActiveVersion ? existing.active_version_id : null,
       version: {
         id: versionId,
         versionLabel,
@@ -3016,6 +3107,9 @@ export class IdentityMappingControlPlaneRepository {
     if (!SOURCE_PROFILE_VERSION_STATES.has(row.lifecycle_state)) {
       throw badRequest('source profile version lifecycle state is invalid');
     }
+    if (row.lifecycle_state === 'active') {
+      throw conflict('an active source profile version cannot be reviewed again');
+    }
     const warningSummary = row.warning_summary_json
       ? (JSON.parse(row.warning_summary_json) as Record<string, unknown>)
       : {};
@@ -3025,12 +3119,15 @@ export class IdentityMappingControlPlaneRepository {
       throw badRequest('PII and regulated candidates must be confirmed before review');
     }
     const now = this.now();
-    await this.adapter.execute(
+    const reviewed = await this.adapter.execute(
       `UPDATE source_profile_versions
           SET lifecycle_state = ?, reviewed_at = ?, updated_at = ?
-        WHERE tenant_id = ? AND profile_id = ? AND id = ?`,
+        WHERE tenant_id = ? AND profile_id = ? AND id = ? AND lifecycle_state <> 'active'`,
       ['reviewed', now, now, tenantId, profileId, versionId]
     );
+    if (reviewed.rowsAffected === 0) {
+      throw conflict('an active source profile version cannot be reviewed again');
+    }
     return { id: versionId, lifecycleState: 'reviewed', reviewedAt: now };
   }
 
@@ -3366,7 +3463,18 @@ export class IdentityMappingControlPlaneRepository {
   }
 
   async listDestinationProfiles(tenantId: string) {
-    const rows = await this.adapter.query<DestinationProfileRow>(
+    const rows = await this.adapter.query<
+      DestinationProfileRow & {
+        av_id: string | null;
+        av_version_label: string | null;
+        av_lifecycle_state: string | null;
+        av_schema_hash: string | null;
+        av_schema_json: string | null;
+        av_validation_summary_json: string | null;
+        av_warning_summary_json: string | null;
+        av_release_impact_json: string | null;
+      }
+    >(
       `SELECT p.*,
               v.id AS version_id,
               v.version_label,
@@ -3375,7 +3483,15 @@ export class IdentityMappingControlPlaneRepository {
               v.schema_json,
               v.validation_summary_json,
               v.warning_summary_json,
-              v.release_impact_json
+              v.release_impact_json,
+              av.id AS av_id,
+              av.version_label AS av_version_label,
+              av.lifecycle_state AS av_lifecycle_state,
+              av.schema_hash AS av_schema_hash,
+              av.schema_json AS av_schema_json,
+              av.validation_summary_json AS av_validation_summary_json,
+              av.warning_summary_json AS av_warning_summary_json,
+              av.release_impact_json AS av_release_impact_json
          FROM destination_profiles p
          LEFT JOIN destination_profile_versions v
            ON v.id = COALESCE(
@@ -3389,10 +3505,16 @@ export class IdentityMappingControlPlaneRepository {
              ),
              p.active_version_id
            )
+         LEFT JOIN destination_profile_versions av
+           ON av.id = p.active_version_id
+          AND av.tenant_id = p.tenant_id
+          AND av.profile_id = p.id
         WHERE p.tenant_id IN (?, ?)
         ORDER BY p.owner_scope_type ASC, p.updated_at DESC`,
       [tenantId, 'platform']
     );
+    const json = (value: string | null) =>
+      value ? (JSON.parse(value) as Record<string, unknown>) : {};
     return rows.map((row) => ({
       id: row.id,
       tenantId: row.tenant_id,
@@ -3404,22 +3526,31 @@ export class IdentityMappingControlPlaneRepository {
       baseProfileId: row.base_profile_id,
       lifecycleState: row.lifecycle_state,
       activeVersionId: row.active_version_id,
+      // The version changed last: the one an editor works on. For an active profile with a pending edit
+      // this is the draft, while the version that is serving is `activeVersion`.
       version: row.version_id
         ? {
             id: row.version_id,
             versionLabel: row.version_label,
             lifecycleState: row.version_lifecycle_state,
             schemaHash: row.schema_hash,
-            schema: row.schema_json ? (JSON.parse(row.schema_json) as Record<string, unknown>) : {},
-            validationSummary: row.validation_summary_json
-              ? (JSON.parse(row.validation_summary_json) as Record<string, unknown>)
-              : {},
-            warningSummary: row.warning_summary_json
-              ? (JSON.parse(row.warning_summary_json) as Record<string, unknown>)
-              : {},
-            releaseImpact: row.release_impact_json
-              ? (JSON.parse(row.release_impact_json) as Record<string, unknown>)
-              : {},
+            schema: json(row.schema_json),
+            validationSummary: json(row.validation_summary_json),
+            warningSummary: json(row.warning_summary_json),
+            releaseImpact: json(row.release_impact_json),
+          }
+        : null,
+      // The version that serves what uses the profile (null while the profile has none).
+      activeVersion: row.av_id
+        ? {
+            id: row.av_id,
+            versionLabel: row.av_version_label,
+            lifecycleState: row.av_lifecycle_state,
+            schemaHash: row.av_schema_hash,
+            schema: json(row.av_schema_json),
+            validationSummary: json(row.av_validation_summary_json),
+            warningSummary: json(row.av_warning_summary_json),
+            releaseImpact: json(row.av_release_impact_json),
           }
         : null,
     }));
@@ -3441,9 +3572,12 @@ export class IdentityMappingControlPlaneRepository {
       owner_scope_type: string;
       owner_scope_id: string | null;
       base_profile_id: string | null;
+      lifecycle_state: string;
+      active_version_id: string | null;
     }>(
       `SELECT id, tenant_id, destination_type, profile_key, display_name,
-              owner_scope_type, owner_scope_id, base_profile_id
+              owner_scope_type, owner_scope_id, base_profile_id,
+              lifecycle_state, active_version_id
          FROM destination_profiles
         WHERE id = ?
           AND (tenant_id = ? OR (? = 1 AND tenant_id = ?))`,
@@ -3452,6 +3586,10 @@ export class IdentityMappingControlPlaneRepository {
     if (!existing) {
       throw notFound('destination profile not found');
     }
+    // An active profile keeps serving its active version while the edit waits for review and
+    // activation: only a new draft version is added, and the row itself is left as it is.
+    const keepsActiveVersion =
+      existing.lifecycle_state === 'active' && existing.active_version_id !== null;
 
     const destinationType =
       input.destinationType ??
@@ -3482,6 +3620,17 @@ export class IdentityMappingControlPlaneRepository {
     const displayName = input.displayName ?? existing.display_name;
     validateRequiredString(profileKey, 'profileKey');
     validateRequiredString(displayName, 'displayName');
+    if (
+      keepsActiveVersion &&
+      (destinationType !== existing.destination_type ||
+        owner.ownerScopeType !== existing.owner_scope_type ||
+        owner.ownerScopeId !== existing.owner_scope_id ||
+        profileKey !== existing.profile_key)
+    ) {
+      throw conflict(
+        'destination type, owner scope and profile key cannot be changed while the profile is active'
+      );
+    }
     const duplicate = await this.adapter.queryOne<{ id: string }>(
       `SELECT id
          FROM destination_profiles
@@ -3527,12 +3676,13 @@ export class IdentityMappingControlPlaneRepository {
     const schemaHash = await hashStableJson(input.schema);
 
     await this.adapter.transaction(async (tx) => {
-      await tx.execute(
+      const updatedRow = await tx.execute(
         `UPDATE destination_profiles
             SET tenant_id = ?, destination_type = ?, profile_key = ?, display_name = ?,
                 owner_scope_type = ?, owner_scope_id = ?, base_profile_id = ?,
                 lifecycle_state = ?, updated_at = ?
-          WHERE tenant_id = ? AND id = ?`,
+          WHERE tenant_id = ? AND id = ?
+            AND lifecycle_state = ? AND COALESCE(active_version_id, '') = ?`,
         [
           owner.tenantId,
           destinationType,
@@ -3541,12 +3691,19 @@ export class IdentityMappingControlPlaneRepository {
           owner.ownerScopeType,
           owner.ownerScopeId,
           input.baseProfileId === undefined ? existing.base_profile_id : input.baseProfileId,
-          'draft',
+          keepsActiveVersion ? existing.lifecycle_state : 'draft',
           now,
           existing.tenant_id,
           profileId,
+          existing.lifecycle_state,
+          existing.active_version_id ?? '',
         ]
       );
+      // The state this edit was decided on changed meanwhile (an activation finished): nothing is
+      // written, so the row cannot be put back to a draft under a version that is serving.
+      if (updatedRow.rowsAffected === 0) {
+        throw conflict('destination profile changed while it was being edited; retry');
+      }
       await tx.execute(
         `INSERT INTO destination_profile_versions (
           id, tenant_id, profile_id, version_label, lifecycle_state, schema_hash, schema_json,
@@ -3579,7 +3736,8 @@ export class IdentityMappingControlPlaneRepository {
       ownerScopeId: owner.ownerScopeId,
       baseProfileId:
         input.baseProfileId === undefined ? existing.base_profile_id : input.baseProfileId,
-      lifecycleState: 'draft',
+      lifecycleState: keepsActiveVersion ? existing.lifecycle_state : 'draft',
+      activeVersionId: keepsActiveVersion ? existing.active_version_id : null,
       version: {
         id: versionId,
         versionLabel,
@@ -3618,6 +3776,10 @@ export class IdentityMappingControlPlaneRepository {
     if (!DESTINATION_PROFILE_VERSION_STATES.has(row.lifecycle_state)) {
       throw badRequest('destination profile version lifecycle state is invalid');
     }
+    // Reviewing would demote the version that is serving; only a pending version is reviewed.
+    if (row.lifecycle_state === 'active') {
+      throw conflict('an active destination profile version cannot be reviewed again');
+    }
     const validationSummary = JSON.parse(row.validation_summary_json) as Record<string, unknown>;
     const warningSummary = JSON.parse(row.warning_summary_json) as Record<string, unknown>;
     const releaseImpact = JSON.parse(row.release_impact_json) as Record<string, unknown>;
@@ -3633,12 +3795,16 @@ export class IdentityMappingControlPlaneRepository {
       throw badRequest('blocking destination release warnings must be confirmed before review');
     }
     const now = this.now();
-    await this.adapter.execute(
+    const reviewed = await this.adapter.execute(
       `UPDATE destination_profile_versions
           SET lifecycle_state = ?, reviewed_at = ?, updated_at = ?
-        WHERE tenant_id = ? AND profile_id = ? AND id = ?`,
+        WHERE tenant_id = ? AND profile_id = ? AND id = ? AND lifecycle_state <> 'active'`,
       ['reviewed', now, now, row.tenant_id, profileId, versionId]
     );
+    // An activation finished after the state was read: the serving version is left as it is.
+    if (reviewed.rowsAffected === 0) {
+      throw conflict('an active destination profile version cannot be reviewed again');
+    }
     return { id: versionId, lifecycleState: 'reviewed', reviewedAt: now };
   }
 
@@ -7662,6 +7828,15 @@ export class IdentityMappingControlPlaneRepository {
     if (query.state !== undefined && !FEDERATION_ENTITY_STATE_FILTERS.has(query.state)) {
       throw badRequest('state must be participating, excluded or explicit');
     }
+    if (query.sort !== undefined && !FEDERATION_ENTITY_SORTS.has(query.sort)) {
+      throw badRequest('sort must be name or entityId');
+    }
+    if (query.direction !== undefined && !FEDERATION_ENTITY_DIRECTIONS.has(query.direction)) {
+      throw badRequest('direction must be asc or desc');
+    }
+    const keywords = normalizeFederationEntityKeywords(query.keywords);
+    const sortByEntityId = query.sort === 'entityId';
+    const descending = query.direction === 'desc';
     const cursor = decodeFederationEntityCursor(query.cursor);
     const source = await this.adapter.queryOne<FederationTrustSourceRow>(
       `SELECT id, source_type, source_key, display_name, lifecycle_state,
@@ -7691,6 +7866,13 @@ export class IdentityMappingControlPlaneRepository {
       where.push(`e.entity_role IN (?, 'ambiguous')`);
       params.push(query.role);
     }
+    if (keywords.length > 0) {
+      where.push(
+        `EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid(e.summary_json) THEN e.summary_json ELSE '{}' END, '$.keywords') k
+                  WHERE k.value IN (SELECT value FROM json_each(?)))`
+      );
+      params.push(JSON.stringify(keywords));
+    }
     if (query.state === 'excluded') {
       where.push(`e.entity_id IN (SELECT value FROM json_each(?))`);
       params.push(JSON.stringify(excludedEntityIds));
@@ -7713,8 +7895,11 @@ export class IdentityMappingControlPlaneRepository {
       `SELECT COUNT(*) AS total FROM federation_metadata_entity_summaries e WHERE ${baseWhere}`,
       params
     );
+    const sortExpression = sortByEntityId ? 'e.entity_id' : 'COALESCE(e.display_name, e.entity_id)';
+    const comparison = descending ? '<' : '>';
+    const direction = descending ? 'DESC' : 'ASC';
     const pageWhere = cursor
-      ? `${baseWhere} AND (COALESCE(e.display_name, e.entity_id) > ? OR (COALESCE(e.display_name, e.entity_id) = ? AND e.entity_id > ?))`
+      ? `${baseWhere} AND (${sortExpression} ${comparison} ? OR (${sortExpression} = ? AND e.entity_id ${comparison} ?))`
       : baseWhere;
     const pageParams = cursor
       ? [...params, cursor.sortKey, cursor.sortKey, cursor.entityId]
@@ -7723,7 +7908,7 @@ export class IdentityMappingControlPlaneRepository {
       `SELECT e.entity_id, e.entity_role, e.display_name, e.summary_json
          FROM federation_metadata_entity_summaries e
         WHERE ${pageWhere}
-        ORDER BY COALESCE(e.display_name, e.entity_id) ASC, e.entity_id ASC
+        ORDER BY ${sortExpression} ${direction}, e.entity_id ${direction}
         LIMIT ?`,
       [...pageParams, limit + 1]
     );
@@ -7775,12 +7960,60 @@ export class IdentityMappingControlPlaneRepository {
       nextCursor:
         rows.length > limit && last
           ? encodeFederationEntityCursor({
-              sortKey: last.display_name ?? last.entity_id,
+              sortKey: sortByEntityId ? last.entity_id : (last.display_name ?? last.entity_id),
               entityId: last.entity_id,
             })
           : null,
       total: Number(totalRow?.total ?? 0),
       explicitLookupAvailable: explicit !== null,
+    };
+  }
+
+  /**
+   * The keywords the entities of a source's active document carry, grouped by kind with how many
+   * entities carry each: what the entity list can be narrowed by. A role narrows it as it does the
+   * list (an entity of both roles counts under either).
+   */
+  async listFederationTrustSourceEntityKeywords(
+    tenantId: string,
+    trustSourceId: string,
+    query: { role?: string }
+  ): Promise<{ categories: FederationEntityKeywordCategory[] }> {
+    validateRequiredString(trustSourceId, 'trustSourceId');
+    if (query.role !== undefined && !FEDERATION_ENTITY_ROLE_FILTERS.has(query.role)) {
+      throw badRequest('role must be saml_idp, saml_sp or ambiguous');
+    }
+    const source = await this.adapter.queryOne<{ active_metadata_document_id: string | null }>(
+      `SELECT active_metadata_document_id
+         FROM federation_trust_sources
+        WHERE tenant_id = ? AND id = ?`,
+      [tenantId, trustSourceId]
+    );
+    if (!source) throw notFound('federation trust source not found');
+    if (!source.active_metadata_document_id) return { categories: [] };
+    const params: unknown[] = [tenantId, source.active_metadata_document_id];
+    let roleWhere = '';
+    if (query.role === 'ambiguous') {
+      roleWhere = ` AND e.entity_role = 'ambiguous'`;
+    } else if (query.role) {
+      roleWhere = ` AND e.entity_role IN (?, 'ambiguous')`;
+      params.push(query.role);
+    }
+    const rows = await this.adapter.query<{ keyword: string; count: number | string }>(
+      `SELECT k.value AS keyword, COUNT(*) AS count
+         FROM federation_metadata_entity_summaries e,
+              json_each(CASE WHEN json_valid(e.summary_json) THEN e.summary_json ELSE '{}' END, '$.keywords') k
+        WHERE e.tenant_id = ? AND e.metadata_document_id = ?${roleWhere}
+          AND typeof(k.value) = 'text'
+        GROUP BY k.value
+        ORDER BY count DESC, k.value ASC
+        LIMIT ?`,
+      [...params, FEDERATION_ENTITY_KEYWORD_FACET_MAX]
+    );
+    return {
+      categories: groupFederationEntityKeywords(
+        rows.map((row) => ({ keyword: row.keyword, count: Number(row.count) }))
+      ),
     };
   }
 
@@ -9404,9 +9637,12 @@ export async function adminIdentityMappingSourceProfileActivateHandler(c: AdminC
 }
 
 export async function adminIdentityMappingSourceProfileDeleteHandler(c: AdminContext) {
-  return handleMutation(c, 'source-profile.delete', async (repository, tenantId) =>
-    repository.deleteSourceProfile(tenantId, requiredParam(c, 'sourceProfileId'))
-  );
+  return handleMutation(c, 'source-profile.delete', async (repository, tenantId) => {
+    const profileId = requiredParam(c, 'sourceProfileId');
+    // A profile that a Mapping Set version or an app still reads from cannot go.
+    refuseIfInUse(await checkSourceProfileUnreferenced(c, { profileId }));
+    return repository.deleteSourceProfile(tenantId, profileId);
+  });
 }
 
 export async function adminIdentityMappingDestinationProfilesListHandler(c: AdminContext) {
@@ -10043,11 +10279,28 @@ export async function adminIdentityMappingFederationTrustSourceEntitiesHandler(c
         q: c.req.query('q') ?? undefined,
         role: c.req.query('role') ?? undefined,
         state: c.req.query('state') ?? undefined,
+        keywords: c.req.queries('keyword') ?? undefined,
+        sort: c.req.query('sort') ?? undefined,
+        direction: c.req.query('direction') ?? undefined,
         limit: limitParam === undefined ? undefined : Number(limitParam),
         cursor: c.req.query('cursor') ?? undefined,
       }
     );
   });
+}
+
+export async function adminIdentityMappingFederationTrustSourceEntityKeywordsHandler(
+  c: AdminContext
+) {
+  return handleControlPlane(c, async (repository, tenantId) =>
+    repository.listFederationTrustSourceEntityKeywords(
+      tenantId,
+      requiredParam(c, 'trustSourceId'),
+      {
+        role: c.req.query('role') ?? undefined,
+      }
+    )
+  );
 }
 
 export async function adminIdentityMappingFederationTrustSourceRefreshHistoryHandler(

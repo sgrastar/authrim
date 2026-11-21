@@ -41,6 +41,7 @@ export const PHASE3_SQLITE_TABLE_GROUPS: readonly Phase3TableGroup[] = [
       'check_api_keys',
       'client_trust_policies',
       'oauth_clients',
+      'shared_launcher_states',
       'web_origin_registry',
     ],
   },

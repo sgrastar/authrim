@@ -155,6 +155,22 @@ export function federationProblems(form: FederationForm): FederationProblem[] {
 	return problems;
 }
 
+/**
+ * What a federation needs to exist at all: a name, the exact metadata address, a certificate to
+ * check its signature against, and a role. The mapping sets come later, on its own page; until
+ * every role has one the federation only collects the inventory and signs nobody in.
+ */
+export function federationSetupProblems(form: FederationForm): FederationProblem[] {
+	return federationProblems(form).filter((problem) =>
+		['name', 'metadataUrl', 'certificates', 'roles', 'discoveryServiceUrl'].includes(problem.field)
+	);
+}
+
+/** Every role has its mapping set (and an external discovery service its address). */
+export function federationInUse(form: FederationForm): boolean {
+	return federationProblems(form).length === 0;
+}
+
 /** The registration authorities typed, one per line, without blanks or repeats. */
 export function registrationAuthorityList(
 	form: Pick<FederationForm, 'registrationAuthorities'>
@@ -181,6 +197,26 @@ const record = (value: unknown): Record<string, unknown> =>
 		? (value as Record<string, unknown>)
 		: {};
 
+/** Still waiting for its mapping sets: made by the wizard (or already waiting) and not complete. */
+function federationSetupPending(form: FederationForm, base: Record<string, unknown>): boolean {
+	return !federationInUse(form) && (base.setupPending === true || Object.keys(base).length === 0);
+}
+
+/**
+ * Without a mapping set per role nobody can sign in, so a federation waiting for them only
+ * collects the inventory and is switched on when the last set is chosen. One an administrator
+ * set to inventory-only on purpose (not waiting) stays so.
+ */
+function resolutionMode(
+	form: FederationForm,
+	base: Record<string, unknown>,
+	resolution: Record<string, unknown>
+): 'automatic' | 'inventory_only' {
+	if (!federationInUse(form)) return 'inventory_only';
+	if (base.setupPending === true) return 'automatic';
+	return resolution.mode === 'inventory_only' ? 'inventory_only' : 'automatic';
+}
+
 /**
  * The stored payload for a form, laid over the one the source already has: what the console does
  * not set (polling, signature policy, registration authorities, entity-category rules) is kept.
@@ -206,8 +242,12 @@ export function federationPayload(
 	const preset = FEDERATION_ATTRIBUTE_PRESETS.find(
 		(candidate) => candidate === form.attributePreset
 	);
+	const { setupPending: _pending, ...kept } = base;
 	return {
-		...base,
+		...kept,
+		// Set by the wizard, kept until every role has its mapping set: it tells a federation that
+		// is waiting for them from one an administrator set to inventory-only on purpose.
+		...(federationSetupPending(form, base) ? { setupPending: true } : {}),
 		metadataUrl: url,
 		metadataUrlPatterns: [url],
 		policy: base.policy ?? 'strict',
@@ -216,11 +256,13 @@ export function federationPayload(
 		polling: base.polling ?? { mode: 'automatic', intervalSeconds: DEFAULT_POLLING_SECONDS },
 		runtimeResolution: {
 			...keptResolution,
-			// A source an administrator set to inventory-only stays so: the form does not own the mode.
-			mode: resolution.mode === 'inventory_only' ? 'inventory_only' : 'automatic',
+			mode: resolutionMode(form, base, resolution),
 			roles: federationRoles(form),
-			...(form.idpRole ? { idpFieldMappingSetId: form.idpMappingSetId } : {}),
-			...(form.spRole ? { spFieldMappingSetId: form.spMappingSetId } : {}),
+			// An empty id is refused by the server: a role with no set yet simply has none.
+			...(form.idpRole && form.idpMappingSetId
+				? { idpFieldMappingSetId: form.idpMappingSetId }
+				: {}),
+			...(form.spRole && form.spMappingSetId ? { spFieldMappingSetId: form.spMappingSetId } : {}),
 			...(form.spRole && preset ? { defaultAttributePresetId: preset } : {}),
 			...(registrationAuthorityList(form).length > 0
 				? { registrationAuthorities: registrationAuthorityList(form) }
@@ -246,7 +288,7 @@ export function federationPayload(
 
 /** The request that makes a federation, or an error when the form is not complete. */
 export function federationCreateInput(form: FederationForm): FederationWrite {
-	if (federationProblems(form).length > 0) throw new Error(t('sf.create.invalid'));
+	if (federationSetupProblems(form).length > 0) throw new Error(t('sf.create.invalid'));
 	return {
 		// The address is what makes two federations the same one.
 		sourceKey: form.metadataUrl.trim(),
@@ -261,7 +303,7 @@ export function federationUpdateInput(
 	form: FederationForm,
 	source: FederationSource
 ): FederationUpdate {
-	if (federationProblems(form).length > 0) throw new Error(t('sf.create.invalid'));
+	if (federationSetupProblems(form).length > 0) throw new Error(t('sf.create.invalid'));
 	return {
 		sourceKey: source.sourceKey,
 		name: form.name.trim(),

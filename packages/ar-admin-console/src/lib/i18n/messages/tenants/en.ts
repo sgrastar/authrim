@@ -221,5 +221,13 @@ export const enTenants: Record<keyof typeof jaTenants, string> = {
 	'tn.dom.record.howTxt': 'Add it to the domain’s DNS as a TXT record.',
 	'tn.dom.record.howHttp': 'Serve the body, as it is, at this URL.',
 	'tn.dom.record.url': 'URL',
-	'tn.dom.record.body': 'Body'
+	'tn.dom.record.body': 'Body',
+
+	'tn.picker.apply': 'Choose {n}',
+	'tn.picker.tooMany': 'Up to {n} can be chosen.',
+	'tn.picker.noAccess': 'You do not have access to the tenant list.',
+	'tn.picker.loadFailed': 'Could not load the tenants.',
+	'tn.picker.filter': 'Filter tenants',
+	'tn.picker.unlisted': '{n} of them are not in the list (deleted tenants, for example)',
+	'tn.picker.default': 'Default tenant'
 };

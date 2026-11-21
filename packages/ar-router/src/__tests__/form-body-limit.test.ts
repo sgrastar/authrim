@@ -12,7 +12,8 @@ import app from '../index';
 
 const DEFAULT_LIMIT = 256 * 1024;
 const UPLOAD_PATH = '/api/admin/assets/login-ui';
-const UPLOAD_LIMIT = 5 * 1024 * 1024;
+/** A 5 MiB picture and room for the multipart form around it. */
+const UPLOAD_LIMIT = 5 * 1024 * 1024 + 64 * 1024;
 
 type MockFetcher = {
   fetch: ReturnType<typeof vi.fn>;
@@ -59,8 +60,8 @@ const FORM = 'application/x-www-form-urlencoded';
 const ADMIN_ORIGIN = 'https://admin.example.com';
 
 /** The admin UI's multipart upload: same-origin to the Admin UI so router CSRF lets it through. */
-function uploadRequest(body: string, contentType: string): Request {
-  return new Request(`https://api.example.com${UPLOAD_PATH}`, {
+function uploadRequest(body: string, contentType: string, path = UPLOAD_PATH): Request {
+  return new Request(`https://api.example.com${path}`, {
     method: 'POST',
     headers: { 'Content-Type': contentType, Origin: ADMIN_ORIGIN },
     body,
@@ -562,6 +563,34 @@ describe('Router form body inspection limit', () => {
       expect(env.OP_MANAGEMENT.received[0].bytes.byteLength).toBe(
         new TextEncoder().encode(body).byteLength
       );
+    });
+
+    it('accepts a picture of exactly 5 MiB in its multipart form', async () => {
+      const { contentType, body } = multipartBody([
+        { name: 'kind', value: 'logo' },
+        {
+          name: 'file',
+          value: 'x'.repeat(5 * 1024 * 1024),
+          filename: 'logo.png',
+          type: 'image/png',
+        },
+      ]);
+      const res = await app.fetch(uploadRequest(body, contentType), env);
+
+      expect(res.status).toBe(200);
+    });
+
+    it('accepts a platform launcher background upload above the ordinary limit', async () => {
+      const { contentType, body } = multipartBody([
+        { name: 'file', value: 'x'.repeat(1024 * 1024), filename: 'bg.png', type: 'image/png' },
+      ]);
+      const res = await app.fetch(
+        uploadRequest(body, contentType, '/api/admin/platform/launchers/assets'),
+        env
+      );
+
+      expect(res.status).toBe(200);
+      expect(env.OP_MANAGEMENT.received).toHaveLength(1);
     });
 
     it('rejects a Login UI asset upload over its own limit', async () => {

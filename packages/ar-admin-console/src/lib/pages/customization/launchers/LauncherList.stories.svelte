@@ -1,7 +1,12 @@
 <script module lang="ts">
 	import { defineMeta } from '@storybook/addon-svelte-csf';
 	import { expect, fn, userEvent, waitFor, within } from 'storybook/test';
-	import { createFakeLaunchers } from '#lib/api/fake/launchers-fake.js';
+	import {
+		FAKE_LAUNCHERS,
+		FAKE_SHARED_LAUNCHERS,
+		createFakeLaunchers
+	} from '#lib/api/fake/launchers-fake.js';
+	import { createFakePlatformLaunchers } from '#lib/api/fake/platform-launchers-fake.js';
 	import { t } from '#lib/i18n/i18n.svelte.js';
 	import { waitForSettledToasts } from '#lib/ui/stories/toast-settled.js';
 	import Toaster from '#lib/ui/toast/Toaster.svelte';
@@ -16,7 +21,7 @@
 			docs: {
 				description: {
 					component:
-						'Customization → Launchers (`/api/admin/launchers`): the tiles of the account page, in the order it shows them. The arrows save a new order at once; a row opens the launcher’s page, where it is edited; **Create launcher** opens the same page for a new one. A new environment has none, and the page says so.'
+						'Customization → Launchers (`/api/admin/launchers`): the tiles of the account page, in the order it shows them. The arrows save a new order at once; a row opens the launcher’s page, where it is edited; **Create launcher** opens the same page for a new one. A new environment has none, and the page says so. Launchers the platform shares with the tenant are listed with the tenant’s own (marked, and never deleted from here). On the platform, the list says whom each launcher is shared with.'
 				}
 			}
 		}
@@ -142,6 +147,46 @@
 			client={createFakeLaunchers(undefined, { forbidden: true })}
 			canWrite
 			{hrefOf}
+			{onopen}
+		/>
+	{/snippet}
+</Story>
+
+<!-- The platform's launchers shared with this tenant sit among its own; they cannot be deleted. -->
+<Story
+	name="With launchers shared by the platform"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findByText('Library');
+		await expect(canvas.getAllByText(t('ln.shared.badge'))).toHaveLength(3);
+		await expect(canvas.getByText(t('ln.shared.updatedBadge'))).toBeInTheDocument();
+	}}
+>
+	{#snippet template()}
+		<LauncherList
+			client={createFakeLaunchers([...FAKE_LAUNCHERS, ...FAKE_SHARED_LAUNCHERS])}
+			canWrite
+			{hrefOf}
+			{onopen}
+		/>
+	{/snippet}
+</Story>
+
+<Story
+	name="The platform's launchers"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findByRole('heading', { level: 1, name: t('ln.platform.title') });
+		await expect(await canvas.findByText(t('ln.sharing.mode.all'))).toBeInTheDocument();
+		await expect(canvas.getByText(t('ln.sharing.count', { n: 2 }))).toBeInTheDocument();
+		await expect(canvas.getByText(t('ln.sharing.lockedBadge'))).toBeInTheDocument();
+	}}
+>
+	{#snippet template()}
+		<LauncherList
+			client={createFakePlatformLaunchers()}
+			canWrite
+			hrefOf={(id) => `/admin/platform/customization/launchers/${id}`}
 			{onopen}
 		/>
 	{/snippet}

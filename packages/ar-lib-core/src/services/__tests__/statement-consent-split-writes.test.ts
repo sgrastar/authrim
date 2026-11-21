@@ -28,7 +28,14 @@ interface Fixture {
 }
 
 function core(): Fixture {
-  return sqliteAdapter('core');
+  const fixture = sqliteAdapter('core');
+  // These tests read the whole tables: leave out the baseline tenant's default statements
+  // (core migration 013).
+  fixture.db.exec(`DELETE FROM statement_consent_projection_jobs;
+    DELETE FROM consent_statement_localizations;
+    DELETE FROM consent_statement_versions;
+    DELETE FROM consent_statements;`);
+  return fixture;
 }
 
 async function seedDefinitions(adapter: DatabaseAdapter, withdrawalAllowed = 1): Promise<void> {

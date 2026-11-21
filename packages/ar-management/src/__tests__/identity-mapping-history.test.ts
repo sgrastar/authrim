@@ -307,11 +307,16 @@ describe('mapping selection history, restore and committed evidence', () => {
           { 'Idempotency-Key': 'test-profile-update' }
         );
         expect(updated.status, JSON.stringify(updated.json)).toBe(200);
+        // Editing an active profile keeps it serving; the profile stops being valid only when it
+        // is taken out of use, which is what the binding then reports.
         expect(
           f.db
             .prepare('SELECT lifecycle_state FROM destination_profiles WHERE id=?')
             .get('profile-b')
-        ).toMatchObject({ lifecycle_state: 'draft' });
+        ).toMatchObject({ lifecycle_state: 'active' });
+        f.db
+          .prepare("UPDATE destination_profiles SET lifecycle_state='draft' WHERE id=?")
+          .run('profile-b');
       }
       const page = await f.call('GET', HISTORY);
       expect(page.status).toBe(200);

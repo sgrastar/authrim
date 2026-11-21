@@ -4,6 +4,7 @@ import type {
 	FederationEntity,
 	FederationEntityPage,
 	FederationEntityQuery,
+	FederationKeywordCategory,
 	FederationRefreshHistoryItem,
 	FederationRefreshResult,
 	FederationSource,
@@ -49,7 +50,8 @@ function mockCertificatePreview(): SamlCertificatePreview {
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
 const DAY = 24 * 60 * 60 * 1000;
-const NOW = Date.UTC(2026, 10, 20, 9, 0, 0);
+// Relative to the real clock: the status card counts days left against it.
+const NOW = Date.now();
 
 const certificate: FederationCertificate = {
 	id: 'cert-1',
@@ -100,7 +102,7 @@ function status(partial: Partial<FederationStatus>): FederationStatus {
 		nextRefreshAt: NOW + 5 * 3_600_000,
 		consecutiveFailures: 0,
 		lastErrorCode: null,
-		acceptedValidUntil: new Date(NOW + 14 * DAY).toISOString(),
+		acceptedValidUntil: new Date(NOW + 14.5 * DAY).toISOString(),
 		activeMetadataDocumentId: 'doc-1',
 		entityCount: 1200,
 		excludedCount: 3,
@@ -124,7 +126,7 @@ export const MOCK_FEDERATION_SOURCES: readonly FederationSource[] = [
 	source('lapsed-federation', 'Lapsed federation', {
 		status: status({
 			sourceState: 'expired',
-			acceptedValidUntil: new Date(NOW - 2 * DAY).toISOString(),
+			acceptedValidUntil: new Date(NOW - 1.5 * DAY).toISOString(),
 			lastSuccessAt: NOW - 16 * DAY,
 			consecutiveFailures: 4,
 			lastErrorCode: 'metadata_fetch_failed',
@@ -139,6 +141,12 @@ export const MOCK_FEDERATION_SOURCES: readonly FederationSource[] = [
 	})
 ];
 
+/** An entity with the keywords its metadata carries (the list view does not send them). */
+export type MockEntity = FederationEntity & { keywords?: string[] };
+
+const LOCATIONS = ['kanto', 'kinki', 'chubu', 'kyushu', 'tohoku', 'hokkaido'];
+const ORG_TYPES = ['university', 'institute', 'library'];
+
 const SCOPES = ['University', 'Institute', 'College', 'Library', 'Hospital', 'Archive'];
 const CATEGORIES = ['https://refeds.org/category/research-and-scholarship'];
 
@@ -146,7 +154,7 @@ const CATEGORIES = ['https://refeds.org/category/research-and-scholarship'];
  * A federation's worth of entities: `count` of them (1,200 by default), the first three SPs the
  * test federation sets aside by default and one with an explicit connection of its own.
  */
-export function mockEntities(count = 1200): FederationEntity[] {
+export function mockEntities(count = 1200): MockEntity[] {
 	return Array.from({ length: count }, (_, index) => {
 		const n = index + 1;
 		const role =
@@ -164,7 +172,11 @@ export function mockEntities(count = 1200): FederationEntity[] {
 			excluded: false,
 			policyAllowed: true,
 			explicitProviderId: n === 7 ? 'saml-explicit-7' : null,
-			explicitProviderType: n === 7 ? 'sp' : null
+			explicitProviderType: n === 7 ? 'sp' : null,
+			keywords: [
+				`category:location:${LOCATIONS[n % LOCATIONS.length]}`,
+				`category:organization_type:${ORG_TYPES[n % ORG_TYPES.length]}`
+			]
 		};
 	});
 }
@@ -172,7 +184,7 @@ export function mockEntities(count = 1200): FederationEntity[] {
 export interface FakeFederationSourcesOptions {
 	sources?: readonly FederationSource[];
 	/** The entities of every source (the exclusions of the source are applied on top). */
-	entities?: readonly FederationEntity[];
+	entities?: readonly MockEntity[];
 	/** What a refresh answers, or the error it fails with. */
 	refresh?: Partial<FederationRefreshResult> | Error;
 	/** Every save finds the source changed by someone else. */
@@ -263,7 +275,7 @@ export function createFakeFederationSources(
 		...clone(row),
 		status: row.status ? { ...row.status, excludedCount: row.excludedEntityIds.length } : row.status
 	});
-	const viewOf = (row: FederationSource, entity: FederationEntity): FederationEntity => ({
+	const viewOf = (row: FederationSource, entity: MockEntity): MockEntity => ({
 		...entity,
 		excluded: row.excludedEntityIds.includes(entity.entityId)
 	});
@@ -298,7 +310,7 @@ export function createFakeFederationSources(
 				metadataUrl: String(payload.metadataUrl ?? ''),
 				certificates: (payload.certificates ?? []) as FederationCertificate[],
 				roles,
-				automatic: true,
+				automatic: resolution.mode === 'automatic',
 				idpMappingSetId: String(resolution.idpFieldMappingSetId ?? ''),
 				spMappingSetId: String(resolution.spFieldMappingSetId ?? ''),
 				attributePresetId: String(resolution.defaultAttributePresetId ?? ''),
@@ -337,6 +349,7 @@ export function createFakeFederationSources(
 				roles: (Array.isArray(resolution.roles)
 					? resolution.roles
 					: row.roles) as FederationSource['roles'],
+				automatic: resolution.mode === 'automatic',
 				idpMappingSetId: String(resolution.idpFieldMappingSetId ?? ''),
 				spMappingSetId: String(resolution.spFieldMappingSetId ?? ''),
 				attributePresetId: String(resolution.defaultAttributePresetId ?? ''),
@@ -389,7 +402,10 @@ export function createFakeFederationSources(
 						(!needle ||
 							entity.entityId.toLowerCase().includes(needle) ||
 							(entity.displayName ?? '').toLowerCase().includes(needle)) &&
-						(!query.role || entity.role === query.role) &&
+						// As the server does: an entity that is both is listed under either role.
+						(!query.role || entity.role === query.role || entity.role === 'ambiguous') &&
+						(!query.keywords?.length ||
+							query.keywords.some((keyword) => entity.keywords?.includes(keyword))) &&
 						(!query.state ||
 							(query.state === 'explicit'
 								? entity.explicitProviderId !== null
@@ -397,20 +413,44 @@ export function createFakeFederationSources(
 									? entity.excluded && entity.explicitProviderId === null
 									: !entity.excluded && entity.explicitProviderId === null))
 				)
-				.sort(
-					(a, b) =>
-						(a.displayName ?? '').localeCompare(b.displayName ?? '') ||
-						a.entityId.localeCompare(b.entityId)
-				);
+				.sort((a, b) => {
+					const order =
+						query.sort === 'entityId'
+							? a.entityId.localeCompare(b.entityId)
+							: (a.displayName ?? a.entityId).localeCompare(b.displayName ?? b.entityId) ||
+								a.entityId.localeCompare(b.entityId);
+					return query.direction === 'desc' ? -order : order;
+				});
 			const limit = Math.min(Math.max(query.limit ?? 50, 1), 200);
 			const start = query.cursor ? Number.parseInt(query.cursor, 10) || 0 : 0;
-			const items = matches.slice(start, start + limit);
+			const items = matches
+				.slice(start, start + limit)
+				.map(({ keywords: _keywords, ...view }) => view);
 			return {
 				items,
 				nextCursor: start + limit < matches.length ? String(start + limit) : null,
 				total: matches.length,
 				explicitLookupAvailable: true
 			};
+		},
+		async entityKeywords(id, query = {}) {
+			await wait();
+			find(id);
+			const counts = new Map<string, number>();
+			for (const entity of entities) {
+				if (query.role && entity.role !== query.role && entity.role !== 'ambiguous') continue;
+				for (const keyword of entity.keywords ?? [])
+					counts.set(keyword, (counts.get(keyword) ?? 0) + 1);
+			}
+			const groups = new Map<string, FederationKeywordCategory['values']>();
+			for (const [value, count] of counts) {
+				const [, type = '', ...rest] = value.split(':');
+				groups.set(type, [...(groups.get(type) ?? []), { value, label: rest.join(':'), count }]);
+			}
+			return [...groups.entries()].map(([type, values]) => ({
+				type,
+				values: values.sort((a, b) => b.count - a.count || a.label.localeCompare(b.label))
+			}));
 		},
 		async refreshHistory(id, limit = 20) {
 			await wait();
