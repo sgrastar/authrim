@@ -14,6 +14,8 @@ export interface FakeDestinationProfiles extends DestinationProfilesClient {
 	saved: DestinationProfileInput[];
 	/** The ids of the profiles that were deleted. */
 	removed: string[];
+	/** The profiles switched on again with `activate`. */
+	activated: string[];
 }
 
 const plain = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
@@ -56,10 +58,12 @@ export function createFakeDestinationProfiles(
 	const rows = new Map(initial.map((row) => [row.id, plain(row)]));
 	const saved: DestinationProfileInput[] = [];
 	const removed: string[] = [];
+	const activated: string[] = [];
 	const wait = () => new Promise((resolve) => setTimeout(resolve, options.delay ?? 0));
 	return {
 		saved,
 		removed,
+		activated,
 		async list(_tenantId, kind) {
 			await wait();
 			return [...rows.values()]
@@ -69,6 +73,20 @@ export function createFakeDestinationProfiles(
 		async listAll() {
 			await wait();
 			return [...rows.values()].map((row) => plain(row));
+		},
+		async activate(_tenantId, written) {
+			await wait();
+			activated.push(written.id);
+			const before = rows.get(written.id) ?? written;
+			const next = mockProfile(
+				written.destinationType as DestinationKind,
+				written.id,
+				before.displayName,
+				plain(before.version?.schema ?? {}),
+				'active'
+			);
+			rows.set(written.id, next);
+			return { profile: plain(next), active: true };
 		},
 		async remove(_tenantId, id) {
 			await wait();

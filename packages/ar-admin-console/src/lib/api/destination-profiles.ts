@@ -41,6 +41,11 @@ export interface DestinationProfilesClient {
 	/** Every profile of the tenant, of any kind (the profiles page). */
 	listAll(tenantId: string, signal?: AbortSignal): Promise<MappingDestinationProfile[]>;
 	save(tenantId: string, input: DestinationProfileInput): Promise<DestinationProfileSaved>;
+	/**
+	 * Switches on a version that was written but not activated (the review stopped it): reviews and
+	 * activates it again, without writing anything new.
+	 */
+	activate(tenantId: string, written: MappingDestinationProfile): Promise<DestinationProfileSaved>;
 	/** Deletes a profile; refused (409) while a mapping set sends into it. */
 	remove(tenantId: string, id: string): Promise<void>;
 }
@@ -87,6 +92,32 @@ export const httpDestinationProfiles: DestinationProfilesClient = {
 			profile:
 				profiles.find((row) => row.id === info.id) ??
 				(written as unknown as MappingDestinationProfile),
+			active: true
+		};
+	},
+	async activate(tenantId, written) {
+		const kind = written.destinationType as DestinationKind;
+		const versionId = written.version?.id;
+		// Where the version stands now: an earlier try may have gone through with its answer lost.
+		const before = (await this.list(tenantId, kind).catch(() => [])).find(
+			(row) => row.id === written.id
+		);
+		const known = [before?.version, before?.activeVersion].find((v) => v?.id === versionId);
+		const state = known?.lifecycleState ?? 'draft';
+		const outcome =
+			state === 'active'
+				? { active: true as const }
+				: await reviewAndActivate(tenantId, BASE, { id: written.id, versionId, state });
+		if (!outcome.active) {
+			return { profile: before ?? written, active: false, reason: outcome.reason };
+		}
+		// A failed re-read after switching on is not a failed activation: what was done stands.
+		const profiles = await this.list(tenantId, kind).catch(() => []);
+		return {
+			profile: profiles.find((row) => row.id === written.id) ?? {
+				...written,
+				lifecycleState: 'active'
+			},
 			active: true
 		};
 	},
