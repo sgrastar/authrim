@@ -203,6 +203,167 @@ const TENANT_PROVISIONING_RULES: AdminRouteAccessRule[] = [
   ),
 ];
 
+/**
+ * Routes that moved out of /api/admin/field-mapping, declared one by one: [pattern, methods,
+ * description]. Nothing here is a wildcard, so a method or a path that is not routed has no rule.
+ */
+const MOVED_MAPPING_ROUTES: ReadonlyArray<readonly [string, AdminRouteMethod[], string]> = [
+  ['/api/admin/identity-mapping/preview/csv', ['POST'], 'identity mapping'],
+  ['/api/admin/identity-mapping/preview/saml', ['POST'], 'identity mapping'],
+  ['/api/admin/identity-mapping/preview/oidc', ['POST'], 'identity mapping'],
+  ['/api/admin/identity-mapping/oidc-scopes', ['GET', 'POST'], 'identity mapping'],
+  ['/api/admin/identity-mapping/oidc-scopes/:id', ['PUT', 'DELETE'], 'identity mapping'],
+  ['/api/admin/identifiers/stores', ['GET'], 'persistent identifiers'],
+  ['/api/admin/identifiers/stores/:name/import', ['POST'], 'persistent identifiers'],
+  ['/api/admin/identifiers/sources', ['GET'], 'persistent identifiers'],
+  ['/api/admin/identifiers/sources/:name/import', ['POST'], 'persistent identifiers'],
+  ['/api/admin/identifiers/exceptions', ['GET'], 'persistent identifiers'],
+  ['/api/admin/identifiers/exceptions/:name/import', ['POST'], 'persistent identifiers'],
+  ['/api/admin/identifiers/hash-key', ['GET'], 'persistent identifiers'],
+  ['/api/admin/identifiers/hash-key/rotate', ['POST'], 'persistent identifiers'],
+  ['/api/admin/identifiers/salts', ['GET'], 'persistent identifiers'],
+  ['/api/admin/identifiers/salts/:name', ['PUT'], 'persistent identifiers'],
+  ['/api/admin/identity-mapping/catalogs', ['GET', 'POST'], 'identity mapping'],
+  ['/api/admin/identity-mapping/protocol-schemas', ['GET', 'POST'], 'identity mapping'],
+  ['/api/admin/identity-mapping/external-schemas', ['GET', 'POST'], 'identity mapping'],
+  ['/api/admin/identity-mapping/source-profiles', ['GET', 'POST'], 'identity mapping'],
+  ['/api/admin/identity-mapping/source-profiles/csv/parse', ['POST'], 'identity mapping'],
+  [
+    '/api/admin/identity-mapping/source-profiles/:sourceProfileId',
+    ['PUT', 'DELETE'],
+    'identity mapping',
+  ],
+  [
+    '/api/admin/identity-mapping/source-profiles/:sourceProfileId/versions/:sourceProfileVersionId/review',
+    ['POST'],
+    'identity mapping',
+  ],
+  [
+    '/api/admin/identity-mapping/source-profiles/:sourceProfileId/versions/:sourceProfileVersionId/activate',
+    ['POST'],
+    'identity mapping',
+  ],
+  ['/api/admin/identity-mapping/destination-profiles', ['GET', 'POST'], 'identity mapping'],
+  [
+    '/api/admin/identity-mapping/destination-profiles/:destinationProfileId',
+    ['PUT', 'DELETE'],
+    'identity mapping',
+  ],
+  [
+    '/api/admin/identity-mapping/destination-profiles/:destinationProfileId/versions/:destinationProfileVersionId/review',
+    ['POST'],
+    'identity mapping',
+  ],
+  [
+    '/api/admin/identity-mapping/destination-profiles/:destinationProfileId/versions/:destinationProfileVersionId/activate',
+    ['POST'],
+    'identity mapping',
+  ],
+  ['/api/admin/identity-mapping/attribute-groups', ['GET', 'POST'], 'identity mapping'],
+  ['/api/admin/identity-mapping/attribute-fields', ['GET', 'POST'], 'identity mapping'],
+  ['/api/admin/identity-mapping/templates', ['GET', 'POST'], 'identity mapping'],
+  ['/api/admin/identity-mapping/source-authority-contracts', ['GET', 'POST'], 'identity mapping'],
+  ['/api/admin/identity-mapping/source-authority-contracts/evaluate', ['POST'], 'identity mapping'],
+  ['/api/admin/identity-mapping/schema-readiness', ['GET'], 'identity mapping'],
+  ['/api/admin/identity-mapping/review-tasks', ['GET', 'POST'], 'identity mapping'],
+  [
+    '/api/admin/identity-mapping/review-tasks/:reviewTaskId/transition',
+    ['POST'],
+    'identity mapping',
+  ],
+  ['/api/admin/identity-mapping/review-task-groups', ['POST'], 'identity mapping'],
+  ['/api/admin/identity-mapping/operational-notifications', ['POST'], 'identity mapping'],
+  [
+    '/api/admin/identity-mapping/operational-notification-states/:stateId/acknowledge',
+    ['POST'],
+    'identity mapping',
+  ],
+  [
+    '/api/admin/identity-mapping/operational-notification-states/:stateId/resolve',
+    ['POST'],
+    'identity mapping',
+  ],
+  ['/api/admin/identity-mapping/groups', ['POST'], 'identity mapping'],
+  ['/api/admin/identity-mapping/groups/:groupId/memberships', ['POST'], 'identity mapping'],
+  ['/api/admin/identity-mapping/entitlements', ['POST'], 'identity mapping'],
+  ['/api/admin/identity-mapping/provisioning-assignment-rules', ['POST'], 'identity mapping'],
+  [
+    '/api/admin/identity-mapping/provisioning-assignment-rules/:ruleId/evaluate',
+    ['POST'],
+    'identity mapping',
+  ],
+  ['/api/admin/identity-mapping/lifecycle-signals', ['POST'], 'identity mapping'],
+  ['/api/admin/identifiers/key-registries', ['POST', 'GET'], 'persistent identifiers'],
+  [
+    '/api/admin/identifiers/key-registries/:keyRegistryId/rotate',
+    ['POST'],
+    'persistent identifiers',
+  ],
+  [
+    '/api/admin/identifiers/key-registries/:keyRegistryId/access-events',
+    ['POST'],
+    'persistent identifiers',
+  ],
+  ['/api/admin/federation/trust-sources', ['POST', 'GET'], 'federation trust sources'],
+  [
+    '/api/admin/federation/trust-sources/:trustSourceId',
+    ['PUT', 'DELETE', 'GET'],
+    'federation trust sources',
+  ],
+  [
+    '/api/admin/federation/trust-sources/:trustSourceId/metadata-documents',
+    ['GET'],
+    'federation trust sources',
+  ],
+  [
+    '/api/admin/federation/trust-sources/:trustSourceId/entities',
+    ['GET'],
+    'federation trust sources',
+  ],
+  [
+    '/api/admin/federation/trust-sources/:trustSourceId/entity-keywords',
+    ['GET'],
+    'federation trust sources',
+  ],
+  [
+    '/api/admin/federation/trust-sources/:trustSourceId/refresh-history',
+    ['GET'],
+    'federation trust sources',
+  ],
+  ['/api/admin/federation/metadata-documents', ['POST'], 'federation trust sources'],
+];
+
+function mappedRoute(
+  pattern: string,
+  methods: AdminRouteMethod[],
+  description: string
+): AdminRouteAccessRule[] {
+  const reads = methods.filter((method) => method === 'GET');
+  const writes = methods.filter((method) => method !== 'GET');
+  return [
+    ...(reads.length
+      ? [
+          rule({
+            pattern,
+            methods: reads,
+            permissions: [ADMIN_PERMISSIONS.SETTINGS_READ],
+            description: `${description} read`,
+          }),
+        ]
+      : []),
+    ...(writes.length
+      ? [
+          rule({
+            pattern,
+            methods: writes,
+            permissions: [ADMIN_PERMISSIONS.SETTINGS_WRITE],
+            description: `${description} write`,
+          }),
+        ]
+      : []),
+  ];
+}
+
 export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
   rule({
     pattern: '/api/internal/versions/:workerName',
@@ -1274,19 +1435,11 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     ADMIN_PERMISSIONS.SETTINGS_WRITE,
     'token claim rules'
   ),
-  ...byMethod(
-    '/api/admin/field-mapping',
-    ADMIN_PERMISSIONS.SETTINGS_READ,
-    ADMIN_PERMISSIONS.SETTINGS_WRITE,
-    ADMIN_PERMISSIONS.SETTINGS_WRITE,
-    'identity field mapping'
-  ),
-  ...byMethod(
-    '/api/admin/field-mapping/*',
-    ADMIN_PERMISSIONS.SETTINGS_READ,
-    ADMIN_PERMISSIONS.SETTINGS_WRITE,
-    ADMIN_PERMISSIONS.SETTINGS_WRITE,
-    'identity field mapping'
+  // The routes that moved out of /api/admin/field-mapping: each is declared as it is routed, so a
+  // method or a path that is not routed has no rule (deny by default). Settings read for GET and
+  // settings write for the rest, as before.
+  ...MOVED_MAPPING_ROUTES.flatMap(([pattern, methods, description]) =>
+    mappedRoute(pattern, methods, description)
   ),
   rule({
     pattern: '/api/admin/identity-mapping/inbound/op/:id',

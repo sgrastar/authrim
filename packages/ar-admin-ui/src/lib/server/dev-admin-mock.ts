@@ -7476,141 +7476,34 @@ async function handleIdentityMapping(
 	segments: string[]
 ): Promise<Response | null> {
 	const method = event.request.method;
-	const mutableFieldMappingSets = fieldMappingSets as unknown as Array<Record<string, unknown>>;
-	const mutableFieldMappingVersions = fieldMappingVersions as unknown as Array<
-		Record<string, unknown>
-	>;
-	if (segments[0] === 'field-mapping-sets' && method === 'GET' && segments.length === 1) {
-		return json({ fieldMappingSets });
+	// The one-step Mapping Set API (`/sets`), as far as the old pickers read it.
+	const setRow = (set: (typeof fieldMappingSets)[number]) => ({
+		id: set.id,
+		owner: 'tenant',
+		field_mapping_key: set.fieldMappingKey,
+		display_name: set.displayName,
+		description: set.description ?? null,
+		enabled: set.lifecycleState === 'active',
+		active_version_id:
+			fieldMappingVersions.find(
+				(version) => version.fieldMappingSetId === set.id && version.lifecycleState === 'active'
+			)?.id ?? null,
+		created_at: set.createdAt ?? null,
+		updated_at: set.updatedAt ?? null
+	});
+	if (segments[0] === 'sets' && method === 'GET' && segments.length === 1) {
+		return json({ sets: fieldMappingSets.map(setRow) });
 	}
-	if (segments[0] === 'field-mapping-sets' && method === 'POST' && segments.length === 1) {
-		const request = await readJson(event.request);
-		const now = Date.now();
-		const result = {
-			id: `field-mapping-dev-${fieldMappingSets.length + 1}`,
-			tenantId: TENANT_ID,
-			fieldMappingKey:
-				typeof request.fieldMappingKey === 'string'
-					? request.fieldMappingKey
-					: 'dev-created-field-mapping',
-			displayName:
-				typeof request.displayName === 'string'
-					? request.displayName
-					: 'Dev created field mapping set',
-			description: typeof request.description === 'string' ? request.description : null,
-			lifecycleState: 'draft',
-			createdAt: now,
-			updatedAt: now
-		};
-		mutableFieldMappingSets.unshift(result);
-		return json({ result });
-	}
-	if (
-		segments[0] === 'field-mapping-sets' &&
-		segments[2] === 'versions' &&
-		segments.length === 3 &&
-		method === 'GET'
-	) {
+	if (segments[0] === 'sets' && method === 'GET' && segments.length === 2) {
+		const set = fieldMappingSets.find((candidate) => candidate.id === segments[1]);
+		if (!set) return json({ error: 'not_found' }, 404);
+		const row = setRow(set);
+		const active = fieldMappingVersions.find((version) => version.id === row.active_version_id);
 		return json({
-			fieldMappingVersions: fieldMappingVersions.filter(
-				(version) => version.fieldMappingSetId === segments[1]
-			)
+			...row,
+			version_label: active?.versionLabel ?? null,
+			destination_profile_id: active?.destinationProfileIds?.[0] ?? null
 		});
-	}
-	if (
-		segments[0] === 'field-mapping-sets' &&
-		segments[2] === 'versions' &&
-		segments.length === 3 &&
-		method === 'POST'
-	) {
-		const request = await readJson(event.request);
-		const rules = Array.isArray(request.rules) ? request.rules : [];
-		const destinationProfileIds = Array.from(
-			new Set(
-				rules.flatMap((rule) => {
-					if (!rule || typeof rule !== 'object') return [];
-					const edges: unknown[] = 'edges' in rule && Array.isArray(rule.edges) ? rule.edges : [];
-					return edges.flatMap((edge) => {
-						if (!edge || typeof edge !== 'object' || !('targetRef' in edge)) return [];
-						const targetRef = edge.targetRef;
-						if (!targetRef || typeof targetRef !== 'object' || !('profileId' in targetRef)) {
-							return [];
-						}
-						return typeof targetRef.profileId === 'string' ? [targetRef.profileId] : [];
-					});
-				})
-			)
-		);
-		const now = Date.now();
-		const result = {
-			id: `field-mapping-version-dev-${now}`,
-			tenantId: TENANT_ID,
-			fieldMappingSetId: segments[1],
-			versionLabel: typeof request.versionLabel === 'string' ? request.versionLabel : `dev-${now}`,
-			lifecycleState: 'draft',
-			compatibilityRange:
-				typeof request.compatibilityRange === 'string' ? request.compatibilityRange : null,
-			authorId: 'admin-dev-admin',
-			publishedAt: null,
-			createdAt: now,
-			updatedAt: now,
-			directions: {
-				source: rules.some(
-					(rule) =>
-						rule &&
-						typeof rule === 'object' &&
-						'ruleKind' in rule &&
-						typeof rule.ruleKind === 'string' &&
-						rule.ruleKind.includes('source')
-				),
-				destination: rules.some(
-					(rule) =>
-						rule &&
-						typeof rule === 'object' &&
-						'ruleKind' in rule &&
-						typeof rule.ruleKind === 'string' &&
-						(rule.ruleKind.includes('destination') || rule.ruleKind.includes('release'))
-				)
-			},
-			sourceProfileIds: Array.isArray(request.sourceProfileIds) ? request.sourceProfileIds : [],
-			destinationProfileIds,
-			rules,
-			latestSnapshot: null
-		};
-		mutableFieldMappingVersions.unshift(result);
-		return json({ result });
-	}
-	if (segments[0] === 'field-mapping-sets' && method === 'DELETE') {
-		return json({ success: true });
-	}
-	if (segments[0] === 'field-mapping-sets' && method === 'POST') {
-		const version = mutableFieldMappingVersions.find((candidate) => candidate.id === segments[3]);
-		if (segments[4] === 'compile') {
-			const snapshot = {
-				id: `snapshot-${segments[3] ?? 'dev'}`,
-				catalogVersionId: 'catalog-version-core-v1',
-				lifecycleState: 'draft',
-				compiledAt: Date.now()
-			};
-			if (version) version.latestSnapshot = snapshot;
-			return json({ result: snapshot });
-		}
-		if (segments[4] === 'activate') {
-			for (const candidate of mutableFieldMappingVersions) {
-				if (candidate.fieldMappingSetId !== segments[1]) continue;
-				candidate.lifecycleState = candidate.id === segments[3] ? 'active' : 'published';
-			}
-			const latestSnapshot = version?.latestSnapshot;
-			if (latestSnapshot && typeof latestSnapshot === 'object') {
-				(latestSnapshot as Record<string, unknown>).lifecycleState = 'active';
-			}
-			const fieldMappingSet = mutableFieldMappingSets.find(
-				(candidate) => candidate.id === segments[1]
-			);
-			if (fieldMappingSet) fieldMappingSet.lifecycleState = 'active';
-			return json({ success: true });
-		}
-		return json({ success: true });
 	}
 	if (segments[0] === 'catalogs') {
 		return json({
@@ -13397,8 +13290,12 @@ export async function handleDevAdminMock(
 	if (tenantDomainMappingsResponse) return tenantDomainMappingsResponse;
 	const tenantVanityDomainsResponse = await handleTenantVanityDomains(event, segments);
 	if (tenantVanityDomainsResponse) return tenantVanityDomainsResponse;
-	if (segments[0] === 'field-mapping') {
+	if (segments[0] === 'identity-mapping') {
 		return await handleIdentityMapping(event, segments.slice(1));
+	}
+	// Federation trust sources used to share the mapping routes.
+	if (segments[0] === 'federation') {
+		return await handleIdentityMapping(event, ['federation-' + segments[1], ...segments.slice(2)]);
 	}
 	if (
 		segments[0] === 'saml-providers' ||

@@ -1878,9 +1878,6 @@
 										{/if}
 									</select>
 								</label>
-								<a class="field-hint-link" href="/admin/field-mapping/field-mapping-sets">
-									{$LL.admin_consent_templates_option_open_field_mapping()}
-								</a>
 							</div>
 						{/if}
 					</div>
@@ -2848,15 +2845,6 @@
 		box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-primary) 30%, transparent);
 	}
 
-	.field-hint-link {
-		display: inline-flex;
-		align-items: center;
-		min-height: 38px;
-		color: var(--color-primary);
-		font-size: 0.84rem;
-		text-decoration: underline;
-		white-space: nowrap;
-	}
 
 	.content-edit-area {
 		display: grid;

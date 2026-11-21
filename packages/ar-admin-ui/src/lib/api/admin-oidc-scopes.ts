@@ -45,7 +45,7 @@ function jsonRequest<T>(path: string, method: string, body?: unknown): Promise<T
 
 export const adminOidcScopesAPI = {
 	async list() {
-		const response = await adminFetch(`${API_BASE_URL}/api/admin/field-mapping/oidc-scopes`);
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/identity-mapping/oidc-scopes`);
 		return parseResponse<{ scopes: OidcScope[] }>(response);
 	},
 
@@ -57,7 +57,11 @@ export const adminOidcScopesAPI = {
 		enabled?: boolean;
 		localizations?: Record<string, OidcScopeLocalization>;
 	}) {
-		return jsonRequest<{ scope: OidcScope }>('/api/admin/field-mapping/oidc-scopes', 'POST', body);
+		return jsonRequest<{ scope: OidcScope }>(
+			'/api/admin/identity-mapping/oidc-scopes',
+			'POST',
+			body
+		);
 	},
 
 	async update(
@@ -70,7 +74,7 @@ export const adminOidcScopesAPI = {
 		}>
 	) {
 		return jsonRequest<{ scope: OidcScope }>(
-			`/api/admin/field-mapping/oidc-scopes/${encodeURIComponent(id)}`,
+			`/api/admin/identity-mapping/oidc-scopes/${encodeURIComponent(id)}`,
 			'PUT',
 			body
 		);
@@ -78,7 +82,7 @@ export const adminOidcScopesAPI = {
 
 	async delete(id: string) {
 		return jsonRequest<{ success: true }>(
-			`/api/admin/field-mapping/oidc-scopes/${encodeURIComponent(id)}`,
+			`/api/admin/identity-mapping/oidc-scopes/${encodeURIComponent(id)}`,
 			'DELETE'
 		);
 	}

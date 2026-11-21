@@ -1050,10 +1050,9 @@ export const adminSAMLAPI = {
 	},
 
 	async listFederationTrustProfiles(): Promise<{ profiles: SAMLFederationTrustProfile[] }> {
-		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/field-mapping/federation-trust-sources`,
-			{ method: 'GET' }
-		);
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/federation/trust-sources`, {
+			method: 'GET'
+		});
 
 		if (!response.ok) {
 			throw await handleAPIError(response, 'Failed to list federation trust profiles');
@@ -1078,14 +1077,11 @@ export const adminSAMLAPI = {
 		request: SAMLFederationTrustProfileRequest
 	): Promise<SAMLFederationTrustProfile> {
 		const sourceRequest = await buildFederationTrustSourceRequest(request);
-		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/field-mapping/federation-trust-sources`,
-			{
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify(sourceRequest)
-			}
-		);
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/federation/trust-sources`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify(sourceRequest)
+		});
 
 		if (!response.ok) {
 			throw await handleAPIError(response, 'Failed to create federation trust profile');
@@ -1110,7 +1106,7 @@ export const adminSAMLAPI = {
 	): Promise<SAMLFederationTrustProfile> {
 		const sourceRequest = await buildFederationTrustSourceRequest(request, id);
 		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/field-mapping/federation-trust-sources/${encodeURIComponent(id)}`,
+			`${API_BASE_URL}/api/admin/federation/trust-sources/${encodeURIComponent(id)}`,
 			{
 				method: 'PUT',
 				headers: { 'Content-Type': 'application/json' },
@@ -1137,7 +1133,7 @@ export const adminSAMLAPI = {
 
 	async deleteFederationTrustProfile(id: string): Promise<{ success: boolean }> {
 		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/field-mapping/federation-trust-sources/${encodeURIComponent(id)}`,
+			`${API_BASE_URL}/api/admin/federation/trust-sources/${encodeURIComponent(id)}`,
 			{ method: 'DELETE' }
 		);
 

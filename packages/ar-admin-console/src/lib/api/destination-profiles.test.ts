@@ -21,7 +21,7 @@ const input = {
 const calls = (fetcher: ReturnType<typeof vi.fn>) =>
 	fetcher.mock.calls.map(
 		([url, init]) =>
-			`${(init as RequestInit)?.method ?? 'GET'} ${String(url).split('/api/admin/field-mapping/')[1]}`
+			`${(init as RequestInit)?.method ?? 'GET'} ${String(url).split('/api/admin/identity-mapping/')[1]}`
 	);
 
 describe('saving an output source', () => {

@@ -165,7 +165,7 @@ function createApp(adapter: DatabaseAdapter, useSessionAuth = false) {
   // With `useSessionAuth` the real middleware reads the session and the assignments from the
   // Admin database, and adds the roles of all of them up as it does in production.
   if (useSessionAuth) app.use('/api/admin/*', adminAuthMiddleware({ plane: 'tenant' }));
-  const base = '/api/admin/field-mapping/field-mapping-sets';
+  const base = '/api/admin/identity-mapping/field-mapping-sets';
   app.get(base, adminIdentityFieldMappingSetsListHandler);
   app.post(base, adminIdentityFieldMappingSetCreateHandler);
   app.delete(`${base}/:fieldMappingSetId`, adminIdentityFieldMappingSetDeleteHandler);
@@ -189,7 +189,7 @@ function createApp(adapter: DatabaseAdapter, useSessionAuth = false) {
   );
   app.post(`${base}/:fieldMappingSetId/rollback`, adminIdentityFieldMappingSetRollbackHandler);
 
-  const profiles = '/api/admin/field-mapping/destination-profiles';
+  const profiles = '/api/admin/identity-mapping/destination-profiles';
   app.post(profiles, adminIdentityMappingDestinationProfileCreateHandler);
   app.put(`${profiles}/:destinationProfileId`, adminIdentityMappingDestinationProfileUpdateHandler);
   app.delete(
@@ -1405,7 +1405,7 @@ describe('platform-owned Mapping Sets through the Admin API', () => {
         const version = db
           .prepare('SELECT id FROM destination_profile_versions WHERE profile_id = ?')
           .get(profileId) as { id: string };
-        const profiles = '/api/admin/field-mapping/destination-profiles';
+        const profiles = '/api/admin/identity-mapping/destination-profiles';
         const actor = actorOf(auth);
         const snapshot = () =>
           JSON.stringify([

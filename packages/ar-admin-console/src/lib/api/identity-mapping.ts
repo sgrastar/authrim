@@ -817,8 +817,8 @@ export function httpIdentityMapping(): IdentityMappingClient {
 				undefined,
 				'test_users'
 			),
-		catalogs: (tenantId) => get(tenantId, `${API_BASE_URL}/api/admin/field-mapping/catalogs`),
+		catalogs: (tenantId) => get(tenantId, `${API_BASE_URL}/api/admin/identity-mapping/catalogs`),
 		destinationProfiles: (tenantId) =>
-			get(tenantId, `${API_BASE_URL}/api/admin/field-mapping/destination-profiles`)
+			get(tenantId, `${API_BASE_URL}/api/admin/identity-mapping/destination-profiles`)
 	};
 }

@@ -25,8 +25,7 @@
 	import SAMLInformationReleaseConsentEditor from '#lib/components/saml/SAMLInformationReleaseConsentEditor.svelte';
 	import {
 		adminIdentityMappingAPI,
-		type IdentityMappingFieldMappingSetSummary,
-		type IdentityMappingFieldMappingVersionSummary
+		type IdentityMappingFieldMappingSetSummary
 	} from '#lib/api/admin-identity-mapping.js';
 	import { AdminPageHeader, AdminPageShell, AdminSection } from '#lib/components/admin/index.js';
 	import LoginProviderIconPicker from '#lib/components/admin/LoginProviderIconPicker.svelte';
@@ -41,7 +40,11 @@
 		isMetadataUrlPreviewCurrent,
 		type SAMLMetadataAggregateImportMode
 	} from '#lib/saml/metadata-aggregate-import.js';
-	import { filterCompatibleActiveFieldMappingSets } from '#lib/saml/field-mapping-options.js';
+	import {
+		activeVersionsFromListedSets,
+		type SAMLFieldMappingVersionOption,
+		filterCompatibleActiveFieldMappingSets
+	} from '#lib/saml/field-mapping-options.js';
 	import { selectMetadataNameIdFormat } from '#lib/saml/metadata-nameid.js';
 	import { onMount } from 'svelte';
 
@@ -73,7 +76,7 @@
 
 	let fieldMappingSets = $state<IdentityMappingFieldMappingSetSummary[]>([]);
 	let fieldMappingVersionsByFieldMappingSetId = $state<
-		Record<string, IdentityMappingFieldMappingVersionSummary[]>
+		Record<string, SAMLFieldMappingVersionOption[]>
 	>({});
 	let loadingFieldMappingSets = $state(true);
 	let setupTarget = $state<SetupTarget>('saml_idp');
@@ -209,18 +212,7 @@
 		try {
 			const result = await adminIdentityMappingAPI.listFieldMappingSets();
 			fieldMappingSets = result.fieldMappingSets || [];
-			const versionPairs = await Promise.all(
-				fieldMappingSets.map(async (fieldMappingSet) => {
-					const versions = await adminIdentityMappingAPI
-						.listFieldMappingVersions(fieldMappingSet.id)
-						.catch(() => null);
-					if (!versions) return null;
-					return [fieldMappingSet.id, versions.fieldMappingVersions] as const;
-				})
-			);
-			fieldMappingVersionsByFieldMappingSetId = Object.fromEntries(
-				versionPairs.filter((entry) => entry !== null)
-			);
+			fieldMappingVersionsByFieldMappingSetId = activeVersionsFromListedSets(fieldMappingSets);
 			ensureCompatibleIdentityMappingSelection(providerType);
 		} catch {
 			fieldMappingSets = [];
@@ -361,12 +353,8 @@
 		}
 		loadingMappingReleaseFields = true;
 		try {
-			const cachedVersions =
-				fieldMappingVersionsByFieldMappingSetId[identityMappingFieldMappingSetId];
 			const [versionResult, destinationResult] = await Promise.all([
-				cachedVersions
-					? Promise.resolve({ fieldMappingVersions: cachedVersions })
-					: adminIdentityMappingAPI.listFieldMappingVersions(identityMappingFieldMappingSetId),
+				adminIdentityMappingAPI.listFieldMappingVersions(identityMappingFieldMappingSetId),
 				adminIdentityMappingAPI.listDestinationProfiles()
 			]);
 			if (sequence !== mappingReleaseLoadSequence) return;
@@ -2491,9 +2479,6 @@
 								</select>
 								<p class="field-hint">
 									{$LL.admin_saml_detail_identity_mapping_policy_hint()}
-									<a class="field-hint-link" href="/admin/field-mapping/field-mapping-sets">
-										{$LL.admin_saml_detail_identity_mapping_policy_link()}
-									</a>
 								</p>
 							</div>
 
@@ -2612,9 +2597,6 @@
 								</select>
 								<p class="field-hint">
 									{$LL.admin_saml_detail_identity_mapping_policy_hint()}
-									<a class="field-hint-link" href="/admin/field-mapping/field-mapping-sets">
-										{$LL.admin_saml_detail_identity_mapping_policy_link()}
-									</a>
 								</p>
 							</div>
 
@@ -3022,18 +3004,6 @@
 
 	.compact-checkboxes {
 		padding-top: 4px;
-	}
-
-	.field-hint-link {
-		display: inline-flex;
-		margin-left: 8px;
-		color: var(--color-accent);
-		font-weight: 700;
-		text-decoration: none;
-	}
-
-	.field-hint-link:hover {
-		text-decoration: underline;
 	}
 
 	.radio-card-group {

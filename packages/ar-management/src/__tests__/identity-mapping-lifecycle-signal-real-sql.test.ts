@@ -589,11 +589,11 @@ describe.each(['scheduled', 'pipeline'] as const)(
         await next();
       });
       app.post(
-        '/api/admin/field-mapping/lifecycle-signals',
+        '/api/admin/identity-mapping/lifecycle-signals',
         adminIdentityMappingLifecycleSignalRecordHandler
       );
       const response = await app.request(
-        '/api/admin/field-mapping/lifecycle-signals',
+        '/api/admin/identity-mapping/lifecycle-signals',
         {
           method: 'POST',
           headers: {
@@ -654,7 +654,7 @@ describe.each(['scheduled', 'pipeline'] as const)(
       const inventories = world.stores.mock.calls.length;
       const replay = () =>
         app.request(
-          '/api/admin/field-mapping/lifecycle-signals',
+          '/api/admin/identity-mapping/lifecycle-signals',
           {
             method: 'POST',
             headers: {

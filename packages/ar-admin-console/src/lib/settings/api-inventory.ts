@@ -155,7 +155,7 @@ export const API_GROUPS: readonly ApiGroup[] = [
 		name: 'Review tasks (resolution center)',
 		kind: 'records',
 		page: 'users/resolution',
-		paths: [`${A}/field-mapping/review-tasks`, `${A}/field-mapping/review-task-groups`]
+		paths: [`${A}/identity-mapping/review-tasks`, `${A}/identity-mapping/review-task-groups`]
 	},
 
 	// -------------------------------------------------------------------------------------------
@@ -223,14 +223,14 @@ export const API_GROUPS: readonly ApiGroup[] = [
 		name: 'OIDC scopes',
 		kind: 'records',
 		page: 'access/schema-setting',
-		paths: [`${A}/field-mapping/oidc-scopes`]
+		paths: [`${A}/identity-mapping/oidc-scopes`]
 	},
 	{
 		id: 'attribute-dictionary',
 		name: 'Attribute fields and groups',
 		kind: 'records',
 		page: 'access/schema-setting',
-		paths: [`${A}/field-mapping/attribute-fields`, `${A}/field-mapping/attribute-groups`]
+		paths: [`${A}/identity-mapping/attribute-fields`, `${A}/identity-mapping/attribute-groups`]
 	},
 	{
 		id: 'mapping-profiles',
@@ -238,12 +238,12 @@ export const API_GROUPS: readonly ApiGroup[] = [
 		kind: 'records',
 		page: 'access/profiles',
 		paths: [
-			`${A}/field-mapping/source-profiles`,
-			`${A}/field-mapping/destination-profiles`,
-			`${A}/field-mapping/catalogs`,
-			`${A}/field-mapping/external-schemas`,
-			`${A}/field-mapping/protocol-schemas`,
-			`${A}/field-mapping/schema-readiness`
+			`${A}/identity-mapping/source-profiles`,
+			`${A}/identity-mapping/destination-profiles`,
+			`${A}/identity-mapping/catalogs`,
+			`${A}/identity-mapping/external-schemas`,
+			`${A}/identity-mapping/protocol-schemas`,
+			`${A}/identity-mapping/schema-readiness`
 		]
 	},
 	{
@@ -252,11 +252,10 @@ export const API_GROUPS: readonly ApiGroup[] = [
 		kind: 'records',
 		page: 'access/mapping-sets',
 		paths: [
-			`${A}/field-mapping/field-mapping-sets`,
 			`${A}/identity-mapping`,
 			`${A}/platform/identity-mapping`,
-			`${A}/field-mapping/templates`,
-			`${A}/field-mapping/preview`
+			`${A}/identity-mapping/templates`,
+			`${A}/identity-mapping/preview`
 		]
 	},
 	{
@@ -265,11 +264,11 @@ export const API_GROUPS: readonly ApiGroup[] = [
 		kind: 'records',
 		page: 'access/mapping-sets',
 		paths: [
-			`${A}/field-mapping/groups`,
-			`${A}/field-mapping/entitlements`,
-			`${A}/field-mapping/provisioning-assignment-rules`,
-			`${A}/field-mapping/source-authority-contracts`,
-			`${A}/field-mapping/lifecycle-signals`
+			`${A}/identity-mapping/groups`,
+			`${A}/identity-mapping/entitlements`,
+			`${A}/identity-mapping/provisioning-assignment-rules`,
+			`${A}/identity-mapping/source-authority-contracts`,
+			`${A}/identity-mapping/lifecycle-signals`
 		],
 		note: 'No legacy page; placement to decide.'
 	},
@@ -279,12 +278,12 @@ export const API_GROUPS: readonly ApiGroup[] = [
 		kind: 'records',
 		page: 'access/mapping-sets',
 		paths: [
-			`${A}/field-mapping/key-registries`,
-			`${A}/field-mapping/hash-key`,
-			`${A}/field-mapping/identifier-salts`,
-			`${A}/field-mapping/identifier-sources`,
-			`${A}/field-mapping/identifier-stores`,
-			`${A}/field-mapping/identifier-exceptions`
+			`${A}/identifiers/key-registries`,
+			`${A}/identifiers/hash-key`,
+			`${A}/identifiers/salts`,
+			`${A}/identifiers/sources`,
+			`${A}/identifiers/stores`,
+			`${A}/identifiers/exceptions`
 		],
 		note: 'No page of its own: persistent identifiers are set up in a mapping step.'
 	},
@@ -445,10 +444,7 @@ export const API_GROUPS: readonly ApiGroup[] = [
 		name: 'Federation trust sources',
 		kind: 'records',
 		page: 'applications/all',
-		paths: [
-			`${A}/field-mapping/federation-trust-sources`,
-			`${A}/field-mapping/federation-metadata-documents`
-		]
+		paths: [`${A}/federation/trust-sources`, `${A}/federation/metadata-documents`]
 	},
 	{
 		id: 'security-alerts',
@@ -648,8 +644,8 @@ export const API_GROUPS: readonly ApiGroup[] = [
 		page: 'integrations/notifications',
 		paths: [
 			`${A}/notifications`,
-			`${A}/field-mapping/operational-notifications`,
-			`${A}/field-mapping/operational-notification-states`
+			`${A}/identity-mapping/operational-notifications`,
+			`${A}/identity-mapping/operational-notification-states`
 		]
 	},
 

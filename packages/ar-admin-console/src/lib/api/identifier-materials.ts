@@ -1,6 +1,6 @@
 /**
  * What a persistent identifier step reads by name, and the imports that fill them (the Admin API
- * under `/api/admin/field-mapping/identifier-*`):
+ * under `/api/admin/identity-mapping/identifier-*`):
  *   - salts: brought from another identity provider (a secret: only a fingerprint comes back),
  *   - identifier sources: a value imported for each account, to make the identifier from,
  *   - stores: identifiers people already have at another identity provider,
@@ -12,7 +12,7 @@ import { API_BASE_URL, adminFetch } from './admin-request';
 import { errorFromResponse } from './api-error';
 import { IDENTIFIER_SALT_NAME } from '@authrim/ar-lib-field-mapping/authoring';
 
-const BASE = `${API_BASE_URL}/api/admin/field-mapping`;
+const BASE = `${API_BASE_URL}/api/admin/identifiers`;
 
 /** The names salts, sources, stores and lists are kept under (the runtime's own rule). */
 export const IDENTIFIER_NAME = IDENTIFIER_SALT_NAME;
@@ -141,7 +141,7 @@ const post = (body: unknown) => ({
 });
 
 const importUrl = (kind: string, name: string) =>
-	`${BASE}/identifier-${kind}/${encodeURIComponent(name)}/import`;
+	`${BASE}/${kind}/${encodeURIComponent(name)}/import`;
 
 function counts(body: Row): ImportCounts {
 	return {
@@ -153,7 +153,7 @@ function counts(body: Row): ImportCounts {
 
 export const identifierMaterialsClient: IdentifierMaterialsClient = {
 	async salts(signal) {
-		const body = await readJson(await adminFetch(`${BASE}/identifier-salts`, { signal }));
+		const body = await readJson(await adminFetch(`${BASE}/salts`, { signal }));
 		return (Array.isArray(body.salts) ? body.salts : []).map((item) => {
 			const row = record(item);
 			return {
@@ -164,23 +164,17 @@ export const identifierMaterialsClient: IdentifierMaterialsClient = {
 		});
 	},
 	async sources(signal) {
-		return summaries(
-			(await readJson(await adminFetch(`${BASE}/identifier-sources`, { signal }))).sources
-		);
+		return summaries((await readJson(await adminFetch(`${BASE}/sources`, { signal }))).sources);
 	},
 	async stores(signal) {
-		return summaries(
-			(await readJson(await adminFetch(`${BASE}/identifier-stores`, { signal }))).stores
-		);
+		return summaries((await readJson(await adminFetch(`${BASE}/stores`, { signal }))).stores);
 	},
 	async exceptions(signal) {
-		return summaries(
-			(await readJson(await adminFetch(`${BASE}/identifier-exceptions`, { signal }))).lists
-		);
+		return summaries((await readJson(await adminFetch(`${BASE}/exceptions`, { signal }))).lists);
 	},
 	async importSalt(name, input) {
 		const body = await readJson(
-			await adminFetch(`${BASE}/identifier-salts/${encodeURIComponent(name)}`, {
+			await adminFetch(`${BASE}/salts/${encodeURIComponent(name)}`, {
 				method: 'PUT',
 				includeJsonContentType: true,
 				body: JSON.stringify(input)
