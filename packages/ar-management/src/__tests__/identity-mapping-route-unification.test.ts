@@ -356,4 +356,35 @@ describe('the mapping Admin API is one family', () => {
       expect(rule?.permissions, `${method} ${newPath}`).toEqual([expected]);
     }
   });
+
+  it('declares no rule for a method a moved path is not routed with', () => {
+    const matches = (pattern: string, path: string) =>
+      new RegExp(`^${pattern.replace(/:[A-Za-z]+/g, '[^/]+')}$`).test(path);
+    let checked = 0;
+    for (const [, , newPath] of MOVED) {
+      const concrete = newPath.replace(/:[A-Za-z]+/g, 'x');
+      for (const method of ['GET', 'POST', 'PUT', 'PATCH', 'DELETE']) {
+        const routed = MOVED.some(
+          ([otherMethod, , otherPath]) => otherMethod === method && matches(otherPath, concrete)
+        );
+        if (routed) continue;
+        expect(findAdminRouteAccessRule(method, concrete), `${method} ${newPath}`).toBeNull();
+        checked += 1;
+      }
+    }
+    expect(checked).toBeGreaterThan(100);
+  });
+
+  it('declares no rule for an unknown path under the moved families', () => {
+    for (const path of [
+      '/api/admin/identity-mapping/not-a-route',
+      '/api/admin/identity-mapping/catalogs/extra/segments',
+      '/api/admin/federation/not-a-route',
+      '/api/admin/identifiers/not-a-route',
+    ]) {
+      for (const method of ['GET', 'POST', 'PUT', 'PATCH', 'DELETE']) {
+        expect(findAdminRouteAccessRule(method, path), `${method} ${path}`).toBeNull();
+      }
+    }
+  });
 });

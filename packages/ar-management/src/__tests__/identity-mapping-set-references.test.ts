@@ -2,7 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { logProducerFixture } from '../../../../test/helpers/log-iceberg-producer-fixture.mjs';
 import {
   adminAuthMiddleware,
+  ADMIN_PERMISSIONS,
   PLATFORM_MAPPING_TENANT_ID,
+  requireAdminPermissions,
   resolveAuthCorePersistenceAdapterFromEnv,
 } from '@authrim/ar-lib-core';
 
@@ -119,21 +121,34 @@ function setup() {
         });
         await next();
       });
-      app.use(
-        '/api/admin/*',
-        adminAuthMiddleware({ plane: 'tenant' }),
-        enforceDeclaredAdminRouteAccess()
+      // The step-by-step set routes are no longer routed (and have no declared access rule), so
+      // the handlers that remain are mounted here on a test path, behind the settings write
+      // permission the declared rule gave them; every other path runs the real declared gate.
+      const declaredGate = enforceDeclaredAdminRouteAccess();
+      app.use('/api/admin/*', adminAuthMiddleware({ plane: 'tenant' }), (c, next) =>
+        c.req.path.startsWith(`${SETS}/`) ? next() : declaredGate(c, next)
       );
-      app.delete(`${SETS}/:fieldMappingSetId`, adminIdentityFieldMappingSetDeleteHandler);
+      const settingsWrite = requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]);
+      app.delete(
+        `${SETS}/:fieldMappingSetId`,
+        settingsWrite,
+        adminIdentityFieldMappingSetDeleteHandler
+      );
       app.post(
         `${SETS}/:fieldMappingSetId/versions/:fieldMappingVersionId/activate`,
+        settingsWrite,
         adminIdentityFieldMappingVersionActivateHandler
       );
       app.post(
         `${SETS}/:fieldMappingSetId/versions/:fieldMappingVersionId/deactivate`,
+        settingsWrite,
         adminIdentityFieldMappingVersionDeactivateHandler
       );
-      app.post(`${SETS}/:fieldMappingSetId/rollback`, adminIdentityFieldMappingSetRollbackHandler);
+      app.post(
+        `${SETS}/:fieldMappingSetId/rollback`,
+        settingsWrite,
+        adminIdentityFieldMappingSetRollbackHandler
+      );
       app.delete(
         '/api/admin/identity-mapping/destination-profiles/:destinationProfileId',
         adminIdentityMappingDestinationProfileDeleteHandler
