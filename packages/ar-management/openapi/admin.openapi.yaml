@@ -15828,7 +15828,12 @@ paths:
       summary: Delete a source profile.
       description: >-
         Deletes the selected source profile for the tenant through the idempotent mutation layer and
-        returns a deletion result.
+        returns a deletion result. Refused with 409 (`reason` `referenced`) while a Mapping Set
+        version (active, draft or retired) reads from the profile in an edge or release rule, an
+        activation scope names it, or an app's or SAML provider's mapping selector names it; set
+        references carry `viaMappingSetId` and `versionId`. 409 `scan_incomplete` when the apps or
+        providers could not be checked. Upstream providers and SCIM settings hold no source profile
+        reference and are not scanned.
       responses:
         '200':
           $ref: '#/components/responses/FieldMappingDeleteResult'
@@ -15841,7 +15846,7 @@ paths:
         '404':
           $ref: '#/components/responses/Error'
         '409':
-          $ref: '#/components/responses/Error'
+          $ref: '#/components/responses/MappingSetInUse'
         '500':
           $ref: '#/components/responses/Error'
       parameters:
@@ -66993,6 +66998,7 @@ components:
             - credential_profile
             - federation_trust_source
             - scim
+            - mapping_set
         tenantId:
           type: string
           description: The tenant the reference is in. Absent for the platform's own default.

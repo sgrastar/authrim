@@ -140,6 +140,9 @@ export function executionContextsOf(
       ];
     case 'scim':
       return [{ tenantId, protocol: 'scim', role: 'receiver' }];
+    case 'mapping_set':
+      // A Mapping Set that reads from a Source Profile is not a place a mapping runs from.
+      return [];
   }
 }
 

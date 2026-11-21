@@ -29,6 +29,7 @@ import {
   adminIdentityFieldMappingVersionActivateHandler,
   adminIdentityFieldMappingVersionDeactivateHandler,
   adminIdentityMappingDestinationProfileDeleteHandler,
+  adminIdentityMappingSourceProfileDeleteHandler,
 } from '../identity-mapping-control-plane';
 import { adminIdentityMappingUsageHandler } from '../identity-mapping-usage';
 import settingsV2 from '../routes/settings-v2';
@@ -136,6 +137,10 @@ function setup() {
       app.delete(
         '/api/admin/field-mapping/destination-profiles/:destinationProfileId',
         adminIdentityMappingDestinationProfileDeleteHandler
+      );
+      app.delete(
+        '/api/admin/field-mapping/source-profiles/:sourceProfileId',
+        adminIdentityMappingSourceProfileDeleteHandler
       );
       app.get(USAGE, adminIdentityMappingUsageHandler);
       app.route('/api/admin', settingsV2);
@@ -1555,5 +1560,122 @@ describe('a Destination Profile an activation scope names', () => {
     expect(refused.json.references.items).toEqual([
       expect.objectContaining({ tenantId: 'tenant-b', clientId: 'b-app' }),
     ]);
+  });
+});
+
+describe('deleting a Source Profile', () => {
+  const del = (t: ReturnType<typeof setup>, profileId: string, who = t.cookie()) =>
+    t.mutate(who, 'DELETE', `/api/admin/field-mapping/source-profiles/${profileId}`);
+  const exists = (t: ReturnType<typeof setup>, id: string) =>
+    t.count(`SELECT COUNT(*) AS n FROM source_profiles WHERE id = '${id}'`) === 1;
+  const seedSource = (t: ReturnType<typeof setup>, id: string, tenant = TENANT) => {
+    t.db
+      .prepare(
+        `INSERT INTO source_profiles (id, tenant_id, source_type, profile_key, display_name, lifecycle_state, active_version_id, created_at, updated_at)
+         VALUES (?, ?, 'json_schema', ?, ?, 'active', ?, 1, 1)`
+      )
+      .run(id, tenant, `key-${id}`, `Source ${id}`, `${id}-v1`);
+    t.db
+      .prepare(
+        `INSERT INTO source_profile_versions (id, tenant_id, profile_id, version_label, lifecycle_state, schema_hash, schema_json, created_at, updated_at)
+         VALUES (?, ?, ?, 'v1', 'active', 'hash', '{}', 1, 1)`
+      )
+      .run(`${id}-v1`, tenant, id);
+  };
+  /** Points the seeded edge of set `a` at the source profile, as authors write it. */
+  const nameInEdge = (t: ReturnType<typeof setup>, ref: string) =>
+    t.db
+      .prepare('UPDATE mapping_rule_edges SET source_ref_json = ? WHERE id = ?')
+      .run(JSON.stringify({ side: 'source', profileId: ref, path: 'email' }), 'edge-a-0');
+
+  it('deletes a profile nothing reads from, with its versions', async () => {
+    const t = setup();
+    seedSource(t, 'sp-free');
+    expect((await del(t, 'sp-free')).status).toBe(200);
+    expect(exists(t, 'sp-free')).toBe(false);
+    expect(
+      t.count("SELECT COUNT(*) AS n FROM source_profile_versions WHERE profile_id = 'sp-free'")
+    ).toBe(0);
+  });
+
+  it.each([['sp-used'], ['source-profile-sp-used']])(
+    'is refused while a set version names it in an edge (%s), draft versions included',
+    async (ref) => {
+      const t = setup();
+      seedSource(t, 'sp-used');
+      nameInEdge(t, ref);
+      t.db.exec("UPDATE field_mapping_versions SET lifecycle_state = 'draft' WHERE id = 'ver-a'");
+      const refused = await del(t, 'sp-used');
+      expect(refused.status).toBe(409);
+      expect(refused.json).toMatchObject({
+        error: 'conflict',
+        reason: 'referenced',
+        references: {
+          items: [
+            expect.objectContaining({
+              kind: 'mapping_set',
+              viaMappingSetId: 'set-a',
+              versionId: 'ver-a',
+              versionLifecycleState: 'draft',
+            }),
+          ],
+        },
+      });
+      expect(exists(t, 'sp-used')).toBe(true);
+    }
+  );
+
+  it('is refused while an activation scope names it', async () => {
+    const t = setup();
+    seedSource(t, 'sp-used');
+    t.db.exec(
+      `UPDATE field_mapping_activations SET activation_scope_json = '{"sourceProfileId":"sp-used"}' WHERE id = 'act-a'`
+    );
+    expect((await del(t, 'sp-used')).status).toBe(409);
+    expect(exists(t, 'sp-used')).toBe(true);
+  });
+
+  it('is refused while an app’s mapping selector names it', async () => {
+    const t = setup();
+    seedSource(t, 'sp-used');
+    insertOAuthClient(t.coreA, {
+      tenantId: TENANT,
+      clientId: 'app-1',
+      identityMapping: { fieldMappingSetId: 'set-a', sourceProfileId: 'sp-used' },
+    });
+    const refused = await del(t, 'sp-used');
+    expect(refused.status).toBe(409);
+    expect(refused.json).toMatchObject({
+      references: { items: [{ kind: 'client', clientId: 'app-1' }] },
+    });
+    expect(exists(t, 'sp-used')).toBe(true);
+  });
+
+  it('is refused while a SAML provider’s selector names it, even with stray spaces', async () => {
+    const t = setup();
+    seedSource(t, 'sp-used');
+    insertSamlProvider(t.coreA, {
+      tenantId: TENANT,
+      id: 'saml-1',
+      config: { identityMapping: { fieldMappingSetId: 'set-a', sourceProfileId: ' sp-used ' } },
+    });
+    const refused = await del(t, 'sp-used');
+    expect(refused.status).toBe(409);
+    expect(refused.json).toMatchObject({
+      references: { items: [{ kind: 'saml_provider', providerId: 'saml-1' }] },
+    });
+    expect(exists(t, 'sp-used')).toBe(true);
+  });
+
+  it('is not held by another tenant’s set, and answers 404 for a missing profile', async () => {
+    const t = setup();
+    seedSource(t, 'sp-free');
+    t.db.exec("UPDATE field_mapping_sets SET tenant_id = 'other' WHERE id = 'set-a'");
+    t.db.exec("UPDATE field_mapping_versions SET tenant_id = 'other' WHERE id = 'ver-a'");
+    t.db.exec("UPDATE mapping_rules SET tenant_id = 'other' WHERE id = 'rule-a'");
+    t.db.exec("UPDATE mapping_rule_edges SET tenant_id = 'other' WHERE id = 'edge-a-0'");
+    nameInEdge(t, 'sp-free');
+    expect((await del(t, 'sp-free')).status).toBe(200);
+    expect((await del(t, 'sp-missing')).status).toBe(404);
   });
 });

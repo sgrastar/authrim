@@ -69,7 +69,9 @@ export type MappingSetReferenceKind =
   | 'upstream_provider'
   | 'credential_profile'
   | 'federation_trust_source'
-  | 'scim';
+  | 'scim'
+  /** A Mapping Set version that reads from a Source Profile (see the Source Profile delete check). */
+  | 'mapping_set';
 
 export interface MappingSetReferenceSwapInputs {
   /** The fields the provider's release policy names. */

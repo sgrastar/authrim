@@ -429,6 +429,122 @@ export async function checkDestinationProfileUnreferenced(
   return conflictFor(c, { references, truncated, unscanned }, 'Destination Profile', 'deleted');
 }
 
+/**
+ * Deleting a Source Profile: refused while anything reads from it. Looked at, in the profile's
+ * tenant: every Mapping Set version (active, draft and retired) whose edges or release rules name
+ * it, an activation whose scope names it, and the tenant's apps whose mapping selector names it.
+ * The tenant's SAML providers' selectors are read too. Not looked at: upstream providers and SCIM
+ * settings (their stored settings carry no Source Profile reference).
+ */
+export async function checkSourceProfileUnreferenced(
+  c: AdminContext,
+  input: { profileId: string }
+): Promise<MappingSetConflict | null> {
+  const tenantId = getTenantIdFromContext(c);
+  const admin = requireDedicatedAdminDatabaseAdapter(c.env, PARTITION);
+  const profile = await admin.queryOne<{ id: string }>(
+    'SELECT id FROM source_profiles WHERE tenant_id = ? AND id = ?',
+    [tenantId, input.profileId]
+  );
+  // The operation answers a profile that is not there.
+  if (!profile) return null;
+
+  // The reference as authors write it, with and without the prefix.
+  const names = [input.profileId, `source-profile-${input.profileId}`];
+  const limits = await resolveMappingSetReferenceLimits(c.env);
+  const limit = limits.rowLimit;
+  const displayLimit = limits.displayLimit;
+  const references: MappingSetReference[] = [];
+  const unscanned: MappingSetReferenceScan['unscanned'] = [];
+  let truncated = false;
+
+  // json_extract fails the whole query on a value that is not JSON: only one that is can name it.
+  const profileOf = (column: string) =>
+    `TRIM(CASE WHEN json_valid(${column}) THEN json_extract(${column}, '$.profileId') END) IN (?, ?)`;
+  const versions = await admin.query<{ set_id: string; version_id: string; state: string }>(
+    `SELECT v.field_mapping_set_id AS set_id, v.id AS version_id, v.lifecycle_state AS state
+       FROM field_mapping_versions v
+      WHERE v.tenant_id = ?
+        AND (
+          EXISTS (
+            SELECT 1 FROM mapping_rules r
+              JOIN mapping_rule_edges e ON e.tenant_id = r.tenant_id AND e.rule_id = r.id
+             WHERE r.tenant_id = v.tenant_id AND r.field_mapping_version_id = v.id
+               AND ${profileOf('e.source_ref_json')}
+          )
+          OR EXISTS (
+            SELECT 1 FROM mapping_release_rules rr
+             WHERE rr.tenant_id = v.tenant_id AND rr.field_mapping_version_id = v.id
+               AND ${profileOf('rr.source_ref_json')}
+          )
+          OR EXISTS (
+            SELECT 1 FROM field_mapping_activations a
+             WHERE a.tenant_id = v.tenant_id AND a.field_mapping_version_id = v.id
+               AND TRIM(CASE WHEN json_valid(a.activation_scope_json)
+                        THEN json_extract(a.activation_scope_json, '$.sourceProfileId') END) IN (?, ?)
+          )
+        )
+      ORDER BY v.field_mapping_set_id, v.id LIMIT ${limit + 1}`,
+    [tenantId, ...names, ...names, ...names]
+  );
+  truncated ||= versions.length > limit;
+  for (const row of versions.slice(0, limit)) {
+    references.push({
+      kind: 'mapping_set',
+      tenantId,
+      viaMappingSetId: row.set_id,
+      versionId: row.version_id,
+      versionLifecycleState: row.state,
+    });
+  }
+
+  let core: DatabaseAdapter | null = null;
+  try {
+    core = createAuthContextFromHono(c, tenantId).coreAdapter;
+  } catch {
+    core = null;
+  }
+  if (!core) {
+    unscanned.push({ area: 'tenant_clients', tenantId, reason: 'core_database_unavailable' });
+  } else {
+    try {
+      const rows = await core.query<{ client_id: string }>(
+        `SELECT client_id FROM oauth_clients
+          WHERE tenant_id = ?
+            AND TRIM(CASE WHEN json_valid(identity_mapping)
+                     THEN json_extract(identity_mapping, '$.sourceProfileId') END) IN (?, ?)
+          ORDER BY client_id LIMIT ${limit + 1}`,
+        [tenantId, ...names]
+      );
+      truncated ||= rows.length > limit;
+      for (const row of rows.slice(0, limit)) {
+        references.push({ kind: 'client', tenantId, clientId: row.client_id });
+      }
+    } catch {
+      unscanned.push({ area: 'tenant_clients', tenantId, reason: 'scan_failed' });
+    }
+    try {
+      const rows = await core.query<{ id: string }>(
+        `SELECT id FROM identity_providers
+          WHERE tenant_id = ?
+            AND TRIM(CASE WHEN json_valid(config_json)
+                     THEN json_extract(config_json, '$.identityMapping.sourceProfileId') END) IN (?, ?)
+          ORDER BY id LIMIT ${limit + 1}`,
+        [tenantId, ...names]
+      );
+      truncated ||= rows.length > limit;
+      for (const row of rows.slice(0, limit)) {
+        references.push({ kind: 'saml_provider', tenantId, providerId: row.id });
+      }
+    } catch {
+      unscanned.push({ area: 'tenant_saml', tenantId, reason: 'scan_failed' });
+    }
+  }
+  const scan: MappingSetReferenceScan = { references, truncated, unscanned };
+  displayLimits.set(scan, displayLimit);
+  return conflictFor(c, scan, 'Source Profile', 'deleted');
+}
+
 function parseJsonObject(json: string | null): Record<string, unknown> {
   try {
     const parsed: unknown = json ? JSON.parse(json) : {};
