@@ -582,13 +582,6 @@ export const deServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 	'sf.fed.mappingSet.idp': 'Mapping-Set (IdP-Rolle)',
 	'sf.fed.mappingSet.failed': 'Die Mapping-Sets konnten nicht geladen werden.',
 	'sf.fed.mappingSet.none': 'Es gibt kein auswählbares Mapping-Set. Legen Sie zuerst eines an.',
-	'sf.fed.preset.label': 'Standardmäßig gesendete Attribute',
-	'sf.fed.preset.hint':
-		'Um es für einen Dienst zu ändern, machen Sie ihn zu einer eigenen Verbindung.',
-	'sf.fed.preset.basic.v1': 'Basis',
-	'sf.fed.preset.enterprise_saas.v1': 'Enterprise-SaaS',
-	'sf.fed.preset.academic_publisher.v1': 'Wissenschaftsverlag',
-	'sf.fed.preset.research_federation.v1': 'Forschungsföderation',
 	'sf.fed.idpSelection.label': 'Wie Personen ihre Einrichtung wählen',
 	'sf.fed.idpSelection.authrim': 'Suchseite von Authrim',
 	'sf.fed.idpSelection.external': 'Externer Discovery Service',

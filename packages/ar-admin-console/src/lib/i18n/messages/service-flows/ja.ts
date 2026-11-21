@@ -576,12 +576,6 @@ export const jaServiceFlows = {
 	'sf.fed.mappingSet.failed': 'マッピングセットを読み込めませんでした。',
 	'sf.fed.mappingSet.none':
 		'選べるマッピングセットがありません。先にマッピングセットを作成してください。',
-	'sf.fed.preset.label': '送る属性の初期セット',
-	'sf.fed.preset.hint': 'サービスごとに変えたいときは、そのサービスを個別設定に切り出します。',
-	'sf.fed.preset.basic.v1': '最小限',
-	'sf.fed.preset.enterprise_saas.v1': 'SaaS 向け',
-	'sf.fed.preset.academic_publisher.v1': '学術出版向け',
-	'sf.fed.preset.research_federation.v1': '研究フェデレーション向け',
 	'sf.fed.idpSelection.label': '機関の選び方',
 	'sf.fed.idpSelection.authrim': 'Authrim の検索画面',
 	'sf.fed.idpSelection.external': '外部の Discovery Service',

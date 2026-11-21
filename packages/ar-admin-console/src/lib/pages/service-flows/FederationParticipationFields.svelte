@@ -5,12 +5,7 @@
 	import SelectRow from '#lib/ui/patterns/SelectRow.svelte';
 	import ToggleRow from '#lib/ui/patterns/ToggleRow.svelte';
 	import TextRow from '#lib/ui/patterns/TextRow.svelte';
-	import {
-		FEDERATION_ATTRIBUTE_PRESETS,
-		isHttps,
-		type FederationForm,
-		type FederationMappingOption
-	} from './federation-model';
+	import { isHttps, type FederationForm, type FederationMappingOption } from './federation-model';
 
 	/**
 	 * How the federation takes part, for the roles the service flow was made with: the SP role
@@ -41,12 +36,6 @@
 		spMappingManaged = false
 	}: Props = $props();
 
-	const presetOptions = $derived(
-		FEDERATION_ATTRIBUTE_PRESETS.map((value) => ({
-			value,
-			label: t(`sf.fed.preset.${value}`)
-		}))
-	);
 	const selectionOptions = $derived([
 		{ value: 'authrim_search', label: t('sf.fed.idpSelection.authrim') },
 		{ value: 'external_ds', label: t('sf.fed.idpSelection.external') }
@@ -80,13 +69,6 @@
 			disabled={disabled || mappingLoading}
 		/>
 	{/if}
-	<SelectRow
-		label={t('sf.fed.preset.label')}
-		options={presetOptions}
-		bind:value={form.attributePreset}
-		hint={t('sf.fed.preset.hint')}
-		{disabled}
-	/>
 {/if}
 {#if form.idpRole}
 	<SelectRow
