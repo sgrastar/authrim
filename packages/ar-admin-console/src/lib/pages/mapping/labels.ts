@@ -75,3 +75,12 @@ export function changeText(change: ClaimChange): string {
 		to: change.type_after ?? ''
 	});
 }
+
+/** Why a change does not reach an app or a service provider, in words. */
+export function heldBackText(held: { claim: string; scope: string; reason?: string }): string {
+	if (held.reason === 'pinned_version') return t('mc.ch.heldBack.pinned', { claim: held.claim });
+	if (held.reason === 'hidden_or_not_listed' || (!held.scope && !held.reason))
+		return t('mc.ch.heldBack.notListed', { claim: held.claim });
+	if (held.reason) return t('mc.ch.heldBack.reason', { claim: held.claim, reason: held.reason });
+	return t('mc.ch.heldBack', { claim: held.claim, scope: held.scope });
+}

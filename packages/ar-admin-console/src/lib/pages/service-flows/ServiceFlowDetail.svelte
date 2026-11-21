@@ -129,7 +129,9 @@
 	const kind = $derived(draft.value.kind as ConnectionKind);
 	const allGroups = $derived(
 		mappingResources
-			? FLOW_GROUPS[kind].filter((group) => canReadMapping && group.id === 'mapping')
+			? FLOW_GROUPS[kind].filter(
+					(group) => canReadMapping && (group.id === 'schemas' || group.id === 'mapping')
+				)
 			: FLOW_GROUPS[kind]
 	);
 	const groups = $derived(mappingResources ? allGroups : visibleGroups(draft.value));
@@ -152,6 +154,8 @@
 	/** The setting shown on the right; empty is the overview. */
 	let current = $state('');
 	const mappingSelected = $derived(current.startsWith('mapping-'));
+	/** The node open on a live connection: the output source, or the mapping, never both. */
+	const mappingSection = $derived(current === 'mapping-schemas' ? 'output' : 'mapping');
 	let panel = $state<HTMLElement | null>(null);
 
 	/** Opens a setting on the right, and brings the page up to it if the flow had scrolled away. */
@@ -430,11 +434,14 @@
 						hidden={!mappingSelected}
 						bind:this={mappingPanel}
 					>
-						<PanelHeader title={t('sf.group.mapping')}>
+						<PanelHeader
+							title={t(mappingSection === 'output' ? 'sf.group.schemas' : 'sf.group.mapping')}
+						>
 							{#snippet back()}<BackLink onclick={() => (current = '')}>{overview}</BackLink
 								>{/snippet}
 						</PanelHeader>
 						<ConnectionMapping
+							section={mappingSection}
 							resources={liveMappingResources}
 							connectionDirty={settingsDirty}
 							guardNavigation={!settingsResources}
@@ -517,7 +524,7 @@
 							bind:form={draft.value.extras}
 							outbound={!incoming}
 						/>{/if}
-					<ConnectionMapping bind:mapping />
+					{#if current !== 'mapping-schemas'}<ConnectionMapping bind:mapping />{/if}
 				</div>
 			{/if}
 			{#if current === '' && !mappingResources}

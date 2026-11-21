@@ -657,9 +657,6 @@
 		);
 		await openIncoming(canvas);
 		await addTrim(canvas);
-		await userEvent.click(canvas.getByText(t('cm.in.preview'), { selector: '.disclosure__title' }));
-		await userEvent.click(canvas.getByRole('button', { name: t('cm.in.evaluate') }));
-		await waitFor(() => expect(canvas.getByText(/"email": "sample@example.test"/)).toBeVisible());
 		await userEvent.click(canvas.getByRole('button', { name: t('common.save') }));
 		await waitFor(() => expect(inboundSaved.incoming.writes).toBe(2));
 		await canvas.findByText(t('cm.saved'));
@@ -676,8 +673,6 @@
 		);
 		await openIncoming(canvas);
 		await addTrim(canvas);
-		await userEvent.click(canvas.getByRole('button', { name: t('cm.in.evaluate') }));
-		await waitFor(() => expect(canvas.getByText(/"email": "sample@example.test"/)).toBeVisible());
 		await userEvent.click(canvas.getByRole('button', { name: t('common.save') }));
 		await waitFor(() => expect(inboundSaved.incoming.writes).toBe(3));
 		await canvas.findByText(t('cm.saved'));
@@ -688,7 +683,7 @@
 	}}
 />
 <Story
-	name="Incoming Mapping read-only inspect and preview"
+	name="Incoming Mapping read-only inspect"
 	args={{
 		resources: inboundReadonly.resources,
 		inboundMapping: inboundReadonly.incoming.client,
@@ -699,9 +694,8 @@
 		const canvas = within(canvasElement);
 		await openIncoming(canvas);
 		await expect(canvas.queryByRole('button', { name: t('common.save') })).toBeNull();
-		await userEvent.click(canvas.getByText(t('cm.in.preview'), { selector: '.disclosure__title' }));
-		await userEvent.click(canvas.getByRole('button', { name: t('cm.in.evaluate') }));
-		await waitFor(() => expect(canvas.getByText(/"email": "sample@example.test"/)).toBeVisible());
+		// The sample preview is hidden for now.
+		await expect(canvas.queryByText(t('cm.in.preview'))).toBeNull();
 	}}
 />
 <Story

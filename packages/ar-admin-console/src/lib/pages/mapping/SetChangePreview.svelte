@@ -7,24 +7,18 @@
 		TestUser
 	} from '#lib/api/identity-mapping.js';
 	import { ApiError } from '#lib/api/api-error.js';
-	import { i18n, t } from '#lib/i18n/i18n.svelte.js';
-	import { formatNumber } from '#lib/ui/format.js';
+	import { t } from '#lib/i18n/i18n.svelte.js';
 	import Callout from '#lib/ui/patterns/Callout.svelte';
-	import Card from '#lib/ui/patterns/Card.svelte';
 	import ConfirmDialog from '#lib/ui/patterns/ConfirmDialog.svelte';
-	import DataTable from '#lib/ui/patterns/DataTable.svelte';
 	import LoadingState from '#lib/ui/patterns/LoadingState.svelte';
-	import MappingEditor from '#lib/ui/patterns/MappingEditor.svelte';
 	import type { Mapping, MappingField, MappingType } from '#lib/ui/patterns/mapping-model.js';
 	import Button from '#lib/ui/primitives/Button.svelte';
-	import Select from '#lib/ui/primitives/Select.svelte';
 	import { Draft } from '#lib/ui/save/draft.svelte.js';
 	import { SaveStopped } from '#lib/ui/save/save-scope.js';
 	import SaveScope, { type SaveControls } from '#lib/ui/save/SaveScope.svelte';
 	import MappingSection from './MappingSection.svelte';
+	import MappingSetPanel from './MappingSetPanel.svelte';
 	import { toast } from '#lib/ui/toast/toast.svelte.js';
-	import { changeText } from './labels';
-	import SourceLabel from './SourceLabel.svelte';
 
 	/**
 	 * MAP-05: before saving a set, what each app that uses it would receive. The draft is sent to
@@ -128,8 +122,6 @@
 	const stale = $derived(preview !== null && previewedDraft !== `${draftText}|${sample}`);
 	const changed = $derived(preview?.apps.filter((a) => a.changes.length > 0) ?? []);
 
-	const num = (n: number) => formatNumber(n, i18n.locale);
-
 	const field = (f: { key: string; type: string }): MappingField => ({
 		key: f.key,
 		type: f.type as MappingType
@@ -201,9 +193,6 @@
 	}
 
 	const setName = $derived(content?.set.display_name ?? setId);
-	const sampleLabel = $derived(
-		users.find((u) => u.user_id === preview?.sample?.user_id)?.label ?? ''
-	);
 </script>
 
 <MappingSection>
@@ -226,146 +215,22 @@
 						{t('mc.ch.save')}
 					</Button>
 				</div>
-				<Card title={setName} description={t('mc.ch.usedBy', { count: usedByCount })}>
-					<MappingEditor
-						label={t('mc.ch.mapping')}
-						direction="outbound"
-						targetLabel={t('mc.ch.claim')}
-						sources={content!.attributes.map(field)}
-						targets={content!.claims.map(field)}
-						field="mappings"
-						bind:mappings={draft!.value.mappings}
-					/>
-				</Card>
-
-				<Card title={t('mc.ch.check')}>
-					<div class="form">
-						<div class="row">
-							<Select
-								label={t('mc.ch.sample')}
-								hint={t('mc.ch.sampleHint')}
-								options={[
-									{ value: '', label: t('mc.ch.sampleNone') },
-									...users.map((u) => ({ value: u.user_id, label: u.label }))
-								]}
-								bind:value={sample}
-							/>
-						</div>
-						<div>
-							<Button variant="secondary" loading={checking} onclick={check}
-								>{t('mc.ch.check')}</Button
-							>
-						</div>
-						{#if actionError}
-							<Callout tone="warning" live>{actionError}</Callout>
-						{/if}
-						{#if stale}
-							<Callout tone="info">{t('mc.ch.stale')}</Callout>
-						{/if}
-						{#if preview && !preview.usage_complete}
-							<Callout tone="warning">{t('mc.ch.incomplete')}</Callout>
-						{/if}
-						{#if preview && !controls.dirty}
-							<p class="muted">{t('mc.ch.noChanges')}</p>
-						{/if}
-					</div>
-				</Card>
-
-				{#if preview && !stale && preview.tenants}
-					<Card title={t('mc.ch.tenants')} description={t('mc.ch.tenants.desc')} flush>
-						<DataTable
-							caption={t('mc.ch.tenants')}
-							columns={[
-								{ key: 'tenant', label: t('mc.ch.col.tenant') },
-								{ key: 'apps', label: t('mc.ch.col.appsUsing'), width: '24%', align: 'end' }
-							]}
-							rows={preview.tenants}
-							rowKey={(row) => row.tenant_id}
-						>
-							{#snippet cell(row, column)}
-								{#if column.key === 'tenant'}
-									<strong>{row.tenant_id}</strong>
-								{:else if row.apps_using === null}
-									<span class="muted">—</span>
-								{:else}
-									{num(row.apps_using)}
-								{/if}
-							{/snippet}
-						</DataTable>
-					</Card>
-				{:else if preview && !stale}
-					<Card title={t('mc.ch.result')} description={t('mc.ch.result.desc')} flush>
-						<DataTable
-							caption={t('mc.ch.result')}
-							columns={[
-								{ key: 'app', label: t('mc.ch.col.app'), width: '20%' },
-								{ key: 'source', label: t('mc.ch.col.source'), width: '18%' },
-								{ key: 'changes', label: t('mc.ch.col.changes') },
-								{ key: 'held', label: t('mc.ch.col.heldBack'), width: '26%' }
-							]}
-							rows={preview.apps}
-							rowKey={(app) => app.client_id}
-						>
-							{#snippet cell(app, column)}
-								{#if column.key === 'app'}
-									<strong>{app.name}</strong>
-								{:else if column.key === 'source'}
-									<SourceLabel selection={{ kind: 'bound', tier: app.tier, setId }} compact />
-								{:else if column.key === 'changes'}
-									{#if app.changes.length === 0}
-										<span class="muted">{t('mc.ch.unchanged')}</span>
-									{:else}
-										<ul class="changes">
-											{#each app.changes as change (change.kind + change.claim)}
-												<li>{changeText(change)}</li>
-											{/each}
-										</ul>
-									{/if}
-								{:else}
-									<ul class="changes muted">
-										{#each app.held_back as held (held.claim)}
-											<li>{t('mc.ch.heldBack', { claim: held.claim, scope: held.scope })}</li>
-										{/each}
-									</ul>
-								{/if}
-							{/snippet}
-						</DataTable>
-					</Card>
-
-					{#if preview.sample}
-						<Card
-							title={t('mc.ch.sampleTitle')}
-							description={t('mc.ch.sampleDesc', { user: sampleLabel })}
-							flush
-						>
-							<DataTable
-								caption={t('mc.ch.sampleTitle')}
-								columns={[
-									{ key: 'claim', label: t('mc.ch.col.claim'), width: '24%' },
-									{ key: 'before', label: t('mc.ch.col.before') },
-									{ key: 'after', label: t('mc.ch.col.after') }
-								]}
-								rows={preview.sample.claims}
-								rowKey={(row) => row.claim}
-							>
-								{#snippet cell(row, column)}
-									{#if column.key === 'claim'}
-										<code>{row.claim}</code>
-									{:else}
-										{@const value = column.key === 'before' ? row.before : row.after}
-										{#if row.not_evaluated?.includes(column.key === 'before' ? 'before' : 'after')}
-											<span class="muted">{t('map.sample.atSignIn')}</span>
-										{:else if value === null}
-											<span class="muted">{t('mc.ch.notSent')}</span>
-										{:else}
-											<code>{value}</code>
-										{/if}
-									{/if}
-								{/snippet}
-							</DataTable>
-						</Card>
-					{/if}
-				{/if}
+				<MappingSetPanel
+					title={setName}
+					description={t('mc.ch.usedBy', { count: usedByCount })}
+					sources={content!.attributes.map(field)}
+					targets={content!.claims.map(field)}
+					bind:mappings={draft!.value.mappings}
+					{setId}
+					{users}
+					bind:sample
+					{preview}
+					{stale}
+					{checking}
+					{actionError}
+					dirty={controls.dirty}
+					oncheck={check}
+				/>
 				<ConfirmDialog
 					open={confirming}
 					title={t('mc.ch.saveConfirm.title', { set: setName })}
@@ -389,30 +254,5 @@
 	.editor-actions {
 		display: flex;
 		justify-content: flex-end;
-	}
-	.form {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-field);
-	}
-
-	.form p {
-		margin: 0;
-	}
-
-	.row {
-		max-inline-size: 24rem;
-	}
-
-	.changes {
-		margin: 0;
-		padding-inline-start: 1.2em;
-		display: flex;
-		flex-direction: column;
-		gap: 2px;
-	}
-
-	.muted {
-		color: var(--text-secondary);
 	}
 </style>

@@ -144,6 +144,9 @@ export const jaServiceFlows = {
 	// The steps of a connection's flow.
 	'sf.group.receives': 'アプリが受け取る情報',
 	'sf.group.mapping': 'マッピング',
+	'sf.group.schemas': '入力と出力',
+	'cm.chooseOutputFirst': '先に「入力と出力」で出力ソースを選んでください。',
+	'cm.finishOutputFirst': '出力ソースの作成・編集が終わるまで、マッピングは変更できません。',
 	'sf.group.consent': '同意',
 	'sf.group.role': 'ロールの割り当て',
 	'sf.group.live': '利用開始',
