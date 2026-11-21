@@ -300,8 +300,8 @@ Generic KeyManager create/rotate routes refuse this dedicated reference. Platfor
 never authorize use of the platform's key for tenant data: each consuming tenant needs its own
 key enrolled through an authorized hash authoring mutation; without it runtime fails closed.
 
-The owning Admin OpenAPI contract exposes GET `/api/admin/field-mapping/hash-key` (settings read,
-installed/kid metadata only) and POST `/api/admin/field-mapping/hash-key/rotate` (settings write,
+The owning Admin OpenAPI contract exposes GET `/api/admin/identifiers/hash-key` (settings read,
+installed/kid metadata only) and POST `/api/admin/identifiers/hash-key/rotate` (settings write,
 audit record, expectedKid precondition). Rotation changes every subsequent output immediately.
 Retrying the previous kid returns the completed rotation; another stale kid conflicts. Rotation
 never creates a missing key. Enrollment and rotation use the existing DR mutation admission and

@@ -132,15 +132,15 @@ function harness(input: {
     await next();
   });
   app.post(
-    '/api/admin/field-mapping/federation-trust-sources',
+    '/api/admin/federation/trust-sources',
     adminIdentityMappingFederationTrustSourceCreateHandler
   );
   app.put(
-    '/api/admin/field-mapping/federation-trust-sources/:trustSourceId',
+    '/api/admin/federation/trust-sources/:trustSourceId',
     adminIdentityMappingFederationTrustSourceUpdateHandler
   );
   app.delete(
-    '/api/admin/field-mapping/federation-trust-sources/:trustSourceId',
+    '/api/admin/federation/trust-sources/:trustSourceId',
     adminIdentityMappingFederationTrustSourceDeleteHandler
   );
   const env = { DB_ADMIN: adapter, SETTINGS: settings } as unknown as Env;
@@ -162,13 +162,13 @@ function harness(input: {
     );
   return {
     create: (protocolPayload?: Record<string, unknown>) =>
-      send('POST', '/api/admin/field-mapping/federation-trust-sources', source(protocolPayload)),
+      send('POST', '/api/admin/federation/trust-sources', source(protocolPayload)),
     update: (protocolPayload?: Record<string, unknown>) =>
-      send('PUT', '/api/admin/field-mapping/federation-trust-sources/source-1', {
+      send('PUT', '/api/admin/federation/trust-sources/source-1', {
         ...source(protocolPayload),
         expectedUpdatedAt: 2000,
       }),
-    remove: () => send('DELETE', '/api/admin/field-mapping/federation-trust-sources/source-1'),
+    remove: () => send('DELETE', '/api/admin/federation/trust-sources/source-1'),
     wroteSource,
   };
 }

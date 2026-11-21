@@ -1023,16 +1023,6 @@ import {
   adminIdentityMappingDestinationProfileReviewHandler,
   adminIdentityMappingDestinationProfileUpdateHandler,
   adminIdentityMappingDestinationProfilesListHandler,
-  adminIdentityFieldMappingSetsListHandler,
-  adminIdentityFieldMappingSetCreateHandler,
-  adminIdentityFieldMappingSetDeleteHandler,
-  adminIdentityFieldMappingSetRollbackHandler,
-  adminIdentityFieldMappingVersionActivateHandler,
-  adminIdentityFieldMappingVersionCompileHandler,
-  adminIdentityFieldMappingVersionCreateHandler,
-  adminIdentityFieldMappingVersionDeactivateHandler,
-  adminIdentityFieldMappingVersionsListHandler,
-  adminIdentityFieldMappingVersionPublishHandler,
   adminIdentityMappingEntitlementGrantHandler,
   adminIdentityMappingFederationMetadataDocumentCreateHandler,
   adminIdentityMappingFederationMetadataDocumentsListHandler,
@@ -3047,264 +3037,214 @@ app.post(
 // =============================================================================
 // Dry-run only. Does not persist CSV rows or canonical identity values.
 app.post(
-  '/api/admin/field-mapping/preview/csv',
+  '/api/admin/identity-mapping/preview/csv',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
   adminCsvDryRunPreviewHandler
 );
 app.post(
-  '/api/admin/field-mapping/preview/saml',
+  '/api/admin/identity-mapping/preview/saml',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
   adminSamlReleasePreviewHandler
 );
 app.post(
-  '/api/admin/field-mapping/preview/oidc',
+  '/api/admin/identity-mapping/preview/oidc',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
   adminOidcReleasePreviewHandler
 );
 app.get(
-  '/api/admin/field-mapping/oidc-scopes',
+  '/api/admin/identity-mapping/oidc-scopes',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
   adminOidcScopesListHandler
 );
 app.post(
-  '/api/admin/field-mapping/oidc-scopes',
+  '/api/admin/identity-mapping/oidc-scopes',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
   adminOidcScopeCreateHandler
 );
 app.put(
-  '/api/admin/field-mapping/oidc-scopes/:id',
+  '/api/admin/identity-mapping/oidc-scopes/:id',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
   adminOidcScopeUpdateHandler
 );
 app.delete(
-  '/api/admin/field-mapping/oidc-scopes/:id',
+  '/api/admin/identity-mapping/oidc-scopes/:id',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
   adminOidcScopeDeleteHandler
 );
 app.get(
-  '/api/admin/field-mapping/identifier-stores',
+  '/api/admin/identifiers/stores',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
   adminIdentifierStoresListHandler
 );
 app.post(
-  '/api/admin/field-mapping/identifier-stores/:name/import',
+  '/api/admin/identifiers/stores/:name/import',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
   adminIdentifierStoreImportHandler
 );
 app.get(
-  '/api/admin/field-mapping/identifier-sources',
+  '/api/admin/identifiers/sources',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
   adminIdentifierSourcesListHandler
 );
 app.post(
-  '/api/admin/field-mapping/identifier-sources/:name/import',
+  '/api/admin/identifiers/sources/:name/import',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
   adminIdentifierSourceImportHandler
 );
 app.get(
-  '/api/admin/field-mapping/identifier-exceptions',
+  '/api/admin/identifiers/exceptions',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
   adminIdentifierExceptionsListHandler
 );
 app.post(
-  '/api/admin/field-mapping/identifier-exceptions/:name/import',
+  '/api/admin/identifiers/exceptions/:name/import',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
   adminIdentifierExceptionsImportHandler
 );
 app.get(
-  '/api/admin/field-mapping/hash-key',
+  '/api/admin/identifiers/hash-key',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
   adminMappingHashKeyGetHandler
 );
 app.post(
-  '/api/admin/field-mapping/hash-key/rotate',
+  '/api/admin/identifiers/hash-key/rotate',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
   adminMappingHashKeyRotateHandler
 );
 app.get(
-  '/api/admin/field-mapping/identifier-salts',
+  '/api/admin/identifiers/salts',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
   adminIdentifierSaltsListHandler
 );
 app.put(
-  '/api/admin/field-mapping/identifier-salts/:name',
+  '/api/admin/identifiers/salts/:name',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
   adminIdentifierSaltPutHandler
 );
 app.get(
-  '/api/admin/field-mapping/catalogs',
+  '/api/admin/identity-mapping/catalogs',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
   adminIdentityMappingCatalogsListHandler
 );
 app.post(
-  '/api/admin/field-mapping/catalogs',
+  '/api/admin/identity-mapping/catalogs',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
   adminIdentityMappingCatalogCreateHandler
 );
 app.get(
-  '/api/admin/field-mapping/protocol-schemas',
+  '/api/admin/identity-mapping/protocol-schemas',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
   adminIdentityMappingProtocolSchemasListHandler
 );
 app.post(
-  '/api/admin/field-mapping/protocol-schemas',
+  '/api/admin/identity-mapping/protocol-schemas',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
   adminIdentityMappingProtocolSchemaCreateHandler
 );
 app.get(
-  '/api/admin/field-mapping/external-schemas',
+  '/api/admin/identity-mapping/external-schemas',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
   adminIdentityMappingExternalSchemasListHandler
 );
 app.post(
-  '/api/admin/field-mapping/external-schemas',
+  '/api/admin/identity-mapping/external-schemas',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
   adminIdentityMappingExternalSchemaImportHandler
 );
 app.get(
-  '/api/admin/field-mapping/source-profiles',
+  '/api/admin/identity-mapping/source-profiles',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
   adminIdentityMappingSourceProfilesListHandler
 );
 app.post(
-  '/api/admin/field-mapping/source-profiles/csv/parse',
+  '/api/admin/identity-mapping/source-profiles/csv/parse',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
   adminIdentityMappingCsvSourceProfileParseHandler
 );
 app.post(
-  '/api/admin/field-mapping/source-profiles',
+  '/api/admin/identity-mapping/source-profiles',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
   adminIdentityMappingSourceProfileCreateHandler
 );
 app.put(
-  '/api/admin/field-mapping/source-profiles/:sourceProfileId',
+  '/api/admin/identity-mapping/source-profiles/:sourceProfileId',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
   adminIdentityMappingSourceProfileUpdateHandler
 );
 app.post(
-  '/api/admin/field-mapping/source-profiles/:sourceProfileId/versions/:sourceProfileVersionId/review',
+  '/api/admin/identity-mapping/source-profiles/:sourceProfileId/versions/:sourceProfileVersionId/review',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
   adminIdentityMappingSourceProfileReviewHandler
 );
 app.post(
-  '/api/admin/field-mapping/source-profiles/:sourceProfileId/versions/:sourceProfileVersionId/activate',
+  '/api/admin/identity-mapping/source-profiles/:sourceProfileId/versions/:sourceProfileVersionId/activate',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
   adminIdentityMappingSourceProfileActivateHandler
 );
 app.delete(
-  '/api/admin/field-mapping/source-profiles/:sourceProfileId',
+  '/api/admin/identity-mapping/source-profiles/:sourceProfileId',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
   adminIdentityMappingSourceProfileDeleteHandler
 );
 app.get(
-  '/api/admin/field-mapping/destination-profiles',
+  '/api/admin/identity-mapping/destination-profiles',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
   adminIdentityMappingDestinationProfilesListHandler
 );
 app.post(
-  '/api/admin/field-mapping/destination-profiles',
+  '/api/admin/identity-mapping/destination-profiles',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
   adminIdentityMappingDestinationProfileCreateHandler
 );
 app.put(
-  '/api/admin/field-mapping/destination-profiles/:destinationProfileId',
+  '/api/admin/identity-mapping/destination-profiles/:destinationProfileId',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
   adminIdentityMappingDestinationProfileUpdateHandler
 );
 app.post(
-  '/api/admin/field-mapping/destination-profiles/:destinationProfileId/versions/:destinationProfileVersionId/review',
+  '/api/admin/identity-mapping/destination-profiles/:destinationProfileId/versions/:destinationProfileVersionId/review',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
   adminIdentityMappingDestinationProfileReviewHandler
 );
 app.post(
-  '/api/admin/field-mapping/destination-profiles/:destinationProfileId/versions/:destinationProfileVersionId/activate',
+  '/api/admin/identity-mapping/destination-profiles/:destinationProfileId/versions/:destinationProfileVersionId/activate',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
   adminIdentityMappingDestinationProfileActivateHandler
 );
 app.delete(
-  '/api/admin/field-mapping/destination-profiles/:destinationProfileId',
+  '/api/admin/identity-mapping/destination-profiles/:destinationProfileId',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
   adminIdentityMappingDestinationProfileDeleteHandler
 );
 app.get(
-  '/api/admin/field-mapping/attribute-groups',
+  '/api/admin/identity-mapping/attribute-groups',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
   adminIdentityMappingAttributeGroupsListHandler
 );
 app.post(
-  '/api/admin/field-mapping/attribute-groups',
+  '/api/admin/identity-mapping/attribute-groups',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
   adminIdentityMappingAttributeGroupCreateHandler
 );
 app.get(
-  '/api/admin/field-mapping/attribute-fields',
+  '/api/admin/identity-mapping/attribute-fields',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
   adminIdentityMappingAttributeFieldsListHandler
 );
 app.post(
-  '/api/admin/field-mapping/attribute-fields',
+  '/api/admin/identity-mapping/attribute-fields',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
   adminIdentityMappingAttributeFieldCreateHandler
 );
 app.get(
-  '/api/admin/field-mapping/templates',
+  '/api/admin/identity-mapping/templates',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
   adminIdentityMappingTemplatesListHandler
 );
 app.post(
-  '/api/admin/field-mapping/templates',
+  '/api/admin/identity-mapping/templates',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
   adminIdentityMappingTemplateCreateHandler
-);
-app.get(
-  '/api/admin/field-mapping/field-mapping-sets',
-  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
-  adminIdentityFieldMappingSetsListHandler
-);
-app.post(
-  '/api/admin/field-mapping/field-mapping-sets',
-  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
-  adminIdentityFieldMappingSetCreateHandler
-);
-app.delete(
-  '/api/admin/field-mapping/field-mapping-sets/:fieldMappingSetId',
-  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
-  adminIdentityFieldMappingSetDeleteHandler
-);
-app.post(
-  '/api/admin/field-mapping/field-mapping-sets/:fieldMappingSetId/versions',
-  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
-  adminIdentityFieldMappingVersionCreateHandler
-);
-app.get(
-  '/api/admin/field-mapping/field-mapping-sets/:fieldMappingSetId/versions',
-  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
-  adminIdentityFieldMappingVersionsListHandler
-);
-app.post(
-  '/api/admin/field-mapping/field-mapping-sets/:fieldMappingSetId/versions/:fieldMappingVersionId/publish',
-  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
-  adminIdentityFieldMappingVersionPublishHandler
-);
-app.post(
-  '/api/admin/field-mapping/field-mapping-sets/:fieldMappingSetId/versions/:fieldMappingVersionId/compile',
-  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
-  adminIdentityFieldMappingVersionCompileHandler
-);
-app.post(
-  '/api/admin/field-mapping/field-mapping-sets/:fieldMappingSetId/versions/:fieldMappingVersionId/activate',
-  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
-  adminIdentityFieldMappingVersionActivateHandler
-);
-app.post(
-  '/api/admin/field-mapping/field-mapping-sets/:fieldMappingSetId/versions/:fieldMappingVersionId/deactivate',
-  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
-  adminIdentityFieldMappingVersionDeactivateHandler
-);
-app.post(
-  '/api/admin/field-mapping/field-mapping-sets/:fieldMappingSetId/rollback',
-  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
-  adminIdentityFieldMappingSetRollbackHandler
 );
 // The search reads the databases of the tenants (one read each for a platform set), so it is
 // rate limited like the other admin endpoints that fan out (strict profile).
@@ -3500,92 +3440,92 @@ app.delete(
   adminIdentityMappingSetDeleteHandler
 );
 app.get(
-  '/api/admin/field-mapping/source-authority-contracts',
+  '/api/admin/identity-mapping/source-authority-contracts',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
   adminIdentityMappingSourceAuthorityContractsListHandler
 );
 app.post(
-  '/api/admin/field-mapping/source-authority-contracts',
+  '/api/admin/identity-mapping/source-authority-contracts',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
   adminIdentityMappingSourceAuthorityContractCreateHandler
 );
 app.post(
-  '/api/admin/field-mapping/source-authority-contracts/evaluate',
+  '/api/admin/identity-mapping/source-authority-contracts/evaluate',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
   adminIdentityMappingSourceAuthorityEvaluateHandler
 );
 app.get(
-  '/api/admin/field-mapping/schema-readiness',
+  '/api/admin/identity-mapping/schema-readiness',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
   adminIdentityMappingSchemaReadinessHandler
 );
 app.get(
-  '/api/admin/field-mapping/review-tasks',
+  '/api/admin/identity-mapping/review-tasks',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
   adminIdentityMappingReviewTasksListHandler
 );
 app.post(
-  '/api/admin/field-mapping/review-tasks',
+  '/api/admin/identity-mapping/review-tasks',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
   adminIdentityMappingReviewTaskCreateHandler
 );
 app.post(
-  '/api/admin/field-mapping/review-tasks/:reviewTaskId/transition',
+  '/api/admin/identity-mapping/review-tasks/:reviewTaskId/transition',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
   adminIdentityMappingReviewTaskTransitionHandler
 );
 app.post(
-  '/api/admin/field-mapping/review-task-groups',
+  '/api/admin/identity-mapping/review-task-groups',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
   adminIdentityMappingReviewTaskGroupCreateHandler
 );
 app.post(
-  '/api/admin/field-mapping/operational-notifications',
+  '/api/admin/identity-mapping/operational-notifications',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
   adminIdentityMappingOperationalNotificationCreateHandler
 );
 app.post(
-  '/api/admin/field-mapping/operational-notification-states/:stateId/acknowledge',
+  '/api/admin/identity-mapping/operational-notification-states/:stateId/acknowledge',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
   adminIdentityMappingOperationalNotificationAcknowledgeHandler
 );
 app.post(
-  '/api/admin/field-mapping/operational-notification-states/:stateId/resolve',
+  '/api/admin/identity-mapping/operational-notification-states/:stateId/resolve',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
   adminIdentityMappingOperationalNotificationResolveHandler
 );
 app.post(
-  '/api/admin/field-mapping/groups',
+  '/api/admin/identity-mapping/groups',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
   adminIdentityMappingGroupCreateHandler
 );
 app.post(
-  '/api/admin/field-mapping/groups/:groupId/memberships',
+  '/api/admin/identity-mapping/groups/:groupId/memberships',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
   adminIdentityMappingGroupMembershipCreateHandler
 );
 app.post(
-  '/api/admin/field-mapping/entitlements',
+  '/api/admin/identity-mapping/entitlements',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
   adminIdentityMappingEntitlementGrantHandler
 );
 app.post(
-  '/api/admin/field-mapping/provisioning-assignment-rules',
+  '/api/admin/identity-mapping/provisioning-assignment-rules',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
   adminIdentityMappingProvisioningAssignmentRuleCreateHandler
 );
 app.post(
-  '/api/admin/field-mapping/provisioning-assignment-rules/:ruleId/evaluate',
+  '/api/admin/identity-mapping/provisioning-assignment-rules/:ruleId/evaluate',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
   adminIdentityMappingProvisioningAssignmentRuleEvaluateHandler
 );
 app.post(
-  '/api/admin/field-mapping/lifecycle-signals',
+  '/api/admin/identity-mapping/lifecycle-signals',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
   adminIdentityMappingLifecycleSignalRecordHandler
 );
 app.post(
-  '/api/admin/field-mapping/key-registries',
+  '/api/admin/identifiers/key-registries',
   requireAdminPermissions([
     ADMIN_PERMISSIONS.SETTINGS_WRITE,
     ADMIN_PERMISSIONS.ADMIN_AUDIT_DETAIL_READ,
@@ -3593,7 +3533,7 @@ app.post(
   adminIdentityMappingKeyRegistryCreateHandler
 );
 app.get(
-  '/api/admin/field-mapping/key-registries',
+  '/api/admin/identifiers/key-registries',
   requireAdminPermissions([
     ADMIN_PERMISSIONS.SETTINGS_READ,
     ADMIN_PERMISSIONS.ADMIN_AUDIT_DETAIL_READ,
@@ -3601,7 +3541,7 @@ app.get(
   adminIdentityMappingKeyRegistriesListHandler
 );
 app.post(
-  '/api/admin/field-mapping/key-registries/:keyRegistryId/rotate',
+  '/api/admin/identifiers/key-registries/:keyRegistryId/rotate',
   requireAdminPermissions([
     ADMIN_PERMISSIONS.SETTINGS_WRITE,
     ADMIN_PERMISSIONS.ADMIN_AUDIT_DETAIL_READ,
@@ -3609,7 +3549,7 @@ app.post(
   adminIdentityMappingKeyRegistryRotateHandler
 );
 app.post(
-  '/api/admin/field-mapping/key-registries/:keyRegistryId/access-events',
+  '/api/admin/identifiers/key-registries/:keyRegistryId/access-events',
   requireAdminPermissions([
     ADMIN_PERMISSIONS.SETTINGS_WRITE,
     ADMIN_PERMISSIONS.ADMIN_AUDIT_DETAIL_READ,
@@ -3617,52 +3557,52 @@ app.post(
   adminIdentityMappingKeyAccessRecordHandler
 );
 app.post(
-  '/api/admin/field-mapping/federation-trust-sources',
+  '/api/admin/federation/trust-sources',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
   adminIdentityMappingFederationTrustSourceCreateHandler
 );
 app.get(
-  '/api/admin/field-mapping/federation-trust-sources',
+  '/api/admin/federation/trust-sources',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
   adminIdentityMappingFederationTrustSourcesListHandler
 );
 app.put(
-  '/api/admin/field-mapping/federation-trust-sources/:trustSourceId',
+  '/api/admin/federation/trust-sources/:trustSourceId',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
   adminIdentityMappingFederationTrustSourceUpdateHandler
 );
 app.delete(
-  '/api/admin/field-mapping/federation-trust-sources/:trustSourceId',
+  '/api/admin/federation/trust-sources/:trustSourceId',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
   adminIdentityMappingFederationTrustSourceDeleteHandler
 );
 app.get(
-  '/api/admin/field-mapping/federation-trust-sources/:trustSourceId/metadata-documents',
+  '/api/admin/federation/trust-sources/:trustSourceId/metadata-documents',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
   adminIdentityMappingFederationMetadataDocumentsListHandler
 );
 app.get(
-  '/api/admin/field-mapping/federation-trust-sources/:trustSourceId',
+  '/api/admin/federation/trust-sources/:trustSourceId',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
   adminIdentityMappingFederationTrustSourceGetHandler
 );
 app.get(
-  '/api/admin/field-mapping/federation-trust-sources/:trustSourceId/entities',
+  '/api/admin/federation/trust-sources/:trustSourceId/entities',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
   adminIdentityMappingFederationTrustSourceEntitiesHandler
 );
 app.get(
-  '/api/admin/field-mapping/federation-trust-sources/:trustSourceId/entity-keywords',
+  '/api/admin/federation/trust-sources/:trustSourceId/entity-keywords',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
   adminIdentityMappingFederationTrustSourceEntityKeywordsHandler
 );
 app.get(
-  '/api/admin/field-mapping/federation-trust-sources/:trustSourceId/refresh-history',
+  '/api/admin/federation/trust-sources/:trustSourceId/refresh-history',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
   adminIdentityMappingFederationTrustSourceRefreshHistoryHandler
 );
 app.post(
-  '/api/admin/field-mapping/federation-metadata-documents',
+  '/api/admin/federation/metadata-documents',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
   adminIdentityMappingFederationMetadataDocumentCreateHandler
 );

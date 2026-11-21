@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createFakeFederationSources } from '#lib/api/fake/federation-sources-fake.js';
 import { answerFederationMock } from './dev-federation-mock.js';
 
-const TRUST = ['field-mapping', 'federation-trust-sources'];
+const TRUST = ['federation', 'trust-sources'];
 const ID = 'test-federation';
 
 describe('the dev mock for SAML federations', () => {

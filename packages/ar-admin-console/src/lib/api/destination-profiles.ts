@@ -8,7 +8,7 @@ import type { MappingDestinationProfile } from './mapping-set';
  * turn, so there are no versions or releases to manage. When the review stops (a warning the server
  * will not let through) the profile is kept as a draft and the result says so.
  *
- * - `GET /api/admin/field-mapping/destination-profiles`
+ * - `GET /api/admin/identity-mapping/destination-profiles`
  * - `POST …/destination-profiles`, `PUT …/destination-profiles/:id`
  * - `POST …/destination-profiles/:id/versions/:versionId/review` and `…/activate`
  */
@@ -50,7 +50,7 @@ export interface DestinationProfilesClient {
 	remove(tenantId: string, id: string): Promise<void>;
 }
 
-const BASE = `${API_BASE_URL}/api/admin/field-mapping/destination-profiles`;
+const BASE = `${API_BASE_URL}/api/admin/identity-mapping/destination-profiles`;
 
 export const httpDestinationProfiles: DestinationProfilesClient = {
 	async list(tenantId, kind, signal) {

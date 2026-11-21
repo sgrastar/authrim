@@ -56,7 +56,7 @@ describe('the federation sources client', () => {
 		};
 		stub((call) =>
 			Response.json(
-				call.url.endsWith('federation-trust-sources')
+				call.url.endsWith('trust-sources')
 					? { federationTrustSources: [{ ...row, status }] }
 					: { federationTrustSource: row, status }
 			)
@@ -95,7 +95,7 @@ describe('the federation sources client', () => {
 				protocolPayload: { metadataUrl: 'https://m.example/a.xml' }
 			}
 		});
-		expect(calls[0].url).toContain('/api/admin/field-mapping/federation-trust-sources');
+		expect(calls[0].url).toContain('/api/admin/federation/trust-sources');
 		expect(calls[0].headers.get('Idempotency-Key')).toBeTruthy();
 		expect(calls[0].headers.get('X-Tenant-Id')).toBe('federation-test');
 	});
@@ -147,7 +147,7 @@ describe('the federation sources client', () => {
 			cursor: '40'
 		});
 		const url = new URL(calls[0].url, 'https://x.example');
-		expect(url.pathname).toBe('/api/admin/field-mapping/federation-trust-sources/f%201/entities');
+		expect(url.pathname).toBe('/api/admin/federation/trust-sources/f%201/entities');
 		expect(Object.fromEntries(url.searchParams)).toEqual({
 			q: 'lib',
 			role: 'saml_idp',
