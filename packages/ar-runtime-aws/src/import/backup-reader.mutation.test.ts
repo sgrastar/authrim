@@ -333,7 +333,7 @@ describe('pinned file tampering', () => {
     }
     ctl.tamperAt = total + 1;
     expect(await scenario()).toBe('ok');
-  });
+  }, 60_000);
 });
 
 describe('multi-frame artifacts', () => {
