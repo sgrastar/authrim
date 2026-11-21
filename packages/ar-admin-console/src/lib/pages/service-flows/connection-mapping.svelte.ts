@@ -1,4 +1,8 @@
-import type { IdentityMappingClient, MappingSetSummary } from '#lib/api/identity-mapping.js';
+import type {
+	IdentityMappingClient,
+	MappingSetSummary,
+	SetChangePreview
+} from '#lib/api/identity-mapping.js';
 import type {
 	MappingCatalog,
 	MappingDestinationProfile,
@@ -15,6 +19,7 @@ import {
 import type { Mapping } from '#lib/ui/patterns/mapping-model.js';
 import { copyValue, Draft } from '#lib/ui/save/draft.svelte.js';
 import { codecContext, profileDescriptor } from './connection-mapping-fields.js';
+import { setChangePreviewOf } from './connection-mapping-preview.js';
 import { ApiError, ReleasePausedError } from '#lib/api/api-error.js';
 import type { DestinationProfilesClient } from '#lib/api/destination-profiles.js';
 
@@ -79,6 +84,13 @@ export class ConnectionMappingState {
 	} | null = null;
 	savedSet: MappingSetDetail | null = null;
 	bindingKey = '';
+	/** "See the changes": what the apps that use the set would receive from the draft. */
+	changes = $state<SetChangePreview | null>(null);
+	changesFor = $state('');
+	checking = $state(false);
+	checkFailed = $state(false);
+	/** Each check and each change of set counts up; an answer for an older one is dropped. */
+	private checkGeneration = 0;
 	form = new Draft<MappingForm>({
 		name: '',
 		description: '',
@@ -165,7 +177,41 @@ export class ConnectionMappingState {
 		return { names: names.sort((a, b) => a.localeCompare(b)), complete };
 	}
 
+	/** The draft as the check reads it: the answer is stale once this is no longer the same. */
+	get draftKey() {
+		return JSON.stringify($state.snapshot(this.form.value.mappings));
+	}
+
+	/** Asks what the draft would change for every place that uses the set (it saves nothing). */
+	async check() {
+		if (!this.selected || !this.context || !this.base || this.checking) return;
+		const key = this.draftKey;
+		const mine = ++this.checkGeneration;
+		this.checking = true;
+		this.checkFailed = false;
+		try {
+			const content = compileMappingSet(
+				copyValue(this.base),
+				copyValue(this.form.value.mappings),
+				this.context
+			);
+			const { client, tenantId } = this.resources;
+			const answer = await client.previewSetChange(tenantId, this.selected, content);
+			if (mine !== this.checkGeneration) return;
+			this.changes = setChangePreviewOf(answer);
+			this.changesFor = key;
+		} catch {
+			if (mine === this.checkGeneration) this.checkFailed = true;
+		} finally {
+			if (mine === this.checkGeneration) this.checking = false;
+		}
+	}
+
 	async select(id: string) {
+		this.checkGeneration++;
+		this.checking = false;
+		this.changes = null;
+		this.checkFailed = false;
 		this.phase = 'loading';
 		try {
 			const detail = id
@@ -217,6 +263,10 @@ export class ConnectionMappingState {
 	}
 
 	create() {
+		this.checkGeneration++;
+		this.checking = false;
+		this.changes = null;
+		this.checkFailed = false;
 		this.selected = '';
 		this.detail = null;
 		this.base = null;
@@ -388,6 +438,10 @@ export class ConnectionMappingState {
 				// Activation is complete only here. A failed metadata read is also a binding-only retry.
 				this.selected = result.value.id;
 				this.sets = [...this.sets.filter((set) => set.id !== result.value.id), result.value];
+				// The saved content is the baseline now: an answer for the old one no longer applies.
+				this.checkGeneration++;
+				this.checking = false;
+				this.changes = null;
 				this.base = copyValue(attempt.request.content);
 				this.form.commit();
 				this.pending = null;

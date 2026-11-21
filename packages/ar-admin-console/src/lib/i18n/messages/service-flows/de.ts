@@ -146,6 +146,10 @@ export const deServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 
 	'sf.group.receives': 'Was die App erhält',
 	'sf.group.mapping': 'Zuordnung',
+	'sf.group.schemas': 'Eingabe und Ausgabe',
+	'cm.chooseOutputFirst': 'Wählen Sie zuerst unter „Eingabe und Ausgabe“ die Ausgabequelle.',
+	'cm.finishOutputFirst':
+		'Schließen Sie zuerst das Erstellen oder Ändern der Ausgabequelle ab, bevor Sie das Mapping ändern.',
 	'sf.group.consent': 'Einwilligung',
 	'sf.group.role': 'Rollenzuweisung',
 	'sf.group.live': 'Live schalten',

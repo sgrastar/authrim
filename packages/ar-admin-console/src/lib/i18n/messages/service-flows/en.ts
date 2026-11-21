@@ -141,6 +141,10 @@ export const enServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 
 	'sf.group.receives': 'What the app receives',
 	'sf.group.mapping': 'Mapping',
+	'sf.group.schemas': 'Input and output',
+	'cm.chooseOutputFirst': 'Choose the output source first, under “Input and output”.',
+	'cm.finishOutputFirst':
+		'Finish making or changing the output source before changing the mapping.',
 	'sf.group.consent': 'Consent',
 	'sf.group.role': 'Role assignment',
 	'sf.group.live': 'Go live',

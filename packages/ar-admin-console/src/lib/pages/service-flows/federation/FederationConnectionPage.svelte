@@ -127,6 +127,8 @@
 	let current = $state('');
 	let rightPanel = $state<HTMLElement | null>(null);
 	const mappingSelected = $derived(current === 'mapping-sets');
+	/** The output source of the SP role's mapping, in a node of its own before the mapping. */
+	const outputSelected = $derived(current === 'mapping-schemas');
 	/** The SP role sends Authrim's people to the federation's services: its mapping is made here. */
 	const mappingResources = $derived<ConnectionMappingResources | null>(
 		outboundMapping && spRole
@@ -146,6 +148,10 @@
 			: null
 	);
 	const exclusionSelected = $derived(current === 'exclusions');
+	// The SP role was switched off while its output source was open: there is nothing to show.
+	$effect(() => {
+		if (current === 'mapping-schemas' && !mappingResources) current = '';
+	});
 	const excludedCount = $derived(form?.excludedEntityIds.length ?? 0);
 	const mappingState = $derived(form && federationInUse(form) ? 'done' : 'todo');
 	/** How many entities of the side the service flow works with, and how many of them are set aside. */
@@ -345,19 +351,42 @@
 				<FlowScope label={t('sf.detail.authrimDoes')}>
 					<!-- The mapping is not optional: what comes through is the mapping's, so it is always there. -->
 					<FlowSequence
-						order={['mapping', 'exclusions']}
-						visible={['mapping', 'exclusions']}
+						order={[...(mappingResources ? ['output'] : []), 'mapping', 'exclusions']}
+						visible={[...(mappingResources ? ['output'] : []), 'mapping', 'exclusions']}
 						lead={36}
 						trail={6}
 						menuTitle={source.name}
 						option={(node) => ({
 							id: node,
-							label: t(node === 'mapping' ? 'sf.group.mapping' : 'sf.fed.flow.exclusions')
+							label: t(
+								node === 'output'
+									? 'sf.group.schemas'
+									: node === 'mapping'
+										? 'sf.group.mapping'
+										: 'sf.fed.flow.exclusions'
+							)
 						})}
 						onadd={selectNode}
 					>
 						{#snippet step(node, { exiting })}
-							{#if node === 'mapping'}
+							{#if node === 'output'}
+								<!-- The output source the SP role sends into: its own node, apart from the mapping. -->
+								<FlowStepGroup
+									name={t('sf.group.schemas')}
+									state={mappingState}
+									{current}
+									{exiting}
+									onselect={selectNode}
+									items={[
+										{
+											id: 'mapping-schemas',
+											label: labelOf('mapping-schemas'),
+											state: mappingState,
+											status: t(mappingState === 'done' ? 'sf.status.done' : 'sf.status.todo')
+										}
+									]}
+								/>
+							{:else if node === 'mapping'}
 								<FlowStepGroup
 									name={t('sf.group.mapping')}
 									state={mappingState}
@@ -416,7 +445,7 @@
 			</FlowCanvas>
 		</div>
 		<div class="detail__side" bind:this={rightPanel}>
-			<div class="detail__general" hidden={mappingSelected || exclusionSelected}>
+			<div class="detail__general" hidden={mappingSelected || outputSelected || exclusionSelected}>
 				<FederationStatusCard
 					{source}
 					{history}
@@ -455,19 +484,20 @@
 					onmaterialize={canMaterialize ? (entity) => (materializing = entity) : undefined}
 				/>
 			</div>
-			<div class="detail__general" hidden={!mappingSelected}>
-				<FederationParticipationCard
-					bind:form
-					{mappingSets}
-					{mappingFailed}
-					{mappingLoading}
-					onreloadmappings={loadSets}
-					disabled={!canEdit}
-					spMappingManaged={mappingResources !== null}
-				/>
+			<div class="detail__general" hidden={!mappingSelected && !outputSelected}>
+				{#if !outputSelected}<FederationParticipationCard
+						bind:form
+						{mappingSets}
+						{mappingFailed}
+						{mappingLoading}
+						onreloadmappings={loadSets}
+						disabled={!canEdit}
+						spMappingManaged={mappingResources !== null}
+					/>{/if}
 				{#if mappingResources}
 					{#key `${id}:${mappingEpoch}`}
 						<ConnectionMapping
+							section={outputSelected ? 'output' : 'mapping'}
 							resources={mappingResources}
 							explain={false}
 							readonly={!canEdit}
@@ -497,8 +527,10 @@
 		}}
 	/>
 	{#if canEdit}
+		<!-- While the SP role's mapping has unsaved changes its own bar is the one shown; the page's
+		     returns once the mapping is saved (which puts the set into this form). -->
 		<SaveBar
-			{dirty}
+			dirty={dirty && !mappingDirty}
 			saving={saving || mappingPending}
 			{invalid}
 			onsave={save}

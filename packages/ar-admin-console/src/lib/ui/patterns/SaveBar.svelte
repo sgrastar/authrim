@@ -18,9 +18,11 @@
 		invalid?: boolean;
 		onsave: () => void;
 		ondiscard: () => void;
+		/** What the Save button says where "Save" alone would not tell what it does. */
+		saveLabel?: string;
 	}
 
-	let { dirty, saving = false, invalid = false, onsave, ondiscard }: Props = $props();
+	let { dirty, saving = false, invalid = false, onsave, ondiscard, saveLabel }: Props = $props();
 
 	const shown = $derived(dirty || saving);
 
@@ -78,7 +80,7 @@
 			<div class="save-bar__actions">
 				<Button variant="ghost" disabled={saving} onclick={ondiscard}>{t('common.discard')}</Button>
 				<Button variant="primary" attention={!invalid} loading={saving} onclick={onsave}>
-					{saving ? t('common.saving') : t('common.save')}
+					{saving ? t('common.saving') : (saveLabel ?? t('common.save'))}
 				</Button>
 			</div>
 		</div>

@@ -418,9 +418,10 @@ describe('the processing steps of a flow', () => {
 
 	it('run in the agreed order', () => {
 		const order = (kind: ConnectionKind) => FLOW_GROUPS[kind].map((group) => group.id);
-		expect(order('rp')).toEqual(['signup', 'role', 'consent', 'mapping']);
+		expect(order('rp')).toEqual(['signup', 'role', 'consent', 'schemas', 'mapping']);
 		for (const kind of ['op', 'idp'] as const)
 			expect(order(kind)).toEqual([
+				'schemas',
 				'mapping',
 				'accounts',
 				'signup',

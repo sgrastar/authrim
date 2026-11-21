@@ -630,13 +630,21 @@
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		await canvas.findByRole('heading', { name: 'Test federation' });
+		// The output source has a node of its own, apart from the mapping.
+		await userEvent.click(
+			canvas.getByRole('button', { name: new RegExp(t('sf.part.mapping-schemas')) })
+		);
+		await canvas.findByRole('button', { name: t('sf.dp.field.create') });
+		await expect(
+			canvas.queryByRole('combobox', { name: new RegExp(`^${t('sf.row.mappingSet')}`) })
+		).toBeNull();
 		await userEvent.click(
 			canvas.getByRole('button', { name: new RegExp(t('sf.part.mapping-sets')) })
 		);
 		// The plain mapping-set select is gone: the connection's own mapping step stands in for it,
-		// with the output source above the mapping set.
+		// and the mapping node holds only the mapping.
 		await expect(canvas.queryByRole('combobox', { name: t('sf.fed.mappingSet.sp') })).toBeNull();
-		await canvas.findByRole('button', { name: t('sf.dp.field.create') });
+		await expect(canvas.queryByRole('button', { name: t('sf.dp.field.create') })).toBeNull();
 		const set = await canvas.findByRole('combobox', {
 			name: new RegExp(`^${t('sf.row.mappingSet')}`)
 		});

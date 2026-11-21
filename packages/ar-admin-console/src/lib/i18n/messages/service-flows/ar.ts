@@ -137,6 +137,9 @@ export const arServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 
 	'sf.group.receives': 'What the app receives',
 	'sf.group.mapping': 'Mapping',
+	'sf.group.schemas': 'الإدخال والإخراج',
+	'cm.chooseOutputFirst': 'اختر مصدر الإخراج أولاً ضمن «الإدخال والإخراج».',
+	'cm.finishOutputFirst': 'أنهِ إنشاء مصدر الإخراج أو تغييره قبل تغيير التعيين.',
 	'sf.group.consent': 'Consent',
 	'sf.group.role': 'Role assignment',
 	'sf.group.live': 'Go live',
