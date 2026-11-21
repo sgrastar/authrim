@@ -44,6 +44,8 @@
 		pending?: boolean;
 		guardNavigation?: boolean;
 		connectionDirty?: boolean;
+		/** Whether an output source is chosen (the set's own, or the one a new mapping starts with). */
+		outputChosen?: boolean;
 		/** Show the test-user explanation (not for a federation, which has no one service to test against). */
 		explain?: boolean;
 		/**
@@ -58,6 +60,7 @@
 		resources,
 		dirty = $bindable(false),
 		bound = $bindable(''),
+		outputChosen = $bindable(false),
 		readonly = false,
 		disabled = false,
 		pending = $bindable(false),
@@ -75,6 +78,7 @@
 		dirty = (shared?.dirty ?? false) || editorState.dirty;
 		pending = shared?.phase === 'saving' || shared?.phase === 'impact' || editorState.saving;
 		bound = shared?.bound ?? '';
+		outputChosen = !!shared?.form.value.profileId;
 	});
 	onMount(() => {
 		if (shared) void shared.load();
@@ -393,22 +397,6 @@
 									label={t('cm.description')}
 									bind:value={shared.form.value.description}
 									field="description"
-								/>
-								<Select
-									label={t('cm.catalog')}
-									options={shared.catalogs.flatMap((catalog) =>
-										catalog.versionId
-											? [{ value: catalog.versionId, label: catalog.displayName }]
-											: []
-									)}
-									placeholder={shared.detail?.content?.catalogVersionId ?? t('mc.ro.choose')}
-									value={shared.form.value.catalogVersionId}
-									onchange={(value) => {
-										shared.form.value.catalogVersionId = value;
-										shared.configure();
-									}}
-									disabled={!!shared.detail}
-									field="catalogVersionId"
 								/>
 							</Disclosure>
 						</BusyScope>

@@ -100,7 +100,7 @@ export const enTenants: Record<keyof typeof jaTenants, string> = {
 	'tn.copy.clients.desc': 'Registered apps and their settings.',
 	'tn.copy.samlProviders': 'SAML connections (copied disabled)',
 	'tn.copy.samlProviders.desc':
-		'Copy SP and IdP configuration as drafts. Select a destination Mapping Set and approve with Level 2 step-up before enabling.',
+		'Copy SP and IdP configuration as drafts. Select a destination Mapping and approve with Level 2 step-up before enabling.',
 	'tn.copy.clientCredentials': 'Include client secrets',
 	'tn.copy.clientCredentials.desc': 'Also copies the apps’ secrets as they are.',
 	'tn.copy.webhooks': 'Webhooks',

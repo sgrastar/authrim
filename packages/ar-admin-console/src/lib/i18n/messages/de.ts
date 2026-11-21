@@ -142,7 +142,7 @@ export const de = {
 	'nav.custom.launchers': 'Einstiegspunkte',
 	'nav.custom.statements': 'Einwilligungstexte',
 	'nav.data.profiles': 'Quelle / Ziel',
-	'nav.data.mappingSets': 'Zuordnungssätze',
+	'nav.data.mappingSets': 'Mappings',
 	'nav.data.readiness': 'Schemabereitschaft',
 	'nav.mon.adminLogging': 'Administratorprotokollierung',
 	'nav.mon.diagnostics': 'Diagnoseprotokolle',

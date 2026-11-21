@@ -142,7 +142,7 @@ export const ar = {
 	'nav.custom.launchers': 'نقاط الدخول',
 	'nav.custom.statements': 'نصوص الموافقة',
 	'nav.data.profiles': 'المصدر / الوجهة',
-	'nav.data.mappingSets': 'مجموعات الربط',
+	'nav.data.mappingSets': 'الربط',
 	'nav.data.readiness': 'جاهزية المخطط',
 	'nav.mon.adminLogging': 'تسجيل عمليات المسؤولين',
 	'nav.mon.diagnostics': 'سجلات التشخيص',

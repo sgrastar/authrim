@@ -461,7 +461,9 @@
 
 	/** Read out receiving side first: "email (Required): from mail, Needs attention". */
 	function rowLabel(target: MappingField, mapping: Mapping | undefined, attention: boolean) {
-		const name = target.required ? `${target.key} (${t('common.required')})` : target.key;
+		// The name a person reads on the row: the label, or the identifier when there is no other.
+		const shown = target.label && target.label !== target.key ? target.label : target.key;
+		const name = target.required ? `${shown} (${t('common.required')})` : shown;
 		const used = mapping?.sources.filter(Boolean) ?? [];
 		const text = used.length
 			? t('map.rowName', { target: name, source: used.join(' + ') })
@@ -565,6 +567,16 @@
 	{/if}
 {/snippet}
 
+<!-- What a person calls the attribute: its label, with the identifier only as hover text; the
+     identifier itself when there is no other name. -->
+{#snippet targetName(target: MappingField)}
+	{#if target.label && target.label !== target.key}
+		<span class="mrow__tname" title={target.key}>{target.label}</span>
+	{:else}
+		<code>{target.key}</code>
+	{/if}
+{/snippet}
+
 {#snippet values(list: SampleValue[])}
 	<span class="sample__values">
 		{#each list as sample, v (v)}
@@ -659,7 +671,7 @@
 								>
 							</span>
 							<span class="mrow__target" class:is-set={isSet}>
-								<code>{target.key}</code>
+								{@render targetName(target)}
 								<TypeBadge>{target.type}</TypeBadge>
 								{#if target.required}<RequiredBadge />{/if}
 							</span>
@@ -761,11 +773,14 @@
 								: null}
 							<div class="mrow__target-edit" transition:slide={{ duration: SLIDE_MS }}>
 								<span class="mrow__target" class:is-set={isSet} aria-hidden="true">
-									<code>{target.key}</code>
+									{@render targetName(target)}
 									<TypeBadge>{target.type}</TypeBadge>
 									{#if target.required}<RequiredBadge />{/if}
 								</span>
-								{#if target.label}<span class="mrow__tlabel">{target.label}</span>{/if}
+								<!-- The attribute's own name (an identifier such as an OID) under its label. -->
+								{#if target.label && target.label !== target.key}<code class="mrow__tkey"
+										>{target.key}</code
+									>{/if}
 								{#if target.required && !mapping}
 									<!-- About the attribute itself, so under it rather than under the arrow. -->
 									<span class="mrow__tnote"><Icon name="warning" />{t('map.x.requiredUnset')}</span>
@@ -1873,11 +1888,20 @@
 		opacity: 0.7;
 	}
 
-	/* While open, the target's name in words sits under it. */
-	.mrow__tlabel {
+	/* While open, the attribute's own name (the identifier) sits under its label. */
+	.mrow__tkey {
 		flex-basis: 100%;
 		color: var(--text-muted);
 		font-size: var(--fs-caption);
+		overflow-wrap: anywhere;
+	}
+
+	.mrow__tname {
+		overflow-wrap: anywhere;
+	}
+
+	.mrow__target.is-set .mrow__tname {
+		font-weight: var(--fw-semibold);
 	}
 
 	.ed__param-hint {

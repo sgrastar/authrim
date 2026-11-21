@@ -144,7 +144,7 @@
 	name="Picked in the mapping editor"
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
-		await userEvent.click(canvas.getByRole('button', { name: /^persistent_id/ }));
+		await userEvent.click(canvas.getByRole('button', { name: /^Persistent ID/ }));
 		await userEvent.click(await canvas.findByRole('button', { name: t('map.addStep') }));
 		const picker = within(await canvas.findByRole('dialog', { name: t('map.pickStep') }));
 		await userEvent.type(picker.getByRole('searchbox'), 'persistent');
@@ -178,7 +178,7 @@
 	name="Switching a mapping that has a source"
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
-		await userEvent.click(canvas.getByRole('button', { name: /^persistent_id/ }));
+		await userEvent.click(canvas.getByRole('button', { name: /^Persistent ID/ }));
 		await userEvent.click(await canvas.findByRole('button', { name: t('map.addStep') }));
 		const picker = within(await canvas.findByRole('dialog', { name: t('map.pickStep') }));
 		await userEvent.type(picker.getByRole('searchbox'), 'persistent');

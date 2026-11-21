@@ -164,7 +164,7 @@
 		for (const label of ['App details', 'Redirect URIs', 'Sign-in method']) {
 			await expect(canvas.getByRole('heading', { name: label, level: 3 })).toBeInTheDocument();
 		}
-		for (const label of ['Mapping sets']) {
+		for (const label of ['Mapping']) {
 			await userEvent.click(inFlow(canvasElement, new RegExp(`^${label}`)));
 			await expect(canvas.getByRole('heading', { name: label, level: 2 })).toBeInTheDocument();
 		}
@@ -274,7 +274,7 @@
 		await expect(
 			inFlow(canvasElement, /^Input and output schemas.*Required.*Not set yet/)
 		).toBeInTheDocument();
-		await expect(inFlow(canvasElement, /^Mapping sets.*Required.*Not set yet/)).toBeInTheDocument();
+		await expect(inFlow(canvasElement, /^Mapping.*Required.*Not set yet/)).toBeInTheDocument();
 		await expect(
 			canvas.queryByRole('button', { name: t('flow.remove', { name: 'Mapping' }) })
 		).toBeNull();
@@ -291,12 +291,10 @@
 		);
 		await openMapping(canvasElement);
 		await userEvent.selectOptions(
-			await canvas.findByRole('combobox', { name: 'Mapping set' }),
+			await canvas.findByRole('combobox', { name: 'Mapping' }),
 			'tenant-default'
 		);
-		await waitFor(() =>
-			expect(inFlow(canvasElement, /^Mapping sets.*Configured/)).toBeInTheDocument()
-		);
+		await waitFor(() => expect(inFlow(canvasElement, /^Mapping.*Configured/)).toBeInTheDocument());
 	}}
 >
 	{#snippet template(args)}{@render frame(args)}{/snippet}
@@ -391,7 +389,7 @@
 			await inHeader(canvasElement).findByText('Active', { selector: '.badge' })
 		).toBeInTheDocument();
 		await openMapping(canvasElement);
-		await userEvent.selectOptions(await canvas.findByRole('combobox', { name: 'Mapping set' }), '');
+		await userEvent.selectOptions(await canvas.findByRole('combobox', { name: 'Mapping' }), '');
 		// The set is gone, so the connection is a draft again and has to be activated once more.
 		await expect(
 			await inHeader(canvasElement).findByText('Draft', { selector: '.badge' })
@@ -417,7 +415,7 @@
 		await expect(canvas.getByText('下書き')).toBeInTheDocument();
 		// The steps of the flow and their settings, with how far each has got.
 		await expect(canvas.getByText('サインイン応答')).toBeInTheDocument();
-		await expect(inFlow(canvasElement, /^マッピングセット.*必須.*未設定/)).toBeInTheDocument();
+		await expect(inFlow(canvasElement, /^マッピング.*必須.*未設定/)).toBeInTheDocument();
 		await openMapping(canvasElement, 'schemas');
 		await expect(await canvas.findByRole('combobox', { name: '入力スキーマ' })).toBeVisible();
 	}}

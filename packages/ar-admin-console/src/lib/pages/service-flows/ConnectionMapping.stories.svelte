@@ -48,11 +48,9 @@
 		await openMapping(root);
 		const canvas = within(root);
 		await canvas.findByRole('button', { name: /^email/ });
-		const details = await openDisclosure(root, 'Mapping Set settings');
+		const details = await openDisclosure(root, 'Mapping settings');
 		await userEvent.type(canvas.getByRole('textbox', { name: 'Name' }), ' updated');
-		await userEvent.click(
-			canvas.getByText('Mapping Set settings', { selector: '.disclosure__title' })
-		);
+		await userEvent.click(canvas.getByText('Mapping settings', { selector: '.disclosure__title' }));
 		await waitFor(() => expect(details).not.toHaveAttribute('open'));
 		await waitFor(() => expect(details.getAnimations({ subtree: true })).toHaveLength(0));
 		await expect(canvas.getAllByText('Changed').length).toBeGreaterThan(0);
@@ -66,10 +64,7 @@
 		await openMapping(canvasElement);
 		const canvas = within(canvasElement);
 		await canvas.findByRole('button', { name: /^email/ });
-		await userEvent.selectOptions(
-			canvas.getByRole('combobox', { name: /Mapping set$/ }),
-			'set-shared'
-		);
+		await userEvent.selectOptions(canvas.getByRole('combobox', { name: /Mapping$/ }), 'set-shared');
 		await canvas.findByRole('button', { name: /^email/ });
 		await userEvent.click(canvas.getByRole('button', { name: /^email/ }));
 		await userEvent.click(canvas.getByRole('button', { name: t('map.addStep') }));
@@ -89,12 +84,12 @@
 		await edit(canvasElement);
 		const dialog = within(
 			await within(canvasElement.ownerDocument.body).findByRole('dialog', {
-				name: 'Update a shared Mapping Set?'
+				name: t('cm.impactTitle')
 			})
 		);
 		await expect(dialog.getByText(/3 references/)).toBeInTheDocument();
 		await userEvent.click(dialog.getByRole('button', { name: 'Update shared set' }));
-		await within(canvasElement).findByText('Mapping Set saved and bound to this connection.');
+		await within(canvasElement).findByText('Mapping saved and bound to this connection.');
 	}}
 />
 <Story
@@ -128,14 +123,11 @@
 		await openMapping(canvasElement);
 		const canvas = within(canvasElement);
 		await canvas.findByRole('button', { name: /^email/ });
-		await userEvent.selectOptions(
-			canvas.getByRole('combobox', { name: /Mapping set$/ }),
-			'set-shared'
-		);
+		await userEvent.selectOptions(canvas.getByRole('combobox', { name: /Mapping$/ }), 'set-shared');
 		await edit(canvasElement);
 		await canvas.findByText(/The set is saved, but binding/);
 		await userEvent.click(canvas.getByRole('button', { name: 'Retry binding only' }));
-		await canvas.findByText('Mapping Set saved and bound to this connection.');
+		await canvas.findByText('Mapping saved and bound to this connection.');
 		await openDisclosure(canvasElement, t('cm.options'));
 		await userEvent.type(canvas.getByRole('textbox', { name: t('sf.row.name') }), ' re-edited');
 		await waitFor(() => expect(canvas.queryByText(t('cm.saved'))).toBeNull());
@@ -296,7 +288,7 @@
 		await openMapping(canvasElement);
 		await canvas.findByRole('button', { name: /^email/ });
 		await expect(canvas.queryByRole('region', { name: t('common.unsaved') })).toBeNull();
-		const field = canvas.getByRole('combobox', { name: /Mapping set$/ });
+		const field = canvas.getByRole('combobox', { name: /Mapping$/ });
 		const bound = (field as HTMLSelectElement).value;
 		await userEvent.selectOptions(field, 'set-shared');
 		const bar = await canvas.findByRole('region', { name: t('common.unsaved') });
@@ -320,7 +312,7 @@
 			canvas.getByRole('button', { name: new RegExp(`^${t('sf.part.mapping-sets')}`) })
 		);
 		await canvas.findByText(t('cm.finishOutputFirst'));
-		await expect(canvas.getByRole('combobox', { name: /Mapping set$/ })).toBeDisabled();
+		await expect(canvas.getByRole('combobox', { name: /Mapping$/ })).toBeDisabled();
 		await expect(canvas.getByRole('button', { name: t('cm.create') })).toBeDisabled();
 	}}
 />
@@ -341,5 +333,21 @@
 		await waitFor(() =>
 			expect(canvas.queryByRole('region', { name: t('common.unsaved') })).toBeNull()
 		);
+	}}
+/>
+
+<Story
+	name="The input and output node reads as set as soon as an output source is chosen"
+	args={{ scenario: 'unbound', protocol: 'saml' }}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const node = () =>
+			canvas.getByRole('button', { name: new RegExp(`^${t('sf.part.mapping-schemas')}`) });
+		await waitFor(() => expect(node()).toHaveTextContent(t('sf.status.todo')));
+		await openOutput(canvasElement);
+		// An existing output source is picked from the list: the node says so.
+		const field = await canvas.findByRole('combobox', { name: t('sf.dp.field.label') });
+		await userEvent.selectOptions(field, (field as HTMLSelectElement).options[1].value);
+		await waitFor(() => expect(node()).toHaveTextContent(t('sf.status.done')));
 	}}
 />

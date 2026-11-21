@@ -209,7 +209,7 @@ export const jaAccountFlows = {
 	'af.group.syncTiming': '同期のタイミング',
 	'af.group.csvFormat': 'ファイルの形式',
 	'af.part.sync-about': '名称と連携先',
-	'af.part.sync-mapping': 'マッピングセット',
+	'af.part.sync-mapping': 'マッピング',
 	'af.part.sync-role': 'ロールの割り当て',
 	'af.part.sin-match': '照合のしかた',
 	'af.part.sin-update': '更新と停止の方針',
@@ -231,7 +231,7 @@ export const jaAccountFlows = {
 	'af.lead.csv-match':
 		'ファイルの行を、Authrim の既存の利用者とどう結びつけ、どう更新するかを決めます。',
 	'af.field.partner': '連携先のシステム名',
-	'af.field.mappingSet': 'マッピングセット',
+	'af.field.mappingSet': 'マッピング',
 	'af.field.role': 'ロール',
 	'af.field.matchKey': '利用者を見つける項目',
 	'af.field.sin.onMissing': '該当する利用者がいないとき',

@@ -225,17 +225,17 @@ describe('the parts of a flow, after the wizard', () => {
 		expect(partState('rp-app', rp)).toBe('done');
 		expect(partState('rp-redirect', rp)).toBe('required');
 		// An app gets what its mapping gives it, so the mapping is required as well.
-		expect(missingParts(rp)).toEqual(['Redirect URIs', 'Input and output schemas', 'Mapping sets']);
+		expect(missingParts(rp)).toEqual(['Redirect URIs', 'Input and output schemas', 'Mapping']);
 		const sp = sampleAnswers('sp', 'wizard');
 		// A service cannot work without a mapping (schemas and a set), which the wizard did not ask.
-		expect(missingParts(sp)).toEqual(['Input and output schemas', 'Mapping sets']);
+		expect(missingParts(sp)).toEqual(['Input and output schemas', 'Mapping']);
 		// Nothing of a provider was asked, so its details are the first thing still required.
 		const op = sampleAnswers('op', 'wizard');
 		expect(partState('op-details', op)).toBe('required');
 		expect(missingParts(op)).toEqual([
 			'The provider’s details',
 			'Input and output schemas',
-			'Mapping sets'
+			'Mapping'
 		]);
 		expect(canActivate(op)).toBe(false);
 	});
@@ -442,7 +442,7 @@ describe('the processing steps of a flow', () => {
 	it('make a mapping set required for a service and a SAML provider', () => {
 		const sp = sampleAnswers('sp', 'wizard');
 		expect(partState('mapping-sets', sp)).toBe('required');
-		expect(missingParts(sp)).toEqual(['Input and output schemas', 'Mapping sets']);
+		expect(missingParts(sp)).toEqual(['Input and output schemas', 'Mapping']);
 		expect(canActivate(sp)).toBe(false);
 		sp.extras.inputSchema = 'authrim';
 		sp.extras.outputSchema = 'standard';
@@ -454,7 +454,7 @@ describe('the processing steps of a flow', () => {
 		const op = sampleAnswers('op', 'complete');
 		op.extras.mappingSet = '';
 		expect(partState('mapping-sets', op)).toBe('required');
-		expect(missingParts(op)).toEqual(['Mapping sets']);
+		expect(missingParts(op)).toEqual(['Mapping']);
 	});
 
 	it('are set when they have what they need', () => {
@@ -582,7 +582,7 @@ describe('the words, in another language', () => {
 		expect(nameOf(emptyAnswers())).toBe('新しい接続');
 		expect(missingParts(sampleAnswers('sp', 'wizard'))).toEqual([
 			'入力と出力のスキーマ',
-			'マッピングセット'
+			'マッピング'
 		]);
 		const rows = reviewRows(sampleAnswers('op', 'wizard'));
 		expect(rows.find((row) => row.label === 'Issuer')?.value).toBe(
@@ -602,7 +602,7 @@ describe('stored choices in the overview', () => {
 		const value = (label: string) => reviewRows(sp).find((row) => row.label === label)?.value;
 		i18n.set('en');
 		expect(value('Identifier')).toBe('Persistent, different for each service');
-		expect(value('Mapping set')).toBe('Follow the tenant default');
+		expect(value('Mapping')).toBe('Follow the tenant default');
 		i18n.set('ja');
 		const ja = reviewRows(sp);
 		expect(ja.some((row) => row.value === 'persistent' || row.value === 'tenant-default')).toBe(
