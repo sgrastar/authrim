@@ -102,6 +102,7 @@
 	let liveName = $state('');
 	let liveEntityId = $state('');
 	let mappingBound = $state('');
+	let outputChosen = $state(false);
 	let mappingPanel = $state<HTMLElement>();
 
 	// What is on screen is a draft of the connection; `answers` (the saved one) changes only with
@@ -172,11 +173,11 @@
 	};
 
 	function statusOf(id: string): { text: string; state: PartState } {
-		if (mappingResources)
-			return {
-				state: mappingBound ? 'done' : 'todo',
-				text: t(mappingBound ? 'sf.status.done' : 'sf.status.todo')
-			};
+		if (mappingResources) {
+			// The output source is the input-and-output node's; the rest is the mapping's.
+			const done = id === 'mapping-schemas' ? outputChosen : !!mappingBound;
+			return { state: done ? 'done' : 'todo', text: t(done ? 'sf.status.done' : 'sf.status.todo') };
+		}
 		const state = partState(id, draft.value);
 		if (id === 'activate')
 			return { text: t(state === 'done' ? 'sf.status.active' : 'sf.status.notActive'), state };
@@ -358,7 +359,7 @@
 						{#snippet step(id, { exiting })}
 							{@const group = allGroups.find((candidate) => candidate.id === id)!}
 							{@const state = mappingResources
-								? mappingBound
+								? (group.id === 'schemas' ? outputChosen : !!mappingBound)
 									? 'done'
 									: 'todo'
 								: groupState(group, draft.value)}
@@ -450,6 +451,7 @@
 							bind:pending={mappingPending}
 							bind:dirty={mappingDirty}
 							bind:bound={mappingBound}
+							bind:outputChosen
 						/>
 					</div>{/if}
 			{:else if current === ''}

@@ -23,6 +23,9 @@ import { setChangePreviewOf } from './connection-mapping-preview.js';
 import { ApiError, ReleasePausedError } from '#lib/api/api-error.js';
 import type { DestinationProfilesClient } from '#lib/api/destination-profiles.js';
 
+/** The catalog every tenant has: Authrim's own attributes. */
+const DEFAULT_CATALOG_KEY = 'authrim.default_canonical';
+
 export interface ConnectionMappingResources {
 	client: IdentityMappingClient;
 	tenantId: string;
@@ -262,6 +265,17 @@ export class ConnectionMappingState {
 		}
 	}
 
+	/**
+	 * The catalog a new mapping reads Authrim's attributes from. Nobody is asked: the default one is
+	 * used (the first there is when the default is missing).
+	 */
+	private defaultCatalogVersionId(): string {
+		const usable = this.catalogs.filter((catalog) => catalog.versionId);
+		const chosen =
+			usable.find((catalog) => catalog.catalogKey === DEFAULT_CATALOG_KEY) ?? usable[0];
+		return chosen?.versionId ?? '';
+	}
+
 	create() {
 		this.checkGeneration++;
 		this.checking = false;
@@ -280,7 +294,7 @@ export class ConnectionMappingState {
 			name: '',
 			description: '',
 			profileId: '',
-			catalogVersionId: '',
+			catalogVersionId: this.defaultCatalogVersionId(),
 			mappings: []
 		});
 		this.phase = 'ready';
