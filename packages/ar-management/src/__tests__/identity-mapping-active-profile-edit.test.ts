@@ -351,3 +351,61 @@ describe('editing an active source profile', () => {
     ).rejects.toMatchObject({ status: 409 });
   });
 });
+
+describe('editing a profile more than once', () => {
+  const labels = (table: string, profileId: string) =>
+    (
+      db
+        .prepare(`SELECT version_label FROM ${table} WHERE profile_id = ? ORDER BY created_at`)
+        .all(profileId) as { version_label: string }[]
+    ).map((row) => row.version_label);
+
+  it('gives each edit of a destination profile a label of its own', async () => {
+    const { profileId } = await activeProfile();
+    const second = await repository.updateDestinationProfile(TENANT, profileId, {
+      schema: csvSchema('mail'),
+    });
+    // The first edit is switched on; a second and a third follow, and one is left as a draft.
+    await repository.reviewDestinationProfileVersion(TENANT, profileId, second.version.id);
+    await repository.activateDestinationProfileVersion(TENANT, profileId, second.version.id);
+    const third = await repository.updateDestinationProfile(TENANT, profileId, {
+      schema: csvSchema('address'),
+    });
+    const fourth = await repository.updateDestinationProfile(TENANT, profileId, {
+      schema: csvSchema('phone'),
+    });
+
+    expect(third.version.id).not.toBe(fourth.version.id);
+    const all = labels('destination_profile_versions', profileId);
+    expect(all).toHaveLength(4);
+    expect(new Set(all).size).toBe(4);
+  });
+
+  it('gives each edit of a source profile a label of its own', async () => {
+    const created = await repository.createSourceProfile(TENANT, {
+      sourceType: 'csv',
+      profileKey: 'people2',
+      displayName: 'People',
+      schema: { sourceType: 'csv', columns: [{ columnName: 'email', valueType: 'string' }] },
+    });
+    await repository.reviewSourceProfileVersion(TENANT, created.id, created.version.id);
+    await repository.activateSourceProfileVersion(TENANT, created.id, created.version.id);
+    for (const column of ['mail', 'address', 'phone'])
+      await repository.updateSourceProfile(TENANT, created.id, {
+        schema: { sourceType: 'csv', columns: [{ columnName: column, valueType: 'string' }] },
+      });
+
+    const all = labels('source_profile_versions', created.id);
+    expect(all).toHaveLength(4);
+    expect(new Set(all).size).toBe(4);
+  });
+
+  it('keeps a label the caller names', async () => {
+    const { profileId } = await activeProfile();
+    const updated = await repository.updateDestinationProfile(TENANT, profileId, {
+      versionLabel: '2026-spring',
+      schema: csvSchema('mail'),
+    });
+    expect(updated.version.versionLabel).toBe('2026-spring');
+  });
+});

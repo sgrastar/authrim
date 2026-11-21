@@ -212,10 +212,6 @@
 {/if}
 
 <style>
-	.editor-actions {
-		display: flex;
-		justify-content: flex-end;
-	}
 	.form {
 		display: flex;
 		flex-direction: column;

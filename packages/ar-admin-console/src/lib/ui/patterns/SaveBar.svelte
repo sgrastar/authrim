@@ -20,9 +20,19 @@
 		ondiscard: () => void;
 		/** What the Save button says where "Save" alone would not tell what it does. */
 		saveLabel?: string;
+		/** What is wrong, in words, when `invalid` (instead of the general "fix the errors"). */
+		invalidMessage?: string;
 	}
 
-	let { dirty, saving = false, invalid = false, onsave, ondiscard, saveLabel }: Props = $props();
+	let {
+		dirty,
+		saving = false,
+		invalid = false,
+		onsave,
+		ondiscard,
+		saveLabel,
+		invalidMessage
+	}: Props = $props();
 
 	const shown = $derived(dirty || saving);
 
@@ -75,7 +85,7 @@
 	>
 		<div class="save-bar__card">
 			<p class="save-bar__msg" class:is-invalid={invalid} role="status">
-				{shown ? (invalid ? t('common.fixErrors') : t('common.unsaved')) : ''}
+				{shown ? (invalid ? (invalidMessage ?? t('common.fixErrors')) : t('common.unsaved')) : ''}
 			</p>
 			<div class="save-bar__actions">
 				<Button variant="ghost" disabled={saving} onclick={ondiscard}>{t('common.discard')}</Button>

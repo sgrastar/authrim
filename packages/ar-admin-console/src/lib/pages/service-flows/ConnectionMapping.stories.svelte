@@ -324,3 +324,22 @@
 		await expect(canvas.getByRole('button', { name: t('cm.create') })).toBeDisabled();
 	}}
 />
+
+<Story
+	name="The save bar says what is missing, and stays away while an output source is being made"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await openMapping(canvasElement);
+		await canvas.findByRole('button', { name: /^email/ });
+		// A new set with no output source yet: the bar names what is missing.
+		await userEvent.click(canvas.getByRole('button', { name: t('cm.create') }));
+		const bar = await canvas.findByRole('region', { name: t('common.unsaved') });
+		await expect(within(bar).getByText(t('cm.problem.profile'))).toBeVisible();
+		// While the output source is made, the bar is not shown: its words would point at nothing.
+		await openOutput(canvasElement);
+		await userEvent.click(await canvas.findByRole('button', { name: t('sf.dp.field.create') }));
+		await waitFor(() =>
+			expect(canvas.queryByRole('region', { name: t('common.unsaved') })).toBeNull()
+		);
+	}}
+/>

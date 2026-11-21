@@ -145,6 +145,11 @@ export const enServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 	'cm.chooseOutputFirst': 'Choose the output source first, under “Input and output”.',
 	'cm.finishOutputFirst':
 		'Finish making or changing the output source before changing the mapping.',
+	'cm.problem.profile': 'Choose the output source first, under “Input and output”.',
+	'cm.problem.catalog': 'Choose the source catalog in “Mapping Set settings”.',
+	'cm.problem.context': 'The mapping is not ready to edit yet.',
+	'cm.problem.name': 'Enter a name for the Mapping Set (in “Mapping Set settings”).',
+	'cm.problem.mappings': 'Add at least one mapping.',
 	'sf.group.consent': 'Consent',
 	'sf.group.role': 'Role assignment',
 	'sf.group.live': 'Go live',

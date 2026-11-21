@@ -150,6 +150,11 @@ export const deServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 	'cm.chooseOutputFirst': 'Wählen Sie zuerst unter „Eingabe und Ausgabe“ die Ausgabequelle.',
 	'cm.finishOutputFirst':
 		'Schließen Sie zuerst das Erstellen oder Ändern der Ausgabequelle ab, bevor Sie das Mapping ändern.',
+	'cm.problem.profile': 'Wählen Sie zuerst unter „Eingabe und Ausgabe“ die Ausgabequelle.',
+	'cm.problem.catalog': 'Wählen Sie den Quellkatalog in „Mapping Set settings“.',
+	'cm.problem.context': 'Das Mapping ist noch nicht bearbeitbar.',
+	'cm.problem.name': 'Geben Sie dem Mapping Set einen Namen (in „Mapping Set settings“).',
+	'cm.problem.mappings': 'Fügen Sie mindestens ein Mapping hinzu.',
 	'sf.group.consent': 'Einwilligung',
 	'sf.group.role': 'Rollenzuweisung',
 	'sf.group.live': 'Live schalten',
