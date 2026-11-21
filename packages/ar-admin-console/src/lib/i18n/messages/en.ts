@@ -142,7 +142,7 @@ export const en = {
 	'nav.custom.launchers': 'Launchers',
 	'nav.custom.statements': 'Consent statements',
 	'nav.data.profiles': 'Source / Destination',
-	'nav.data.mappingSets': 'Mapping sets',
+	'nav.data.mappingSets': 'Mappings',
 	'nav.data.readiness': 'Schema readiness',
 	'nav.mon.adminLogging': 'Admin logging',
 	'nav.mon.diagnostics': 'Diagnostic logs',

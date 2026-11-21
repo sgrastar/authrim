@@ -26,7 +26,7 @@
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		// A required attribute still unset: open its line, pick a source, apply the fix offered.
-		await userEvent.click(canvas.getByRole('button', { name: /^enabled \(/ }));
+		await userEvent.click(canvas.getByRole('button', { name: /^enabled \(/i }));
 		const option = await within(canvasElement.ownerDocument.body).findByRole('option', {
 			name: /accountEnabled/
 		});
@@ -39,7 +39,7 @@
 		// Taking away the only source attribute removes the mapping and closes the line
 		// (the columns draw back first, then it folds).
 		await userEvent.click(canvas.getByRole('button', { name: t('map.unassign') }));
-		const line = canvas.getByRole('button', { name: /^enabled \(/ });
+		const line = canvas.getByRole('button', { name: /^enabled \(/i });
 		await waitFor(() => expect(line).toHaveFocus());
 		await waitFor(() => expect(line).toHaveAttribute('aria-expanded', 'false'));
 		// With no source, a step can fill it with a fixed value: true, for a boolean.
@@ -103,13 +103,13 @@
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		// Groups into a single-value attribute: the line says so and offers the fixes.
-		await userEvent.click(canvas.getByRole('button', { name: /^costCenter[:：]/ }));
+		await userEvent.click(canvas.getByRole('button', { name: /^Cost centre[:：]/ }));
 		await userEvent.click(await canvas.findByRole('button', { name: t('map.fix.first') }));
 		await waitFor(() =>
 			expect(canvas.queryByRole('button', { name: t('map.fix.first') })).toBeNull()
 		);
 		// Transforms run in order: add one to "mail", then run it first.
-		await userEvent.click(canvas.getByRole('button', { name: /^mail \(/ }));
+		await userEvent.click(canvas.getByRole('button', { name: /^Email \(/ }));
 		await userEvent.click(await canvas.findByRole('button', { name: t('map.addStep') }));
 		// The picker: look at a step, then add it with the preview's button.
 		const picker = within(await canvas.findByRole('dialog', { name: t('map.pickStep') }));
@@ -117,7 +117,7 @@
 		await userEvent.click(await picker.findByRole('button', { name: t('map.pick.add') }));
 		await userEvent.click(canvas.getByRole('button', { name: t('map.stepMenu', { n: 2 }) }));
 		await userEvent.click(await canvas.findByRole('menuitem', { name: t('map.runEarlier') }));
-		const summary = canvas.getByRole('button', { name: /^mail \(/ });
+		const summary = canvas.getByRole('button', { name: /^Email \(/ });
 		await waitFor(() =>
 			expect(summary.querySelector('.mrow__transform')?.textContent).toBe(
 				`${t('map.t.trim')}${t('map.stepsSep')}${t('map.s.lower')}`
@@ -127,3 +127,29 @@
 >
 	{#snippet template()}<DestinationProfileDemo />{/snippet}
 </Story>
+
+<Story
+	name="An attribute is shown by its label, not by its identifier"
+	args={{
+		label: 'Attribute mapping',
+		direction: 'outbound',
+		sources: [{ key: 'email', type: 'string' }],
+		targets: [
+			{ key: 'urn:oid:1.3.6.1.4.1.5923.1.1.1.10', label: 'eduPersonTargetedID', type: 'string' },
+			{ key: 'mail', type: 'string' }
+		],
+		mappings: []
+	}}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		// The label stands for the attribute; the identifier is only its hover text.
+		const named = await canvas.findByText('eduPersonTargetedID');
+		await expect(named).toBeVisible();
+		await expect(named).toHaveAttribute('title', 'urn:oid:1.3.6.1.4.1.5923.1.1.1.10');
+		await expect(canvas.queryByText('urn:oid:1.3.6.1.4.1.5923.1.1.1.10')).toBeNull();
+		// The row's button answers to the label too (speech control, screen readers).
+		await expect(canvas.getByRole('button', { name: /^eduPersonTargetedID/ })).toBeVisible();
+		// One that has no other name keeps its identifier.
+		await expect(canvas.getByText('mail')).toBeVisible();
+	}}
+/>

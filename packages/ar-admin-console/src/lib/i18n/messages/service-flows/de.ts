@@ -86,13 +86,12 @@ export const deServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 		'Die Freigabeanforderungen wurden nicht erfüllt. Es würde keine SAML-Antwort ausgestellt.',
 	'cm.otherConnections': 'Weitere Verbindungen mit diesem Set: {names}.',
 	'cm.connections': 'Apps und Dienste',
-	'cm.create': 'Mapping Set erstellen',
-	'cm.options': 'Mapping-Set-Einstellungen',
+	'cm.create': 'Mapping erstellen',
+	'cm.options': 'Mapping-Einstellungen',
 	'cm.description': 'Beschreibung',
 	'cm.profile': 'Zielprofil',
-	'cm.catalog': 'Quellkatalog',
 	'cm.saveBind': 'Speichern und für diese Verbindung verwenden',
-	'cm.saved': 'Mapping Set gespeichert und mit dieser Verbindung verknüpft.',
+	'cm.saved': 'Mapping gespeichert und mit dieser Verbindung verknüpft.',
 	'cm.readonly':
 		'Dieses Set oder diese Verknüpfung kann hier nicht bearbeitet werden. Protokoll, Profil oder gespeicherte Einstellungen werden nicht unterstützt. Die Prüfung mit einem Testbenutzer ist weiterhin möglich.',
 	'cm.conflict':
@@ -105,7 +104,7 @@ export const deServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 	'cm.bindingFailed':
 		'Das Set ist gespeichert, aber die Verknüpfung ist fehlgeschlagen. Wiederholen Sie nur die Verknüpfung.',
 	'cm.retryBinding': 'Nur Verknüpfung wiederholen',
-	'cm.impactTitle': 'Gemeinsames Mapping Set aktualisieren?',
+	'cm.impactTitle': 'Gemeinsames Mapping aktualisieren?',
 	'cm.impact':
 		'Dieses Set hat {count} Verweise, einschließlich Verbindungen und Standardwerten. Speichern ändert den Inhalt für alle Verbindungen, die es verwenden.',
 	'cm.impactIncomplete':
@@ -137,7 +136,7 @@ export const deServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 	'sf.part.attrsTaken': 'Zu übernehmende Attribute',
 	'sf.part.link': 'Personen zuordnen',
 	'sf.part.mapping-schemas': 'Eingabe- und Ausgabeschemas',
-	'sf.part.mapping-sets': 'Zuordnungssätze',
+	'sf.part.mapping-sets': 'Mapping',
 	'sf.part.additional': 'Abzufragende Felder',
 	'sf.part.consent-statements': 'Einwilligungstexte',
 	'sf.part.consent-policies': 'Einwilligungsrichtlinien',
@@ -151,9 +150,9 @@ export const deServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 	'cm.finishOutputFirst':
 		'Schließen Sie zuerst das Erstellen oder Ändern der Ausgabequelle ab, bevor Sie das Mapping ändern.',
 	'cm.problem.profile': 'Wählen Sie zuerst unter „Eingabe und Ausgabe“ die Ausgabequelle.',
-	'cm.problem.catalog': 'Wählen Sie den Quellkatalog in „Mapping Set settings“.',
+	'cm.problem.catalog': 'Die Attributliste von Authrim konnte nicht geladen werden.',
 	'cm.problem.context': 'Das Mapping ist noch nicht bearbeitbar.',
-	'cm.problem.name': 'Geben Sie dem Mapping Set einen Namen (in „Mapping Set settings“).',
+	'cm.problem.name': 'Geben Sie dem Mapping einen Namen (in „Mapping-Einstellungen“).',
 	'cm.problem.mappings': 'Fügen Sie mindestens ein Mapping hinzu.',
 	'sf.group.consent': 'Einwilligung',
 	'sf.group.role': 'Rollenzuweisung',
@@ -210,7 +209,7 @@ export const deServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 	'sf.row.test': 'Verbindung testen',
 	'sf.row.issuer': 'Aussteller',
 	'sf.row.clientId': 'Client-ID',
-	'sf.row.mappingSet': 'Zuordnungssatz',
+	'sf.row.mappingSet': 'Mapping',
 	'sf.row.role': 'Rolle',
 	'sf.row.kind.rp': 'OpenID-Connect-App (RP)',
 	'sf.row.kind.sp': 'SAML-Dienst (SP)',
@@ -252,9 +251,9 @@ export const deServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 
 	'sf.schema.authrim': 'Authrim-Benutzer',
 	'sf.schema.authrimExtended': 'Authrim-Benutzer mit benutzerdefinierten Attributen',
-	'sf.schema.serviceReceives': 'Claims oder Attribute, die der Dienst erhält',
-	'sf.schema.standardPlusCustom': 'Standard-Claims plus benutzerdefinierte Claims',
-	'sf.schema.providerStandard': 'Die Standard-Claims oder -Attribute des Anbieters',
+	'sf.schema.serviceReceives': 'Attribute, die der Dienst erhält',
+	'sf.schema.standardPlusCustom': 'Standard-Attribute plus benutzerdefinierte Attribute',
+	'sf.schema.providerStandard': 'Die Standardattribute des Anbieters',
 
 	'sf.wizard.title': 'Serviceablauf hinzufügen',
 	'sf.wizard.description':
@@ -397,9 +396,9 @@ export const deServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 	'sf.rp.openidRequired': 'Eine OpenID-Connect-App muss {scope} anfordern.',
 	'sf.rp.userInfo': 'An die App gesendete Benutzerinformationen',
 	'sf.rp.userInfoHint':
-		'Welche Regeln die Claims im ID-Token und in UserInfo bestimmen. Ohne Satz läuft keine Zuordnung.',
+		'Welche Regeln die Attribute im ID-Token und in UserInfo bestimmen. Ohne Satz läuft keine Zuordnung.',
 
-	'sf.set.choose': 'Zuordnungssatz wählen',
+	'sf.set.choose': 'Mapping wählen',
 	'sf.set.tenantDefault': 'Vorgabe des Mandanten übernehmen',
 	'sf.set.staff': 'Satz für Beschäftigte',
 	'sf.set.none': 'Keine zusätzliche Zuordnung',
@@ -434,7 +433,7 @@ export const deServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 	'sf.in.clientIdHint': 'Wird vom Anbieter vergeben, wenn Sie Authrim registrieren.',
 	'sf.in.clientSecret': 'Client-Geheimnis',
 	'sf.in.attrsLabel': 'Vom Anbieter übernommene Attribute',
-	'sf.in.attrsHint.op': 'Welche Claims des Anbieters Teil des Kontos der Person werden.',
+	'sf.in.attrsHint.op': 'Welche Attribute des Anbieters Teil des Kontos der Person werden.',
 	'sf.in.attrsHint.idp': 'Welche Attribute des Anbieters Teil des Kontos der Person werden.',
 	'sf.in.attrs.minimal': 'Minimal: nur die Kennung des Anbieters',
 	'sf.in.attrs.standard': 'Standard: Name und E-Mail',
@@ -543,8 +542,8 @@ export const deServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 	'sf.fed.error.certificates':
 		'Fügen Sie mindestens ein Zertifikat hinzu, gegen das die Metadaten-Signatur geprüft wird.',
 	'sf.fed.error.roles': 'Aktivieren Sie die SP-Rolle, die IdP-Rolle oder beide.',
-	'sf.fed.error.spMapping': 'Wählen Sie das Mapping-Set für die SP-Rolle.',
-	'sf.fed.error.idpMapping': 'Wählen Sie das Mapping-Set für die IdP-Rolle.',
+	'sf.fed.error.spMapping': 'Wählen Sie das Mapping für die SP-Rolle.',
+	'sf.fed.error.idpMapping': 'Wählen Sie das Mapping für die IdP-Rolle.',
 	'sf.fed.error.dsUrl': 'Die URL des Discovery Service muss eine https-Adresse sein.',
 	'sf.fed.name': 'Name',
 	'sf.fed.metadataUrl': 'URL der Aggregat-Metadaten',
@@ -583,10 +582,10 @@ export const deServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 	'sf.fed.role.idp': 'IdP-Rolle',
 	'sf.fed.role.idpDesc':
 		'Die Personen in Authrim können sich über die Einrichtungen der Föderation anmelden.',
-	'sf.fed.mappingSet.sp': 'Mapping-Set (SP-Rolle)',
-	'sf.fed.mappingSet.idp': 'Mapping-Set (IdP-Rolle)',
-	'sf.fed.mappingSet.failed': 'Die Mapping-Sets konnten nicht geladen werden.',
-	'sf.fed.mappingSet.none': 'Es gibt kein auswählbares Mapping-Set. Legen Sie zuerst eines an.',
+	'sf.fed.mappingSet.sp': 'Mapping (SP-Rolle)',
+	'sf.fed.mappingSet.idp': 'Mapping (IdP-Rolle)',
+	'sf.fed.mappingSet.failed': 'Die Mappings konnten nicht geladen werden.',
+	'sf.fed.mappingSet.none': 'Es gibt kein auswählbares Mapping. Legen Sie zuerst eines an.',
 	'sf.fed.idpSelection.label': 'Wie Personen ihre Einrichtung wählen',
 	'sf.fed.idpSelection.authrim': 'Suchseite von Authrim',
 	'sf.fed.idpSelection.external': 'Externer Discovery Service',
@@ -681,7 +680,7 @@ export const deServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 	'sf.dp.addAttribute': 'Attribut hinzufügen',
 	'sf.dp.addClaim': 'Claim hinzufügen',
 	'sf.dp.error.name': 'Geben Sie einen Namen ein.',
-	'sf.dp.error.rows': 'Fügen Sie mindestens ein Attribut (einen Claim) hinzu.',
+	'sf.dp.error.rows': 'Fügen Sie mindestens ein Attribut hinzu.',
 	'sf.dp.error.emptyKey': 'Eine Zeile hat keinen Namen.',
 	'sf.dp.error.duplicate': 'Zwei Zeilen haben denselben Namen.',
 	'sf.dp.error.surface': 'Wählen Sie ID-Token, UserInfo oder beides.',
@@ -779,7 +778,7 @@ export const deServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 	'sf.dp.field.create': 'Ausgabequelle erstellen',
 	'sf.dp.field.edit': 'Ausgabequelle bearbeiten',
 	'sf.dp.field.hint':
-		'Die Attribute (Claims), die an App oder Dienst gesendet werden. Eine Zuordnung sendet in diese Ausgabequelle.',
+		'Die Attribute, die an App oder Dienst gesendet werden. Eine Zuordnung sendet in diese Ausgabequelle.',
 	'sf.fed.flow.exclusions': 'Ausschlüsse',
 	'sf.fed.flow.exclusionsItem': 'Ausschlüsse und Entities',
 	'sf.fed.flow.exclusionsCount': '{count} ausgeschlossen',

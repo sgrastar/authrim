@@ -482,7 +482,7 @@
 		// The other system is the flow's own setting, asked on the overview.
 		await expect(canvas.getByRole('textbox', { name: /Name of the other system/ })).toBeRequired();
 		// Mapping is a step from the start (a user cannot come in without one), and required.
-		await expect(inFlow(canvasElement, /^Mapping set.*Required.*Not set yet/)).toBeInTheDocument();
+		await expect(inFlow(canvasElement, /^Mapping.*Required.*Not set yet/)).toBeInTheDocument();
 		await expect(canvas.queryByRole('heading', { name: 'Run' })).toBeNull();
 	}}
 />

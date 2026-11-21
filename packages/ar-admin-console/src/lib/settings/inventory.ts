@@ -77,7 +77,7 @@ export const DRAFT_PAGES: readonly DraftPage[] = [
 	{
 		id: 'access/mapping-sets',
 		scope: 'tenant',
-		note: 'The default Mapping Set is also set by the platform (Settings API, platform scope); a tenant value none refuses it.'
+		note: 'The default Mapping is also set by the platform (Settings API, platform scope); a tenant value none refuses it.'
 	},
 	{ id: 'users/lifecycle', scope: 'tenant' },
 	{ id: 'users/support', scope: 'tenant' },
@@ -813,11 +813,11 @@ place(
 
 place(
 	'access/mapping-sets',
-	'Default Mapping Set',
+	'Default Mapping',
 	{ primary: ['identity_mapping.oidc_default_set_id'] },
 	{
 		'identity_mapping.oidc_default_set_id':
-			'Applied to apps that name no Mapping Set of their own (ID token, UserInfo and the consent screen). Unset means no mapping applies; a tenant value none means: do not use the platform default either. A value that cannot be used stops those apps from signing in. Should become a picker of active Mapping Sets, with the apps it would affect.'
+			'Applied to apps that name no Mapping of their own (ID token, UserInfo and the consent screen). Unset means no mapping applies; a tenant value none means: do not use the platform default either. A value that cannot be used stops those apps from signing in. Should become a picker of active Mappings, with the apps it would affect.'
 	}
 );
 
@@ -924,7 +924,7 @@ place(
 
 place(
 	'plat-infra/scale',
-	'Mapping Set usage search',
+	'Mapping usage search',
 	{
 		search: [
 			'identity_mapping.reference_scan_tenant_limit',
@@ -935,7 +935,7 @@ place(
 	},
 	{
 		'identity_mapping.reference_scan_tenant_limit':
-			'Platform setting only. How many tenants are read when looking for what uses a platform Mapping Set; more tenants than this and a deletion or switch-off is refused.',
+			'Platform setting only. How many tenants are read when looking for what uses a platform Mapping; more tenants than this and a deletion or switch-off is refused.',
 		'identity_mapping.reference_scan_row_limit':
 			'Platform setting only. Rows read from one place before it is cut off and the count is given as a lower bound.',
 		'identity_mapping.reference_scan_concurrency':

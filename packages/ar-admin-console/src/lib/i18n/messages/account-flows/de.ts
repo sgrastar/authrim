@@ -218,7 +218,7 @@ export const deAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 	'af.group.syncTiming': 'Wann synchronisiert wird',
 	'af.group.csvFormat': 'Dateiformat',
 	'af.part.sync-about': 'Name und das andere System',
-	'af.part.sync-mapping': 'Zuordnungssatz',
+	'af.part.sync-mapping': 'Mapping',
 	'af.part.sync-role': 'Rollenzuweisung',
 	'af.part.sin-match': 'Wie Benutzer abgeglichen werden',
 	'af.part.sin-update': 'Aktualisierungen und Entfernungen',
@@ -245,7 +245,7 @@ export const deAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 	'af.lead.csv-match':
 		'Legen Sie fest, wie eine Zeile mit einem vorhandenen Benutzer abgeglichen wird und wie sie ihn aktualisiert.',
 	'af.field.partner': 'Name des anderen Systems',
-	'af.field.mappingSet': 'Zuordnungssatz',
+	'af.field.mappingSet': 'Mapping',
 	'af.field.role': 'Rolle',
 	'af.field.matchKey': 'Feld zum Auffinden des Benutzers',
 	'af.field.sin.onMissing': 'Wenn kein Benutzer passt',

@@ -100,7 +100,7 @@ export const arTenants: Record<keyof typeof jaTenants, string> = {
 	'tn.copy.clients.desc': 'التطبيقات المسجلة وإعداداتها.',
 	'tn.copy.samlProviders': 'اتصالات SAML (نسخ معطلة)',
 	'tn.copy.samlProviders.desc':
-		'نسخ إعدادات SP وIdP كمسودات. اختر مجموعة تعيين في المستأجر الوجهة وأكّد بالمصادقة الإضافية من المستوى 2 قبل التفعيل.',
+		'نسخ إعدادات SP وIdP كمسودات. اختر تعيين في المستأجر الوجهة وأكّد بالمصادقة الإضافية من المستوى 2 قبل التفعيل.',
 	'tn.copy.clientCredentials': 'تضمين أسرار العملاء',
 	'tn.copy.clientCredentials.desc': 'ينسخ أيضًا أسرار التطبيقات كما هي.',
 	'tn.copy.webhooks': 'خطافات الويب',
