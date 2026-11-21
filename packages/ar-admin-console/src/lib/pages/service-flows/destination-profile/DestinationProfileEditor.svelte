@@ -9,6 +9,7 @@
 	import ColumnBrowser, { type BrowserItem } from '#lib/ui/patterns/ColumnBrowser.svelte';
 	import Callout from '#lib/ui/patterns/Callout.svelte';
 	import ConfirmDialog from '#lib/ui/patterns/ConfirmDialog.svelte';
+	import Badge from '#lib/ui/primitives/Badge.svelte';
 	import Button from '#lib/ui/primitives/Button.svelte';
 	import SegmentedControl from '#lib/ui/primitives/SegmentedControl.svelte';
 	import Select from '#lib/ui/primitives/Select.svelte';
@@ -86,6 +87,12 @@
 	let saving = $state(false);
 	let failure = $state('');
 	let draftReason = $state<string | null>(null);
+	/** What was written but not switched on, and the form it was written from, for "try again". */
+	let draftProfile = $state<MappingDestinationProfile | null>(null);
+	let draftFormKey = $state('');
+	const formKey = $derived(JSON.stringify([form.displayName.trim(), schemaFromForm(form)]));
+	/** Only the draft as written can be switched on again: a changed form is saved first. */
+	const canRetry = $derived(!!draftProfile?.version?.id && draftFormKey === formKey);
 	let confirming = $state(false);
 
 	// What the title was last filled with by a template or a copy: a title the person has
@@ -160,8 +167,12 @@
 	const problems = $derived(profileProblems(form));
 	const blocked = $derived(problems.length > 0 || invalidRows);
 
-	function attributeNames(template: DestinationTemplate): string[] {
-		return formFromSchema(protocol, '', template.schema).rows.map((row) => row.key);
+	/** What a template holds, by the name a person knows (the attribute's own name is its hover text). */
+	function attributeItems(template: DestinationTemplate): { key: string; label: string }[] {
+		return formFromSchema(protocol, '', template.schema).rows.map((row) => ({
+			key: row.key,
+			label: row.label.trim() || row.key
+		}));
 	}
 
 	function requestSave() {
@@ -174,6 +185,8 @@
 		saving = true;
 		failure = '';
 		draftReason = null;
+		// The form as submitted: a change made while this runs is not what gets switched on again.
+		const submittedKey = formKey;
 		try {
 			const saved = await client.save(tenantId, {
 				id: profile?.id ?? (writtenId || undefined),
@@ -184,7 +197,30 @@
 			});
 			writtenId = saved.profile.id;
 			if (saved.active) onsaved(saved);
-			else draftReason = saved.reason ?? '';
+			else {
+				draftReason = saved.reason ?? '';
+				draftProfile = saved.profile;
+				draftFormKey = submittedKey;
+			}
+		} catch (error) {
+			failure = error instanceof Error && error.message ? error.message : t('sf.dp.saveFailed');
+		} finally {
+			saving = false;
+		}
+	}
+
+	/** Reviews and switches on the draft that was written, without writing it again. */
+	async function retryActivation() {
+		if (!draftProfile || !canRetry || saving) return;
+		saving = true;
+		failure = '';
+		try {
+			const result = await client.activate(tenantId, draftProfile);
+			if (result.active) {
+				draftReason = null;
+				draftProfile = null;
+				onsaved(result);
+			} else draftReason = result.reason ?? '';
 		} catch (error) {
 			failure = error instanceof Error && error.message ? error.message : t('sf.dp.saveFailed');
 		} finally {
@@ -221,13 +257,6 @@
 
 <div class="editor">
 	<h3 class="editor__title">{t(editing ? 'sf.dp.title.edit' : 'sf.dp.title.new')}</h3>
-	<TextField
-		label={t('sf.dp.name')}
-		hint={t('sf.dp.nameHint')}
-		required
-		bind:value={form.displayName}
-	/>
-
 	{#if !editing}
 		<SegmentedControl label={t('sf.dp.method')} options={methodOptions} bind:value={method} />
 		{#if method === 'template'}
@@ -244,7 +273,17 @@
 							<dd>{item.template.updatedAt}</dd>
 						</dl>
 						{#if previewing === item.id}
-							<p class="template__names">{attributeNames(item.template).join(', ')}</p>
+							{@const attributes = attributeItems(item.template)}
+							<div class="template__attributes">
+								<p class="template__attributes-title">
+									{t('sf.dp.template.attributes', { count: attributes.length })}
+								</p>
+								<ul class="template__labels">
+									{#each attributes as attribute (attribute.key)}
+										<li title={attribute.key}><Badge>{attribute.label}</Badge></li>
+									{/each}
+								</ul>
+							</div>
 						{/if}
 						<div class="template__actions">
 							<Button
@@ -276,6 +315,13 @@
 			{/if}
 		{/if}
 	{/if}
+
+	<TextField
+		label={t('sf.dp.name')}
+		hint={t('sf.dp.nameHint')}
+		required
+		bind:value={form.displayName}
+	/>
 
 	{#if protocol === 'saml'}
 		<p class="editor__hint">{t('sf.dp.nameId.hint')}</p>
@@ -309,6 +355,11 @@
 			{#if profile?.lifecycleState === 'active'}<p class="editor__warn">
 					{t('sf.dp.draft.editWarning')}
 				</p>{/if}
+			{#if canRetry}<div>
+					<Button variant="secondary" size="sm" loading={saving} onclick={retryActivation}
+						>{t('sf.dp.draft.retry')}</Button
+					>
+				</div>{/if}
 		</Callout>
 	{/if}
 	<div class="editor__actions">
@@ -402,10 +453,24 @@
 		text-align: end;
 	}
 
-	.template__names {
+	.template__attributes {
+		display: grid;
+		gap: var(--space-related);
+	}
+
+	.template__attributes-title {
 		margin: 0;
 		font-size: var(--fs-small);
-		overflow-wrap: anywhere;
+		color: var(--text-secondary);
+	}
+
+	.template__labels {
+		display: flex;
+		flex-wrap: wrap;
+		gap: var(--space-related);
+		margin: 0;
+		padding: 0;
+		list-style: none;
 	}
 
 	.template__actions {

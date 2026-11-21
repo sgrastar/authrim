@@ -55,6 +55,9 @@
 	const manual = ready();
 	const copy = ready();
 	const inUse = ready();
+	const retry = ready(
+		createFakeDestinationProfiles([existing], { blockReview: 'blocking warning' })
+	);
 	const draft = ready(
 		createFakeDestinationProfiles([existing], { blockReview: 'blocking warning' })
 	);
@@ -213,5 +216,85 @@
 		await canvas.findByText(t('sf.dp.draft.title'));
 		await expect(canvas.getByText(t('sf.dp.draft.editWarning'))).toBeVisible();
 		await expect(stopped.onsaved).not.toHaveBeenCalled();
+	}}
+/>
+
+<Story
+	name="A template's preview lists its attributes as labels"
+	args={ready().args}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(canvas.getByRole('button', { name: /Academic federation/ }));
+		await userEvent.click(canvas.getByRole('button', { name: /GakuNin application standard/ }));
+		await userEvent.click(canvas.getByRole('button', { name: t('sf.dp.template.preview') }));
+		const count = (gakunin.schema.attributes as unknown[]).length;
+		await canvas.findByText(t('sf.dp.template.attributes', { count }));
+		// One label for each attribute, named as a person knows it, with the attribute's own name as
+		// its hover text; not one run-on line of identifiers.
+		const labels = canvas.getAllByRole('listitem').filter((item) => item.hasAttribute('title'));
+		await expect(labels).toHaveLength(count);
+		await expect(labels.some((item) => item.getAttribute('title')?.startsWith('urn:oid:'))).toBe(
+			true
+		);
+		await expect(
+			labels.every((item) => !(item.textContent ?? '').trim().startsWith('urn:oid:'))
+		).toBe(true);
+	}}
+/>
+
+<Story
+	name="The title comes after the way to start, right above the NameID settings"
+	args={ready().args}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const title = canvas.getByRole('textbox', { name: new RegExp(`^${t('sf.dp.name')}`) });
+		const method = canvas.getByRole('radio', { name: t('sf.dp.method.template') });
+		const format = canvas.getByRole('combobox', { name: t('sf.dp.nameId.format') });
+		const follows = (a: Element, b: Element) =>
+			Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+		await expect(follows(method, title)).toBe(true);
+		await expect(follows(title, format)).toBe(true);
+	}}
+/>
+
+<Story
+	name="A draft that was not switched on can be switched on again without being written again"
+	args={retry.args}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(canvas.getByRole('radio', { name: t('sf.dp.method.manual') }));
+		await userEvent.type(
+			canvas.getByRole('textbox', { name: new RegExp(`^${t('sf.dp.name')}`) }),
+			'Mine'
+		);
+		await userEvent.click(canvas.getByRole('button', { name: t('sf.dp.addAttribute') }));
+		await userEvent.type(canvas.getAllByRole('textbox', { name: /Attribute/ })[0], 'mail');
+		await userEvent.click(canvas.getByRole('button', { name: t('sf.dp.save') }));
+		await canvas.findByText(t('sf.dp.draft.title'));
+		await userEvent.click(canvas.getByRole('button', { name: t('sf.dp.draft.retry') }));
+		await waitFor(() => expect(retry.onsaved).toHaveBeenCalled());
+		await expect(retry.fake.activated).toHaveLength(1);
+		// Nothing was written a second time.
+		await expect(retry.fake.saved).toHaveLength(1);
+	}}
+/>
+
+<Story
+	name="Switching on again is offered only for the draft as it was written"
+	args={ready(createFakeDestinationProfiles([existing], { blockReview: 'blocking warning' })).args}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(canvas.getByRole('radio', { name: t('sf.dp.method.manual') }));
+		const title = canvas.getByRole('textbox', { name: new RegExp(`^${t('sf.dp.name')}`) });
+		await userEvent.type(title, 'Mine');
+		await userEvent.click(canvas.getByRole('button', { name: t('sf.dp.addAttribute') }));
+		await userEvent.type(canvas.getAllByRole('textbox', { name: /Attribute/ })[0], 'mail');
+		await userEvent.click(canvas.getByRole('button', { name: t('sf.dp.save') }));
+		await canvas.findByRole('button', { name: t('sf.dp.draft.retry') });
+		// A change to the form is a new draft to write: it is saved, not switched on from the old one.
+		await userEvent.type(title, ' changed');
+		await waitFor(() =>
+			expect(canvas.queryByRole('button', { name: t('sf.dp.draft.retry') })).toBeNull()
+		);
 	}}
 />

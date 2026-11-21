@@ -648,6 +648,7 @@ export const deServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 	'sf.dp.template.updated': 'Aktualisiert',
 	'sf.dp.template.preview': 'Vorschau',
 	'sf.dp.template.hidePreview': 'Vorschau schließen',
+	'sf.dp.template.attributes': 'Enthaltene Attribute ({count})',
 	'sf.dp.template.use': 'Vorlage verwenden',
 	'sf.dp.template.used': '„{name}“ ist geladen. Änderungen in der Tabelle unten.',
 	'sf.dp.nameId.format': 'NameID-Format',
@@ -691,6 +692,7 @@ export const deServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 	'sf.dp.draft.title': 'Als Entwurf gespeichert',
 	'sf.dp.draft.body':
 		'Die Prüfung vor der Aktivierung hat gestoppt. Korrigieren und erneut speichern.',
+	'sf.dp.draft.retry': 'Erneut aktivieren',
 	'sf.dp.impact.title': 'Diese Ausgabequelle wird verwendet',
 	'sf.dp.impact.body': 'Beim Speichern ändert sich sofort, was diese Zuordnungen senden: {names}',
 	'sf.dp.impact.confirm': 'Speichern',
