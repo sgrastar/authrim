@@ -158,14 +158,19 @@
 
 	/** An output source is being made or changed: the mapping waits until that is done or left. */
 	const profileBusy = $derived(profileEditor !== null);
-	/** What cannot be saved yet: a field that is not valid, a name, or nothing mapped. */
-	const blocked = $derived(
-		invalid ||
-			profileBusy ||
-			!shared?.context ||
-			((shared.form.dirty || !shared.detail) && !shared.form.value.name.trim()) ||
-			!shared.form.value.mappings.length
-	);
+	/** What cannot be saved yet, in words ('' when nothing stops it). */
+	const blockedReason = $derived.by(() => {
+		if (!shared) return '';
+		if (invalid) return t('common.fixErrors');
+		if (shared.newKey && !shared.form.value.profileId) return t('cm.problem.profile');
+		if (shared.newKey && !shared.form.value.catalogVersionId) return t('cm.problem.catalog');
+		if (!shared.context) return t('cm.problem.context');
+		if ((shared.form.dirty || !shared.detail) && !shared.form.value.name.trim())
+			return t('cm.problem.name');
+		if (!shared.form.value.mappings.length) return t('cm.problem.mappings');
+		return '';
+	});
+	const blocked = $derived(blockedReason !== '');
 	function save() {
 		if (blocked || !shared) return;
 		void shared.save();
@@ -445,11 +450,12 @@
 				>{/if}
 		{/if}
 	</div>
-	{#if !readonly && !disabled && !shared.readonlyReason}
+	{#if !readonly && !disabled && !shared.readonlyReason && !profileBusy}
 		<SaveBar
 			dirty={shared.dirty}
 			saving={shared.phase === 'saving'}
 			invalid={blocked}
+			invalidMessage={blockedReason}
 			saveLabel={t('cm.saveBind')}
 			onsave={save}
 			ondiscard={discard}
