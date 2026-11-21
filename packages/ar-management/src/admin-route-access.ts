@@ -1275,18 +1275,18 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     'token claim rules'
   ),
   ...byMethod(
-    '/api/admin/field-mapping',
+    '/api/admin/federation/*',
     ADMIN_PERMISSIONS.SETTINGS_READ,
     ADMIN_PERMISSIONS.SETTINGS_WRITE,
     ADMIN_PERMISSIONS.SETTINGS_WRITE,
-    'identity field mapping'
+    'federation trust sources'
   ),
   ...byMethod(
-    '/api/admin/field-mapping/*',
+    '/api/admin/identifiers/*',
     ADMIN_PERMISSIONS.SETTINGS_READ,
     ADMIN_PERMISSIONS.SETTINGS_WRITE,
     ADMIN_PERMISSIONS.SETTINGS_WRITE,
-    'identity field mapping'
+    'persistent identifiers'
   ),
   rule({
     pattern: '/api/admin/identity-mapping/inbound/op/:id',
@@ -1414,6 +1414,16 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     roles: PLATFORM_ADMIN_ROLES,
     description: 'platform identity mapping default inspection',
   }),
+  // Everything else under identity-mapping (profiles, catalogs, templates, schemas, attribute
+  // groups and fields, OIDC scopes, review tasks, schema readiness, groups, entitlements ...) is
+  // the settings read and write. Kept after the specific rules above, which the first match wins.
+  ...byMethod(
+    '/api/admin/identity-mapping/*',
+    ADMIN_PERMISSIONS.SETTINGS_READ,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    'identity mapping'
+  ),
   readOnly(
     '/api/admin/credential-profiles',
     ADMIN_PERMISSIONS.VC_CREDENTIAL_PROFILES_READ,

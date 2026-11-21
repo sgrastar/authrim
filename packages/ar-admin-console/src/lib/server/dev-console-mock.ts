@@ -621,7 +621,7 @@ export async function handleDevAdminMock(
 		}
 	}
 	// The SAML federation sources, their entities and "make this an explicit connection".
-	if (segments[0] === 'saml-federation-sources' || segments[1] === 'federation-trust-sources') {
+	if (segments[0] === 'saml-federation-sources' || segments[1] === 'trust-sources') {
 		const body: unknown =
 			method === 'GET' || method === 'DELETE'
 				? undefined

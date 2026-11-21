@@ -235,7 +235,7 @@
 		],
 		identityMapping: {
 			parent: {
-				href: '/admin/field-mapping',
+				href: '/admin/field-mapping/profiles',
 				icon: 'i-ph-graph',
 				label: $LL.admin_nav_identity_mapping()
 			},
@@ -243,12 +243,6 @@
 				{
 					href: '/admin/field-mapping/profiles',
 					label: $LL.admin_nav_source_destination()
-				},
-
-				{
-					href: '/admin/field-mapping/field-mapping-sets',
-					label: $LL.admin_nav_mapping_policies(),
-					activePaths: ['/admin/field-mapping/edit']
 				}
 			]
 		},
@@ -437,11 +431,6 @@
 			label: c.label,
 			icon: 'i-ph-arrow-right'
 		})),
-		{
-			path: '/admin/field-mapping/edit',
-			label: $LL.admin_nav_mapping_policies(),
-			icon: 'i-ph-arrow-right'
-		},
 		...navTenant.settings,
 		// Platform
 		...navPlatform.tenantManagement,

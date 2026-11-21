@@ -509,13 +509,6 @@
 			description={$LL.admin_flows_configuration_links_description()}
 		>
 			<div class="link-grid">
-				<a href="/admin/field-mapping/field-mapping-sets" class="link-card">
-					<i class="i-ph-graph" aria-hidden="true"></i>
-					<div>
-						<strong>{$LL.admin_flows_link_field_mapping_set_title()}</strong>
-						<span>{$LL.admin_flows_link_field_mapping_set_description()}</span>
-					</div>
-				</a>
 				<a href="/admin/consent-statements" class="link-card">
 					<i class="i-ph-list-checks" aria-hidden="true"></i>
 					<div>

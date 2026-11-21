@@ -148,12 +148,7 @@ const allNewFlowTemplates: NewFlowTemplate[] = [
 				description: 'Identity SchemaからSPへ送る属性セットを決定します。',
 				icon: 'i-ph-graph',
 				settings: ['Destination Field Mapping Set', '送信対象フィールド', '属性名変換'],
-				links: [
-					{
-						label: 'Field Mapping Set',
-						href: '/admin/field-mapping/field-mapping-sets'
-					}
-				]
+				links: []
 			},
 			{
 				id: 'consent',
@@ -245,12 +240,7 @@ const allNewFlowTemplates: NewFlowTemplate[] = [
 				description: '要求scopeとclaimに対して、実際に返せるユーザー属性を決定します。',
 				icon: 'i-ph-graph',
 				settings: ['Identity Schema', 'Destination Field Mapping Set', 'claim policy'],
-				links: [
-					{
-						label: 'Field Mapping Set',
-						href: '/admin/field-mapping/field-mapping-sets'
-					}
-				]
+				links: []
 			},
 			{
 				id: 'consent',
@@ -573,13 +563,7 @@ const allNewFlowTemplates: NewFlowTemplate[] = [
 					'SAML SPへ送信する属性を表示し、今回のみ許可または今後も許可のユーザー選択を受け取ります。',
 				icon: 'i-ph-handshake',
 				settings: ['SAML attribute release policy', 'masked attribute values', 'User Decision'],
-				links: [
-					{ label: '同意文', href: '/admin/consent-statements' },
-					{
-						label: 'Field Mapping Set',
-						href: '/admin/field-mapping/field-mapping-sets'
-					}
-				]
+				links: [{ label: '同意文', href: '/admin/consent-statements' }]
 			},
 			{
 				id: 'saml-attribute-release-complete',

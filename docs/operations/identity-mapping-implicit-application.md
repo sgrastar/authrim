@@ -494,9 +494,7 @@ request is refused (409, nothing changed) when:
   set and the batch (the batch begins with a check of the version in use, else the one saved last).
 
 A repeat of a successful request with the same `Idempotency-Key` is answered with the stored answer.
-A repeat with another key, once the set is gone, is 404. The older
-`DELETE /api/admin/field-mapping/field-mapping-sets/{fieldMappingSetId}` still refuses a set that
-is switched on.
+A repeat with another key, once the set is gone, is 404.
 
 The audit record `identity_mapping.set.deleted` says whether the set was on (`was_enabled`).
 

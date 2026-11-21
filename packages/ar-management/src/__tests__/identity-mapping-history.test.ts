@@ -183,11 +183,11 @@ function setup() {
       app.put('/api/admin/clients/:id', adminClientUpdateHandler);
       app.get('/api/admin/identity-mapping/effective', adminIdentityMappingEffectiveHandler);
       app.put(
-        '/api/admin/field-mapping/destination-profiles/:destinationProfileId',
+        '/api/admin/identity-mapping/destination-profiles/:destinationProfileId',
         adminIdentityMappingDestinationProfileUpdateHandler
       );
       app.post(
-        '/api/admin/field-mapping/field-mapping-sets/:fieldMappingSetId/versions/:fieldMappingVersionId/compile',
+        '/api/admin/identity-mapping/field-mapping-sets/:fieldMappingSetId/versions/:fieldMappingVersionId/compile',
         adminIdentityFieldMappingVersionCompileHandler
       );
       app.route('/api/admin', settingsV2);
@@ -283,7 +283,7 @@ describe('mapping selection history, restore and committed evidence', () => {
       else {
         const updated = await f.call(
           'PUT',
-          '/api/admin/field-mapping/destination-profiles/profile-b',
+          '/api/admin/identity-mapping/destination-profiles/profile-b',
           {
             schema: {
               destinationType: 'oidc',
@@ -432,7 +432,7 @@ describe('mapping selection history, restore and committed evidence', () => {
       .run(TENANT);
     const compiled = await f.call(
       'POST',
-      '/api/admin/field-mapping/field-mapping-sets/set-a/versions/ver-a/compile',
+      '/api/admin/identity-mapping/field-mapping-sets/set-a/versions/ver-a/compile',
       { catalogVersionId: 'catalog-a-draft' },
       { 'Idempotency-Key': 'test-draft-compile' }
     );

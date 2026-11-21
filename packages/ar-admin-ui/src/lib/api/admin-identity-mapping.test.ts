@@ -69,46 +69,87 @@ describe('adminIdentityMappingAPI', () => {
 		});
 	});
 
-	describe('listFieldMappingSets', () => {
-		const set = (id: string, owner?: string) => ({
+	const json = (body: unknown) =>
+		new Response(JSON.stringify(body), {
+			status: 200,
+			headers: { 'Content-Type': 'application/json' }
+		});
+
+	describe('listFieldMappingSets (read from the one-step Mapping Set API)', () => {
+		const row = (id: string, owner?: string, enabled = true) => ({
 			id,
-			tenantId: owner === 'platform' ? 'platform' : 'tenant-a',
 			...(owner === undefined ? {} : { owner }),
-			fieldMappingKey: id,
-			displayName: id,
-			lifecycleState: 'active'
+			field_mapping_key: id,
+			display_name: id,
+			enabled
 		});
 
 		it("keeps to the tenant's own sets, and leaves out the platform's", async () => {
 			fetchMock.mockResolvedValueOnce(
-				new Response(
-					JSON.stringify({
-						fieldMappingSets: [
-							set('own', 'tenant'),
-							set('shared', 'platform'),
-							set('also-own', 'tenant')
-						]
-					}),
-					{ status: 200, headers: { 'Content-Type': 'application/json' } }
-				)
-			);
-
-			const result = await adminIdentityMappingAPI.listFieldMappingSets();
-
-			expect(result.fieldMappingSets.map((item) => item.id)).toEqual(['own', 'also-own']);
-		});
-
-		it('takes a set with no owner (an older API) as the tenant’s', async () => {
-			fetchMock.mockResolvedValueOnce(
-				new Response(JSON.stringify({ fieldMappingSets: [set('old-1'), set('old-2')] }), {
-					status: 200,
-					headers: { 'Content-Type': 'application/json' }
+				json({
+					sets: [row('own', 'tenant'), row('shared', 'platform'), row('also-own', 'tenant')]
 				})
 			);
 
 			const result = await adminIdentityMappingAPI.listFieldMappingSets();
 
-			expect(result.fieldMappingSets.map((item) => item.id)).toEqual(['old-1', 'old-2']);
+			expect(requestPath(fetchMock.mock.calls[0][0])).toBe('/api/admin/identity-mapping/sets');
+			expect(result.fieldMappingSets.map((item) => item.id)).toEqual(['own', 'also-own']);
+		});
+
+		it('reads a set that is switched on as active and one that is off as a draft', async () => {
+			fetchMock.mockResolvedValueOnce(json({ sets: [row('on'), row('off', 'tenant', false)] }));
+
+			const result = await adminIdentityMappingAPI.listFieldMappingSets();
+
+			expect(result.fieldMappingSets.map((item) => item.lifecycleState)).toEqual([
+				'active',
+				'draft'
+			]);
+			expect(result.fieldMappingSets[0]).toMatchObject({
+				fieldMappingKey: 'on',
+				displayName: 'on',
+				owner: 'tenant'
+			});
+		});
+	});
+
+	describe('listFieldMappingVersions (read from the set)', () => {
+		it('gives the version in use and the Destination Profile it releases into', async () => {
+			fetchMock.mockResolvedValueOnce(
+				json({
+					id: 'set-1',
+					enabled: true,
+					active_version_id: 'ver-1',
+					version_label: 'v3',
+					destination_profile_id: 'profile-1'
+				})
+			);
+
+			const result = await adminIdentityMappingAPI.listFieldMappingVersions('set-1');
+
+			expect(requestPath(fetchMock.mock.calls[0][0])).toBe(
+				'/api/admin/identity-mapping/sets/set-1'
+			);
+			expect(result.fieldMappingVersions).toMatchObject([
+				{
+					id: 'ver-1',
+					fieldMappingSetId: 'set-1',
+					lifecycleState: 'active',
+					destinationProfileIds: ['profile-1'],
+					directions: { source: true, destination: true }
+				}
+			]);
+		});
+
+		it('has no version for a set that is switched off', async () => {
+			fetchMock.mockResolvedValueOnce(
+				json({ id: 'set-1', enabled: false, active_version_id: null })
+			);
+
+			const result = await adminIdentityMappingAPI.listFieldMappingVersions('set-1');
+
+			expect(result.fieldMappingVersions).toEqual([]);
 		});
 	});
 
@@ -175,74 +216,41 @@ describe('adminIdentityMappingAPI', () => {
 		await adminIdentityMappingAPI.listFederationTrustSources();
 		await adminIdentityMappingAPI.listFederationMetadataDocuments('trust/source 1');
 		await adminIdentityMappingAPI.listReviewTasks({ status: 'open', limit: 25 });
-		await adminIdentityMappingAPI.createFieldMappingSet({
-			fieldMappingKey: 'ui_draft',
-			displayName: 'UI Draft'
-		});
-		await adminIdentityMappingAPI.createFieldMappingVersion('field mapping set 1', {
-			versionLabel: 'ui-draft',
-			rules: [
-				{
-					ruleKey: 'email',
-					ruleKind: 'source_mapping',
-					action: 'map',
-					edges: [{ sourceRef: { path: 'Email' }, targetRef: { path: 'email' } }],
-					transforms: [{ edgeIndex: 0, operation: 'trim' }]
-				}
-			]
-		});
 		await adminIdentityMappingAPI.listFieldMappingVersions('field mapping set 1');
-		await adminIdentityMappingAPI.rollbackFieldMappingSet('field mapping set 1');
-		await adminIdentityMappingAPI.publishFieldMappingVersion('field mapping set 1', 'version 1');
-		await adminIdentityMappingAPI.compileFieldMappingVersion('field mapping set 1', 'version 1', {
-			catalogVersionId: 'catalog version 1'
-		});
-		await adminIdentityMappingAPI.activateFieldMappingVersion('field mapping set 1', 'version 1', {
-			snapshotId: 'snapshot 1',
-			activationScope: { kind: 'tenant', id: 'tenant_a' }
-		});
-		await adminIdentityMappingAPI.deactivateFieldMappingVersion('field mapping set 1', 'version 1');
 		await adminIdentityMappingAPI.transitionReviewTask('review task 1', {
 			status: 'resolved',
 			reasonCodes: ['operator_resolved']
 		});
 
 		expect(fetchMock.mock.calls.map((call) => requestPath(call[0]))).toEqual([
-			'/api/admin/field-mapping/field-mapping-sets',
-			'/api/admin/field-mapping/catalogs',
-			'/api/admin/field-mapping/protocol-schemas',
-			'/api/admin/field-mapping/external-schemas',
-			'/api/admin/field-mapping/source-profiles',
-			'/api/admin/field-mapping/destination-profiles',
-			'/api/admin/field-mapping/source-profiles/csv/parse',
-			'/api/admin/field-mapping/source-profiles',
-			'/api/admin/field-mapping/source-profiles/source%20profile%201',
-			'/api/admin/field-mapping/source-profiles/source%20profile%201/versions/version%201/review',
-			'/api/admin/field-mapping/source-profiles/source%20profile%201/versions/version%201/activate',
-			'/api/admin/field-mapping/source-profiles/source%20profile%201',
-			'/api/admin/field-mapping/destination-profiles',
-			'/api/admin/field-mapping/destination-profiles/destination%20profile%201',
-			'/api/admin/field-mapping/destination-profiles/destination%20profile%201/versions/version%201/review',
-			'/api/admin/field-mapping/destination-profiles/destination%20profile%201/versions/version%201/activate',
-			'/api/admin/field-mapping/destination-profiles/destination%20profile%201',
-			'/api/admin/field-mapping/attribute-groups',
-			'/api/admin/field-mapping/attribute-groups',
-			'/api/admin/field-mapping/attribute-fields',
-			'/api/admin/field-mapping/attribute-fields',
-			'/api/admin/field-mapping/templates',
-			'/api/admin/field-mapping/schema-readiness',
-			'/api/admin/field-mapping/federation-trust-sources',
-			'/api/admin/field-mapping/federation-trust-sources/trust%2Fsource%201/metadata-documents',
-			'/api/admin/field-mapping/review-tasks?status=open&limit=25',
-			'/api/admin/field-mapping/field-mapping-sets',
-			'/api/admin/field-mapping/field-mapping-sets/field%20mapping%20set%201/versions',
-			'/api/admin/field-mapping/field-mapping-sets/field%20mapping%20set%201/versions',
-			'/api/admin/field-mapping/field-mapping-sets/field%20mapping%20set%201/rollback',
-			'/api/admin/field-mapping/field-mapping-sets/field%20mapping%20set%201/versions/version%201/publish',
-			'/api/admin/field-mapping/field-mapping-sets/field%20mapping%20set%201/versions/version%201/compile',
-			'/api/admin/field-mapping/field-mapping-sets/field%20mapping%20set%201/versions/version%201/activate',
-			'/api/admin/field-mapping/field-mapping-sets/field%20mapping%20set%201/versions/version%201/deactivate',
-			'/api/admin/field-mapping/review-tasks/review%20task%201/transition'
+			'/api/admin/identity-mapping/sets',
+			'/api/admin/identity-mapping/catalogs',
+			'/api/admin/identity-mapping/protocol-schemas',
+			'/api/admin/identity-mapping/external-schemas',
+			'/api/admin/identity-mapping/source-profiles',
+			'/api/admin/identity-mapping/destination-profiles',
+			'/api/admin/identity-mapping/source-profiles/csv/parse',
+			'/api/admin/identity-mapping/source-profiles',
+			'/api/admin/identity-mapping/source-profiles/source%20profile%201',
+			'/api/admin/identity-mapping/source-profiles/source%20profile%201/versions/version%201/review',
+			'/api/admin/identity-mapping/source-profiles/source%20profile%201/versions/version%201/activate',
+			'/api/admin/identity-mapping/source-profiles/source%20profile%201',
+			'/api/admin/identity-mapping/destination-profiles',
+			'/api/admin/identity-mapping/destination-profiles/destination%20profile%201',
+			'/api/admin/identity-mapping/destination-profiles/destination%20profile%201/versions/version%201/review',
+			'/api/admin/identity-mapping/destination-profiles/destination%20profile%201/versions/version%201/activate',
+			'/api/admin/identity-mapping/destination-profiles/destination%20profile%201',
+			'/api/admin/identity-mapping/attribute-groups',
+			'/api/admin/identity-mapping/attribute-groups',
+			'/api/admin/identity-mapping/attribute-fields',
+			'/api/admin/identity-mapping/attribute-fields',
+			'/api/admin/identity-mapping/templates',
+			'/api/admin/identity-mapping/schema-readiness',
+			'/api/admin/federation/trust-sources',
+			'/api/admin/federation/trust-sources/trust%2Fsource%201/metadata-documents',
+			'/api/admin/identity-mapping/review-tasks?status=open&limit=25',
+			'/api/admin/identity-mapping/sets/field%20mapping%20set%201',
+			'/api/admin/identity-mapping/review-tasks/review%20task%201/transition'
 		]);
 		expect(fetchMock.mock.calls[6][1]).toMatchObject({ method: 'POST' });
 		expect(fetchMock.mock.calls[7][1]).toMatchObject({ method: 'POST' });
@@ -256,47 +264,11 @@ describe('adminIdentityMappingAPI', () => {
 		expect(fetchMock.mock.calls[15][1]).toMatchObject({ method: 'POST' });
 		expect(fetchMock.mock.calls[16][1]).toMatchObject({ method: 'DELETE' });
 		expect(fetchMock.mock.calls[18][1]).toMatchObject({ method: 'POST' });
-		expect(fetchMock.mock.calls[26][1]).toMatchObject({ method: 'POST' });
+		expect(fetchMock.mock.calls[26][1]).not.toMatchObject({ method: expect.any(String) });
 		expect(fetchMock.mock.calls[27][1]).toMatchObject({ method: 'POST' });
-		expect(fetchMock.mock.calls[28][1]).not.toMatchObject({ method: expect.any(String) });
-		expect(fetchMock.mock.calls[29][1]).toMatchObject({ method: 'POST' });
-		expect(fetchMock.mock.calls[30][1]).toMatchObject({ method: 'POST' });
-		expect(fetchMock.mock.calls[31][1]).toMatchObject({ method: 'POST' });
-		expect(fetchMock.mock.calls[32][1]).toMatchObject({ method: 'POST' });
-		expect(fetchMock.mock.calls[33][1]).toMatchObject({ method: 'POST' });
-		expect(fetchMock.mock.calls[34][1]).toMatchObject({ method: 'POST' });
-		for (const callIndex of [26, 27, 29, 30, 31, 32, 33, 34]) {
-			expect(requestHeader(fetchMock.mock.calls[callIndex][1], 'Idempotency-Key')).toEqual(
-				expect.any(String)
-			);
-		}
-	});
-
-	it('returns the compiled snapshot from the mutation result envelope', async () => {
-		fetchMock.mockResolvedValueOnce(
-			new Response(
-				JSON.stringify({
-					result: {
-						id: 'snapshot_1',
-						tenantId: 'tenant_a',
-						fieldMappingVersionId: 'version_1',
-						catalogVersionId: 'catalog_version_1',
-						snapshotHash: 'snapshot_hash_1',
-						dependencyGraphId: 'dependency_graph_1',
-						lifecycleState: 'draft'
-					}
-				}),
-				{ status: 200, headers: { 'Content-Type': 'application/json' } }
-			)
+		expect(requestHeader(fetchMock.mock.calls[27][1], 'Idempotency-Key')).toEqual(
+			expect.any(String)
 		);
-
-		const response = await adminIdentityMappingAPI.compileFieldMappingVersion(
-			'field_mapping_set_1',
-			'version_1',
-			{ catalogVersionId: 'catalog_version_1' }
-		);
-
-		expect(response.result.id).toBe('snapshot_1');
 	});
 
 	it('sends the observed revision when updating a federation trust source', async () => {
@@ -308,7 +280,7 @@ describe('adminIdentityMappingAPI', () => {
 		});
 
 		expect(requestPath(fetchMock.mock.calls[0]?.[0])).toBe(
-			'/api/admin/field-mapping/federation-trust-sources/source%2F1'
+			'/api/admin/federation/trust-sources/source%2F1'
 		);
 		expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: 'PUT' });
 		expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({

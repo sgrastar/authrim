@@ -63,7 +63,7 @@ export async function answerFederationMock(
 	onMaterialized?: (entity: MaterializedEntity) => void
 ): Promise<MockAnswer | null> {
 	try {
-		if (segments[0] === 'field-mapping' && segments[1] === 'federation-trust-sources') {
+		if (segments[0] === 'federation' && segments[1] === 'trust-sources') {
 			const id = segments[2];
 			const view = segments[3];
 			if (!id) {
