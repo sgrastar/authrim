@@ -32,7 +32,7 @@ export function mockSource(
 
 export function createFakeSourceProfiles(
 	initial: SourceProfile[] = [],
-	options: { blockReview?: string } = {}
+	options: { blockReview?: string; inUse?: string[] } = {}
 ): FakeSourceProfiles {
 	const rows = new Map(initial.map((row) => [row.id, plain(row)]));
 	const saved: SourceProfileInput[] = [];
@@ -55,6 +55,9 @@ export function createFakeSourceProfiles(
 				: { profile: plain(profile), active: true };
 		},
 		async remove(_tenantId, id) {
+			// The server answers 409 while a mapping set still reads from the profile.
+			if (options.inUse?.includes(id))
+				throw new Error('This input source is still used by a mapping set.');
 			removed.push(id);
 			rows.delete(id);
 		}

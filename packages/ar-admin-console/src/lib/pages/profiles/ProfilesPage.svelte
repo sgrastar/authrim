@@ -125,20 +125,16 @@
 		if (!canWrite) return [];
 		return [
 			{ label: t('pf.edit'), onselect: () => openEditor(row) },
-			// An input source cannot be deleted from here yet: the server does not check whether a
-			// mapping set still reads from it, so deleting one could leave a set pointing at nothing.
-			...(row.side === 'out'
-				? [
-						{
-							label: t('pf.delete'),
-							danger: true,
-							onselect: () => {
-								deleteFailure = '';
-								deleting = row;
-							}
-						}
-					]
-				: [])
+			// The server refuses (409) while a mapping set still reads from the profile; the dialog
+			// then shows its reason instead of closing.
+			{
+				label: t('pf.delete'),
+				danger: true,
+				onselect: () => {
+					deleteFailure = '';
+					deleting = row;
+				}
+			}
 		];
 	}
 	async function saved(_result: DestinationProfileSaved | SourceProfileSaved) {

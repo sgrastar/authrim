@@ -33,7 +33,7 @@
 	const samlSchema = schemaFromForm(formFromSchema('saml', '', templatesFor('saml')[0].schema));
 	const csvForm = emptySourceForm('csv');
 	csvForm.rows = [{ ...emptySourceRow(), key: 'Employee ID' }];
-	const world = () => {
+	const world = (inUse: string[] = []) => {
 		const destinations = createFakeDestinationProfiles([
 			mockProfile('saml', 'saml-1', 'Portal attributes', samlSchema),
 			mockProfile(
@@ -44,9 +44,10 @@
 				'draft'
 			)
 		]);
-		const sources = createFakeSourceProfiles([
-			mockSource('csv', 'csv-1', 'Staff file', sourceSchemaFromForm(csvForm))
-		]);
+		const sources = createFakeSourceProfiles(
+			[mockSource('csv', 'csv-1', 'Staff file', sourceSchemaFromForm(csvForm))],
+			{ inUse }
+		);
 		return {
 			destinations,
 			sources,
@@ -57,6 +58,7 @@
 	const created = world();
 	const changed = world();
 	const removed = world();
+	const inUse = world(['csv-1']);
 	const readOnly = world();
 </script>
 
@@ -113,18 +115,11 @@
 />
 
 <Story
-	name="Deleting asks first; an input source is not offered for deletion"
+	name="Deleting asks first"
 	args={removed.args}
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		await canvas.findByText('Portal attributes');
-		// An input source can be changed but not deleted from here yet.
-		await userEvent.click(
-			canvas.getByRole('button', { name: t('pf.actionsFor', { name: 'Staff file' }) })
-		);
-		await canvas.findByRole('menuitem', { name: t('pf.edit') });
-		await expect(canvas.queryByRole('menuitem', { name: t('pf.delete') })).toBeNull();
-		await userEvent.keyboard('{Escape}');
 		await userEvent.click(
 			canvas.getByRole('button', { name: t('pf.actionsFor', { name: 'Portal attributes' }) })
 		);
@@ -134,6 +129,33 @@
 		await waitFor(() => expect(removed.destinations.removed).toEqual(['saml-1']));
 		await canvas.findByText(t('pf.deleted'));
 		await waitFor(() => expect(canvas.queryByText('Portal attributes')).toBeNull());
+		// An input source is offered for deletion too.
+		await userEvent.click(
+			canvas.getByRole('button', { name: t('pf.actionsFor', { name: 'Staff file' }) })
+		);
+		await userEvent.click(await canvas.findByRole('menuitem', { name: t('pf.delete') }));
+		const second = await within(document.body).findByRole('dialog');
+		await userEvent.click(within(second).getByRole('button', { name: t('pf.delete') }));
+		await waitFor(() => expect(removed.sources.removed).toEqual(['csv-1']));
+		await waitFor(() => expect(canvas.queryByText('Staff file')).toBeNull());
+	}}
+/>
+
+<Story
+	name="An input source still in use is not deleted; the reason is shown"
+	args={inUse.args}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findByText('Staff file');
+		await userEvent.click(
+			canvas.getByRole('button', { name: t('pf.actionsFor', { name: 'Staff file' }) })
+		);
+		await userEvent.click(await canvas.findByRole('menuitem', { name: t('pf.delete') }));
+		const dialog = await within(document.body).findByRole('dialog');
+		await userEvent.click(within(dialog).getByRole('button', { name: t('pf.delete') }));
+		await within(dialog).findByText('This input source is still used by a mapping set.');
+		await expect(inUse.sources.removed).toEqual([]);
+		await expect(canvas.getByText('Staff file')).toBeTruthy();
 	}}
 />
 
