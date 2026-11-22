@@ -5578,12 +5578,12 @@ describe('identity mapping control plane Admin API handlers', () => {
     });
     const app = createIdentityMappingApiApp(adapter);
     app.get(
-      '/api/admin/field-mapping/field-mapping-sets',
+      '/api/admin/identity-mapping/field-mapping-sets',
       adminIdentityFieldMappingSetsListHandler
     );
 
     const response = await app.request(
-      '/api/admin/field-mapping/field-mapping-sets',
+      '/api/admin/identity-mapping/field-mapping-sets',
       { headers: { 'X-Tenant-Id': 'tenant_a' } },
       { DB_ADMIN: adapter } as unknown as Env
     );
@@ -5624,12 +5624,12 @@ describe('identity mapping control plane Admin API handlers', () => {
     });
     const app = createIdentityMappingApiApp(adapter);
     app.get(
-      '/api/admin/field-mapping/protocol-schemas',
+      '/api/admin/identity-mapping/protocol-schemas',
       adminIdentityMappingProtocolSchemasListHandler
     );
 
     const response = await app.request(
-      '/api/admin/field-mapping/protocol-schemas',
+      '/api/admin/identity-mapping/protocol-schemas',
       { headers: { 'X-Tenant-Id': 'tenant_a' } },
       { DB_ADMIN: adapter } as unknown as Env
     );
@@ -5661,12 +5661,12 @@ describe('identity mapping control plane Admin API handlers', () => {
       await next();
     });
     app.post(
-      '/api/admin/field-mapping/destination-profiles',
+      '/api/admin/identity-mapping/destination-profiles',
       adminIdentityMappingDestinationProfileCreateHandler
     );
 
     const response = await app.request(
-      '/api/admin/field-mapping/destination-profiles',
+      '/api/admin/identity-mapping/destination-profiles',
       {
         method: 'POST',
         headers: {
@@ -5706,16 +5706,16 @@ describe('identity mapping control plane Admin API handlers', () => {
       await next();
     });
     app.post(
-      '/api/admin/field-mapping/attribute-groups',
+      '/api/admin/identity-mapping/attribute-groups',
       adminIdentityMappingAttributeGroupCreateHandler
     );
     app.post(
-      '/api/admin/field-mapping/attribute-fields',
+      '/api/admin/identity-mapping/attribute-fields',
       adminIdentityMappingAttributeFieldCreateHandler
     );
 
     const groupResponse = await app.request(
-      '/api/admin/field-mapping/attribute-groups',
+      '/api/admin/identity-mapping/attribute-groups',
       {
         method: 'POST',
         headers: {
@@ -5735,7 +5735,7 @@ describe('identity mapping control plane Admin API handlers', () => {
       { DB_ADMIN: adapter } as unknown as Env
     );
     const fieldResponse = await app.request(
-      '/api/admin/field-mapping/attribute-fields',
+      '/api/admin/identity-mapping/attribute-fields',
       {
         method: 'POST',
         headers: {
@@ -5790,10 +5790,10 @@ describe('identity mapping control plane Admin API handlers', () => {
       (c as unknown as { set(key: string, value: string): void }).set('tenantId', 'tenant_a');
       await next();
     });
-    app.get('/api/admin/field-mapping/review-tasks', adminIdentityMappingReviewTasksListHandler);
+    app.get('/api/admin/identity-mapping/review-tasks', adminIdentityMappingReviewTasksListHandler);
 
     const response = await app.request(
-      '/api/admin/field-mapping/review-tasks?status=open&limit=5',
+      '/api/admin/identity-mapping/review-tasks?status=open&limit=5',
       { headers: { 'X-Tenant-Id': 'tenant_a' } },
       { DB_ADMIN: adapter } as unknown as Env
     );
@@ -5840,12 +5840,12 @@ describe('identity mapping control plane Admin API handlers', () => {
       await next();
     });
     app.get(
-      '/api/admin/field-mapping/schema-readiness',
+      '/api/admin/identity-mapping/schema-readiness',
       adminIdentityMappingSchemaReadinessHandler
     );
 
     const response = await app.request(
-      '/api/admin/field-mapping/schema-readiness',
+      '/api/admin/identity-mapping/schema-readiness',
       { headers: { 'X-Tenant-Id': 'tenant_a' } },
       { DB_ADMIN: adapter } as unknown as Env
     );
@@ -5916,12 +5916,12 @@ describe('identity mapping control plane Admin API handlers', () => {
       await next();
     });
     app.get(
-      '/api/admin/field-mapping/federation-trust-sources/:trustSourceId/metadata-documents',
+      '/api/admin/federation/trust-sources/:trustSourceId/metadata-documents',
       adminIdentityMappingFederationMetadataDocumentsListHandler
     );
 
     const response = await app.request(
-      '/api/admin/field-mapping/federation-trust-sources/trust-source-1/metadata-documents',
+      '/api/admin/federation/trust-sources/trust-source-1/metadata-documents',
       {},
       { DB_ADMIN: adapter } as unknown as Env
     );
@@ -5951,12 +5951,12 @@ describe('identity mapping control plane Admin API handlers', () => {
     const adapter = createAdapter({});
     const app = createIdentityMappingApiApp(adapter);
     app.post(
-      '/api/admin/field-mapping/field-mapping-sets',
+      '/api/admin/identity-mapping/field-mapping-sets',
       adminIdentityFieldMappingSetCreateHandler
     );
 
     const response = await app.request(
-      '/api/admin/field-mapping/field-mapping-sets',
+      '/api/admin/identity-mapping/field-mapping-sets',
       {
         method: 'POST',
         headers: {
@@ -6796,22 +6796,22 @@ describe('federation trust source exceptions, IdP selection and inventory reads'
     });
     const app = createIdentityMappingApiApp(adapter);
     app.get(
-      '/api/admin/field-mapping/federation-trust-sources/:trustSourceId',
+      '/api/admin/federation/trust-sources/:trustSourceId',
       adminIdentityMappingFederationTrustSourceGetHandler
     );
     app.get(
-      '/api/admin/field-mapping/federation-trust-sources/:trustSourceId/entities',
+      '/api/admin/federation/trust-sources/:trustSourceId/entities',
       adminIdentityMappingFederationTrustSourceEntitiesHandler
     );
     app.get(
-      '/api/admin/field-mapping/federation-trust-sources/:trustSourceId/refresh-history',
+      '/api/admin/federation/trust-sources/:trustSourceId/refresh-history',
       adminIdentityMappingFederationTrustSourceRefreshHistoryHandler
     );
     const env = { DB_ADMIN: adapter } as unknown as Env;
     const headers = { 'X-Tenant-Id': 'tenant_a' };
 
     const single = await app.request(
-      '/api/admin/field-mapping/federation-trust-sources/trust-source-1',
+      '/api/admin/federation/trust-sources/trust-source-1',
       { headers },
       env
     );
@@ -6822,7 +6822,7 @@ describe('federation trust source exceptions, IdP selection and inventory reads'
     });
 
     const entities = await app.request(
-      '/api/admin/field-mapping/federation-trust-sources/trust-source-1/entities?q=alpha&limit=5',
+      '/api/admin/federation/trust-sources/trust-source-1/entities?q=alpha&limit=5',
       { headers },
       env
     );
@@ -6835,7 +6835,7 @@ describe('federation trust source exceptions, IdP selection and inventory reads'
     });
 
     const history = await app.request(
-      '/api/admin/field-mapping/federation-trust-sources/trust-source-1/refresh-history?limit=3',
+      '/api/admin/federation/trust-sources/trust-source-1/refresh-history?limit=3',
       { headers },
       env
     );
@@ -6865,11 +6865,11 @@ describe('federation trust source exceptions, IdP selection and inventory reads'
       await next();
     });
     writeApp.put(
-      '/api/admin/field-mapping/federation-trust-sources/:trustSourceId',
+      '/api/admin/federation/trust-sources/:trustSourceId',
       adminIdentityMappingFederationTrustSourceUpdateHandler
     );
     const update = await writeApp.request(
-      '/api/admin/field-mapping/federation-trust-sources/trust-source-1',
+      '/api/admin/federation/trust-sources/trust-source-1',
       {
         method: 'PUT',
         headers: {

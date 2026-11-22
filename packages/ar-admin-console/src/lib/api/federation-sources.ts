@@ -2,7 +2,7 @@
  * The tenant's SAML federation sources: an aggregate metadata document (a national federation's
  * list of hundreds of providers) trusted as a whole, with a few entities set aside.
  *
- * - `GET/POST /api/admin/field-mapping/federation-trust-sources`, `GET/PUT/DELETE …/:id`
+ * - `GET/POST /api/admin/federation/trust-sources`, `GET/PUT/DELETE …/:id`
  * - `GET …/:id/entities`, `GET …/:id/refresh-history` (read-only views over what was imported)
  * - `POST /api/admin/saml-federation-sources/:id/refresh-metadata` and `…/entities/materialize`
  * - `POST /api/admin/saml-metadata/certificate-preview`
@@ -379,7 +379,7 @@ function readHistory(value: unknown): FederationRefreshHistoryItem {
 
 // -- Transport -------------------------------------------------------------------------------
 
-const TRUST = `${API_BASE_URL}/api/admin/field-mapping/federation-trust-sources`;
+const TRUST = `${API_BASE_URL}/api/admin/federation/trust-sources`;
 const SOURCES = `${API_BASE_URL}/api/admin/saml-federation-sources`;
 
 async function send<T>(

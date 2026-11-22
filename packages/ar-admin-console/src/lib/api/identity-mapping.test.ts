@@ -213,8 +213,8 @@ describe('HTTP IdentityMappingClient', () => {
 		);
 		expect(fetcher.mock.calls.map(([url]) => url)).toEqual([
 			'/api/admin/identity-mapping/sets',
-			'/api/admin/field-mapping/catalogs',
-			'/api/admin/field-mapping/destination-profiles',
+			'/api/admin/identity-mapping/catalogs',
+			'/api/admin/identity-mapping/destination-profiles',
 			'/api/admin/identity-mapping/test-users',
 			'/api/admin/identity-mapping/sets/set/preview-change',
 			'/api/admin/identity-mapping/explain',

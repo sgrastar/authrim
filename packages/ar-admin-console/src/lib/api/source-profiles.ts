@@ -6,7 +6,7 @@ import { profileJson, profileRequest, readWritten, reviewAndActivate } from './p
  * a CSV file, the attributes of a SCIM user). As for output sources, a save writes, reviews and
  * switches the profile on in one action.
  *
- * - `GET /api/admin/field-mapping/source-profiles`
+ * - `GET /api/admin/identity-mapping/source-profiles`
  * - `POST …/source-profiles`, `PUT …/source-profiles/:id`, `DELETE …/source-profiles/:id`
  * - `POST …/source-profiles/:id/versions/:versionId/review` and `…/activate`
  */
@@ -51,7 +51,7 @@ export interface SourceProfilesClient {
 	remove(tenantId: string, id: string): Promise<void>;
 }
 
-const BASE = `${API_BASE_URL}/api/admin/field-mapping/source-profiles`;
+const BASE = `${API_BASE_URL}/api/admin/identity-mapping/source-profiles`;
 
 export const httpSourceProfiles: SourceProfilesClient = {
 	async list(tenantId, signal) {

@@ -3027,7 +3027,14 @@ export class IdentityMappingControlPlaneRepository {
       parseDraftId: input.parseDraftId ?? null,
       rawContentPersisted: false,
     };
-    const versionLabel = input.versionLabel ?? 'draft';
+    const versionLabel =
+      input.versionLabel ??
+      (await this.nextProfileVersionLabel(
+        'source_profile_versions',
+        tenantId,
+        profileId,
+        versionId
+      ));
 
     await this.adapter.transaction(async (tx) => {
       const updatedRow = await tx.execute(
@@ -3556,6 +3563,28 @@ export class IdentityMappingControlPlaneRepository {
     }));
   }
 
+  /**
+   * The label of a version that an edit adds when the caller names none. Labels are unique within
+   * a profile, so a fixed one would make the second edit of any profile fail on the constraint.
+   */
+  private async nextProfileVersionLabel(
+    table: 'source_profile_versions' | 'destination_profile_versions',
+    tenantId: string,
+    profileId: string,
+    versionId: string
+  ): Promise<string> {
+    const counted = await this.adapter.queryOne<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM ${table} WHERE tenant_id = ? AND profile_id = ?`,
+      [tenantId, profileId]
+    );
+    const label = `v${Number(counted?.n ?? 0) + 1}`;
+    const taken = await this.adapter.queryOne<{ id: string }>(
+      `SELECT id FROM ${table} WHERE tenant_id = ? AND profile_id = ? AND version_label = ?`,
+      [tenantId, profileId, label]
+    );
+    return taken ? `${label}-${versionId.slice(-6)}` : label;
+  }
+
   async updateDestinationProfile(
     tenantId: string,
     profileId: string,
@@ -3672,7 +3701,14 @@ export class IdentityMappingControlPlaneRepository {
     };
     const now = this.now();
     const versionId = createId('destination_profile_version');
-    const versionLabel = input.versionLabel ?? 'draft';
+    const versionLabel =
+      input.versionLabel ??
+      (await this.nextProfileVersionLabel(
+        'destination_profile_versions',
+        existing.tenant_id,
+        profileId,
+        versionId
+      ));
     const schemaHash = await hashStableJson(input.schema);
 
     await this.adapter.transaction(async (tx) => {
@@ -10547,6 +10583,16 @@ export function controlPlaneErrorResponse(c: AdminContext, error: unknown): Resp
       },
       error.status as 400 | 404 | 409 | 500
     );
+  }
+  // The answer says nothing of the cause: it is kept in the log (the message, never the request).
+  try {
+    getLogger(c)
+      .module('IDENTITY-MAPPING')
+      .error('Identity mapping control plane operation failed', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+  } catch {
+    // Logging must not turn an answer into another failure.
   }
   return c.json(
     {

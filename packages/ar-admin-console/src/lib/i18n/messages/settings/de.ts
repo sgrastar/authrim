@@ -352,9 +352,9 @@ export const deSettings: Record<keyof typeof jaSettings, string> = {
 	'set.k.session.backchannel_retry_backoff_multiplier':
 		'Faktor, um den die Zeit zwischen Wiederholungen wächst',
 
-	'set.k.identity_mapping.oidc_default_set_id': 'Standard-Mapping-Set (OIDC)',
+	'set.k.identity_mapping.oidc_default_set_id': 'Standard-Mapping (OIDC)',
 	'set.k.identity_mapping.oidc_default_set_id.desc':
-		'Die ID des Mapping-Sets für Apps dieses Bereichs, die kein eigenes gewählt haben. Nicht gesetzt bedeutet: kein Standard, es wird kein Mapping angewendet. Ein Tenant kann none eintragen, um auch den Standard der Plattform nicht zu verwenden. Es kann nur ein aktives Mapping-Set angegeben werden. Apps ohne eigenes Mapping-Set verwenden ihn für ID-Token, UserInfo und Zustimmungsbildschirm; eine App kann mit ihrem eigenen none aussteigen. Ist das genannte Mapping-Set nicht nutzbar (gelöscht, inaktiv, ungültig), können sich diese Apps nicht anmelden, bis es korrigiert oder der Wert gelöscht wird.',
+		'Die ID des Mappings für Apps dieses Bereichs, die kein eigenes gewählt haben. Nicht gesetzt bedeutet: kein Standard, es wird kein Mapping angewendet. Ein Tenant kann none eintragen, um auch den Standard der Plattform nicht zu verwenden. Es kann nur ein aktives Mapping angegeben werden. Apps ohne eigenes Mapping verwenden ihn für ID-Token, UserInfo und Zustimmungsbildschirm; eine App kann mit ihrem eigenen none aussteigen. Ist das genannte Mapping nicht nutzbar (gelöscht, inaktiv, ungültig), können sich diese Apps nicht anmelden, bis es korrigiert oder der Wert gelöscht wird.',
 
 	'set.k.bulk_apply.max_tenants_per_request': 'Sammelanwendung: Tenants pro Anfrage',
 	'set.k.bulk_apply.max_tenants_per_request.desc':
@@ -411,21 +411,20 @@ export const deSettings: Record<keyof typeof jaSettings, string> = {
 	'set.k.tenant_capabilities.saml_metadata_url.desc':
 		'Aus: Tenant-Administratoren können nicht veranlassen, dass die Plattform SAML-Metadaten von einer von ihnen gewählten URL abruft oder eine neue URL für späteres Abrufen speichert: Metadaten-Vorschau, Import, Aktualisierung und Zertifikatsvorschau mit URL sowie das Speichern eines SAML-Anbieters oder einer Föderationsquelle mit neuer oder geänderter Metadaten-URL. Das Einfügen von Metadaten-XML, das Beibehalten oder Löschen einer gespeicherten URL, Lesen und Löschen bleiben möglich. Bereits gespeicherte URLs werden weiter automatisch aktualisiert. Plattformadministratoren sind an der Admin-API ausgenommen. Eine Wiederherstellung aus einem Tenant-Backup stellt Anbieter und Quellen mit Metadaten-URL nicht wieder her, solange die Option aus ist, außer ein Plattformadministrator hat sie angefordert. Standardmäßig an.',
 
-	'set.k.identity_mapping.reference_scan_tenant_limit': 'Nutzungssuche des Mapping-Sets: Tenants',
+	'set.k.identity_mapping.reference_scan_tenant_limit': 'Nutzungssuche des Mappings: Tenants',
 	'set.k.identity_mapping.reference_scan_tenant_limit.desc':
-		'Die höchste Zahl von Tenants, deren Apps gelesen werden, wenn die Stellen gesucht werden, die ein Mapping-Set der Plattform verwenden. Jeder Tenant ist ein Datenbankzugriff; bei mehr Tenants gilt der Rest als nicht geprüft, und Löschen oder Deaktivieren des Sets wird abgelehnt. Zwischen 1 und 1000. Plattformeinstellung; standardmäßig 200.',
+		'Die höchste Zahl von Tenants, deren Apps gelesen werden, wenn die Stellen gesucht werden, die ein Mapping der Plattform verwenden. Jeder Tenant ist ein Datenbankzugriff; bei mehr Tenants gilt der Rest als nicht geprüft, und Löschen oder Deaktivieren des Sets wird abgelehnt. Zwischen 1 und 1000. Plattformeinstellung; standardmäßig 200.',
 
 	'set.k.identity_mapping.reference_scan_row_limit':
-		'Nutzungssuche des Mapping-Sets: Zeilen pro Stelle',
+		'Nutzungssuche des Mappings: Zeilen pro Stelle',
 	'set.k.identity_mapping.reference_scan_row_limit.desc':
-		'Die höchste Zahl von Zeilen, die aus einer Stelle gelesen werden (Tenant-Standards, Apps eines Tenants, SAML-Anbieter eines Tenants), wenn die Nutzung eines Mapping-Sets gesucht wird. Eine größere Stelle wird abgeschnitten, und die Anzahl gilt als Untergrenze. Zwischen 10 und 5000. Plattformeinstellung; standardmäßig 500.',
+		'Die höchste Zahl von Zeilen, die aus einer Stelle gelesen werden (Tenant-Standards, Apps eines Tenants, SAML-Anbieter eines Tenants), wenn die Nutzung eines Mappings gesucht wird. Eine größere Stelle wird abgeschnitten, und die Anzahl gilt als Untergrenze. Zwischen 10 und 5000. Plattformeinstellung; standardmäßig 500.',
 
-	'set.k.identity_mapping.reference_scan_concurrency':
-		'Nutzungssuche des Mapping-Sets: Parallelität',
+	'set.k.identity_mapping.reference_scan_concurrency': 'Nutzungssuche des Mappings: Parallelität',
 	'set.k.identity_mapping.reference_scan_concurrency.desc':
-		'Wie viele Tenants gleichzeitig gelesen werden, wenn die Nutzung eines Mapping-Sets der Plattform gesucht wird. Zwischen 1 und 16. Plattformeinstellung; standardmäßig 8.',
+		'Wie viele Tenants gleichzeitig gelesen werden, wenn die Nutzung eines Mappings der Plattform gesucht wird. Zwischen 1 und 16. Plattformeinstellung; standardmäßig 8.',
 
-	'set.k.identity_mapping.reference_display_limit': 'Nutzung des Mapping-Sets: angezeigte Verweise',
+	'set.k.identity_mapping.reference_display_limit': 'Nutzung des Mappings: angezeigte Verweise',
 	'set.k.identity_mapping.reference_display_limit.desc':
 		'Wie viele Verweise die Nutzungsantwort und die Ablehnung eines Löschens auflisten; die Anzahl ist immer die gesamte. Zwischen 1 und 100. Plattformeinstellung; standardmäßig 20.',
 

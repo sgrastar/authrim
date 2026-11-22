@@ -621,6 +621,8 @@
 			canvas.getByRole('heading', { name: t('sf.fed.participation.title') })
 		).toBeVisible();
 		await expect(canvas.queryByRole('heading', { name: t('sf.fed.entities.title') })).toBeNull();
+		// The old attribute presets are gone: the mapping set and its output source decide what is sent.
+		await expect(canvasElement.querySelector('option[value="basic.v1"]')).toBeNull();
 	}}
 />
 

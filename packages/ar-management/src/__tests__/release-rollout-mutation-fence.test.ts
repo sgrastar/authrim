@@ -180,7 +180,7 @@ describe('release rollout mutation fence', () => {
         ['PUT', '/api/admin/clients/app-1'],
         ['PATCH', '/api/admin/tenants/tenant-a/settings/identity-mapping'],
         ['PUT', '/api/admin/identity-mapping/sets/set-a'],
-        ['POST', '/api/admin/field-mapping/field-mapping-sets/set-a/rollback'],
+        ['POST', '/api/admin/identity-mapping/destination-profiles'],
         ['POST', '/api/admin/tenants/tenant-a/lifecycle/restore-validate'],
         ['POST', `${path}/restore`],
         ['POST', `${path}/extra`],

@@ -2,7 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { logProducerFixture } from '../../../../test/helpers/log-iceberg-producer-fixture.mjs';
 import {
   adminAuthMiddleware,
+  ADMIN_PERMISSIONS,
   PLATFORM_MAPPING_TENANT_ID,
+  requireAdminPermissions,
   resolveAuthCorePersistenceAdapterFromEnv,
 } from '@authrim/ar-lib-core';
 
@@ -64,7 +66,7 @@ import type { SQLiteDatabase } from './test-sqlite';
  */
 
 const KEY = 'identity_mapping.oidc_default_set_id';
-const SETS = '/api/admin/field-mapping/field-mapping-sets';
+const SETS = '/api/admin/identity-mapping/field-mapping-sets';
 const USAGE = '/api/admin/identity-mapping/usage';
 const TENANT_SETTINGS = `/api/admin/tenants/${TENANT}/settings/identity-mapping`;
 const PLATFORM_SETTINGS = '/api/admin/platform/settings/identity-mapping';
@@ -119,27 +121,40 @@ function setup() {
         });
         await next();
       });
-      app.use(
-        '/api/admin/*',
-        adminAuthMiddleware({ plane: 'tenant' }),
-        enforceDeclaredAdminRouteAccess()
+      // The step-by-step set routes are no longer routed (and have no declared access rule), so
+      // the handlers that remain are mounted here on a test path, behind the settings write
+      // permission the declared rule gave them; every other path runs the real declared gate.
+      const declaredGate = enforceDeclaredAdminRouteAccess();
+      app.use('/api/admin/*', adminAuthMiddleware({ plane: 'tenant' }), (c, next) =>
+        c.req.path.startsWith(`${SETS}/`) ? next() : declaredGate(c, next)
       );
-      app.delete(`${SETS}/:fieldMappingSetId`, adminIdentityFieldMappingSetDeleteHandler);
+      const settingsWrite = requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]);
+      app.delete(
+        `${SETS}/:fieldMappingSetId`,
+        settingsWrite,
+        adminIdentityFieldMappingSetDeleteHandler
+      );
       app.post(
         `${SETS}/:fieldMappingSetId/versions/:fieldMappingVersionId/activate`,
+        settingsWrite,
         adminIdentityFieldMappingVersionActivateHandler
       );
       app.post(
         `${SETS}/:fieldMappingSetId/versions/:fieldMappingVersionId/deactivate`,
+        settingsWrite,
         adminIdentityFieldMappingVersionDeactivateHandler
       );
-      app.post(`${SETS}/:fieldMappingSetId/rollback`, adminIdentityFieldMappingSetRollbackHandler);
+      app.post(
+        `${SETS}/:fieldMappingSetId/rollback`,
+        settingsWrite,
+        adminIdentityFieldMappingSetRollbackHandler
+      );
       app.delete(
-        '/api/admin/field-mapping/destination-profiles/:destinationProfileId',
+        '/api/admin/identity-mapping/destination-profiles/:destinationProfileId',
         adminIdentityMappingDestinationProfileDeleteHandler
       );
       app.delete(
-        '/api/admin/field-mapping/source-profiles/:sourceProfileId',
+        '/api/admin/identity-mapping/source-profiles/:sourceProfileId',
         adminIdentityMappingSourceProfileDeleteHandler
       );
       app.get(USAGE, adminIdentityMappingUsageHandler);
@@ -662,7 +677,7 @@ describe('putting another version in use', () => {
 
 describe('deleting a Destination Profile', () => {
   const del = (t: ReturnType<typeof setup>, who: string, profileId: string) =>
-    t.mutate(who, 'DELETE', `/api/admin/field-mapping/destination-profiles/${profileId}`);
+    t.mutate(who, 'DELETE', `/api/admin/identity-mapping/destination-profiles/${profileId}`);
 
   it('is refused while a set that releases into it is named, and says which set', async () => {
     const t = setup();
@@ -1080,7 +1095,7 @@ describe('what counts as in use for a Destination Profile', () => {
     const refused = await t.mutate(
       t.cookie(),
       'DELETE',
-      '/api/admin/field-mapping/destination-profiles/profile-a'
+      '/api/admin/identity-mapping/destination-profiles/profile-a'
     );
     expect(refused.status).toBe(409);
     expect(refused.json.references.items[0]).toMatchObject({ viaMappingSetId: 'set-a' });
@@ -1096,7 +1111,7 @@ describe('what counts as in use for a Destination Profile', () => {
         await t.mutate(
           t.cookie(),
           'DELETE',
-          '/api/admin/field-mapping/destination-profiles/profile-a'
+          '/api/admin/identity-mapping/destination-profiles/profile-a'
         )
       ).status
     ).toBe(200);
@@ -1449,7 +1464,7 @@ describe('what a SAML service provider saved about its Destination Profile', () 
 
 describe('a Destination Profile an activation scope names', () => {
   const del = (t: ReturnType<typeof setup>, profileId: string, who = t.cookie()) =>
-    t.mutate(who, 'DELETE', `/api/admin/field-mapping/destination-profiles/${profileId}`);
+    t.mutate(who, 'DELETE', `/api/admin/identity-mapping/destination-profiles/${profileId}`);
   const profileExists = (t: ReturnType<typeof setup>, id: string) =>
     t.count(`SELECT COUNT(*) AS n FROM destination_profiles WHERE id = '${id}'`) === 1;
 
@@ -1565,7 +1580,7 @@ describe('a Destination Profile an activation scope names', () => {
 
 describe('deleting a Source Profile', () => {
   const del = (t: ReturnType<typeof setup>, profileId: string, who = t.cookie()) =>
-    t.mutate(who, 'DELETE', `/api/admin/field-mapping/source-profiles/${profileId}`);
+    t.mutate(who, 'DELETE', `/api/admin/identity-mapping/source-profiles/${profileId}`);
   const exists = (t: ReturnType<typeof setup>, id: string) =>
     t.count(`SELECT COUNT(*) AS n FROM source_profiles WHERE id = '${id}'`) === 1;
   const seedSource = (t: ReturnType<typeof setup>, id: string, tenant = TENANT) => {

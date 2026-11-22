@@ -102,6 +102,7 @@
 	let mappingEpoch = $state(0);
 	let mappingPending = $state(false);
 	let mappingDirty = $state(false);
+	let outputChosen = $state(false);
 	let refreshing = $state(false);
 	let failure = $state('');
 	let conflict = $state(false);
@@ -373,7 +374,7 @@
 								<!-- The output source the SP role sends into: its own node, apart from the mapping. -->
 								<FlowStepGroup
 									name={t('sf.group.schemas')}
-									state={mappingState}
+									state={outputChosen ? 'done' : 'todo'}
 									{current}
 									{exiting}
 									onselect={selectNode}
@@ -381,8 +382,8 @@
 										{
 											id: 'mapping-schemas',
 											label: labelOf('mapping-schemas'),
-											state: mappingState,
-											status: t(mappingState === 'done' ? 'sf.status.done' : 'sf.status.todo')
+											state: outputChosen ? 'done' : 'todo',
+											status: t(outputChosen ? 'sf.status.done' : 'sf.status.todo')
 										}
 									]}
 								/>
@@ -505,6 +506,7 @@
 							guardNavigation={false}
 							bind:pending={mappingPending}
 							bind:dirty={mappingDirty}
+							bind:outputChosen
 						/>
 					{/key}
 				{/if}
@@ -529,13 +531,7 @@
 	{#if canEdit}
 		<!-- While the SP role's mapping has unsaved changes its own bar is the one shown; the page's
 		     returns once the mapping is saved (which puts the set into this form). -->
-		<SaveBar
-			dirty={dirty && !mappingDirty}
-			saving={saving || mappingPending}
-			{invalid}
-			onsave={save}
-			ondiscard={discard}
-		/>
+		<SaveBar dirty={dirty && !mappingDirty} {saving} {invalid} onsave={save} ondiscard={discard} />
 	{/if}
 {/if}
 

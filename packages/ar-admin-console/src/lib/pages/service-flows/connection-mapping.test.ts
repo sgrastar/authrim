@@ -261,4 +261,20 @@ describe('connection Mapping Set save and binding', () => {
 		expect(state.phase).toBe('saved');
 		expect(state.changes).toBeNull();
 	});
+
+	it('starts a new mapping on the default catalog, and asks nobody', async () => {
+		const fixture = connectionMappingFixture();
+		const state = new ConnectionMappingState(fixture.resources);
+		await state.load();
+		state.catalogs = [
+			{ ...state.catalogs[0], catalogKey: 'tenant.custom', versionId: 'custom-version' },
+			{
+				...state.catalogs[0],
+				catalogKey: 'authrim.default_canonical',
+				versionId: 'default-version'
+			}
+		];
+		state.create();
+		expect(state.form.value.catalogVersionId).toBe('default-version');
+	});
 });

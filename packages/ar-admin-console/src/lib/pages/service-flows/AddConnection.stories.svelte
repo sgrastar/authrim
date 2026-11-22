@@ -320,7 +320,7 @@
 		);
 		await openMapping(canvasElement, 'sets');
 		await userEvent.selectOptions(
-			await canvas.findByRole('combobox', { name: 'Mapping set' }),
+			await canvas.findByRole('combobox', { name: 'Mapping' }),
 			'tenant-default'
 		);
 		// Activating is at the end of the general settings: Save, then activate.
@@ -391,7 +391,7 @@
 		);
 		await openMapping(canvasElement, 'sets');
 		await userEvent.selectOptions(
-			await canvas.findByRole('combobox', { name: 'Mapping set' }),
+			await canvas.findByRole('combobox', { name: 'Mapping' }),
 			'tenant-default'
 		);
 		// No "Review and activate" step in a service's flow.
@@ -465,7 +465,7 @@
 		);
 		await openMapping(canvasElement, 'sets');
 		await userEvent.selectOptions(
-			await canvas.findByRole('combobox', { name: 'Mapping set' }),
+			await canvas.findByRole('combobox', { name: 'Mapping' }),
 			'tenant-default'
 		);
 		await userEvent.click(canvas.getAllByRole('button', { name: 'General settings' })[0]);

@@ -225,7 +225,9 @@ function adminTag(routePath) {
   if (routePath.startsWith('/api/admin/security')) return 'Security';
   if (routePath.startsWith('/api/admin/compliance')) return 'Compliance';
   if (routePath.startsWith('/api/admin/data-retention')) return 'Data Retention';
-  if (routePath.startsWith('/api/admin/field-mapping')) return 'Field Mapping';
+  if (routePath.startsWith('/api/admin/identity-mapping')) return 'Identity Mapping';
+  if (routePath.startsWith('/api/admin/federation')) return 'Federation';
+  if (routePath.startsWith('/api/admin/identifiers')) return 'Persistent Identifiers';
   if (routePath.startsWith('/api/admin/flows')) return 'Flows';
   if (routePath.startsWith('/api/admin/external')) return 'External Providers';
   if (routePath.startsWith('/api/admin/vc')) return 'Verifiable Credentials';
@@ -316,7 +318,9 @@ function tagGroupsForAdmin() {
         'Security',
         'Compliance',
         'Data Retention',
-        'Field Mapping',
+        'Identity Mapping',
+        'Federation',
+        'Persistent Identifiers',
         'Flows',
         'External Providers',
         'Policy Administration',

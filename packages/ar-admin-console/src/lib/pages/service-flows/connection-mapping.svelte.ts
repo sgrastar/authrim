@@ -23,6 +23,9 @@ import { setChangePreviewOf } from './connection-mapping-preview.js';
 import { ApiError, ReleasePausedError } from '#lib/api/api-error.js';
 import type { DestinationProfilesClient } from '#lib/api/destination-profiles.js';
 
+/** The catalog every tenant has: Authrim's own attributes. */
+const DEFAULT_CATALOG_KEY = 'authrim.default_canonical';
+
 export interface ConnectionMappingResources {
 	client: IdentityMappingClient;
 	tenantId: string;
@@ -73,6 +76,8 @@ export class ConnectionMappingState {
 	impact = $state<{ count: number; incomplete: boolean; connections: string[] } | null>(null);
 	stage = $state('');
 	newKey = $state('');
+	/** The output source picked before any mapping exists: a new mapping starts with it. */
+	chosenProfileId = $state('');
 	base: MappingSetContent | null = null;
 	pending: {
 		request: MappingSetSaveRequest & { field_mapping_key: string };
@@ -208,6 +213,7 @@ export class ConnectionMappingState {
 	}
 
 	async select(id: string) {
+		this.chosenProfileId = '';
 		this.checkGeneration++;
 		this.checking = false;
 		this.changes = null;
@@ -262,6 +268,17 @@ export class ConnectionMappingState {
 		}
 	}
 
+	/**
+	 * The catalog a new mapping reads Authrim's attributes from. Nobody is asked: the default one is
+	 * used (the first there is when the default is missing).
+	 */
+	private defaultCatalogVersionId(): string {
+		const usable = this.catalogs.filter((catalog) => catalog.versionId);
+		const chosen =
+			usable.find((catalog) => catalog.catalogKey === DEFAULT_CATALOG_KEY) ?? usable[0];
+		return chosen?.versionId ?? '';
+	}
+
 	create() {
 		this.checkGeneration++;
 		this.checking = false;
@@ -279,10 +296,12 @@ export class ConnectionMappingState {
 		this.form.reset({
 			name: '',
 			description: '',
-			profileId: '',
-			catalogVersionId: '',
+			profileId: this.chosenProfileId,
+			catalogVersionId: this.defaultCatalogVersionId(),
 			mappings: []
 		});
+		// With an output source already chosen the mapping can be made at once.
+		this.configure();
 		this.phase = 'ready';
 	}
 

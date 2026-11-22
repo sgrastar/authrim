@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+	activeVersionsFromListedSets,
 	buildSelectableFieldMappingSets,
 	filterCompatibleActiveFieldMappingSets
 } from './field-mapping-options';
@@ -90,5 +91,24 @@ describe('filterCompatibleActiveFieldMappingSets', () => {
 				currentFieldMappingSetId: 'draft-inbound'
 			}).map((item) => item.id)
 		).toEqual(['draft-inbound', 'active-outbound']);
+	});
+});
+
+describe('activeVersionsFromListedSets', () => {
+	it('gives a version in use to each set that is switched on, and none to a draft', () => {
+		expect(
+			activeVersionsFromListedSets([
+				{ id: 'on', lifecycleState: 'active' },
+				{ id: 'off', lifecycleState: 'draft' }
+			])
+		).toEqual({ on: [{ lifecycleState: 'active' }] });
+	});
+
+	it('makes every set that is on selectable for either side of a provider', () => {
+		const sets = [{ id: 'on', lifecycleState: 'active' }];
+		const versions = activeVersionsFromListedSets(sets);
+		for (const providerType of ['saml_idp', 'saml_sp'] as const) {
+			expect(filterCompatibleActiveFieldMappingSets(sets, versions, providerType)).toEqual(sets);
+		}
 	});
 });

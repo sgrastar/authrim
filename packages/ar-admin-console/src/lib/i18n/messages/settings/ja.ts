@@ -345,9 +345,9 @@ export const jaSettings = {
 	'set.k.session.backchannel_retry_max_delay_ms': '再送の間隔の上限',
 	'set.k.session.backchannel_retry_backoff_multiplier': '再送の間隔を延ばす倍率',
 
-	'set.k.identity_mapping.oidc_default_set_id': '既定のマッピングセット（OIDC）',
+	'set.k.identity_mapping.oidc_default_set_id': '既定のマッピング（OIDC）',
 	'set.k.identity_mapping.oidc_default_set_id.desc':
-		'この範囲のアプリが自分のマッピングセットを選んでいないときに使う、マッピングセットの ID です。未設定のときは既定なしで、マッピングは適用されません。テナントで none を指定すると、プラットフォームの既定も使いません。有効なマッピングセットだけを指定できます。自分のマッピングセットを指定していないアプリには、ID トークン、UserInfo、同意画面のすべてでこの値が使われます（アプリ側で none を指定すると適用されません）。指定したマッピングセットが使えない状態（削除済み、無効、不正）のときは、修正するか値を消すまで、該当するアプリはサインインできません。',
+		'この範囲のアプリが自分のマッピングを選んでいないときに使う、マッピングの ID です。未設定のときは既定なしで、マッピングは適用されません。テナントで none を指定すると、プラットフォームの既定も使いません。有効なマッピングだけを指定できます。自分のマッピングを指定していないアプリには、ID トークン、UserInfo、同意画面のすべてでこの値が使われます（アプリ側で none を指定すると適用されません）。指定したマッピングが使えない状態（削除済み、無効、不正）のときは、修正するか値を消すまで、該当するアプリはサインインできません。',
 
 	'set.k.bulk_apply.max_tenants_per_request': '一括適用：1 回のテナント数',
 	'set.k.bulk_apply.max_tenants_per_request.desc':
@@ -400,19 +400,19 @@ export const jaSettings = {
 	'set.k.tenant_capabilities.saml_metadata_url.desc':
 		'オフにすると、テナントの管理者は、自分で指定した URL から SAML メタデータを取得させること、および取得用の URL を新しく保存・変更することができなくなります。対象は、URL を使うメタデータのプレビュー・インポート・更新と証明書のプレビュー、新しい URL や変更した URL を持つ SAML プロバイダーとフェデレーションソースの保存です。メタデータ XML の貼り付け、保存済みの URL を残す変更、URL の消去、参照、削除はできます。すでに保存されている URL からの自動更新は続きます。プラットフォーム管理者は Admin API では対象外です。テナントのバックアップ復元でも、プラットフォーム管理者が依頼した場合を除き、メタデータ URL を持つプロバイダーとソースは復元されません。既定はオンです。',
 
-	'set.k.identity_mapping.reference_scan_tenant_limit': 'マッピングセット利用検索：テナント数',
+	'set.k.identity_mapping.reference_scan_tenant_limit': 'マッピング利用検索：テナント数',
 	'set.k.identity_mapping.reference_scan_tenant_limit.desc':
-		'プラットフォームが所有するマッピングセットの利用箇所を探すときに、アプリを読み取るテナントの最大数です。テナント 1 件ごとにデータベースを 1 回読みます。これより多いテナントがあるとき、残りは「未確認」として報告され、そのセットの削除や無効化は拒否されます。1〜1000 の範囲で指定します。プラットフォーム設定で、既定は 200 です。',
+		'プラットフォームが所有するマッピングの利用箇所を探すときに、アプリを読み取るテナントの最大数です。テナント 1 件ごとにデータベースを 1 回読みます。これより多いテナントがあるとき、残りは「未確認」として報告され、そのセットの削除や無効化は拒否されます。1〜1000 の範囲で指定します。プラットフォーム設定で、既定は 200 です。',
 
-	'set.k.identity_mapping.reference_scan_row_limit': 'マッピングセット利用検索：1 か所あたりの行数',
+	'set.k.identity_mapping.reference_scan_row_limit': 'マッピング利用検索：1 か所あたりの行数',
 	'set.k.identity_mapping.reference_scan_row_limit.desc':
-		'マッピングセットの利用箇所を探すときに、1 か所（テナントの既定、1 テナントのアプリ、1 テナントの SAML プロバイダー）から読み取る最大行数です。これを超える場所は途中で打ち切られ、件数は下限値として返されます。10〜5000 の範囲で指定します。プラットフォーム設定で、既定は 500 です。',
+		'マッピングの利用箇所を探すときに、1 か所（テナントの既定、1 テナントのアプリ、1 テナントの SAML プロバイダー）から読み取る最大行数です。これを超える場所は途中で打ち切られ、件数は下限値として返されます。10〜5000 の範囲で指定します。プラットフォーム設定で、既定は 500 です。',
 
-	'set.k.identity_mapping.reference_scan_concurrency': 'マッピングセット利用検索：同時読み取り数',
+	'set.k.identity_mapping.reference_scan_concurrency': 'マッピング利用検索：同時読み取り数',
 	'set.k.identity_mapping.reference_scan_concurrency.desc':
-		'プラットフォームが所有するマッピングセットの利用箇所を探すときに、同時に読み取るテナントの数です。1〜16 の範囲で指定します。プラットフォーム設定で、既定は 8 です。',
+		'プラットフォームが所有するマッピングの利用箇所を探すときに、同時に読み取るテナントの数です。1〜16 の範囲で指定します。プラットフォーム設定で、既定は 8 です。',
 
-	'set.k.identity_mapping.reference_display_limit': 'マッピングセット利用状況：表示する参照数',
+	'set.k.identity_mapping.reference_display_limit': 'マッピング利用状況：表示する参照数',
 	'set.k.identity_mapping.reference_display_limit.desc':
 		'利用状況の応答と、削除が拒否されたときの応答に一覧として載せる参照の数です。件数そのものは常に全体の数を返します。1〜100 の範囲で指定します。プラットフォーム設定で、既定は 20 です。',
 

@@ -68,3 +68,20 @@ function isCompatibleActiveVersion(
 
 	return true;
 }
+
+/**
+ * What the pickers know of a set from the list alone: a set that is switched on serves a version,
+ * and the one-step Mapping Set API lists no more than that. Reading each set for its direction
+ * would be one request per set against a rate limit; which Destination Profile a set releases
+ * into is read once, for the set that is chosen, and the server's save-time checks refuse a set
+ * that does not fit the provider.
+ */
+export function activeVersionsFromListedSets(
+	fieldMappingSets: readonly SAMLFieldMappingSetOption[]
+): Record<string, SAMLFieldMappingVersionOption[]> {
+	return Object.fromEntries(
+		fieldMappingSets
+			.filter((fieldMappingSet) => fieldMappingSet.lifecycleState === 'active')
+			.map((fieldMappingSet) => [fieldMappingSet.id, [{ lifecycleState: 'active' }]])
+	);
+}

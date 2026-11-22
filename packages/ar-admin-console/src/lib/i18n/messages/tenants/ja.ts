@@ -102,7 +102,7 @@ export const jaTenants = {
 	'tn.copy.clients.desc': '登録済みのアプリとその設定。',
 	'tn.copy.samlProviders': 'SAML 接続（無効で複製）',
 	'tn.copy.samlProviders.desc':
-		'SP と IdP の設定を下書きとして複製します。有効化するには、複製先のマッピングセットを選び、レベル2の追加認証で承認してください。',
+		'SP と IdP の設定を下書きとして複製します。有効化するには、複製先のマッピングを選び、レベル2の追加認証で承認してください。',
 	'tn.copy.clientCredentials': 'クライアントシークレットも含める',
 	'tn.copy.clientCredentials.desc': 'アプリのシークレットもそのままコピーします。',
 	'tn.copy.webhooks': 'Webhook',

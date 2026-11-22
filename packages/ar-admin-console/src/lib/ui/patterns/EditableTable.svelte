@@ -160,7 +160,16 @@
 </script>
 
 <div class="etable">
-	<div class="etable__scroll" role="region" aria-label={label} aria-describedby="{uid}-hint">
+	<!-- With no rows there is no cell to focus: the region itself takes the keys so that a wide
+	     header can still be scrolled to. -->
+	<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+	<div
+		class="etable__scroll"
+		role="region"
+		aria-label={label}
+		aria-describedby="{uid}-hint"
+		tabindex={rows.length === 0 ? 0 : undefined}
+	>
 		<table bind:this={table}>
 			<caption class="sr-only">{label}</caption>
 			<thead>

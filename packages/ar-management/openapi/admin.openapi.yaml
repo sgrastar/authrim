@@ -178,7 +178,9 @@ tags:
   - name: Diagnostic Logging
   - name: Email Delivery
   - name: External Providers
-  - name: Field Mapping
+  - name: Federation
+  - name: Identity Mapping
+  - name: Persistent Identifiers
   - name: Flows
   - name: Health
   - name: Jobs
@@ -11552,10 +11554,10 @@ paths:
           schema:
             type: string
           description: Optional bridge-specific pagination cursor.
-  /api/admin/field-mapping/attribute-fields:
+  /api/admin/identity-mapping/attribute-fields:
     get:
       tags:
-        - Field Mapping
+        - Identity Mapping
       operationId: getApiAdminFieldMappingAttributeFields
       summary: List field-mapping attribute fields.
       description: >-
@@ -11581,7 +11583,7 @@ paths:
         - adminSessionCookie: []
     post:
       tags:
-        - Field Mapping
+        - Identity Mapping
       operationId: postApiAdminFieldMappingAttributeFields
       summary: Create a field-mapping attribute field.
       description: >-
@@ -11607,10 +11609,10 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
-  /api/admin/field-mapping/attribute-groups:
+  /api/admin/identity-mapping/attribute-groups:
     get:
       tags:
-        - Field Mapping
+        - Identity Mapping
       operationId: getApiAdminFieldMappingAttributeGroups
       summary: List field-mapping attribute groups.
       description: >-
@@ -11636,7 +11638,7 @@ paths:
         - adminSessionCookie: []
     post:
       tags:
-        - Field Mapping
+        - Identity Mapping
       operationId: postApiAdminFieldMappingAttributeGroups
       summary: Create a field-mapping attribute group.
       description: >-
@@ -11664,10 +11666,10 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
-  /api/admin/field-mapping/catalogs:
+  /api/admin/identity-mapping/catalogs:
     get:
       tags:
-        - Field Mapping
+        - Identity Mapping
       operationId: getApiAdminFieldMappingCatalogs
       summary: List field catalogs.
       description: >-
@@ -11693,7 +11695,7 @@ paths:
         - adminSessionCookie: []
     post:
       tags:
-        - Field Mapping
+        - Identity Mapping
       operationId: postApiAdminFieldMappingCatalogs
       summary: Create a field catalog.
       description: >-
@@ -11722,10 +11724,10 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
-  /api/admin/field-mapping/destination-profiles:
+  /api/admin/identity-mapping/destination-profiles:
     get:
       tags:
-        - Field Mapping
+        - Identity Mapping
       operationId: getApiAdminFieldMappingDestinationProfiles
       summary: List destination profiles.
       description: 'Lists OIDC, CSV, and SAML destination profiles with owner scope and active version details.'
@@ -11749,7 +11751,7 @@ paths:
         - adminSessionCookie: []
     post:
       tags:
-        - Field Mapping
+        - Identity Mapping
       operationId: postApiAdminFieldMappingDestinationProfiles
       summary: Create a destination profile.
       description: >-
@@ -11777,10 +11779,10 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
-  '/api/admin/field-mapping/destination-profiles/{destinationProfileId}':
+  '/api/admin/identity-mapping/destination-profiles/{destinationProfileId}':
     delete:
       tags:
-        - Field Mapping
+        - Identity Mapping
       operationId: deleteApiAdminFieldMappingDestinationProfilesByDestinationProfileId
       summary: Delete a destination profile.
       description: >-
@@ -11817,7 +11819,7 @@ paths:
         - adminSessionCookie: []
     put:
       tags:
-        - Field Mapping
+        - Identity Mapping
       operationId: putApiAdminFieldMappingDestinationProfilesByDestinationProfileId
       summary: Update a destination profile.
       description: >-
@@ -11855,10 +11857,10 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
-  '/api/admin/field-mapping/destination-profiles/{destinationProfileId}/versions/{destinationProfileVersionId}/activate':
+  '/api/admin/identity-mapping/destination-profiles/{destinationProfileId}/versions/{destinationProfileVersionId}/activate':
     post:
       tags:
-        - Field Mapping
+        - Identity Mapping
       operationId: >-
         postApiAdminFieldMappingDestinationProfilesByDestinationProfileIdVersionsByDestinationProfileVersionIdActivate
       summary: Activate a destination profile version.
@@ -11900,10 +11902,10 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
-  '/api/admin/field-mapping/destination-profiles/{destinationProfileId}/versions/{destinationProfileVersionId}/review':
+  '/api/admin/identity-mapping/destination-profiles/{destinationProfileId}/versions/{destinationProfileVersionId}/review':
     post:
       tags:
-        - Field Mapping
+        - Identity Mapping
       operationId: >-
         postApiAdminFieldMappingDestinationProfilesByDestinationProfileIdVersionsByDestinationProfileVersionIdReview
       summary: Move a destination profile version to review.
@@ -11945,10 +11947,10 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
-  /api/admin/field-mapping/entitlements:
+  /api/admin/identity-mapping/entitlements:
     post:
       tags:
-        - Field Mapping
+        - Identity Mapping
       operationId: postApiAdminFieldMappingEntitlements
       summary: Grant an entitlement.
       description: >-
@@ -11976,10 +11978,10 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
-  /api/admin/field-mapping/external-schemas:
+  /api/admin/identity-mapping/external-schemas:
     get:
       tags:
-        - Field Mapping
+        - Identity Mapping
       operationId: getApiAdminFieldMappingExternalSchemas
       summary: List imported external schemas.
       description: Lists imported external schemas registered for source systems and their lifecycle state.
@@ -12003,7 +12005,7 @@ paths:
         - adminSessionCookie: []
     post:
       tags:
-        - Field Mapping
+        - Identity Mapping
       operationId: postApiAdminFieldMappingExternalSchemas
       summary: Import an external schema.
       description: >-
@@ -12031,10 +12033,10 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
-  /api/admin/field-mapping/federation-metadata-documents:
+  /api/admin/federation/metadata-documents:
     post:
       tags:
-        - Field Mapping
+        - Federation
       operationId: postApiAdminFieldMappingFederationMetadataDocuments
       summary: Register a federation metadata document.
       description: >-
@@ -12062,10 +12064,10 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
-  /api/admin/field-mapping/federation-trust-sources:
+  /api/admin/federation/trust-sources:
     get:
       tags:
-        - Field Mapping
+        - Federation
       operationId: getApiAdminFieldMappingFederationTrustSources
       summary: List federation trust sources.
       description: Lists SAML federation trust sources and metadata configuration summaries for the tenant.
@@ -12089,7 +12091,7 @@ paths:
         - adminSessionCookie: []
     post:
       tags:
-        - Field Mapping
+        - Federation
       operationId: postApiAdminFieldMappingFederationTrustSources
       summary: Create a federation trust source.
       description: >-
@@ -12121,10 +12123,10 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
-  '/api/admin/field-mapping/federation-trust-sources/{trustSourceId}':
+  '/api/admin/federation/trust-sources/{trustSourceId}':
     get:
       tags:
-        - Field Mapping
+        - Federation
       operationId: getApiAdminFieldMappingFederationTrustSourcesByTrustSourceId
       summary: Read one federation trust source.
       description: >-
@@ -12155,7 +12157,7 @@ paths:
         - adminSessionCookie: []
     delete:
       tags:
-        - Field Mapping
+        - Federation
       operationId: deleteApiAdminFieldMappingFederationTrustSourcesByTrustSourceId
       summary: Delete a federation trust source.
       description: >-
@@ -12193,7 +12195,7 @@ paths:
         - adminSessionCookie: []
     put:
       tags:
-        - Field Mapping
+        - Federation
       operationId: putApiAdminFieldMappingFederationTrustSourcesByTrustSourceId
       summary: Update a federation trust source.
       description: >-
@@ -12233,10 +12235,10 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
-  '/api/admin/field-mapping/federation-trust-sources/{trustSourceId}/metadata-documents':
+  '/api/admin/federation/trust-sources/{trustSourceId}/metadata-documents':
     get:
       tags:
-        - Field Mapping
+        - Federation
       operationId: getApiAdminFieldMappingFederationTrustSourcesByTrustSourceIdMetadataDocuments
       summary: List federation metadata documents.
       description: Lists metadata documents registered for one federation trust source.
@@ -12265,10 +12267,10 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
-  '/api/admin/field-mapping/federation-trust-sources/{trustSourceId}/entities':
+  '/api/admin/federation/trust-sources/{trustSourceId}/entities':
     get:
       tags:
-        - Field Mapping
+        - Federation
       operationId: getApiAdminFieldMappingFederationTrustSourcesByTrustSourceIdEntities
       summary: Search the entities of a federation trust source.
       description: >-
@@ -12371,10 +12373,10 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
-  '/api/admin/field-mapping/federation-trust-sources/{trustSourceId}/entity-keywords':
+  '/api/admin/federation/trust-sources/{trustSourceId}/entity-keywords':
     get:
       tags:
-        - Field Mapping
+        - Federation
       operationId: getApiAdminFieldMappingFederationTrustSourcesByTrustSourceIdEntityKeywords
       summary: List the keywords of the entities of a federation trust source.
       description: >-
@@ -12414,10 +12416,10 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
-  '/api/admin/field-mapping/federation-trust-sources/{trustSourceId}/refresh-history':
+  '/api/admin/federation/trust-sources/{trustSourceId}/refresh-history':
     get:
       tags:
-        - Field Mapping
+        - Federation
       operationId: getApiAdminFieldMappingFederationTrustSourcesByTrustSourceIdRefreshHistory
       summary: List recent refreshes of a federation trust source.
       description: >-
@@ -12454,147 +12456,10 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
-  /api/admin/field-mapping/field-mapping-sets:
-    get:
-      tags:
-        - Field Mapping
-      operationId: getApiAdminFieldMappingFieldMappingSets
-      summary: List field mapping sets.
-      description: >-
-        Lists the field mapping sets the tenant owns together with the platform's, which every
-        tenant can read. Each set carries its key, display name, owner (`tenant` or `platform`),
-        lifecycle state, and timestamps. A set another tenant owns is never listed. A platform set
-        can be read but not changed with tenant authority.
-      responses:
-        '200':
-          $ref: '#/components/responses/FieldMappingSets'
-        '400':
-          $ref: '#/components/responses/Error'
-        '401':
-          $ref: '#/components/responses/Error'
-        '403':
-          $ref: '#/components/responses/Error'
-        '404':
-          $ref: '#/components/responses/Error'
-        '409':
-          $ref: '#/components/responses/Error'
-        '500':
-          $ref: '#/components/responses/Error'
-      security:
-        - adminBearer: []
-        - adminSessionCookie: []
-    post:
-      tags:
-        - Field Mapping
-      operationId: postApiAdminFieldMappingFieldMappingSets
-      deprecated: true
-      summary: Create a field mapping set.
-      description: >-
-        Creates a field mapping set container. Versions and rules are added through the versions
-        endpoint. With `ownerScopeType` set to `platform` the set is created in the platform's
-        namespace (the set every tenant can read), which requires platform administrator
-        authority; any other value creates a set the calling tenant owns. A tenant set cannot
-        carry the platform owner scope.
-        Deprecated: this is one of the five steps (set, version, publish, compile, activate) that `POST /api/admin/identity-mapping/sets` and `PUT /api/admin/identity-mapping/sets/{id}` run in one call, with the same checks and a release safety check made when the content is saved. It keeps working unchanged; new clients use the Mapping Set facade.
-      parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
-      responses:
-        '200':
-          $ref: '#/components/responses/FieldMappingSetMutation'
-        '400':
-          $ref: '#/components/responses/Error'
-        '401':
-          $ref: '#/components/responses/Error'
-        '403':
-          $ref: '#/components/responses/Error'
-        '404':
-          $ref: '#/components/responses/Error'
-        '409':
-          $ref: '#/components/responses/Error'
-        '500':
-          $ref: '#/components/responses/Error'
-      requestBody:
-        $ref: '#/components/requestBodies/FieldMappingSetCreate'
-      security:
-        - adminBearer: []
-        - adminSessionCookie: []
-  '/api/admin/field-mapping/field-mapping-sets/{fieldMappingSetId}':
-    delete:
-      tags:
-        - Field Mapping
-      operationId: deleteApiAdminFieldMappingFieldMappingSetsByFieldMappingSetId
-      summary: Delete a field mapping set.
-      description: >-
-        Deletes a field mapping set by id and returns a mutation result envelope. A set that
-        another tenant owns answers 404 as a set that does not exist does. A set the platform owns
-        requires platform administrator authority (403 otherwise). Refused with 409 (`reason` `referenced`) while a default (the platform's or a tenant's), an app, a SAML provider, a credential profile or SCIM still names the set, or with 409 (`reason` `scan_incomplete`) when where it is used could not be checked everywhere. `references` carries the count, the first references, and for a platform set the count of other tenants' references; their tenant and app IDs are given only to a caller with global authority.
-      responses:
-        '200':
-          $ref: '#/components/responses/FieldMappingDeleteResult'
-        '400':
-          $ref: '#/components/responses/Error'
-        '401':
-          $ref: '#/components/responses/Error'
-        '403':
-          $ref: '#/components/responses/Error'
-        '404':
-          $ref: '#/components/responses/Error'
-        '409':
-          $ref: '#/components/responses/MappingSetInUse'
-        '500':
-          $ref: '#/components/responses/Error'
-      parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
-        - name: fieldMappingSetId
-          in: path
-          required: true
-          schema:
-            type: string
-          description: Field mapping set identifier.
-      security:
-        - adminBearer: []
-        - adminSessionCookie: []
-  '/api/admin/field-mapping/field-mapping-sets/{fieldMappingSetId}/rollback':
-    post:
-      tags:
-        - Field Mapping
-      operationId: postApiAdminFieldMappingFieldMappingSetsByFieldMappingSetIdRollback
-      summary: Rollback a field mapping set.
-      description: >-
-        Rolls back a field mapping set to a previous active state according to the repository policy
-        and returns rollback metadata. Refused with 409 (`reason` `referenced`) while a default (the platform's or a tenant's), an app, a SAML provider, a credential profile or SCIM still names the set (a rollback re-activates an earlier activation whose compiled snapshot is not active), or with 409 (`reason` `scan_incomplete`) when where it is used could not be checked everywhere. `references` carries the count, the first references, and for a platform set the count of other tenants' references; their tenant and app IDs are given only to a caller with global authority. Also 409 (`reason` `would_break_references`) when the version would not meet what the references need.
-      responses:
-        '200':
-          $ref: '#/components/responses/FieldMappingRollbackResult'
-        '400':
-          $ref: '#/components/responses/Error'
-        '401':
-          $ref: '#/components/responses/Error'
-        '403':
-          $ref: '#/components/responses/Error'
-        '404':
-          $ref: '#/components/responses/Error'
-        '409':
-          $ref: '#/components/responses/MappingSetInUse'
-        '500':
-          $ref: '#/components/responses/Error'
-      parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
-        - name: fieldMappingSetId
-          in: path
-          required: true
-          schema:
-            type: string
-          description: Field mapping set identifier.
-      requestBody:
-        $ref: '#/components/requestBodies/FieldMappingEmptyMutation'
-      security:
-        - adminBearer: []
-        - adminSessionCookie: []
   /api/admin/identity-mapping/usage:
     get:
       tags:
-        - Field Mapping
+        - Identity Mapping
       operationId: getApiAdminIdentityMappingUsage
       summary: Show where a Mapping Set is used.
       description: >-
@@ -12644,7 +12509,7 @@ paths:
   /api/admin/identity-mapping/effective:
     get:
       tags:
-        - Field Mapping
+        - Identity Mapping
       operationId: getApiAdminIdentityMappingEffective
       summary: Show which Mapping Set an app is bound to, and why.
       description: >-
@@ -12696,7 +12561,7 @@ paths:
   /api/admin/platform/identity-mapping/preview-default:
     post:
       tags:
-        - Field Mapping
+        - Identity Mapping
       operationId: postApiAdminPlatformIdentityMappingPreviewDefault
       summary: Inspect a proposed platform default Mapping Set.
       description: >-
@@ -12757,7 +12622,7 @@ paths:
   /api/admin/platform/identity-mapping/tenants:
     get:
       tags:
-        - Field Mapping
+        - Identity Mapping
       operationId: getApiAdminPlatformIdentityMappingTenants
       summary: List every tenant with the source of its Mapping Set and how its apps choose.
       description: >-
@@ -12816,7 +12681,7 @@ paths:
   /api/admin/identity-mapping/test-users:
     get:
       tags:
-        - Field Mapping
+        - Identity Mapping
       operationId: getApiAdminIdentityMappingTestUsers
       summary: List the tenant's test users for explaining the release of claims.
       description: >-
@@ -12840,7 +12705,7 @@ paths:
         - adminSessionCookie: []
     put:
       tags:
-        - Field Mapping
+        - Identity Mapping
       operationId: putApiAdminIdentityMappingTestUsers
       summary: Replace the tenant's test users.
       description: >-
@@ -12878,7 +12743,7 @@ paths:
   /api/admin/identity-mapping/explain:
     post:
       tags:
-        - Field Mapping
+        - Identity Mapping
       operationId: postApiAdminIdentityMappingExplain
       summary: Explain OIDC or SAML release for a test user.
       description: >-
@@ -12932,7 +12797,7 @@ paths:
   /api/admin/identity-mapping/sets/{id}/preview-change:
     post:
       tags:
-        - Field Mapping
+        - Identity Mapping
       operationId: postApiAdminIdentityMappingSetPreviewChange
       summary: Preview what a change of a Mapping Set's content would do, app by app.
       description: >-
@@ -13019,7 +12884,7 @@ paths:
   /api/admin/identity-mapping/history:
     get:
       tags:
-        - Field Mapping
+        - Identity Mapping
       operationId: getApiAdminIdentityMappingHistory
       summary: List changes to the tenant's default and apps' Mapping Set choices.
       description: >-
@@ -13089,7 +12954,7 @@ paths:
   /api/admin/identity-mapping/failures:
     get:
       tags:
-        - Field Mapping
+        - Identity Mapping
       operationId: getApiAdminIdentityMappingFailures
       summary: List cumulative OIDC mapping failure observations.
       description: >-
@@ -13153,7 +13018,7 @@ paths:
   /api/admin/identity-mapping/history/{id}/restore:
     post:
       tags:
-        - Field Mapping
+        - Identity Mapping
       operationId: postApiAdminIdentityMappingHistoryRestore
       summary: Preview or restore the before value of one recorded level change.
       description: >-
@@ -13245,7 +13110,7 @@ paths:
   /api/admin/identity-mapping/preview-effective:
     post:
       tags:
-        - Field Mapping
+        - Identity Mapping
       operationId: postApiAdminIdentityMappingPreviewEffective
       summary: Preview which Mapping Set an app (or the tenant) would be bound to if a choice were saved.
       description: >-
@@ -13289,7 +13154,7 @@ paths:
   /api/admin/identity-mapping/sets/compare:
     get:
       tags:
-        - Field Mapping
+        - Identity Mapping
       operationId: getApiAdminIdentityMappingCompareSets
       summary: Compare the claims of two Mapping Sets.
       description: >-
@@ -13336,7 +13201,7 @@ paths:
   /api/admin/identity-mapping/sets:
     get:
       tags:
-        - Field Mapping
+        - Identity Mapping
       operationId: getApiAdminIdentityMappingSets
       summary: List Mapping Sets.
       description: >-
@@ -13362,7 +13227,7 @@ paths:
         - adminSessionCookie: []
     post:
       tags:
-        - Field Mapping
+        - Identity Mapping
       operationId: postApiAdminIdentityMappingSets
       summary: Create a Mapping Set with its content, and switch it on.
       description: >-
@@ -13415,7 +13280,7 @@ paths:
         - adminSessionCookie: []
   /api/admin/identity-mapping/inbound/op/{id}:
     get:
-      tags: [Field Mapping]
+      tags: [Identity Mapping]
       operationId: getApiAdminInboundOPMapping
       summary: Read an incoming OP connection mapping.
       description: >-
@@ -13459,7 +13324,7 @@ paths:
         - adminBearer: []
         - adminSessionCookie: []
     put:
-      tags: [Field Mapping]
+      tags: [Identity Mapping]
       operationId: putApiAdminInboundOPMapping
       summary: Save an incoming OP connection mapping.
       description: >-
@@ -13522,7 +13387,7 @@ paths:
         - adminSessionCookie: []
   /api/admin/identity-mapping/inbound/op/{id}/preview:
     post:
-      tags: [Field Mapping]
+      tags: [Identity Mapping]
       operationId: postApiAdminInboundOPMappingPreview
       summary: Preview an incoming OP connection mapping.
       description: >-
@@ -13573,7 +13438,7 @@ paths:
         - adminSessionCookie: []
   /api/admin/identity-mapping/inbound/idp/{id}:
     get:
-      tags: [Field Mapping]
+      tags: [Identity Mapping]
       operationId: getApiAdminInboundIDPMapping
       summary: Read an incoming IDP connection mapping.
       description: >-
@@ -13617,7 +13482,7 @@ paths:
         - adminBearer: []
         - adminSessionCookie: []
     put:
-      tags: [Field Mapping]
+      tags: [Identity Mapping]
       operationId: putApiAdminInboundIDPMapping
       summary: Save an incoming IDP connection mapping.
       description: >-
@@ -13676,7 +13541,7 @@ paths:
         - adminSessionCookie: []
   /api/admin/identity-mapping/inbound/idp/{id}/preview:
     post:
-      tags: [Field Mapping]
+      tags: [Identity Mapping]
       operationId: postApiAdminInboundIDPMappingPreview
       summary: Preview an incoming IDP connection mapping.
       description: >-
@@ -13728,7 +13593,7 @@ paths:
   '/api/admin/identity-mapping/sets/{id}':
     get:
       tags:
-        - Field Mapping
+        - Identity Mapping
       operationId: getApiAdminIdentityMappingSetsById
       summary: Read a Mapping Set with its content.
       description: >-
@@ -13764,7 +13629,7 @@ paths:
         - adminSessionCookie: []
     put:
       tags:
-        - Field Mapping
+        - Identity Mapping
       operationId: putApiAdminIdentityMappingSetsById
       summary: Replace the content of a Mapping Set, and switch it on or off.
       description: >-
@@ -13886,14 +13751,13 @@ paths:
         - adminSessionCookie: []
     delete:
       tags:
-        - Field Mapping
+        - Identity Mapping
       operationId: deleteApiAdminIdentityMappingSetsById
       summary: Delete a Mapping Set.
       description: >-
         Deletes a Mapping Set with its versions. A set that is switched on is switched off and
         deleted by the same request, in one atomic batch: there is no separate step of switching it
-        off first (the older `DELETE /api/admin/field-mapping/field-mapping-sets/{fieldMappingSetId}`
-        still refuses an active set). The request is refused with 409 (`reason` `referenced` or
+        off first. The request is refused with 409 (`reason` `referenced` or
         `scan_incomplete`, with `references`) while a default, an app, a SAML provider, a
         credential profile, a federation trust source or SCIM still names the set, or when where it
         is used could not be checked everywhere; nothing is changed then. `If-Match` (optional)
@@ -13937,290 +13801,10 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
-  '/api/admin/field-mapping/field-mapping-sets/{fieldMappingSetId}/versions':
-    get:
-      tags:
-        - Field Mapping
-      operationId: getApiAdminFieldMappingFieldMappingSetsByFieldMappingSetIdVersions
-      summary: List field mapping versions.
-      description: >-
-        Lists versions for a field mapping set, including rule and transform summaries and compiled
-        snapshot metadata. The set may be the tenant's or the platform's; a set another tenant
-        owns, or one that does not exist, answers 404.
-      responses:
-        '200':
-          $ref: '#/components/responses/FieldMappingVersions'
-        '400':
-          $ref: '#/components/responses/Error'
-        '401':
-          $ref: '#/components/responses/Error'
-        '403':
-          $ref: '#/components/responses/Error'
-        '404':
-          $ref: '#/components/responses/Error'
-        '409':
-          $ref: '#/components/responses/Error'
-        '500':
-          $ref: '#/components/responses/Error'
-      parameters:
-        - name: fieldMappingSetId
-          in: path
-          required: true
-          schema:
-            type: string
-          description: Field mapping set identifier.
-      security:
-        - adminBearer: []
-        - adminSessionCookie: []
+  /api/admin/identity-mapping/groups:
     post:
       tags:
-        - Field Mapping
-      operationId: postApiAdminFieldMappingFieldMappingSetsByFieldMappingSetIdVersions
-      deprecated: true
-      summary: Create a field mapping version.
-      description: >-
-        Creates a draft version for a field mapping set with rules, edges, transforms, validation
-        rules, release rules, and conflict rules. A set the platform owns cannot read a field a
-        tenant defines (custom claims, custom fields, attributes), make a persistent identifier,
-        or use a Source Profile. Mapping edges cannot target claims owned by an OIDC
-        or introspection protocol envelope. Every source field marked mappingRequired in a referenced
-        Source Profile must be connected by an edge.
-        Deprecated: this is one of the five steps (set, version, publish, compile, activate) that `POST /api/admin/identity-mapping/sets` and `PUT /api/admin/identity-mapping/sets/{id}` run in one call, with the same checks and a release safety check made when the content is saved. It keeps working unchanged; new clients use the Mapping Set facade.
-      responses:
-        '200':
-          $ref: '#/components/responses/FieldMappingVersionMutation'
-        '400':
-          $ref: '#/components/responses/Error'
-        '401':
-          $ref: '#/components/responses/Error'
-        '403':
-          $ref: '#/components/responses/Error'
-        '404':
-          $ref: '#/components/responses/Error'
-        '409':
-          $ref: '#/components/responses/Error'
-        '500':
-          $ref: '#/components/responses/Error'
-      parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
-        - name: fieldMappingSetId
-          in: path
-          required: true
-          schema:
-            type: string
-      requestBody:
-        $ref: '#/components/requestBodies/FieldMappingVersionCreate'
-      security:
-        - adminBearer: []
-        - adminSessionCookie: []
-  '/api/admin/field-mapping/field-mapping-sets/{fieldMappingSetId}/versions/{fieldMappingVersionId}/activate':
-    post:
-      tags:
-        - Field Mapping
-      operationId: >-
-        postApiAdminFieldMappingFieldMappingSetsByFieldMappingSetIdVersionsByFieldMappingVersionIdActivate
-      deprecated: true
-      summary: Activate a field mapping version.
-      description: >-
-        Activates a compiled field mapping version for the supplied activation scope. Requires a
-        compiled snapshot id in the request body. A set the platform owns applies to every tenant,
-        so its activation is stored with an empty scope (a tenant-wide scope is accepted and
-        normalised; a narrower one is refused), and it must release into exactly one OIDC
-        Destination Profile that the platform owns. While the set has a version in use and is
-        named by a default, an app, a SAML provider, a credential profile or SCIM, the version put
-        in its place must still release into exactly one active Destination Profile of the kind in
-        use (and, for a platform set, hold only what a platform set may), keep the version or
-        snapshot that an app, a SAML provider or a credential profile is bound to, and the scope of
-        the new activation must still apply to the context of each of them; otherwise 409 with
-        `reason` `would_break_references` and the failed condition in `references.violation`.
-        Mappings that read what comes in (SAML identity providers, SCIM) and credential mappings
-        need no Destination Profile. The profiles counted are the ones the runtime counts: those
-        the version's edges name together with the `destinationProfileId` of the activation scope.
-        A SAML provider's saved release policy and attribute names must still hold for the new
-        version's profile, by the rules that save the provider's configuration. When more
-        references exist than are read in full, the change is refused as `scan_incomplete`; the
-        list in `references` is then a lower bound (`countIsLowerBound`) and `scanComplete` is
-        false. 409
-        `scan_incomplete` when where the set is used could not be checked everywhere.
-        Deprecated: this is one of the five steps (set, version, publish, compile, activate) that `POST /api/admin/identity-mapping/sets` and `PUT /api/admin/identity-mapping/sets/{id}` run in one call, with the same checks and a release safety check made when the content is saved. It keeps working unchanged; new clients use the Mapping Set facade.
-      responses:
-        '200':
-          $ref: '#/components/responses/FieldMappingActivationResult'
-        '400':
-          $ref: '#/components/responses/Error'
-        '401':
-          $ref: '#/components/responses/Error'
-        '403':
-          $ref: '#/components/responses/Error'
-        '404':
-          $ref: '#/components/responses/Error'
-        '409':
-          $ref: '#/components/responses/MappingSetInUse'
-        '500':
-          $ref: '#/components/responses/Error'
-      parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
-        - name: fieldMappingSetId
-          in: path
-          required: true
-          schema:
-            type: string
-          description: Field mapping set identifier.
-        - name: fieldMappingVersionId
-          in: path
-          required: true
-          schema:
-            type: string
-          description: Field mapping version identifier.
-      requestBody:
-        $ref: '#/components/requestBodies/FieldMappingVersionActivate'
-      security:
-        - adminBearer: []
-        - adminSessionCookie: []
-  '/api/admin/field-mapping/field-mapping-sets/{fieldMappingSetId}/versions/{fieldMappingVersionId}/compile':
-    post:
-      tags:
-        - Field Mapping
-      operationId: >-
-        postApiAdminFieldMappingFieldMappingSetsByFieldMappingSetIdVersionsByFieldMappingVersionIdCompile
-      deprecated: true
-      summary: Compile a field mapping version.
-      description: >-
-        Compiles a field mapping version against a catalog version and returns the compiled snapshot
-        metadata. For a set the platform owns, the catalog version must be the platform's, every
-        source must be a field of it, and a custom field is refused.
-        Deprecated: this is one of the five steps (set, version, publish, compile, activate) that `POST /api/admin/identity-mapping/sets` and `PUT /api/admin/identity-mapping/sets/{id}` run in one call, with the same checks and a release safety check made when the content is saved. It keeps working unchanged; new clients use the Mapping Set facade.
-      responses:
-        '200':
-          $ref: '#/components/responses/FieldMappingCompileResult'
-        '400':
-          $ref: '#/components/responses/Error'
-        '401':
-          $ref: '#/components/responses/Error'
-        '403':
-          $ref: '#/components/responses/Error'
-        '404':
-          $ref: '#/components/responses/Error'
-        '409':
-          $ref: '#/components/responses/Error'
-        '500':
-          $ref: '#/components/responses/Error'
-      parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
-        - name: fieldMappingSetId
-          in: path
-          required: true
-          schema:
-            type: string
-          description: Field mapping set identifier.
-        - name: fieldMappingVersionId
-          in: path
-          required: true
-          schema:
-            type: string
-          description: Field mapping version identifier.
-      requestBody:
-        $ref: '#/components/requestBodies/FieldMappingVersionCompile'
-      security:
-        - adminBearer: []
-        - adminSessionCookie: []
-  '/api/admin/field-mapping/field-mapping-sets/{fieldMappingSetId}/versions/{fieldMappingVersionId}/deactivate':
-    post:
-      tags:
-        - Field Mapping
-      operationId: >-
-        postApiAdminFieldMappingFieldMappingSetsByFieldMappingSetIdVersionsByFieldMappingVersionIdDeactivate
-      summary: Deactivate a field mapping version.
-      description: >-
-        Deactivates an active field mapping version and returns a lifecycle transition result
-        envelope. Refused while the version in use is named (see `references`): a default, an
-        app, a SAML provider, a federation trust source, a credential profile or SCIM names the set
-        (`reason` `referenced`), or where it is used could not be checked everywhere
-        (`scan_incomplete`). Deactivating a version that is not in use is not refused. A version
-        that is not one of this set answers 404.
-      responses:
-        '200':
-          $ref: '#/components/responses/FieldMappingLifecycleTransition'
-        '400':
-          $ref: '#/components/responses/Error'
-        '401':
-          $ref: '#/components/responses/Error'
-        '403':
-          $ref: '#/components/responses/Error'
-        '404':
-          $ref: '#/components/responses/Error'
-        '409':
-          $ref: '#/components/responses/MappingSetInUse'
-        '500':
-          $ref: '#/components/responses/Error'
-      parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
-        - name: fieldMappingSetId
-          in: path
-          required: true
-          schema:
-            type: string
-          description: Field mapping set identifier.
-        - name: fieldMappingVersionId
-          in: path
-          required: true
-          schema:
-            type: string
-          description: Field mapping version identifier.
-      requestBody:
-        $ref: '#/components/requestBodies/FieldMappingEmptyMutation'
-      security:
-        - adminBearer: []
-        - adminSessionCookie: []
-  '/api/admin/field-mapping/field-mapping-sets/{fieldMappingSetId}/versions/{fieldMappingVersionId}/publish':
-    post:
-      tags:
-        - Field Mapping
-      operationId: >-
-        postApiAdminFieldMappingFieldMappingSetsByFieldMappingSetIdVersionsByFieldMappingVersionIdPublish
-      deprecated: true
-      summary: Publish a field mapping version.
-      description: >-
-        Publishes a draft field mapping version for the specified field mapping set. The mutation is
-        idempotent when an Idempotency-Key header is supplied and returns the lifecycle transition
-        in a result envelope.
-        Deprecated: this is one of the five steps (set, version, publish, compile, activate) that `POST /api/admin/identity-mapping/sets` and `PUT /api/admin/identity-mapping/sets/{id}` run in one call, with the same checks and a release safety check made when the content is saved. It keeps working unchanged; new clients use the Mapping Set facade.
-      responses:
-        '200':
-          $ref: '#/components/responses/FieldMappingLifecycleTransition'
-        '400':
-          $ref: '#/components/responses/Error'
-        '401':
-          $ref: '#/components/responses/Error'
-        '403':
-          $ref: '#/components/responses/Error'
-        '404':
-          $ref: '#/components/responses/Error'
-        '409':
-          $ref: '#/components/responses/Error'
-        '500':
-          $ref: '#/components/responses/Error'
-      parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
-        - name: fieldMappingSetId
-          in: path
-          required: true
-          schema:
-            type: string
-        - name: fieldMappingVersionId
-          in: path
-          required: true
-          schema:
-            type: string
-      requestBody:
-        $ref: '#/components/requestBodies/FieldMappingEmptyMutation'
-      security:
-        - adminBearer: []
-        - adminSessionCookie: []
-  /api/admin/field-mapping/groups:
-    post:
-      tags:
-        - Field Mapping
+        - Identity Mapping
       operationId: postApiAdminFieldMappingGroups
       summary: Create an identity mapping group.
       description: >-
@@ -14248,10 +13832,10 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
-  '/api/admin/field-mapping/groups/{groupId}/memberships':
+  '/api/admin/identity-mapping/groups/{groupId}/memberships':
     post:
       tags:
-        - Field Mapping
+        - Identity Mapping
       operationId: postApiAdminFieldMappingGroupsByGroupIdMemberships
       summary: Create a group membership.
       description: >-
@@ -14285,10 +13869,10 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
-  /api/admin/field-mapping/key-registries:
+  /api/admin/identifiers/key-registries:
     get:
       tags:
-        - Field Mapping
+        - Persistent Identifiers
       operationId: getApiAdminFieldMappingKeyRegistries
       summary: List key registries.
       description: >-
@@ -14314,7 +13898,7 @@ paths:
         - adminSessionCookie: []
     post:
       tags:
-        - Field Mapping
+        - Persistent Identifiers
       operationId: postApiAdminFieldMappingKeyRegistries
       summary: Create a key registry.
       description: >-
@@ -14342,10 +13926,10 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
-  '/api/admin/field-mapping/key-registries/{keyRegistryId}/access-events':
+  '/api/admin/identifiers/key-registries/{keyRegistryId}/access-events':
     post:
       tags:
-        - Field Mapping
+        - Persistent Identifiers
       operationId: postApiAdminFieldMappingKeyRegistriesByKeyRegistryIdAccessEvents
       summary: Record a key access event.
       description: >-
@@ -14379,10 +13963,10 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
-  '/api/admin/field-mapping/key-registries/{keyRegistryId}/rotate':
+  '/api/admin/identifiers/key-registries/{keyRegistryId}/rotate':
     post:
       tags:
-        - Field Mapping
+        - Persistent Identifiers
       operationId: postApiAdminFieldMappingKeyRegistriesByKeyRegistryIdRotate
       summary: Rotate a key registry.
       description: >-
@@ -14416,10 +14000,10 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
-  /api/admin/field-mapping/lifecycle-signals:
+  /api/admin/identity-mapping/lifecycle-signals:
     post:
       tags:
-        - Field Mapping
+        - Identity Mapping
       operationId: postApiAdminFieldMappingLifecycleSignals
       summary: Record an external lifecycle signal.
       description: >-
@@ -14458,10 +14042,10 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
-  '/api/admin/field-mapping/operational-notification-states/{stateId}/acknowledge':
+  '/api/admin/identity-mapping/operational-notification-states/{stateId}/acknowledge':
     post:
       tags:
-        - Field Mapping
+        - Identity Mapping
       operationId: postApiAdminFieldMappingOperationalNotificationStatesByStateIdAcknowledge
       summary: Acknowledge an operational notification state.
       description: >-
@@ -14494,10 +14078,10 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
-  '/api/admin/field-mapping/operational-notification-states/{stateId}/resolve':
+  '/api/admin/identity-mapping/operational-notification-states/{stateId}/resolve':
     post:
       tags:
-        - Field Mapping
+        - Identity Mapping
       operationId: postApiAdminFieldMappingOperationalNotificationStatesByStateIdResolve
       summary: Resolve an operational notification state.
       description: >-
@@ -14530,10 +14114,10 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
-  /api/admin/field-mapping/operational-notifications:
+  /api/admin/identity-mapping/operational-notifications:
     post:
       tags:
-        - Field Mapping
+        - Identity Mapping
       operationId: postApiAdminFieldMappingOperationalNotifications
       summary: Create an operational notification.
       description: >-
@@ -14561,9 +14145,9 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
-  /api/admin/field-mapping/hash-key:
+  /api/admin/identifiers/hash-key:
     get:
-      tags: [Field Mapping]
+      tags: [Persistent Identifiers]
       operationId: getApiAdminFieldMappingHashKey
       summary: Read tenant mapping hash key metadata
       description: >-
@@ -14592,9 +14176,9 @@ paths:
           $ref: '#/components/responses/Error'
         '503':
           $ref: '#/components/responses/Error'
-  /api/admin/field-mapping/hash-key/rotate:
+  /api/admin/identifiers/hash-key/rotate:
     post:
-      tags: [Field Mapping]
+      tags: [Persistent Identifiers]
       operationId: postApiAdminFieldMappingHashKeyRotate
       summary: Rotate an installed tenant mapping hash key
       description: >-
@@ -14638,10 +14222,10 @@ paths:
           $ref: '#/components/responses/Error'
         '503':
           $ref: '#/components/responses/Error'
-  /api/admin/field-mapping/identifier-salts:
+  /api/admin/identifiers/salts:
     get:
       tags:
-        - Field Mapping
+        - Persistent Identifiers
       operationId: getApiAdminFieldMappingIdentifierSalts
       summary: List imported identifier salts.
       description: >-
@@ -14680,10 +14264,10 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
-  '/api/admin/field-mapping/identifier-salts/{name}':
+  '/api/admin/identifiers/salts/{name}':
     put:
       tags:
-        - Field Mapping
+        - Persistent Identifiers
       operationId: putApiAdminFieldMappingIdentifierSaltsByName
       summary: Import an identifier salt.
       description: >-
@@ -14750,10 +14334,10 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
-  /api/admin/field-mapping/identifier-stores:
+  /api/admin/identifiers/stores:
     get:
       tags:
-        - Field Mapping
+        - Persistent Identifiers
       operationId: getApiAdminFieldMappingIdentifierStores
       summary: List identifier stores.
       description: >-
@@ -14789,10 +14373,10 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
-  '/api/admin/field-mapping/identifier-stores/{name}/import':
+  '/api/admin/identifiers/stores/{name}/import':
     post:
       tags:
-        - Field Mapping
+        - Persistent Identifiers
       operationId: postApiAdminFieldMappingIdentifierStoresByNameImport
       summary: Import identifiers into a store.
       description: >-
@@ -14858,10 +14442,10 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
-  /api/admin/field-mapping/identifier-sources:
+  /api/admin/identifiers/sources:
     get:
       tags:
-        - Field Mapping
+        - Persistent Identifiers
       operationId: getApiAdminFieldMappingIdentifierSources
       summary: List identifier sources.
       description: >-
@@ -14898,10 +14482,10 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
-  '/api/admin/field-mapping/identifier-sources/{name}/import':
+  '/api/admin/identifiers/sources/{name}/import':
     post:
       tags:
-        - Field Mapping
+        - Persistent Identifiers
       operationId: postApiAdminFieldMappingIdentifierSourcesByNameImport
       summary: Import values into an identifier source.
       description: >-
@@ -14969,10 +14553,10 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
-  /api/admin/field-mapping/identifier-exceptions:
+  /api/admin/identifiers/exceptions:
     get:
       tags:
-        - Field Mapping
+        - Persistent Identifiers
       operationId: getApiAdminFieldMappingIdentifierExceptions
       summary: List identifier exception lists.
       description: >-
@@ -15009,10 +14593,10 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
-  '/api/admin/field-mapping/identifier-exceptions/{name}/import':
+  '/api/admin/identifiers/exceptions/{name}/import':
     post:
       tags:
-        - Field Mapping
+        - Persistent Identifiers
       operationId: postApiAdminFieldMappingIdentifierExceptionsByNameImport
       summary: Replace an identifier exception list.
       description: >-
@@ -15076,10 +14660,10 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
-  /api/admin/field-mapping/preview/csv:
+  /api/admin/identity-mapping/preview/csv:
     post:
       tags:
-        - Field Mapping
+        - Identity Mapping
       operationId: postApiAdminFieldMappingPreviewCsv
       summary: Preview CSV field mapping.
       description: >-
@@ -15105,10 +14689,10 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
-  /api/admin/field-mapping/preview/oidc:
+  /api/admin/identity-mapping/preview/oidc:
     post:
       tags:
-        - Field Mapping
+        - Identity Mapping
       operationId: postApiAdminFieldMappingPreviewOidc
       summary: Preview OIDC destination release.
       description: >-
@@ -15135,10 +14719,10 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
-  /api/admin/field-mapping/preview/saml:
+  /api/admin/identity-mapping/preview/saml:
     post:
       tags:
-        - Field Mapping
+        - Identity Mapping
       operationId: postApiAdminFieldMappingPreviewSaml
       summary: Preview SAML destination release.
       description: >-
@@ -15165,10 +14749,10 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
-  /api/admin/field-mapping/oidc-scopes:
+  /api/admin/identity-mapping/oidc-scopes:
     get:
       tags:
-        - Field Mapping
+        - Identity Mapping
       operationId: getApiAdminFieldMappingOidcScopes
       summary: List tenant OIDC scopes.
       description: >-
@@ -15237,7 +14821,7 @@ paths:
         - adminSessionCookie: []
     post:
       tags:
-        - Field Mapping
+        - Identity Mapping
       operationId: postApiAdminFieldMappingOidcScopes
       summary: Create an OIDC scope.
       description: >-
@@ -15294,10 +14878,10 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
-  '/api/admin/field-mapping/oidc-scopes/{id}':
+  '/api/admin/identity-mapping/oidc-scopes/{id}':
     put:
       tags:
-        - Field Mapping
+        - Identity Mapping
       operationId: putApiAdminFieldMappingOidcScopesById
       summary: Update an OIDC scope.
       description: Updates mutable fields for a tenant OIDC scope.
@@ -15347,7 +14931,7 @@ paths:
         - adminSessionCookie: []
     delete:
       tags:
-        - Field Mapping
+        - Identity Mapping
       operationId: deleteApiAdminFieldMappingOidcScopesById
       summary: Delete an OIDC scope.
       description: Deletes a custom tenant OIDC scope. Built-in system scopes cannot be deleted.
@@ -15378,10 +14962,10 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
-  /api/admin/field-mapping/protocol-schemas:
+  /api/admin/identity-mapping/protocol-schemas:
     get:
       tags:
-        - Field Mapping
+        - Identity Mapping
       operationId: getApiAdminFieldMappingProtocolSchemas
       summary: List protocol schemas.
       description: >-
@@ -15407,7 +14991,7 @@ paths:
         - adminSessionCookie: []
     post:
       tags:
-        - Field Mapping
+        - Identity Mapping
       operationId: postApiAdminFieldMappingProtocolSchemas
       summary: Create a protocol schema.
       description: >-
@@ -15435,10 +15019,10 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
-  /api/admin/field-mapping/provisioning-assignment-rules:
+  /api/admin/identity-mapping/provisioning-assignment-rules:
     post:
       tags:
-        - Field Mapping
+        - Identity Mapping
       operationId: postApiAdminFieldMappingProvisioningAssignmentRules
       summary: Create a provisioning assignment rule.
       description: >-
@@ -15466,10 +15050,10 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
-  '/api/admin/field-mapping/provisioning-assignment-rules/{ruleId}/evaluate':
+  '/api/admin/identity-mapping/provisioning-assignment-rules/{ruleId}/evaluate':
     post:
       tags:
-        - Field Mapping
+        - Identity Mapping
       operationId: postApiAdminFieldMappingProvisioningAssignmentRulesByRuleIdEvaluate
       summary: Evaluate a provisioning assignment rule.
       description: >-
@@ -15502,10 +15086,10 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
-  /api/admin/field-mapping/review-task-groups:
+  /api/admin/identity-mapping/review-task-groups:
     post:
       tags:
-        - Field Mapping
+        - Identity Mapping
       operationId: postApiAdminFieldMappingReviewTaskGroups
       summary: Create a review task group.
       description: >-
@@ -15533,10 +15117,10 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
-  /api/admin/field-mapping/review-tasks:
+  /api/admin/identity-mapping/review-tasks:
     get:
       tags:
-        - Field Mapping
+        - Identity Mapping
       operationId: getApiAdminFieldMappingReviewTasks
       summary: List review tasks.
       description: >-
@@ -15584,7 +15168,7 @@ paths:
         - adminSessionCookie: []
     post:
       tags:
-        - Field Mapping
+        - Identity Mapping
       operationId: postApiAdminFieldMappingReviewTasks
       summary: Create a review task.
       description: >-
@@ -15612,10 +15196,10 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
-  '/api/admin/field-mapping/review-tasks/{reviewTaskId}/transition':
+  '/api/admin/identity-mapping/review-tasks/{reviewTaskId}/transition':
     post:
       tags:
-        - Field Mapping
+        - Identity Mapping
       operationId: postApiAdminFieldMappingReviewTasksByReviewTaskIdTransition
       summary: Transition a review task.
       description: >-
@@ -15648,10 +15232,10 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
-  /api/admin/field-mapping/schema-readiness:
+  /api/admin/identity-mapping/schema-readiness:
     get:
       tags:
-        - Field Mapping
+        - Identity Mapping
       operationId: getApiAdminFieldMappingSchemaReadiness
       summary: List identity-mapping schema readiness.
       description: >-
@@ -15675,10 +15259,10 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
-  /api/admin/field-mapping/source-authority-contracts:
+  /api/admin/identity-mapping/source-authority-contracts:
     get:
       tags:
-        - Field Mapping
+        - Identity Mapping
       operationId: getApiAdminFieldMappingSourceAuthorityContracts
       summary: List source authority contracts.
       description: >-
@@ -15704,7 +15288,7 @@ paths:
         - adminSessionCookie: []
     post:
       tags:
-        - Field Mapping
+        - Identity Mapping
       operationId: postApiAdminFieldMappingSourceAuthorityContracts
       summary: Create a source authority contract.
       description: >-
@@ -15732,10 +15316,10 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
-  /api/admin/field-mapping/source-authority-contracts/evaluate:
+  /api/admin/identity-mapping/source-authority-contracts/evaluate:
     post:
       tags:
-        - Field Mapping
+        - Identity Mapping
       operationId: postApiAdminFieldMappingSourceAuthorityContractsEvaluate
       summary: Evaluate a source authority contract.
       description: >-
@@ -15763,10 +15347,10 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
-  /api/admin/field-mapping/source-profiles:
+  /api/admin/identity-mapping/source-profiles:
     get:
       tags:
-        - Field Mapping
+        - Identity Mapping
       operationId: getApiAdminFieldMappingSourceProfiles
       summary: List source profiles.
       description: >-
@@ -15792,7 +15376,7 @@ paths:
         - adminSessionCookie: []
     post:
       tags:
-        - Field Mapping
+        - Identity Mapping
       operationId: postApiAdminFieldMappingSourceProfiles
       summary: Create a source profile.
       description: >-
@@ -15820,10 +15404,10 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
-  '/api/admin/field-mapping/source-profiles/{sourceProfileId}':
+  '/api/admin/identity-mapping/source-profiles/{sourceProfileId}':
     delete:
       tags:
-        - Field Mapping
+        - Identity Mapping
       operationId: deleteApiAdminFieldMappingSourceProfilesBySourceProfileId
       summary: Delete a source profile.
       description: >-
@@ -15861,7 +15445,7 @@ paths:
         - adminSessionCookie: []
     put:
       tags:
-        - Field Mapping
+        - Identity Mapping
       operationId: putApiAdminFieldMappingSourceProfilesBySourceProfileId
       summary: Replace a source profile.
       description: >-
@@ -15896,10 +15480,10 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
-  '/api/admin/field-mapping/source-profiles/{sourceProfileId}/versions/{sourceProfileVersionId}/activate':
+  '/api/admin/identity-mapping/source-profiles/{sourceProfileId}/versions/{sourceProfileVersionId}/activate':
     post:
       tags:
-        - Field Mapping
+        - Identity Mapping
       operationId: >-
         postApiAdminFieldMappingSourceProfilesBySourceProfileIdVersionsBySourceProfileVersionIdActivate
       summary: Activate a source profile version.
@@ -15938,10 +15522,10 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
-  '/api/admin/field-mapping/source-profiles/{sourceProfileId}/versions/{sourceProfileVersionId}/review':
+  '/api/admin/identity-mapping/source-profiles/{sourceProfileId}/versions/{sourceProfileVersionId}/review':
     post:
       tags:
-        - Field Mapping
+        - Identity Mapping
       operationId: >-
         postApiAdminFieldMappingSourceProfilesBySourceProfileIdVersionsBySourceProfileVersionIdReview
       summary: Move a source profile version to review.
@@ -15980,10 +15564,10 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
-  /api/admin/field-mapping/source-profiles/csv/parse:
+  /api/admin/identity-mapping/source-profiles/csv/parse:
     post:
       tags:
-        - Field Mapping
+        - Identity Mapping
       operationId: postApiAdminFieldMappingSourceProfilesCsvParse
       summary: Parse a CSV source profile draft.
       description: >-
@@ -16011,10 +15595,10 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
-  /api/admin/field-mapping/templates:
+  /api/admin/identity-mapping/templates:
     get:
       tags:
-        - Field Mapping
+        - Identity Mapping
       operationId: getApiAdminFieldMappingTemplates
       summary: List mapping templates.
       description: >-
@@ -16040,7 +15624,7 @@ paths:
         - adminSessionCookie: []
     post:
       tags:
-        - Field Mapping
+        - Identity Mapping
       operationId: postApiAdminFieldMappingTemplates
       summary: Create a mapping template.
       description: >-
@@ -86179,7 +85763,7 @@ x-tagGroups:
       - Security
       - Compliance
       - Data Retention
-      - Field Mapping
+      - Identity Mapping
       - Flows
       - External Providers
       - Policy Administration

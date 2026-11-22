@@ -17,7 +17,6 @@
 	import BusyScope from '#lib/ui/busy/BusyScope.svelte';
 	import Button from '#lib/ui/primitives/Button.svelte';
 	import Badge from '#lib/ui/primitives/Badge.svelte';
-	import RequiredBadge from '#lib/ui/primitives/RequiredBadge.svelte';
 	import Select from '#lib/ui/primitives/Select.svelte';
 	import TextField from '#lib/ui/primitives/TextField.svelte';
 	import TextArea from '#lib/ui/primitives/TextArea.svelte';
@@ -44,6 +43,8 @@
 		pending?: boolean;
 		guardNavigation?: boolean;
 		connectionDirty?: boolean;
+		/** Whether an output source is chosen (the set's own, or the one a new mapping starts with). */
+		outputChosen?: boolean;
 		/** Show the test-user explanation (not for a federation, which has no one service to test against). */
 		explain?: boolean;
 		/**
@@ -58,6 +59,7 @@
 		resources,
 		dirty = $bindable(false),
 		bound = $bindable(''),
+		outputChosen = $bindable(false),
 		readonly = false,
 		disabled = false,
 		pending = $bindable(false),
@@ -69,12 +71,12 @@
 	const shared = untrack(() => (resources ? new ConnectionMappingState(resources) : null));
 	let invalid = $state(false);
 	let changeTo = $state<string | null>(null);
-	let metadataOpen = $state(false);
 	let explainError = $state(false);
 	$effect(() => {
 		dirty = (shared?.dirty ?? false) || editorState.dirty;
 		pending = shared?.phase === 'saving' || shared?.phase === 'impact' || editorState.saving;
 		bound = shared?.bound ?? '';
+		outputChosen = !!(shared?.form.value.profileId || shared?.chosenProfileId);
 	});
 	onMount(() => {
 		if (shared) void shared.load();
@@ -107,19 +109,13 @@
 		editorState = { dirty: false, saving: false };
 		profileEditor = kind;
 	}
-	/** An output source was picked with no set open: a new set that sends into it is started. */
-	function startWithProfile(profileId: string) {
-		if (!shared || !profileId) return;
-		shared.create();
-		metadataOpen = true;
-		shared.form.value.profileId = profileId;
-		shared.configure();
-	}
-	/** No output source suits: one is made first, and a new set is started with it. */
-	async function startWithNewProfile() {
+	/** An output source was picked before any mapping: it is kept for the mapping to be made. */
+	function chooseProfile(profileId: string) {
 		if (!shared) return;
-		shared.create();
-		metadataOpen = true;
+		shared.chosenProfileId = profileId;
+	}
+	/** No output source suits: one is made first; the mapping to come starts with it. */
+	async function startWithNewProfile() {
 		await openProfileEditor('new');
 	}
 	async function profileSaved(saved: DestinationProfileSaved) {
@@ -131,6 +127,9 @@
 		if (shared.newKey) {
 			shared.form.value.profileId = saved.profile.id;
 			shared.configure();
+		} else if (!shared.selected) {
+			// No mapping yet: the output source just made is the one the mapping will start with.
+			shared.chosenProfileId = saved.profile.id;
 		} else if (edited && shared.selected) {
 			// What the set sends into has changed under it: read it again. An output source made
 			// beside a set leaves the set as it is.
@@ -142,7 +141,6 @@
 		if (shared.dirty) changeTo = value;
 		else if (value === '__new') {
 			shared.create();
-			metadataOpen = true;
 		} else void shared.select(value);
 	}
 	function applyChoice() {
@@ -151,21 +149,25 @@
 		if (value === null || !shared) return;
 		if (value === '__new') {
 			shared.create();
-			metadataOpen = true;
 		} else if (value === '__inspect') void shared.inspectUnknown();
 		else void shared.select(value);
 	}
 
 	/** An output source is being made or changed: the mapping waits until that is done or left. */
 	const profileBusy = $derived(profileEditor !== null);
-	/** What cannot be saved yet: a field that is not valid, a name, or nothing mapped. */
-	const blocked = $derived(
-		invalid ||
-			profileBusy ||
-			!shared?.context ||
-			((shared.form.dirty || !shared.detail) && !shared.form.value.name.trim()) ||
-			!shared.form.value.mappings.length
-	);
+	/** What cannot be saved yet, in words ('' when nothing stops it). */
+	const blockedReason = $derived.by(() => {
+		if (!shared) return '';
+		if (invalid) return t('common.fixErrors');
+		if (shared.newKey && !shared.form.value.profileId) return t('cm.problem.profile');
+		if (shared.newKey && !shared.form.value.catalogVersionId) return t('cm.problem.catalog');
+		if (!shared.context) return t('cm.problem.context');
+		if ((shared.form.dirty || !shared.detail) && !shared.form.value.name.trim())
+			return t('cm.problem.name');
+		if (!shared.form.value.mappings.length) return t('cm.problem.mappings');
+		return '';
+	});
+	const blocked = $derived(blockedReason !== '');
 	function save() {
 		if (blocked || !shared) return;
 		void shared.save();
@@ -289,8 +291,8 @@
 										label: profile.displayName
 									}))}
 									placeholder={t('mc.ro.choose')}
-									value=""
-									onchange={startWithProfile}
+									value={shared.chosenProfileId}
+									onchange={chooseProfile}
 								/>
 								{#if canEditProfiles}
 									<div class="profile__actions">
@@ -317,6 +319,7 @@
 						>{/if}
 					<Select
 						label={t('sf.row.mappingSet')}
+						required
 						placeholder={t('mc.ro.choose')}
 						options={shared.sets.map((set) => ({
 							value: set.id,
@@ -375,37 +378,17 @@
 						<BusyScope
 							busy={disabled || readonly || shared.locked || shared.readonlyReason || profileBusy}
 						>
-							<Disclosure title={t('cm.options')} bind:open={metadataOpen}>
-								{#snippet meta()}{#if !shared.form.value.name.trim() || !shared.form.value.profileId || !shared.form.value.catalogVersionId}<RequiredBadge
-										/>{/if}{/snippet}
-								<TextField
-									label={t('sf.row.name')}
-									bind:value={shared.form.value.name}
-									field="name"
-									required
-								/>
-								<TextArea
-									label={t('cm.description')}
-									bind:value={shared.form.value.description}
-									field="description"
-								/>
-								<Select
-									label={t('cm.catalog')}
-									options={shared.catalogs.flatMap((catalog) =>
-										catalog.versionId
-											? [{ value: catalog.versionId, label: catalog.displayName }]
-											: []
-									)}
-									placeholder={shared.detail?.content?.catalogVersionId ?? t('mc.ro.choose')}
-									value={shared.form.value.catalogVersionId}
-									onchange={(value) => {
-										shared.form.value.catalogVersionId = value;
-										shared.configure();
-									}}
-									disabled={!!shared.detail}
-									field="catalogVersionId"
-								/>
-							</Disclosure>
+							<TextField
+								label={t('sf.row.name')}
+								bind:value={shared.form.value.name}
+								field="name"
+								required
+							/>
+							<TextArea
+								label={t('cm.description')}
+								bind:value={shared.form.value.description}
+								field="description"
+							/>
 						</BusyScope>
 					{/if}
 				</div>
@@ -445,11 +428,12 @@
 				>{/if}
 		{/if}
 	</div>
-	{#if !readonly && !disabled && !shared.readonlyReason}
+	{#if !readonly && !disabled && !shared.readonlyReason && !profileBusy}
 		<SaveBar
 			dirty={shared.dirty}
 			saving={shared.phase === 'saving'}
 			invalid={blocked}
+			invalidMessage={blockedReason}
 			saveLabel={t('cm.saveBind')}
 			onsave={save}
 			ondiscard={discard}
