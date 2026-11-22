@@ -41,6 +41,9 @@ export const jaSettings = {
 	'set.section.adminSignIn': '管理者のログイン',
 	'set.section.adminSignIn.desc':
 		'このテナントの管理者が、ログインしたままでいられる時間と、操作の前に求める確認です。',
+	'set.section.adminSecondFactorPlatform': '全テナント共通の管理者の第2要素',
+	'set.section.adminSecondFactorPlatform.desc':
+		'テナントが自分の一覧を持たない場合に、管理者の第2要素として認める種類です。認証アプリ（TOTP）を認めると、全テナントで使えるようになります。',
 	'set.section.adminSignInPlatform': '全テナント共通の管理者ログイン',
 	'set.section.adminSignInPlatform.desc':
 		'すべてのテナントの管理者に適用されます。変更できるのはプラットフォーム管理者だけです。',

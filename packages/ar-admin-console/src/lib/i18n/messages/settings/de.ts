@@ -39,6 +39,9 @@ export const deSettings: Record<keyof typeof jaSettings, string> = {
 	'set.section.adminSignIn': 'Anmeldung der Administratoren',
 	'set.section.adminSignIn.desc':
 		'Wie lange die Administratoren dieses Mandanten angemeldet bleiben und welche Prüfungen vor einem Vorgang verlangt werden.',
+	'set.section.adminSecondFactorPlatform': 'Zweite Faktoren für Administratoren in allen Tenants',
+	'set.section.adminSecondFactorPlatform.desc':
+		'Welche Arten zweiter Faktoren Administratoren in jedem Tenant nutzen dürfen, der keine eigene Liste hat. Erlaubt man hier Authenticator-Apps (TOTP), stehen sie in allen Tenants zur Verfügung.',
 	'set.section.adminSignInPlatform': 'Anmeldung der Administratoren für alle Mandanten',
 	'set.section.adminSignInPlatform.desc':
 		'Gilt für die Administratoren aller Mandanten. Nur Plattform-Administratoren können es ändern.',

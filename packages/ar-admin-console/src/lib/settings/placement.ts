@@ -399,8 +399,6 @@ export const TEAM: SettingsPageDef = {
 			level: 'platform',
 			settings: [
 				{ key: 'security.admin_step_up_enforced', depth: 'primary' },
-				// The platform's list is what every tenant that sets none of its own is held to.
-				{ key: 'security.admin_second_factor_allowed_kinds', depth: 'primary' },
 				{ key: 'security.admin_keyring_dc_api', depth: 'primary' },
 				{ key: 'security.admin_last_resort_reenroll_window_seconds', depth: 'advanced' }
 			]
@@ -447,6 +445,16 @@ export const GENERAL: SettingsPageDef = {
 				{ key: 'environment_banner.text_localizations', depth: 'primary' },
 				{ key: 'environment_banner.noindex', depth: 'primary' }
 			]
+		},
+		{
+			// The platform's list is what every tenant that sets none of its own is held to. It is
+			// on this page, not beside the tenant's own on Administrators: a page keeps one
+			// value per setting, so the same setting cannot be edited twice on one page.
+			id: 'admin-second-factor-platform',
+			title: 'set.section.adminSecondFactorPlatform',
+			description: 'set.section.adminSecondFactorPlatform.desc',
+			level: 'platform',
+			settings: [{ key: 'security.admin_second_factor_allowed_kinds', depth: 'primary' }]
 		},
 		{
 			id: 'login-entry-platform',

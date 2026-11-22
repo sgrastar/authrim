@@ -39,6 +39,9 @@ export const enSettings: Record<keyof typeof jaSettings, string> = {
 	'set.section.adminSignIn': 'Admin sign-in',
 	'set.section.adminSignIn.desc':
 		'How long this tenant’s administrators stay signed in, and the checks asked before an operation.',
+	'set.section.adminSecondFactorPlatform': 'Admin second factors for every tenant',
+	'set.section.adminSecondFactorPlatform.desc':
+		'The kinds of second factor admins may use in every tenant that sets none of its own. Allowing authenticator apps (TOTP) here makes them available in all tenants.',
 	'set.section.adminSignInPlatform': 'Admin sign-in for every tenant',
 	'set.section.adminSignInPlatform.desc':
 		'Applies to the administrators of every tenant. Only platform administrators can change it.',

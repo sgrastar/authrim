@@ -19,6 +19,8 @@ const placed = SETTINGS_PAGES.flatMap((page) =>
 	page.sections.flatMap((section) => section.settings.map((setting) => setting.key))
 );
 const drafted = DRAFT.map((entry) => entry.key);
+/** Settings placed on two pages: the tenant's own, and the platform's default for every tenant. */
+const DUAL_PLACED = new Set(['security.admin_second_factor_allowed_kinds']);
 const everyKey = Object.values(ALL_CATEGORY_META).flatMap((meta) => Object.keys(meta.settings));
 const navItems = new Set(
 	[...TENANT_AREAS, ...PLATFORM_AREAS].flatMap((area) =>
@@ -61,22 +63,20 @@ describe('where settings live', () => {
 		}
 	});
 
-	it('places each setting once at each level', () => {
-		// A setting the platform and a tenant can both set (a tenant's own value replaces the
-		// platform's) is shown once for each: the two are read and saved apart.
-		const tenantLevel = SETTINGS_PAGES.flatMap((page) =>
-			page.sections
-				.filter((section) => section.level !== 'platform')
-				.flatMap((section) => section.settings.map((setting) => setting.key))
-		);
-		const platformLevel = SETTINGS_PAGES.flatMap((page) =>
-			page.sections
-				.filter((section) => section.level === 'platform')
-				.flatMap((section) => section.settings.map((setting) => setting.key))
-		);
-		const twice = (keys: string[]) => keys.filter((key, i) => keys.indexOf(key) !== i);
-		expect(twice([...tenantLevel, ...drafted])).toEqual([]);
-		expect(twice([...platformLevel, ...drafted])).toEqual([]);
+	it('places each setting once on a page', () => {
+		// A page keeps one value per setting, so one setting is never edited twice on a page. A
+		// setting both the platform and a tenant can set is placed on a different page for each.
+		for (const page of SETTINGS_PAGES) {
+			const keys = page.sections.flatMap((section) => section.settings.map((s) => s.key));
+			expect(
+				keys.filter((key, i) => keys.indexOf(key) !== i),
+				page.id
+			).toEqual([]);
+		}
+		expect(drafted.filter((key, i) => drafted.indexOf(key) !== i)).toEqual([]);
+		const twice = placed.filter((key, i) => placed.indexOf(key) !== i);
+		expect(twice.filter((key) => !DUAL_PLACED.has(key))).toEqual([]);
+		expect(drafted.filter((key) => placed.includes(key) && !DUAL_PLACED.has(key))).toEqual([]);
 	});
 
 	it('gives every setting of every category a place, on a built page or in the draft', () => {
