@@ -1,7 +1,9 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import { t } from '#lib/i18n/i18n.svelte.js';
 	import type { FederationCertificate } from '#lib/api/federation-sources.js';
 	import Button from '#lib/ui/primitives/Button.svelte';
+	import SegmentedControl from '#lib/ui/primitives/SegmentedControl.svelte';
 	import TextArea from '#lib/ui/primitives/TextArea.svelte';
 	import TextField from '#lib/ui/primitives/TextField.svelte';
 	import Callout from '#lib/ui/patterns/Callout.svelte';
@@ -15,8 +17,8 @@
 	} from './federation-model';
 
 	/**
-	 * The certificates a federation's metadata is signed with, added by pasting PEM, from a file
-	 * (PEM or DER) or by reading an https address. Each is shown with its SHA-256 and SHA-1
+	 * The certificates a federation's metadata is signed with, added by reading an https address,
+	 * by pasting PEM or from a file (PEM or DER): one way at a time, picked above the field. Each is shown with its SHA-256 and SHA-1
 	 * fingerprints worked out in the browser from the certificate itself. The fingerprint is the
 	 * check: the federation publishes it (SHA-256 today; SHA-1 is how older lists give it), so
 	 * compare before saving. Shared by the wizard and the federation's own page.
@@ -28,6 +30,16 @@
 		readUrl?: (url: string) => Promise<string>;
 	}
 	let { certificates = $bindable(), disabled = false, readUrl }: Props = $props();
+
+	/** How a certificate is added now: only that way's fields are shown. */
+	type Method = 'url' | 'paste' | 'file';
+	// Without an address reader the first way is pasting.
+	let method = $state<Method>(untrack(() => (readUrl ? 'url' : 'paste')));
+	const methods = $derived([
+		...(readUrl ? [{ value: 'url', label: t('sf.fed.cert.mode.url') }] : []),
+		{ value: 'paste', label: t('sf.fed.cert.mode.paste') },
+		{ value: 'file', label: t('sf.fed.cert.mode.file') }
+	]);
 
 	let pasted = $state('');
 	let files = $state<File[]>([]);
@@ -130,7 +142,19 @@
 	{/if}
 	{#if !disabled}
 		<p class="certs__lead">{t('sf.fed.cert.required')}</p>
-		{#if readUrl}
+		<SegmentedControl
+			label={t('sf.fed.cert.mode.label')}
+			options={methods}
+			value={method}
+			onchange={(value) => {
+				if (value !== 'url' && value !== 'paste' && value !== 'file') return;
+				method = value;
+				// What went wrong with one way is not shown under another.
+				error = '';
+				urlError = '';
+			}}
+		/>
+		{#if method === 'url' && readUrl}
 			<TextField
 				label={t('sf.fed.cert.url')}
 				hint={t('sf.fed.cert.urlHint')}
@@ -144,22 +168,25 @@
 					>{reading ? t('sf.fed.cert.urlReading') : t('sf.fed.cert.urlRead')}</Button
 				>
 			</div>
+		{:else if method === 'paste'}
+			<TextArea
+				label={t('sf.fed.cert.paste')}
+				hint={t('sf.fed.cert.pasteHint')}
+				mono
+				rows={5}
+				error={error || undefined}
+				bind:value={pasted}
+			/>
+			<div class="certs__actions">
+				<Button variant="secondary" disabled={!pasted.trim()} onclick={addPasted}
+					>{t('sf.fed.cert.add')}</Button
+				>
+			</div>
+		{:else if method === 'file'}
+			<FileDrop label={t('sf.fed.cert.file')} accept=".pem,.crt,.cer,.der,.txt" bind:files />
+			<p class="certs__lead">{t('sf.fed.cert.fileHint')}</p>
+			{#if error}<p class="certs__error" role="alert">{error}</p>{/if}
 		{/if}
-		<TextArea
-			label={t('sf.fed.cert.paste')}
-			hint={t('sf.fed.cert.pasteHint')}
-			mono
-			rows={5}
-			error={error || undefined}
-			bind:value={pasted}
-		/>
-		<div class="certs__actions">
-			<Button variant="secondary" disabled={!pasted.trim()} onclick={addPasted}
-				>{t('sf.fed.cert.add')}</Button
-			>
-		</div>
-		<FileDrop label={t('sf.fed.cert.file')} accept=".pem,.crt,.cer,.der,.txt" bind:files />
-		<p class="certs__lead">{t('sf.fed.cert.fileHint')}</p>
 	{/if}
 </div>
 
@@ -216,5 +243,11 @@
 
 	.certs__actions {
 		display: flex;
+	}
+
+	.certs__error {
+		margin: 0;
+		color: var(--danger);
+		font-size: var(--fs-small);
 	}
 </style>

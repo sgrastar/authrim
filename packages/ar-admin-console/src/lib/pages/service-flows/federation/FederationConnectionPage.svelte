@@ -353,51 +353,41 @@
 				{/if}
 				<FlowEdge length={24} tip={false} />
 				<FlowScope label={t('sf.detail.authrimDoes')}>
-					<!-- The mapping is not optional: what comes through is the mapping's, so it is always there. -->
+					<!-- The mapping is not optional: what comes through is the mapping's, so it is always there.
+					     It holds the output source the SP role sends into and the mapping itself, as two parts. -->
 					<FlowSequence
-						order={[...(mappingResources ? ['output'] : []), 'mapping', 'exclusions']}
-						visible={[...(mappingResources ? ['output'] : []), 'mapping', 'exclusions']}
+						order={['mapping', 'exclusions']}
+						visible={['mapping', 'exclusions']}
 						lead={36}
 						trail={6}
 						menuTitle={source.name}
 						option={(node) => ({
 							id: node,
-							label: t(
-								node === 'output'
-									? 'sf.group.schemas'
-									: node === 'mapping'
-										? 'sf.group.mapping'
-										: 'sf.fed.flow.exclusions'
-							)
+							label: t(node === 'mapping' ? 'sf.group.mapping' : 'sf.fed.flow.exclusions')
 						})}
 						onadd={selectNode}
 					>
 						{#snippet step(node, { exiting })}
-							{#if node === 'output'}
-								<!-- The output source the SP role sends into: its own node, apart from the mapping. -->
-								<FlowStepGroup
-									name={t('sf.group.schemas')}
-									state={outputChosen ? 'done' : 'todo'}
-									{current}
-									{exiting}
-									onselect={selectNode}
-									items={[
-										{
-											id: 'mapping-schemas',
-											label: labelOf('mapping-schemas'),
-											state: outputChosen ? 'done' : 'todo',
-											status: t(outputChosen ? 'sf.status.done' : 'sf.status.todo')
-										}
-									]}
-								/>
-							{:else if node === 'mapping'}
+							{#if node === 'mapping'}
 								<FlowStepGroup
 									name={t('sf.group.mapping')}
-									state={mappingState}
+									state={mappingState === 'done' && (!mappingResources || outputChosen)
+										? 'done'
+										: 'todo'}
 									{current}
 									{exiting}
 									onselect={selectNode}
 									items={[
+										...(mappingResources
+											? [
+													{
+														id: 'mapping-schemas',
+														label: labelOf('mapping-schemas'),
+														state: outputChosen ? ('done' as const) : ('todo' as const),
+														status: t(outputChosen ? 'sf.status.done' : 'sf.status.todo')
+													}
+												]
+											: []),
 										{
 											id: 'mapping-sets',
 											label: labelOf('mapping-sets'),

@@ -418,10 +418,9 @@ describe('the processing steps of a flow', () => {
 
 	it('run in the agreed order', () => {
 		const order = (kind: ConnectionKind) => FLOW_GROUPS[kind].map((group) => group.id);
-		expect(order('rp')).toEqual(['signup', 'role', 'consent', 'schemas', 'mapping']);
+		expect(order('rp')).toEqual(['signup', 'role', 'consent', 'mapping']);
 		for (const kind of ['op', 'idp'] as const)
 			expect(order(kind)).toEqual([
-				'schemas',
 				'mapping',
 				'accounts',
 				'signup',
@@ -429,6 +428,19 @@ describe('the processing steps of a flow', () => {
 				'consent',
 				'role'
 			]);
+	});
+
+	it('keep the output source and the mapping in one step, the source first', () => {
+		for (const kind of KINDS.filter((candidate) => candidate !== 'federation')) {
+			const mapping = FLOW_GROUPS[kind].filter((group) => group.id === 'mapping');
+			expect(mapping, kind).toHaveLength(1);
+			expect(mapping[0].parts, kind).toEqual(['mapping-schemas', 'mapping-sets']);
+			// There is no step of its own for the output source any more.
+			expect(
+				FLOW_GROUPS[kind].some((group) => group.id === 'schemas'),
+				kind
+			).toBe(false);
+		}
 	});
 
 	it('are only counted once they are in the flow', () => {

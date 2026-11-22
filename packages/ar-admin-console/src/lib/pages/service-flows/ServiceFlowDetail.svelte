@@ -130,9 +130,7 @@
 	const kind = $derived(draft.value.kind as ConnectionKind);
 	const allGroups = $derived(
 		mappingResources
-			? FLOW_GROUPS[kind].filter(
-					(group) => canReadMapping && (group.id === 'schemas' || group.id === 'mapping')
-				)
+			? FLOW_GROUPS[kind].filter((group) => canReadMapping && group.id === 'mapping')
 			: FLOW_GROUPS[kind]
 	);
 	const groups = $derived(mappingResources ? allGroups : visibleGroups(draft.value));
@@ -359,7 +357,7 @@
 						{#snippet step(id, { exiting })}
 							{@const group = allGroups.find((candidate) => candidate.id === id)!}
 							{@const state = mappingResources
-								? (group.id === 'schemas' ? outputChosen : !!mappingBound)
+								? outputChosen && !!mappingBound
 									? 'done'
 									: 'todo'
 								: groupState(group, draft.value)}

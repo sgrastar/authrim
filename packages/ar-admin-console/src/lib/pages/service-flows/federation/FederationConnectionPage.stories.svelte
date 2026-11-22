@@ -343,6 +343,7 @@
 		const canvas = within(canvasElement);
 		await canvas.findByRole('heading', { name: 'Test federation' });
 		// The one it already has: a repeat is not added twice.
+		await userEvent.click(canvas.getByRole('radio', { name: t('sf.fed.cert.mode.paste') }));
 		await userEvent.click(canvas.getByRole('textbox', { name: t('sf.fed.cert.paste') }));
 		await userEvent.paste(MOCK_FEDERATION_CERTIFICATE);
 		await userEvent.click(canvas.getByRole('button', { name: t('sf.fed.cert.add') }));
@@ -698,5 +699,30 @@
 		await canvas.findByText('eduPersonPrincipalName');
 		await canvas.findByText(t('sf.fed.req.required', { count: 390 }));
 		await canvas.findByText(t('sf.fed.req.askedBy', { count: 412 }));
+	}}
+/>
+
+<Story
+	name="The output source and the mapping are two parts of one step"
+	args={mappingPage.args}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findByRole('heading', { name: 'Test federation' });
+		// One step, named for the mapping, holding the output source first and the mapping second.
+		const step = (await canvas.findByRole('region', {
+			name: t('sf.group.mapping')
+		})) as HTMLElement;
+		const parts = within(step).getAllByRole('button');
+		await expect(parts.map((part) => part.textContent)).toEqual([
+			expect.stringContaining(t('sf.part.mapping-schemas')),
+			expect.stringContaining(t('sf.part.mapping-sets'))
+		]);
+		// There is no step of its own for the output source.
+		await expect(canvas.queryByRole('region', { name: t('sf.group.schemas') })).toBeNull();
+		// Each part still opens on its own.
+		await userEvent.click(parts[0]);
+		await canvas.findByRole('button', { name: t('sf.dp.field.create') });
+		await userEvent.click(within(step).getAllByRole('button')[1]);
+		await expect(canvas.queryByRole('button', { name: t('sf.dp.field.create') })).toBeNull();
 	}}
 />

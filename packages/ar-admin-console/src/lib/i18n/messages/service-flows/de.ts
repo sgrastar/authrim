@@ -566,6 +566,10 @@ export const deServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 	'sf.fed.cert.remove': 'Zertifikat entfernen',
 	'sf.fed.cert.compare':
 		'Vergleichen Sie ihn mit dem von der Föderation veröffentlichten Fingerabdruck. Verwenden Sie kein Zertifikat, das nicht übereinstimmt.',
+	'sf.fed.cert.mode.label': 'Art, das Zertifikat hinzuzufügen',
+	'sf.fed.cert.mode.url': 'URL',
+	'sf.fed.cert.mode.paste': 'Einfügen',
+	'sf.fed.cert.mode.file': 'Zertifikatsdatei',
 	'sf.fed.cert.paste': 'Zertifikat (PEM)',
 	'sf.fed.cert.pasteHint': 'Einfügen und auf Hinzufügen klicken, um den Fingerabdruck zu sehen.',
 	'sf.fed.cert.add': 'Zertifikat hinzufügen',
