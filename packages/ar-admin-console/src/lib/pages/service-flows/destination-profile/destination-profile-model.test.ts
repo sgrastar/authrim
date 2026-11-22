@@ -207,3 +207,57 @@ describe('the template texts', () => {
 			);
 	});
 });
+
+describe('sample values', () => {
+	const attributes = (schema: Record<string, unknown>) =>
+		schema.attributes as Array<Record<string, unknown>>;
+
+	it('every SAML template attribute has sample values, and they survive the table', () => {
+		for (const template of templatesFor('saml')) {
+			for (const attribute of attributes(template.schema))
+				expect(attribute.examples, `${template.displayName} ${attribute.label}`).toBeTruthy();
+			const again = schemaFromForm(formFromSchema('saml', '', template.schema));
+			expect(attributes(again).map((attribute) => attribute.examples)).toEqual(
+				attributes(template.schema).map((attribute) => attribute.examples)
+			);
+		}
+	});
+
+	it('are in the language and place of the federation they belong to', () => {
+		const by = (key: string, label: string) =>
+			attributes(templatesFor('saml').find((template) => template.profileKey === key)!.schema).find(
+				(attribute) => attribute.label === label
+			)?.examples;
+		expect(by('gakunin_application_standard_v2_8', 'jaSn')).toEqual(['山田']);
+		expect(by('surfconext_attribute_overview', 'schacHomeOrganization')).toEqual(['example.nl']);
+		expect(by('kafe_attribute_map', 'mail')).toEqual(['gildong.hong@example.ac.kr']);
+	});
+
+	it('are edited as a comma separated list, and left out when there are none', () => {
+		const form = emptyProfileForm('saml');
+		form.displayName = 'x';
+		form.rows = [{ ...emptyRow('saml'), key: 'mail', examples: 'a@example.org, b@example.org' }];
+		expect(attributes(schemaFromForm(form))[0].examples).toEqual([
+			'a@example.org',
+			'b@example.org'
+		]);
+		form.rows[0].examples = '';
+		expect('examples' in attributes(schemaFromForm(form))[0]).toBe(false);
+	});
+
+	it('are kept exactly when their text is not edited, even with commas or non-text values', () => {
+		const schema = {
+			destinationType: 'saml',
+			nameId: {
+				format: 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent',
+				source: 'subject_identifier'
+			},
+			attributes: [{ name: 'sn', label: 'sn', valueType: 'string', examples: ['Doe, Jane', 5] }]
+		};
+		const form = formFromSchema('saml', 'x', schema);
+		expect(attributes(schemaFromForm(form))[0].examples).toEqual(['Doe, Jane', 5]);
+		// Edited, they are what the text says.
+		form.rows[0].examples = 'Smith';
+		expect(attributes(schemaFromForm(form))[0].examples).toEqual(['Smith']);
+	});
+});

@@ -649,7 +649,7 @@ function samlAttributes(attributes: SamlAttributeTemplate[]) {
 	}));
 }
 
-export const samlDestinationTemplates: DestinationTemplate[] = [
+const baseSamlDestinationTemplates: DestinationTemplate[] = [
 	{
 		id: 'template_destination_saml_standard',
 		destinationType: 'saml',
@@ -932,3 +932,93 @@ export const samlDestinationTemplates: DestinationTemplate[] = [
 		}
 	}
 ];
+
+/**
+ * Sample values that read like the federation's own people and institutions (a Korean, Dutch,
+ * Swiss, Australian, UK, Malaysian or international academic), by the attribute's label. What a
+ * template does not name keeps its general sample. They only show what a value looks like.
+ */
+const FEDERATION_EXAMPLES: Record<string, Record<string, string[]>> = {
+	refeds_research_and_scholarship: {
+		eduPersonPrincipalName: ['jane.doe@example.edu'],
+		mail: ['jane.doe@example.edu'],
+		displayName: ['Jane Doe'],
+		givenName: ['Jane'],
+		sn: ['Doe'],
+		eduPersonScopedAffiliation: ['faculty@example.edu', 'member@example.edu']
+	},
+	kafe_attribute_map: {
+		eduPersonPrincipalName: ['gildong.hong@example.ac.kr'],
+		sn: ['Hong'],
+		givenName: ['Gildong'],
+		cn: ['Gildong Hong'],
+		displayName: ['Gildong Hong'],
+		mail: ['gildong.hong@example.ac.kr'],
+		eduPersonScopedAffiliation: ['student@example.ac.kr', 'faculty@example.ac.kr'],
+		schacHomeOrganization: ['example.ac.kr'],
+		schacHomeOrganizationType: ['urn:schac:homeOrganizationType:int:university']
+	},
+	uk_federation_core: {
+		eduPersonScopedAffiliation: ['student@example.ac.uk', 'member@example.ac.uk'],
+		eduPersonPrincipalName: ['jsmith@example.ac.uk']
+	},
+	switch_eduid_core: {
+		givenName: ['Anna'],
+		sn: ['Muster'],
+		cn: ['Anna Muster'],
+		displayName: ['Anna Muster'],
+		mail: ['anna.muster@example.ch'],
+		eduPersonPrincipalName: ['anna.muster@example.ch'],
+		eduPersonScopedAffiliation: ['student@example.ch', 'member@example.ch'],
+		eduPersonUniqueId: ['28c5353b8bb34984a8bd4169ba94c606@example.ch'],
+		schacHomeOrganization: ['example.ch'],
+		schacHomeOrganizationType: ['urn:schac:homeOrganizationType:int:university']
+	},
+	surfconext_attribute_overview: {
+		sn: ['de Vries'],
+		givenName: ['Jan'],
+		cn: ['Jan de Vries'],
+		displayName: ['Jan de Vries'],
+		mail: ['jan.devries@example.nl'],
+		schacHomeOrganization: ['example.nl'],
+		schacHomeOrganizationType: ['urn:schac:homeOrganizationType:int:university'],
+		eduPersonScopedAffiliation: ['student@example.nl', 'member@example.nl'],
+		eduPersonPrincipalName: ['jdevries@example.nl'],
+		uid: ['jdevries'],
+		preferredLanguage: ['nl', 'en']
+	},
+	aaf_core_attributes: {
+		displayName: ['Jane Citizen'],
+		givenName: ['Jane'],
+		sn: ['Citizen'],
+		mail: ['jane.citizen@example.edu.au'],
+		eduPersonScopedAffiliation: ['student@example.edu.au', 'member@example.edu.au'],
+		eduPersonPrincipalName: ['jcitizen@example.edu.au'],
+		schacHomeOrganization: ['example.edu.au'],
+		schacHomeOrganizationType: ['urn:schac:homeOrganizationType:int:university'],
+		'SAML subject ID': ['jcitizen@example.edu.au']
+	},
+	sifulan_minimum_attributes: {
+		displayName: ['Nurul Aisyah binti Rahman'],
+		givenName: ['Nurul Aisyah'],
+		sn: ['Rahman'],
+		mail: ['nurul.aisyah@example.edu.my'],
+		eduPersonPrincipalName: ['nurul.aisyah@example.edu.my'],
+		eduPersonScopedAffiliation: ['student@example.edu.my', 'member@example.edu.my']
+	}
+};
+
+function withFederationExamples(template: DestinationTemplate): DestinationTemplate {
+	const examples = FEDERATION_EXAMPLES[template.profileKey];
+	if (!examples) return template;
+	const attributes = (template.schema.attributes as Array<Record<string, unknown>>).map(
+		(attribute) => {
+			const own = examples[String(attribute.label)];
+			return own ? { ...attribute, examples: own } : attribute;
+		}
+	);
+	return { ...template, schema: { ...template.schema, attributes } };
+}
+
+export const samlDestinationTemplates: DestinationTemplate[] =
+	baseSamlDestinationTemplates.map(withFederationExamples);

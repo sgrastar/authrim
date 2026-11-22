@@ -35,11 +35,18 @@
 		);
 	}
 
+	/** An existing mapping is only looked at: what is changed is a copy of it, with a name of its own. */
 	async function edit(root: HTMLElement) {
 		await openMapping(root);
 		const canvas = within(root);
 		await canvas.findByRole('button', { name: /^email/ });
-		await userEvent.type(canvas.getByRole('textbox', { name: 'Name' }), ' updated');
+		const copy = await canvas.findByRole('button', { name: t('cm.createFrom') });
+		await waitFor(() => expect(copy).toBeEnabled());
+		await userEvent.click(copy);
+		await userEvent.click(await canvas.findByRole('button', { name: t('cm.title.edit') }));
+		const field = await canvas.findByRole('textbox', { name: t('cm.title.label') });
+		await userEvent.clear(field);
+		await userEvent.type(field, 'Staff copy{Enter}');
 		await canvas.findByRole('region', { name: t('common.unsaved') });
 		await userEvent.click(canvas.getByRole('button', { name: 'Save and use for this connection' }));
 	}
@@ -53,15 +60,19 @@
 		await canvas.findByRole('button', { name: /^email/ });
 		await userEvent.selectOptions(canvas.getByRole('combobox', { name: /Mapping$/ }), 'set-shared');
 		await canvas.findByRole('button', { name: /^email/ });
+		// A mapping that exists is chosen, not changed: its title cannot be edited and a row cannot
+		// take a step; the way to change one is a copy of it.
+		await expect(canvas.queryByRole('button', { name: t('cm.title.edit') })).toBeNull();
 		await userEvent.click(canvas.getByRole('button', { name: /^email/ }));
-		await userEvent.click(canvas.getByRole('button', { name: t('map.addStep') }));
-		const picker = within(await canvas.findByRole('dialog', { name: t('map.pickStep') }));
-		await userEvent.click(picker.getByRole('button', { name: new RegExp(`^${t('map.t.trim')}`) }));
-		await userEvent.click(await picker.findByRole('button', { name: t('map.pick.add') }));
+		await expect(canvas.getByRole('button', { name: t('map.addStep') })).toBeDisabled();
 		await expect(
 			canvas.getByRole('button', { name: 'Save and use for this connection' })
 		).toBeEnabled();
-		await expect(canvas.queryByRole('table', { name: /recipient|schema/i })).toBeNull();
+		// The copy can be changed.
+		const copy = canvas.getByRole('button', { name: t('cm.createFrom') });
+		await userEvent.click(copy);
+		await userEvent.click(await canvas.findByRole('button', { name: t('cm.title.edit') }));
+		await canvas.findByRole('textbox', { name: t('cm.title.label') });
 	}}
 />
 <Story
@@ -115,8 +126,6 @@
 		await canvas.findByText(/The set is saved, but binding/);
 		await userEvent.click(canvas.getByRole('button', { name: 'Retry binding only' }));
 		await canvas.findByText('Mapping saved and bound to this connection.');
-		await userEvent.type(canvas.getByRole('textbox', { name: t('sf.row.name') }), ' re-edited');
-		await waitFor(() => expect(canvas.queryByText(t('cm.saved'))).toBeNull());
 	}}
 />
 <Story
@@ -132,24 +141,37 @@
 		await expect(canvas.queryByRole('combobox', { name: t('mc.ch.sample') })).toBeNull();
 	}}
 />
-<Story name="Unsupported set read only" args={{ scenario: 'readonly' }} />
+<Story
+	name="Unsupported set read only"
+	args={{ scenario: 'readonly' }}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await openMapping(canvasElement);
+		await canvas.findByText(t('cm.readonly'));
+		// It cannot be the base of a copy, so a fresh mapping is the way on.
+		const fresh = await canvas.findByRole('button', { name: t('cm.create') });
+		await expect(fresh).toBeEnabled();
+		await expect(canvas.queryByRole('button', { name: t('cm.createFrom') })).toBeNull();
+	}}
+/>
 
 <Story
-	name="Mapping edits survive staying on the detail"
+	name="A mapping being made survives staying on the detail"
 	play={async ({ canvasElement }) => {
 		await openMapping(canvasElement);
 		const canvas = within(canvasElement);
 		await canvas.findByRole('button', { name: /^email/ });
-		await userEvent.type(canvas.getByRole('textbox', { name: t('sf.row.name') }), ' updated');
+		const copy = await canvas.findByRole('button', { name: t('cm.createFrom') });
+		await waitFor(() => expect(copy).toBeEnabled());
+		await userEvent.click(copy);
+		await userEvent.click(await canvas.findByRole('button', { name: t('cm.title.edit') }));
+		const field = await canvas.findByRole('textbox', { name: t('cm.title.label') });
+		await userEvent.clear(field);
+		await userEvent.type(field, 'Staff copy{Enter}');
 		await userEvent.click(canvas.getAllByRole('button', { name: t('af.general') })[0]);
-		await expect(
-			canvas.queryByRole('combobox', { name: new RegExp(`^${t('sf.row.mappingSet')}`) })
-		).toBeNull();
 		await expect(canvas.queryByRole('button', { name: /^email/ })).toBeNull();
 		await openMapping(canvasElement);
-		await expect(canvas.getByRole('textbox', { name: new RegExp(t('sf.row.name')) })).toHaveValue(
-			'Portal mapping updated'
-		);
+		await expect(await canvas.findByRole('heading', { name: 'Staff copy' })).toBeVisible();
 		await userEvent.click(canvas.getByRole('button', { name: t('sf.detail.back') }));
 		const dialog = within(
 			await within(canvasElement.ownerDocument.body).findByRole('dialog', {
@@ -157,15 +179,13 @@
 			})
 		);
 		await userEvent.click(dialog.getByRole('button', { name: t('sf.unsaved.keep') }));
-		await expect(canvas.getByRole('textbox', { name: new RegExp(t('sf.row.name')) })).toHaveValue(
-			'Portal mapping updated'
-		);
+		await expect(canvas.getByRole('heading', { name: 'Staff copy' })).toBeVisible();
 	}}
 />
 
 <Story
 	name="Make the output source while making a mapping set"
-	args={{ protocol: 'saml' }}
+	args={{ scenario: 'unbound', protocol: 'saml' }}
 	play={async ({ canvasElement }) => {
 		await openMapping(canvasElement);
 		const canvas = within(canvasElement);
@@ -297,21 +317,30 @@
 		);
 		await canvas.findByText(t('cm.finishOutputFirst'));
 		await expect(canvas.getByRole('combobox', { name: /Mapping$/ })).toBeDisabled();
-		await expect(canvas.getByRole('button', { name: t('cm.create') })).toBeDisabled();
+		await expect(canvas.getByRole('button', { name: t('cm.createFrom') })).toBeDisabled();
 	}}
 />
 
 <Story
 	name="The save bar says what is missing, and stays away while an output source is being made"
+	args={{ scenario: 'unbound', protocol: 'saml' }}
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
-		await openMapping(canvasElement);
-		await canvas.findByRole('button', { name: /^email/ });
-		// A new set with no output source yet: the bar names what is missing.
-		await userEvent.click(canvas.getByRole('button', { name: t('cm.create') }));
+		await openOutput(canvasElement);
+		const output = await canvas.findByRole('combobox', { name: t('sf.dp.field.label') });
+		await userEvent.selectOptions(output, (output as HTMLSelectElement).options[1].value);
+		await userEvent.click(
+			canvas.getByRole('button', { name: new RegExp(`^${t('sf.part.mapping-sets')}`) })
+		);
+		await userEvent.click(await canvas.findByRole('button', { name: t('cm.create') }));
+		// A name is given but nothing is mapped yet: the bar names what is missing.
+		await userEvent.type(
+			await canvas.findByRole('textbox', { name: t('cm.title.label') }),
+			'Staff mapping{Enter}'
+		);
 		const bar = await canvas.findByRole('region', { name: t('common.unsaved') });
-		await expect(within(bar).getByText(t('cm.problem.profile'))).toBeVisible();
-		// While the output source is made, the bar is not shown: its words would point at nothing.
+		await expect(within(bar).getByText(t('cm.problem.mappings'))).toBeVisible();
+		// While an output source is made, the bar is not shown: its words would point at nothing.
 		await openOutput(canvasElement);
 		await userEvent.click(await canvas.findByRole('button', { name: t('sf.dp.field.create') }));
 		await waitFor(() =>
@@ -352,11 +381,53 @@
 			name: new RegExp(`^${t('sf.row.mappingSet')}`)
 		});
 		await expect(picker).toBeRequired();
-		await expect(canvas.queryByRole('textbox', { name: t('sf.row.name') })).toBeNull();
-		// Making it brings the name and description, as plain fields: nothing to unfold.
+		await expect(canvas.queryByRole('textbox', { name: t('cm.title.label') })).toBeNull();
+		// Making it brings its title, to be named in place; there is no name or description field.
 		await userEvent.click(canvas.getByRole('button', { name: t('cm.create') }));
-		await expect(await canvas.findByRole('textbox', { name: t('sf.row.name') })).toBeVisible();
-		await expect(canvas.getByRole('textbox', { name: t('cm.description') })).toBeVisible();
+		await expect(await canvas.findByRole('textbox', { name: t('cm.title.label') })).toBeVisible();
+		await expect(canvas.queryByRole('textbox', { name: t('sf.row.name') })).toBeNull();
 		await expect(canvas.queryByText(t('cm.chooseOutputFirst'))).toBeNull();
+	}}
+/>
+
+<Story
+	name="A new mapping can start as a copy of the one chosen, named after it"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await openMapping(canvasElement);
+		await canvas.findByRole('button', { name: /^email/ });
+		const copy = await canvas.findByRole('button', { name: t('cm.createFrom') });
+		await waitFor(() => expect(copy).toBeEnabled());
+		await userEvent.click(copy);
+		// The copy has the same attributes and a name to be given or kept; it can be changed.
+		await expect(
+			await canvas.findByRole('heading', { name: t('cm.copyName', { name: 'Portal mapping' }) })
+		).toBeVisible();
+		await canvas.findByRole('button', { name: /^email/ });
+		await expect(canvas.getByRole('button', { name: t('cm.title.edit') })).toBeEnabled();
+		// The original is not touched: it is not the chosen one any more, and nothing was saved.
+		await expect(canvas.getByRole('button', { name: t('cm.create') })).toBeVisible();
+	}}
+/>
+
+<Story
+	name="A name typed in the title is saved even when Done was not pressed"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await openMapping(canvasElement);
+		await canvas.findByRole('button', { name: /^email/ });
+		const copy = await canvas.findByRole('button', { name: t('cm.createFrom') });
+		await waitFor(() => expect(copy).toBeEnabled());
+		await userEvent.click(copy);
+		await userEvent.click(await canvas.findByRole('button', { name: t('cm.title.edit') }));
+		const field = await canvas.findByRole('textbox', { name: t('cm.title.label') });
+		await userEvent.clear(field);
+		await userEvent.type(field, 'Typed name');
+		await userEvent.click(canvas.getByRole('button', { name: 'Save and use for this connection' }));
+		// Saved under the typed name; and, existing now, it is only looked at.
+		await expect(await canvas.findByRole('heading', { name: 'Typed name' })).toBeVisible();
+		await waitFor(() =>
+			expect(canvas.queryByRole('button', { name: t('cm.title.edit') })).toBeNull()
+		);
 	}}
 />

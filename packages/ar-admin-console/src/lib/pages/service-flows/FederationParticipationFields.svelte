@@ -25,6 +25,11 @@
 		disabled?: boolean;
 		/** The SP role's mapping set is made and chosen elsewhere on the page (with its output source): no select here. */
 		spMappingManaged?: boolean;
+		/**
+		 * Which fields: those of taking part (a role to switch on, how a person picks an institution),
+		 * those of the mappings the roles use, or both.
+		 */
+		section?: 'participation' | 'mapping' | 'all';
 	}
 	let {
 		form = $bindable(),
@@ -33,8 +38,11 @@
 		mappingLoading = false,
 		onreloadmappings,
 		disabled = false,
-		spMappingManaged = false
+		spMappingManaged = false,
+		section = 'all'
 	}: Props = $props();
+	const showParticipation = $derived(section !== 'mapping');
+	const showMapping = $derived(section !== 'participation');
 
 	const selectionOptions = $derived([
 		{ value: 'authrim_search', label: t('sf.fed.idpSelection.authrim') },
@@ -43,7 +51,7 @@
 </script>
 
 <!-- A federation with no role at all (made inventory-only by hand) is asked which it takes: the only case with switches. -->
-{#if !form.spRole && !form.idpRole}
+{#if showParticipation && !form.spRole && !form.idpRole}
 	<ToggleRow
 		label={t('sf.fed.role.sp')}
 		description={t('sf.fed.role.spDesc')}
@@ -57,7 +65,7 @@
 		{disabled}
 	/>
 {/if}
-{#if form.spRole}
+{#if showMapping && form.spRole}
 	{#if !spMappingManaged}
 		<SelectRow
 			label={t('sf.fed.mappingSet.sp')}
@@ -69,7 +77,7 @@
 		/>
 	{/if}
 {/if}
-{#if form.idpRole}
+{#if showMapping && form.idpRole}
 	<SelectRow
 		label={t('sf.fed.mappingSet.idp')}
 		placeholder={t('mc.ro.choose')}
@@ -78,6 +86,8 @@
 		bind:value={form.idpMappingSetId}
 		disabled={disabled || mappingLoading}
 	/>
+{/if}
+{#if showParticipation && form.idpRole}
 	<SelectRow
 		label={t('sf.fed.idpSelection.label')}
 		options={selectionOptions}
@@ -104,7 +114,7 @@
 		/>
 	{/if}
 {/if}
-{#if mappingFailed}
+{#if showMapping && mappingFailed}
 	<Callout tone="warning" live>
 		{t('sf.fed.mappingSet.failed')}
 		{#if onreloadmappings}<Button size="sm" onclick={onreloadmappings}>{t('common.retry')}</Button

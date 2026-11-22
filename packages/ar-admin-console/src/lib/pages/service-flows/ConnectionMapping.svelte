@@ -18,8 +18,6 @@
 	import Button from '#lib/ui/primitives/Button.svelte';
 	import Badge from '#lib/ui/primitives/Badge.svelte';
 	import Select from '#lib/ui/primitives/Select.svelte';
-	import TextField from '#lib/ui/primitives/TextField.svelte';
-	import TextArea from '#lib/ui/primitives/TextArea.svelte';
 	import SaveBar from '#lib/ui/patterns/SaveBar.svelte';
 	import MappingSetPanel from '../mapping/MappingSetPanel.svelte';
 	import LeaveGuard from './LeaveGuard.svelte';
@@ -139,10 +137,20 @@
 	}
 	function choose(value: string) {
 		if (!shared || readonly || disabled) return;
-		if (shared.dirty) changeTo = value;
+		// Only what was typed, or a save in flight, is worth a question: having chosen another
+		// mapping to look at is not.
+		if (shared.form.dirty || shared.pending || shared.phase === 'binding_failed') changeTo = value;
 		else if (value === '__new') {
 			shared.create();
-		} else void shared.select(value);
+		} else if (value === '__copy') copySelected();
+		else void shared.select(value);
+	}
+	/** A new mapping that starts as a copy of the selected one, named after it. */
+	function copySelected() {
+		if (!shared?.detail) return;
+		shared.copyFromSelected(
+			t('cm.copyName', { name: shared.detail.display_name ?? shared.detail.field_mapping_key })
+		);
 	}
 	function applyChoice() {
 		const value = changeTo;
@@ -150,10 +158,13 @@
 		if (value === null || !shared) return;
 		if (value === '__new') {
 			shared.create();
-		} else if (value === '__inspect') void shared.inspectUnknown();
+		} else if (value === '__copy') copySelected();
+		else if (value === '__inspect') void shared.inspectUnknown();
 		else void shared.select(value);
 	}
 
+	/** The chosen mapping can be the base of a new one (it is supported, so its rules can be read). */
+	const canCopy = $derived(!!shared?.detail && !shared.readonlyReason);
 	/** An output source is being made or changed: the mapping waits until that is done or left. */
 	const profileBusy = $derived(profileEditor !== null);
 	/** What cannot be saved yet, in words ('' when nothing stops it). */
@@ -337,12 +348,13 @@
 						changed={shared.selected !== shared.bound}
 					/>
 					{#if !readonly}<div>
+							<!-- A mapping that cannot be copied (an unsupported one) leaves a fresh one as the way on. -->
 							<Button
 								variant="secondary"
 								size="sm"
-								onclick={() => choose('__new')}
+								onclick={() => choose(canCopy ? '__copy' : '__new')}
 								disabled={disabled || shared.locked || shared.pinned || profileBusy}
-								>{t('cm.create')}</Button
+								>{t(canCopy ? 'cm.createFrom' : 'cm.create')}</Button
 							>
 						</div>{/if}
 					{#if shared.readonlyReason}<Callout tone="warning">{t('cm.readonly')}</Callout>{/if}
@@ -375,30 +387,25 @@
 					{#if shared.phase === 'saved' && !shared.dirty}<Callout tone="info" live
 							>{t('cm.saved')}</Callout
 						>{/if}
-					{#if shared.detail || shared.newKey}
-						<BusyScope
-							busy={disabled || readonly || shared.locked || shared.readonlyReason || profileBusy}
-						>
-							<TextField
-								label={t('sf.row.name')}
-								bind:value={shared.form.value.name}
-								field="name"
-								required
-							/>
-							<TextArea
-								label={t('cm.description')}
-								bind:value={shared.form.value.description}
-								field="description"
-							/>
-						</BusyScope>
-					{/if}
 				</div>
 			</Card>
 			{#if shared.context && !shared.readonlyReason && (shared.detail || shared.newKey)}
-				<BusyScope busy={disabled || readonly || shared.locked || profileBusy}>
+				<!-- A mapping that exists is only looked at (and chosen); one being made can be edited. -->
+				<BusyScope busy={disabled || readonly || shared.locked || profileBusy || !shared.newKey}>
 					<div class="stack">
 						<MappingSetPanel
-							title={shared.form.value.name || t('sf.row.mappingSet')}
+							title={shared.form.value.name}
+							rename={shared.newKey
+								? {
+										onchange: (name) => (shared.form.value.name = name),
+										placeholder: t('cm.newMappingTitle'),
+										editLabel: t('cm.title.edit'),
+										label: t('cm.title.label'),
+										hint: t('cm.title.hint'),
+										requiredMessage: t('cm.title.required'),
+										doneLabel: t('cm.title.done')
+									}
+								: undefined}
 							description={shared.detail?.references
 								? t('mc.ch.usedBy', { count: shared.detail.references.count })
 								: undefined}
