@@ -7,7 +7,7 @@ const mocks = vi.hoisted(() => ({
   writeAdminAuditLog: vi.fn(),
   notice: vi.fn(),
   consoleNotice: vi.fn(),
-  auth: {} as Record<string, unknown> | undefined,
+  auth: {},
 }));
 
 vi.mock('../admin-step-up-gate', () => ({

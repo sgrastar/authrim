@@ -18,7 +18,7 @@ const mocks = vi.hoisted(() => ({
   writeAdminAuditLog: vi.fn(),
   incrementRpc: vi.fn(),
   challenges: new Map<string, Challenge>(),
-  auth: {} as Record<string, unknown>,
+  auth: {},
 }));
 
 vi.mock('../admin-shared', () => ({ writeAdminAuditLog: mocks.writeAdminAuditLog }));
@@ -69,7 +69,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
           createdAt: Date.now(),
           expiresAt: Date.now() + request.ttl * 1000,
           consumed: false,
-        } as Challenge);
+        });
       },
       getChallengeRpc: async (id: string) => mocks.challenges.get(id) ?? null,
       consumeChallengeRpc: async (request: { id: string }) => {
@@ -99,6 +99,7 @@ import {
 } from '@authrim/ar-lib-core';
 import { myTotpFactorRouter } from '../routes/admin-management/my-totp-factor';
 
+const anyNumber: unknown = expect.any(Number);
 const KEY = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
 const SECRET = 'JBSWY3DPEHPK3PXP';
 const ENV = {
@@ -250,8 +251,9 @@ describe('authenticator app second factor', () => {
 
     it('returns the gate’s refusal and stores nothing when the receipt is missing', async () => {
       mocks.listActiveByUser.mockResolvedValue([{ id: 'sf-1', kind: 'webauthn_credential' }]);
-      mocks.requireAdminStepUp.mockImplementation(async (c: { json: Function }) =>
-        c.json({ error: 'step_up_required' }, 403)
+      mocks.requireAdminStepUp.mockImplementation(
+        async (c: { json: (body: unknown, status: number) => Response }) =>
+          c.json({ error: 'step_up_required' }, 403)
       );
 
       const { status, body } = await call('/enroll', {});
@@ -293,10 +295,14 @@ describe('authenticator app second factor', () => {
     it('spends no receipt when no encryption key is configured', async () => {
       mocks.listActiveByUser.mockResolvedValue([{ id: 'sf-1', kind: 'webauthn_credential' }]);
 
-      const { status, body } = await call('/enroll', {}, {
-        ...ENV,
-        ADMIN_CREDENTIAL_ENCRYPTION_KEY: undefined,
-      } as unknown as Env);
+      const { status, body } = await call(
+        '/enroll',
+        {},
+        {
+          ...ENV,
+          ADMIN_CREDENTIAL_ENCRYPTION_KEY: undefined,
+        }
+      );
 
       expect(status).toBe(503);
       expect(body).toMatchObject({ error: 'totp_unavailable' });
@@ -516,7 +522,7 @@ describe('authenticator app second factor', () => {
       expect(body).toMatchObject({ verified: true });
       expect(mocks.recordTotpUse).toHaveBeenCalledWith('sf-t', {
         timeStep: step,
-        usedAt: expect.any(Number),
+        usedAt: anyNumber,
       });
       expect(mocks.recordSecondFactorVerification).toHaveBeenCalledWith(
         'sess-1',
