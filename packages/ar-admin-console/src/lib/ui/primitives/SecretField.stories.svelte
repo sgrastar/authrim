@@ -52,3 +52,22 @@
 		<div style="max-width:480px"><SecretField label={secret()} stored /></div>
 	{/snippet}
 </Story>
+
+<Story
+	name="Long value in a narrow space"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const value = '0TTER6TKVDCCLPIJ2LC7XO7RUN7N4KWRQ4TQ';
+		await userEvent.click(await canvas.findByRole('button', { name: /Show|を表示/ }));
+		const shown = await canvas.findByText(value);
+		// The whole value is on screen: it wraps, it is not cut short with an ellipsis.
+		await expect(shown.scrollWidth).toBeLessThanOrEqual(shown.clientWidth);
+		await expect(getComputedStyle(shown).whiteSpace).toBe('normal');
+	}}
+>
+	{#snippet template()}
+		<div style="max-width:300px">
+			<SecretField label={secret()} mode="show" once value="0TTER6TKVDCCLPIJ2LC7XO7RUN7N4KWRQ4TQ" />
+		</div>
+	{/snippet}
+</Story>

@@ -892,10 +892,11 @@ export const en = {
 	'map.fix.bool': 'Convert to true or false',
 	'map.unusedList': '{source} not used: {list}',
 	'map.nothing': 'No attributes match',
-	'me.keyring': 'Authrim Keyring',
+	'me.keyring': 'Administrator credentials',
+	'me.keyring.issue': 'Issue an administrator credential',
 	'me.keyringDesc':
-		'Add your administrator credential to Authrim Keyring on your iPhone. The credential is used to approve sensitive operations.',
-	'keyring.page.title': 'Add to Authrim Keyring',
+		'The administrator credentials issued to Authrim Keyring on your iPhone. They are used to approve sensitive operations.',
+	'keyring.page.title': 'Issue an administrator credential',
 	'keyring.page.desc':
 		'Issue your administrator credential to Authrim Keyring. The QR code is valid for a short time and can be used only once.',
 	'keyring.back': 'Back to account',

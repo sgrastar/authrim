@@ -890,10 +890,11 @@ export const ja = {
 	'map.fix.bool': 'true／false に変換する',
 	'map.unusedList': '使われていない{source}: {list}',
 	'map.nothing': '該当する属性はありません',
-	'me.keyring': 'Authrim Keyring',
+	'me.keyring': '管理者資格情報',
+	'me.keyring.issue': '管理者資格情報を発行',
 	'me.keyringDesc':
-		'iPhone の Authrim Keyring に、あなたの管理者資格情報を追加します。追加した資格情報は、重要な操作の承認に使います。',
-	'keyring.page.title': 'Authrim Keyring に追加',
+		'iPhone の Authrim Keyring に発行した、あなたの管理者資格情報です。重要な操作の承認に使います。',
+	'keyring.page.title': '管理者資格情報を発行する',
 	'keyring.page.desc':
 		'あなたの管理者資格情報を Authrim Keyring に発行します。QR コードは短時間だけ有効で、1 回しか使えません。',
 	'keyring.back': '個人設定に戻る',

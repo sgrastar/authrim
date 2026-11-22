@@ -906,10 +906,11 @@ export const de = {
 	'map.fix.bool': 'In true/false umwandeln',
 	'map.unusedList': '{source} nicht verwendet: {list}',
 	'map.nothing': 'Keine passenden Attribute',
-	'me.keyring': 'Authrim Keyring',
+	'me.keyring': 'Administrator-Berechtigungen',
+	'me.keyring.issue': 'Administrator-Berechtigung ausstellen',
 	'me.keyringDesc':
-		'Fügen Sie Ihre Administrator-Berechtigung zu Authrim Keyring auf Ihrem iPhone hinzu. Sie dient zur Freigabe sensibler Vorgänge.',
-	'keyring.page.title': 'Zu Authrim Keyring hinzufügen',
+		'Ihre Administrator-Berechtigungen, die an Authrim Keyring auf Ihrem iPhone ausgestellt wurden. Sie dienen zur Freigabe sensibler Vorgänge.',
+	'keyring.page.title': 'Administrator-Berechtigung ausstellen',
 	'keyring.page.desc':
 		'Stellen Sie Ihre Administrator-Berechtigung für Authrim Keyring aus. Der QR-Code ist nur kurz gültig und kann nur einmal verwendet werden.',
 	'keyring.back': 'Zurück zum Konto',
