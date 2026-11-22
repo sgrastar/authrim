@@ -7,6 +7,8 @@ import {
   aalMapProblem,
   adminStepUpOverridesProblem,
   ADMIN_STEP_UP_OVERRIDES_KEY,
+  ADMIN_SECOND_FACTOR_ALLOWED_KINDS_KEY,
+  adminSecondFactorAllowedKindsProblem,
   ialAssuranceValuesProblem,
   ialMapProblem,
   idaProfileProblem,
@@ -225,7 +227,12 @@ export function validateSecurityPatch(body: SettingsPatchRequest): string | null
   }
   const stepUpOverrides = body.set?.[ADMIN_STEP_UP_OVERRIDES_KEY];
   if (stepUpOverrides !== undefined) {
-    return adminStepUpOverridesProblem(stepUpOverrides);
+    const problem = adminStepUpOverridesProblem(stepUpOverrides);
+    if (problem) return problem;
+  }
+  const allowedKinds = body.set?.[ADMIN_SECOND_FACTOR_ALLOWED_KINDS_KEY];
+  if (allowedKinds !== undefined) {
+    return adminSecondFactorAllowedKindsProblem(allowedKinds);
   }
   return null;
 }

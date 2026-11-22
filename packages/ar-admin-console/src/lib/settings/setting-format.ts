@@ -39,6 +39,12 @@ function isEmptyObject(value: unknown): boolean {
 export function formatSetting(key: string, meta: SettingMeta, value: unknown): string {
 	const locale = i18n.locale;
 	if (value === null || value === undefined || value === '') return t('settings.value.empty');
+	// The allowed second-factor kinds read as the names people know, not as the stored labels.
+	if (key === 'security.admin_second_factor_allowed_kinds' && Array.isArray(value)) {
+		return value
+			.map((kind) => (kind === 'totp' ? t('set.kind.totp') : t('set.kind.hardware')))
+			.join(', ');
+	}
 	// An empty map (no operation raised, say) reads as nothing set, not as `{}`.
 	if (meta.type === 'json' && isEmptyObject(value)) return t('settings.value.empty');
 	switch (meta.type) {

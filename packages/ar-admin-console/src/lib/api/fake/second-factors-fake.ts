@@ -24,6 +24,10 @@ export interface FakeSecondFactorsOptions {
 	keys?: Array<Partial<SecondFactor> & { label: string }>;
 	/** Whether the first-enrollment window is still open (only matters with no active key). */
 	firstEnrollmentOpen?: boolean;
+	/** The tenant allows an authenticator app as a second factor. */
+	totpAllowed?: boolean;
+	/** The code the fake accepts when confirming an authenticator app (123456 by default). */
+	totpCode?: string;
 	/** The admin's own request: waiting, or ready to complete. */
 	recovery?: 'waiting' | 'ready';
 	/** Open requests of other admins in the tenant. */
@@ -98,6 +102,7 @@ export function createFakeSecondFactors(
 		return run();
 	};
 	const active = () => keys.filter((key) => key.revoked_at === null);
+	let pendingTotpLabel: string | null = null;
 
 	return {
 		list: () =>
@@ -115,11 +120,51 @@ export function createFakeSecondFactors(
 									: 'recovery_required',
 						first_enrollment_ends_at: now + (options.firstEnrollmentOpen ? 5 : -2) * DAY
 					},
+					totp: { allowed: options.totpAllowed === true },
 					recovery: options.soleAdmin
 						? { available: false, reason: 'sole_admin' }
 						: { available: true }
 				})
 			),
+
+		startTotp: ({ label }) =>
+			call(() => {
+				if (options.totpAllowed !== true) {
+					throw new ApiError(403, 'second_factor_kind_not_allowed', 'Not allowed');
+				}
+				if (active().some((key) => key.kind === 'totp')) {
+					throw new ApiError(409, 'second_factor_kind_in_use', 'Already registered');
+				}
+				if (active().length === 0 && !options.firstEnrollmentOpen) {
+					throw new ApiError(403, 'second_factor_recovery_required', 'Recovery required');
+				}
+				pendingTotpLabel = label ?? null;
+				return {
+					challengeId: nextId('totp'),
+					otpauthUri:
+						'otpauth://totp/Authrim%20Admin:admin%40example.com?secret=JBSWY3DPEHPK3PXP&issuer=Authrim%20Admin',
+					secret: 'JBSWY3DPEHPK3PXP',
+					expiresAt: Date.now() + 5 * 60 * 1000
+				};
+			}),
+
+		confirmTotp: ({ code }) =>
+			call(() => {
+				if (code !== (options.totpCode ?? '123456')) {
+					throw new ApiError(400, 'verification_failed', 'Code was not verified');
+				}
+				const key: SecondFactor = {
+					id: nextId('sf'),
+					kind: 'totp',
+					label: pendingTotpLabel ?? 'Authenticator app',
+					aaguid: null,
+					created_at: Date.now(),
+					last_used_at: Date.now(),
+					revoked_at: null
+				};
+				keys = [key, ...keys];
+				return key;
+			}),
 
 		register: ({ label, recovery: asRecovery }) =>
 			call(() => {

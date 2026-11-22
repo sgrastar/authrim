@@ -1,7 +1,9 @@
 <script lang="ts">
 	import { t } from '#lib/i18n/i18n.svelte.js';
+	import Callout from '#lib/ui/patterns/Callout.svelte';
 	import ChoiceCards from '#lib/ui/patterns/ChoiceCards.svelte';
 	import Button from '#lib/ui/primitives/Button.svelte';
+	import TextField from '#lib/ui/primitives/TextField.svelte';
 	import KeyringPresentationPanel from './KeyringPresentationPanel.svelte';
 	import {
 		secondFactorPrompt,
@@ -9,8 +11,9 @@
 	} from './second-factor-prompt.svelte.js';
 
 	/**
-	 * The second-factor question of a step-up, for admins with Keyring: a security key or Keyring.
-	 * Mounted once in the root layout; `prompt` is replaceable for stories and tests.
+	 * The second-factor question of a step-up, for admins with more than a security key: a security
+	 * key, Keyring or an authenticator app (its 6-digit code is typed here). Mounted once in the
+	 * root layout; `prompt` is replaceable for stories and tests.
 	 */
 	interface Props {
 		prompt?: SecondFactorPromptState;
@@ -20,7 +23,61 @@
 
 	let dialog = $state<HTMLDialogElement>();
 	let choice = $state('keyring');
+	let code = $state('');
 	const uid = $props.id();
+
+	const options = $derived([
+		...(prompt.hasKeyring
+			? [
+					{
+						value: 'keyring',
+						label: t('kp.prompt.keyring'),
+						description: t('kp.prompt.keyringHint'),
+						icon: 'deviceMobile' as const
+					}
+				]
+			: []),
+		...(prompt.hasSecurityKey
+			? [
+					{
+						value: 'security_key',
+						label: t('kp.prompt.securityKey'),
+						description: t('kp.prompt.securityKeyHint'),
+						icon: 'key' as const
+					}
+				]
+			: []),
+		...(prompt.hasTotp
+			? [
+					{
+						value: 'totp',
+						label: t('kp.prompt.totp'),
+						description: t('kp.prompt.totpHint'),
+						icon: 'lock' as const
+					}
+				]
+			: [])
+	]);
+
+	// The first way offered is the one preselected, and a code typed before is never kept.
+	$effect(() => {
+		if (prompt.open) {
+			choice = options[0]?.value ?? 'keyring';
+			code = '';
+		}
+	});
+
+	const failureText = $derived(
+		prompt.totpFailure === 'invalid'
+			? t('kp.totp.error.invalid')
+			: prompt.totpFailure === 'rate_limited'
+				? t('kp.totp.error.rateLimited')
+				: prompt.totpFailure === 'not_allowed'
+					? t('kp.totp.error.notAllowed')
+					: prompt.totpFailure === 'unavailable'
+						? t('kp.totp.error.unavailable')
+						: ''
+	);
 
 	$effect(() => {
 		if (!dialog) return;
@@ -30,7 +87,12 @@
 
 	function proceed() {
 		if (choice === 'security_key') prompt.chooseSecurityKey();
+		else if (choice === 'totp') prompt.chooseTotp();
 		else prompt.chooseKeyring();
+	}
+
+	function submit() {
+		if (code.trim()) void prompt.submitTotp(code);
 	}
 </script>
 
@@ -44,7 +106,13 @@
 	}}
 >
 	<h2 id="{uid}-title">{t('kp.prompt.title')}</h2>
-	<p>{prompt.flow ? t('kp.prompt.keyringDesc') : t('kp.prompt.desc')}</p>
+	<p>
+		{prompt.flow
+			? t('kp.prompt.keyringDesc')
+			: prompt.totpStep
+				? t('kp.prompt.totpDesc')
+				: t('kp.prompt.desc')}
+	</p>
 	<div class="dialog__body">
 		{#if prompt.flow}
 			<KeyringPresentationPanel
@@ -52,35 +120,45 @@
 				onretry={() => prompt.retry()}
 				onqr={() => prompt.useQr()}
 			/>
+		{:else if prompt.totpStep}
+			<TextField
+				label={t('kp.totp.label')}
+				bind:value={code}
+				inputmode="numeric"
+				autocomplete="one-time-code"
+				maxlength={7}
+				placeholder="123456"
+				disabled={prompt.totpBusy}
+				onkeydown={(event) => {
+					if (event.key === 'Enter') {
+						event.preventDefault();
+						submit();
+					}
+				}}
+			/>
+			{#if failureText}
+				<Callout tone="danger" live>{failureText}</Callout>
+			{/if}
 		{:else if prompt.open}
 			<ChoiceCards
 				label={t('kp.prompt.choose')}
 				hideLabel
 				columns={1}
 				bind:value={choice}
-				options={[
-					{
-						value: 'keyring',
-						label: t('kp.prompt.keyring'),
-						description: t('kp.prompt.keyringHint'),
-						icon: 'deviceMobile'
-					},
-					{
-						value: 'security_key',
-						label: t('kp.prompt.securityKey'),
-						description: t('kp.prompt.securityKeyHint'),
-						icon: 'key'
-					}
-				]}
+				{options}
 			/>
 		{/if}
 	</div>
 	<div class="dialog__actions">
-		{#if prompt.flow && prompt.hasSecurityKey}
-			<Button variant="ghost" onclick={() => prompt.back()}>{t('kp.prompt.other')}</Button>
+		{#if (prompt.flow || prompt.totpStep) && prompt.canGoBack}
+			<Button variant="ghost" onclick={() => prompt.back()}>{t('kp.prompt.back')}</Button>
 		{/if}
 		<Button variant="ghost" onclick={() => prompt.cancel()}>{t('common.cancel')}</Button>
-		{#if !prompt.flow}
+		{#if prompt.totpStep}
+			<Button variant="primary" loading={prompt.totpBusy} disabled={!code.trim()} onclick={submit}>
+				{t('kp.totp.verify')}
+			</Button>
+		{:else if !prompt.flow}
 			<Button variant="primary" onclick={proceed}>{t('kp.prompt.continue')}</Button>
 		{/if}
 	</div>

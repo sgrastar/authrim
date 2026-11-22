@@ -69,6 +69,28 @@ export const deSecurityKeys: Record<keyof typeof jaSecurityKeys, string> = {
 	'sk.error.cancelled': 'Die Bestätigung wurde abgebrochen.',
 	'sk.error.windowClosed':
 		'Die Frist für den ersten Schlüssel ist abgelaufen. Stellen Sie stattdessen einen Wiederherstellungsantrag.',
+	'sk.addTotp': 'Authenticator-App hinzufügen',
+	'sk.totp.title': 'Authenticator-App als zweiten Faktor hinzufügen',
+	'sk.totp.body':
+		'Scannen Sie den QR-Code mit Ihrer Authenticator-App und geben Sie den angezeigten 6-stelligen Code ein.',
+	'sk.totp.qrAlt': 'QR-Code für Ihre Authenticator-App',
+	'sk.totp.secret': 'Wenn Sie den QR-Code nicht scannen können',
+	'sk.totp.secretHint':
+		'Geben Sie diesen Schlüssel in Ihrer Authenticator-App ein. Er wird nur jetzt angezeigt und nie wieder.',
+	'sk.totp.code': 'Code aus Ihrer Authenticator-App',
+	'sk.totp.confirm': 'Hinzufügen',
+	'sk.totp.added': 'Authenticator-App als zweiter Faktor hinzugefügt.',
+	'sk.totp.badge': 'Authenticator-App',
+	'sk.totp.weaker':
+		'Der Code einer Authenticator-App ist ein schwächerer Faktor als ein Sicherheitsschlüssel: Man kann dazu gebracht werden, ihn einzugeben.',
+	'sk.error.totpNotAllowed': 'Dieser Mandant erlaubt Authenticator-Apps nicht als zweiten Faktor.',
+	'sk.error.totpInUse':
+		'Es ist bereits eine Authenticator-App registriert. Entfernen Sie sie zuerst.',
+	'sk.error.totpInvalid':
+		'Der Code wurde nicht akzeptiert. Geben Sie den aktuellen Code Ihrer Authenticator-App ein.',
+	'sk.error.rateLimited':
+		'Zu viele Versuche. Warten Sie einige Minuten und versuchen Sie es erneut.',
+	'sk.error.totpExpired': 'Die Zeit ist abgelaufen. Beginnen Sie von vorn.',
 	'sk.others.title': 'Wiederherstellungsanträge anderer Administratoren',
 	'sk.others.info':
 		'Administratoren dieses Mandanten möchten ihre Sicherheitsschlüssel ersetzen. Ziehen Sie unerwartete Anträge zurück.',

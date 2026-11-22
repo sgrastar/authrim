@@ -58,6 +58,11 @@ import {
   evaluateAdminStepUpEvidence,
   issueAdminStepUpReceipt,
   resolveAdminStepUpLevel,
+  adminSecondFactorAllowedKindsProblem,
+  adminSecondFactorStrength,
+  isAdminSecondFactorKindAllowed,
+  resolveAdminSecondFactorAllowedKinds,
+  widensAdminSecondFactorKinds,
   type AdminStepUpBinding,
 } from '../admin-step-up';
 
@@ -162,6 +167,65 @@ describe('admin step-up policy', () => {
     const result = adminStepUpOverridesProblem(value);
     if (problem === null) expect(result).toBeNull();
     else expect(result).toContain(problem);
+  });
+});
+
+describe('allowed second-factor kinds', () => {
+  it('maps every stored kind to a strength and refuses unknown ones', () => {
+    expect(adminSecondFactorStrength('webauthn_credential')).toBe('hardware');
+    expect(adminSecondFactorStrength('keyring_holder_key')).toBe('hardware');
+    expect(adminSecondFactorStrength('totp')).toBe('totp');
+    expect(adminSecondFactorStrength('platform_synced')).toBeNull();
+    expect(adminSecondFactorStrength('')).toBeNull();
+  });
+
+  it('accepts lists of known strengths that include hardware', () => {
+    expect(adminSecondFactorAllowedKindsProblem(['hardware'])).toBeNull();
+    expect(adminSecondFactorAllowedKindsProblem(['hardware', 'totp'])).toBeNull();
+    expect(adminSecondFactorAllowedKindsProblem(['totp', 'hardware'])).toBeNull();
+  });
+
+  it('refuses a list that is empty, lacks hardware, repeats or names an unknown kind', () => {
+    expect(adminSecondFactorAllowedKindsProblem([])).toMatch(/must include hardware/);
+    expect(adminSecondFactorAllowedKindsProblem(['totp'])).toMatch(/must include hardware/);
+    expect(adminSecondFactorAllowedKindsProblem(['hardware', 'hardware'])).toMatch(/twice/);
+    expect(adminSecondFactorAllowedKindsProblem(['hardware', 'sms'])).toMatch(/unknown kind sms/);
+    expect(adminSecondFactorAllowedKindsProblem(['hardware', 1])).toMatch(/unknown kind number/);
+    expect(adminSecondFactorAllowedKindsProblem('hardware')).toMatch(/must be a list/);
+    expect(adminSecondFactorAllowedKindsProblem(null)).toMatch(/must be a list/);
+    expect(adminSecondFactorAllowedKindsProblem({ hardware: true })).toMatch(/must be a list/);
+  });
+
+  it('reads anything unreadable as hardware only, never as wider', () => {
+    for (const value of [undefined, null, 'totp', [], ['totp'], ['hardware', 'sms'], {}]) {
+      expect([...resolveAdminSecondFactorAllowedKinds(value)]).toEqual(['hardware']);
+    }
+    expect([...resolveAdminSecondFactorAllowedKinds(['hardware', 'totp'])].sort()).toEqual([
+      'hardware',
+      'totp',
+    ]);
+  });
+
+  it('allows a factor only when its strength is listed', () => {
+    const hardwareOnly = resolveAdminSecondFactorAllowedKinds(['hardware']);
+    const both = resolveAdminSecondFactorAllowedKinds(['hardware', 'totp']);
+    expect(isAdminSecondFactorKindAllowed('webauthn_credential', hardwareOnly)).toBe(true);
+    expect(isAdminSecondFactorKindAllowed('keyring_holder_key', hardwareOnly)).toBe(true);
+    expect(isAdminSecondFactorKindAllowed('totp', hardwareOnly)).toBe(false);
+    expect(isAdminSecondFactorKindAllowed('totp', both)).toBe(true);
+    // A kind this code does not know never satisfies L2.
+    expect(isAdminSecondFactorKindAllowed('sms', both)).toBe(false);
+  });
+
+  it('tells a change that adds a strength from one that does not', () => {
+    expect(widensAdminSecondFactorKinds(['hardware'], ['hardware', 'totp'])).toBe(true);
+    // Not set yet reads as the default, so adding totp widens it.
+    expect(widensAdminSecondFactorKinds(undefined, ['hardware', 'totp'])).toBe(true);
+    expect(widensAdminSecondFactorKinds(['hardware', 'totp'], ['hardware'])).toBe(false);
+    expect(widensAdminSecondFactorKinds(['hardware', 'totp'], ['totp', 'hardware'])).toBe(false);
+    expect(widensAdminSecondFactorKinds(['hardware'], ['hardware'])).toBe(false);
+    // An invalid new value reads as hardware only: it cannot widen.
+    expect(widensAdminSecondFactorKinds(['hardware'], ['totp'])).toBe(false);
   });
 });
 
@@ -384,7 +448,7 @@ describe('requirements and receipts', () => {
       });
 
       expect(issued.binding).toMatchObject(l2);
-      expect(isSecondFactorActive).toHaveBeenCalledWith('admin-1', 'sf-1');
+      expect(isSecondFactorActive).toHaveBeenCalledWith('admin-1', 'sf-1', l2);
     });
 
     it.each([

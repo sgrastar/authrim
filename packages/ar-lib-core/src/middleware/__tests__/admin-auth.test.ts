@@ -242,6 +242,17 @@ function createTestApp(
     return c.json({ success: true, adminAuth });
   });
 
+  for (const path of [
+    '/api/admin/me/second-factors/totp/enroll',
+    '/api/admin/me/second-factors/totp/enroll/verify',
+    '/api/admin/me/second-factors/totp/verify',
+  ]) {
+    app.post(path, (c) => {
+      const adminAuth = (c as unknown as { get(key: string): unknown }).get('adminAuth');
+      return c.json({ success: true, adminAuth });
+    });
+  }
+
   app.post('/api/admin/me/second-factor-recovery/complete', (c) => {
     const adminAuth = (c as unknown as { get(key: string): unknown }).get('adminAuth');
     return c.json({ success: true, adminAuth });
@@ -2323,6 +2334,9 @@ describe('adminAuthMiddleware', () => {
       const receipt = await call('POST', '/api/admin/me/step-up/receipts');
       const secondFactor = await call('POST', '/api/admin/me/reauth/second-factor/verify');
       const enrollment = await call('POST', '/api/admin/me/second-factors/webauthn/options');
+      const totpEnroll = await call('POST', '/api/admin/me/second-factors/totp/enroll');
+      const totpConfirm = await call('POST', '/api/admin/me/second-factors/totp/enroll/verify');
+      const totpVerify = await call('POST', '/api/admin/me/second-factors/totp/verify');
       const recovery = await call('POST', '/api/admin/me/second-factor-recovery/complete');
       const preferences = await call('GET', '/api/admin/me/notice-preferences');
 
@@ -2343,6 +2357,11 @@ describe('adminAuthMiddleware', () => {
       expect((await secondFactor.json<Body>()).adminAuth.tenantId).toBe('default');
       expect(enrollment.status).toBe(200);
       expect((await enrollment.json<Body>()).adminAuth.tenantId).toBe('default');
+      // The authenticator app routes are the admin's own as well, under the session's tenant.
+      for (const response of [totpEnroll, totpConfirm, totpVerify]) {
+        expect(response.status).toBe(200);
+        expect((await response.json<Body>()).adminAuth.tenantId).toBe('default');
+      }
       expect(recovery.status).toBe(200);
       expect((await recovery.json<Body>()).adminAuth.tenantId).toBe('default');
       // Notice email choices belong to the admin, kept under the session's own tenant.

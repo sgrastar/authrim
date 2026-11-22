@@ -25,6 +25,7 @@ import { requireDedicatedAdminDatabaseAdapter } from './admin-database-adapter';
 import { resolveEffectiveSettings } from './effective-settings';
 import { markIdempotentResponseRetryable } from '../middleware/idempotency';
 import {
+  ADMIN_SECOND_FACTOR_ALLOWED_KINDS_KEY,
   ADMIN_STEP_UP_ALWAYS_ENFORCED,
   ADMIN_STEP_UP_ENFORCED_KEY,
   ADMIN_STEP_UP_OVERRIDES_KEY,
@@ -35,7 +36,9 @@ import {
   createAdminStepUpOperationHash,
   createAdminStepUpRequirement,
   evaluateAdminStepUpEvidence,
+  isAdminSecondFactorKindAllowed,
   isAdminStepUpHumanSession,
+  resolveAdminSecondFactorAllowedKinds,
   resolveAdminStepUpLevel,
   type AdminStepUpBinding,
   type AdminStepUpLevel,
@@ -78,17 +81,34 @@ function holdsExactly(auth: AdminAuthContext, permission: string): boolean {
   );
 }
 
-/** Whether the second factor the session verified is still active (not revoked since). */
-async function sessionFactorActive(env: Env, auth: AdminAuthContext): Promise<boolean> {
+/**
+ * Whether the second factor the session verified is still active (not revoked since) and of a
+ * kind the tenant being acted on allows: a factor whose kind the tenant has since removed from
+ * its allowed list no longer counts, even though its row is still there.
+ */
+async function sessionFactorActive(
+  env: Env,
+  auth: AdminAuthContext,
+  allowedKinds: unknown
+): Promise<boolean> {
   if (!auth.secondFactorId) return false;
   const adapter = requireDedicatedAdminDatabaseAdapter(env, 'admin-step-up-gate');
-  return new AdminSecondFactorRepository(adapter).isActive(auth.userId, auth.secondFactorId);
+  const factor = await new AdminSecondFactorRepository(adapter).findActive(
+    auth.userId,
+    auth.secondFactorId
+  );
+  return (
+    factor !== null &&
+    isAdminSecondFactorKindAllowed(factor.kind, resolveAdminSecondFactorAllowedKinds(allowedKinds))
+  );
 }
 
 /** The step-up settings that apply to a tenant: its raised levels and the platform's switch. */
 export interface AdminStepUpPolicy {
   overrides: unknown;
   enforced: unknown;
+  /** The second-factor strengths the tenant allows for L2 (anything unreadable means hardware). */
+  allowedKinds: unknown;
 }
 
 /** Reads the step-up policy for a tenant. Throws when the settings cannot be read. */
@@ -96,10 +116,13 @@ export async function readAdminStepUpPolicy(
   env: Env,
   tenantId: string
 ): Promise<AdminStepUpPolicy> {
-  const settings = await resolveEffectiveSettings(env, 'security', { tenantId });
+  // Not from the per-isolate cache: this decides what satisfies L2, so a tightening (a kind taken
+  // out of the allowed list, a level raised) applies to the next operation, not a minute later.
+  const settings = await resolveEffectiveSettings(env, 'security', { tenantId, fresh: true });
   return {
     overrides: settings[ADMIN_STEP_UP_OVERRIDES_KEY],
     enforced: settings[ADMIN_STEP_UP_ENFORCED_KEY],
+    allowedKinds: settings[ADMIN_SECOND_FACTOR_ALLOWED_KINDS_KEY],
   };
 }
 
@@ -129,8 +152,12 @@ export async function requireAdminStepUp(
 
   let overrides: unknown;
   let enforced: unknown;
+  let allowedKinds: unknown;
   try {
-    ({ overrides, enforced } = await readAdminStepUpPolicy(c.env, descriptor.targetTenantId));
+    ({ overrides, enforced, allowedKinds } = await readAdminStepUpPolicy(
+      c.env,
+      descriptor.targetTenantId
+    ));
   } catch {
     return refuse(
       c,
@@ -197,7 +224,7 @@ export async function requireAdminStepUp(
   const receipt = c.req.header(ADMIN_STEP_UP_RECEIPT_HEADER);
   // A receipt counts only while the factor behind it is: a key revoked after the receipt was
   // issued voids it. Checked before spending it, so a refused receipt is not wasted.
-  if (receipt && (await sessionFactorActive(c.env, auth))) {
+  if (receipt && (await sessionFactorActive(c.env, auth, allowedKinds))) {
     try {
       await consumeAdminStepUpReceipt(c.env, receipt, binding);
       return null;

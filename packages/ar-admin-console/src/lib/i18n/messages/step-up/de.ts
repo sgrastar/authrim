@@ -4,7 +4,7 @@ export const deStepUp = {
 	'stepUp.body': 'Dieser Vorgang ist {level}. Er erfordert {factors}. Fortfahren?',
 	'stepUp.factor.passkey': 'eine Passkey-Bestätigung',
 	'stepUp.factor.second_factor':
-		'eine Bestätigung mit dem zweiten Faktor (Sicherheitsschlüssel oder Keyring)',
+		'eine Bestätigung mit dem zweiten Faktor (Sicherheitsschlüssel, Keyring oder Authenticator-App)',
 	'stepUp.factorJoin': ' und ',
 	'stepUp.confirm': 'Bestätigen'
 };

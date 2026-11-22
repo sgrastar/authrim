@@ -44,6 +44,17 @@ export const arKeyringPresentation = {
 	'kp.prompt.securityKeyHint': 'استخدم مفتاح أمان USB أو NFC مسجلًا.',
 	'kp.prompt.continue': 'متابعة',
 	'kp.prompt.other': 'استخدام مفتاح الأمان',
+	'kp.prompt.totp': 'تطبيق المصادقة',
+	'kp.prompt.totpHint': 'أدخل الرمز المكوّن من 6 أرقام الظاهر في تطبيق المصادقة.',
+	'kp.prompt.totpDesc': 'أدخل الرمز المكوّن من 6 أرقام الظاهر في تطبيق المصادقة.',
+	'kp.prompt.back': 'اختيار طريقة أخرى',
+	'kp.totp.label': 'رمز تطبيق المصادقة',
+	'kp.totp.verify': 'تحقق',
+	'kp.totp.error.invalid':
+		'لم يُقبل الرمز. يعمل كل رمز مرة واحدة فقط: إن استخدمته للتو فانتظر الرمز التالي.',
+	'kp.totp.error.rateLimited': 'محاولات كثيرة جدًا. انتظر بضع دقائق ثم حاول مجددًا.',
+	'kp.totp.error.notAllowed': 'لم يعد هذا المستأجر يسمح بتطبيقات المصادقة كعامل ثانٍ.',
+	'kp.totp.error.unavailable': 'تعذّر التحقق من الرمز. حاول مجددًا.',
 	'kp.enroll.add': 'إضافة Keyring',
 	'kp.enroll.title': 'إضافة Authrim Keyring كعامل ثانٍ',
 	'kp.enroll.body':

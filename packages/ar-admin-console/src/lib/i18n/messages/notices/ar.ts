@@ -91,6 +91,8 @@ export const arNotices: Record<keyof typeof jaNotices, string> = {
 	'notice.msg.second_factor_last_resort_recovery':
 		'The step-up security keys of {email} were reset by the environment owner',
 	'notice.msg.second_factor_recovery_requested': '{email} asked to recover a security key',
+	'notice.msg.second_factor_policy_widened':
+		'وسّع {email} أنواع العامل الثاني المسموح بها ({kinds}) بمفتاح مرور فقط',
 	'notice.msg.storage_registry_security': 'A security problem was found in the storage registry',
 	'notice.msg.storage_registry_health': 'The storage registry has a health problem',
 	'notice.msg.tenant_database_stats': 'A tenant database’s statistics need attention',

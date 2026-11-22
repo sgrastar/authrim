@@ -66,6 +66,26 @@ export const enSecurityKeys: Record<keyof typeof jaSecurityKeys, string> = {
 	'sk.error.cancelled': 'The confirmation was cancelled.',
 	'sk.error.windowClosed':
 		'The window for registering a first key has closed. File a recovery request instead.',
+	'sk.addTotp': 'Add authenticator app',
+	'sk.totp.title': 'Add an authenticator app as a second factor',
+	'sk.totp.body':
+		'Scan the QR code with your authenticator app, then type the 6-digit code it shows.',
+	'sk.totp.qrAlt': 'QR code for your authenticator app',
+	'sk.totp.secret': 'If you cannot scan the QR code',
+	'sk.totp.secretHint':
+		'Type this key into your authenticator app. It is shown only now and never again.',
+	'sk.totp.code': 'Code from your authenticator app',
+	'sk.totp.confirm': 'Add',
+	'sk.totp.added': 'Authenticator app added as a second factor.',
+	'sk.totp.badge': 'Authenticator app',
+	'sk.totp.weaker':
+		'An authenticator app code is a weaker factor than a security key: a person can be tricked into typing it.',
+	'sk.error.totpNotAllowed': 'This tenant does not allow authenticator apps as a second factor.',
+	'sk.error.totpInUse': 'An authenticator app is already registered. Remove it first.',
+	'sk.error.totpInvalid':
+		'The code was not accepted. Type the current code from your authenticator app.',
+	'sk.error.rateLimited': 'Too many attempts. Wait a few minutes and try again.',
+	'sk.error.totpExpired': 'Time ran out. Start again.',
 	'sk.others.title': 'Recovery requests of other administrators',
 	'sk.others.info':
 		'Administrators of this tenant asked to replace their security keys. Cancel any request you do not expect.',

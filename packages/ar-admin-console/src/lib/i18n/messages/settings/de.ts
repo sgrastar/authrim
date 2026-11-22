@@ -67,6 +67,14 @@ export const deSettings: Record<keyof typeof jaSettings, string> = {
 	'set.k.security.admin_step_up_overrides': 'Erhöhte Prüfungen je Vorgang',
 	'set.k.security.admin_step_up_overrides.desc':
 		'Vorgangsnamen mit der verlangten Prüfung (L1: ein Passkey; L2: ein Passkey und ein zweiter Faktor), zum Beispiel {"client.secret.rotate": "L2"}. Eine Stufe kann nicht unter die eingebaute fallen.',
+	'set.k.security.admin_second_factor_allowed_kinds': 'Verwendbare zweite Faktoren',
+	'set.k.security.admin_second_factor_allowed_kinds.desc':
+		'Welche zweiten Faktoren Admins zur Bestätigung sensibler Vorgänge (L2) verwenden können. Sicherheitsschlüssel und Keyring sind immer erlaubt. Erlauben Sie Authenticator-Apps, können auch Admins ohne Schlüssel L2 erfüllen; die Sicherheit sinkt jedoch, weil man dazu gebracht werden kann, den Code einzugeben. Eine Erweiterung erfordert eine zusätzliche Bestätigung.',
+	'set.kind.hardware': 'Sicherheitsschlüssel oder Keyring',
+	'set.kind.hardware.desc': 'Ein an ein Gerät gebundener Schlüssel. Immer erlaubt.',
+	'set.kind.totp': 'Authenticator-App',
+	'set.kind.totp.desc':
+		'Ein 6-stelliger Code. Er ist anfällig für Phishing: Erlauben Sie ihn nur für Admins, die keinen Schlüssel haben können.',
 	'set.k.security.admin_step_up_enforced':
 		'Zusätzliche Prüfungen vor Verwaltungsvorgängen verlangen',
 	'set.k.security.admin_step_up_enforced.desc':

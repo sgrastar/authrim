@@ -65,6 +65,14 @@ export const arSettings: Record<keyof typeof jaSettings, string> = {
 	'set.k.security.admin_step_up_overrides': 'تحققات مرفوعة لكل عملية',
 	'set.k.security.admin_step_up_overrides.desc':
 		'أسماء العمليات مع التحقق المطلوب (L1: مفتاح مرور؛ L2: مفتاح مرور وعامل ثانٍ)، مثل {"client.secret.rotate": "L2"}. لا يمكن خفض المستوى عن المستوى المضمّن.',
+	'set.k.security.admin_second_factor_allowed_kinds': 'العوامل الثانية المسموح بها',
+	'set.k.security.admin_second_factor_allowed_kinds.desc':
+		'أنواع العامل الثاني التي يمكن للمسؤولين استخدامها لتأكيد العمليات الحساسة (L2). مفاتيح الأمان وKeyring مسموح بها دائمًا. السماح بتطبيقات المصادقة يتيح للمسؤولين بلا مفتاح استيفاء L2 لكنه يخفض الأمان، إذ يمكن خداع شخص ليُدخل الرمز. توسيع هذا الإعداد يتطلب تأكيدًا إضافيًا.',
+	'set.kind.hardware': 'مفتاح الأمان أو Keyring',
+	'set.kind.hardware.desc': 'مفتاح مرتبط بجهاز. مسموح به دائمًا.',
+	'set.kind.totp': 'تطبيق المصادقة',
+	'set.kind.totp.desc':
+		'رمز من 6 أرقام. ضعيف أمام التصيّد: اسمح به فقط للمسؤولين الذين لا يمكنهم امتلاك مفتاح.',
 	'set.k.security.admin_step_up_enforced': 'طلب تحققات إضافية قبل عمليات الإدارة',
 	'set.k.security.admin_step_up_enforced.desc':
 		'عند الإيقاف تُتخطّى تحققات مفتاح المرور والعامل الثاني قبل عمليات الإدارة الحساسة. أوقفه أثناء الترحيل فقط؛ الإيقاف نفسه يتطلب تحقق L2.',

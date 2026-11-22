@@ -9,7 +9,7 @@ vi.mock('@simplewebauthn/browser', () => ({
 	WebAuthnAbortService: { cancelCeremony: vi.fn() }
 }));
 
-import { verifySecondFactor } from './admin-step-up';
+import { verifySecondFactor, verifyTotpCode } from './admin-step-up';
 import { ApiError } from './api-error';
 import { httpKeyringFactor } from './keyring-factor';
 
@@ -202,5 +202,133 @@ describe('verifySecondFactor', () => {
 		prompt.ask.mockRejectedValue(cancelled);
 		await expect(verifySecondFactor()).rejects.toBe(cancelled);
 		expect(prompt.ask).toHaveBeenCalledWith(expect.objectContaining({ hasSecurityKey: false }));
+	});
+});
+
+describe('verifySecondFactor with an authenticator app', () => {
+	function state(kinds: string[], totpAllowed: boolean) {
+		return json(200, {
+			second_factors: kinds.map((kind, i) => ({ id: `f${i}`, kind, revoked_at: null })),
+			totp: { allowed: totpAllowed }
+		});
+	}
+
+	it('asks for the code, with a way to check it, when only an authenticator app is registered', async () => {
+		vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(state(['totp'], true)));
+		prompt.ask.mockResolvedValue('totp_verified');
+
+		await verifySecondFactor();
+
+		expect(prompt.ask).toHaveBeenCalledWith(
+			expect.objectContaining({
+				hasSecurityKey: false,
+				hasKeyring: false,
+				hasTotp: true,
+				verifyTotp: verifyTotpCode
+			})
+		);
+		expect(webauthn.startAuthentication).not.toHaveBeenCalled();
+	});
+
+	it('offers it beside a security key, and runs the key when that is picked', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi
+				.fn()
+				.mockResolvedValueOnce(state(['webauthn_credential', 'totp'], true))
+				.mockResolvedValueOnce(json(200, { allowed_second_factor_kinds: ['hardware', 'totp'] }))
+				.mockResolvedValueOnce(json(200, { options: { challenge: 'c' }, challenge_id: 'ch' }))
+				.mockResolvedValueOnce(json(200, { verified: true }))
+		);
+		prompt.ask.mockResolvedValue('security_key');
+		webauthn.startAuthentication.mockResolvedValue({ id: 'cred' });
+
+		await verifySecondFactor();
+
+		expect(prompt.ask).toHaveBeenCalledWith(
+			expect.objectContaining({ hasSecurityKey: true, hasKeyring: false, hasTotp: true })
+		);
+		expect(webauthn.startAuthentication).toHaveBeenCalledTimes(1);
+	});
+
+	it('judges the selected tenant, not the session tenant, when the requirements say', async () => {
+		// The session tenant allows it, but the tenant being acted on lists hardware only.
+		vi.stubGlobal(
+			'fetch',
+			vi
+				.fn()
+				.mockResolvedValueOnce(state(['webauthn_credential', 'totp'], true))
+				.mockResolvedValueOnce(json(200, { allowed_second_factor_kinds: ['hardware'] }))
+				.mockResolvedValueOnce(json(200, { options: { challenge: 'c' }, challenge_id: 'ch' }))
+				.mockResolvedValueOnce(json(200, { verified: true }))
+		);
+		webauthn.startAuthentication.mockResolvedValue({ id: 'cred' });
+
+		await verifySecondFactor();
+		expect(prompt.ask).not.toHaveBeenCalled();
+
+		// And the other way round: allowed where the operation acts, though not at home.
+		prompt.ask.mockResolvedValue('totp_verified');
+		vi.stubGlobal(
+			'fetch',
+			vi
+				.fn()
+				.mockResolvedValueOnce(state(['totp'], false))
+				.mockResolvedValueOnce(json(200, { allowed_second_factor_kinds: ['hardware', 'totp'] }))
+		);
+		await verifySecondFactor();
+		expect(prompt.ask).toHaveBeenCalledWith(expect.objectContaining({ hasTotp: true }));
+	});
+
+	it('does not offer it where the tenant does not allow authenticator apps', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi
+				.fn()
+				.mockResolvedValueOnce(state(['webauthn_credential', 'totp'], false))
+				.mockResolvedValueOnce(json(200, { allowed_second_factor_kinds: ['hardware'] }))
+				.mockResolvedValueOnce(json(200, { options: { challenge: 'c' }, challenge_id: 'ch' }))
+				.mockResolvedValueOnce(json(200, { verified: true }))
+		);
+		webauthn.startAuthentication.mockResolvedValue({ id: 'cred' });
+
+		await verifySecondFactor();
+
+		expect(prompt.ask).not.toHaveBeenCalled();
+		expect(webauthn.startAuthentication).toHaveBeenCalledTimes(1);
+	});
+
+	it('also offers it beside Keyring, and stops once the code was accepted', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn().mockResolvedValueOnce(state(['keyring_holder_key', 'totp'], true))
+		);
+		prompt.ask.mockResolvedValue('totp_verified');
+
+		await verifySecondFactor();
+
+		expect(prompt.ask).toHaveBeenCalledWith(
+			expect.objectContaining({ hasKeyring: true, hasTotp: true })
+		);
+		expect(webauthn.startAuthentication).not.toHaveBeenCalled();
+	});
+
+	it('posts the code to the Admin API, and passes a refusal on with its code', async () => {
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValueOnce(json(200, { verified: true, verified_at: 1 }))
+			.mockResolvedValueOnce(json(400, { error: 'verification_failed' }));
+		vi.stubGlobal('fetch', fetchMock);
+
+		await verifyTotpCode('123456');
+		const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+		expect(url).toMatch(/\/api\/admin\/me\/second-factors\/totp\/verify$/u);
+		expect(init.method).toBe('POST');
+		expect(JSON.parse(String(init.body))).toEqual({ code: '123456' });
+
+		await expect(verifyTotpCode('000000')).rejects.toMatchObject({
+			status: 400,
+			code: 'verification_failed'
+		});
 	});
 });

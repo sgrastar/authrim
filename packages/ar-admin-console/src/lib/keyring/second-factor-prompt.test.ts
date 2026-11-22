@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ApiError } from '#lib/api/api-error.js';
 import type { KeyringFactorClient } from '#lib/api/keyring-factor.js';
 import { POLL_INTERVAL_MS } from './presentation-flow.svelte';
 import { SecondFactorCancelled, SecondFactorPromptState } from './second-factor-prompt.svelte';
@@ -148,6 +149,168 @@ describe('SecondFactorPromptState', () => {
 		await vi.advanceTimersByTimeAsync(0);
 		expect(prompt.flow?.phase).toBe('waiting');
 		expect(keyring.startStepUp).toHaveBeenCalledTimes(1);
+		prompt.cancel();
+	});
+});
+
+describe('SecondFactorPromptState with an authenticator app', () => {
+	const totpOnly = (verifyTotp: (code: string) => Promise<void>) => ({
+		hasSecurityKey: false,
+		hasKeyring: false,
+		hasTotp: true,
+		client: client(),
+		verifyTotp
+	});
+
+	it('asks for the code right away when it is the only way, and answers once it is accepted', async () => {
+		const verify = vi.fn(async () => undefined);
+		const prompt = new SecondFactorPromptState();
+		const answer = prompt.ask(totpOnly(verify));
+
+		expect(prompt.open).toBe(true);
+		expect(prompt.totpStep).toBe(true);
+		expect(prompt.flow).toBeNull();
+		await prompt.submitTotp(' 123 456 ');
+
+		await expect(answer).resolves.toBe('totp_verified');
+		// Spaces the app shows between the digits are dropped.
+		expect(verify).toHaveBeenCalledWith('123456');
+		expect(prompt.open).toBe(false);
+		expect(prompt.totpStep).toBe(false);
+	});
+
+	it('keeps the prompt open on a refused code, naming why, and accepts a retyped one', async () => {
+		const verify = vi
+			.fn<(code: string) => Promise<void>>()
+			.mockRejectedValueOnce(new ApiError(400, 'verification_failed', 'x'))
+			.mockResolvedValueOnce(undefined);
+		const prompt = new SecondFactorPromptState();
+		const answer = prompt.ask(totpOnly(verify));
+
+		await prompt.submitTotp('000000');
+		expect(prompt.open).toBe(true);
+		expect(prompt.totpFailure).toBe('invalid');
+		expect(prompt.totpBusy).toBe(false);
+
+		await prompt.submitTotp('123456');
+		await expect(answer).resolves.toBe('totp_verified');
+		expect(prompt.totpFailure).toBeNull();
+	});
+
+	it.each([
+		[new ApiError(429, 'rate_limited', 'x'), 'rate_limited'],
+		[new ApiError(403, 'second_factor_kind_not_allowed', 'x'), 'not_allowed'],
+		[new ApiError(400, 'no_second_factor', 'x'), 'unavailable'],
+		[new Error('offline'), 'unavailable']
+	])('names a failure that is not a wrong code (%#)', async (error, failure) => {
+		const prompt = new SecondFactorPromptState();
+		void prompt.ask(totpOnly(vi.fn(async () => Promise.reject(error)))).catch(() => undefined);
+
+		await prompt.submitTotp('123456');
+
+		expect(prompt.totpFailure).toBe(failure);
+		expect(prompt.open).toBe(true);
+		prompt.cancel();
+	});
+
+	it('does not run two checks at once', async () => {
+		let release: () => void = () => undefined;
+		const verify = vi.fn(() => new Promise<void>((resolve) => (release = resolve)));
+		const prompt = new SecondFactorPromptState();
+		const answer = prompt.ask(totpOnly(verify));
+
+		const first = prompt.submitTotp('123456');
+		await prompt.submitTotp('123456');
+		expect(verify).toHaveBeenCalledTimes(1);
+		release();
+		await first;
+		await expect(answer).resolves.toBe('totp_verified');
+	});
+
+	it('shows the choice when there is more than one way, and goes back to it', () => {
+		const prompt = new SecondFactorPromptState();
+		void prompt.ask({ ...totpOnly(vi.fn()), hasSecurityKey: true }).catch(() => undefined);
+		expect(prompt.totpStep).toBe(false);
+		expect(prompt.canGoBack).toBe(true);
+
+		prompt.chooseTotp();
+		expect(prompt.totpStep).toBe(true);
+		prompt.back();
+		expect(prompt.totpStep).toBe(false);
+		expect(prompt.open).toBe(true);
+		prompt.cancel();
+	});
+
+	it('offers the authenticator app only when there is a way to check the code', () => {
+		const prompt = new SecondFactorPromptState();
+		void prompt
+			.ask({ hasSecurityKey: true, hasKeyring: false, hasTotp: true, client: client() })
+			.catch(() => undefined);
+		expect(prompt.hasTotp).toBe(false);
+		prompt.chooseTotp();
+		expect(prompt.totpStep).toBe(false);
+		prompt.cancel();
+	});
+
+	it('rejects like a cancelled ceremony when closed on the code step, forgetting the failure', async () => {
+		const prompt = new SecondFactorPromptState();
+		const answer = prompt.ask(
+			totpOnly(vi.fn(async () => Promise.reject(new ApiError(400, 'verification_failed', 'x'))))
+		);
+		await prompt.submitTotp('000000');
+		prompt.cancel();
+
+		await expect(answer).rejects.toBeInstanceOf(SecondFactorCancelled);
+		expect(prompt.totpFailure).toBeNull();
+		expect(prompt.totpStep).toBe(false);
+	});
+
+	it('ignores a code answer that arrives after its prompt was closed and another one opened', async () => {
+		let release: () => void = () => undefined;
+		const slow = vi.fn(() => new Promise<void>((resolve) => (release = resolve)));
+		const prompt = new SecondFactorPromptState();
+		const first = prompt.ask(totpOnly(slow));
+		const submitted = prompt.submitTotp('123456');
+		prompt.cancel();
+		await expect(first).rejects.toBeInstanceOf(SecondFactorCancelled);
+
+		// A second question opens before the first answer comes back.
+		const second = prompt.ask(totpOnly(vi.fn(async () => undefined)));
+		let settled = false;
+		void second.then(() => (settled = true));
+		release();
+		await submitted;
+		await Promise.resolve();
+
+		// The late answer did not answer the new question or touch its state.
+		expect(settled).toBe(false);
+		expect(prompt.open).toBe(true);
+		expect(prompt.totpBusy).toBe(false);
+		await prompt.submitTotp('654321');
+		await expect(second).resolves.toBe('totp_verified');
+	});
+
+	it('ignores a refusal that arrives after its prompt was closed and another one opened', async () => {
+		let fail: (error: Error) => void = () => undefined;
+		const slow = vi.fn(() => new Promise<void>((_, reject) => (fail = reject)));
+		const prompt = new SecondFactorPromptState();
+		void prompt.ask(totpOnly(slow)).catch(() => undefined);
+		const submitted = prompt.submitTotp('123456');
+		prompt.cancel();
+		void prompt.ask(totpOnly(vi.fn(async () => undefined))).catch(() => undefined);
+
+		fail(new ApiError(400, 'verification_failed', 'x'));
+		await submitted;
+
+		expect(prompt.totpFailure).toBeNull();
+		prompt.cancel();
+	});
+
+	it('keeps Keyring as the default when hasKeyring is not given', () => {
+		const prompt = new SecondFactorPromptState();
+		void prompt.ask({ hasSecurityKey: true, client: client('pending') }).catch(() => undefined);
+		expect(prompt.hasKeyring).toBe(true);
+		expect(prompt.hasTotp).toBe(false);
 		prompt.cancel();
 	});
 });
