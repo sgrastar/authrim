@@ -399,6 +399,8 @@ export const TEAM: SettingsPageDef = {
 			level: 'platform',
 			settings: [
 				{ key: 'security.admin_step_up_enforced', depth: 'primary' },
+				// The platform's list is what every tenant that sets none of its own is held to.
+				{ key: 'security.admin_second_factor_allowed_kinds', depth: 'primary' },
 				{ key: 'security.admin_keyring_dc_api', depth: 'primary' },
 				{ key: 'security.admin_last_resort_reenroll_window_seconds', depth: 'advanced' }
 			]

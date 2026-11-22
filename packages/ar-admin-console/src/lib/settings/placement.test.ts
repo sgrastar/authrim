@@ -61,9 +61,22 @@ describe('where settings live', () => {
 		}
 	});
 
-	it('places each setting once', () => {
-		const all = [...placed, ...drafted];
-		expect(all.filter((key, i) => all.indexOf(key) !== i)).toEqual([]);
+	it('places each setting once at each level', () => {
+		// A setting the platform and a tenant can both set (a tenant's own value replaces the
+		// platform's) is shown once for each: the two are read and saved apart.
+		const tenantLevel = SETTINGS_PAGES.flatMap((page) =>
+			page.sections
+				.filter((section) => section.level !== 'platform')
+				.flatMap((section) => section.settings.map((setting) => setting.key))
+		);
+		const platformLevel = SETTINGS_PAGES.flatMap((page) =>
+			page.sections
+				.filter((section) => section.level === 'platform')
+				.flatMap((section) => section.settings.map((setting) => setting.key))
+		);
+		const twice = (keys: string[]) => keys.filter((key, i) => keys.indexOf(key) !== i);
+		expect(twice([...tenantLevel, ...drafted])).toEqual([]);
+		expect(twice([...platformLevel, ...drafted])).toEqual([]);
 	});
 
 	it('gives every setting of every category a place, on a built page or in the draft', () => {
