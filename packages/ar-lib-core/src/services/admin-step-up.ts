@@ -115,6 +115,109 @@ export const ADMIN_STEP_UP_ENFORCED_KEY = 'security.admin_step_up_enforced';
 /** The platform setting that lets admins present Keyring through the browser's DC API. */
 export const ADMIN_KEYRING_DC_API_KEY = 'security.admin_keyring_dc_api';
 
+// =============================================================================
+// Allowed second-factor kinds
+// =============================================================================
+
+/** The tenant setting that lists which kinds of second factor satisfy L2 in that tenant. */
+export const ADMIN_SECOND_FACTOR_ALLOWED_KINDS_KEY = 'security.admin_second_factor_allowed_kinds';
+
+/**
+ * How strong a second factor is, as a tenant names it in the allowed list:
+ * - `hardware`: a device-bound security key, or the holder key of a Keyring credential.
+ * - `totp`: a code from an authenticator app. Independent of the passkey, but a person can be
+ *   tricked into typing it, and a copy of its secret works anywhere.
+ * A synced passkey is no kind: it is refused outright, not a strength a tenant can allow.
+ */
+export type AdminSecondFactorStrength = 'hardware' | 'totp';
+
+export const ADMIN_SECOND_FACTOR_STRENGTHS: readonly AdminSecondFactorStrength[] = [
+  'hardware',
+  'totp',
+];
+
+/** What a tenant allows until it says otherwise. */
+export const DEFAULT_ADMIN_SECOND_FACTOR_ALLOWED_KINDS: readonly AdminSecondFactorStrength[] = [
+  'hardware',
+];
+
+/** The strength of a stored second-factor kind, or null for a kind this code does not know. */
+export function adminSecondFactorStrength(kind: string): AdminSecondFactorStrength | null {
+  switch (kind) {
+    case 'webauthn_credential':
+    case 'keyring_holder_key':
+      return 'hardware';
+    case 'totp':
+      return 'totp';
+    default:
+      return null;
+  }
+}
+
+function isSecondFactorStrength(value: unknown): value is AdminSecondFactorStrength {
+  return value === 'hardware' || value === 'totp';
+}
+
+/**
+ * The problem with a value for `security.admin_second_factor_allowed_kinds`, or null: a list of
+ * known strengths without duplicates that always includes `hardware`, so a tenant cannot lock
+ * every admin out of L2 by emptying it.
+ */
+export function adminSecondFactorAllowedKindsProblem(value: unknown): string | null {
+  const key = ADMIN_SECOND_FACTOR_ALLOWED_KINDS_KEY;
+  if (!Array.isArray(value)) return `${key} must be a list of second-factor kinds`;
+  const seen = new Set<string>();
+  for (const entry of value) {
+    if (!isSecondFactorStrength(entry)) {
+      return `${key}: unknown kind ${typeof entry === 'string' ? entry : typeof entry}`;
+    }
+    if (seen.has(entry)) return `${key}: ${entry} is listed twice`;
+    seen.add(entry);
+  }
+  if (!seen.has('hardware')) return `${key} must include hardware`;
+  return null;
+}
+
+/**
+ * The strengths a tenant allows. A value that is not a valid list is read as the default
+ * (hardware only): an unreadable list never widens what is accepted.
+ */
+export function resolveAdminSecondFactorAllowedKinds(
+  value: unknown
+): ReadonlySet<AdminSecondFactorStrength> {
+  if (adminSecondFactorAllowedKindsProblem(value) !== null) {
+    return new Set(DEFAULT_ADMIN_SECOND_FACTOR_ALLOWED_KINDS);
+  }
+  return new Set(value as AdminSecondFactorStrength[]);
+}
+
+/** Whether a second factor of this stored kind satisfies L2 under the allowed strengths. */
+export function isAdminSecondFactorKindAllowed(
+  kind: string,
+  allowed: ReadonlySet<AdminSecondFactorStrength>
+): boolean {
+  const strength = adminSecondFactorStrength(kind);
+  return strength !== null && allowed.has(strength);
+}
+
+/** The stored second-factor kinds that count under the allowed strengths. */
+export function adminSecondFactorKindsAllowedBy(
+  allowed: ReadonlySet<AdminSecondFactorStrength>
+): string[] {
+  const kinds: string[] = [];
+  if (allowed.has('hardware')) kinds.push('webauthn_credential', 'keyring_holder_key');
+  if (allowed.has('totp')) kinds.push('totp');
+  return kinds;
+}
+
+/** Whether `after` allows a strength that `before` did not (a change that weakens the policy). */
+export function widensAdminSecondFactorKinds(before: unknown, after: unknown): boolean {
+  const was = resolveAdminSecondFactorAllowedKinds(before);
+  const now = resolveAdminSecondFactorAllowedKinds(after);
+  for (const strength of now) if (!was.has(strength)) return true;
+  return false;
+}
+
 /**
  * The permission that lets a machine principal perform one operation without a human step-up.
  * Held by exact name only: no wildcard (`*`, `admin:*`) carries it.
@@ -434,9 +537,15 @@ export interface IssueAdminStepUpReceiptInput {
   auth: AdminAuthContext;
   /**
    * Whether the session's second factor is still registered and not revoked, checked at issuance
-   * for L2 (the session row was read before this request's work began).
+   * for L2 (the session row was read before this request's work began). The binding says which
+   * tenant the receipt is for, so the check can also hold the factor's kind to that tenant's
+   * allowed second-factor kinds.
    */
-  isSecondFactorActive?: (adminUserId: string, secondFactorId: string) => Promise<boolean>;
+  isSecondFactorActive?: (
+    adminUserId: string,
+    secondFactorId: string,
+    binding: AdminStepUpBinding
+  ) => Promise<boolean>;
   now?: number;
 }
 
@@ -492,7 +601,8 @@ export async function issueAdminStepUpReceipt(
         'second_factor',
       ]);
     }
-    if (!(await input.isSecondFactorActive(auth.userId, factorId))) {
+    const { version: _version, ...plainBinding } = bindingOf(binding);
+    if (!(await input.isSecondFactorActive(auth.userId, factorId, plainBinding))) {
       throw new AdminStepUpError('step_up_evidence_required', 'Second factor was revoked', [
         'second_factor',
       ]);

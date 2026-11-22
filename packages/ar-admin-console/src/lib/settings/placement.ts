@@ -388,7 +388,8 @@ export const TEAM: SettingsPageDef = {
 			description: 'set.section.adminSignIn.desc',
 			settings: [
 				{ key: 'session.ttl.admin_passkey', depth: 'primary' },
-				{ key: 'security.admin_step_up_overrides', depth: 'primary' }
+				{ key: 'security.admin_step_up_overrides', depth: 'primary' },
+				{ key: 'security.admin_second_factor_allowed_kinds', depth: 'primary' }
 			]
 		},
 		{

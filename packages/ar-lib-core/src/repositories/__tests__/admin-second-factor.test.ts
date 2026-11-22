@@ -22,6 +22,7 @@ function adminSchema(): { db: DatabaseSync; adapter: DatabaseAdapter } {
     '005_admin_second_factor_recoveries.sql',
     '010_keyring_second_factor_recoveries.sql',
     '011_admin_second_factor_reenroll_window.sql',
+    '027_admin_totp_second_factor.sql',
   ]) {
     fixture.db.exec(
       renderPortableMigrationSql(readMigrationSource(ADMIN_MIGRATIONS, file), 'sqlite')
@@ -431,6 +432,164 @@ describe('AdminSecondFactorRepository in the real admin schema', () => {
     if (!result.inserted) throw new Error('not inserted');
     expect(await repo.touch(result.factor.id, 123)).toBe(true);
     expect((await repo.listByUser('admin-1'))[0].last_used_at).toBe(123);
+  });
+
+  describe('TOTP second factor', () => {
+    const secret = (version = 1) => ({
+      admin_user_id: 'admin-1',
+      secret_encrypted: 'ciphertext-a',
+      secret_key_version: version,
+      time_step: 100,
+      label: 'Authenticator',
+    });
+
+    it('registers a TOTP factor that lists as kind totp and keeps its secret out of the factor', async () => {
+      const result = await repo.insertTotp(secret(), { firstOnly: true });
+      if (!result.inserted) throw new Error('not inserted');
+      expect(result.factor.kind).toBe('totp');
+      expect(result.factor).not.toHaveProperty('secret_encrypted');
+
+      const [listed] = await repo.listActiveByUser('admin-1');
+      expect(listed.kind).toBe('totp');
+      expect(listed).not.toHaveProperty('secret_encrypted');
+
+      const [stored] = await repo.listActiveTotpSecrets('admin-1');
+      expect(stored.secret_encrypted).toBe('ciphertext-a');
+      expect(stored.secret_key_version).toBe(1);
+      // The code that proved possession counts as used.
+      expect(stored.last_used_time_step).toBe(100);
+    });
+
+    it('allows one active TOTP factor per admin, and another after removing it', async () => {
+      await repo.insertWebAuthn(key('cred-a'), { firstOnly: false });
+      const first = await repo.insertTotp(secret(), { firstOnly: false });
+      if (!first.inserted) throw new Error('not inserted');
+      expect(await repo.insertTotp(secret(), { firstOnly: false })).toEqual({
+        inserted: false,
+        reason: 'kind_in_use',
+      });
+      expect(await repo.revoke('admin-1', first.factor.id)).toMatchObject({ revoked: true });
+      expect(await repo.insertTotp(secret(), { firstOnly: false })).toMatchObject({
+        inserted: true,
+      });
+    });
+
+    it('applies the first-enrollment rules, even when two first enrollments race', async () => {
+      const results = await Promise.all([
+        repo.insertTotp(secret(), { firstOnly: true }),
+        repo.insertWebAuthn(key('cred-a'), { firstOnly: true }),
+      ]);
+      expect(results.map((result) => result.inserted).sort()).toEqual([false, true]);
+    });
+
+    it('accepts a code for a step only once, even when two requests carry it', async () => {
+      const result = await repo.insertTotp(secret(), { firstOnly: true });
+      if (!result.inserted) throw new Error('not inserted');
+      const id = result.factor.id;
+
+      // The registration code (step 100) cannot be used again.
+      expect(await repo.recordTotpUse(id, { timeStep: 100, usedAt: 5 })).toBe(false);
+      const outcomes = await Promise.all([
+        repo.recordTotpUse(id, { timeStep: 101, usedAt: 6 }),
+        repo.recordTotpUse(id, { timeStep: 101, usedAt: 7 }),
+      ]);
+      expect(outcomes.sort()).toEqual([false, true]);
+      expect(await repo.recordTotpUse(id, { timeStep: 100, usedAt: 8 })).toBe(false);
+      expect(await repo.recordTotpUse(id, { timeStep: 102, usedAt: 9 })).toBe(true);
+      const [stored] = await repo.listActiveTotpSecrets('admin-1');
+      expect(stored.last_used_time_step).toBe(102);
+    });
+
+    it('records no use on a revoked factor and lists no secret for it', async () => {
+      await repo.insertWebAuthn(key('cred-a'), { firstOnly: false });
+      const result = await repo.insertTotp(secret(), { firstOnly: false });
+      if (!result.inserted) throw new Error('not inserted');
+      await repo.revoke('admin-1', result.factor.id);
+      expect(await repo.recordTotpUse(result.factor.id, { timeStep: 500, usedAt: 1 })).toBe(false);
+      expect(await repo.listActiveTotpSecrets('admin-1')).toEqual([]);
+    });
+
+    it('adds a TOTP factor only while the approving factor is the session evidence', async () => {
+      const approving = await repo.insertWebAuthn(key('cred-a'), { firstOnly: false });
+      if (!approving.inserted) throw new Error('not inserted');
+      db.prepare(
+        `INSERT INTO admin_sessions (id, tenant_id, admin_user_id, created_at, expires_at)
+         VALUES ('sess-t', 'default', 'admin-1', 1, 9999999999999)`
+      ).run();
+      const approvedBy = { factorId: approving.factor.id, sessionId: 'sess-t' };
+      expect(await repo.insertTotp(secret(), { firstOnly: false, approvedBy })).toEqual({
+        inserted: false,
+        reason: 'approval_revoked',
+      });
+      await new AdminSessionRepository(adapter, 'default').recordSecondFactorVerification(
+        'sess-t',
+        { adminUserId: 'admin-1', secondFactorId: approving.factor.id }
+      );
+      expect(await repo.insertTotp(secret(), { firstOnly: false, approvedBy })).toMatchObject({
+        inserted: true,
+      });
+    });
+
+    it('finds only the admin’s own active factor, with its kind', async () => {
+      const result = await repo.insertTotp(secret(), { firstOnly: true });
+      if (!result.inserted) throw new Error('not inserted');
+      expect(await repo.findActive('admin-1', result.factor.id)).toMatchObject({ kind: 'totp' });
+      expect(await repo.findActive('admin-2', result.factor.id)).toBeNull();
+      await repo.revokeByAdmin('admin-1', result.factor.id);
+      expect(await repo.findActive('admin-1', result.factor.id)).toBeNull();
+    });
+
+    it('counts only the kinds that still satisfy L2 towards the minimum when told which', async () => {
+      const hardware = ['webauthn_credential', 'keyring_holder_key'];
+      const key1 = await repo.insertWebAuthn(key('cred-a'), { firstOnly: false });
+      const totp = await repo.insertTotp(secret(), { firstOnly: false });
+      if (!key1.inserted || !totp.inserted) throw new Error('not inserted');
+
+      // The authenticator app is not allowed any more: the only key that counts stays.
+      expect(await repo.revoke('admin-1', key1.factor.id, { countedKinds: hardware })).toEqual({
+        revoked: false,
+        reason: 'minimum_reached',
+      });
+      // The factor that does not count can always go.
+      expect(await repo.revoke('admin-1', totp.factor.id, { countedKinds: hardware })).toEqual({
+        revoked: true,
+      });
+    });
+
+    it('lets the key go once the authenticator app counts as well, and keeps the old rule without the option', async () => {
+      const all = ['webauthn_credential', 'keyring_holder_key', 'totp'];
+      const key1 = await repo.insertWebAuthn(key('cred-a'), { firstOnly: false });
+      const totp = await repo.insertTotp(secret(), { firstOnly: false });
+      if (!key1.inserted || !totp.inserted) throw new Error('not inserted');
+
+      expect(await repo.revoke('admin-1', key1.factor.id, { countedKinds: all })).toEqual({
+        revoked: true,
+      });
+      // Without the option every active factor counts, as before: the last one stays.
+      expect(await repo.revoke('admin-1', totp.factor.id)).toEqual({
+        revoked: false,
+        reason: 'minimum_reached',
+      });
+    });
+
+    it('clears the evidence a revoked TOTP factor gave sessions', async () => {
+      await repo.insertWebAuthn(key('cred-a'), { firstOnly: false });
+      const result = await repo.insertTotp(secret(), { firstOnly: false });
+      if (!result.inserted) throw new Error('not inserted');
+      db.prepare(
+        `INSERT INTO admin_sessions (id, tenant_id, admin_user_id, created_at, expires_at)
+         VALUES ('sess-r', 'default', 'admin-1', 1, 9999999999999)`
+      ).run();
+      await new AdminSessionRepository(adapter, 'default').recordSecondFactorVerification(
+        'sess-r',
+        { adminUserId: 'admin-1', secondFactorId: result.factor.id }
+      );
+      await repo.revoke('admin-1', result.factor.id);
+      const row = db
+        .prepare('SELECT second_factor_id FROM admin_sessions WHERE id = ?')
+        .get('sess-r') as { second_factor_id: string | null };
+      expect(row.second_factor_id).toBeNull();
+    });
   });
 
   it('starts the enrollment window at account creation unless the migration set it', async () => {

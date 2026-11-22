@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => ({
   writeAdminAuditLog: vi.fn(),
   refuseRecoveryRequest: vi.fn(),
   fileRecoveryRequest: vi.fn(),
+  readAdminStepUpPolicy: vi.fn(),
   auth: {},
 }));
 
@@ -68,6 +69,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     ...actual,
     AdminSecondFactorRepository: MockAdminSecondFactorRepository,
     AdminPasskeyRepository: MockAdminPasskeyRepository,
+    readAdminStepUpPolicy: mocks.readAdminStepUpPolicy,
     requireDedicatedAdminDatabaseAdapter: vi.fn(() => ({})),
     getChallengeStoreByChallengeId: vi.fn(async () => ({
       storeChallengeRpc: mocks.storeChallengeRpc,
@@ -181,6 +183,7 @@ const verifyBody = {
 
 describe('mySecondFactorsRouter', () => {
   beforeEach(() => {
+    mocks.readAdminStepUpPolicy.mockResolvedValue({ allowedKinds: undefined });
     vi.clearAllMocks();
     mocks.auth = human();
     mocks.listActiveByUser.mockResolvedValue([factor()]);
@@ -221,8 +224,19 @@ describe('mySecondFactorsRouter', () => {
         minimum: 1,
         enrollment: { mode: 'step_up', first_enrollment_ends_at: NOW - 1, reenroll_until: null },
         keyring: { dc_api: false },
+        totp: { allowed: false },
         recovery: { available: true },
       });
+    });
+
+    it('says whether the tenant of the session allows an authenticator app', async () => {
+      mocks.readAdminStepUpPolicy.mockResolvedValue({ allowedKinds: ['hardware', 'totp'] });
+      expect(((await call('GET', '')).body as { totp: unknown }).totp).toEqual({ allowed: true });
+      expect(mocks.readAdminStepUpPolicy).toHaveBeenCalledWith(expect.anything(), 'default');
+
+      // A policy that cannot be read is never taken as permission.
+      mocks.readAdminStepUpPolicy.mockRejectedValue(new Error('KV down'));
+      expect(((await call('GET', '')).body as { totp: unknown }).totp).toEqual({ allowed: false });
     });
 
     it('says up front that a sole administrator cannot request a recovery', async () => {
@@ -637,7 +651,9 @@ describe('mySecondFactorsRouter', () => {
         targetTenantId: 'default',
         targetIds: ['sf-1'],
       });
-      expect(mocks.revoke).toHaveBeenCalledWith('admin-1', 'sf-1');
+      expect(mocks.revoke).toHaveBeenCalledWith('admin-1', 'sf-1', {
+        countedKinds: ['webauthn_credential', 'keyring_holder_key'],
+      });
       expect(mocks.writeAdminAuditLog.mock.calls[0]?.[1]).toMatchObject({
         action: 'admin.second_factor.revoked',
         resourceId: 'sf-1',
@@ -652,6 +668,40 @@ describe('mySecondFactorsRouter', () => {
       expect(status).toBe(409);
       expect(body).toMatchObject({ error: 'second_factor_minimum', minimum: 1 });
       expect(mocks.requireAdminStepUp).not.toHaveBeenCalled();
+    });
+
+    it('does not count a factor of a kind the tenant no longer allows towards the minimum', async () => {
+      // One key and an authenticator app the tenant has since removed from its allowed list.
+      mocks.listActiveByUser.mockResolvedValue([factor(), factor({ id: 'sf-t', kind: 'totp' })]);
+
+      const kept = await call('DELETE', '/sf-1');
+      expect(kept.status).toBe(409);
+      expect(kept.body).toMatchObject({ error: 'second_factor_minimum' });
+      expect(mocks.requireAdminStepUp).not.toHaveBeenCalled();
+
+      // The disallowed one itself may always go.
+      expect((await call('DELETE', '/sf-t')).status).toBe(200);
+    });
+
+    it('counts an authenticator app where the tenant allows it', async () => {
+      mocks.readAdminStepUpPolicy.mockResolvedValue({ allowedKinds: ['hardware', 'totp'] });
+      mocks.listActiveByUser.mockResolvedValue([factor(), factor({ id: 'sf-t', kind: 'totp' })]);
+
+      expect((await call('DELETE', '/sf-1')).status).toBe(200);
+      expect(mocks.revoke).toHaveBeenCalledWith('admin-1', 'sf-1', {
+        countedKinds: ['webauthn_credential', 'keyring_holder_key', 'totp'],
+      });
+    });
+
+    it('refuses when the policy cannot be read, never counting everything', async () => {
+      mocks.readAdminStepUpPolicy.mockRejectedValue(new Error('KV down'));
+
+      const { status, body } = await call('DELETE', '/sf-1');
+
+      expect(status).toBe(503);
+      expect(body).toMatchObject({ error: 'step_up_unavailable' });
+      expect(mocks.requireAdminStepUp).not.toHaveBeenCalled();
+      expect(mocks.revoke).not.toHaveBeenCalled();
     });
 
     it('reports the minimum when a concurrent removal got there first', async () => {

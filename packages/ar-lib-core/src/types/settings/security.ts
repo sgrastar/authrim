@@ -25,6 +25,7 @@ export interface SecuritySettings {
   // Admin step-up
   'security.admin_step_up_enforced': boolean;
   'security.admin_step_up_overrides': Record<string, 'L1' | 'L2'>;
+  'security.admin_second_factor_allowed_kinds': Array<'hardware' | 'totp'>;
   'security.admin_keyring_dc_api': boolean;
   'security.admin_last_resort_reenroll_window_seconds': number;
 
@@ -175,6 +176,20 @@ export const SECURITY_SETTINGS_META: Record<keyof SecuritySettings, SettingMeta>
     label: 'Admin Step-up Levels',
     description:
       'Raise the re-authentication an admin operation needs, by operation (L1: a recent passkey; L2: a recent passkey and second factor). An operation cannot be set below its built-in level',
+    visibility: 'admin',
+  },
+  'security.admin_second_factor_allowed_kinds': {
+    key: 'security.admin_second_factor_allowed_kinds',
+    // A tenant sets its own list. The platform's (or the deployment's, from the environment
+    // variable) is the default for every tenant that sets none, so authenticator apps can be
+    // allowed everywhere at once. A tenant's own list replaces it, it is not added to it.
+    scopes: ['platform', 'tenant'],
+    type: 'json',
+    default: ['hardware'],
+    envKey: 'ADMIN_SECOND_FACTOR_ALLOWED_KINDS',
+    label: 'Admin Second Factor Kinds',
+    description:
+      'Which kinds of second factor satisfy L2 for admins: hardware (a security key or Keyring) is always allowed; totp adds authenticator apps, which are weaker because a person can be tricked into typing the code. Set at the platform it applies to every tenant that sets none of its own',
     visibility: 'admin',
   },
 
@@ -392,6 +407,7 @@ export const SECURITY_DEFAULTS: SecuritySettings = {
   'security.dpop_nonce_resource_overrides': {},
   'security.admin_step_up_enforced': true,
   'security.admin_step_up_overrides': {},
+  'security.admin_second_factor_allowed_kinds': ['hardware'],
   'security.admin_keyring_dc_api': false,
   'security.admin_last_resort_reenroll_window_seconds': 86400,
   // New settings

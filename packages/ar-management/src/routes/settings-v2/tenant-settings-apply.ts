@@ -39,7 +39,9 @@ import {
 import {
   gateStepUpSettingsPatch,
   patchTouchesStepUpSettings,
+  runStepUpSettingsAfterSave,
   verifyProfileSwitch,
+  type StepUpSettingsPending,
 } from './step-up-settings';
 import type { ProfileSwitchGuard } from '../../profile-switch-verify';
 import { identityMappingReferenceProblem } from './identity-mapping-reference';
@@ -611,6 +613,7 @@ export async function applyTenantSettingsChange(
       // Weakening the step-up policy or shortening a retention needs a step-up of its own
       // (a dry run only decides, so it spends nothing).
       const switchGuard: ProfileSwitchGuard = { compared: [] };
+      const stepUpPending: StepUpSettingsPending = {};
       if (!dryRun) {
         const refused = await gateStepUpSettingsPatch({
           c,
@@ -622,6 +625,7 @@ export async function applyTenantSettingsChange(
           actor,
           refuse: input.refuseStepUp === true,
           guard: switchGuard,
+          pending: stepUpPending,
         });
         if (refused) return refused;
       }
@@ -653,6 +657,8 @@ export async function applyTenantSettingsChange(
           409
         );
       }
+
+      if (!dryRun) await runStepUpSettingsAfterSave(stepUpPending);
 
       if (
         !dryRun &&

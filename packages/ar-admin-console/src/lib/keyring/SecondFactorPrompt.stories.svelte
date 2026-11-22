@@ -1,6 +1,7 @@
 <script module lang="ts">
 	import { defineMeta } from '@storybook/addon-svelte-csf';
 	import { expect, userEvent, within } from 'storybook/test';
+	import { ApiError } from '#lib/api/api-error.js';
 	import { createFakeKeyringFactor } from '#lib/api/fake/keyring-factor-fake.js';
 	import { t } from '#lib/i18n/i18n.svelte.js';
 	import Button from '#lib/ui/primitives/Button.svelte';
@@ -21,14 +22,30 @@
 		}
 	});
 
-	function open(hasSecurityKey: boolean) {
+	function open(
+		hasSecurityKey: boolean,
+		extra: {
+			hasKeyring?: boolean;
+			hasTotp?: boolean;
+			verifyTotp?: (code: string) => Promise<void>;
+		} = {}
+	) {
 		const prompt = new SecondFactorPromptState();
 		const ask = () =>
 			void prompt
-				.ask({ hasSecurityKey, client: createFakeKeyringFactor({ answerAfterMs: 4_000 }) })
+				.ask({
+					hasSecurityKey,
+					client: createFakeKeyringFactor({ answerAfterMs: 4_000 }),
+					...extra
+				})
 				.catch(() => undefined);
 		ask();
 		return { prompt, ask };
+	}
+
+	/** Accepts 123456 only, like the server accepts the current code once. */
+	async function fakeVerify(code: string) {
+		if (code !== '123456') throw new ApiError(400, 'verification_failed', 'Code was not verified');
 	}
 </script>
 
@@ -39,7 +56,7 @@
 		await body.findByText(t('kp.prompt.securityKeyHint'));
 		await userEvent.click(body.getByRole('button', { name: t('kp.prompt.continue') }));
 		await body.findByText(t('kp.code.label'));
-		expect(body.getByRole('button', { name: t('kp.prompt.other') })).toBeTruthy();
+		expect(body.getByRole('button', { name: t('kp.prompt.back') })).toBeTruthy();
 	}}
 >
 	{#snippet template()}
@@ -52,6 +69,41 @@
 <Story name="Keyring only">
 	{#snippet template()}
 		{@const demo = open(false)}
+		<Button onclick={demo.ask}>{t('kp.prompt.title')}</Button>
+		<SecondFactorPrompt prompt={demo.prompt} />
+	{/snippet}
+</Story>
+
+<Story
+	name="Authenticator app only"
+	play={async ({ canvasElement }) => {
+		const body = within(canvasElement.ownerDocument.body);
+		// With no other way to confirm, the dialog asks for the code right away.
+		const field = await body.findByLabelText(t('kp.totp.label'));
+		await userEvent.type(field, '000000');
+		await userEvent.click(body.getByRole('button', { name: t('kp.totp.verify') }));
+		await body.findByText(t('kp.totp.error.invalid'));
+	}}
+>
+	{#snippet template()}
+		{@const demo = open(false, { hasKeyring: false, hasTotp: true, verifyTotp: fakeVerify })}
+		<Button onclick={demo.ask}>{t('kp.prompt.title')}</Button>
+		<SecondFactorPrompt prompt={demo.prompt} />
+	{/snippet}
+</Story>
+
+<Story
+	name="Security key or authenticator app"
+	play={async ({ canvasElement }) => {
+		const body = within(canvasElement.ownerDocument.body);
+		await userEvent.click(await body.findByText(t('kp.prompt.totpHint')));
+		await userEvent.click(body.getByRole('button', { name: t('kp.prompt.continue') }));
+		await body.findByLabelText(t('kp.totp.label'));
+		expect(body.getByRole('button', { name: t('kp.prompt.back') })).toBeTruthy();
+	}}
+>
+	{#snippet template()}
+		{@const demo = open(true, { hasKeyring: false, hasTotp: true, verifyTotp: fakeVerify })}
 		<Button onclick={demo.ask}>{t('kp.prompt.title')}</Button>
 		<SecondFactorPrompt prompt={demo.prompt} />
 	{/snippet}

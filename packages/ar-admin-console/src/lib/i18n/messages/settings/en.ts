@@ -65,6 +65,14 @@ export const enSettings: Record<keyof typeof jaSettings, string> = {
 	'set.k.security.admin_step_up_overrides': 'Raised checks by operation',
 	'set.k.security.admin_step_up_overrides.desc':
 		'Operation names with the check they ask for (L1: a passkey; L2: a passkey and a second factor), for example {"client.secret.rotate": "L2"}. A level cannot go below the built-in one.',
+	'set.k.security.admin_second_factor_allowed_kinds': 'Second factors that can be used',
+	'set.k.security.admin_second_factor_allowed_kinds.desc':
+		'The kinds of second factor an admin can use to confirm sensitive operations (L2). Security keys and Keyring are always allowed. Allowing authenticator apps lets admins without a key meet L2, but lowers security: a person can be tricked into typing the code. Widening this needs an extra confirmation.',
+	'set.kind.hardware': 'Security key or Keyring',
+	'set.kind.hardware.desc': 'A key bound to a device. Always allowed.',
+	'set.kind.totp': 'Authenticator app',
+	'set.kind.totp.desc':
+		'A 6-digit code. It is weak against phishing: allow it only for admins who cannot have a key.',
 	'set.k.security.admin_step_up_enforced': 'Ask for extra checks before admin operations',
 	'set.k.security.admin_step_up_enforced.desc':
 		'Off skips the passkey and second-factor checks before sensitive admin operations. Turn it off only during a migration; turning it off itself needs an L2 check.',

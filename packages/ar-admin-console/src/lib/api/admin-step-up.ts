@@ -89,42 +89,71 @@ export class StepUpCancelledError extends Error {
 }
 
 /** The kinds of second factor the admin has active; empty when they cannot be read. */
-async function activeSecondFactorKinds(): Promise<{ kinds: Set<string>; dcApi: boolean }> {
+async function activeSecondFactorKinds(): Promise<{
+	kinds: Set<string>;
+	dcApi: boolean;
+	totpAllowed: boolean;
+}> {
 	try {
 		const response = await adminFetch(`${API_BASE_URL}/api/admin/me/second-factors`, {
 			credentials: 'include'
 		});
-		if (!response.ok) return { kinds: new Set(), dcApi: false };
+		if (!response.ok) return { kinds: new Set(), dcApi: false, totpAllowed: false };
 		const body = (await response.json()) as {
 			second_factors?: Array<{ kind?: unknown; revoked_at?: unknown }>;
 			keyring?: { dc_api?: unknown };
+			totp?: { allowed?: unknown };
 		};
 		const kinds = new Set(
 			(body.second_factors ?? []).flatMap((factor) =>
 				factor.revoked_at == null && typeof factor.kind === 'string' ? [factor.kind] : []
 			)
 		);
-		return { kinds, dcApi: body.keyring?.dc_api === true };
+		// The tenant the operation acts on (the selected one) decides whether an authenticator app
+		// counts; the session tenant's answer is only the fallback when that cannot be read.
+		// Only asked when the admin has an authenticator app, the one kind this decides.
+		const selected = kinds.has('totp')
+			? await fetchStepUpRequirements()
+					.then((requirements) => requirements.allowed_second_factor_kinds)
+					.catch(() => undefined)
+			: undefined;
+		return {
+			kinds,
+			dcApi: body.keyring?.dc_api === true,
+			totpAllowed: Array.isArray(selected) ? selected.includes('totp') : body.totp?.allowed === true
+		};
 	} catch {
-		return { kinds: new Set(), dcApi: false };
+		return { kinds: new Set(), dcApi: false, totpAllowed: false };
 	}
 }
 
 /**
- * Verify a second factor and record it on the session. With Keyring registered the admin
- * chooses (Keyring, or a security key when there is one); otherwise a security key is asked for.
+ * Verify a second factor and record it on the session. With Keyring or an authenticator app
+ * registered the admin chooses among what they have (Keyring, a security key, an authenticator
+ * app); with only a security key that is asked for directly. An authenticator app counts only
+ * where the tenant allows it.
  */
 export async function verifySecondFactor(): Promise<void> {
-	const { kinds, dcApi } = await activeSecondFactorKinds();
-	if (kinds.has('keyring_holder_key')) {
+	const { kinds, dcApi, totpAllowed } = await activeSecondFactorKinds();
+	const hasKeyring = kinds.has('keyring_holder_key');
+	const hasTotp = totpAllowed && kinds.has('totp');
+	if (hasKeyring || hasTotp) {
 		const answer = await secondFactorPrompt.ask({
 			hasSecurityKey: kinds.has('webauthn_credential'),
+			hasKeyring,
+			hasTotp,
 			client: httpKeyringFactor,
-			dcApi
+			dcApi,
+			verifyTotp: verifyTotpCode
 		});
-		if (answer === 'keyring_verified') return;
+		if (answer === 'keyring_verified' || answer === 'totp_verified') return;
 	}
 	await verifySecurityKey();
+}
+
+/** Verify a code from the admin's authenticator app and record it on the session. */
+export async function verifyTotpCode(code: string): Promise<void> {
+	await postJson('/api/admin/me/second-factors/totp/verify', { code });
 }
 
 /** Verify one of the admin's registered security keys and record it on the session. */
@@ -335,6 +364,8 @@ export interface StepUpRequirements {
 		second_factor_fresh_until: number | null;
 	};
 	second_factor_registered: boolean;
+	/** The kinds of second factor the selected tenant allows for L2 (`hardware`, `totp`). */
+	allowed_second_factor_kinds?: string[];
 	/** Keyed by operation name, e.g. `webhook.destination.update`. */
 	operations: Record<string, StepUpOperationRequirement>;
 }

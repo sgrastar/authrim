@@ -23,7 +23,7 @@ export const RECOVERY_NOTICE_MAX_RECIPIENTS = 200;
  * Every active administrator of the tenant, whatever their role: anyone who may be able to cancel
  * the request has to hear about it. Null when there are more than the notice can reach.
  */
-async function tenantAdminContacts(
+export async function tenantAdminContacts(
   adapter: DatabaseAdapter,
   tenantId: string
 ): Promise<Array<{ id: string; email: string }> | null> {

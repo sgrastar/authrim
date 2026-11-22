@@ -1094,6 +1094,7 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
       'structured',
       `
     security.admin_step_up_overrides
+    security.admin_second_factor_allowed_kinds
   `,
     ],
     [

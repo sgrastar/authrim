@@ -25,9 +25,11 @@ import {
   describeAdminStepUpFreshness,
   effectiveAdminStepUpLevel,
   getLogger,
+  isAdminSecondFactorKindAllowed,
   isAdminStepUpHumanSession,
   issueAdminStepUpReceipt,
   readAdminStepUpPolicy,
+  resolveAdminSecondFactorAllowedKinds,
   requireDedicatedAdminDatabaseAdapter,
   type AdminStepUpLevel,
   type AdminStepUpOperation,
@@ -104,12 +106,16 @@ myStepUpRouter.get('/requirements', async (c) => {
   }
 
   const freshness = describeAdminStepUpFreshness(auth, Date.now());
+  const allowedKinds = resolveAdminSecondFactorAllowedKinds(policy.allowedKinds);
   let secondFactorRegistered: boolean;
   try {
     const factors = await new AdminSecondFactorRepository(
       requireDedicatedAdminDatabaseAdapter(c.env, 'admin-management')
     ).listActiveByUser(auth.userId);
-    secondFactorRegistered = factors.length > 0;
+    // Only a factor this tenant accepts can satisfy L2 here.
+    secondFactorRegistered = factors.some((factor) =>
+      isAdminSecondFactorKindAllowed(factor.kind, allowedKinds)
+    );
   } catch (error) {
     stepUpLog(c).error('Failed to read second factors for step-up requirements', {
       action: 'admin_step_up_requirements',
@@ -127,6 +133,7 @@ myStepUpRouter.get('/requirements', async (c) => {
       second_factor_fresh_until: freshness.secondFactorFreshUntil,
     },
     second_factor_registered: secondFactorRegistered,
+    allowed_second_factor_kinds: [...allowedKinds],
     operations,
   });
 });
@@ -159,10 +166,18 @@ myStepUpRouter.post('/receipts', async (c) => {
     const issued = await issueAdminStepUpReceipt(c.env, {
       stepUpId: body.step_up_id,
       auth,
-      isSecondFactorActive: (adminUserId, secondFactorId) =>
-        new AdminSecondFactorRepository(
+      isSecondFactorActive: async (adminUserId, secondFactorId, binding) => {
+        const factor = await new AdminSecondFactorRepository(
           requireDedicatedAdminDatabaseAdapter(c.env, 'admin-management')
-        ).isActive(adminUserId, secondFactorId),
+        ).findActive(adminUserId, secondFactorId);
+        if (!factor) return false;
+        // The receipt is for the tenant being acted on, and so is the list of kinds it accepts.
+        const policy = await readAdminStepUpPolicy(c.env, binding.targetTenantId);
+        return isAdminSecondFactorKindAllowed(
+          factor.kind,
+          resolveAdminSecondFactorAllowedKinds(policy.allowedKinds)
+        );
+      },
     });
     await writeAdminAuditLog(c, {
       action: 'admin.step_up.receipt_issued',

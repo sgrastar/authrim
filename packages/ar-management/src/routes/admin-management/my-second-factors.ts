@@ -44,8 +44,12 @@ import {
   getAdminWebAuthnRpIdForOrigin,
   getChallengeStoreByChallengeId,
   getLogger,
+  adminSecondFactorKindsAllowedBy,
+  isAdminSecondFactorKindAllowed,
   isAdminStepUpHumanSession,
+  readAdminStepUpPolicy,
   requireDedicatedAdminDatabaseAdapter,
+  resolveAdminSecondFactorAllowedKinds,
   resolveAdminWebAuthnBrowserOrigin,
   resolveEffectiveSettings,
 } from '@authrim/ar-lib-core';
@@ -234,6 +238,15 @@ mySecondFactorsRouter.get('/', async (c) => {
     })
       .then((settings) => settings[ADMIN_KEYRING_DC_API_KEY] === true)
       .catch(() => false);
+    // Whether the tenant of the session lets an authenticator app be registered and used here.
+    const totpAllowed = await readAdminStepUpPolicy(c.env, auth.sessionTenantId)
+      .then((policy) =>
+        isAdminSecondFactorKindAllowed(
+          'totp',
+          resolveAdminSecondFactorAllowedKinds(policy.allowedKinds)
+        )
+      )
+      .catch(() => false);
     return c.json({
       second_factors: factors.map(presentSecondFactor),
       active_count: state.active.length,
@@ -244,6 +257,7 @@ mySecondFactorsRouter.get('/', async (c) => {
         reenroll_until: state.reenrollUntil,
       },
       keyring: { dc_api: dcApi },
+      totp: { allowed: totpAllowed },
       // A sole administrator cannot request a recovery (nobody could cancel it): the console says
       // so up front instead of after the admin has prepared a new factor.
       recovery: (await hasAnotherAdmin(
@@ -620,11 +634,30 @@ mySecondFactorsRouter.delete('/:id', async (c) => {
   try {
     const repo = repository(c);
     const active = await repo.listActiveByUser(auth.userId);
-    if (!active.some((factor) => factor.id === id)) {
+    const target = active.find((factor) => factor.id === id);
+    if (!target) {
       return c.json({ error: 'not_found', error_description: 'Second factor not found' }, 404);
     }
+    // Only a factor that still satisfies L2 under this tenant's policy counts towards the
+    // minimum: one of a kind the tenant has since removed from its allowed list cannot stand in
+    // for the last key. A policy that cannot be read refuses, never counts everything.
+    let countedKinds: string[];
+    try {
+      const policy = await readAdminStepUpPolicy(c.env, auth.sessionTenantId);
+      countedKinds = adminSecondFactorKindsAllowedBy(
+        resolveAdminSecondFactorAllowedKinds(policy.allowedKinds)
+      );
+    } catch {
+      return c.json(
+        { error: 'step_up_unavailable', error_description: 'The step-up policy could not be read' },
+        503
+      );
+    }
+    const counted = active.filter((factor) => countedKinds.includes(factor.kind));
     // Refused before the receipt is spent; the revocation below checks it again atomically.
-    if (active.length <= ADMIN_SECOND_FACTOR_MINIMUM) return minimumReached(c);
+    if (countedKinds.includes(target.kind) && counted.length <= ADMIN_SECOND_FACTOR_MINIMUM) {
+      return minimumReached(c);
+    }
     const refused = await requireAdminStepUp(c, {
       operation: 'admin.second_factor.remove',
       targetTenantId: auth.sessionTenantId,
@@ -632,7 +665,7 @@ mySecondFactorsRouter.delete('/:id', async (c) => {
     });
     if (refused) return refused;
 
-    const result = await repo.revoke(auth.userId, id);
+    const result = await repo.revoke(auth.userId, id, { countedKinds });
     if (!result.revoked) {
       return result.reason === 'minimum_reached'
         ? minimumReached(c)

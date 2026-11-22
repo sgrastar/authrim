@@ -21,7 +21,7 @@ vi.mock('../admin-database-adapter', () => ({
 }));
 vi.mock('../../repositories/admin/admin-second-factor', () => ({
   AdminSecondFactorRepository: class {
-    isActive = async () => true;
+    findActive = async () => ({ kind: 'webauthn_credential' });
   },
 }));
 vi.mock('../../utils/challenge-sharding', () => ({

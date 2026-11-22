@@ -5,7 +5,7 @@ import type { Env } from '@authrim/ar-lib-core';
 const mocks = vi.hoisted(() => ({
   issueAdminStepUpReceipt: vi.fn(),
   writeAdminAuditLog: vi.fn(),
-  isActive: vi.fn(),
+  findActive: vi.fn(),
   listActiveByUser: vi.fn(),
   readAdminStepUpPolicy: vi.fn(),
   auth: undefined as Record<string, unknown> | undefined,
@@ -21,7 +21,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     [actual.AR_ERROR_CODES.INTERNAL_ERROR]: 500,
   };
   class MockAdminSecondFactorRepository {
-    isActive = mocks.isActive;
+    findActive = mocks.findActive;
     listActiveByUser = mocks.listActiveByUser;
   }
   return {
@@ -96,14 +96,29 @@ describe('myStepUpRouter', () => {
       {
         stepUpId: string;
         auth: unknown;
-        isSecondFactorActive: (user: string, id: string) => Promise<boolean>;
+        isSecondFactorActive: (
+          user: string,
+          id: string,
+          binding: { targetTenantId: string }
+        ) => Promise<boolean>;
       },
     ];
     expect(input).toMatchObject({ stepUpId: 'asr_requirement', auth: AUTH });
     // The issuance checks the session's second factor against the registry.
-    mocks.isActive.mockResolvedValue(false);
-    await expect(input.isSecondFactorActive('admin-1', 'sf-1')).resolves.toBe(false);
-    expect(mocks.isActive).toHaveBeenCalledWith('admin-1', 'sf-1');
+    const binding = { targetTenantId: 'tenant-a' };
+    mocks.findActive.mockResolvedValue(null);
+    await expect(input.isSecondFactorActive('admin-1', 'sf-1', binding)).resolves.toBe(false);
+    expect(mocks.findActive).toHaveBeenCalledWith('admin-1', 'sf-1');
+    // A security key counts; the tenant's policy is read for the tenant the receipt is for.
+    mocks.findActive.mockResolvedValue({ kind: 'webauthn_credential' });
+    mocks.readAdminStepUpPolicy.mockResolvedValue({ allowedKinds: undefined });
+    await expect(input.isSecondFactorActive('admin-1', 'sf-1', binding)).resolves.toBe(true);
+    expect(mocks.readAdminStepUpPolicy).toHaveBeenCalledWith(expect.anything(), 'tenant-a');
+    // A TOTP factor counts only where the tenant allows totp.
+    mocks.findActive.mockResolvedValue({ kind: 'totp' });
+    await expect(input.isSecondFactorActive('admin-1', 'sf-1', binding)).resolves.toBe(false);
+    mocks.readAdminStepUpPolicy.mockResolvedValue({ allowedKinds: ['hardware', 'totp'] });
+    await expect(input.isSecondFactorActive('admin-1', 'sf-1', binding)).resolves.toBe(true);
     const [, audit] = mocks.writeAdminAuditLog.mock.calls[0] as [unknown, Record<string, unknown>];
     expect(audit).toMatchObject({
       action: 'admin.step_up.receipt_issued',
@@ -187,7 +202,7 @@ describe('GET /api/admin/me/step-up/requirements', () => {
       secondFactorVerifiedAtMs: NOW - 10 * 60_000,
     };
     mocks.readAdminStepUpPolicy.mockResolvedValue({ overrides: undefined, enforced: undefined });
-    mocks.listActiveByUser.mockResolvedValue([{ id: 'factor-1' }]);
+    mocks.listActiveByUser.mockResolvedValue([{ id: 'factor-1', kind: 'webauthn_credential' }]);
   });
 
   afterEach(() => {
@@ -267,6 +282,27 @@ describe('GET /api/admin/me/step-up/requirements', () => {
     mocks.listActiveByUser.mockResolvedValue([]);
 
     expect((await get()).body.second_factor_registered).toBe(false);
+  });
+
+  it('counts only second factors of a kind the tenant allows, and reports the allowed kinds', async () => {
+    mocks.listActiveByUser.mockResolvedValue([{ id: 'factor-2', kind: 'totp' }]);
+
+    // Hardware only is the default: an admin with just an authenticator app has none yet.
+    let { body } = await get();
+    expect(body.second_factor_registered).toBe(false);
+    expect(body.allowed_second_factor_kinds).toEqual(['hardware']);
+
+    mocks.readAdminStepUpPolicy.mockResolvedValue({
+      overrides: undefined,
+      enforced: undefined,
+      allowedKinds: ['hardware', 'totp'],
+    });
+    ({ body } = await get());
+    expect(body.second_factor_registered).toBe(true);
+    expect([...(body.allowed_second_factor_kinds as string[])].sort()).toEqual([
+      'hardware',
+      'totp',
+    ]);
   });
 
   it('refuses a machine caller without reading the policy', async () => {

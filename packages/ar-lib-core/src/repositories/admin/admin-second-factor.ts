@@ -10,7 +10,7 @@
 import type { DatabaseAdapter } from '../../db/adapter';
 import { generateId, getCurrentTimestamp } from '../base';
 
-export type AdminSecondFactorKind = 'webauthn_credential' | 'keyring_holder_key';
+export type AdminSecondFactorKind = 'webauthn_credential' | 'keyring_holder_key' | 'totp';
 
 /** Active factors that must remain; a removal that would go below this is refused. */
 export const ADMIN_SECOND_FACTOR_MINIMUM = 1;
@@ -51,6 +51,28 @@ export interface AdminWebAuthnSecondFactorInput {
   label?: string | null;
 }
 
+/**
+ * An active TOTP factor with what verifying a code needs. Kept apart from `AdminSecondFactor` so
+ * the encrypted secret is never part of an object that is listed, logged or sent to a client.
+ */
+export interface AdminTotpSecret {
+  factor: AdminSecondFactor;
+  secret_encrypted: string;
+  secret_key_version: number;
+  /** The newest 30-second step a code was accepted for, or null if none was yet. */
+  last_used_time_step: number | null;
+}
+
+export interface AdminTotpSecondFactorInput {
+  admin_user_id: string;
+  /** The secret, already encrypted. */
+  secret_encrypted: string;
+  secret_key_version: number;
+  /** The step of the code that proved the admin holds the secret (it cannot be used again). */
+  time_step: number;
+  label?: string | null;
+}
+
 export type AdminSecondFactorInsertResult =
   | { inserted: true; factor: AdminSecondFactor }
   | {
@@ -59,6 +81,7 @@ export type AdminSecondFactorInsertResult =
         | 'already_enrolled'
         | 'enrollment_closed'
         | 'credential_in_use'
+        | 'kind_in_use'
         | 'approval_revoked'
         | 'session_ended';
     };
@@ -89,6 +112,12 @@ const FIRST_ONLY_SQL = `(? = 0 OR (
       SELECT 1 FROM admin_users WHERE id = ? AND second_factor_reenroll_until > ?
     ))
 ))`;
+
+/** An unknown kind is read as WebAuthn only for rows that predate the kind column's values. */
+function kindOf(value: unknown): AdminSecondFactorKind {
+  if (value === 'keyring_holder_key' || value === 'totp') return value;
+  return 'webauthn_credential';
+}
 
 function firstOnlyParams(firstOnly: boolean, adminUserId: string, now: number): unknown[] {
   return [
@@ -408,6 +437,149 @@ export class AdminSecondFactorRepository {
     };
   }
 
+  /**
+   * Register an authenticator-app secret as a second factor, after a code from it was verified.
+   * `firstOnly`, `approvedBy` and `sessionId` follow the same rules as for the other kinds. An
+   * admin has at most one active TOTP factor: a second is refused (`kind_in_use`), so replacing
+   * the secret means removing the old one first.
+   */
+  async insertTotp(
+    input: AdminTotpSecondFactorInput,
+    options: {
+      firstOnly: boolean;
+      approvedBy?: { factorId: string; sessionId: string };
+      sessionId?: string;
+      now?: number;
+    }
+  ): Promise<AdminSecondFactorInsertResult> {
+    const id = generateId();
+    const now = options.now ?? getCurrentTimestamp();
+    const approval = options.approvedBy ?? null;
+    const result = await this.insertConsumingWindow(
+      input.admin_user_id,
+      id,
+      `INSERT INTO admin_second_factors (
+         id, admin_user_id, kind, secret_encrypted, secret_key_version, last_used_time_step,
+         label, created_at, last_used_at
+       )
+       SELECT ?, ?, 'totp', ?, ?, ?, ?, ?, ?
+       WHERE NOT EXISTS (
+           SELECT 1 FROM admin_second_factors
+            WHERE admin_user_id = ? AND kind = 'totp' AND revoked_at IS NULL
+         )
+         AND (? IS NULL OR (EXISTS (
+           SELECT 1 FROM admin_second_factors WHERE id = ? AND admin_user_id = ? AND revoked_at IS NULL
+         ) AND EXISTS (
+           SELECT 1 FROM admin_sessions WHERE id = ? AND admin_user_id = ? AND second_factor_id = ?
+         )))
+         AND ${FIRST_ONLY_SQL}
+         AND ${SESSION_ALIVE_SQL}`,
+      [
+        id,
+        input.admin_user_id,
+        input.secret_encrypted,
+        input.secret_key_version,
+        input.time_step,
+        input.label ?? null,
+        now,
+        now,
+        input.admin_user_id,
+        approval ? approval.factorId : null,
+        approval?.factorId ?? null,
+        input.admin_user_id,
+        approval?.sessionId ?? null,
+        input.admin_user_id,
+        approval?.factorId ?? null,
+        ...firstOnlyParams(options.firstOnly, input.admin_user_id, now),
+        ...sessionAliveParams(options.sessionId, input.admin_user_id, now),
+      ]
+    );
+    if (result.rowsAffected === 0) {
+      const existing = await this.adapter.queryOne<{ found: number }>(
+        `SELECT 1 AS found FROM admin_second_factors
+          WHERE admin_user_id = ? AND kind = 'totp' AND revoked_at IS NULL LIMIT 1`,
+        [input.admin_user_id]
+      );
+      if (existing) return { inserted: false, reason: 'kind_in_use' };
+      if (approval) return { inserted: false, reason: 'approval_revoked' };
+      if (
+        options.sessionId &&
+        !(await this.sessionAlive(input.admin_user_id, options.sessionId, now))
+      )
+        return { inserted: false, reason: 'session_ended' };
+      const active = await this.listActiveByUser(input.admin_user_id);
+      return {
+        inserted: false,
+        reason: active.length > 0 ? 'already_enrolled' : 'enrollment_closed',
+      };
+    }
+    return {
+      inserted: true,
+      factor: {
+        id,
+        admin_user_id: input.admin_user_id,
+        kind: 'totp',
+        credential_id: null,
+        holder_jkt: null,
+        public_key: null,
+        counter: 0,
+        transports: null,
+        aaguid: null,
+        backup_eligible: null,
+        backup_state: null,
+        label: input.label ?? null,
+        created_at: now,
+        last_used_at: now,
+        revoked_at: null,
+      },
+    };
+  }
+
+  /** The admin's active TOTP factors with their encrypted secrets, newest first. */
+  async listActiveTotpSecrets(adminUserId: string): Promise<AdminTotpSecret[]> {
+    const rows = await this.adapter.query<Record<string, unknown>>(
+      `SELECT * FROM admin_second_factors
+        WHERE admin_user_id = ? AND kind = 'totp' AND revoked_at IS NULL
+          AND secret_encrypted IS NOT NULL AND secret_key_version IS NOT NULL
+        ORDER BY created_at DESC`,
+      [adminUserId]
+    );
+    return rows.map((row) => ({
+      factor: this.rowToFactor(row),
+      secret_encrypted: String(row.secret_encrypted),
+      secret_key_version: Number(row.secret_key_version),
+      last_used_time_step:
+        typeof row.last_used_time_step === 'number' ? row.last_used_time_step : null,
+    }));
+  }
+
+  /**
+   * Record a verified TOTP code: the step it was for and the time. The row is updated only while
+   * no code for this step or a later one was accepted and the factor is still active, so one code
+   * verifies once even when two requests carry it at the same moment.
+   *
+   * @returns False when the code was already used (or the factor was revoked)
+   */
+  async recordTotpUse(id: string, use: { timeStep: number; usedAt: number }): Promise<boolean> {
+    const result = await this.adapter.execute(
+      `UPDATE admin_second_factors SET last_used_time_step = ?, last_used_at = ?
+        WHERE id = ? AND kind = 'totp' AND revoked_at IS NULL
+          AND (last_used_time_step IS NULL OR last_used_time_step < ?)`,
+      [use.timeStep, use.usedAt, id, use.timeStep]
+    );
+    return result.rowsAffected > 0;
+  }
+
+  /** The admin's factor when it is active (its kind tells which policy strength it counts as). */
+  async findActive(adminUserId: string, id: string): Promise<AdminSecondFactor | null> {
+    const row = await this.adapter.queryOne<Record<string, unknown>>(
+      `SELECT * FROM admin_second_factors
+        WHERE id = ? AND admin_user_id = ? AND revoked_at IS NULL`,
+      [id, adminUserId]
+    );
+    return row ? this.rowToFactor(row) : null;
+  }
+
   /** The admin's active Keyring factor with this holder key, or null. */
   async findActiveKeyringFactor(
     adminUserId: string,
@@ -517,14 +689,30 @@ export class AdminSecondFactorRepository {
    * The count is checked in the same statement, so concurrent removals cannot both pass it.
    * Sessions that verified the factor lose that evidence in the same batch.
    */
-  async revoke(adminUserId: string, id: string): Promise<AdminSecondFactorRevokeResult> {
+  async revoke(
+    adminUserId: string,
+    id: string,
+    options: { countedKinds?: readonly string[] } = {}
+  ): Promise<AdminSecondFactorRevokeResult> {
     const now = getCurrentTimestamp();
+    // The minimum counts every active factor, or with `countedKinds` only those of kinds that
+    // still satisfy L2 under the tenant's policy: a factor of a kind the tenant no longer allows
+    // may always be removed, but the last one that counts may not (it would leave no way to L2).
+    const counted = options.countedKinds;
+    const marks = (counted ?? []).map(() => '?').join(', ');
+    const minimumSql = counted
+      ? `AND (kind NOT IN (${marks}) OR (SELECT COUNT(*) FROM admin_second_factors
+            WHERE admin_user_id = ? AND revoked_at IS NULL AND kind IN (${marks})) > ?)`
+      : `AND ${ACTIVE_COUNT_SQL} > ?`;
+    const minimumParams = counted
+      ? [...counted, adminUserId, ...counted, ADMIN_SECOND_FACTOR_MINIMUM]
+      : [adminUserId, ADMIN_SECOND_FACTOR_MINIMUM];
     const [revoke] = await this.adapter.batch([
       {
         sql: `UPDATE admin_second_factors SET revoked_at = ?
           WHERE id = ? AND admin_user_id = ? AND revoked_at IS NULL
-            AND ${ACTIVE_COUNT_SQL} > ?`,
-        params: [now, id, adminUserId, adminUserId, ADMIN_SECOND_FACTOR_MINIMUM],
+            ${minimumSql}`,
+        params: [now, id, adminUserId, ...minimumParams],
       },
       {
         // Narrowed by admin so the admin_user_id index is used rather than a table scan.
@@ -608,7 +796,7 @@ export class AdminSecondFactorRepository {
     return {
       id: String(row.id),
       admin_user_id: String(row.admin_user_id),
-      kind: row.kind === 'keyring_holder_key' ? 'keyring_holder_key' : 'webauthn_credential',
+      kind: kindOf(row.kind),
       credential_id: typeof row.credential_id === 'string' ? row.credential_id : null,
       holder_jkt: typeof row.holder_jkt === 'string' ? row.holder_jkt : null,
       public_key: typeof row.public_key === 'string' ? row.public_key : null,

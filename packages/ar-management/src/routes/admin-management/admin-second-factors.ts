@@ -66,10 +66,10 @@ async function noticeRevocation(
 ): Promise<void> {
   if (!(await isNotificationDeliveryAvailable(env, { owner: 'tenant', tenantId }))) return;
   const key = `admin-second-factor-revoked:${input.factorId}`;
-  const name = input.factorLabel ? `"${input.factorLabel}"` : 'One of your security keys';
+  const name = input.factorLabel ? `"${input.factorLabel}"` : 'One of your second factors';
   const text = [
     `${name} was revoked by another administrator and can no longer confirm sensitive operations.`,
-    'If you did not expect this, contact the other administrators of your tenant. If it was your last key, register a new one through the recovery request in the admin console.',
+    'If you did not expect this, contact the other administrators of your tenant. If it was your last second factor, register a new one through the recovery request in the admin console.',
   ];
   await produceNotificationDelivery(env, {
     owner: { owner: 'tenant', tenantId },
@@ -82,7 +82,7 @@ async function noticeRevocation(
       channel: 'email',
       to: input.email,
       from: env.EMAIL_FROM || 'noreply@authrim.dev',
-      subject: 'A security key of your admin account was revoked',
+      subject: 'A second factor of your admin account was revoked',
       body: `<!doctype html><html><body style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:24px">${text
         .map((line) => `<p>${line.replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`)}</p>`)
         .join('')}</body></html>`,
