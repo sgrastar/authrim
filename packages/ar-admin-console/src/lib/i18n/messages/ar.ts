@@ -879,10 +879,11 @@ export const ar = {
 	'map.fix.bool': 'التحويل إلى true أو false',
 	'map.unusedList': '{source} غير مستخدمة: {list}',
 	'map.nothing': 'لا توجد سمات مطابقة',
-	'me.keyring': 'Authrim Keyring',
+	'me.keyring': 'بيانات اعتماد المسؤول',
+	'me.keyring.issue': 'إصدار بيانات اعتماد المسؤول',
 	'me.keyringDesc':
-		'أضف بيانات اعتماد المسؤول الخاصة بك إلى Authrim Keyring على جهاز iPhone. تُستخدم بيانات الاعتماد للموافقة على العمليات الحساسة.',
-	'keyring.page.title': 'الإضافة إلى Authrim Keyring',
+		'بيانات اعتماد المسؤول الصادرة إلى Authrim Keyring على جهاز iPhone. تُستخدم للموافقة على العمليات الحساسة.',
+	'keyring.page.title': 'إصدار بيانات اعتماد المسؤول',
 	'keyring.page.desc':
 		'أصدر بيانات اعتماد المسؤول الخاصة بك إلى Authrim Keyring. رمز QR صالح لوقت قصير ويمكن استخدامه مرة واحدة فقط.',
 	'keyring.back': 'العودة إلى الحساب',

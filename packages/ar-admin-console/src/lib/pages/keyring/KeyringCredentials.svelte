@@ -1,4 +1,5 @@
 <script lang="ts">
+	import type { Snippet } from 'svelte';
 	import { goto } from '$app/navigation';
 	import {
 		FRESH_AUTH_REQUIRED,
@@ -34,9 +35,14 @@
 		returnPath: string;
 		/** Changes whenever the list should be read again (a credential was just issued). */
 		refreshKey?: number;
+		/** A heading of the box's own (the account page names it "Administrator credentials"). */
+		title?: string;
+		description?: string;
+		/** Beside the heading (the account page's "Issue" button). */
+		actions?: Snippet;
 	}
 
-	let { client, returnPath, refreshKey = 0 }: Props = $props();
+	let { client, returnPath, refreshKey = 0, title, description, actions }: Props = $props();
 
 	let credentials = $state<WalletCredential[]>([]);
 	let loadState = $state<'loading' | 'ready' | 'failed'>('loading');
@@ -114,7 +120,11 @@
 	}
 </script>
 
-<Card title={t('keyring.credentials.title')} description={t('keyring.credentials.desc')}>
+<Card
+	title={title ?? t('keyring.credentials.title')}
+	description={description ?? t('keyring.credentials.desc')}
+	{actions}
+>
 	{#if revokeError}
 		<div class="credentials__error">
 			<Callout tone="danger" live>{t(revokeError)}</Callout>
@@ -136,7 +146,7 @@
 	{:else if credentials.length === 0}
 		<EmptyState icon="key" title={t('keyring.credentials.empty')} />
 	{:else}
-		<ItemGrid label={t('keyring.credentials.title')}>
+		<ItemGrid label={title ?? t('keyring.credentials.title')}>
 			{#each credentials as credential (credential.id)}
 				<ItemCard title={codeOf(credential)} icon="key">
 					{#snippet meta()}

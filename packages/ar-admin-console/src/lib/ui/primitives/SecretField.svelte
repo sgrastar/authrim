@@ -20,7 +20,8 @@
 	 * replace it, and "Keep the current value" undoes that. `value` stays empty unless a new
 	 * secret is typed, so saving without touching the field keeps the old one.
 	 *
-	 * The hidden form is a fixed row of dots, so it does not reveal the secret's length.
+	 * The hidden form is a fixed row of dots, so it does not reveal the secret's length. A shown
+	 * value wraps over as many lines as it needs, never cut short.
 	 */
 	interface Props {
 		label: string;
@@ -108,8 +109,11 @@
 	{#if mode === 'show'}
 		{#if once}<Callout tone="warning">{t('secret.once')}</Callout>{/if}
 		<div class="secret__row">
-			<output class="secret__value" id="{uid}-input" aria-labelledby="{uid}-label"
-				>{visible ? value : MASK}</output
+			<output
+				class="secret__value"
+				class:is-open={visible}
+				id="{uid}-input"
+				aria-labelledby="{uid}-label">{visible ? value : MASK}</output
 			>
 			<IconButton
 				icon={visible ? 'eyeSlash' : 'eye'}
@@ -198,6 +202,14 @@
 		text-overflow: ellipsis;
 		white-space: nowrap;
 		user-select: all;
+	}
+
+	/* Once shown, the whole value is on screen: it is copied or typed into another app, so it
+	   wraps instead of ending in an ellipsis. */
+	.secret__value.is-open {
+		overflow-wrap: anywhere;
+		text-overflow: clip;
+		white-space: normal;
 	}
 
 	.secret__box {

@@ -5,6 +5,8 @@
 	import { myPasskeysAPI, passkeyErrorKey, type AdminPasskey } from '#lib/api/my-passkeys.js';
 	import { httpSecondFactors } from '#lib/api/second-factors.js';
 	import RecoveryRequests from '#lib/pages/me/RecoveryRequests.svelte';
+	import { httpWalletCredentials } from '#lib/api/wallet-credentials.js';
+	import KeyringCredentials from '#lib/pages/keyring/KeyringCredentials.svelte';
 	import SecurityKeys from '#lib/pages/me/SecurityKeys.svelte';
 	import { hasPermission } from '#lib/access/access.js';
 	import { adminAccess } from '#lib/access/admin-access.svelte.js';
@@ -309,9 +311,17 @@
 		{/if}
 	</Card>
 
-	<Card title={t('me.keyring')} description={t('me.keyringDesc')}>
-		<Button icon="plus" size="sm" href="/admin/me/keyring">{t('keyring.start.button')}</Button>
-	</Card>
+	<!-- The issuing page is where the sign-in returns to after a fresh-sign-in request. -->
+	<KeyringCredentials
+		client={httpWalletCredentials}
+		returnPath="/admin/me/keyring"
+		title={t('me.keyring')}
+		description={t('me.keyringDesc')}
+	>
+		{#snippet actions()}
+			<Button icon="plus" size="sm" href="/admin/me/keyring">{t('me.keyring.issue')}</Button>
+		{/snippet}
+	</KeyringCredentials>
 
 	<SecurityKeys client={httpSecondFactors} />
 

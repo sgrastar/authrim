@@ -11,7 +11,9 @@
 	} from '#lib/api/wallet-credentials.js';
 	import { t } from '#lib/i18n/i18n.svelte.js';
 	import { toast } from '#lib/ui/toast/toast.svelte.js';
+	import Button from '#lib/ui/primitives/Button.svelte';
 	import Keyring from './Keyring.svelte';
+	import KeyringCredentials from './KeyringCredentials.svelte';
 
 	const { Story } = defineMeta({
 		title: 'Pages/Account/Keyring',
@@ -362,5 +364,40 @@
 >
 	{#snippet template()}
 		<Keyring client={client(['issued'])} />
+	{/snippet}
+</Story>
+
+<Story
+	name="Account page box"
+	parameters={{
+		docs: {
+			description: {
+				story:
+					'The same list as a box on Account → Personal settings, headed “Administrator credentials”, with the button that goes to the issuing page beside the heading. Issued credentials are cards; an empty box says so.'
+			}
+		}
+	}}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findByRole('heading', { name: t('me.keyring') });
+		await canvas.findByRole('link', { name: t('me.keyring.issue') });
+		// The issued credential is a card in the box.
+		await canvas.findByText('MZXW-6YTB');
+		await canvas.findByText(t('keyring.credentials.status.revoked'));
+	}}
+>
+	{#snippet template()}
+		<div style="max-width:880px;padding:24px">
+			<KeyringCredentials
+				client={client(['pending'], { credentials: CREDENTIALS })}
+				returnPath="/admin/me/keyring"
+				title={t('me.keyring')}
+				description={t('me.keyringDesc')}
+			>
+				{#snippet actions()}
+					<Button icon="plus" size="sm" href="/admin/me/keyring">{t('me.keyring.issue')}</Button>
+				{/snippet}
+			</KeyringCredentials>
+		</div>
 	{/snippet}
 </Story>
