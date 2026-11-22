@@ -22,6 +22,7 @@
 	import MappingSetPanel from '../mapping/MappingSetPanel.svelte';
 	import LeaveGuard from './LeaveGuard.svelte';
 	import { CHANGE_PREVIEW_FEATURES } from './change-preview.js';
+	import { requestedNote, type RequestedCounts } from './requested-attributes-model.js';
 	import { SAMPLE_USER_FEATURES } from './sample-user.js';
 	import DestinationProfileEditor from './destination-profile/DestinationProfileEditor.svelte';
 	import type { DestinationProfileSaved } from '#lib/api/destination-profiles.js';
@@ -49,6 +50,11 @@
 		 * has none to list): for showing, beside the mapping, which attributes it can and cannot send.
 		 */
 		sendable?: ReadonlySet<string> | null;
+		/**
+		 * How many service providers ask for each attribute, from the federation's metadata, to say
+		 * under an attribute of the mapping how many of them require it (see `requestedNote`).
+		 */
+		requested?: RequestedCounts | null;
 		/** Show the test-user explanation (not for a federation, which has no one service to test against). */
 		explain?: boolean;
 		/**
@@ -65,6 +71,7 @@
 		bound = $bindable(''),
 		outputChosen = $bindable(false),
 		sendable = $bindable(null),
+		requested = null,
 		readonly = false,
 		disabled = false,
 		pending = $bindable(false),
@@ -82,7 +89,8 @@
 		pending = shared?.phase === 'saving' || shared?.phase === 'impact' || editorState.saving;
 		bound = shared?.bound ?? '';
 		outputChosen = !!(shared?.form.value.profileId || shared?.chosenProfileId);
-		sendable = sendableNames(shared);
+		// While an output source is made or changed, what its table holds now is what it can send.
+		sendable = profileEditor && editorNames ? editorNames : sendableNames(shared);
 	});
 	/** The attribute names of the serving version of the output source in use (a SAML source). */
 	function sendableNames(state: ConnectionMappingState | null): ReadonlySet<string> | null {
@@ -108,6 +116,8 @@
 	let profileUsedBy = $state<string[]>([]);
 	let profileUsageUnknown = $state(false);
 	let editorState = $state({ dirty: false, saving: false });
+	/** The attribute names the open output-source editor holds, as typed; null when it is closed. */
+	let editorNames = $state<ReadonlySet<string> | null>(null);
 	/** A new set with mappings in it cannot have its output source changed under them. */
 	const profileEditBlocked = $derived(
 		!!shared && !!shared.newKey && shared.form.value.mappings.length > 0
@@ -263,6 +273,7 @@
 								usedBy={profileUsedBy}
 								usageUnknown={profileUsageUnknown}
 								onstate={(state) => (editorState = state)}
+								onattributes={(names) => (editorNames = names)}
 								onsaved={profileSaved}
 								oncancel={() => {
 									profileEditor = null;
@@ -433,6 +444,7 @@
 							targets={shared.context.targets}
 							bind:mappings={shared.form.value.mappings}
 							bind:invalid
+							targetNote={requested ? (key) => requestedNote(requested, key) : undefined}
 							setId={shared.selected}
 							checkable={CHANGE_PREVIEW_FEATURES && !!shared.selected}
 							preview={shared.changes}

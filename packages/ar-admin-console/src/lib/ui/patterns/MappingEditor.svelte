@@ -75,6 +75,8 @@
 		targetLabel?: string;
 		invalid?: boolean;
 		field?: string;
+		/** A line of its own under an attribute's name once its row is open (counts, a hint). */
+		targetNote?: (key: string) => string | undefined;
 	}
 
 	let {
@@ -87,7 +89,8 @@
 		sourceLabel = direction === 'outbound' ? t('map.out.source') : t('map.in.source'),
 		targetLabel = direction === 'outbound' ? t('map.out.target') : t('map.in.target'),
 		invalid = $bindable(false),
-		field
+		field,
+		targetNote
 	}: Props = $props();
 
 	const uid = $props.id();
@@ -780,6 +783,9 @@
 								<!-- The attribute's own name (an identifier such as an OID) under its label. -->
 								{#if target.label && target.label !== target.key}<code class="mrow__tkey"
 										>{target.key}</code
+									>{/if}
+								{#if targetNote?.(target.key)}<span class="mrow__tnote2"
+										>{targetNote(target.key)}</span
 									>{/if}
 								{#if target.required && !mapping}
 									<!-- About the attribute itself, so under it rather than under the arrow. -->
@@ -1889,6 +1895,13 @@
 	}
 
 	/* While open, the attribute's own name (the identifier) sits under its label. */
+	.mrow__tnote2 {
+		display: block;
+		margin-block-start: 2px;
+		color: var(--text-secondary);
+		font-size: var(--fs-caption);
+	}
+
 	.mrow__tkey {
 		flex-basis: 100%;
 		color: var(--text-muted);

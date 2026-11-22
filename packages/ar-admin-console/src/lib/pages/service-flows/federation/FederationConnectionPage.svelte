@@ -47,6 +47,8 @@
 	import FederationMaterializeDialog from './FederationMaterializeDialog.svelte';
 	import FederationParticipationCard from './FederationParticipationCard.svelte';
 	import FederationRequestedAttributes from './FederationRequestedAttributes.svelte';
+	import { requestedCountsFrom } from '../requested-attributes-model';
+	import type { FederationRequestedAttributes as RequestedData } from '#lib/api/federation-sources.js';
 	import FederationStatusCard from './FederationStatusCard.svelte';
 	import FederationTrustCard from './FederationTrustCard.svelte';
 	import { formChanged, snapshotForm } from './federation-page-model';
@@ -105,6 +107,34 @@
 	let mappingDirty = $state(false);
 	// The attribute names of the output source the SP role's mapping uses, from the open mapping.
 	let sendableAttributes = $state<ReadonlySet<string> | null>(null);
+	// What the federation's service providers ask for: read once here, for the output source's table
+	// and for the line under each attribute of the mapping; read again after a refresh or a save.
+	let requested = $state<RequestedData | null>(null);
+	let requestedPhase = $state<'loading' | 'ready' | 'failed'>('loading');
+	let requestedGeneration = 0;
+	async function loadRequested() {
+		const mine = ++requestedGeneration;
+		requestedPhase = 'loading';
+		try {
+			const result = await client.requestedAttributes(id);
+			if (mine !== requestedGeneration) return;
+			requested = result;
+			requestedPhase = 'ready';
+		} catch {
+			if (mine !== requestedGeneration) return;
+			requestedPhase = 'failed';
+		}
+	}
+	$effect(() => {
+		void revision;
+		if (mappingResources) void loadRequested();
+	});
+	// Only from a read that succeeded: after a failed reload the old counts are not shown as current.
+	const requestedCounts = $derived(
+		requestedPhase === 'ready' && requested && requested.attributes.length > 0
+			? requestedCountsFrom(requested)
+			: null
+	);
 	let outputChosen = $state(false);
 	let refreshing = $state(false);
 	let failure = $state('');
@@ -499,14 +529,6 @@
 						disabled={!canEdit}
 						spMappingManaged={mappingResources !== null}
 					/>{/if}
-				{#if mappingResources && !outputSelected}
-					<FederationRequestedAttributes
-						{client}
-						{id}
-						sendable={sendableAttributes}
-						refreshKey={revision}
-					/>
-				{/if}
 				{#if mappingResources}
 					{#key `${id}:${mappingEpoch}`}
 						<ConnectionMapping
@@ -520,8 +542,17 @@
 							bind:dirty={mappingDirty}
 							bind:outputChosen
 							bind:sendable={sendableAttributes}
+							requested={outputSelected ? null : requestedCounts}
 						/>
 					{/key}
+					{#if outputSelected}
+						<FederationRequestedAttributes
+							phase={requestedPhase}
+							data={requested}
+							sendable={sendableAttributes}
+							onretry={loadRequested}
+						/>
+					{/if}
 				{/if}
 			</div>
 		</div>

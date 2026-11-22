@@ -746,12 +746,14 @@ export const arServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 	'sf.dp.field.edit': 'تعديل مصدر الإخراج',
 	'sf.dp.field.hint':
 		'تعريف السمات المرسلة إلى التطبيق أو الخدمة. تُرسل التعيين إلى مصدر الإخراج هذا.',
+	'sf.fed.req.col.attribute': 'السمة',
+	'sf.fed.req.col.required': 'مطلوبة لدى',
+	'sf.fed.req.col.optional': 'اختيارية لدى',
+	'sf.fed.req.col.source': 'مصدر الإخراج',
+	'sf.fed.req.counts': 'مطلوبة {required} اختيارية {optional} / {total}',
 	'sf.fed.req.title': 'السمات التي تطلبها الخدمات',
 	'sf.fed.req.desc':
 		'السمات التي يطلبها مزوّدو الخدمة في الاتحاد ضمن بيانات التعريف الخاصة بهم. السمة التي يضعها بعضهم كمطلوبة يجب إرسالها، وإلا تعذّر تسجيل دخول الأشخاص إلى تلك الخدمات.',
-	'sf.fed.req.required': 'مطلوبة لدى {count}',
-	'sf.fed.req.optional': 'اختيارية',
-	'sf.fed.req.askedBy': 'يطلبها {count}',
 	'sf.fed.req.sendable': 'موجودة في مصدر الإخراج',
 	'sf.fed.req.notSendable': 'غير موجودة في مصدر الإخراج',
 	'sf.fed.req.partial':
