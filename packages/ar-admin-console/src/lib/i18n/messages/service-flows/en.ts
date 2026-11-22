@@ -543,6 +543,10 @@ export const enServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 	'sf.fed.cert.remove': 'Remove certificate',
 	'sf.fed.cert.compare':
 		'Compare it with the fingerprint the federation publishes. Do not use a certificate that does not match.',
+	'sf.fed.cert.mode.label': 'How to add the certificate',
+	'sf.fed.cert.mode.url': 'URL',
+	'sf.fed.cert.mode.paste': 'Paste',
+	'sf.fed.cert.mode.file': 'Certificate file',
 	'sf.fed.cert.paste': 'Certificate (PEM)',
 	'sf.fed.cert.pasteHint': 'Paste it and press Add to see its fingerprint.',
 	'sf.fed.cert.add': 'Add certificate',

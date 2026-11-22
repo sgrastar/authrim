@@ -560,6 +560,10 @@ export const jaServiceFlows = {
 	'sf.fed.cert.remove': '証明書を削除',
 	'sf.fed.cert.compare':
 		'フェデレーションが公表している指紋と見比べてください。一致しない証明書は使わないでください。',
+	'sf.fed.cert.mode.label': '証明書の追加方法',
+	'sf.fed.cert.mode.url': 'URL',
+	'sf.fed.cert.mode.paste': '直接入力',
+	'sf.fed.cert.mode.file': '証明書ファイル',
 	'sf.fed.cert.paste': '証明書（PEM）',
 	'sf.fed.cert.pasteHint': '貼り付けて「追加」を押すと、指紋を計算して表示します。',
 	'sf.fed.cert.add': '証明書を追加',

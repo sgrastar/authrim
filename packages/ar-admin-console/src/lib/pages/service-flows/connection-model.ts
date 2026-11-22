@@ -324,14 +324,12 @@ export const FLOW_GROUPS: Record<ConnectionKind, readonly FlowGroup[]> = {
 			parts: ['consent-statements', 'consent-policies'],
 			optional: true
 		},
-		{ id: 'schemas', label: 'sf.group.schemas', parts: ['mapping-schemas'] },
-		{ id: 'mapping', label: 'sf.group.mapping', parts: ['mapping-sets'] }
+		{ id: 'mapping', label: 'sf.group.mapping', parts: ['mapping-schemas', 'mapping-sets'] }
 	],
 	// The sign-in response is a connection setting and the test a general one (see below).
 	sp: [
 		{ id: 'signup', label: 'sf.group.signup', parts: ['signup-flow'], optional: true },
-		{ id: 'schemas', label: 'sf.group.schemas', parts: ['mapping-schemas'] },
-		{ id: 'mapping', label: 'sf.group.mapping', parts: ['mapping-sets'] },
+		{ id: 'mapping', label: 'sf.group.mapping', parts: ['mapping-schemas', 'mapping-sets'] },
 		{
 			id: 'consent',
 			label: 'sf.group.consent',
@@ -345,8 +343,7 @@ export const FLOW_GROUPS: Record<ConnectionKind, readonly FlowGroup[]> = {
 	// consent, and given a role last (on settled attributes, never without consent). The test is
 	// a general setting.
 	op: [
-		{ id: 'schemas', label: 'sf.group.schemas', parts: ['mapping-schemas'] },
-		{ id: 'mapping', label: 'sf.group.mapping', parts: ['mapping-sets'] },
+		{ id: 'mapping', label: 'sf.group.mapping', parts: ['mapping-schemas', 'mapping-sets'] },
 		{ id: 'accounts', label: 'sf.group.accounts', parts: ['op-link'] },
 		{ id: 'signup', label: 'sf.group.signup', parts: ['signup-flow'], optional: true },
 		{ id: 'additional', label: 'sf.group.additional', parts: ['additional'], optional: true },
@@ -359,8 +356,7 @@ export const FLOW_GROUPS: Record<ConnectionKind, readonly FlowGroup[]> = {
 		{ id: 'role', label: 'sf.group.role', parts: ['role'], optional: true }
 	],
 	idp: [
-		{ id: 'schemas', label: 'sf.group.schemas', parts: ['mapping-schemas'] },
-		{ id: 'mapping', label: 'sf.group.mapping', parts: ['mapping-sets'] },
+		{ id: 'mapping', label: 'sf.group.mapping', parts: ['mapping-schemas', 'mapping-sets'] },
 		{ id: 'accounts', label: 'sf.group.accounts', parts: ['idp-link'] },
 		{ id: 'signup', label: 'sf.group.signup', parts: ['signup-flow'], optional: true },
 		{ id: 'additional', label: 'sf.group.additional', parts: ['additional'], optional: true },

@@ -74,6 +74,8 @@
 		await userEvent.click(next(canvas));
 	}
 	async function addCertificate(canvas: Canvas, pem = MOCK_FEDERATION_CERTIFICATE) {
+		// One way of adding at a time: the address is the first, pasting is picked.
+		await userEvent.click(canvas.getByRole('radio', { name: t('sf.fed.cert.mode.paste') }));
 		await userEvent.click(canvas.getByRole('textbox', { name: t('sf.fed.cert.paste') }));
 		await userEvent.paste(pem);
 		await userEvent.click(canvas.getByRole('button', { name: t('sf.fed.cert.add') }));
@@ -167,6 +169,27 @@
 		await waitFor(() =>
 			expect(happy.navigate).toHaveBeenCalledWith('/admin/applications/all/federation/federation-1')
 		);
+	}}
+/>
+
+<Story
+	name="A certificate is added one way at a time: its address, pasting, or a file"
+	args={{ resources: invalid.value, onnavigate: invalid.navigate }}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await toFederation(canvas, 'out');
+		const field = (name: string) => canvas.queryByText(name, { selector: 'label' });
+		// The address is the first way; the other two are not shown yet.
+		await canvas.findByRole('textbox', { name: t('sf.fed.cert.url') });
+		await expect(canvas.queryByRole('textbox', { name: t('sf.fed.cert.paste') })).toBeNull();
+		await expect(canvas.queryByText(t('sf.fed.cert.file'))).toBeNull();
+		await userEvent.click(canvas.getByRole('radio', { name: t('sf.fed.cert.mode.paste') }));
+		await canvas.findByRole('textbox', { name: t('sf.fed.cert.paste') });
+		await expect(canvas.queryByRole('textbox', { name: t('sf.fed.cert.url') })).toBeNull();
+		await userEvent.click(canvas.getByRole('radio', { name: t('sf.fed.cert.mode.file') }));
+		await canvas.findByText(t('sf.fed.cert.fileHint'));
+		await expect(canvas.queryByRole('textbox', { name: t('sf.fed.cert.paste') })).toBeNull();
+		await expect(field(t('sf.fed.cert.url'))).toBeNull();
 	}}
 />
 
