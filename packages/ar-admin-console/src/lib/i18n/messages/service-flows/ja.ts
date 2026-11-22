@@ -523,8 +523,6 @@ export const jaServiceFlows = {
 	'sf.protocol.federation': 'SAML フェデレーション',
 	'sf.protocol.federationShort': 'SAML フェデレーション',
 	'sf.role.fed.badge': 'フェデレーション',
-	'sf.role.fed.line':
-		'集約メタデータに載っているすべてのプロバイダーを信頼します。除外したものだけが参加しません。',
 	'sf.name.newFederation': '新しいフェデレーション',
 	'sf.blurb.federation': '集約メタデータで参加する SAML フェデレーション',
 	'sf.wizard.kind.federation.label': 'SAML フェデレーション',

@@ -251,16 +251,15 @@
 />
 
 <Story
-	name="The mapping node is the mapping set screen: the changes can be seen before saving"
+	name="The mapping node holds only the mapping: the change preview is hidden for now"
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		await openMapping(canvasElement);
 		await canvas.findByRole('button', { name: /^email/ });
-		// The same cards as the mapping sets page: the claim mapping and "See the changes".
-		await canvas.findByRole('heading', { name: t('mc.ch.check') });
-		await userEvent.click(canvas.getByRole('button', { name: t('mc.ch.check') }));
-		const result = await canvas.findByRole('table', { name: t('mc.ch.result') });
-		await within(result).findByText('Staff portal');
+		// "See the changes" and "Changes by app" are not shown.
+		await expect(canvas.queryByRole('heading', { name: t('mc.ch.check') })).toBeNull();
+		await expect(canvas.queryByRole('button', { name: t('mc.ch.check') })).toBeNull();
+		await expect(canvas.queryByRole('table', { name: t('mc.ch.result') })).toBeNull();
 		// Nothing of the output source is on this node.
 		await expect(canvas.queryByRole('button', { name: t('sf.dp.field.create') })).toBeNull();
 	}}

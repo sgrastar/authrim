@@ -506,8 +506,6 @@ export const enServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 	'sf.protocol.federation': 'SAML federation',
 	'sf.protocol.federationShort': 'SAML federation',
 	'sf.role.fed.badge': 'Federation',
-	'sf.role.fed.line':
-		'Every provider in the aggregate metadata is trusted. Only the ones you set aside stay out.',
 	'sf.name.newFederation': 'New federation',
 	'sf.blurb.federation': 'A SAML federation joined through aggregate metadata',
 	'sf.wizard.kind.federation.label': 'A SAML federation',

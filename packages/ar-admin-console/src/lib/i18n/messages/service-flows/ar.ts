@@ -501,7 +501,6 @@ export const arServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 	'sf.protocol.federation': 'اتحاد SAML',
 	'sf.protocol.federationShort': 'اتحاد SAML',
 	'sf.role.fed.badge': 'اتحاد',
-	'sf.role.fed.line': 'يُوثَق بكل مزوّد في البيانات الوصفية المجمّعة. ولا يُستبعد إلا ما تستثنيه.',
 	'sf.name.newFederation': 'اتحاد جديد',
 	'sf.blurb.federation': 'اتحاد SAML ينضم إليه عبر بيانات وصفية مجمّعة',
 	'sf.wizard.kind.federation.label': 'اتحاد SAML',

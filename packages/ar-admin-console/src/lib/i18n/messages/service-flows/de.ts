@@ -528,8 +528,6 @@ export const deServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 	'sf.protocol.federation': 'SAML-Föderation',
 	'sf.protocol.federationShort': 'SAML-Föderation',
 	'sf.role.fed.badge': 'Föderation',
-	'sf.role.fed.line':
-		'Alle Anbieter in den Aggregat-Metadaten gelten als vertrauenswürdig. Nur ausgenommene Anbieter sind ausgeschlossen.',
 	'sf.name.newFederation': 'Neue Föderation',
 	'sf.blurb.federation': 'SAML-Föderation, der über Aggregat-Metadaten beigetreten wird',
 	'sf.wizard.kind.federation.label': 'Eine SAML-Föderation',

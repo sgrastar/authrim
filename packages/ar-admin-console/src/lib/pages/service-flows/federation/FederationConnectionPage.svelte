@@ -332,7 +332,7 @@
 			<FlowCanvas
 				label={source.name}
 				heading={t('sf.detail.signIn')}
-				detail={t(idpRole ? 'sf.role.in.line' : 'sf.role.fed.line')}
+				detail={idpRole ? t('sf.role.in.line') : undefined}
 			>
 				{#if idpRole || !spRole}
 					<FlowEndpoint

@@ -23,6 +23,7 @@
 	import SaveBar from '#lib/ui/patterns/SaveBar.svelte';
 	import MappingSetPanel from '../mapping/MappingSetPanel.svelte';
 	import LeaveGuard from './LeaveGuard.svelte';
+	import { CHANGE_PREVIEW_FEATURES } from './change-preview.js';
 	import { SAMPLE_USER_FEATURES } from './sample-user.js';
 	import DestinationProfileEditor from './destination-profile/DestinationProfileEditor.svelte';
 	import type { DestinationProfileSaved } from '#lib/api/destination-profiles.js';
@@ -406,7 +407,7 @@
 							bind:mappings={shared.form.value.mappings}
 							bind:invalid
 							setId={shared.selected}
-							checkable={!!shared.selected}
+							checkable={CHANGE_PREVIEW_FEATURES && !!shared.selected}
 							preview={shared.changes}
 							stale={shared.changes !== null && shared.changesFor !== shared.draftKey}
 							checking={shared.checking}

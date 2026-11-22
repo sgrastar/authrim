@@ -662,3 +662,14 @@
 		});
 	}}
 />
+
+<Story
+	name="The sign-in step does not repeat that every provider in the metadata is trusted"
+	args={mappingPage.args}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findByRole('heading', { name: 'Test federation' });
+		// The flow's header carries no sentence about trusting the metadata's providers.
+		await expect(canvasElement.textContent).not.toMatch(/trust every|すべてのプロバイダーを信頼/);
+	}}
+/>
