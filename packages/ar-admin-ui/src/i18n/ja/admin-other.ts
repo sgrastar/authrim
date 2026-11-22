@@ -689,7 +689,6 @@ const adminOther = {
 	admin_consent_templates_option_body: '選択肢の説明（{language}）',
 	admin_consent_templates_option_body_description:
 		'このテキストを選択肢のラベル/本文として表示します。%link1% などの管理リンクトークンを利用できます。',
-	admin_consent_templates_option_open_field_mapping: 'Field Mapping Set設定を開く',
 	admin_consent_templates_binding_description: 'この同意文をどの対象に紐付けるかを指定します。',
 	admin_consent_templates_binding_type: '対象種別',
 	admin_consent_templates_binding_subject: '本人 / Subject',

@@ -47,9 +47,6 @@ const adminCompliance = {
 	admin_compliance_fact_user_mfa:
 		'{with:number} of {total:number} users ({percent:number}%) have a passkey or TOTP',
 	admin_compliance_fact_rbac: '{roles:number} roles · {users:number} users with a role',
-
-	// MFA
-	admin_compliance_mfa: 'Multi-factor authentication',
 	admin_compliance_mfa_admins: 'Admins with a passkey',
 	admin_compliance_mfa_users: 'Users with MFA',
 	admin_compliance_mfa_passkey: 'Passkey',
@@ -58,7 +55,6 @@ const adminCompliance = {
 	admin_compliance_mfa_enforcement: 'Required at sign-in',
 	admin_compliance_mfa_enforced_yes: 'Yes',
 	admin_compliance_mfa_enforced_no: 'No',
-	admin_compliance_audit_log: 'Audit log',
 	admin_compliance_audit_event_retention: 'Event log retention',
 	admin_compliance_audit_pii_retention: 'PII log retention',
 	admin_compliance_access_control: 'Access control',
@@ -245,8 +241,7 @@ const adminCompliance = {
 	admin_compliance_category_access_tokens: 'Access tokens',
 
 	admin_compliance_cancel: 'Cancel',
-	admin_compliance_save: 'Save',
-	admin_compliance_close: 'Close'
+	admin_compliance_save: 'Save'
 } as const;
 
 export default adminCompliance;

@@ -17,6 +17,9 @@ import {
   adminIdentityMappingDestinationProfileDeleteHandler,
   adminIdentityMappingDestinationProfileReviewHandler,
   adminIdentityMappingDestinationProfileUpdateHandler,
+  IdentityMappingControlPlaneRepository,
+} from '../identity-mapping-control-plane';
+import {
   adminIdentityFieldMappingSetCreateHandler,
   adminIdentityFieldMappingSetDeleteHandler,
   adminIdentityFieldMappingSetRollbackHandler,
@@ -27,8 +30,7 @@ import {
   adminIdentityFieldMappingVersionDeactivateHandler,
   adminIdentityFieldMappingVersionPublishHandler,
   adminIdentityFieldMappingVersionsListHandler,
-  IdentityMappingControlPlaneRepository,
-} from '../identity-mapping-control-plane';
+} from './helpers/legacy-mapping-set-steps';
 import { DatabaseSync, type SQLiteDatabase, type SQLInputValue } from './test-sqlite';
 import { insertTenant, openCoreDatabase } from './helpers/core-database';
 

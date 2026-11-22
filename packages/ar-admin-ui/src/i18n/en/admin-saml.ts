@@ -369,7 +369,6 @@ const adminSaml = {
 		'No active compatible Field Mapping Sets are available.',
 	admin_saml_detail_identity_mapping_policy_hint:
 		'Selects the active Field Mapping Set used for inbound and outbound SAML attribute mapping.',
-	admin_saml_detail_identity_mapping_policy_link: 'Manage Field Mapping Sets',
 	admin_saml_detail_minimum_ial: 'Minimum identity assurance level',
 	admin_saml_detail_minimum_ial_none: 'No minimum',
 	admin_saml_detail_minimum_ial_hint:

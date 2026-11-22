@@ -4,7 +4,6 @@ const adminFlows = {
 	admin_flows_title: 'Flows',
 	admin_flows_description:
 		'Review the path from login, attribute release, consent, and output in one place.',
-	admin_flows_field_mapping: 'Field Mapping',
 	admin_flows_list_title: 'Flow list',
 	admin_flows_list_description:
 		'Check the configuration elements in details, then open the Flow view for the full picture.',
@@ -95,8 +94,6 @@ const adminFlows = {
 	admin_flows_configuration_links_description:
 		'Keep Flow definitions lightweight and place actual configuration in the existing settings pages.',
 	admin_flows_link_field_mapping_set_title: 'Field Mapping Set',
-	admin_flows_link_field_mapping_set_description:
-		'Define groups of attributes and claims to release.',
 	admin_flows_link_consent_statement_title: 'Consent Statement',
 	admin_flows_link_consent_statement_description: 'Define the text and options shown to users.',
 	admin_flows_runtime_contract_title: 'Runtime contract',

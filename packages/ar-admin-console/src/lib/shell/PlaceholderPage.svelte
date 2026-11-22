@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { hasMessage, t } from '#lib/i18n/i18n.svelte.js';
-	import Callout from '#lib/ui/patterns/Callout.svelte';
 	import Card from '#lib/ui/patterns/Card.svelte';
 	import EmptyState from '#lib/ui/patterns/EmptyState.svelte';
 	import PageHeader from '#lib/ui/patterns/PageHeader.svelte';
@@ -12,7 +11,7 @@
 	/**
 	 * Stand-in for an item whose page has not been rebuilt yet. It keeps the information
 	 * architecture reviewable in a real environment: what the item is, how it behaves in the
-	 * current scope, and which legacy Admin UI pages it will take over.
+	 * current scope.
 	 */
 	interface Props {
 		location: NavLocation;
@@ -25,10 +24,6 @@
 	const treatment = $derived(
 		location.kind === 'platform' && location.top.inherited ? (item?.platform ?? 'inherit') : null
 	);
-	const assigned = $derived(item?.legacyRoutes ?? location.area.legacyRoutes);
-	// Entries starting with "(new)" are design notes for features with no legacy page.
-	const legacy = $derived(assigned.filter((route) => route.startsWith('/')));
-	const newOnly = $derived(legacy.length === 0 && assigned.length > 0);
 
 	/** Retirement notes are stored as <prefix>.title / .desc / .N.t / .N.d / .foot. */
 	const retire = $derived.by(() => {
@@ -63,33 +58,4 @@
 	<Card>
 		<EmptyState icon="stack" title={t('placeholder.title')} description={t('placeholder.body')} />
 	</Card>
-	{#if newOnly}
-		<Callout>{t('placeholder.new')}</Callout>
-	{:else if legacy.length > 0}
-		<Card title={t('placeholder.legacy')} level={2}>
-			<ul class="routes">
-				{#each legacy as route (route)}
-					<li><code>{route}</code></li>
-				{/each}
-			</ul>
-		</Card>
-	{/if}
 </Page>
-
-<style>
-	.routes {
-		display: grid;
-		gap: 6px;
-		margin: 0;
-		padding: 0;
-		list-style: none;
-	}
-
-	code {
-		font-family: var(--font-mono);
-		font-size: var(--fs-caption);
-		color: var(--text-secondary);
-		unicode-bidi: isolate;
-		direction: ltr;
-	}
-</style>

@@ -33,7 +33,6 @@ export interface NavItem {
 	 * shown as the item, in its place in the navigation. Other paths under the item are unknown.
 	 */
 	details?: boolean;
-	legacyRoutes: readonly string[];
 }
 
 export interface NavArea {
@@ -43,7 +42,6 @@ export interface NavArea {
 	scope: AreaScope;
 	badge?: string;
 	children: readonly NavItem[];
-	legacyRoutes: readonly string[];
 }
 
 export interface TopEntry {

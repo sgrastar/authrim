@@ -9,10 +9,6 @@ const adminDiagnosticLogging = {
 	admin_diagnostic_logging_unsaved_confirm:
 		'You have unsaved changes. Switching tabs will discard them. Continue?',
 	admin_diagnostic_logging_load_settings_failed: 'Failed to load diagnostic settings',
-	admin_diagnostic_logging_load_storage_destinations_failed: 'Failed to load storage destinations',
-	admin_diagnostic_logging_update_storage_destination_failed:
-		'Failed to update storage destination',
-	admin_diagnostic_logging_storage_destination_updated: 'Storage destination updated.',
 	admin_diagnostic_logging_load_clients_failed: 'Failed to load clients',
 	admin_diagnostic_logging_update_settings_failed: 'Failed to update diagnostic settings',
 	admin_diagnostic_logging_start_before_end: 'Start date must be before end date.',
@@ -36,9 +32,6 @@ const adminDiagnosticLogging = {
 	admin_diagnostic_logging_r2_output: 'Log storage',
 	admin_diagnostic_logging_r2_output_desc:
 		'When diagnostic logging is enabled, logs use the storage mode selected during Setup. Pipeline sends logs directly to Iceberg and may take a few minutes to appear. Scheduled stores logs in the database until export to Iceberg is confirmed.',
-	admin_diagnostic_logging_r2_toggle_label: 'Persist logs to R2',
-	admin_diagnostic_logging_r2_enabled: 'R2 output is enabled.',
-	admin_diagnostic_logging_r2_disabled: 'R2 output is disabled.',
 	admin_diagnostic_logging_sdk_ingestion: 'SDK Log Ingestion',
 	admin_diagnostic_logging_sdk_ingestion_desc:
 		'Accept diagnostic logs from client SDKs (Web, Node.js, etc.) via the public ingest API. Requires client_id authentication.',
@@ -121,10 +114,6 @@ const adminDiagnosticLogging = {
 	admin_diagnostic_logging_storage_connection: 'Log storage connection',
 	admin_diagnostic_logging_storage_connection_desc:
 		'Check the configured Iceberg log reader before exporting. The storage mode and credentials are managed by Setup.',
-	admin_diagnostic_logging_storage_destination: 'Storage destination',
-	admin_diagnostic_logging_use_runtime_binding: 'Use runtime binding fields below',
-	admin_diagnostic_logging_r2_binding: 'R2 binding',
-	admin_diagnostic_logging_path_prefix: 'Path prefix',
 	admin_diagnostic_logging_testing: 'Testing...',
 	admin_diagnostic_logging_test_connection: 'Test Connection',
 	admin_diagnostic_logging_export_redirect_title: 'Diagnostic Logging - Redirecting',

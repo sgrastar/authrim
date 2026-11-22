@@ -9,8 +9,7 @@ const tenant = persona('tenant').access;
 const item = (id: string, requires?: NavItem['requires']): NavItem => ({
 	id,
 	label: 'nav.int.plugins',
-	requires,
-	legacyRoutes: []
+	requires
 });
 
 describe('navigation items of a capability the platform can turn off', () => {

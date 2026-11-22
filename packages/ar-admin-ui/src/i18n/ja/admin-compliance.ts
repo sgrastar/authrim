@@ -45,9 +45,6 @@ const adminCompliance = {
 	admin_compliance_fact_user_mfa:
 		'利用者 {total} 人中 {with} 人（{percent}%）がパスキーまたは TOTP あり',
 	admin_compliance_fact_rbac: 'ロール {roles} 件・ロールを持つ利用者 {users} 人',
-
-	// MFA
-	admin_compliance_mfa: '多要素認証',
 	admin_compliance_mfa_admins: 'パスキーを持つ管理者',
 	admin_compliance_mfa_users: 'MFA を持つ利用者',
 	admin_compliance_mfa_passkey: 'パスキー',
@@ -56,7 +53,6 @@ const adminCompliance = {
 	admin_compliance_mfa_enforcement: 'サインインでの必須化',
 	admin_compliance_mfa_enforced_yes: 'あり',
 	admin_compliance_mfa_enforced_no: 'なし',
-	admin_compliance_audit_log: '監査ログ',
 	admin_compliance_audit_event_retention: 'イベントログの保持期間',
 	admin_compliance_audit_pii_retention: 'PII ログの保持期間',
 	admin_compliance_access_control: 'アクセス制御',
@@ -244,8 +240,7 @@ const adminCompliance = {
 	admin_compliance_category_access_tokens: 'アクセストークン',
 
 	admin_compliance_cancel: 'キャンセル',
-	admin_compliance_save: '保存',
-	admin_compliance_close: '閉じる'
+	admin_compliance_save: '保存'
 } as const;
 
 export default adminCompliance;

@@ -274,10 +274,7 @@ export const ja = {
 	'account.signedInAs': 'ログイン中',
 	'account.signOut': 'ログアウト',
 	'placeholder.title': 'この画面はまだ新しいコンソールにありません',
-	'placeholder.body':
-		'情報設計が終わった機能から順に作り直しています。この項目が引き受ける予定の現行 Admin UI の画面は次のとおりです。',
-	'placeholder.legacy': '引き受ける現行の画面',
-	'placeholder.new': '新しい機能（現行の画面なし）',
+	'placeholder.body': '情報設計が終わった機能から順に作り直しています。',
 	'error.notFound.title': 'ページが見つかりません',
 	'error.notFound.body': 'URL が変わったか、この画面はまだありません。',
 	'error.generic.title': '問題が発生しました',

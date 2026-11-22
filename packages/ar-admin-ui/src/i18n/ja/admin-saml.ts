@@ -367,7 +367,6 @@ const adminSaml = {
 		'利用可能な有効なField Mapping Setがありません。',
 	admin_saml_detail_identity_mapping_policy_hint:
 		'Inbound/Outbound SAML属性変換に使うactiveなField Mapping Setを選択します。',
-	admin_saml_detail_identity_mapping_policy_link: 'Field Mapping Set設定を開く',
 	admin_saml_detail_minimum_ial: '本人確認の最低保証レベル（IAL）',
 	admin_saml_detail_minimum_ial_none: '指定なし',
 	admin_saml_detail_minimum_ial_hint:

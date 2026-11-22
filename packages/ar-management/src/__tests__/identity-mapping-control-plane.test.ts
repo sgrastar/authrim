@@ -14,8 +14,6 @@ import {
   adminIdentityMappingAttributeGroupCreateHandler,
   adminIdentityMappingDestinationProfileCreateHandler,
   adminIdentityMappingProtocolSchemasListHandler,
-  adminIdentityFieldMappingSetsListHandler,
-  adminIdentityFieldMappingSetCreateHandler,
   adminIdentityMappingFederationMetadataDocumentsListHandler,
   adminIdentityMappingFederationTrustSourceEntitiesHandler,
   adminIdentityMappingFederationTrustSourceGetHandler,
@@ -26,6 +24,10 @@ import {
   adminIdentityMappingSchemaReadinessHandler,
   IdentityMappingControlPlaneRepository as BaseRepository,
 } from '../identity-mapping-control-plane';
+import {
+  adminIdentityFieldMappingSetsListHandler,
+  adminIdentityFieldMappingSetCreateHandler,
+} from './helpers/legacy-mapping-set-steps';
 
 const logCalls = vi.hoisted(() => ({ emit: vi.fn(), prepare: vi.fn(), publication: vi.fn() }));
 const federationSideEffects = vi.hoisted(() => ({

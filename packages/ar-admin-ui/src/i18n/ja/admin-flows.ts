@@ -3,7 +3,6 @@ const adminFlows = {
 	admin_flows_page_title: 'Flows - Authrim管理画面',
 	admin_flows_title: 'Flows',
 	admin_flows_description: 'ログイン、属性送信、同意、出力までの流れを一覧から確認します。',
-	admin_flows_field_mapping: 'Field Mapping',
 	admin_flows_list_title: 'Flow list',
 	admin_flows_list_description: '詳細で設定要素を確認し、Flow画面で全体像を見ます。',
 	admin_flows_status_preview: 'Preview',
@@ -91,7 +90,6 @@ const adminFlows = {
 	admin_flows_configuration_links_description:
 		'Flowそのものは薄く保ち、実設定は既存の設定画面に寄せます。',
 	admin_flows_link_field_mapping_set_title: 'Field Mapping Set',
-	admin_flows_link_field_mapping_set_description: '送信する属性やclaimのまとまりを定義します。',
 	admin_flows_link_consent_statement_title: 'Consent Statement',
 	admin_flows_link_consent_statement_description: 'ユーザーに表示する文言と選択肢を定義します。',
 	admin_flows_runtime_contract_title: 'Runtime contract',

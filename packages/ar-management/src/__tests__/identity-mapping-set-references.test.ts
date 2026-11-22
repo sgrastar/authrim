@@ -26,13 +26,15 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
 
 import { enforceDeclaredAdminRouteAccess } from '../admin-route-access';
 import {
-  adminIdentityFieldMappingSetDeleteHandler,
-  adminIdentityFieldMappingSetRollbackHandler,
-  adminIdentityFieldMappingVersionActivateHandler,
-  adminIdentityFieldMappingVersionDeactivateHandler,
   adminIdentityMappingDestinationProfileDeleteHandler,
   adminIdentityMappingSourceProfileDeleteHandler,
 } from '../identity-mapping-control-plane';
+import {
+  adminIdentityFieldMappingSetRollbackHandler,
+  adminIdentityFieldMappingVersionActivateHandler,
+  adminIdentityFieldMappingVersionDeactivateHandler,
+} from './helpers/legacy-mapping-set-steps';
+import { adminIdentityMappingSetDeleteHandler } from '../identity-mapping-set-facade';
 import { adminIdentityMappingUsageHandler } from '../identity-mapping-usage';
 import settingsV2 from '../routes/settings-v2';
 import {
@@ -66,7 +68,10 @@ import type { SQLiteDatabase } from './test-sqlite';
  */
 
 const KEY = 'identity_mapping.oidc_default_set_id';
+/** The step-by-step switch routes that are not routed any more (test-only mounts). */
 const SETS = '/api/admin/identity-mapping/field-mapping-sets';
+/** The live set routes. */
+const LIVE_SETS = '/api/admin/identity-mapping/sets';
 const USAGE = '/api/admin/identity-mapping/usage';
 const TENANT_SETTINGS = `/api/admin/tenants/${TENANT}/settings/identity-mapping`;
 const PLATFORM_SETTINGS = '/api/admin/platform/settings/identity-mapping';
@@ -121,19 +126,15 @@ function setup() {
         });
         await next();
       });
-      // The step-by-step set routes are no longer routed (and have no declared access rule), so
-      // the handlers that remain are mounted here on a test path, behind the settings write
-      // permission the declared rule gave them; every other path runs the real declared gate.
+      // The step-by-step switch routes are no longer routed (and have no declared access rule), so
+      // those handlers are mounted here on a test path, behind the settings write permission the
+      // declared rule gave them; every other path, the live DELETE of a set included, runs the real
+      // declared gate.
       const declaredGate = enforceDeclaredAdminRouteAccess();
       app.use('/api/admin/*', adminAuthMiddleware({ plane: 'tenant' }), (c, next) =>
         c.req.path.startsWith(`${SETS}/`) ? next() : declaredGate(c, next)
       );
       const settingsWrite = requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]);
-      app.delete(
-        `${SETS}/:fieldMappingSetId`,
-        settingsWrite,
-        adminIdentityFieldMappingSetDeleteHandler
-      );
       app.post(
         `${SETS}/:fieldMappingSetId/versions/:fieldMappingVersionId/activate`,
         settingsWrite,
@@ -149,6 +150,7 @@ function setup() {
         settingsWrite,
         adminIdentityFieldMappingSetRollbackHandler
       );
+      app.delete(`${LIVE_SETS}/:id`, adminIdentityMappingSetDeleteHandler);
       app.delete(
         '/api/admin/identity-mapping/destination-profiles/:destinationProfileId',
         adminIdentityMappingDestinationProfileDeleteHandler
@@ -197,7 +199,7 @@ function setup() {
   };
   const deactivate = (who: string, setId: string, versionId: string) =>
     mutate(who, 'POST', `${SETS}/${setId}/versions/${versionId}/deactivate`);
-  const remove = (who: string, setId: string) => mutate(who, 'DELETE', `${SETS}/${setId}`);
+  const remove = (who: string, setId: string) => mutate(who, 'DELETE', `${LIVE_SETS}/${setId}`);
   const usage = (who: string, setId: string) =>
     context.call(who, 'GET', `${USAGE}?set_id=${encodeURIComponent(setId)}`);
   const count = (sql: string) => (context.db.prepare(sql).get() as { n: number }).n;
@@ -305,16 +307,9 @@ beforeEach(async () => {
 });
 
 describe('a set nobody names', () => {
-  it('is deleted as before: not while its activation is active, then yes', async () => {
+  it('is deleted once switched off', async () => {
     const t = setup();
     const admin = t.cookie();
-
-    const early = await t.remove(admin, 'set-a');
-    expect(early.status).toBe(409);
-    expect(early.json.error_description).toBe(
-      'active field mapping set must be deactivated before deletion'
-    );
-    expect(early.json.references).toBeUndefined();
 
     expect((await t.deactivate(admin, 'set-a', 'ver-a')).status).toBe(200);
     expect(activeActivations(t, 'set-a')).toBe(0);
