@@ -121,11 +121,15 @@ describe('connection Mapping Set save and binding', () => {
 		await state.save();
 		expect(state.phase).toBe('outcome_unknown');
 		expect(fixture.events).toEqual(['save']);
+		// Until the save is known to have gone through, the creation key is the one in the payload.
+		const createKey = state.newKey;
 		await state.write();
 		expect(fixture.requests[1]).toEqual(fixture.requests[0]);
-		expect(fixture.requests[0].request.field_mapping_key).toBe(state.newKey);
-		expect(state.newKey).not.toContain('name');
+		expect(fixture.requests[0].request.field_mapping_key).toBe(createKey);
+		expect(createKey).not.toContain('name');
 		expect(state.phase).toBe('saved');
+		// Saved: it is a mapping that exists now, not one being made.
+		expect(state.newKey).toBe('');
 	});
 	it('keeps conflict and stage failure unsaved and never binds either result', async () => {
 		for (const scenario of ['conflict', 'stage'] satisfies Array<'conflict' | 'stage'>) {
@@ -276,5 +280,33 @@ describe('connection Mapping Set save and binding', () => {
 		];
 		state.create();
 		expect(state.form.value.catalogVersionId).toBe('default-version');
+	});
+
+	it('counts a copy as unsaved work from the start, even with nothing typed', async () => {
+		const fixture = connectionMappingFixture('unbound');
+		const state = new ConnectionMappingState(fixture.resources);
+		await state.load();
+		await state.select('set-shared');
+		state.copyFromSelected('Copy of shared');
+		expect(state.selected).toBe('');
+		expect(state.bound).toBe('');
+		expect(state.form.value.name).toBe('Copy of shared');
+		expect(state.dirty).toBe(true);
+		// Choosing something else leaves the copy behind.
+		await state.select('set-portal');
+		expect(state.copied).toBe(false);
+	});
+	it('stops being a mapping in the making once it is saved', async () => {
+		const fixture = connectionMappingFixture();
+		const state = new ConnectionMappingState(fixture.resources);
+		await state.load();
+		await state.select('set-shared');
+		state.copyFromSelected('Copy of shared');
+		await state.save();
+		expect(state.phase).toBe('saved');
+		expect(state.newKey).toBe('');
+		expect(state.copied).toBe(false);
+		expect(state.detail?.id).toBe('set-created');
+		expect(state.dirty).toBe(false);
 	});
 });

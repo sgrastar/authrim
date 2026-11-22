@@ -298,3 +298,29 @@
 		);
 	}}
 />
+
+<Story
+	name="Taking a template closes its preview, and the table shows sample values and the identifier's type"
+	args={ready().args}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(canvas.getByRole('button', { name: /Academic federation/ }));
+		await userEvent.click(canvas.getByRole('button', { name: /GakuNin application standard/ }));
+		await userEvent.click(canvas.getByRole('button', { name: t('sf.dp.template.preview') }));
+		const count = (gakunin.schema.attributes as unknown[]).length;
+		await canvas.findByText(t('sf.dp.template.attributes', { count }));
+		await userEvent.click(canvas.getByRole('button', { name: t('sf.dp.template.use') }));
+		await canvas.findByDisplayValue('eduPersonPrincipalName');
+		// The preview is gone with the choice.
+		await expect(canvas.queryByText(t('sf.dp.template.attributes', { count }))).toBeNull();
+		// The sample values are a column again, in the federation's own words (Japanese names here).
+		await canvas.findByRole('columnheader', { name: new RegExp(t('sf.dp.col.examples')) });
+		await canvas.findByDisplayValue('山田');
+		// eduPersonTargetedID's own kind of value has a name of its own, not a blank.
+		const persistent = canvas
+			.getAllByRole('combobox')
+			.filter((field) => (field as HTMLSelectElement).value === 'saml:persistent-nameid');
+		await expect(persistent).toHaveLength(1);
+		await expect(persistent[0]).toHaveDisplayValue(t('sf.dp.type.persistentId'));
+	}}
+/>

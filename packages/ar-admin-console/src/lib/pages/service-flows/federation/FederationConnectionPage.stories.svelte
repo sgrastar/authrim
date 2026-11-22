@@ -611,15 +611,20 @@
 		// Each step opens its own settings in the main area; the others are not shown.
 		await expect(canvas.getByRole('heading', { name: t('sf.fed.statusCard.title') })).toBeVisible();
 		await userEvent.click(exclusions);
+		// Participation (who takes part) is on the same node as the exclusions.
+		await expect(
+			canvas.getByRole('heading', { name: t('sf.fed.participation.title') })
+		).toBeVisible();
 		await expect(canvas.getByRole('heading', { name: t('sf.fed.exceptions.title') })).toBeVisible();
 		await expect(canvas.getByRole('heading', { name: t('sf.fed.entities.title') })).toBeVisible();
 		await expect(canvas.queryByRole('heading', { name: t('sf.fed.statusCard.title') })).toBeNull();
 		await userEvent.click(
 			canvas.getByRole('button', { name: new RegExp(t('sf.part.mapping-sets')) })
 		);
+		// The mapping node no longer holds the participation card.
 		await expect(
-			canvas.getByRole('heading', { name: t('sf.fed.participation.title') })
-		).toBeVisible();
+			canvas.queryByRole('heading', { name: t('sf.fed.participation.title') })
+		).toBeNull();
 		await expect(canvas.queryByRole('heading', { name: t('sf.fed.entities.title') })).toBeNull();
 		// The old attribute presets are gone: the mapping set and its output source decide what is sent.
 		await expect(canvasElement.querySelector('option[value="basic.v1"]')).toBeNull();
@@ -660,5 +665,16 @@
 		await expect(mappingPage.client.calls.updated[0].input).toMatchObject({
 			payload: { runtimeResolution: { roles: ['saml_sp'], spFieldMappingSetId: 'set-shared' } }
 		});
+	}}
+/>
+
+<Story
+	name="The sign-in step does not repeat that every provider in the metadata is trusted"
+	args={mappingPage.args}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findByRole('heading', { name: 'Test federation' });
+		// The flow's header carries no sentence about trusting the metadata's providers.
+		await expect(canvasElement.textContent).not.toMatch(/trust every|すべてのプロバイダーを信頼/);
 	}}
 />

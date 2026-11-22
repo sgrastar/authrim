@@ -9,6 +9,8 @@
 	import type { Mapping, MappingField } from '#lib/ui/patterns/mapping-model.js';
 	import Button from '#lib/ui/primitives/Button.svelte';
 	import Select from '#lib/ui/primitives/Select.svelte';
+	import IconButton from '#lib/ui/primitives/IconButton.svelte';
+	import TitleEditor from '#lib/ui/patterns/TitleEditor.svelte';
 	import { changeText, heldBackText } from './labels';
 	import SourceLabel from './SourceLabel.svelte';
 
@@ -40,6 +42,19 @@
 		/** The mapping holds something that cannot be saved. */
 		invalid?: boolean;
 		oncheck: () => void;
+		/**
+		 * The title is the mapping's name and can be changed in place (a mapping being made). Its
+		 * words, and what is shown while there is no name yet.
+		 */
+		rename?: {
+			onchange: (name: string) => void;
+			placeholder: string;
+			editLabel: string;
+			label: string;
+			hint: string;
+			requiredMessage: string;
+			doneLabel: string;
+		};
 	}
 
 	let {
@@ -58,8 +73,15 @@
 		dirty,
 		checkable = true,
 		invalid = $bindable(false),
-		oncheck
+		oncheck,
+		rename
 	}: Props = $props();
+
+	// A mapping with no name yet opens its title for naming; Done keeps the name, Cancel leaves it.
+	let editing = $state(false);
+	$effect(() => {
+		if (rename && !title.trim()) editing = true;
+	});
 
 	const num = (n: number) => formatNumber(n, i18n.locale);
 	const sampleLabel = $derived(
@@ -67,7 +89,37 @@
 	);
 </script>
 
-<Card {title} {description}>
+<Card>
+	<div class="head">
+		{#if rename && editing}
+			<TitleEditor
+				value={title}
+				label={rename.label}
+				hint={rename.hint}
+				requiredMessage={rename.requiredMessage}
+				maxlength={80}
+				doneLabel={rename.doneLabel}
+				oninput={(value) => rename.onchange(value)}
+				ondone={(value) => {
+					rename.onchange(value.trim());
+					editing = false;
+				}}
+				oncancel={() => (editing = false)}
+			/>
+		{/if}
+		<div class="head__row" class:is-hidden={rename && editing}>
+			<h2 class="head__title">{title.trim() || rename?.placeholder || ''}</h2>
+			{#if rename && !editing}
+				<IconButton
+					icon="pencil"
+					size="sm"
+					label={rename.editLabel}
+					onclick={() => (editing = true)}
+				/>
+			{/if}
+		</div>
+		{#if description}<p class="head__desc">{description}</p>{/if}
+	</div>
 	<MappingEditor
 		label={t('mc.ch.mapping')}
 		direction="outbound"
@@ -212,6 +264,37 @@
 {/if}
 
 <style>
+	.head {
+		display: grid;
+		gap: var(--space-related);
+		padding-bottom: var(--space-field);
+	}
+
+	.head__row {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+		min-width: 0;
+	}
+
+	.head__row.is-hidden {
+		display: none;
+	}
+
+	.head__title {
+		margin: 0;
+		font-size: var(--fs-title);
+		font-weight: var(--fw-semibold);
+		line-height: var(--lh-tight);
+		overflow-wrap: anywhere;
+	}
+
+	.head__desc {
+		margin: 0;
+		color: var(--text-secondary);
+		font-size: var(--fs-small);
+	}
+
 	.form {
 		display: flex;
 		flex-direction: column;

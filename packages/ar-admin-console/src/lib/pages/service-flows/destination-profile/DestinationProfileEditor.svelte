@@ -149,6 +149,8 @@
 		form.rest = next.rest;
 		fillName(template.displayName);
 		used = template.displayName;
+		// The template is taken: its preview has done its job.
+		previewing = '';
 	}
 	let used = $state('');
 

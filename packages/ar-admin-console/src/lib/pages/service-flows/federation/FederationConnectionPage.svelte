@@ -332,7 +332,7 @@
 			<FlowCanvas
 				label={source.name}
 				heading={t('sf.detail.signIn')}
-				detail={t(idpRole ? 'sf.role.in.line' : 'sf.role.fed.line')}
+				detail={idpRole ? t('sf.role.in.line') : undefined}
 			>
 				{#if idpRole || !spRole}
 					<FlowEndpoint
@@ -469,6 +469,16 @@
 				{/if}
 			</div>
 			<div class="detail__general" hidden={!exclusionSelected}>
+				<FederationParticipationCard
+					section="participation"
+					bind:form
+					{mappingSets}
+					{mappingFailed}
+					{mappingLoading}
+					onreloadmappings={loadSets}
+					disabled={!canEdit}
+					spMappingManaged={mappingResources !== null}
+				/>
 				<FederationExceptionsCard
 					sourceId={id}
 					{client}
@@ -487,6 +497,7 @@
 			</div>
 			<div class="detail__general" hidden={!mappingSelected && !outputSelected}>
 				{#if !outputSelected}<FederationParticipationCard
+						section="mapping"
 						bind:form
 						{mappingSets}
 						{mappingFailed}
