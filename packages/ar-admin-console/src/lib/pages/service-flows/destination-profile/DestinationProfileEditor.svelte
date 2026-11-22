@@ -49,6 +49,8 @@
 		usageUnknown?: boolean;
 		/** Whether there is something unsaved or a save is under way (for leaving the page). */
 		onstate?: (state: { dirty: boolean; saving: boolean }) => void;
+		/** The attribute names the table holds now, as they are typed (SAML), for what shows beside it. */
+		onattributes?: (names: ReadonlySet<string>) => void;
 		onsaved: (saved: DestinationProfileSaved) => void;
 		oncancel: () => void;
 	}
@@ -61,6 +63,7 @@
 		usedBy = [],
 		usageUnknown = false,
 		onstate,
+		onattributes,
 		onsaved,
 		oncancel
 	}: Props = $props();
@@ -83,6 +86,9 @@
 	let writtenId = $state('');
 	const initial = untrack(() => JSON.stringify(form));
 	$effect(() => onstate?.({ dirty: JSON.stringify(form) !== initial, saving }));
+	$effect(() =>
+		onattributes?.(new Set(form.rows.map((row) => row.key.trim()).filter((key) => key !== '')))
+	);
 	let invalidRows = $state(false);
 	let saving = $state(false);
 	let failure = $state('');

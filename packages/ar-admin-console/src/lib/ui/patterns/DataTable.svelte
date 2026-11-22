@@ -59,6 +59,11 @@
 		dense?: boolean;
 		/** Keep wide columns readable and let the table wrapper scroll on narrow screens. */
 		minWidth?: string;
+		/**
+		 * A table with nothing to press in it (no checkbox, no link, no button) still has to be
+		 * reachable by keyboard where it scrolls sideways: the wrapper then takes the keys itself.
+		 */
+		scrollFocusable?: boolean;
 	}
 
 	let {
@@ -78,7 +83,8 @@
 		onrowopen,
 		rowOpenLabel,
 		dense = false,
-		minWidth
+		minWidth,
+		scrollFocusable = false
 	}: Props = $props();
 
 	const keys = $derived(rows.map(rowKey));
@@ -137,7 +143,13 @@
 	</div>
 {/if}
 
-<div class="table-wrap">
+<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+<div
+	class="table-wrap"
+	role={scrollFocusable ? 'region' : undefined}
+	aria-label={scrollFocusable ? caption : undefined}
+	tabindex={scrollFocusable ? 0 : undefined}
+>
 	<table
 		class="data"
 		class:data--many={columns.length >= 6}

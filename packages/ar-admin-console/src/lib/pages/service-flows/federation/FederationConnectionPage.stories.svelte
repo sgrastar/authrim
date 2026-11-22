@@ -7,6 +7,7 @@
 		MOCK_FEDERATION_FINGERPRINT,
 		MOCK_FEDERATION_SOURCES
 	} from '#lib/api/fake/federation-sources-fake.js';
+	import type { FederationRequestedAttributes } from '#lib/api/federation-sources.js';
 	import { t } from '#lib/i18n/i18n.svelte.js';
 	import { fingerprintDisplay } from '../federation-model';
 	import { fingerprintText } from '../federation-fingerprint.fixture';
@@ -51,11 +52,14 @@
 			canMaterialize?: boolean;
 			/** The SP role's mapping set is made and chosen on the page (mapping fixtures behind it). */
 			outbound?: boolean;
+			/** What the federation's service providers ask for (the fake's default when absent). */
+			requested?: FederationRequestedAttributes;
 		} = {}
 	) {
 		const client = createFakeFederationSources({
 			sources: options.sources ?? MOCK_FEDERATION_SOURCES,
-			conflictOnSave: options.conflictOnSave
+			conflictOnSave: options.conflictOnSave,
+			requestedAttributes: options.requested
 		});
 		const onback = fn();
 		const onnavigate = fn(async (_path: string) => {});
@@ -156,6 +160,53 @@
 			{ ...healthy, roles: ['saml_sp'], spMappingSetId: '', idpMappingSetId: '', automatic: false }
 		]
 	});
+	/** Two attributes the services ask for: "email" the output source has, the other it has not. */
+	const requestedPage = page({
+		outbound: true,
+		sources: [
+			{ ...healthy, roles: ['saml_sp'], spMappingSetId: '', idpMappingSetId: '', automatic: false }
+		],
+		requested: {
+			attributes: [
+				{ name: 'email', friendlyName: 'mail', requestedBy: 7, requiredBy: 5 },
+				{
+					name: 'eduPersonPrincipalName',
+					friendlyName: null,
+					requestedBy: 3,
+					requiredBy: 0
+				}
+			],
+			spTotal: 50,
+			spRead: 50
+		}
+	});
+	/** The first read of what the services ask for answers, a read after a refresh fails. */
+	const flakyPage = (() => {
+		const made = page({
+			outbound: true,
+			sources: [
+				{
+					...healthy,
+					roles: ['saml_sp'],
+					spMappingSetId: '',
+					idpMappingSetId: '',
+					automatic: false
+				}
+			],
+			requested: {
+				attributes: [{ name: 'email', friendlyName: 'mail', requestedBy: 7, requiredBy: 5 }],
+				spTotal: 50,
+				spRead: 50
+			}
+		});
+		const read = made.client.requestedAttributes.bind(made.client);
+		let reads = 0;
+		made.client.requestedAttributes = async (id, signal) => {
+			if (++reads > 1) throw new Error('down');
+			return read(id, signal);
+		};
+		return made;
+	})();
 	const bulkPage = page();
 	const countPage = page({
 		sources: [{ ...healthy, roles: ['saml_sp'], idpMappingSetId: '' }]
@@ -681,24 +732,117 @@
 />
 
 <Story
-	name="The mapping node shows what the federation's services ask for, and whether the output source has it"
-	args={mappingPage.args}
+	name="The output source's node holds the table of what the services ask for"
+	args={requestedPage.args}
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		await canvas.findByRole('heading', { name: 'Test federation' });
-		// Not in the output source's own node: it is about what is sent, so it sits with the mapping.
-		await userEvent.click(
-			canvas.getByRole('button', { name: new RegExp(t('sf.part.mapping-schemas')) })
-		);
-		await expect(canvas.queryByText(t('sf.fed.req.title'))).toBeNull();
+		// The mapping node does not hold the table: it is about the output source.
 		await userEvent.click(
 			canvas.getByRole('button', { name: new RegExp(t('sf.part.mapping-sets')) })
 		);
-		await canvas.findByText(t('sf.fed.req.title'));
-		// The attributes come with how many services require each.
-		await canvas.findByText('eduPersonPrincipalName');
-		await canvas.findByText(t('sf.fed.req.required', { count: 390 }));
-		await canvas.findByText(t('sf.fed.req.askedBy', { count: 412 }));
+		await expect(canvas.queryByRole('table', { name: t('sf.fed.req.title') })).toBeNull();
+		await userEvent.click(
+			canvas.getByRole('button', { name: new RegExp(t('sf.part.mapping-schemas')) })
+		);
+		// The output source in use is the one chosen here: it tells which attributes it can send.
+		await userEvent.selectOptions(
+			await canvas.findByRole('combobox', { name: new RegExp(`^${t('sf.dp.field.label')}`) }),
+			'Portal attributes'
+		);
+		const table = await canvas.findByRole('table', { name: t('sf.fed.req.title') });
+		// Under the output source's own settings, not above them.
+		const create = canvas.getByRole('button', { name: t('sf.dp.field.create') });
+		await expect(
+			create.compareDocumentPosition(table) & Node.DOCUMENT_POSITION_FOLLOWING
+		).toBeTruthy();
+		// "email" is in the output source in use, "eduPersonPrincipalName" is not.
+		const mail = (await within(table).findByText('mail')).closest('tr') as HTMLElement;
+		await within(mail).findByText(t('sf.fed.req.sendable'));
+		const upn = (await within(table).findByText('eduPersonPrincipalName')).closest(
+			'tr'
+		) as HTMLElement;
+		await within(upn).findByText(t('sf.fed.req.notSendable'));
+	}}
+/>
+
+<Story
+	name="The table stays while an output source is made, and follows what is typed"
+	args={requestedPage.args}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findByRole('heading', { name: 'Test federation' });
+		await userEvent.click(
+			canvas.getByRole('button', { name: new RegExp(t('sf.part.mapping-schemas')) })
+		);
+		await userEvent.click(await canvas.findByRole('button', { name: t('sf.dp.field.create') }));
+		const table = await canvas.findByRole('table', { name: t('sf.fed.req.title') });
+		// A new source has no attributes yet: none of the asked-for ones is in it.
+		const upn = () =>
+			within(table).getByText('eduPersonPrincipalName').closest('tr') as HTMLElement;
+		await waitFor(() => expect(within(upn()).getByText(t('sf.fed.req.notSendable'))).toBeVisible());
+		// Adding the attribute to the table being made turns it to "in the output source" at once.
+		await userEvent.click(await canvas.findByRole('button', { name: t('sf.dp.addAttribute') }));
+		await userEvent.type(
+			canvas.getAllByRole('textbox', { name: /Attribute/ })[0],
+			'eduPersonPrincipalName'
+		);
+		await waitFor(() => expect(within(upn()).getByText(t('sf.fed.req.sendable'))).toBeVisible());
+	}}
+/>
+
+<Story
+	name="The mapping node says under an attribute how many services require it"
+	args={requestedPage.args}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findByRole('heading', { name: 'Test federation' });
+		await userEvent.click(
+			canvas.getByRole('button', { name: new RegExp(t('sf.part.mapping-sets')) })
+		);
+		const set = await canvas.findByRole('combobox', {
+			name: new RegExp(`^${t('sf.row.mappingSet')}`)
+		});
+		await waitFor(() => expect(set).toBeEnabled());
+		await userEvent.selectOptions(set, 'set-shared');
+		// Open the attribute's row: its identifier, and under it the counts. Nothing says whether
+		// the output source has it (the source's own settings do).
+		await userEvent.click(await canvas.findByRole('button', { name: /email/ }));
+		await canvas.findByText(t('sf.fed.req.counts', { required: 5, optional: 2, total: 50 }));
+		await expect(canvas.queryByText(t('sf.fed.req.sendable'))).toBeNull();
+		await expect(canvas.queryByText(t('sf.fed.req.notSendable'))).toBeNull();
+	}}
+/>
+
+<Story
+	name="Counts from before a failed reload are not shown as current"
+	args={flakyPage.args}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findByRole('heading', { name: 'Test federation' });
+		await userEvent.click(
+			canvas.getByRole('button', { name: new RegExp(t('sf.part.mapping-sets')) })
+		);
+		const set = await canvas.findByRole('combobox', {
+			name: new RegExp(`^${t('sf.row.mappingSet')}`)
+		});
+		await waitFor(() => expect(set).toBeEnabled());
+		await userEvent.selectOptions(set, 'set-shared');
+		await userEvent.click(await canvas.findByRole('button', { name: /email/ }));
+		await canvas.findByText(t('sf.fed.req.counts', { required: 5, optional: 2, total: 50 }));
+		// A refresh reads the metadata again; the read of what is asked for fails this time.
+		await userEvent.click(canvas.getByRole('button', { name: t('af.general') }));
+		await userEvent.click(
+			await canvas.findByRole('button', { name: t('sf.fed.statusCard.refresh') })
+		);
+		await userEvent.click(
+			canvas.getByRole('button', { name: new RegExp(t('sf.part.mapping-sets')) })
+		);
+		await waitFor(() =>
+			expect(
+				canvas.queryByText(t('sf.fed.req.counts', { required: 5, optional: 2, total: 50 }))
+			).toBeNull()
+		);
 	}}
 />
 

@@ -789,12 +789,14 @@ export const deServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 	'sf.dp.field.edit': 'Ausgabequelle bearbeiten',
 	'sf.dp.field.hint':
 		'Die Attribute, die an App oder Dienst gesendet werden. Eine Zuordnung sendet in diese Ausgabequelle.',
+	'sf.fed.req.col.attribute': 'Attribut',
+	'sf.fed.req.col.required': 'Erforderlich für',
+	'sf.fed.req.col.optional': 'Optional für',
+	'sf.fed.req.col.source': 'Ausgabequelle',
+	'sf.fed.req.counts': 'Erf. {required} Opt. {optional} / {total}',
 	'sf.fed.req.title': 'Attribute, die die Dienste anfordern',
 	'sf.fed.req.desc':
 		'Die Attribute, die die Service Provider der Föderation in ihren Metadaten anfordern. Ein Attribut, das manche als erforderlich markieren, muss gesendet werden, sonst können sich Personen bei diesen Diensten nicht anmelden.',
-	'sf.fed.req.required': 'Erforderlich für {count}',
-	'sf.fed.req.optional': 'Optional',
-	'sf.fed.req.askedBy': 'Angefordert von {count}',
 	'sf.fed.req.sendable': 'In der Ausgabequelle',
 	'sf.fed.req.notSendable': 'Nicht in der Ausgabequelle',
 	'sf.fed.req.partial':

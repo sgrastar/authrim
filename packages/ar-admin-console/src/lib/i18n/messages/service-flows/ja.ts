@@ -775,14 +775,16 @@ export const jaServiceFlows = {
 	'sf.dp.field.edit': '出力ソースを編集',
 	'sf.dp.field.hint':
 		'アプリやサービスに送る属性の定義です。マッピングはこの出力ソースへ送ります。',
+	'sf.fed.req.col.attribute': '属性',
+	'sf.fed.req.col.required': '必須の SP',
+	'sf.fed.req.col.optional': '任意の SP',
+	'sf.fed.req.col.source': '出力ソース',
+	'sf.fed.req.counts': '必須 {required}件 任意 {optional}件 / {total}件',
 	'sf.fed.req.title': 'SP が求める属性',
 	'sf.fed.req.desc':
 		'この連合の SP がメタデータで求めている属性です。必須としている SP がある属性は、送れないとその SP でログインできません。',
-	'sf.fed.req.required': '必須 {count} 件',
-	'sf.fed.req.optional': '任意',
-	'sf.fed.req.askedBy': '{count} 件の SP が要求',
-	'sf.fed.req.sendable': '出力ソースにあります',
-	'sf.fed.req.notSendable': '出力ソースにありません',
+	'sf.fed.req.sendable': '出力ソースに存在',
+	'sf.fed.req.notSendable': '出力ソースに不在',
 	'sf.fed.req.partial':
 		'SP {total} 件のうち {read} 件だけ集計できています。メタデータを再取得すると、すべてを集計します。',
 	'sf.fed.req.none': 'メタデータで属性を求めている SP はありません。',

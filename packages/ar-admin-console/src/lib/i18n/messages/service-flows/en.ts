@@ -762,12 +762,14 @@ export const enServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 	'sf.dp.field.edit': 'Edit the output source',
 	'sf.dp.field.hint':
 		'The attributes sent to the app or service. A mapping sends into this output source.',
+	'sf.fed.req.col.attribute': 'Attribute',
+	'sf.fed.req.col.required': 'Required by',
+	'sf.fed.req.col.optional': 'Optional for',
+	'sf.fed.req.col.source': 'Output source',
+	'sf.fed.req.counts': 'Req. {required} Opt. {optional} / {total}',
 	'sf.fed.req.title': 'Attributes the services ask for',
 	'sf.fed.req.desc':
 		"The attributes the federation's service providers ask for in their metadata. An attribute some of them mark required has to be sent, or those services cannot sign people in.",
-	'sf.fed.req.required': 'Required by {count}',
-	'sf.fed.req.optional': 'Optional',
-	'sf.fed.req.askedBy': 'Asked for by {count}',
 	'sf.fed.req.sendable': 'In the output source',
 	'sf.fed.req.notSendable': 'Not in the output source',
 	'sf.fed.req.partial':

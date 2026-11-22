@@ -41,6 +41,8 @@
 		checkable?: boolean;
 		/** The mapping holds something that cannot be saved. */
 		invalid?: boolean;
+		/** A line under an attribute's name in the open row of the mapping (see MappingEditor). */
+		targetNote?: (key: string) => string | undefined;
 		oncheck: () => void;
 		/**
 		 * The title is the mapping's name and can be changed in place (a mapping being made). Its
@@ -73,6 +75,7 @@
 		dirty,
 		checkable = true,
 		invalid = $bindable(false),
+		targetNote,
 		oncheck,
 		rename
 	}: Props = $props();
@@ -129,6 +132,7 @@
 		field="mappings"
 		bind:mappings
 		bind:invalid
+		{targetNote}
 	/>
 </Card>
 
