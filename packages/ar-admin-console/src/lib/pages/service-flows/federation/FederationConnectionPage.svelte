@@ -46,6 +46,7 @@
 	import FederationExceptionsCard from './FederationExceptionsCard.svelte';
 	import FederationMaterializeDialog from './FederationMaterializeDialog.svelte';
 	import FederationParticipationCard from './FederationParticipationCard.svelte';
+	import FederationRequestedAttributes from './FederationRequestedAttributes.svelte';
 	import FederationStatusCard from './FederationStatusCard.svelte';
 	import FederationTrustCard from './FederationTrustCard.svelte';
 	import { formChanged, snapshotForm } from './federation-page-model';
@@ -102,6 +103,8 @@
 	let mappingEpoch = $state(0);
 	let mappingPending = $state(false);
 	let mappingDirty = $state(false);
+	// The attribute names of the output source the SP role's mapping uses, from the open mapping.
+	let sendableAttributes = $state<ReadonlySet<string> | null>(null);
 	let outputChosen = $state(false);
 	let refreshing = $state(false);
 	let failure = $state('');
@@ -506,6 +509,14 @@
 						disabled={!canEdit}
 						spMappingManaged={mappingResources !== null}
 					/>{/if}
+				{#if mappingResources && !outputSelected}
+					<FederationRequestedAttributes
+						{client}
+						{id}
+						sendable={sendableAttributes}
+						refreshKey={revision}
+					/>
+				{/if}
 				{#if mappingResources}
 					{#key `${id}:${mappingEpoch}`}
 						<ConnectionMapping
@@ -518,6 +529,7 @@
 							bind:pending={mappingPending}
 							bind:dirty={mappingDirty}
 							bind:outputChosen
+							bind:sendable={sendableAttributes}
 						/>
 					{/key}
 				{/if}

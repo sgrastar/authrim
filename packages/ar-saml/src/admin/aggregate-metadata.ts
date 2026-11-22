@@ -2,6 +2,7 @@ import type {
   Env,
   SAMLFederationTrustProfile,
   SAMLMetadataEntityRole,
+  SAMLMetadataEntityRequestedAttribute,
   SAMLMetadataEntitySummary,
   SAMLMetadataVerificationPolicy,
   SAMLMetadataVerificationSummary,
@@ -390,7 +391,65 @@ function summarizeEntityDescriptor(entity: Element): SAMLMetadataEntitySummary {
     entityCategories: getEntityAttributeValues(entity, SAML_ENTITY_CATEGORY_ATTRIBUTE),
     entityCategorySupport: getEntityAttributeValues(entity, SAML_ENTITY_CATEGORY_SUPPORT_ATTRIBUTE),
     registrationAuthority: getRegistrationAuthority(entity),
+    ...(spDescriptor
+      ? { requestedAttributes: summarizeRequestedAttributes(spDescriptor as Element) }
+      : {}),
   };
+}
+
+/** The most attributes kept per SP, and the longest a name or label: a hostile file stays small. */
+const MAX_REQUESTED_ATTRIBUTES_PER_ENTITY = 64;
+const MAX_REQUESTED_ATTRIBUTE_TEXT_LENGTH = 256;
+
+/**
+ * What an SP's metadata asks to receive, merged by attribute name: required when any
+ * AttributeConsumingService marks it so. `isRequired` is an xs:boolean, so "1" counts as true.
+ */
+function summarizeRequestedAttributes(
+  spDescriptor: Element
+): SAMLMetadataEntityRequestedAttribute[] {
+  const byName = new Map<string, SAMLMetadataEntityRequestedAttribute>();
+  for (const service of findElements(
+    spDescriptor,
+    SAML_NAMESPACES.MD,
+    'AttributeConsumingService'
+  )) {
+    for (const requested of findElements(service, SAML_NAMESPACES.MD, 'RequestedAttribute')) {
+      const name = getAttribute(requested, 'Name')?.trim();
+      if (!name || name.length > MAX_REQUESTED_ATTRIBUTE_TEXT_LENGTH) continue;
+      const flag = getAttribute(requested, 'isRequired')?.trim();
+      const required = flag === 'true' || flag === '1';
+      const friendlyName = getAttribute(requested, 'FriendlyName')?.trim();
+      const existing = byName.get(name);
+      if (existing) {
+        existing.required ||= required;
+        if (
+          !existing.friendlyName &&
+          friendlyName &&
+          friendlyName.length <= MAX_REQUESTED_ATTRIBUTE_TEXT_LENGTH
+        ) {
+          existing.friendlyName = friendlyName;
+        }
+      } else if (byName.size < MAX_REQUESTED_ATTRIBUTES_PER_ENTITY) {
+        byName.set(name, {
+          name,
+          ...(friendlyName && friendlyName.length <= MAX_REQUESTED_ATTRIBUTE_TEXT_LENGTH
+            ? { friendlyName }
+            : {}),
+          required,
+        });
+      }
+    }
+  }
+  return [...byName.values()];
+}
+
+/** An entity summary as a preview lists it: without what only the stored snapshot counts. */
+export function withoutRequestedAttributes(
+  entity: SAMLMetadataEntitySummary
+): SAMLMetadataEntitySummary {
+  const { requestedAttributes: _requestedAttributes, ...rest } = entity;
+  return rest;
 }
 
 function getEntityAttributeValues(entity: Element, attributeName: string): string[] | undefined {

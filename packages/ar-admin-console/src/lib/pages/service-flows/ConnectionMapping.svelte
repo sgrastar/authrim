@@ -25,7 +25,7 @@
 	import { SAMPLE_USER_FEATURES } from './sample-user.js';
 	import DestinationProfileEditor from './destination-profile/DestinationProfileEditor.svelte';
 	import type { DestinationProfileSaved } from '#lib/api/destination-profiles.js';
-	import type { MappingDestinationProfile } from '#lib/api/mapping-set.js';
+	import { servingVersion, type MappingDestinationProfile } from '#lib/api/mapping-set.js';
 
 	/**
 	 * A connection's one mapping, on its service flow's main screen: a provider's attributes into
@@ -44,6 +44,11 @@
 		connectionDirty?: boolean;
 		/** Whether an output source is chosen (the set's own, or the one a new mapping starts with). */
 		outputChosen?: boolean;
+		/**
+		 * The SAML attribute names the output source in use can send (null while none is chosen or it
+		 * has none to list): for showing, beside the mapping, which attributes it can and cannot send.
+		 */
+		sendable?: ReadonlySet<string> | null;
 		/** Show the test-user explanation (not for a federation, which has no one service to test against). */
 		explain?: boolean;
 		/**
@@ -59,6 +64,7 @@
 		dirty = $bindable(false),
 		bound = $bindable(''),
 		outputChosen = $bindable(false),
+		sendable = $bindable(null),
 		readonly = false,
 		disabled = false,
 		pending = $bindable(false),
@@ -76,7 +82,21 @@
 		pending = shared?.phase === 'saving' || shared?.phase === 'impact' || editorState.saving;
 		bound = shared?.bound ?? '';
 		outputChosen = !!(shared?.form.value.profileId || shared?.chosenProfileId);
+		sendable = sendableNames(shared);
 	});
+	/** The attribute names of the serving version of the output source in use (a SAML source). */
+	function sendableNames(state: ConnectionMappingState | null): ReadonlySet<string> | null {
+		if (!state) return null;
+		const profileId = state.form.value.profileId || state.chosenProfileId;
+		const profile = state.allProfiles.find((candidate) => candidate.id === profileId);
+		const attributes = profile ? servingVersion(profile)?.schema.attributes : undefined;
+		if (!Array.isArray(attributes)) return null;
+		return new Set(
+			attributes
+				.map((attribute) => (attribute as { name?: unknown }).name)
+				.filter((name): name is string => typeof name === 'string')
+		);
+	}
 	onMount(() => {
 		if (shared) void shared.load();
 	});

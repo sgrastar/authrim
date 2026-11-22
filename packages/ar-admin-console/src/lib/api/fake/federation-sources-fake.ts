@@ -5,6 +5,7 @@ import type {
 	FederationEntityPage,
 	FederationEntityQuery,
 	FederationKeywordCategory,
+	FederationRequestedAttributes,
 	FederationRefreshHistoryItem,
 	FederationRefreshResult,
 	FederationSource,
@@ -50,6 +51,38 @@ function mockCertificatePreview(): SamlCertificatePreview {
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
 const DAY = 24 * 60 * 60 * 1000;
+
+/** What the SPs of a federation typically ask for: who the person is, and how to reach them. */
+export const DEFAULT_REQUESTED_ATTRIBUTES: FederationRequestedAttributes = {
+	attributes: [
+		{
+			name: 'urn:oid:1.3.6.1.4.1.5923.1.1.1.6',
+			friendlyName: 'eduPersonPrincipalName',
+			requestedBy: 412,
+			requiredBy: 390
+		},
+		{
+			name: 'urn:oid:0.9.2342.19200300.100.1.3',
+			friendlyName: 'mail',
+			requestedBy: 301,
+			requiredBy: 188
+		},
+		{
+			name: 'urn:oid:2.16.840.1.113730.3.1.241',
+			friendlyName: 'displayName',
+			requestedBy: 120,
+			requiredBy: 0
+		},
+		{
+			name: 'urn:oid:1.3.6.1.4.1.5923.1.1.1.10',
+			friendlyName: 'eduPersonTargetedID',
+			requestedBy: 44,
+			requiredBy: 0
+		}
+	],
+	spTotal: 500,
+	spRead: 500
+};
 // Relative to the real clock: the status card counts days left against it.
 const NOW = Date.now();
 
@@ -187,6 +220,8 @@ export interface FakeFederationSourcesOptions {
 	entities?: readonly MockEntity[];
 	/** What a refresh answers, or the error it fails with. */
 	refresh?: Partial<FederationRefreshResult> | Error;
+	/** What the service providers ask for (the default: a few attributes, two of them required). */
+	requestedAttributes?: FederationRequestedAttributes | Error;
 	/** Every save finds the source changed by someone else. */
 	conflictOnSave?: boolean;
 	/** Milliseconds each call takes (0 by default; stories that show a loading state set it). */
@@ -451,6 +486,13 @@ export function createFakeFederationSources(
 				type,
 				values: values.sort((a, b) => b.count - a.count || a.label.localeCompare(b.label))
 			}));
+		},
+		async requestedAttributes(id) {
+			await wait();
+			find(id);
+			const given = options.requestedAttributes;
+			if (given instanceof Error) throw given;
+			return clone(given ?? DEFAULT_REQUESTED_ATTRIBUTES);
 		},
 		async refreshHistory(id, limit = 20) {
 			await wait();
