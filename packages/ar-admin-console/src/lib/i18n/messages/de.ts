@@ -909,7 +909,7 @@ export const de = {
 	'me.keyring': 'Administrator-Berechtigungen',
 	'me.keyring.issue': 'Administrator-Berechtigung ausstellen',
 	'me.keyringDesc':
-		'Ihre Administrator-Berechtigungen, die an Authrim Keyring auf Ihrem iPhone ausgestellt wurden. Sie dienen zur Freigabe sensibler Vorgänge.',
+		'Ihre Administrator-Berechtigungen. Sie können damit unter anderem die Anmeldung durchführen.',
 	'keyring.page.title': 'Administrator-Berechtigung ausstellen',
 	'keyring.page.desc':
 		'Stellen Sie Ihre Administrator-Berechtigung für Authrim Keyring aus. Der QR-Code ist nur kurz gültig und kann nur einmal verwendet werden.',

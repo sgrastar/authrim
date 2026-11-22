@@ -894,8 +894,7 @@ export const en = {
 	'map.nothing': 'No attributes match',
 	'me.keyring': 'Administrator credentials',
 	'me.keyring.issue': 'Issue an administrator credential',
-	'me.keyringDesc':
-		'The administrator credentials issued to Authrim Keyring on your iPhone. They are used to approve sensitive operations.',
+	'me.keyringDesc': 'Your administrator credentials. You can use them to sign in and more.',
 	'keyring.page.title': 'Issue an administrator credential',
 	'keyring.page.desc':
 		'Issue your administrator credential to Authrim Keyring. The QR code is valid for a short time and can be used only once.',

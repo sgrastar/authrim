@@ -273,7 +273,11 @@
 		{:else}
 			<ItemGrid label={t('me.passkeys')}>
 				{#each passkeys as passkey (passkey.id)}
-					<ItemCard title={nameOf(passkey)} icon="fingerprint">
+					<ItemCard
+						title={nameOf(passkey)}
+						icon="fingerprint"
+						image={passkey.provider?.icon_light ?? passkey.provider?.icon_dark ?? undefined}
+					>
 						{#snippet meta()}
 							{#if passkey.provider?.known && passkey.provider.name}
 								<Badge>{passkey.provider.name}</Badge>

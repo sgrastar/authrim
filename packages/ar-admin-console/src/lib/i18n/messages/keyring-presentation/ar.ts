@@ -55,17 +55,17 @@ export const arKeyringPresentation = {
 	'kp.totp.error.rateLimited': 'محاولات كثيرة جدًا. انتظر بضع دقائق ثم حاول مجددًا.',
 	'kp.totp.error.notAllowed': 'لم يعد هذا المستأجر يسمح بتطبيقات المصادقة كعامل ثانٍ.',
 	'kp.totp.error.unavailable': 'تعذّر التحقق من الرمز. حاول مجددًا.',
-	'kp.enroll.add': 'إضافة Keyring',
+	'kp.enroll.add': 'إضافة Authrim Keyring',
 	'kp.enroll.title': 'إضافة Authrim Keyring كعامل ثانٍ',
 	'kp.enroll.body':
 		'قدّم بيانات اعتماد المسؤول الصادرة إلى Keyring. يصبح مفتاحها أحد عواملك الثانية.',
 	'kp.enroll.needCredential':
 		'أصدر أولًا بيانات اعتماد المسؤول إلى Keyring (حسابي ← Authrim Keyring).',
 	'kp.enroll.added': 'أُضيف Keyring كعامل ثانٍ.',
-	'kp.recover.add': 'طلب الاسترداد باستخدام Keyring',
+	'kp.recover.add': 'طلب الاسترداد باستخدام Authrim Keyring',
 	'kp.recover.title': 'طلب الاسترداد باستخدام Authrim Keyring',
 	'kp.recover.body':
 		'قدِّم بيانات اعتماد المسؤول الصادرة إلى Keyring لتقديم الطلب. ستصلك أنت وجميع مسؤولي المستأجر رسالة بريد إلكتروني، ويمكن إكماله بعد 24 ساعة. عند إكماله تُلغى جميع العوامل الثانية الحالية وتنتهي جلساتك الأخرى.',
-	'kp.kind.keyring': 'Keyring',
+	'kp.kind.keyring': 'Authrim Keyring',
 	'kp.kind.securityKey': 'مفتاح الأمان'
 };

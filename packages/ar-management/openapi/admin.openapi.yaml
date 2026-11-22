@@ -83580,6 +83580,14 @@ components:
             - string
             - 'null'
           description: Display-only WebAuthn authenticator AAGUID. Do not use for trust decisions.
+        provider:
+          description: >-
+            The authenticator named from its AAGUID, with display-only icons; null when the key has
+            no AAGUID (a Keyring holder key or an authenticator app). Do not use for trust
+            decisions.
+          oneOf:
+            - $ref: '#/components/schemas/PasskeyProvider'
+            - type: 'null'
         created_at:
           type: integer
           format: int64
@@ -83598,6 +83606,7 @@ components:
         - kind
         - label
         - aaguid
+        - provider
         - created_at
         - last_used_at
         - revoked_at

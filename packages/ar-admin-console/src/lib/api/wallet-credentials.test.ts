@@ -13,6 +13,7 @@ vi.mock('#lib/api/admin-step-up.js', async (importOriginal) => {
 			actual.withStepUp(operation, steps)
 	};
 });
+import { tenantScope } from '#lib/auth/tenant-scope.svelte.js';
 import {
 	FRESH_AUTH_REQUIRED,
 	NOT_ELIGIBLE,
@@ -311,5 +312,29 @@ describe('revokeErrorKey', () => {
 			'keyring.error.generic'
 		);
 		expect(revokeErrorKey(new Error('x'))).toBe('keyring.error.generic');
+	});
+});
+
+describe('the administrator’s own credentials', () => {
+	it('never name the tenant the console is looking at', async () => {
+		// The server accepts these only on a session of the admin's home tenant; looking at another
+		// tenant in the console must not turn them into a request for that tenant.
+		// A tenant is selected only from the list the console has read (the admin's home is first).
+		await tenantScope.load('home-tenant', false);
+		expect(tenantScope.tenantId).toBe('home-tenant');
+		const calls: Headers[] = [];
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (_url: string, init: RequestInit) => {
+				calls.push(new Headers(init.headers));
+				return json(200, { items: [], ...OFFER, state: 'pending' });
+			})
+		);
+		await httpWalletCredentials.listCredentials().catch(() => {});
+		await httpWalletCredentials.createOffer().catch(() => {});
+		await httpWalletCredentials.getOfferStatus('off_1').catch(() => {});
+		await httpWalletCredentials.revokeCredential('c').catch(() => {});
+		expect(calls.length).toBeGreaterThanOrEqual(4);
+		for (const headers of calls) expect(headers.get('X-Tenant-Id')).toBeNull();
 	});
 });
