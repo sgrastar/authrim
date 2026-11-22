@@ -121,10 +121,13 @@ function tallyBlock(lang: Lang, config: Config, tally: Tally | null): string {
 
 export function startPage(lang: Lang, config: Config, tally: Tally | null = null): string {
   const copy = COPY[lang];
-  const notices = copy
-    .notices(config.tenantTtlHours)
-    .map((line) => `<li>${esc(line)}</li>`)
-    .join('\n');
+  const all = copy.notices(config.tenantTtlHours);
+  const items = (lines: string[]): string =>
+    lines.map((line) => `<li>${esc(line)}</li>`).join('\n');
+  // The first three are the plain rules; the rest (where the database is, the second factor) are
+  // fine print, set smaller below the language links.
+  const notices = items(all.slice(0, 3));
+  const finePrint = items(all.slice(3));
   return layout(
     lang,
     copy.title,
@@ -145,6 +148,11 @@ ${notices}
 <button type="submit" class="start-btn" data-wait="${esc(plain(copy.startChecking))}">${esc(copy.start)}</button>
 </form>
 ${tallyBlock(lang, config, tally)}${langNav(lang, '/')}
+<div class="notices fine">
+<ul>
+${finePrint}
+</ul>
+</div>
 </section>`
   );
 }

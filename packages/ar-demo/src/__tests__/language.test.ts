@@ -383,6 +383,11 @@ describe('every language renders every page', () => {
       expect(html).not.toContain('class="panel"');
       expect(html.match(/<li>/g)).toHaveLength(5 + LANGS.length);
       expect(html).toContain(`<h2>${copy.noticeTitle}</h2>`);
+      // The database and second-factor notes are fine print, below the language links.
+      const [, , , regionNote, stepUpNote] = copy.notices(7);
+      expect(html.indexOf(regionNote)).toBeGreaterThan(html.indexOf('class="lang"'));
+      expect(html.indexOf(stepUpNote)).toBeGreaterThan(html.indexOf(regionNote));
+      expect(html).toContain('class="notices fine"');
       expect(html).not.toContain('class="brand"');
       expect(html).toContain('<h1 lang="en">Authrim <span>Demo</span></h1>');
       expect(html).toContain(`<p class="intro">${copy.intro1}</p>`);
