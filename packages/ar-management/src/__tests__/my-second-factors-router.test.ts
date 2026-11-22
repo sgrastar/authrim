@@ -215,6 +215,7 @@ describe('mySecondFactorsRouter', () => {
             kind: 'webauthn_credential',
             label: 'Key',
             aaguid: null,
+            provider: null,
             created_at: 1,
             last_used_at: null,
             revoked_at: null,
@@ -227,6 +228,23 @@ describe('mySecondFactorsRouter', () => {
         totp: { allowed: false },
         recovery: { available: true },
       });
+    });
+
+    it('names the authenticator from its AAGUID, with icons, and never invents one', async () => {
+      // Authrim Keyring's own AAGUID resolves to its name and icon; an unknown one has no name.
+      const factors = [
+        factor({ id: 'sf-keyring', aaguid: '6f1c5e2a-7b4d-4e8f-9a3c-2d5b8e1f0a47' }),
+        factor({ id: 'sf-unknown', aaguid: '11111111-2222-4333-8444-555555555555' }),
+      ];
+      mocks.listActiveByUser.mockResolvedValue(factors);
+      mocks.listByUser.mockResolvedValue(factors);
+      const { body } = await call('GET', '');
+      const [keyring, unknown] = (
+        body as { second_factors: Array<{ provider: Record<string, unknown> | null }> }
+      ).second_factors;
+      expect(keyring.provider).toMatchObject({ name: 'Authrim Keyring', known: true });
+      expect(String(keyring.provider?.icon_light)).toMatch(/^data:image\//);
+      expect(unknown.provider).toMatchObject({ name: null, icon_light: null, known: false });
     });
 
     it('says whether the tenant of the session allows an authenticator app', async () => {

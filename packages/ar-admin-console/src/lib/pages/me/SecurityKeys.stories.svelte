@@ -1,6 +1,6 @@
 <script module lang="ts">
 	import { defineMeta } from '@storybook/addon-svelte-csf';
-	import { expect, userEvent, within } from 'storybook/test';
+	import { expect, userEvent, waitFor, within } from 'storybook/test';
 	import { createFakeKeyringFactor } from '#lib/api/fake/keyring-factor-fake.js';
 	import { createFakeSecondFactors } from '#lib/api/fake/second-factors-fake.js';
 	import { t } from '#lib/i18n/i18n.svelte.js';
@@ -28,6 +28,13 @@
 			}
 		}
 	});
+
+	/** A small stand-in for an authenticator's own icon. */
+	const ICON =
+		'data:image/svg+xml;base64,' +
+		btoa(
+			'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="#2f6fed"/><circle cx="16" cy="16" r="7" fill="#fff"/></svg>'
+		);
 </script>
 
 <Story
@@ -61,6 +68,61 @@
 				keys: [
 					{ label: 'YubiKey 5C (blue)' },
 					{ label: 'iPhone (Keyring)', kind: 'keyring_holder_key' }
+				]
+			})}
+			keyring={createFakeKeyringFactor()}
+		/>
+	{/snippet}
+</Story>
+
+<Story
+	name="Authenticator icons and Authrim Keyring"
+	parameters={{
+		docs: {
+			description: {
+				story:
+					'A key made by a known authenticator shows that authenticator’s own icon (found from its AAGUID, display only); a key with no icon keeps the generic one. A Keyring key nobody named is called “Authrim Keyring”, not just “Keyring”.'
+			}
+		}
+	}}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		// The unnamed Keyring key is named after the app.
+		await canvas.findByRole('heading', { name: t('kp.kind.keyring') });
+		await canvas.findByText('YubiKey 5C');
+		// Exactly the keys that have an icon show one.
+		await waitFor(() => expect(canvasElement.querySelectorAll('img').length).toBe(2));
+		await expect(canvas.getByRole('button', { name: t('kp.enroll.add') })).toBeVisible();
+	}}
+>
+	{#snippet template()}
+		<SecurityKeys
+			client={createFakeSecondFactors({
+				keys: [
+					{
+						label: 'YubiKey 5C',
+						aaguid: 'cb69481e-8ff7-4039-93ec-0a2729a154a8',
+						provider: {
+							aaguid: 'cb69481e-8ff7-4039-93ec-0a2729a154a8',
+							name: 'YubiKey 5 Series',
+							icon_light: ICON,
+							icon_dark: ICON,
+							known: true
+						}
+					},
+					{
+						label: 'Keyring',
+						kind: 'keyring_holder_key',
+						aaguid: '6f1c5e2a-7b4d-4e8f-9a3c-2d5b8e1f0a47',
+						provider: {
+							aaguid: '6f1c5e2a-7b4d-4e8f-9a3c-2d5b8e1f0a47',
+							name: 'Authrim Keyring',
+							icon_light: ICON,
+							icon_dark: ICON,
+							known: true
+						}
+					},
+					{ label: 'Old key (no icon)' }
 				]
 			})}
 			keyring={createFakeKeyringFactor()}
@@ -216,7 +278,10 @@
 		const canvas = within(canvasElement);
 		await userEvent.click(await canvas.findByRole('button', { name: t('kp.recover.add') }));
 		const page = within(canvasElement.ownerDocument.body);
-		await page.findByText(t('kp.recover.title'));
+		// The button and the dialog's title now read the same: the dialog is the second match.
+		await waitFor(async () =>
+			expect((await page.findAllByText(t('kp.recover.title'))).length).toBeGreaterThanOrEqual(2)
+		);
 		await page.findByText(t('kp.code.label'));
 	}}
 >

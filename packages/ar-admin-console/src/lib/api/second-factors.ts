@@ -14,12 +14,15 @@ import { withCeremonyTimeout } from '#lib/api/admin-reauth.js';
 import { adminFetch, API_BASE_URL } from '#lib/api/admin-request.js';
 import { stepUpHeaders, withStepUp } from '#lib/api/admin-step-up.js';
 import { ApiError, ReleasePausedError, isReleasePause } from '#lib/api/api-error.js';
+import type { PasskeyProvider } from '#lib/api/my-passkeys.js';
 
 export interface SecondFactor {
 	id: string;
 	kind: 'webauthn_credential' | 'keyring_holder_key' | 'totp';
 	label: string | null;
 	aaguid: string | null;
+	/** The authenticator named from its AAGUID, with its icons (display only). */
+	provider?: PasskeyProvider | null;
 	created_at: number;
 	last_used_at: number | null;
 	revoked_at: number | null;

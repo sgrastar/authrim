@@ -62,6 +62,7 @@ import {
   hasAnotherAdmin,
   refuseRecoveryRequest,
 } from './my-second-factor-recovery';
+import { resolveAaguidAuthenticator } from '@authrim/ar-lib-core/webauthn/aaguid-metadata';
 
 type AdminContext = Context<{ Bindings: Env; Variables: { adminAuth?: AdminAuthContext } }>;
 type HumanSession = AdminAuthContext & { sessionId: string; sessionTenantId: string };
@@ -175,6 +176,8 @@ export function presentSecondFactor(factor: AdminSecondFactor) {
     kind: factor.kind,
     label: factor.label,
     aaguid: factor.aaguid,
+    // The authenticator named from its AAGUID, with its icons (display only, never for trust).
+    provider: resolveAaguidAuthenticator(factor.aaguid),
     created_at: factor.created_at,
     last_used_at: factor.last_used_at,
     revoked_at: factor.revoked_at,

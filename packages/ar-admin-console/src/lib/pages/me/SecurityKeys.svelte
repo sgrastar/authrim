@@ -138,8 +138,16 @@
 		return t('sk.error');
 	}
 
-	const nameOf = (key: { label: string | null }) => key.label || t('sk.unnamed');
 	const isKeyring = (key: SecondFactor) => key.kind === 'keyring_holder_key';
+	// A Keyring key is named "Keyring" when the admin gave it no name: say whose Keyring it is.
+	const nameOf = (key: SecondFactor) =>
+		isKeyring(key) && (!key.label || key.label === 'Keyring')
+			? t('kp.kind.keyring')
+			: key.label || t('sk.unnamed');
+	// The authenticator's own icon (from its AAGUID) where it has one. The card's tile is light in
+	// both themes, so the icon made for light backgrounds is the one to use.
+	const iconOf = (key: SecondFactor) =>
+		key.provider?.icon_light ?? key.provider?.icon_dark ?? undefined;
 	const isTotp = (key: SecondFactor) => key.kind === 'totp';
 	const kindIcon = (key: SecondFactor) =>
 		isKeyring(key) ? 'deviceMobile' : isTotp(key) ? 'clock' : 'key';
@@ -379,7 +387,7 @@
 			{:else}
 				<ItemGrid label={t('sk.title')}>
 					{#each activeKeys as key (key.id)}
-						<ItemCard title={nameOf(key)} icon={kindIcon(key)}>
+						<ItemCard title={nameOf(key)} icon={kindIcon(key)} image={iconOf(key)}>
 							{#snippet meta()}
 								<Badge>{t(kindLabel(key))}</Badge>
 								{#if onlyOne}<Badge tone="info">{t('sk.only')}</Badge>{/if}

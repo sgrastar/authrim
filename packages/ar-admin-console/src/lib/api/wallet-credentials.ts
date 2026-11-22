@@ -187,10 +187,16 @@ function parseCredentials(body: unknown): WalletCredential[] {
 	});
 }
 
+/**
+ * These endpoints are the signed-in administrator's own: the server accepts them only on a session
+ * of the administrator's home tenant. The tenant the console is looking at is not sent, or an
+ * admin looking at another tenant is refused (`wallet_credential_home_session_required`).
+ */
 export const httpWalletCredentials: WalletCredentialsClient & WalletCredentialManager = {
 	async listCredentials() {
 		const response = await adminFetch(`${API_BASE_URL}/api/admin/me/wallet-credentials`, {
-			credentials: 'include'
+			credentials: 'include',
+			skipTenantHeader: true
 		});
 		if (!response.ok) throw await errorFrom(response);
 		return parseCredentials(await response.json().catch(() => null));
@@ -203,7 +209,12 @@ export const httpWalletCredentials: WalletCredentialsClient & WalletCredentialMa
 			await withStepUp(async (receipt) => {
 				const response = await adminFetch(
 					`${API_BASE_URL}/api/admin/me/wallet-credentials/${encodeURIComponent(credentialId)}/revoke`,
-					{ method: 'POST', credentials: 'include', headers: stepUpHeaders(receipt) }
+					{
+						method: 'POST',
+						credentials: 'include',
+						headers: stepUpHeaders(receipt),
+						skipTenantHeader: true
+					}
 				);
 				if (response.ok) return;
 				if (response.status === 403) {
@@ -222,7 +233,8 @@ export const httpWalletCredentials: WalletCredentialsClient & WalletCredentialMa
 	async createOffer() {
 		const response = await adminFetch(`${API_BASE_URL}/api/admin/me/wallet-credentials/offers`, {
 			method: 'POST',
-			credentials: 'include'
+			credentials: 'include',
+			skipTenantHeader: true
 		});
 		if (!response.ok) throw await errorFrom(response);
 		return parseOffer(await response.json().catch(() => null));
@@ -231,7 +243,7 @@ export const httpWalletCredentials: WalletCredentialsClient & WalletCredentialMa
 	async getOfferStatus(offerId) {
 		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/me/wallet-credentials/offers/${encodeURIComponent(offerId)}`,
-			{ credentials: 'include' }
+			{ credentials: 'include', skipTenantHeader: true }
 		);
 		if (!response.ok) throw await errorFrom(response);
 		return parseStatus(await response.json().catch(() => null));

@@ -60,17 +60,17 @@ export const enKeyringPresentation = {
 	'kp.totp.error.rateLimited': 'Too many attempts. Wait a few minutes and try again.',
 	'kp.totp.error.notAllowed': 'This tenant no longer allows authenticator apps as a second factor.',
 	'kp.totp.error.unavailable': 'The code could not be checked. Try again.',
-	'kp.enroll.add': 'Add Keyring',
+	'kp.enroll.add': 'Add Authrim Keyring',
 	'kp.enroll.title': 'Add Authrim Keyring as a second factor',
 	'kp.enroll.body':
 		'Present the admin credential issued to your Keyring. Its key becomes one of your second factors.',
 	'kp.enroll.needCredential':
 		'First issue the admin credential to Keyring (My account → Authrim Keyring).',
 	'kp.enroll.added': 'Keyring was added as a second factor.',
-	'kp.recover.add': 'Request recovery with Keyring',
+	'kp.recover.add': 'Request recovery with Authrim Keyring',
 	'kp.recover.title': 'Request recovery with Authrim Keyring',
 	'kp.recover.body':
 		'Present the admin credential issued to your Keyring to file the request. You and every administrator of the tenant are emailed, and it can be completed after 24 hours. Completing it revokes all your current second factors and ends your other sessions.',
-	'kp.kind.keyring': 'Keyring',
+	'kp.kind.keyring': 'Authrim Keyring',
 	'kp.kind.securityKey': 'Security key'
 };
