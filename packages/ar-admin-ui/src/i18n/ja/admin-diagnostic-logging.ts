@@ -9,11 +9,6 @@ const adminDiagnosticLogging = {
 	admin_diagnostic_logging_unsaved_confirm:
 		'未保存の変更があります。タブを切り替えると変更は破棄されます。続行しますか？',
 	admin_diagnostic_logging_load_settings_failed: '診断ログ設定を読み込めませんでした',
-	admin_diagnostic_logging_load_storage_destinations_failed:
-		'storage destinationを読み込めませんでした',
-	admin_diagnostic_logging_update_storage_destination_failed:
-		'storage destinationを更新できませんでした',
-	admin_diagnostic_logging_storage_destination_updated: 'Storage destinationを更新しました。',
 	admin_diagnostic_logging_load_clients_failed: 'clientを読み込めませんでした',
 	admin_diagnostic_logging_update_settings_failed: '診断ログ設定を更新できませんでした',
 	admin_diagnostic_logging_start_before_end: '開始日は終了日より前にしてください。',
@@ -36,9 +31,6 @@ const adminDiagnosticLogging = {
 	admin_diagnostic_logging_r2_output: 'ログの保存',
 	admin_diagnostic_logging_r2_output_desc:
 		'診断ログを有効にすると、Setupで選んだ保存方式に従って保存します。PipelineではIcebergへ直接送信し、表示まで数分かかる場合があります。ScheduledではIcebergへの出力を確認するまでDBに保存します。',
-	admin_diagnostic_logging_r2_toggle_label: 'ログをR2へ保存',
-	admin_diagnostic_logging_r2_enabled: 'R2出力は有効です。',
-	admin_diagnostic_logging_r2_disabled: 'R2出力は無効です。',
 	admin_diagnostic_logging_sdk_ingestion: 'SDKログ取り込み',
 	admin_diagnostic_logging_sdk_ingestion_desc:
 		'client SDK（Web、Node.jsなど）からpublic ingest API経由で診断ログを受け付けます。client_id認証が必要です。',
@@ -118,10 +110,6 @@ const adminDiagnosticLogging = {
 	admin_diagnostic_logging_storage_connection: 'ログ保存先の接続',
 	admin_diagnostic_logging_storage_connection_desc:
 		'エクスポートする前に、設定済みのIcebergへの読取り接続を確認します。保存方式と認証情報はSetupで管理します。',
-	admin_diagnostic_logging_storage_destination: 'Storage destination',
-	admin_diagnostic_logging_use_runtime_binding: '下のruntime binding項目を使用',
-	admin_diagnostic_logging_r2_binding: 'R2 binding',
-	admin_diagnostic_logging_path_prefix: 'Path prefix',
 	admin_diagnostic_logging_testing: 'テスト中...',
 	admin_diagnostic_logging_test_connection: '接続をテスト',
 	admin_diagnostic_logging_export_redirect_title: '診断ログ - Redirecting',

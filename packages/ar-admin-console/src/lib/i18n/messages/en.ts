@@ -271,10 +271,7 @@ export const en = {
 	'account.signedInAs': 'Signed in as',
 	'account.signOut': 'Sign out',
 	'placeholder.title': 'This page is not in the new console yet',
-	'placeholder.body':
-		'Features are rebuilt one by one once their information design is settled. This item will take over these pages of the current Admin UI.',
-	'placeholder.legacy': 'Current pages it takes over',
-	'placeholder.new': 'New feature (no current page)',
+	'placeholder.body': 'Features are rebuilt one by one once their information design is settled.',
 	'error.notFound.title': 'Page not found',
 	'error.notFound.body': 'The URL may have changed, or this page does not exist yet.',
 	'error.generic.title': 'Something went wrong',

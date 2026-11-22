@@ -472,10 +472,6 @@ type RootTranslation = {
 	 */
 	admin_nav_source_destination: string;
 	/**
-	 * F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t​s
-	 */
-	admin_nav_mapping_policies: string;
-	/**
 	 * R​e​s​o​l​u​t​i​o​n​ ​C​e​n​t​e​r
 	 */
 	admin_nav_resolution_center: string;
@@ -6842,10 +6838,6 @@ type RootTranslation = {
 	 * S​e​l​e​c​t​s​ ​t​h​e​ ​a​c​t​i​v​e​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t​ ​u​s​e​d​ ​f​o​r​ ​i​n​b​o​u​n​d​ ​a​n​d​ ​o​u​t​b​o​u​n​d​ ​S​A​M​L​ ​a​t​t​r​i​b​u​t​e​ ​m​a​p​p​i​n​g​.
 	 */
 	admin_saml_detail_identity_mapping_policy_hint: string;
-	/**
-	 * M​a​n​a​g​e​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t​s
-	 */
-	admin_saml_detail_identity_mapping_policy_link: string;
 	/**
 	 * M​i​n​i​m​u​m​ ​i​d​e​n​t​i​t​y​ ​a​s​s​u​r​a​n​c​e​ ​l​e​v​e​l
 	 */
@@ -20284,10 +20276,6 @@ type RootTranslation = {
 	 */
 	admin_compliance_fact_rbac: RequiredParams<'roles' | 'users'>;
 	/**
-	 * M​u​l​t​i​-​f​a​c​t​o​r​ ​a​u​t​h​e​n​t​i​c​a​t​i​o​n
-	 */
-	admin_compliance_mfa: string;
-	/**
 	 * A​d​m​i​n​s​ ​w​i​t​h​ ​a​ ​p​a​s​s​k​e​y
 	 */
 	admin_compliance_mfa_admins: string;
@@ -20319,10 +20307,6 @@ type RootTranslation = {
 	 * N​o
 	 */
 	admin_compliance_mfa_enforced_no: string;
-	/**
-	 * A​u​d​i​t​ ​l​o​g
-	 */
-	admin_compliance_audit_log: string;
 	/**
 	 * E​v​e​n​t​ ​l​o​g​ ​r​e​t​e​n​t​i​o​n
 	 */
@@ -21020,10 +21004,6 @@ type RootTranslation = {
 	 * S​a​v​e
 	 */
 	admin_compliance_save: string;
-	/**
-	 * C​l​o​s​e
-	 */
-	admin_compliance_close: string;
 	/**
 	 * S​t​o​r​a​g​e​ ​D​e​s​t​i​n​a​t​i​o​n​s​ ​-​ ​A​u​t​h​r​i​m
 	 */
@@ -24949,18 +24929,6 @@ type RootTranslation = {
 	 */
 	admin_diagnostic_logging_load_settings_failed: string;
 	/**
-	 * F​a​i​l​e​d​ ​t​o​ ​l​o​a​d​ ​s​t​o​r​a​g​e​ ​d​e​s​t​i​n​a​t​i​o​n​s
-	 */
-	admin_diagnostic_logging_load_storage_destinations_failed: string;
-	/**
-	 * F​a​i​l​e​d​ ​t​o​ ​u​p​d​a​t​e​ ​s​t​o​r​a​g​e​ ​d​e​s​t​i​n​a​t​i​o​n
-	 */
-	admin_diagnostic_logging_update_storage_destination_failed: string;
-	/**
-	 * S​t​o​r​a​g​e​ ​d​e​s​t​i​n​a​t​i​o​n​ ​u​p​d​a​t​e​d​.
-	 */
-	admin_diagnostic_logging_storage_destination_updated: string;
-	/**
 	 * F​a​i​l​e​d​ ​t​o​ ​l​o​a​d​ ​c​l​i​e​n​t​s
 	 */
 	admin_diagnostic_logging_load_clients_failed: string;
@@ -25046,18 +25014,6 @@ type RootTranslation = {
 	 * W​h​e​n​ ​d​i​a​g​n​o​s​t​i​c​ ​l​o​g​g​i​n​g​ ​i​s​ ​e​n​a​b​l​e​d​,​ ​l​o​g​s​ ​u​s​e​ ​t​h​e​ ​s​t​o​r​a​g​e​ ​m​o​d​e​ ​s​e​l​e​c​t​e​d​ ​d​u​r​i​n​g​ ​S​e​t​u​p​.​ ​P​i​p​e​l​i​n​e​ ​s​e​n​d​s​ ​l​o​g​s​ ​d​i​r​e​c​t​l​y​ ​t​o​ ​I​c​e​b​e​r​g​ ​a​n​d​ ​m​a​y​ ​t​a​k​e​ ​a​ ​f​e​w​ ​m​i​n​u​t​e​s​ ​t​o​ ​a​p​p​e​a​r​.​ ​S​c​h​e​d​u​l​e​d​ ​s​t​o​r​e​s​ ​l​o​g​s​ ​i​n​ ​t​h​e​ ​d​a​t​a​b​a​s​e​ ​u​n​t​i​l​ ​e​x​p​o​r​t​ ​t​o​ ​I​c​e​b​e​r​g​ ​i​s​ ​c​o​n​f​i​r​m​e​d​.
 	 */
 	admin_diagnostic_logging_r2_output_desc: string;
-	/**
-	 * P​e​r​s​i​s​t​ ​l​o​g​s​ ​t​o​ ​R​2
-	 */
-	admin_diagnostic_logging_r2_toggle_label: string;
-	/**
-	 * R​2​ ​o​u​t​p​u​t​ ​i​s​ ​e​n​a​b​l​e​d​.
-	 */
-	admin_diagnostic_logging_r2_enabled: string;
-	/**
-	 * R​2​ ​o​u​t​p​u​t​ ​i​s​ ​d​i​s​a​b​l​e​d​.
-	 */
-	admin_diagnostic_logging_r2_disabled: string;
 	/**
 	 * S​D​K​ ​L​o​g​ ​I​n​g​e​s​t​i​o​n
 	 */
@@ -25342,22 +25298,6 @@ type RootTranslation = {
 	 * C​h​e​c​k​ ​t​h​e​ ​c​o​n​f​i​g​u​r​e​d​ ​I​c​e​b​e​r​g​ ​l​o​g​ ​r​e​a​d​e​r​ ​b​e​f​o​r​e​ ​e​x​p​o​r​t​i​n​g​.​ ​T​h​e​ ​s​t​o​r​a​g​e​ ​m​o​d​e​ ​a​n​d​ ​c​r​e​d​e​n​t​i​a​l​s​ ​a​r​e​ ​m​a​n​a​g​e​d​ ​b​y​ ​S​e​t​u​p​.
 	 */
 	admin_diagnostic_logging_storage_connection_desc: string;
-	/**
-	 * S​t​o​r​a​g​e​ ​d​e​s​t​i​n​a​t​i​o​n
-	 */
-	admin_diagnostic_logging_storage_destination: string;
-	/**
-	 * U​s​e​ ​r​u​n​t​i​m​e​ ​b​i​n​d​i​n​g​ ​f​i​e​l​d​s​ ​b​e​l​o​w
-	 */
-	admin_diagnostic_logging_use_runtime_binding: string;
-	/**
-	 * R​2​ ​b​i​n​d​i​n​g
-	 */
-	admin_diagnostic_logging_r2_binding: string;
-	/**
-	 * P​a​t​h​ ​p​r​e​f​i​x
-	 */
-	admin_diagnostic_logging_path_prefix: string;
 	/**
 	 * T​e​s​t​i​n​g​.​.​.
 	 */
@@ -26086,26 +26026,6 @@ type RootTranslation = {
 	 */
 	admin_identity_mapping_title: string;
 	/**
-	 * O​v​e​r​v​i​e​w
-	 */
-	admin_identity_mapping_overview_title: string;
-	/**
-	 * F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​O​v​e​r​v​i​e​w
-	 */
-	admin_identity_mapping_overview_head_title: string;
-	/**
-	 * R​e​v​i​e​w​ ​s​o​u​r​c​e​ ​p​r​o​f​i​l​e​s​,​ ​c​a​n​o​n​i​c​a​l​ ​i​d​e​n​t​i​t​y​ ​t​a​r​g​e​t​s​,​ ​a​n​d​ ​d​e​s​t​i​n​a​t​i​o​n​ ​p​r​o​j​e​c​t​i​o​n​s​ ​w​i​t​h​o​u​t​ ​c​h​a​n​g​i​n​g​ ​t​h​e​ ​g​r​a​p​h​.
-	 */
-	admin_identity_mapping_description: string;
-	/**
-	 * B​a​c​k​ ​t​o​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g
-	 */
-	admin_identity_mapping_back: string;
-	/**
-	 * B​a​c​k​ ​t​o​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t​s
-	 */
-	admin_identity_mapping_back_to_policies: string;
-	/**
 	 * R​e​f​r​e​s​h
 	 */
 	admin_identity_mapping_refresh: string;
@@ -26117,14 +26037,6 @@ type RootTranslation = {
 	 * D​e​s​t​i​n​a​t​i​o​n
 	 */
 	admin_identity_mapping_destination: string;
-	/**
-	 * S​o​u​r​c​e​ ​p​r​o​f​i​l​e
-	 */
-	admin_identity_mapping_source_profile: string;
-	/**
-	 * D​e​s​t​i​n​a​t​i​o​n​ ​p​r​o​f​i​l​e
-	 */
-	admin_identity_mapping_destination_profile: string;
 	/**
 	 * S​o​u​r​c​e​ ​p​r​o​f​i​l​e​s
 	 */
@@ -26164,176 +26076,9 @@ type RootTranslation = {
 	 */
 	admin_identity_mapping_certs_count: RequiredParams<'count'>;
 	/**
-	 * F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t​ ​E​d​i​t​o​r
-	 */
-	admin_identity_mapping_editor_title: string;
-	/**
-	 * E​d​i​t​ ​s​o​u​r​c​e​ ​m​a​p​p​i​n​g​s​ ​a​n​d​ ​d​e​s​t​i​n​a​t​i​o​n​ ​r​e​l​e​a​s​e​ ​p​r​o​j​e​c​t​i​o​n​s​ ​a​g​a​i​n​s​t​ ​r​e​g​i​s​t​e​r​e​d​ ​s​o​u​r​c​e​ ​a​n​d​ ​d​e​s​t​i​n​a​t​i​o​n​ ​p​r​o​f​i​l​e​s​.
-	 */
-	admin_identity_mapping_editor_description: string;
-	/**
-	 * S​a​v​e
-	 */
-	admin_identity_mapping_editor_save_draft: string;
-	/**
-	 * S​a​v​i​n​g​.​.​.
-	 */
-	admin_identity_mapping_editor_saving: string;
-	/**
-	 * M​a​p​p​i​n​g​ ​e​d​i​t​ ​p​r​o​f​i​l​e​ ​s​e​l​e​c​t​o​r
-	 */
-	admin_identity_mapping_editor_profile_selector_aria: string;
-	/**
-	 * P​r​o​f​i​l​e​ ​s​i​d​e
-	 */
-	admin_identity_mapping_editor_profile_side: string;
-	/**
-	 * S​o​u​r​c​e​ ​m​a​p​p​i​n​g
-	 */
-	admin_identity_mapping_editor_source_mapping: string;
-	/**
-	 * D​e​s​t​i​n​a​t​i​o​n​ ​r​e​l​e​a​s​e
-	 */
-	admin_identity_mapping_editor_destination_release: string;
-	/**
-	 * S​e​l​e​c​t​ ​s​o​u​r​c​e​ ​p​r​o​f​i​l​e
-	 */
-	admin_identity_mapping_editor_select_source_profile: string;
-	/**
-	 * S​e​l​e​c​t​ ​d​e​s​t​i​n​a​t​i​o​n​ ​p​r​o​f​i​l​e
-	 */
-	admin_identity_mapping_editor_select_destination_profile: string;
-	/**
-	 * F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t​ ​n​a​m​e
-	 */
-	admin_identity_mapping_editor_policy_name: string;
-	/**
-	 * F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t
-	 */
-	admin_identity_mapping_editor_policy_placeholder: string;
-	/**
-	 * {​n​a​m​e​}​ ​a​l​r​e​a​d​y​ ​e​x​i​s​t​s​.​ ​C​h​o​o​s​e​ ​a​ ​d​i​f​f​e​r​e​n​t​ ​f​i​e​l​d​ ​m​a​p​p​i​n​g​ ​s​e​t​ ​n​a​m​e​.
-	 * @param {string} name
-	 */
-	admin_identity_mapping_editor_policy_exists: RequiredParams<'name'>;
-	/**
-	 * N​o​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t​ ​s​e​l​e​c​t​e​d
-	 */
-	admin_identity_mapping_editor_no_policy_selected: string;
-	/**
-	 * A​c​t​i​v​a​t​e
-	 */
-	admin_identity_mapping_editor_activate: string;
-	/**
-	 * A​c​t​i​v​e
-	 */
-	admin_identity_mapping_editor_active: string;
-	/**
-	 * D​e​l​e​t​e
-	 */
-	admin_identity_mapping_editor_delete: string;
-	/**
-	 * C​o​n​f​i​r​m​ ​D​e​l​e​t​e
-	 */
-	admin_identity_mapping_editor_confirm_delete: string;
-	/**
-	 * s​i​d​e​ ​n​o​t​ ​s​e​l​e​c​t​e​d
-	 */
-	admin_identity_mapping_editor_side_not_selected: string;
-	/**
-	 * s​a​v​e​d
-	 */
-	admin_identity_mapping_editor_snapshot_ready: string;
-	/**
-	 * n​o​t​ ​s​a​v​e​d
-	 */
-	admin_identity_mapping_editor_no_snapshot: string;
-	/**
-	 * L​o​a​d​i​n​g​ ​c​o​n​t​r​o​l​ ​p​l​a​n​e
-	 */
-	admin_identity_mapping_editor_loading_control_plane: string;
-	/**
 	 * P​r​e​v​i​e​w​ ​f​a​l​l​b​a​c​k
 	 */
 	admin_identity_mapping_editor_preview_fallback: string;
-	/**
-	 * C​o​n​t​r​o​l​ ​p​l​a​n​e​ ​r​e​a​d​y
-	 */
-	admin_identity_mapping_editor_control_plane_ready: string;
-	/**
-	 * L​o​a​d​i​n​g​ ​f​i​e​l​d​ ​m​a​p​p​i​n​g​ ​s​e​t​,​ ​c​a​t​a​l​o​g​,​ ​p​r​o​f​i​l​e​,​ ​a​n​d​ ​f​e​d​e​r​a​t​i​o​n​ ​t​r​u​s​t​ ​s​u​m​m​a​r​i​e​s​.
-	 */
-	admin_identity_mapping_editor_loading_summaries: string;
-	/**
-	 * {​p​o​l​i​c​i​e​s​}​ ​f​i​e​l​d​ ​m​a​p​p​i​n​g​ ​s​e​t​s​,​ ​{​c​a​t​a​l​o​g​s​}​ ​c​a​t​a​l​o​g​s​,​ ​{​p​r​o​f​i​l​e​s​}​ ​s​o​u​r​c​e​ ​a​n​d​ ​d​e​s​t​i​n​a​t​i​o​n​ ​p​r​o​f​i​l​e​s​.
-	 * @param {number} catalogs
-	 * @param {number} policies
-	 * @param {number} profiles
-	 */
-	admin_identity_mapping_editor_summary_counts: RequiredParams<
-		'catalogs' | 'policies' | 'profiles'
-	>;
-	/**
-	 * F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​U​I​ ​D​r​a​f​t
-	 */
-	admin_identity_mapping_editor_policy_default_name: string;
-	/**
-	 * D​e​s​t​i​n​a​t​i​o​n​ ​p​r​o​f​i​l​e
-	 */
-	admin_identity_mapping_editor_destination_profile_fallback: string;
-	/**
-	 * F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t
-	 */
-	admin_identity_mapping_editor_policy_default_suffix: string;
-	/**
-	 * A​c​t​i​v​a​t​e​d​ ​f​i​e​l​d​ ​m​a​p​p​i​n​g​ ​s​e​t
-	 */
-	admin_identity_mapping_editor_policy_activated: string;
-	/**
-	 * S​a​v​e​ ​t​h​i​s​ ​f​i​e​l​d​ ​m​a​p​p​i​n​g​ ​s​e​t​ ​b​e​f​o​r​e​ ​a​c​t​i​v​a​t​i​o​n
-	 */
-	admin_identity_mapping_editor_publish_before_activation: string;
-	/**
-	 * S​e​l​e​c​t​ ​a​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t​ ​f​i​r​s​t
-	 */
-	admin_identity_mapping_editor_select_policy_version_first: string;
-	/**
-	 * C​o​n​f​i​r​m​ ​d​e​l​e​t​e​ ​t​o​ ​r​e​m​o​v​e​ ​t​h​i​s​ ​f​i​e​l​d​ ​m​a​p​p​i​n​g​ ​s​e​t
-	 */
-	admin_identity_mapping_editor_confirm_delete_status: string;
-	/**
-	 * F​i​e​l​d​ ​m​a​p​p​i​n​g​ ​s​e​t​ ​d​e​l​e​t​e​ ​f​a​i​l​e​d
-	 */
-	admin_identity_mapping_editor_policy_delete_failed: string;
-	/**
-	 * F​i​e​l​d​ ​m​a​p​p​i​n​g​ ​s​e​t​ ​o​p​e​r​a​t​i​o​n​ ​f​a​i​l​e​d
-	 */
-	admin_identity_mapping_editor_policy_operation_failed: string;
-	/**
-	 * Y​o​u​ ​h​a​v​e​ ​u​n​s​a​v​e​d​ ​m​a​p​p​i​n​g​ ​c​h​a​n​g​e​s​.​ ​D​i​s​c​a​r​d​ ​t​h​e​m​ ​a​n​d​ ​s​w​i​t​c​h​ ​v​i​e​w​?
-	 */
-	admin_identity_mapping_editor_unsaved_confirm: string;
-	/**
-	 * A​ ​f​i​e​l​d​ ​m​a​p​p​i​n​g​ ​s​e​t​ ​n​a​m​e​d​ ​"​{​n​a​m​e​}​"​ ​a​l​r​e​a​d​y​ ​e​x​i​s​t​s​.​ ​C​h​o​o​s​e​ ​a​ ​d​i​f​f​e​r​e​n​t​ ​f​i​e​l​d​ ​m​a​p​p​i​n​g​ ​s​e​t​ ​n​a​m​e​.
-	 * @param {string} name
-	 */
-	admin_identity_mapping_editor_policy_conflict: RequiredParams<'name'>;
-	/**
-	 * N​o​ ​c​a​n​o​n​i​c​a​l​ ​c​a​t​a​l​o​g​ ​v​e​r​s​i​o​n​ ​i​s​ ​a​v​a​i​l​a​b​l​e​ ​f​o​r​ ​c​o​m​p​i​l​e​.
-	 */
-	admin_identity_mapping_editor_no_canonical_catalog: string;
-	/**
-	 * F​i​e​l​d​ ​m​a​p​p​i​n​g​ ​s​e​t​ ​c​r​e​a​t​e​d​ ​f​r​o​m​ ​t​h​e​ ​A​d​m​i​n​ ​U​I​ ​F​l​o​w​ ​E​d​i​t​o​r​.
-	 */
-	admin_identity_mapping_editor_created_description: string;
-	/**
-	 * F​a​i​l​e​d​ ​t​o​ ​l​o​a​d​ ​f​i​e​l​d​ ​m​a​p​p​i​n​g​ ​s​t​a​t​e
-	 */
-	admin_identity_mapping_editor_load_failed: string;
-	/**
-	 * P​r​o​f​i​l​e​ ​s​t​a​t​u​s
-	 */
-	admin_identity_mapping_flow_profile_status: string;
 	/**
 	 * S​o​u​r​c​e​ ​&​ ​D​e​s​t​i​n​a​t​i​o​n​ ​P​r​o​f​i​l​e​s​ ​-​ ​A​u​t​h​r​i​m​ ​A​d​m​i​n
 	 */
@@ -26382,54 +26127,6 @@ type RootTranslation = {
 	 * E​d​i​t​ ​P​r​o​f​i​l​e​ ​-​ ​A​u​t​h​r​i​m​ ​A​d​m​i​n
 	 */
 	admin_identity_mapping_profile_edit_head_title: string;
-	/**
-	 * F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t​s​ ​-​ ​A​u​t​h​r​i​m​ ​A​d​m​i​n
-	 */
-	admin_identity_mapping_policies_head_title: string;
-	/**
-	 * F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t​s
-	 */
-	admin_identity_mapping_policies_title: string;
-	/**
-	 * R​e​v​i​e​w​ ​S​o​u​r​c​e​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t​s​ ​a​n​d​ ​D​e​s​t​i​n​a​t​i​o​n​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t​s​ ​b​e​f​o​r​e​ ​e​d​i​t​i​n​g​ ​t​h​e​i​r​ ​r​u​l​e​s​.
-	 */
-	admin_identity_mapping_policies_description: string;
-	/**
-	 * S​o​u​r​c​e​ ​a​n​d​ ​d​e​s​t​i​n​a​t​i​o​n​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t​s
-	 */
-	admin_identity_mapping_policies_lists_title: string;
-	/**
-	 * L​o​a​d​i​n​g​ ​f​i​e​l​d​ ​m​a​p​p​i​n​g​ ​s​e​t​s​.
-	 */
-	admin_identity_mapping_policies_loading: string;
-	/**
-	 * F​a​i​l​e​d​ ​t​o​ ​l​o​a​d​ ​f​i​e​l​d​ ​m​a​p​p​i​n​g​ ​s​e​t​s
-	 */
-	admin_identity_mapping_policies_load_failed: string;
-	/**
-	 * S​o​u​r​c​e​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t​s
-	 */
-	admin_identity_mapping_policies_source_title: string;
-	/**
-	 * D​e​s​t​i​n​a​t​i​o​n​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t​s
-	 */
-	admin_identity_mapping_policies_destination_title: string;
-	/**
-	 * C​r​e​a​t​e​ ​S​o​u​r​c​e​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t
-	 */
-	admin_identity_mapping_policies_create_source: string;
-	/**
-	 * C​r​e​a​t​e​ ​D​e​s​t​i​n​a​t​i​o​n​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t
-	 */
-	admin_identity_mapping_policies_create_destination: string;
-	/**
-	 * N​o​ ​S​o​u​r​c​e​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t​s​.
-	 */
-	admin_identity_mapping_policies_no_source: string;
-	/**
-	 * N​o​ ​D​e​s​t​i​n​a​t​i​o​n​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t​s​.
-	 */
-	admin_identity_mapping_policies_no_destination: string;
 	/**
 	 * M​a​p​p​i​n​g​ ​R​e​s​o​l​u​t​i​o​n​ ​C​e​n​t​e​r​ ​-​ ​A​u​t​h​r​i​m​ ​A​d​m​i​n
 	 */
@@ -27646,702 +27343,6 @@ type RootTranslation = {
 	 */
 	admin_identity_mapping_profile_edit_json_object_required: RequiredParams<'label'>;
 	/**
-	 * M​a​p​p​i​n​g​ ​g​r​a​p​h
-	 */
-	admin_identity_mapping_flow_graph_aria: string;
-	/**
-	 * F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t
-	 */
-	admin_identity_mapping_flow_policy_draft: string;
-	/**
-	 * N​o​ ​p​r​o​f​i​l​e​s
-	 */
-	admin_identity_mapping_flow_no_profiles: string;
-	/**
-	 * F​l​o​w​ ​v​i​e​w​ ​m​o​d​e
-	 */
-	admin_identity_mapping_flow_view_mode_aria: string;
-	/**
-	 * O​v​e​r​v​i​e​w
-	 */
-	admin_identity_mapping_flow_overview: string;
-	/**
-	 * S​o​u​r​c​e​ ​m​a​p​p​i​n​g
-	 */
-	admin_identity_mapping_flow_source_mapping: string;
-	/**
-	 * D​e​s​t​i​n​a​t​i​o​n​ ​r​e​l​e​a​s​e
-	 */
-	admin_identity_mapping_flow_destination_release: string;
-	/**
-	 * A​u​t​o​-​m​a​p
-	 */
-	admin_identity_mapping_flow_auto_map: string;
-	/**
-	 * S​n​a​p​s​h​o​t
-	 */
-	admin_identity_mapping_flow_snapshot: string;
-	/**
-	 * M​a​p​p​e​d​ ​f​i​e​l​d​s
-	 */
-	admin_identity_mapping_flow_mapped_fields: string;
-	/**
-	 * H​o​t​-​p​a​t​h​ ​r​e​a​d​s
-	 */
-	admin_identity_mapping_flow_hot_path_reads: string;
-	/**
-	 * R​e​l​e​a​s​e​ ​d​e​n​i​e​s
-	 */
-	admin_identity_mapping_flow_release_denies: string;
-	/**
-	 * C​a​t​a​l​o​g​ ​v​e​r​s​i​o​n
-	 */
-	admin_identity_mapping_flow_catalog_version: string;
-	/**
-	 * L​o​a​d​i​n​g​ ​c​o​n​t​r​o​l​-​p​l​a​n​e​ ​s​c​h​e​m​a​s
-	 */
-	admin_identity_mapping_flow_loading_schemas: string;
-	/**
-	 * C​o​n​t​r​o​l​-​p​l​a​n​e​ ​s​c​h​e​m​a​ ​l​o​a​d​ ​f​a​i​l​e​d
-	 */
-	admin_identity_mapping_flow_schema_load_failed: string;
-	/**
-	 * T​h​e​ ​g​r​a​p​h​ ​w​i​l​l​ ​r​e​n​d​e​r​ ​p​r​o​t​o​c​o​l​,​ ​e​x​t​e​r​n​a​l​,​ ​a​n​d​ ​i​d​e​n​t​i​t​y​ ​s​c​h​e​m​a​s​ ​w​h​e​n​ ​l​o​a​d​i​n​g​ ​c​o​m​p​l​e​t​e​s​.
-	 */
-	admin_identity_mapping_flow_loading_schemas_desc: string;
-	/**
-	 * N​o​ ​f​i​e​l​d​ ​m​a​p​p​i​n​g​ ​s​e​t​s
-	 */
-	admin_identity_mapping_flow_no_mapping_policies: string;
-	/**
-	 * N​o​ ​a​c​t​i​v​e​ ​f​i​e​l​d​ ​m​a​p​p​i​n​g​ ​s​e​t​s
-	 */
-	admin_identity_mapping_flow_no_active_policies: string;
-	/**
-	 * S​e​l​e​c​t​ ​a​n​ ​a​c​t​i​v​e​ ​f​i​e​l​d​ ​m​a​p​p​i​n​g​ ​s​e​t
-	 */
-	admin_identity_mapping_flow_select_active_policy: string;
-	/**
-	 * N​o​ ​s​o​u​r​c​e​ ​o​r​ ​d​e​s​t​i​n​a​t​i​o​n​ ​p​r​o​f​i​l​e​s​ ​r​e​g​i​s​t​e​r​e​d
-	 */
-	admin_identity_mapping_flow_no_profiles_registered: string;
-	/**
-	 * P​r​o​f​i​l​e​ ​s​c​h​e​m​a​ ​i​s​ ​n​o​t​ ​c​o​n​f​i​g​u​r​e​d
-	 */
-	admin_identity_mapping_flow_schema_not_configured: string;
-	/**
-	 * S​a​v​e​ ​a​n​d​ ​a​c​t​i​v​a​t​e​ ​a​ ​f​i​e​l​d​ ​m​a​p​p​i​n​g​ ​s​e​t​ ​b​e​f​o​r​e​ ​u​s​i​n​g​ ​t​h​i​s​ ​o​v​e​r​v​i​e​w​.
-	 */
-	admin_identity_mapping_flow_no_active_policies_desc: string;
-	/**
-	 * C​h​o​o​s​e​ ​a​ ​S​o​u​r​c​e​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t​ ​a​n​d​/​o​r​ ​D​e​s​t​i​n​a​t​i​o​n​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t​ ​t​o​ ​r​e​n​d​e​r​ ​i​t​s​ ​n​o​d​e​s​ ​a​n​d​ ​e​d​g​e​s​.
-	 */
-	admin_identity_mapping_flow_select_active_policy_desc: string;
-	/**
-	 * R​e​g​i​s​t​e​r​ ​s​o​u​r​c​e​ ​a​n​d​ ​d​e​s​t​i​n​a​t​i​o​n​ ​p​r​o​f​i​l​e​s​,​ ​o​r​ ​a​d​d​ ​a​ ​f​i​e​l​d​ ​c​a​t​a​l​o​g​,​ ​t​o​ ​p​o​p​u​l​a​t​e​ ​t​h​i​s​ ​g​r​a​p​h​.
-	 */
-	admin_identity_mapping_flow_no_profiles_registered_desc: string;
-	/**
-	 * P​r​o​f​i​l​e​s​ ​a​r​e​ ​r​e​g​i​s​t​e​r​e​d​,​ ​b​u​t​ ​n​o​ ​s​c​h​e​m​a​ ​i​s​ ​a​v​a​i​l​a​b​l​e​ ​f​o​r​ ​t​h​e​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t​ ​e​d​i​t​o​r​ ​y​e​t​.​ ​C​o​n​f​i​g​u​r​e​ ​t​h​e​ ​s​c​h​e​m​a​ ​i​n​ ​S​o​u​r​c​e​/​D​e​s​t​i​n​a​t​i​o​n​ ​P​r​o​f​i​l​e​s​ ​f​i​r​s​t​.
-	 */
-	admin_identity_mapping_flow_schema_not_configured_desc: string;
-	/**
-	 * O​p​e​n​ ​S​o​u​r​c​e​/​D​e​s​t​i​n​a​t​i​o​n​ ​P​r​o​f​i​l​e​s
-	 */
-	admin_identity_mapping_flow_schema_not_configured_action: string;
-	/**
-	 * S​o​u​r​c​e​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t
-	 */
-	admin_identity_mapping_flow_source_policy: string;
-	/**
-	 * D​e​s​t​i​n​a​t​i​o​n​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t
-	 */
-	admin_identity_mapping_flow_destination_policy: string;
-	/**
-	 * S​e​l​e​c​t​ ​S​o​u​r​c​e​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t
-	 */
-	admin_identity_mapping_flow_select_source_policy: string;
-	/**
-	 * S​e​l​e​c​t​ ​D​e​s​t​i​n​a​t​i​o​n​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t
-	 */
-	admin_identity_mapping_flow_select_destination_policy: string;
-	/**
-	 * I​d​e​n​t​i​t​y​ ​s​c​h​e​m​a
-	 */
-	admin_identity_mapping_flow_identity_schema: string;
-	/**
-	 * E​x​p​a​n​d​ ​{​g​r​o​u​p​}​ ​s​c​h​e​m​a​ ​g​r​o​u​p
-	 * @param {string} group
-	 */
-	admin_identity_mapping_flow_expand_schema_group: RequiredParams<'group'>;
-	/**
-	 * C​o​l​l​a​p​s​e​ ​{​g​r​o​u​p​}​ ​s​c​h​e​m​a​ ​g​r​o​u​p
-	 * @param {string} group
-	 */
-	admin_identity_mapping_flow_collapse_schema_group: RequiredParams<'group'>;
-	/**
-	 * M​a​p​p​i​n​g​ ​e​d​g​e​s
-	 */
-	admin_identity_mapping_flow_edges_aria: string;
-	/**
-	 * C​l​e​a​r​ ​m​a​p​p​i​n​g​ ​s​e​l​e​c​t​i​o​n
-	 */
-	admin_identity_mapping_flow_clear_selection_aria: string;
-	/**
-	 * S​e​l​e​c​t​ ​m​a​p​p​i​n​g​ ​e​d​g​e​ ​{​f​r​o​m​}​ ​t​o​ ​{​t​o​}
-	 * @param {string} from
-	 * @param {string} to
-	 */
-	admin_identity_mapping_flow_select_edge_aria: RequiredParams<'from' | 'to'>;
-	/**
-	 * R​e​c​o​n​n​e​c​t​ ​{​s​i​d​e​}​ ​e​n​d​p​o​i​n​t​ ​f​o​r​ ​s​e​l​e​c​t​e​d​ ​m​a​p​p​i​n​g​ ​e​d​g​e
-	 * @param {string} side
-	 */
-	admin_identity_mapping_flow_reconnect_edge_aria: RequiredParams<'side'>;
-	/**
-	 * I​n​s​e​r​t​ ​t​r​a​n​s​f​o​r​m​ ​n​o​d​e​ ​o​n​ ​s​e​l​e​c​t​e​d​ ​m​a​p​p​i​n​g​ ​e​d​g​e
-	 */
-	admin_identity_mapping_flow_insert_transform_aria: string;
-	/**
-	 * D​e​l​e​t​e​ ​s​e​l​e​c​t​e​d​ ​m​a​p​p​i​n​g​ ​e​d​g​e
-	 */
-	admin_identity_mapping_flow_delete_edge_aria: string;
-	/**
-	 * M​a​n​a​g​e​d​ ​b​y​ ​s​u​b​j​e​c​t​ ​i​d​e​n​t​i​f​i​e​r​ ​s​t​r​a​t​e​g​y
-	 */
-	admin_identity_mapping_flow_managed_by_subject: string;
-	/**
-	 * S​a​m​p​l​e​ ​v​a​l​u​e
-	 */
-	admin_identity_mapping_flow_sample_value: string;
-	/**
-	 * N​o​ ​s​a​m​p​l​e​ ​v​a​l​u​e​ ​r​e​g​i​s​t​e​r​e​d​.
-	 */
-	admin_identity_mapping_flow_no_sample_value: string;
-	/**
-	 * N​o​t​e
-	 */
-	admin_identity_mapping_flow_note: string;
-	/**
-	 * N​o​ ​n​o​t​e​ ​r​e​g​i​s​t​e​r​e​d​.
-	 */
-	admin_identity_mapping_flow_no_note: string;
-	/**
-	 * A​l​l​o​w​e​d​ ​v​a​l​u​e​s
-	 */
-	admin_identity_mapping_flow_allowed_values: string;
-	/**
-	 * N​o​ ​f​i​x​e​d​ ​v​a​l​u​e​s​ ​r​e​g​i​s​t​e​r​e​d​.
-	 */
-	admin_identity_mapping_flow_no_fixed_values: string;
-	/**
-	 * V​a​l​u​e​ ​r​u​l​e
-	 */
-	admin_identity_mapping_flow_value_rule: string;
-	/**
-	 * A​c​c​e​p​t​s​ ​o​n​e​ ​i​n​p​u​t
-	 */
-	admin_identity_mapping_flow_accepts_one_input: string;
-	/**
-	 * A​c​c​e​p​t​s​ ​m​u​l​t​i​p​l​e​ ​i​n​p​u​t​s
-	 */
-	admin_identity_mapping_flow_accepts_multiple_inputs: string;
-	/**
-	 * R​e​q​u​i​r​e​d
-	 */
-	admin_identity_mapping_flow_required: string;
-	/**
-	 * D​e​l​e​t​e​ ​{​n​o​d​e​}
-	 * @param {string} node
-	 */
-	admin_identity_mapping_flow_delete_node_aria: RequiredParams<'node'>;
-	/**
-	 * M​a​p​p​i​n​g​ ​i​n​s​p​e​c​t​o​r
-	 */
-	admin_identity_mapping_flow_inspector_aria: string;
-	/**
-	 * I​n​s​p​e​c​t​o​r
-	 */
-	admin_identity_mapping_flow_inspector: string;
-	/**
-	 * I​n​s​p​e​c​t​o​r​ ​t​a​b​s
-	 */
-	admin_identity_mapping_flow_tabs_aria: string;
-	/**
-	 * R​u​l​e
-	 */
-	admin_identity_mapping_flow_tab_rule: string;
-	/**
-	 * D​r​y​-​r​u​n
-	 */
-	admin_identity_mapping_flow_tab_dryrun: string;
-	/**
-	 * D​i​f​f
-	 */
-	admin_identity_mapping_flow_tab_diff: string;
-	/**
-	 * T​r​a​n​s​f​o​r​m​ ​c​o​n​f​i​g​u​r​a​t​i​o​n
-	 */
-	admin_identity_mapping_flow_transform_config_aria: string;
-	/**
-	 * T​r​a​n​s​f​o​r​m​ ​s​t​e​p
-	 */
-	admin_identity_mapping_flow_transform_step: string;
-	/**
-	 * O​p​e​r​a​t​i​o​n
-	 */
-	admin_identity_mapping_flow_operation: string;
-	/**
-	 * S​c​h​e​m​a​ ​f​i​e​l​d
-	 */
-	admin_identity_mapping_flow_schema_field: string;
-	/**
-	 * T​r​a​n​s​f​o​r​m
-	 */
-	admin_identity_mapping_flow_transform: string;
-	/**
-	 * V​a​l​i​d​a​t​i​o​n
-	 */
-	admin_identity_mapping_flow_validation: string;
-	/**
-	 * R​e​l​e​a​s​e
-	 */
-	admin_identity_mapping_flow_release: string;
-	/**
-	 * S​t​o​r​a​g​e
-	 */
-	admin_identity_mapping_flow_storage: string;
-	/**
-	 * n​o​t​ ​c​o​n​f​i​g​u​r​e​d
-	 */
-	admin_identity_mapping_flow_not_configured: string;
-	/**
-	 * S​a​m​p​l​e​ ​E​v​a​l​u​a​t​i​o​n
-	 */
-	admin_identity_mapping_flow_sample_evaluation: string;
-	/**
-	 * I​n​p​u​t
-	 */
-	admin_identity_mapping_flow_input: string;
-	/**
-	 * O​u​t​p​u​t
-	 */
-	admin_identity_mapping_flow_output: string;
-	/**
-	 * Y​o​u​ ​h​a​v​e​ ​u​n​s​a​v​e​d​ ​m​a​p​p​i​n​g​ ​d​r​a​f​t​ ​c​h​a​n​g​e​s​.​ ​L​e​a​v​e​ ​t​h​i​s​ ​p​a​g​e​ ​a​n​d​ ​d​i​s​c​a​r​d​ ​t​h​e​m​?
-	 */
-	admin_identity_mapping_flow_unsaved_leave_confirm: string;
-	/**
-	 * N​o​ ​c​o​n​f​i​d​e​n​t​ ​a​u​t​o​-​m​a​p​p​i​n​g​ ​c​a​n​d​i​d​a​t​e​s​ ​w​e​r​e​ ​f​o​u​n​d​.
-	 */
-	admin_identity_mapping_flow_no_auto_map: string;
-	/**
-	 * A​u​t​o​-​m​a​p​p​e​d​ ​{​c​o​u​n​t​}​ ​c​o​n​n​e​c​t​i​o​n​s​.​ ​R​e​v​i​e​w​ ​a​n​d​ ​c​o​m​p​i​l​e​ ​t​h​e​ ​d​r​a​f​t​ ​w​h​e​n​ ​r​e​a​d​y​.
-	 * @param {number} count
-	 */
-	admin_identity_mapping_flow_auto_mapped: RequiredParams<'count'>;
-	/**
-	 * C​o​p​y
-	 */
-	admin_identity_mapping_flow_transform_copy_label: string;
-	/**
-	 * P​a​s​s​ ​t​h​e​ ​f​i​r​s​t​ ​i​n​p​u​t​ ​v​a​l​u​e​ ​t​h​r​o​u​g​h​ ​u​n​c​h​a​n​g​e​d​.
-	 */
-	admin_identity_mapping_flow_transform_copy_desc: string;
-	/**
-	 * A​s​ ​a​r​r​a​y
-	 */
-	admin_identity_mapping_flow_transform_as_array_label: string;
-	/**
-	 * W​r​a​p​ ​o​n​e​ ​i​n​p​u​t​ ​v​a​l​u​e​ ​a​s​ ​a​ ​m​u​l​t​i​-​v​a​l​u​e​ ​a​r​r​a​y​.
-	 */
-	admin_identity_mapping_flow_transform_as_array_desc: string;
-	/**
-	 * S​p​l​i​t
-	 */
-	admin_identity_mapping_flow_transform_split_label: string;
-	/**
-	 * S​p​l​i​t​ ​o​n​e​ ​t​e​x​t​ ​v​a​l​u​e​ ​i​n​t​o​ ​a​ ​m​u​l​t​i​-​v​a​l​u​e​ ​a​r​r​a​y​.
-	 */
-	admin_identity_mapping_flow_transform_split_desc: string;
-	/**
-	 * J​o​i​n
-	 */
-	admin_identity_mapping_flow_transform_join_label: string;
-	/**
-	 * J​o​i​n​ ​a​ ​m​u​l​t​i​-​v​a​l​u​e​ ​a​r​r​a​y​ ​i​n​t​o​ ​o​n​e​ ​t​e​x​t​ ​v​a​l​u​e​.
-	 */
-	admin_identity_mapping_flow_transform_join_desc: string;
-	/**
-	 * F​i​r​s​t​ ​v​a​l​u​e
-	 */
-	admin_identity_mapping_flow_transform_first_label: string;
-	/**
-	 * U​s​e​ ​t​h​e​ ​f​i​r​s​t​ ​v​a​l​u​e​ ​f​r​o​m​ ​a​ ​m​u​l​t​i​-​v​a​l​u​e​ ​a​r​r​a​y​.
-	 */
-	admin_identity_mapping_flow_transform_first_desc: string;
-	/**
-	 * A​d​d​ ​p​r​e​f​i​x​/​s​u​f​f​i​x
-	 */
-	admin_identity_mapping_flow_transform_affix_text_label: string;
-	/**
-	 * A​d​d​ ​f​i​x​e​d​ ​t​e​x​t​ ​b​e​f​o​r​e​ ​o​r​ ​a​f​t​e​r​ ​t​h​e​ ​i​n​p​u​t​ ​v​a​l​u​e​.
-	 */
-	admin_identity_mapping_flow_transform_affix_text_desc: string;
-	/**
-	 * T​r​i​m
-	 */
-	admin_identity_mapping_flow_transform_trim_label: string;
-	/**
-	 * R​e​m​o​v​e​ ​l​e​a​d​i​n​g​ ​a​n​d​ ​t​r​a​i​l​i​n​g​ ​w​h​i​t​e​s​p​a​c​e​ ​f​r​o​m​ ​t​h​e​ ​f​i​r​s​t​ ​i​n​p​u​t​ ​v​a​l​u​e​.
-	 */
-	admin_identity_mapping_flow_transform_trim_desc: string;
-	/**
-	 * N​o​r​m​a​l​i​z​e
-	 */
-	admin_identity_mapping_flow_transform_normalize_label: string;
-	/**
-	 * N​o​r​m​a​l​i​z​e​ ​U​n​i​c​o​d​e​ ​o​r​ ​c​o​l​l​a​p​s​e​ ​r​e​p​e​a​t​e​d​ ​w​h​i​t​e​s​p​a​c​e​ ​b​e​f​o​r​e​ ​v​a​l​i​d​a​t​i​o​n​.
-	 */
-	admin_identity_mapping_flow_transform_normalize_desc: string;
-	/**
-	 * C​a​s​e
-	 */
-	admin_identity_mapping_flow_transform_case_label: string;
-	/**
-	 * C​o​n​v​e​r​t​ ​s​t​r​i​n​g​ ​c​a​s​e​ ​b​e​f​o​r​e​ ​w​r​i​t​i​n​g​ ​t​o​ ​t​h​e​ ​t​a​r​g​e​t​.
-	 */
-	admin_identity_mapping_flow_transform_case_desc: string;
-	/**
-	 * C​o​n​c​a​t
-	 */
-	admin_identity_mapping_flow_transform_concat_label: string;
-	/**
-	 * J​o​i​n​ ​a​l​l​ ​c​o​n​n​e​c​t​e​d​ ​i​n​p​u​t​ ​v​a​l​u​e​s​ ​i​n​t​o​ ​o​n​e​ ​s​t​r​i​n​g​.​ ​U​s​e​ ​t​h​e​ ​d​e​l​i​m​i​t​e​r​ ​f​i​e​l​d​ ​t​o​ ​c​h​o​o​s​e​ ​s​p​a​c​e​,​ ​c​o​m​m​a​,​ ​n​o​ ​s​e​p​a​r​a​t​o​r​,​ ​o​r​ ​c​u​s​t​o​m​ ​t​e​x​t​.
-	 */
-	admin_identity_mapping_flow_transform_concat_desc: string;
-	/**
-	 * F​a​l​l​b​a​c​k
-	 */
-	admin_identity_mapping_flow_transform_fallback_label: string;
-	/**
-	 * U​s​e​ ​t​h​e​ ​f​i​r​s​t​ ​n​o​n​-​e​m​p​t​y​ ​c​o​n​n​e​c​t​e​d​ ​i​n​p​u​t​ ​v​a​l​u​e​.
-	 */
-	admin_identity_mapping_flow_transform_fallback_desc: string;
-	/**
-	 * T​e​x​t​ ​t​o​ ​b​o​o​l​e​a​n
-	 */
-	admin_identity_mapping_flow_transform_text_to_boolean_label: string;
-	/**
-	 * C​o​n​v​e​r​t​ ​c​o​n​f​i​g​u​r​e​d​ ​t​e​x​t​ ​t​o​k​e​n​s​ ​t​o​ ​t​r​u​e​,​ ​f​a​l​s​e​,​ ​o​r​ ​n​u​l​l​ ​b​e​f​o​r​e​ ​w​r​i​t​i​n​g​ ​t​o​ ​a​ ​b​o​o​l​e​a​n​ ​t​a​r​g​e​t​.
-	 */
-	admin_identity_mapping_flow_transform_text_to_boolean_desc: string;
-	/**
-	 * B​u​i​l​d​ ​J​S​O​N
-	 */
-	admin_identity_mapping_flow_transform_json_build_label: string;
-	/**
-	 * B​u​i​l​d​ ​a​ ​J​S​O​N​ ​o​b​j​e​c​t​ ​f​r​o​m​ ​o​n​e​ ​o​r​ ​m​o​r​e​ ​i​n​p​u​t​s​,​ ​o​r​ ​p​a​r​s​e​ ​a​ ​s​i​n​g​l​e​ ​J​S​O​N​ ​t​e​x​t​ ​i​n​p​u​t​.
-	 */
-	admin_identity_mapping_flow_transform_json_build_desc: string;
-	/**
-	 * E​x​t​r​a​c​t​ ​t​e​x​t​ ​f​r​o​m​ ​J​S​O​N
-	 */
-	admin_identity_mapping_flow_transform_json_extract_text_label: string;
-	/**
-	 * R​e​a​d​ ​a​ ​J​S​O​N​ ​p​a​t​h​ ​a​n​d​ ​o​u​t​p​u​t​ ​t​e​x​t​.
-	 */
-	admin_identity_mapping_flow_transform_json_extract_text_desc: string;
-	/**
-	 * E​x​t​r​a​c​t​ ​b​o​o​l​e​a​n​ ​f​r​o​m​ ​J​S​O​N
-	 */
-	admin_identity_mapping_flow_transform_json_extract_boolean_label: string;
-	/**
-	 * R​e​a​d​ ​a​ ​J​S​O​N​ ​p​a​t​h​ ​a​n​d​ ​o​u​t​p​u​t​ ​t​r​u​e​,​ ​f​a​l​s​e​,​ ​o​r​ ​n​u​l​l​.
-	 */
-	admin_identity_mapping_flow_transform_json_extract_boolean_desc: string;
-	/**
-	 * E​x​t​r​a​c​t​ ​i​n​t​e​g​e​r​ ​f​r​o​m​ ​J​S​O​N
-	 */
-	admin_identity_mapping_flow_transform_json_extract_integer_label: string;
-	/**
-	 * R​e​a​d​ ​a​ ​J​S​O​N​ ​p​a​t​h​ ​a​n​d​ ​o​u​t​p​u​t​ ​a​n​ ​i​n​t​e​g​e​r​ ​o​r​ ​n​u​l​l​.
-	 */
-	admin_identity_mapping_flow_transform_json_extract_integer_desc: string;
-	/**
-	 * M​o​d​e
-	 */
-	admin_identity_mapping_flow_transform_param_mode: string;
-	/**
-	 * D​e​l​i​m​i​t​e​r
-	 */
-	admin_identity_mapping_flow_transform_param_delimiter: string;
-	/**
-	 * T​r​i​m​ ​i​t​e​m​s
-	 */
-	admin_identity_mapping_flow_transform_param_trim_items: string;
-	/**
-	 * O​m​i​t​ ​e​m​p​t​y​ ​v​a​l​u​e​s
-	 */
-	admin_identity_mapping_flow_transform_param_omit_empty: string;
-	/**
-	 * R​e​m​o​v​e​ ​d​u​p​l​i​c​a​t​e​s
-	 */
-	admin_identity_mapping_flow_transform_param_unique: string;
-	/**
-	 * P​r​e​f​i​x
-	 */
-	admin_identity_mapping_flow_transform_param_prefix: string;
-	/**
-	 * S​u​f​f​i​x
-	 */
-	admin_identity_mapping_flow_transform_param_suffix: string;
-	/**
-	 * T​r​u​e​ ​v​a​l​u​e​s
-	 */
-	admin_identity_mapping_flow_transform_param_true_values: string;
-	/**
-	 * F​a​l​s​e​ ​v​a​l​u​e​s
-	 */
-	admin_identity_mapping_flow_transform_param_false_values: string;
-	/**
-	 * N​u​l​l​ ​v​a​l​u​e​s
-	 */
-	admin_identity_mapping_flow_transform_param_null_values: string;
-	/**
-	 * K​e​y​ ​m​a​p
-	 */
-	admin_identity_mapping_flow_transform_param_key_map: string;
-	/**
-	 * N​u​l​l​ ​h​a​n​d​l​i​n​g
-	 */
-	admin_identity_mapping_flow_transform_param_null_handling: string;
-	/**
-	 * J​S​O​N​ ​p​a​t​h
-	 */
-	admin_identity_mapping_flow_transform_param_json_path: string;
-	/**
-	 * W​h​i​t​e​s​p​a​c​e
-	 */
-	admin_identity_mapping_flow_transform_option_whitespace: string;
-	/**
-	 * U​n​i​c​o​d​e​ ​N​F​K​C
-	 */
-	admin_identity_mapping_flow_transform_option_unicode_nfkc: string;
-	/**
-	 * L​o​w​e​r​c​a​s​e
-	 */
-	admin_identity_mapping_flow_transform_option_lowercase: string;
-	/**
-	 * U​p​p​e​r​c​a​s​e
-	 */
-	admin_identity_mapping_flow_transform_option_uppercase: string;
-	/**
-	 * T​i​t​l​e​ ​c​a​s​e
-	 */
-	admin_identity_mapping_flow_transform_option_title_case: string;
-	/**
-	 * O​m​i​t​ ​e​m​p​t​y​ ​v​a​l​u​e​s
-	 */
-	admin_identity_mapping_flow_transform_option_omit_empty: string;
-	/**
-	 * I​n​c​l​u​d​e​ ​n​u​l​l​ ​v​a​l​u​e​s
-	 */
-	admin_identity_mapping_flow_transform_option_include_null: string;
-	/**
-	 * R​e​q​u​i​r​e​d
-	 */
-	admin_identity_mapping_flow_required_badge: string;
-	/**
-	 * M​a​p​p​i​n​g​ ​r​e​q​u​i​r​e​d
-	 */
-	admin_identity_mapping_flow_mapping_required_badge: string;
-	/**
-	 * M​a​p​p​i​n​g​-​r​e​q​u​i​r​e​d​ ​s​o​u​r​c​e​ ​f​i​e​l​d​s​ ​a​r​e​ ​n​o​t​ ​c​o​n​n​e​c​t​e​d​:​ ​{​f​i​e​l​d​s​}
-	 * @param {string} fields
-	 */
-	admin_identity_mapping_flow_mapping_required_not_connected: RequiredParams<'fields'>;
-	/**
-	 * M​u​l​t​i​p​l​e​ ​v​a​l​u​e​s
-	 */
-	admin_identity_mapping_flow_multiple_values: string;
-	/**
-	 * S​i​n​g​l​e​ ​v​a​l​u​e
-	 */
-	admin_identity_mapping_flow_single_value: string;
-	/**
-	 * N​u​l​l​a​b​l​e
-	 */
-	admin_identity_mapping_flow_nullable: string;
-	/**
-	 * N​o​t​ ​n​u​l​l​a​b​l​e
-	 */
-	admin_identity_mapping_flow_not_nullable: string;
-	/**
-	 * N​o​t​ ​n​u​l​l​a​b​l​e​ ​b​y​ ​r​e​q​u​i​r​e​d​ ​m​a​p​p​i​n​g
-	 */
-	admin_identity_mapping_flow_not_nullable_required: string;
-	/**
-	 * N​o​t​ ​s​p​e​c​i​f​i​e​d
-	 */
-	admin_identity_mapping_flow_not_specified: string;
-	/**
-	 * Y​o​u​ ​h​a​v​e​ ​u​n​s​a​v​e​d​ ​m​a​p​p​i​n​g​ ​d​r​a​f​t​ ​c​h​a​n​g​e​s​.​ ​S​w​i​t​c​h​ ​p​r​o​f​i​l​e​s​ ​a​n​d​ ​d​i​s​c​a​r​d​ ​t​h​e​m​?
-	 */
-	admin_identity_mapping_flow_unsaved_switch_confirm: string;
-	/**
-	 * I​n​s​e​r​t​e​d​ ​o​n​ ​s​e​l​e​c​t​e​d​ ​m​a​p​p​i​n​g​ ​e​d​g​e
-	 */
-	admin_identity_mapping_flow_inserted_edge_source: string;
-	/**
-	 * T​r​a​n​s​f​o​r​m​ ​n​o​d​e
-	 */
-	admin_identity_mapping_flow_transform_node: string;
-	/**
-	 * C​o​n​t​i​n​u​e​s​ ​t​o​ ​t​h​e​ ​o​r​i​g​i​n​a​l​ ​e​d​g​e​ ​t​a​r​g​e​t
-	 */
-	admin_identity_mapping_flow_continues_original_target: string;
-	/**
-	 * t​r​a​n​s​f​o​r​m​ ​n​o​d​e​ ​i​n​s​e​r​t​e​d
-	 */
-	admin_identity_mapping_flow_transform_inserted_validation: string;
-	/**
-	 * T​h​i​s​ ​t​r​a​n​s​f​o​r​m​ ​n​o​d​e​ ​w​a​s​ ​i​n​s​e​r​t​e​d​ ​i​n​t​o​ ​a​n​ ​e​x​i​s​t​i​n​g​ ​m​a​p​p​i​n​g​ ​e​d​g​e​.
-	 */
-	admin_identity_mapping_flow_transform_inserted_trace: string;
-	/**
-	 * C​u​s​t​o​m​ ​g​r​a​p​h​ ​e​d​g​e
-	 */
-	admin_identity_mapping_flow_custom_graph_edge: string;
-	/**
-	 * N​o​t​ ​c​o​n​n​e​c​t​e​d​ ​y​e​t
-	 */
-	admin_identity_mapping_flow_not_connected_yet: string;
-	/**
-	 * C​u​s​t​o​m​ ​n​o​d​e​ ​a​d​d​e​d​.​ ​D​r​a​g​ ​a​ ​c​o​n​n​e​c​t​i​o​n​ ​h​a​n​d​l​e​ ​t​o​ ​a​t​t​a​c​h​ ​i​t​ ​t​o​ ​t​h​e​ ​i​d​e​n​t​i​t​y​ ​s​c​h​e​m​a​.
-	 */
-	admin_identity_mapping_flow_custom_node_trace: string;
-	/**
-	 * t​r​a​n​s​f​o​r​m​ ​c​o​n​f​i​g​u​r​e​d​;​ ​v​a​l​i​d​a​t​i​o​n​ ​p​e​n​d​i​n​g
-	 */
-	admin_identity_mapping_flow_transform_configured_validation: string;
-	/**
-	 * T​r​a​n​s​f​o​r​m​ ​o​u​t​p​u​t​ ​p​r​e​v​i​e​w​ ​p​e​n​d​i​n​g​ ​f​o​r​ ​{​s​u​m​m​a​r​y​}​.
-	 * @param {string} summary
-	 */
-	admin_identity_mapping_flow_transform_output_pending: RequiredParams<'summary'>;
-	/**
-	 * T​r​a​n​s​f​o​r​m​ ​c​o​n​f​i​g​u​r​a​t​i​o​n​ ​i​s​ ​s​t​o​r​e​d​ ​o​n​ ​t​h​e​ ​n​o​d​e​ ​a​n​d​ ​w​i​l​l​ ​b​e​ ​p​e​r​s​i​s​t​e​d​ ​a​s​ ​a​ ​m​a​p​p​i​n​g​ ​t​r​a​n​s​f​o​r​m​ ​s​t​e​p​.
-	 */
-	admin_identity_mapping_flow_transform_config_trace: string;
-	/**
-	 * C​o​n​n​e​c​t​ ​a​t​ ​l​e​a​s​t​ ​o​n​e​ ​m​a​p​p​i​n​g​ ​e​d​g​e​ ​b​e​f​o​r​e​ ​s​a​v​i​n​g​.
-	 */
-	admin_identity_mapping_flow_connect_edge_before_compile: string;
-	/**
-	 * S​a​v​e​ ​i​s​ ​n​o​t​ ​c​o​n​n​e​c​t​e​d​ ​o​n​ ​t​h​i​s​ ​p​a​g​e​.
-	 */
-	admin_identity_mapping_flow_compile_not_connected: string;
-	/**
-	 * S​a​v​i​n​g​ ​f​i​e​l​d​ ​m​a​p​p​i​n​g​ ​s​e​t​.​.​.
-	 */
-	admin_identity_mapping_flow_saving_draft_policy: string;
-	/**
-	 * F​i​e​l​d​ ​m​a​p​p​i​n​g​ ​s​e​t​ ​s​a​v​e​d​.
-	 */
-	admin_identity_mapping_flow_draft_saved_compiled: string;
-	/**
-	 * F​a​i​l​e​d​ ​t​o​ ​s​a​v​e​ ​f​i​e​l​d​ ​m​a​p​p​i​n​g​ ​s​e​t​.
-	 */
-	admin_identity_mapping_flow_compile_failed: string;
-	/**
-	 * N​o​t​ ​c​o​n​n​e​c​t​e​d
-	 */
-	admin_identity_mapping_flow_not_connected: string;
-	/**
-	 * c​o​n​f​i​g​u​r​e​d
-	 */
-	admin_identity_mapping_flow_configured: string;
-	/**
-	 * l​o​a​d​e​d​ ​f​r​o​m​ ​{​r​u​l​e​K​e​y​}
-	 * @param {string} ruleKey
-	 */
-	admin_identity_mapping_flow_loaded_from: RequiredParams<'ruleKey'>;
-	/**
-	 * C​o​n​n​e​c​t​e​d​ ​p​o​l​i​c​y​ ​i​n​p​u​t
-	 */
-	admin_identity_mapping_flow_connected_policy_input: string;
-	/**
-	 * N​o​ ​s​c​h​e​m​a​ ​f​i​e​l​d​ ​s​e​l​e​c​t​e​d
-	 */
-	admin_identity_mapping_flow_no_schema_field_selected: string;
-	/**
-	 * A​c​t​i​v​e​ ​p​o​l​i​c​y​ ​r​u​l​e​ ​{​r​u​l​e​K​e​y​}​ ​r​e​s​t​o​r​e​d​ ​t​h​i​s​ ​m​a​p​p​i​n​g​ ​e​d​g​e​.
-	 * @param {string} ruleKey
-	 */
-	admin_identity_mapping_flow_active_policy_edge_trace: RequiredParams<'ruleKey'>;
-	/**
-	 * A​c​t​i​v​e​ ​p​o​l​i​c​y​ ​r​u​l​e​ ​{​r​u​l​e​K​e​y​}​ ​r​e​s​t​o​r​e​d​ ​t​h​i​s​ ​t​r​a​n​s​f​o​r​m​ ​n​o​d​e​.
-	 * @param {string} ruleKey
-	 */
-	admin_identity_mapping_flow_active_policy_transform_trace: RequiredParams<'ruleKey'>;
-	/**
-	 * M​a​p​p​i​n​g​ ​e​d​g​e
-	 */
-	admin_identity_mapping_flow_mapping_edge: string;
-	/**
-	 * T​a​r​g​e​t
-	 */
-	admin_identity_mapping_flow_target: string;
-	/**
-	 * d​r​a​f​t​ ​e​d​g​e​ ​s​e​l​e​c​t​e​d​;​ ​B​a​c​k​s​p​a​c​e​/​D​e​l​e​t​e​ ​r​e​m​o​v​e​s​ ​i​t
-	 */
-	admin_identity_mapping_flow_selected_edge_custom_validation: string;
-	/**
-	 * l​o​a​d​e​d​ ​e​d​g​e​ ​s​e​l​e​c​t​e​d​;​ ​B​a​c​k​s​p​a​c​e​/​D​e​l​e​t​e​ ​r​e​m​o​v​e​s​ ​i​t​ ​f​r​o​m​ ​t​h​i​s​ ​d​r​a​f​t
-	 */
-	admin_identity_mapping_flow_selected_edge_loaded_validation: string;
-	/**
-	 * S​e​l​e​c​t​e​d​ ​e​d​g​e​.​ ​P​r​e​s​s​ ​B​a​c​k​s​p​a​c​e​ ​o​r​ ​D​e​l​e​t​e​ ​t​o​ ​r​e​m​o​v​e​ ​t​h​i​s​ ​c​o​n​n​e​c​t​i​o​n​ ​f​r​o​m​ ​t​h​e​ ​d​r​a​f​t​.
-	 */
-	admin_identity_mapping_flow_selected_edge_trace: string;
-	/**
-	 * M​a​p​p​i​n​g​ ​n​o​d​e
-	 */
-	admin_identity_mapping_flow_mapping_node: string;
-	/**
-	 * S​e​l​e​c​t​e​d​ ​g​r​a​p​h​ ​n​o​d​e
-	 */
-	admin_identity_mapping_flow_selected_graph_node: string;
-	/**
-	 * C​o​n​n​e​c​t​e​d​ ​s​c​h​e​m​a​ ​f​i​e​l​d
-	 */
-	admin_identity_mapping_flow_connected_schema_field: string;
-	/**
-	 * C​o​n​n​e​c​t​e​d​ ​d​e​s​t​i​n​a​t​i​o​n
-	 */
-	admin_identity_mapping_flow_connected_destination: string;
-	/**
-	 * N​o​ ​r​u​n​t​i​m​e​ ​i​n​p​u​t​ ​s​e​l​e​c​t​e​d​.
-	 */
-	admin_identity_mapping_flow_no_runtime_input: string;
-	/**
-	 * N​o​ ​m​a​p​p​i​n​g​ ​e​d​g​e​ ​y​e​t​.
-	 */
-	admin_identity_mapping_flow_no_mapping_edge: string;
-	/**
-	 * S​e​l​e​c​t​ ​a​ ​m​a​p​p​i​n​g​ ​n​o​d​e​ ​t​o​ ​i​n​s​p​e​c​t​ ​r​u​l​e​ ​b​e​h​a​v​i​o​r​.
-	 */
-	admin_identity_mapping_flow_select_node_trace: string;
-	/**
-	 * D​r​a​f​t​-​o​n​l​y​ ​n​o​d​e
-	 */
-	admin_identity_mapping_flow_draft_only_node: string;
-	/**
-	 * T​h​i​s​ ​n​o​d​e​ ​e​x​i​s​t​s​ ​o​n​l​y​ ​i​n​ ​t​h​e​ ​l​o​c​a​l​ ​d​r​a​f​t​ ​p​r​e​v​i​e​w​.
-	 */
-	admin_identity_mapping_flow_draft_only_node_diff: string;
-	/**
 	 * R​e​s​o​u​r​c​e​ ​S​e​r​v​e​r
 	 */
 	admin_identity_mapping_profile_edit_resource_server: string;
@@ -28381,10 +27382,6 @@ type RootTranslation = {
 	 * R​e​v​i​e​w​ ​t​h​e​ ​p​a​t​h​ ​f​r​o​m​ ​l​o​g​i​n​,​ ​a​t​t​r​i​b​u​t​e​ ​r​e​l​e​a​s​e​,​ ​c​o​n​s​e​n​t​,​ ​a​n​d​ ​o​u​t​p​u​t​ ​i​n​ ​o​n​e​ ​p​l​a​c​e​.
 	 */
 	admin_flows_description: string;
-	/**
-	 * F​i​e​l​d​ ​M​a​p​p​i​n​g
-	 */
-	admin_flows_field_mapping: string;
 	/**
 	 * F​l​o​w​ ​l​i​s​t
 	 */
@@ -28715,10 +27712,6 @@ type RootTranslation = {
 	 * F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t
 	 */
 	admin_flows_link_field_mapping_set_title: string;
-	/**
-	 * D​e​f​i​n​e​ ​g​r​o​u​p​s​ ​o​f​ ​a​t​t​r​i​b​u​t​e​s​ ​a​n​d​ ​c​l​a​i​m​s​ ​t​o​ ​r​e​l​e​a​s​e​.
-	 */
-	admin_flows_link_field_mapping_set_description: string;
 	/**
 	 * C​o​n​s​e​n​t​ ​S​t​a​t​e​m​e​n​t
 	 */
@@ -33069,10 +32062,6 @@ type RootTranslation = {
 	 */
 	admin_consent_templates_option_body_description: string;
 	/**
-	 * O​p​e​n​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t​ ​s​e​t​t​i​n​g​s
-	 */
-	admin_consent_templates_option_open_field_mapping: string;
-	/**
 	 * C​h​o​o​s​e​ ​w​h​a​t​ ​t​h​i​s​ ​c​o​n​s​e​n​t​ ​s​t​a​t​e​m​e​n​t​ ​i​s​ ​b​o​u​n​d​ ​t​o​.
 	 */
 	admin_consent_templates_binding_description: string;
@@ -34164,10 +33153,6 @@ export type TranslationFunctions = {
 	 * Source & Destination
 	 */
 	admin_nav_source_destination: () => LocalizedString;
-	/**
-	 * Field Mapping Sets
-	 */
-	admin_nav_mapping_policies: () => LocalizedString;
 	/**
 	 * Resolution Center
 	 */
@@ -40467,10 +39452,6 @@ export type TranslationFunctions = {
 	 * Selects the active Field Mapping Set used for inbound and outbound SAML attribute mapping.
 	 */
 	admin_saml_detail_identity_mapping_policy_hint: () => LocalizedString;
-	/**
-	 * Manage Field Mapping Sets
-	 */
-	admin_saml_detail_identity_mapping_policy_link: () => LocalizedString;
 	/**
 	 * Minimum identity assurance level
 	 */
@@ -53760,10 +52741,6 @@ Remove this role from {email}?
 	 */
 	admin_compliance_fact_rbac: (arg: { roles: number; users: number }) => LocalizedString;
 	/**
-	 * Multi-factor authentication
-	 */
-	admin_compliance_mfa: () => LocalizedString;
-	/**
 	 * Admins with a passkey
 	 */
 	admin_compliance_mfa_admins: () => LocalizedString;
@@ -53795,10 +52772,6 @@ Remove this role from {email}?
 	 * No
 	 */
 	admin_compliance_mfa_enforced_no: () => LocalizedString;
-	/**
-	 * Audit log
-	 */
-	admin_compliance_audit_log: () => LocalizedString;
 	/**
 	 * Event log retention
 	 */
@@ -54474,10 +53447,6 @@ Remove this role from {email}?
 	 * Save
 	 */
 	admin_compliance_save: () => LocalizedString;
-	/**
-	 * Close
-	 */
-	admin_compliance_close: () => LocalizedString;
 	/**
 	 * Storage Destinations - Authrim
 	 */
@@ -58347,18 +57316,6 @@ Remove this role from {email}?
 	 */
 	admin_diagnostic_logging_load_settings_failed: () => LocalizedString;
 	/**
-	 * Failed to load storage destinations
-	 */
-	admin_diagnostic_logging_load_storage_destinations_failed: () => LocalizedString;
-	/**
-	 * Failed to update storage destination
-	 */
-	admin_diagnostic_logging_update_storage_destination_failed: () => LocalizedString;
-	/**
-	 * Storage destination updated.
-	 */
-	admin_diagnostic_logging_storage_destination_updated: () => LocalizedString;
-	/**
 	 * Failed to load clients
 	 */
 	admin_diagnostic_logging_load_clients_failed: () => LocalizedString;
@@ -58442,18 +57399,6 @@ Remove this role from {email}?
 	 * When diagnostic logging is enabled, logs use the storage mode selected during Setup. Pipeline sends logs directly to Iceberg and may take a few minutes to appear. Scheduled stores logs in the database until export to Iceberg is confirmed.
 	 */
 	admin_diagnostic_logging_r2_output_desc: () => LocalizedString;
-	/**
-	 * Persist logs to R2
-	 */
-	admin_diagnostic_logging_r2_toggle_label: () => LocalizedString;
-	/**
-	 * R2 output is enabled.
-	 */
-	admin_diagnostic_logging_r2_enabled: () => LocalizedString;
-	/**
-	 * R2 output is disabled.
-	 */
-	admin_diagnostic_logging_r2_disabled: () => LocalizedString;
 	/**
 	 * SDK Log Ingestion
 	 */
@@ -58738,22 +57683,6 @@ Remove this role from {email}?
 	 * Check the configured Iceberg log reader before exporting. The storage mode and credentials are managed by Setup.
 	 */
 	admin_diagnostic_logging_storage_connection_desc: () => LocalizedString;
-	/**
-	 * Storage destination
-	 */
-	admin_diagnostic_logging_storage_destination: () => LocalizedString;
-	/**
-	 * Use runtime binding fields below
-	 */
-	admin_diagnostic_logging_use_runtime_binding: () => LocalizedString;
-	/**
-	 * R2 binding
-	 */
-	admin_diagnostic_logging_r2_binding: () => LocalizedString;
-	/**
-	 * Path prefix
-	 */
-	admin_diagnostic_logging_path_prefix: () => LocalizedString;
 	/**
 	 * Testing...
 	 */
@@ -59478,26 +58407,6 @@ Remove this role from {email}?
 	 */
 	admin_identity_mapping_title: () => LocalizedString;
 	/**
-	 * Overview
-	 */
-	admin_identity_mapping_overview_title: () => LocalizedString;
-	/**
-	 * Field Mapping Overview
-	 */
-	admin_identity_mapping_overview_head_title: () => LocalizedString;
-	/**
-	 * Review source profiles, canonical identity targets, and destination projections without changing the graph.
-	 */
-	admin_identity_mapping_description: () => LocalizedString;
-	/**
-	 * Back to Field Mapping
-	 */
-	admin_identity_mapping_back: () => LocalizedString;
-	/**
-	 * Back to Field Mapping Sets
-	 */
-	admin_identity_mapping_back_to_policies: () => LocalizedString;
-	/**
 	 * Refresh
 	 */
 	admin_identity_mapping_refresh: () => LocalizedString;
@@ -59509,14 +58418,6 @@ Remove this role from {email}?
 	 * Destination
 	 */
 	admin_identity_mapping_destination: () => LocalizedString;
-	/**
-	 * Source profile
-	 */
-	admin_identity_mapping_source_profile: () => LocalizedString;
-	/**
-	 * Destination profile
-	 */
-	admin_identity_mapping_destination_profile: () => LocalizedString;
 	/**
 	 * Source profiles
 	 */
@@ -59554,173 +58455,9 @@ Remove this role from {email}?
 	 */
 	admin_identity_mapping_certs_count: (arg: { count: number }) => LocalizedString;
 	/**
-	 * Field Mapping Set Editor
-	 */
-	admin_identity_mapping_editor_title: () => LocalizedString;
-	/**
-	 * Edit source mappings and destination release projections against registered source and destination profiles.
-	 */
-	admin_identity_mapping_editor_description: () => LocalizedString;
-	/**
-	 * Save
-	 */
-	admin_identity_mapping_editor_save_draft: () => LocalizedString;
-	/**
-	 * Saving...
-	 */
-	admin_identity_mapping_editor_saving: () => LocalizedString;
-	/**
-	 * Mapping edit profile selector
-	 */
-	admin_identity_mapping_editor_profile_selector_aria: () => LocalizedString;
-	/**
-	 * Profile side
-	 */
-	admin_identity_mapping_editor_profile_side: () => LocalizedString;
-	/**
-	 * Source mapping
-	 */
-	admin_identity_mapping_editor_source_mapping: () => LocalizedString;
-	/**
-	 * Destination release
-	 */
-	admin_identity_mapping_editor_destination_release: () => LocalizedString;
-	/**
-	 * Select source profile
-	 */
-	admin_identity_mapping_editor_select_source_profile: () => LocalizedString;
-	/**
-	 * Select destination profile
-	 */
-	admin_identity_mapping_editor_select_destination_profile: () => LocalizedString;
-	/**
-	 * Field Mapping Set name
-	 */
-	admin_identity_mapping_editor_policy_name: () => LocalizedString;
-	/**
-	 * Field Mapping Set
-	 */
-	admin_identity_mapping_editor_policy_placeholder: () => LocalizedString;
-	/**
-	 * {name} already exists. Choose a different field mapping set name.
-	 */
-	admin_identity_mapping_editor_policy_exists: (arg: { name: string }) => LocalizedString;
-	/**
-	 * No Field Mapping Set selected
-	 */
-	admin_identity_mapping_editor_no_policy_selected: () => LocalizedString;
-	/**
-	 * Activate
-	 */
-	admin_identity_mapping_editor_activate: () => LocalizedString;
-	/**
-	 * Active
-	 */
-	admin_identity_mapping_editor_active: () => LocalizedString;
-	/**
-	 * Delete
-	 */
-	admin_identity_mapping_editor_delete: () => LocalizedString;
-	/**
-	 * Confirm Delete
-	 */
-	admin_identity_mapping_editor_confirm_delete: () => LocalizedString;
-	/**
-	 * side not selected
-	 */
-	admin_identity_mapping_editor_side_not_selected: () => LocalizedString;
-	/**
-	 * saved
-	 */
-	admin_identity_mapping_editor_snapshot_ready: () => LocalizedString;
-	/**
-	 * not saved
-	 */
-	admin_identity_mapping_editor_no_snapshot: () => LocalizedString;
-	/**
-	 * Loading control plane
-	 */
-	admin_identity_mapping_editor_loading_control_plane: () => LocalizedString;
-	/**
 	 * Preview fallback
 	 */
 	admin_identity_mapping_editor_preview_fallback: () => LocalizedString;
-	/**
-	 * Control plane ready
-	 */
-	admin_identity_mapping_editor_control_plane_ready: () => LocalizedString;
-	/**
-	 * Loading field mapping set, catalog, profile, and federation trust summaries.
-	 */
-	admin_identity_mapping_editor_loading_summaries: () => LocalizedString;
-	/**
-	 * {policies} field mapping sets, {catalogs} catalogs, {profiles} source and destination profiles.
-	 */
-	admin_identity_mapping_editor_summary_counts: (arg: {
-		catalogs: number;
-		policies: number;
-		profiles: number;
-	}) => LocalizedString;
-	/**
-	 * Field Mapping UI Draft
-	 */
-	admin_identity_mapping_editor_policy_default_name: () => LocalizedString;
-	/**
-	 * Destination profile
-	 */
-	admin_identity_mapping_editor_destination_profile_fallback: () => LocalizedString;
-	/**
-	 * Field Mapping Set
-	 */
-	admin_identity_mapping_editor_policy_default_suffix: () => LocalizedString;
-	/**
-	 * Activated field mapping set
-	 */
-	admin_identity_mapping_editor_policy_activated: () => LocalizedString;
-	/**
-	 * Save this field mapping set before activation
-	 */
-	admin_identity_mapping_editor_publish_before_activation: () => LocalizedString;
-	/**
-	 * Select a Field Mapping Set first
-	 */
-	admin_identity_mapping_editor_select_policy_version_first: () => LocalizedString;
-	/**
-	 * Confirm delete to remove this field mapping set
-	 */
-	admin_identity_mapping_editor_confirm_delete_status: () => LocalizedString;
-	/**
-	 * Field mapping set delete failed
-	 */
-	admin_identity_mapping_editor_policy_delete_failed: () => LocalizedString;
-	/**
-	 * Field mapping set operation failed
-	 */
-	admin_identity_mapping_editor_policy_operation_failed: () => LocalizedString;
-	/**
-	 * You have unsaved mapping changes. Discard them and switch view?
-	 */
-	admin_identity_mapping_editor_unsaved_confirm: () => LocalizedString;
-	/**
-	 * A field mapping set named "{name}" already exists. Choose a different field mapping set name.
-	 */
-	admin_identity_mapping_editor_policy_conflict: (arg: { name: string }) => LocalizedString;
-	/**
-	 * No canonical catalog version is available for compile.
-	 */
-	admin_identity_mapping_editor_no_canonical_catalog: () => LocalizedString;
-	/**
-	 * Field mapping set created from the Admin UI Flow Editor.
-	 */
-	admin_identity_mapping_editor_created_description: () => LocalizedString;
-	/**
-	 * Failed to load field mapping state
-	 */
-	admin_identity_mapping_editor_load_failed: () => LocalizedString;
-	/**
-	 * Profile status
-	 */
-	admin_identity_mapping_flow_profile_status: () => LocalizedString;
 	/**
 	 * Source & Destination Profiles - Authrim Admin
 	 */
@@ -59769,54 +58506,6 @@ Remove this role from {email}?
 	 * Edit Profile - Authrim Admin
 	 */
 	admin_identity_mapping_profile_edit_head_title: () => LocalizedString;
-	/**
-	 * Field Mapping Sets - Authrim Admin
-	 */
-	admin_identity_mapping_policies_head_title: () => LocalizedString;
-	/**
-	 * Field Mapping Sets
-	 */
-	admin_identity_mapping_policies_title: () => LocalizedString;
-	/**
-	 * Review Source Field Mapping Sets and Destination Field Mapping Sets before editing their rules.
-	 */
-	admin_identity_mapping_policies_description: () => LocalizedString;
-	/**
-	 * Source and destination Field Mapping Sets
-	 */
-	admin_identity_mapping_policies_lists_title: () => LocalizedString;
-	/**
-	 * Loading field mapping sets.
-	 */
-	admin_identity_mapping_policies_loading: () => LocalizedString;
-	/**
-	 * Failed to load field mapping sets
-	 */
-	admin_identity_mapping_policies_load_failed: () => LocalizedString;
-	/**
-	 * Source Field Mapping Sets
-	 */
-	admin_identity_mapping_policies_source_title: () => LocalizedString;
-	/**
-	 * Destination Field Mapping Sets
-	 */
-	admin_identity_mapping_policies_destination_title: () => LocalizedString;
-	/**
-	 * Create Source Field Mapping Set
-	 */
-	admin_identity_mapping_policies_create_source: () => LocalizedString;
-	/**
-	 * Create Destination Field Mapping Set
-	 */
-	admin_identity_mapping_policies_create_destination: () => LocalizedString;
-	/**
-	 * No Source Field Mapping Sets.
-	 */
-	admin_identity_mapping_policies_no_source: () => LocalizedString;
-	/**
-	 * No Destination Field Mapping Sets.
-	 */
-	admin_identity_mapping_policies_no_destination: () => LocalizedString;
 	/**
 	 * Mapping Resolution Center - Authrim Admin
 	 */
@@ -61031,701 +59720,6 @@ Remove this role from {email}?
 		label: string;
 	}) => LocalizedString;
 	/**
-	 * Mapping graph
-	 */
-	admin_identity_mapping_flow_graph_aria: () => LocalizedString;
-	/**
-	 * Field Mapping Set
-	 */
-	admin_identity_mapping_flow_policy_draft: () => LocalizedString;
-	/**
-	 * No profiles
-	 */
-	admin_identity_mapping_flow_no_profiles: () => LocalizedString;
-	/**
-	 * Flow view mode
-	 */
-	admin_identity_mapping_flow_view_mode_aria: () => LocalizedString;
-	/**
-	 * Overview
-	 */
-	admin_identity_mapping_flow_overview: () => LocalizedString;
-	/**
-	 * Source mapping
-	 */
-	admin_identity_mapping_flow_source_mapping: () => LocalizedString;
-	/**
-	 * Destination release
-	 */
-	admin_identity_mapping_flow_destination_release: () => LocalizedString;
-	/**
-	 * Auto-map
-	 */
-	admin_identity_mapping_flow_auto_map: () => LocalizedString;
-	/**
-	 * Snapshot
-	 */
-	admin_identity_mapping_flow_snapshot: () => LocalizedString;
-	/**
-	 * Mapped fields
-	 */
-	admin_identity_mapping_flow_mapped_fields: () => LocalizedString;
-	/**
-	 * Hot-path reads
-	 */
-	admin_identity_mapping_flow_hot_path_reads: () => LocalizedString;
-	/**
-	 * Release denies
-	 */
-	admin_identity_mapping_flow_release_denies: () => LocalizedString;
-	/**
-	 * Catalog version
-	 */
-	admin_identity_mapping_flow_catalog_version: () => LocalizedString;
-	/**
-	 * Loading control-plane schemas
-	 */
-	admin_identity_mapping_flow_loading_schemas: () => LocalizedString;
-	/**
-	 * Control-plane schema load failed
-	 */
-	admin_identity_mapping_flow_schema_load_failed: () => LocalizedString;
-	/**
-	 * The graph will render protocol, external, and identity schemas when loading completes.
-	 */
-	admin_identity_mapping_flow_loading_schemas_desc: () => LocalizedString;
-	/**
-	 * No field mapping sets
-	 */
-	admin_identity_mapping_flow_no_mapping_policies: () => LocalizedString;
-	/**
-	 * No active field mapping sets
-	 */
-	admin_identity_mapping_flow_no_active_policies: () => LocalizedString;
-	/**
-	 * Select an active field mapping set
-	 */
-	admin_identity_mapping_flow_select_active_policy: () => LocalizedString;
-	/**
-	 * No source or destination profiles registered
-	 */
-	admin_identity_mapping_flow_no_profiles_registered: () => LocalizedString;
-	/**
-	 * Profile schema is not configured
-	 */
-	admin_identity_mapping_flow_schema_not_configured: () => LocalizedString;
-	/**
-	 * Save and activate a field mapping set before using this overview.
-	 */
-	admin_identity_mapping_flow_no_active_policies_desc: () => LocalizedString;
-	/**
-	 * Choose a Source Field Mapping Set and/or Destination Field Mapping Set to render its nodes and edges.
-	 */
-	admin_identity_mapping_flow_select_active_policy_desc: () => LocalizedString;
-	/**
-	 * Register source and destination profiles, or add a field catalog, to populate this graph.
-	 */
-	admin_identity_mapping_flow_no_profiles_registered_desc: () => LocalizedString;
-	/**
-	 * Profiles are registered, but no schema is available for the Field Mapping Set editor yet. Configure the schema in Source/Destination Profiles first.
-	 */
-	admin_identity_mapping_flow_schema_not_configured_desc: () => LocalizedString;
-	/**
-	 * Open Source/Destination Profiles
-	 */
-	admin_identity_mapping_flow_schema_not_configured_action: () => LocalizedString;
-	/**
-	 * Source Field Mapping Set
-	 */
-	admin_identity_mapping_flow_source_policy: () => LocalizedString;
-	/**
-	 * Destination Field Mapping Set
-	 */
-	admin_identity_mapping_flow_destination_policy: () => LocalizedString;
-	/**
-	 * Select Source Field Mapping Set
-	 */
-	admin_identity_mapping_flow_select_source_policy: () => LocalizedString;
-	/**
-	 * Select Destination Field Mapping Set
-	 */
-	admin_identity_mapping_flow_select_destination_policy: () => LocalizedString;
-	/**
-	 * Identity schema
-	 */
-	admin_identity_mapping_flow_identity_schema: () => LocalizedString;
-	/**
-	 * Expand {group} schema group
-	 */
-	admin_identity_mapping_flow_expand_schema_group: (arg: { group: string }) => LocalizedString;
-	/**
-	 * Collapse {group} schema group
-	 */
-	admin_identity_mapping_flow_collapse_schema_group: (arg: { group: string }) => LocalizedString;
-	/**
-	 * Mapping edges
-	 */
-	admin_identity_mapping_flow_edges_aria: () => LocalizedString;
-	/**
-	 * Clear mapping selection
-	 */
-	admin_identity_mapping_flow_clear_selection_aria: () => LocalizedString;
-	/**
-	 * Select mapping edge {from} to {to}
-	 */
-	admin_identity_mapping_flow_select_edge_aria: (arg: {
-		from: string;
-		to: string;
-	}) => LocalizedString;
-	/**
-	 * Reconnect {side} endpoint for selected mapping edge
-	 */
-	admin_identity_mapping_flow_reconnect_edge_aria: (arg: { side: string }) => LocalizedString;
-	/**
-	 * Insert transform node on selected mapping edge
-	 */
-	admin_identity_mapping_flow_insert_transform_aria: () => LocalizedString;
-	/**
-	 * Delete selected mapping edge
-	 */
-	admin_identity_mapping_flow_delete_edge_aria: () => LocalizedString;
-	/**
-	 * Managed by subject identifier strategy
-	 */
-	admin_identity_mapping_flow_managed_by_subject: () => LocalizedString;
-	/**
-	 * Sample value
-	 */
-	admin_identity_mapping_flow_sample_value: () => LocalizedString;
-	/**
-	 * No sample value registered.
-	 */
-	admin_identity_mapping_flow_no_sample_value: () => LocalizedString;
-	/**
-	 * Note
-	 */
-	admin_identity_mapping_flow_note: () => LocalizedString;
-	/**
-	 * No note registered.
-	 */
-	admin_identity_mapping_flow_no_note: () => LocalizedString;
-	/**
-	 * Allowed values
-	 */
-	admin_identity_mapping_flow_allowed_values: () => LocalizedString;
-	/**
-	 * No fixed values registered.
-	 */
-	admin_identity_mapping_flow_no_fixed_values: () => LocalizedString;
-	/**
-	 * Value rule
-	 */
-	admin_identity_mapping_flow_value_rule: () => LocalizedString;
-	/**
-	 * Accepts one input
-	 */
-	admin_identity_mapping_flow_accepts_one_input: () => LocalizedString;
-	/**
-	 * Accepts multiple inputs
-	 */
-	admin_identity_mapping_flow_accepts_multiple_inputs: () => LocalizedString;
-	/**
-	 * Required
-	 */
-	admin_identity_mapping_flow_required: () => LocalizedString;
-	/**
-	 * Delete {node}
-	 */
-	admin_identity_mapping_flow_delete_node_aria: (arg: { node: string }) => LocalizedString;
-	/**
-	 * Mapping inspector
-	 */
-	admin_identity_mapping_flow_inspector_aria: () => LocalizedString;
-	/**
-	 * Inspector
-	 */
-	admin_identity_mapping_flow_inspector: () => LocalizedString;
-	/**
-	 * Inspector tabs
-	 */
-	admin_identity_mapping_flow_tabs_aria: () => LocalizedString;
-	/**
-	 * Rule
-	 */
-	admin_identity_mapping_flow_tab_rule: () => LocalizedString;
-	/**
-	 * Dry-run
-	 */
-	admin_identity_mapping_flow_tab_dryrun: () => LocalizedString;
-	/**
-	 * Diff
-	 */
-	admin_identity_mapping_flow_tab_diff: () => LocalizedString;
-	/**
-	 * Transform configuration
-	 */
-	admin_identity_mapping_flow_transform_config_aria: () => LocalizedString;
-	/**
-	 * Transform step
-	 */
-	admin_identity_mapping_flow_transform_step: () => LocalizedString;
-	/**
-	 * Operation
-	 */
-	admin_identity_mapping_flow_operation: () => LocalizedString;
-	/**
-	 * Schema field
-	 */
-	admin_identity_mapping_flow_schema_field: () => LocalizedString;
-	/**
-	 * Transform
-	 */
-	admin_identity_mapping_flow_transform: () => LocalizedString;
-	/**
-	 * Validation
-	 */
-	admin_identity_mapping_flow_validation: () => LocalizedString;
-	/**
-	 * Release
-	 */
-	admin_identity_mapping_flow_release: () => LocalizedString;
-	/**
-	 * Storage
-	 */
-	admin_identity_mapping_flow_storage: () => LocalizedString;
-	/**
-	 * not configured
-	 */
-	admin_identity_mapping_flow_not_configured: () => LocalizedString;
-	/**
-	 * Sample Evaluation
-	 */
-	admin_identity_mapping_flow_sample_evaluation: () => LocalizedString;
-	/**
-	 * Input
-	 */
-	admin_identity_mapping_flow_input: () => LocalizedString;
-	/**
-	 * Output
-	 */
-	admin_identity_mapping_flow_output: () => LocalizedString;
-	/**
-	 * You have unsaved mapping draft changes. Leave this page and discard them?
-	 */
-	admin_identity_mapping_flow_unsaved_leave_confirm: () => LocalizedString;
-	/**
-	 * No confident auto-mapping candidates were found.
-	 */
-	admin_identity_mapping_flow_no_auto_map: () => LocalizedString;
-	/**
-	 * Auto-mapped {count} connections. Review and compile the draft when ready.
-	 */
-	admin_identity_mapping_flow_auto_mapped: (arg: { count: number }) => LocalizedString;
-	/**
-	 * Copy
-	 */
-	admin_identity_mapping_flow_transform_copy_label: () => LocalizedString;
-	/**
-	 * Pass the first input value through unchanged.
-	 */
-	admin_identity_mapping_flow_transform_copy_desc: () => LocalizedString;
-	/**
-	 * As array
-	 */
-	admin_identity_mapping_flow_transform_as_array_label: () => LocalizedString;
-	/**
-	 * Wrap one input value as a multi-value array.
-	 */
-	admin_identity_mapping_flow_transform_as_array_desc: () => LocalizedString;
-	/**
-	 * Split
-	 */
-	admin_identity_mapping_flow_transform_split_label: () => LocalizedString;
-	/**
-	 * Split one text value into a multi-value array.
-	 */
-	admin_identity_mapping_flow_transform_split_desc: () => LocalizedString;
-	/**
-	 * Join
-	 */
-	admin_identity_mapping_flow_transform_join_label: () => LocalizedString;
-	/**
-	 * Join a multi-value array into one text value.
-	 */
-	admin_identity_mapping_flow_transform_join_desc: () => LocalizedString;
-	/**
-	 * First value
-	 */
-	admin_identity_mapping_flow_transform_first_label: () => LocalizedString;
-	/**
-	 * Use the first value from a multi-value array.
-	 */
-	admin_identity_mapping_flow_transform_first_desc: () => LocalizedString;
-	/**
-	 * Add prefix/suffix
-	 */
-	admin_identity_mapping_flow_transform_affix_text_label: () => LocalizedString;
-	/**
-	 * Add fixed text before or after the input value.
-	 */
-	admin_identity_mapping_flow_transform_affix_text_desc: () => LocalizedString;
-	/**
-	 * Trim
-	 */
-	admin_identity_mapping_flow_transform_trim_label: () => LocalizedString;
-	/**
-	 * Remove leading and trailing whitespace from the first input value.
-	 */
-	admin_identity_mapping_flow_transform_trim_desc: () => LocalizedString;
-	/**
-	 * Normalize
-	 */
-	admin_identity_mapping_flow_transform_normalize_label: () => LocalizedString;
-	/**
-	 * Normalize Unicode or collapse repeated whitespace before validation.
-	 */
-	admin_identity_mapping_flow_transform_normalize_desc: () => LocalizedString;
-	/**
-	 * Case
-	 */
-	admin_identity_mapping_flow_transform_case_label: () => LocalizedString;
-	/**
-	 * Convert string case before writing to the target.
-	 */
-	admin_identity_mapping_flow_transform_case_desc: () => LocalizedString;
-	/**
-	 * Concat
-	 */
-	admin_identity_mapping_flow_transform_concat_label: () => LocalizedString;
-	/**
-	 * Join all connected input values into one string. Use the delimiter field to choose space, comma, no separator, or custom text.
-	 */
-	admin_identity_mapping_flow_transform_concat_desc: () => LocalizedString;
-	/**
-	 * Fallback
-	 */
-	admin_identity_mapping_flow_transform_fallback_label: () => LocalizedString;
-	/**
-	 * Use the first non-empty connected input value.
-	 */
-	admin_identity_mapping_flow_transform_fallback_desc: () => LocalizedString;
-	/**
-	 * Text to boolean
-	 */
-	admin_identity_mapping_flow_transform_text_to_boolean_label: () => LocalizedString;
-	/**
-	 * Convert configured text tokens to true, false, or null before writing to a boolean target.
-	 */
-	admin_identity_mapping_flow_transform_text_to_boolean_desc: () => LocalizedString;
-	/**
-	 * Build JSON
-	 */
-	admin_identity_mapping_flow_transform_json_build_label: () => LocalizedString;
-	/**
-	 * Build a JSON object from one or more inputs, or parse a single JSON text input.
-	 */
-	admin_identity_mapping_flow_transform_json_build_desc: () => LocalizedString;
-	/**
-	 * Extract text from JSON
-	 */
-	admin_identity_mapping_flow_transform_json_extract_text_label: () => LocalizedString;
-	/**
-	 * Read a JSON path and output text.
-	 */
-	admin_identity_mapping_flow_transform_json_extract_text_desc: () => LocalizedString;
-	/**
-	 * Extract boolean from JSON
-	 */
-	admin_identity_mapping_flow_transform_json_extract_boolean_label: () => LocalizedString;
-	/**
-	 * Read a JSON path and output true, false, or null.
-	 */
-	admin_identity_mapping_flow_transform_json_extract_boolean_desc: () => LocalizedString;
-	/**
-	 * Extract integer from JSON
-	 */
-	admin_identity_mapping_flow_transform_json_extract_integer_label: () => LocalizedString;
-	/**
-	 * Read a JSON path and output an integer or null.
-	 */
-	admin_identity_mapping_flow_transform_json_extract_integer_desc: () => LocalizedString;
-	/**
-	 * Mode
-	 */
-	admin_identity_mapping_flow_transform_param_mode: () => LocalizedString;
-	/**
-	 * Delimiter
-	 */
-	admin_identity_mapping_flow_transform_param_delimiter: () => LocalizedString;
-	/**
-	 * Trim items
-	 */
-	admin_identity_mapping_flow_transform_param_trim_items: () => LocalizedString;
-	/**
-	 * Omit empty values
-	 */
-	admin_identity_mapping_flow_transform_param_omit_empty: () => LocalizedString;
-	/**
-	 * Remove duplicates
-	 */
-	admin_identity_mapping_flow_transform_param_unique: () => LocalizedString;
-	/**
-	 * Prefix
-	 */
-	admin_identity_mapping_flow_transform_param_prefix: () => LocalizedString;
-	/**
-	 * Suffix
-	 */
-	admin_identity_mapping_flow_transform_param_suffix: () => LocalizedString;
-	/**
-	 * True values
-	 */
-	admin_identity_mapping_flow_transform_param_true_values: () => LocalizedString;
-	/**
-	 * False values
-	 */
-	admin_identity_mapping_flow_transform_param_false_values: () => LocalizedString;
-	/**
-	 * Null values
-	 */
-	admin_identity_mapping_flow_transform_param_null_values: () => LocalizedString;
-	/**
-	 * Key map
-	 */
-	admin_identity_mapping_flow_transform_param_key_map: () => LocalizedString;
-	/**
-	 * Null handling
-	 */
-	admin_identity_mapping_flow_transform_param_null_handling: () => LocalizedString;
-	/**
-	 * JSON path
-	 */
-	admin_identity_mapping_flow_transform_param_json_path: () => LocalizedString;
-	/**
-	 * Whitespace
-	 */
-	admin_identity_mapping_flow_transform_option_whitespace: () => LocalizedString;
-	/**
-	 * Unicode NFKC
-	 */
-	admin_identity_mapping_flow_transform_option_unicode_nfkc: () => LocalizedString;
-	/**
-	 * Lowercase
-	 */
-	admin_identity_mapping_flow_transform_option_lowercase: () => LocalizedString;
-	/**
-	 * Uppercase
-	 */
-	admin_identity_mapping_flow_transform_option_uppercase: () => LocalizedString;
-	/**
-	 * Title case
-	 */
-	admin_identity_mapping_flow_transform_option_title_case: () => LocalizedString;
-	/**
-	 * Omit empty values
-	 */
-	admin_identity_mapping_flow_transform_option_omit_empty: () => LocalizedString;
-	/**
-	 * Include null values
-	 */
-	admin_identity_mapping_flow_transform_option_include_null: () => LocalizedString;
-	/**
-	 * Required
-	 */
-	admin_identity_mapping_flow_required_badge: () => LocalizedString;
-	/**
-	 * Mapping required
-	 */
-	admin_identity_mapping_flow_mapping_required_badge: () => LocalizedString;
-	/**
-	 * Mapping-required source fields are not connected: {fields}
-	 */
-	admin_identity_mapping_flow_mapping_required_not_connected: (arg: {
-		fields: string;
-	}) => LocalizedString;
-	/**
-	 * Multiple values
-	 */
-	admin_identity_mapping_flow_multiple_values: () => LocalizedString;
-	/**
-	 * Single value
-	 */
-	admin_identity_mapping_flow_single_value: () => LocalizedString;
-	/**
-	 * Nullable
-	 */
-	admin_identity_mapping_flow_nullable: () => LocalizedString;
-	/**
-	 * Not nullable
-	 */
-	admin_identity_mapping_flow_not_nullable: () => LocalizedString;
-	/**
-	 * Not nullable by required mapping
-	 */
-	admin_identity_mapping_flow_not_nullable_required: () => LocalizedString;
-	/**
-	 * Not specified
-	 */
-	admin_identity_mapping_flow_not_specified: () => LocalizedString;
-	/**
-	 * You have unsaved mapping draft changes. Switch profiles and discard them?
-	 */
-	admin_identity_mapping_flow_unsaved_switch_confirm: () => LocalizedString;
-	/**
-	 * Inserted on selected mapping edge
-	 */
-	admin_identity_mapping_flow_inserted_edge_source: () => LocalizedString;
-	/**
-	 * Transform node
-	 */
-	admin_identity_mapping_flow_transform_node: () => LocalizedString;
-	/**
-	 * Continues to the original edge target
-	 */
-	admin_identity_mapping_flow_continues_original_target: () => LocalizedString;
-	/**
-	 * transform node inserted
-	 */
-	admin_identity_mapping_flow_transform_inserted_validation: () => LocalizedString;
-	/**
-	 * This transform node was inserted into an existing mapping edge.
-	 */
-	admin_identity_mapping_flow_transform_inserted_trace: () => LocalizedString;
-	/**
-	 * Custom graph edge
-	 */
-	admin_identity_mapping_flow_custom_graph_edge: () => LocalizedString;
-	/**
-	 * Not connected yet
-	 */
-	admin_identity_mapping_flow_not_connected_yet: () => LocalizedString;
-	/**
-	 * Custom node added. Drag a connection handle to attach it to the identity schema.
-	 */
-	admin_identity_mapping_flow_custom_node_trace: () => LocalizedString;
-	/**
-	 * transform configured; validation pending
-	 */
-	admin_identity_mapping_flow_transform_configured_validation: () => LocalizedString;
-	/**
-	 * Transform output preview pending for {summary}.
-	 */
-	admin_identity_mapping_flow_transform_output_pending: (arg: {
-		summary: string;
-	}) => LocalizedString;
-	/**
-	 * Transform configuration is stored on the node and will be persisted as a mapping transform step.
-	 */
-	admin_identity_mapping_flow_transform_config_trace: () => LocalizedString;
-	/**
-	 * Connect at least one mapping edge before saving.
-	 */
-	admin_identity_mapping_flow_connect_edge_before_compile: () => LocalizedString;
-	/**
-	 * Save is not connected on this page.
-	 */
-	admin_identity_mapping_flow_compile_not_connected: () => LocalizedString;
-	/**
-	 * Saving field mapping set...
-	 */
-	admin_identity_mapping_flow_saving_draft_policy: () => LocalizedString;
-	/**
-	 * Field mapping set saved.
-	 */
-	admin_identity_mapping_flow_draft_saved_compiled: () => LocalizedString;
-	/**
-	 * Failed to save field mapping set.
-	 */
-	admin_identity_mapping_flow_compile_failed: () => LocalizedString;
-	/**
-	 * Not connected
-	 */
-	admin_identity_mapping_flow_not_connected: () => LocalizedString;
-	/**
-	 * configured
-	 */
-	admin_identity_mapping_flow_configured: () => LocalizedString;
-	/**
-	 * loaded from {ruleKey}
-	 */
-	admin_identity_mapping_flow_loaded_from: (arg: { ruleKey: string }) => LocalizedString;
-	/**
-	 * Connected policy input
-	 */
-	admin_identity_mapping_flow_connected_policy_input: () => LocalizedString;
-	/**
-	 * No schema field selected
-	 */
-	admin_identity_mapping_flow_no_schema_field_selected: () => LocalizedString;
-	/**
-	 * Active policy rule {ruleKey} restored this mapping edge.
-	 */
-	admin_identity_mapping_flow_active_policy_edge_trace: (arg: {
-		ruleKey: string;
-	}) => LocalizedString;
-	/**
-	 * Active policy rule {ruleKey} restored this transform node.
-	 */
-	admin_identity_mapping_flow_active_policy_transform_trace: (arg: {
-		ruleKey: string;
-	}) => LocalizedString;
-	/**
-	 * Mapping edge
-	 */
-	admin_identity_mapping_flow_mapping_edge: () => LocalizedString;
-	/**
-	 * Target
-	 */
-	admin_identity_mapping_flow_target: () => LocalizedString;
-	/**
-	 * draft edge selected; Backspace/Delete removes it
-	 */
-	admin_identity_mapping_flow_selected_edge_custom_validation: () => LocalizedString;
-	/**
-	 * loaded edge selected; Backspace/Delete removes it from this draft
-	 */
-	admin_identity_mapping_flow_selected_edge_loaded_validation: () => LocalizedString;
-	/**
-	 * Selected edge. Press Backspace or Delete to remove this connection from the draft.
-	 */
-	admin_identity_mapping_flow_selected_edge_trace: () => LocalizedString;
-	/**
-	 * Mapping node
-	 */
-	admin_identity_mapping_flow_mapping_node: () => LocalizedString;
-	/**
-	 * Selected graph node
-	 */
-	admin_identity_mapping_flow_selected_graph_node: () => LocalizedString;
-	/**
-	 * Connected schema field
-	 */
-	admin_identity_mapping_flow_connected_schema_field: () => LocalizedString;
-	/**
-	 * Connected destination
-	 */
-	admin_identity_mapping_flow_connected_destination: () => LocalizedString;
-	/**
-	 * No runtime input selected.
-	 */
-	admin_identity_mapping_flow_no_runtime_input: () => LocalizedString;
-	/**
-	 * No mapping edge yet.
-	 */
-	admin_identity_mapping_flow_no_mapping_edge: () => LocalizedString;
-	/**
-	 * Select a mapping node to inspect rule behavior.
-	 */
-	admin_identity_mapping_flow_select_node_trace: () => LocalizedString;
-	/**
-	 * Draft-only node
-	 */
-	admin_identity_mapping_flow_draft_only_node: () => LocalizedString;
-	/**
-	 * This node exists only in the local draft preview.
-	 */
-	admin_identity_mapping_flow_draft_only_node_diff: () => LocalizedString;
-	/**
 	 * Resource Server
 	 */
 	admin_identity_mapping_profile_edit_resource_server: () => LocalizedString;
@@ -61765,10 +59759,6 @@ Remove this role from {email}?
 	 * Review the path from login, attribute release, consent, and output in one place.
 	 */
 	admin_flows_description: () => LocalizedString;
-	/**
-	 * Field Mapping
-	 */
-	admin_flows_field_mapping: () => LocalizedString;
 	/**
 	 * Flow list
 	 */
@@ -62097,10 +60087,6 @@ Remove this role from {email}?
 	 * Field Mapping Set
 	 */
 	admin_flows_link_field_mapping_set_title: () => LocalizedString;
-	/**
-	 * Define groups of attributes and claims to release.
-	 */
-	admin_flows_link_field_mapping_set_description: () => LocalizedString;
 	/**
 	 * Consent Statement
 	 */
@@ -66398,10 +64384,6 @@ Remove this role from {email}?
 	 * This text is shown as the option label/body. It can include managed link tokens such as %link1%.
 	 */
 	admin_consent_templates_option_body_description: () => LocalizedString;
-	/**
-	 * Open Field Mapping Set settings
-	 */
-	admin_consent_templates_option_open_field_mapping: () => LocalizedString;
 	/**
 	 * Choose what this consent statement is bound to.
 	 */

@@ -87,15 +87,6 @@ describe('navigation model', () => {
 		}
 	});
 
-	it('keeps every legacy Admin UI route assigned to an item', () => {
-		const legacy = [...TENANT_AREAS, ...PLATFORM_AREAS].flatMap((area) => [
-			...area.legacyRoutes,
-			...area.children.flatMap((item) => item.legacyRoutes)
-		]);
-		const routes = legacy.filter((route) => route.startsWith('/admin'));
-		expect(routes.length).toBeGreaterThan(100);
-	});
-
 	it('keeps personal settings outside the navigation', () => {
 		expect(isStandalonePath('/admin/me')).toBe(true);
 		expect(isStandalonePath('/admin/me/')).toBe(true);

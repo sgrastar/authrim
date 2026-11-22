@@ -273,9 +273,7 @@ export const de = {
 	'account.signOut': 'Abmelden',
 	'placeholder.title': 'Diese Seite ist noch nicht in der neuen Konsole',
 	'placeholder.body':
-		'Funktionen werden einzeln neu aufgebaut, sobald ihr Informationsdesign steht. Dieser Eintrag übernimmt diese Seiten der aktuellen Admin-UI.',
-	'placeholder.legacy': 'Übernommene aktuelle Seiten',
-	'placeholder.new': 'Neue Funktion (keine aktuelle Seite)',
+		'Funktionen werden einzeln neu aufgebaut, sobald ihr Informationsdesign steht.',
 	'error.notFound.title': 'Seite nicht gefunden',
 	'error.notFound.body': 'Die URL hat sich eventuell geändert oder die Seite existiert noch nicht.',
 	'error.generic.title': 'Etwas ist schiefgelaufen',

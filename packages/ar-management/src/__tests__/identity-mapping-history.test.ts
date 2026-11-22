@@ -65,10 +65,8 @@ import {
   adminIdentityMappingHistoryRestoreHandler,
 } from '../identity-mapping-history';
 import { adminIdentityMappingEffectiveHandler } from '../identity-mapping-effective';
-import {
-  adminIdentityMappingDestinationProfileUpdateHandler,
-  adminIdentityFieldMappingVersionCompileHandler,
-} from '../identity-mapping-control-plane';
+import { adminIdentityMappingDestinationProfileUpdateHandler } from '../identity-mapping-control-plane';
+import { adminIdentityFieldMappingVersionCompileHandler } from './helpers/legacy-mapping-set-steps';
 import settingsV2 from '../routes/settings-v2';
 import {
   TENANT,

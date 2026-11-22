@@ -691,7 +691,6 @@ const adminOther = {
 	admin_consent_templates_option_body: 'Option text ({language:string})',
 	admin_consent_templates_option_body_description:
 		'This text is shown as the option label/body. It can include managed link tokens such as %link1%.',
-	admin_consent_templates_option_open_field_mapping: 'Open Field Mapping Set settings',
 	admin_consent_templates_binding_description: 'Choose what this consent statement is bound to.',
 	admin_consent_templates_binding_type: 'Target type',
 	admin_consent_templates_binding_subject: 'Subject',
