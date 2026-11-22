@@ -419,6 +419,10 @@ export const PLATFORM_AREAS: readonly NavArea[] = [
 				label: 'nav.pa.roles'
 			},
 			{
+				id: 'sign-in',
+				label: 'nav.pa.signIn'
+			},
+			{
 				id: 'attributes',
 				label: 'nav.pa.attributes'
 			},

@@ -231,6 +231,7 @@ export const de = {
 	'nav.pt.invitations': 'Mandanteneinladungen',
 	'nav.pa.users': 'Administratorbenutzer',
 	'nav.pa.roles': 'Administratorrollen',
+	'nav.pa.signIn': 'Anmeldung der Administratoren',
 	'nav.pa.attributes': 'Administratorattribute',
 	'nav.pa.relationships': 'Administratorbeziehungen',
 	'nav.pa.policies': 'Administratorrichtlinien',

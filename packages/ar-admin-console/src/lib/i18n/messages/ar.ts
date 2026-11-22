@@ -230,6 +230,7 @@ export const ar = {
 	'nav.pt.invitations': 'دعوات المستأجرين',
 	'nav.pa.users': 'مستخدمو الإدارة',
 	'nav.pa.roles': 'أدوار الإدارة',
+	'nav.pa.signIn': 'تسجيل دخول المسؤولين',
 	'nav.pa.attributes': 'سمات الإدارة',
 	'nav.pa.relationships': 'علاقات الإدارة',
 	'nav.pa.policies': 'سياسات الإدارة',

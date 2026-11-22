@@ -47,6 +47,7 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
 .notices h2{font-size:.88rem;font-weight:620;color:var(--ink-soft)}
 .notices ul{list-style:none;padding:0;margin-top:.3rem;display:grid;gap:.15rem}
 .notices li{text-wrap:pretty}
+.notices.fine{margin-top:1.4rem;font-size:.76rem;line-height:1.65}
 /* The check, when it shows, and the button are one block: same width, same corners. */
 form{display:grid;width:min(100%,300px);margin:2rem auto 0}
 /* The check takes no room until it has something to ask. */

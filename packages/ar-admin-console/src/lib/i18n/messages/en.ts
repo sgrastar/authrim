@@ -230,6 +230,7 @@ export const en = {
 	'nav.pt.invitations': 'Tenant invitations',
 	'nav.pa.users': 'Admin users',
 	'nav.pa.roles': 'Admin roles',
+	'nav.pa.signIn': 'Admin sign-in',
 	'nav.pa.attributes': 'Admin attributes',
 	'nav.pa.relationships': 'Admin relationships',
 	'nav.pa.policies': 'Admin policies',

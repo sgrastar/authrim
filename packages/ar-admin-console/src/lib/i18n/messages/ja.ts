@@ -233,6 +233,7 @@ export const ja = {
 	'nav.pt.invitations': 'テナント招待',
 	'nav.pa.users': '管理者ユーザー',
 	'nav.pa.roles': '管理者ロール',
+	'nav.pa.signIn': '管理者のログイン',
 	'nav.pa.attributes': '管理者属性',
 	'nav.pa.relationships': '管理者関係',
 	'nav.pa.policies': '管理者ポリシー',
