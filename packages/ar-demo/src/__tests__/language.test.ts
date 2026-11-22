@@ -231,7 +231,7 @@ describe('every language renders every page', () => {
     for (const lang of LANGS) {
       const copy = COPY[lang];
       expect(Object.keys(copy.errors).sort()).toEqual([...ERROR_KINDS].sort());
-      expect(copy.notices(7)).toHaveLength(3);
+      expect(copy.notices(7)).toHaveLength(5);
       for (const [key, value] of Object.entries(copy)) {
         if (typeof value === 'string') expect(value.trim(), `${lang}.${key}`).not.toBe('');
       }
@@ -265,6 +265,8 @@ describe('every language renders every page', () => {
       'これは動作確認のためのデモ環境です。',
       '実際の個人情報や本物の認証情報は入力しないでください。',
       '作成したものはすべて、約3時間後に自動で削除されます。',
+      '本マルチテナント環境では、データベースがAPAC(アジア地域)となっています。使用環境によっては通信が遅い場合があります。',
+      '重要な操作を行う場合、２つの要素で認証を行うステップアップ認証を採用しています。本来、２つ目の認証ではYubikeyなどのハードウェアを使用した許可か専用スマホアプリでの許可が推奨されますが、このデモ環境では利便性を考慮し、6桁のコードを利用するTOTP形式でも登録可能です。',
     ]);
   });
 
@@ -359,7 +361,7 @@ describe('every language renders every page', () => {
   });
 
   it.each([...LANGS])(
-    'start page in %s: three notices, the lifetime, switcher, Turnstile',
+    'start page in %s: five notices, the lifetime, switcher, Turnstile',
     async (lang) => {
       const html = startPage(lang, await configFor(7));
       const copy = COPY[lang];
@@ -375,11 +377,11 @@ describe('every language renders every page', () => {
       expect(html).toContain(`data-language="${copy.turnstile}"`);
       expect(html.match(/<h1[ >]/g)).toHaveLength(1);
       expect(html).toContain('<button type="submit" class="start-btn" data-wait=');
-      // words on the empty sheet, no window: name, two intro paragraphs, notices (3), Turnstile, button, language links
+      // words on the empty sheet, no window: name, two intro paragraphs, notices (5), Turnstile, button, language links
       expect(html).toContain('<section class="hero">');
       expect(html).not.toContain('class="window"');
       expect(html).not.toContain('class="panel"');
-      expect(html.match(/<li>/g)).toHaveLength(3 + LANGS.length);
+      expect(html.match(/<li>/g)).toHaveLength(5 + LANGS.length);
       expect(html).toContain(`<h2>${copy.noticeTitle}</h2>`);
       expect(html).not.toContain('class="brand"');
       expect(html).toContain('<h1 lang="en">Authrim <span>Demo</span></h1>');

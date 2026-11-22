@@ -55,7 +55,7 @@ export interface Copy extends GateTexts {
   intro1: string;
   intro2: string;
   noticeTitle: string;
-  notices: (hours: number) => [string, string, string];
+  notices: (hours: number) => [string, string, string, string, string];
   start: string;
   /** On the start button while the check is still answering. */
   startChecking: string;
@@ -103,7 +103,7 @@ export const COPY: Record<Lang, Copy> = {
     themeLabel: '昼と夜を切り替える',
     title: 'Authrim デモ環境',
     intro1: p(
-      'Authrim の|エンドユーザー向け|ログインと|管理者向けの|画面を、|実際に|操作して|試せる|デモ環境です。'
+      'Authrim の|エンドユーザー向け|ログインと|管理者向けの|画面を、|実際に|操作して|試せる|マルチテナントの|デモ環境です。'
     ),
     intro2: p(
       '「開始する」を|押すと、|あなた専用の|テナントが|作成され、|設定を|自由に|変更できます|（一部、|変更できない|項目が|あります）。'
@@ -113,6 +113,12 @@ export const COPY: Record<Lang, Copy> = {
       p('これは|動作確認のための|デモ環境です。'),
       p('実際の|個人情報や|本物の|認証情報は|入力しないでください。'),
       p(`作成した|ものは|すべて、|約${hours}時間後に|自動で|削除されます。`),
+      p(
+        '本マルチテナント環境では、|データベースが|APAC(アジア地域)と|なっています。|使用環境によっては|通信が|遅い|場合があります。'
+      ),
+      p(
+        '重要な|操作を|行う|場合、|２つの|要素で|認証を|行う|ステップアップ認証を|採用しています。|本来、|２つ目の|認証では|Yubikeyなどの|ハードウェアを|使用した|許可か|専用スマホアプリでの|許可が|推奨されますが、|このデモ環境では|利便性を|考慮し、|6桁の|コードを|利用する|TOTP形式でも|登録可能です。'
+      ),
     ],
     start: '開始する',
     startChecking: '確認しています…',
@@ -173,7 +179,7 @@ export const COPY: Record<Lang, Copy> = {
     themeLabel: 'Switch between day and night',
     title: 'Authrim Demo',
     intro1:
-      'A demo environment where you can try Authrim’s end-user sign-in and administrator screens hands-on.',
+      'A multi-tenant demo environment where you can try Authrim’s end-user sign-in and administrator screens hands-on.',
     intro2:
       'Press “Start” to create a tenant of your own, where you can change settings freely (a few items cannot be changed).',
     noticeTitle: 'Please note',
@@ -181,6 +187,8 @@ export const COPY: Record<Lang, Copy> = {
       'This is a demo environment for testing only.',
       'Do not enter real personal data or real credentials.',
       `Everything you create is deleted automatically after about ${hours} ${hours === 1 ? 'hour' : 'hours'}.`,
+      'In this multi-tenant environment the database is in APAC (Asia-Pacific). Depending on where you are, connections may be slow.',
+      'Important operations use step-up authentication, which asks for two factors. A second factor from hardware such as a YubiKey, or approval in a dedicated phone app, is normally recommended, but for convenience this demo also lets you register a TOTP authenticator (a 6-digit code).',
     ],
     start: 'Start',
     startChecking: 'Checking…',
@@ -231,7 +239,7 @@ export const COPY: Record<Lang, Copy> = {
     themeLabel: 'Zwischen Tag und Nacht wechseln',
     title: 'Authrim Demo',
     intro1:
-      'Eine Demo-Umgebung, in der du die Anmeldung für Endnutzer und die Verwaltungsoberfläche von Authrim direkt ausprobieren kannst.',
+      'Eine Multi-Tenant-Demo-Umgebung, in der du die Anmeldung für Endnutzer und die Verwaltungsoberfläche von Authrim direkt ausprobieren kannst.',
     intro2:
       'Mit „Starten“ wird ein eigener Tenant für dich angelegt, dessen Einstellungen du frei ändern kannst (einige wenige Punkte sind nicht änderbar).',
     noticeTitle: 'Bitte beachten',
@@ -239,6 +247,8 @@ export const COPY: Record<Lang, Copy> = {
       'Dies ist eine Demo-Umgebung nur zum Ausprobieren.',
       'Gib keine echten personenbezogenen Daten und keine echten Zugangsdaten ein.',
       `Alles, was du anlegst, wird nach etwa ${hours} ${hours === 1 ? 'Stunde' : 'Stunden'} automatisch gelöscht.`,
+      'In dieser Multi-Tenant-Umgebung liegt die Datenbank in APAC (Asien-Pazifik). Je nach Standort können Verbindungen langsam sein.',
+      'Für wichtige Vorgänge wird eine Step-up-Authentifizierung mit zwei Faktoren verwendet. Als zweiter Faktor wird eigentlich Hardware wie ein YubiKey oder die Freigabe in einer eigenen Smartphone-App empfohlen; in dieser Demo kannst du aus Bequemlichkeit auch eine TOTP-Authenticator-App (6-stelliger Code) registrieren.',
     ],
     start: 'Starten',
     startChecking: 'Wird geprüft…',
@@ -292,7 +302,7 @@ export const COPY: Record<Lang, Copy> = {
     themeLabel: 'التبديل بين النهار والليل',
     title: 'بيئة Authrim التجريبية',
     intro1:
-      'بيئة تجريبية تتيح لك تجربة شاشات تسجيل الدخول للمستخدمين النهائيين وشاشات المسؤولين في Authrim عمليًا.',
+      'بيئة تجريبية متعددة المستأجرين (Multi-tenant) تتيح لك تجربة شاشات تسجيل الدخول للمستخدمين النهائيين وشاشات المسؤولين في Authrim عمليًا.',
     intro2:
       'عند الضغط على «ابدأ» يُنشأ مستأجر (Tenant) خاص بك، ويمكنك تغيير إعداداته بحرية (مع وجود بعض العناصر التي لا يمكن تغييرها).',
     noticeTitle: 'يُرجى الانتباه',
@@ -300,6 +310,8 @@ export const COPY: Record<Lang, Copy> = {
       'هذه بيئة تجريبية لأغراض الاختبار فقط.',
       'لا تُدخل بيانات شخصية حقيقية ولا بيانات اعتماد حقيقية.',
       `يُحذف كل ما تنشئه تلقائيًا بعد نحو ${arabicHours(hours)}.`,
+      'في هذه البيئة متعددة المستأجرين توجد قاعدة البيانات في منطقة APAC (آسيا والمحيط الهادئ). قد يكون الاتصال بطيئًا بحسب مكان استخدامك.',
+      'تعتمد العمليات المهمة المصادقة المعزّزة (Step-up) بعاملين. يُفضَّل عادةً أن يكون العامل الثاني عبر جهاز مثل YubiKey أو الموافقة من تطبيق هاتف مخصص، لكن هذه البيئة التجريبية تتيح لك للتيسير تسجيل تطبيق TOTP (رمز من 6 أرقام).',
     ],
     start: 'ابدأ',
     startChecking: 'جارٍ التحقق…',
