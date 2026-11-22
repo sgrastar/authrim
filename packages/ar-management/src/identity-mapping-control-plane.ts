@@ -2024,6 +2024,30 @@ const FEDERATION_ENTITY_DIRECTIONS = new Set(['asc', 'desc']);
 const FEDERATION_ENTITY_KEYWORDS_MAX = 20;
 const FEDERATION_ENTITY_KEYWORD_MAX_LENGTH = 256;
 const FEDERATION_ENTITY_KEYWORD_FACET_MAX = 2000;
+/** The most distinct attributes listed: a federation's SPs together ask for a few dozen. */
+const FEDERATION_REQUESTED_ATTRIBUTES_MAX = 200;
+
+/** One attribute the service providers of a federation ask for, counted over them. */
+export interface FederationRequestedAttribute {
+  /** The SAML Attribute Name (an OID URN, typically). */
+  name: string;
+  friendlyName: string | null;
+  /** How many service providers ask for it. */
+  requestedBy: number;
+  /** How many of those mark it required. */
+  requiredBy: number;
+}
+
+/**
+ * What the service providers of a federation's current metadata ask to receive. `spTotal` counts
+ * the SPs; `spRead` how many of them carry the list: a snapshot imported before the lists were
+ * kept has none until the next refresh, and then `spRead` is lower than `spTotal`.
+ */
+export interface FederationRequestedAttributes {
+  attributes: FederationRequestedAttribute[];
+  spTotal: number;
+  spRead: number;
+}
 
 /**
  * Groups keyword tokens by kind. A federation writes them as `category:<kind>:<value>`
@@ -8050,6 +8074,69 @@ export class IdentityMappingControlPlaneRepository {
     };
   }
 
+  /**
+   * The attributes the service providers of a source's active document ask for, each with how many
+   * SPs ask for it and how many mark it required (an entity of both roles counts as an SP). The
+   * counts come from the lists kept with each entity summary at import.
+   */
+  async listFederationTrustSourceRequestedAttributes(
+    tenantId: string,
+    trustSourceId: string
+  ): Promise<FederationRequestedAttributes> {
+    validateRequiredString(trustSourceId, 'trustSourceId');
+    const source = await this.adapter.queryOne<{ active_metadata_document_id: string | null }>(
+      `SELECT active_metadata_document_id
+         FROM federation_trust_sources
+        WHERE tenant_id = ? AND id = ?`,
+      [tenantId, trustSourceId]
+    );
+    if (!source) throw notFound('federation trust source not found');
+    if (!source.active_metadata_document_id) return { attributes: [], spTotal: 0, spRead: 0 };
+    const documentId = source.active_metadata_document_id;
+    const [counts, rows] = await Promise.all([
+      this.adapter.queryOne<{ sp_total: number | string; sp_read: number | string | null }>(
+        `SELECT COUNT(*) AS sp_total,
+                SUM(CASE WHEN json_valid(summary_json)
+                          AND json_type(summary_json, '$.requestedAttributes') = 'array'
+                         THEN 1 ELSE 0 END) AS sp_read
+           FROM federation_metadata_entity_summaries
+          WHERE tenant_id = ? AND metadata_document_id = ?
+            AND entity_role IN ('saml_sp', 'ambiguous')`,
+        [tenantId, documentId]
+      ),
+      this.adapter.query<{
+        name: string;
+        friendly_name: string | null;
+        requested_by: number | string;
+        required_by: number | string;
+      }>(
+        `SELECT json_extract(a.value, '$.name') AS name,
+                MAX(json_extract(a.value, '$.friendlyName')) AS friendly_name,
+                COUNT(*) AS requested_by,
+                SUM(CASE WHEN json_extract(a.value, '$.required') IN (1, 'true') THEN 1 ELSE 0 END) AS required_by
+           FROM federation_metadata_entity_summaries e,
+                json_each(CASE WHEN json_valid(e.summary_json) THEN e.summary_json ELSE '{}' END, '$.requestedAttributes') a
+          WHERE e.tenant_id = ? AND e.metadata_document_id = ?
+            AND e.entity_role IN ('saml_sp', 'ambiguous')
+            AND typeof(json_extract(a.value, '$.name')) = 'text'
+          GROUP BY name
+          ORDER BY required_by DESC, requested_by DESC, name ASC
+          LIMIT ?`,
+        [tenantId, documentId, FEDERATION_REQUESTED_ATTRIBUTES_MAX]
+      ),
+    ]);
+    return {
+      attributes: rows.map((row) => ({
+        name: row.name,
+        friendlyName: row.friendly_name ?? null,
+        requestedBy: Number(row.requested_by),
+        requiredBy: Number(row.required_by),
+      })),
+      spTotal: Number(counts?.sp_total ?? 0),
+      spRead: Number(counts?.sp_read ?? 0),
+    };
+  }
+
   /** The most recent refresh jobs of a source, newest first, with the entity-count change. */
   async listFederationRefreshHistory(
     tenantId: string,
@@ -10134,6 +10221,17 @@ export async function adminIdentityMappingFederationTrustSourceEntityKeywordsHan
       {
         role: c.req.query('role') ?? undefined,
       }
+    )
+  );
+}
+
+export async function adminIdentityMappingFederationTrustSourceRequestedAttributesHandler(
+  c: AdminContext
+) {
+  return handleControlPlane(c, async (repository, tenantId) =>
+    repository.listFederationTrustSourceRequestedAttributes(
+      tenantId,
+      requiredParam(c, 'trustSourceId')
     )
   );
 }

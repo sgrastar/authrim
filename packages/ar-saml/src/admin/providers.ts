@@ -115,6 +115,7 @@ import {
   unwrapSingleEntityMetadata,
   resolveAggregateSignaturePolicy,
   verifyAggregateMetadata,
+  withoutRequestedAttributes,
 } from './aggregate-metadata';
 import {
   evaluateFederationRuntimePolicy,
@@ -1728,7 +1729,7 @@ export async function handlePreviewMetadata(c: AdminSAMLContext): Promise<Respon
         tenantId,
         metadataXml: aggregate.metadataXml,
         metadataUrl: resolvedMetadata.metadataUrl,
-        entities: aggregate.entities,
+        entities: aggregate.entities.map(withoutRequestedAttributes),
         verification,
       });
 

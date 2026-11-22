@@ -160,6 +160,47 @@ describe('the federation sources client', () => {
 		expect(page.items[0].explicitProviderType).toBe('idp');
 	});
 
+	it('reads what the federation’s services ask for, and survives a malformed answer', async () => {
+		const calls = stub(() =>
+			Response.json({
+				attributes: [
+					{
+						name: 'urn:oid:1.3.6.1.4.1.5923.1.1.1.6',
+						friendlyName: 'eduPersonPrincipalName',
+						requestedBy: 412,
+						requiredBy: 390
+					},
+					{ name: 'urn:oid:2', friendlyName: null, requestedBy: 3, requiredBy: 0 }
+				],
+				spTotal: 500,
+				spRead: 480
+			})
+		);
+		await expect(httpFederationSources.requestedAttributes('f 1')).resolves.toEqual({
+			attributes: [
+				{
+					name: 'urn:oid:1.3.6.1.4.1.5923.1.1.1.6',
+					friendlyName: 'eduPersonPrincipalName',
+					requestedBy: 412,
+					requiredBy: 390
+				},
+				{ name: 'urn:oid:2', friendlyName: null, requestedBy: 3, requiredBy: 0 }
+			],
+			spTotal: 500,
+			spRead: 480
+		});
+		expect(calls[0].url).toBe('/api/admin/federation/trust-sources/f%201/requested-attributes');
+		expect(calls[0].method).toBe('GET');
+
+		// An answer that is not what was promised reads as nothing, not as a crash.
+		stub(() => Response.json({ attributes: 'x' }));
+		await expect(httpFederationSources.requestedAttributes('f1')).resolves.toEqual({
+			attributes: [],
+			spTotal: 0,
+			spRead: 0
+		});
+	});
+
 	it('refreshes and materializes through the SAML routes, with the server’s type names', async () => {
 		const calls = stub((call) =>
 			Response.json(

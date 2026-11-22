@@ -6546,6 +6546,67 @@ describe('federation trust source exceptions, IdP selection and inventory reads'
     ).resolves.toEqual({ categories: [] });
   });
 
+  it('counts what the service providers of the active document ask for, and how many require it', async () => {
+    const admin = createAdapter({
+      queryOneRows: [{ active_metadata_document_id: 'doc-1' }, { sp_total: '500', sp_read: '480' }],
+      queryRowSets: [
+        [
+          {
+            name: 'urn:oid:1.3.6.1.4.1.5923.1.1.1.6',
+            friendly_name: 'eduPersonPrincipalName',
+            requested_by: '412',
+            required_by: '390',
+          },
+          {
+            name: 'urn:oid:0.9.2342.19200300.100.1.3',
+            friendly_name: null,
+            requested_by: 301,
+            required_by: 0,
+          },
+        ],
+      ],
+    });
+    const result = await new IdentityMappingControlPlaneRepository(
+      admin,
+      () => 1000
+    ).listFederationTrustSourceRequestedAttributes('tenant_a', 'trust-source-1');
+    expect(result).toEqual({
+      attributes: [
+        {
+          name: 'urn:oid:1.3.6.1.4.1.5923.1.1.1.6',
+          friendlyName: 'eduPersonPrincipalName',
+          requestedBy: 412,
+          requiredBy: 390,
+        },
+        {
+          name: 'urn:oid:0.9.2342.19200300.100.1.3',
+          friendlyName: null,
+          requestedBy: 301,
+          requiredBy: 0,
+        },
+      ],
+      spTotal: 500,
+      // A snapshot taken before the lists were kept would read fewer than it has.
+      spRead: 480,
+    });
+    const query = admin.queries.find((item) => item.sql.includes("'$.requestedAttributes'"));
+    expect(query?.sql).toContain("e.entity_role IN ('saml_sp', 'ambiguous')");
+    expect(query?.params.slice(0, 2)).toEqual(['tenant_a', 'doc-1']);
+
+    await expect(
+      new IdentityMappingControlPlaneRepository(
+        createAdapter({ queryOneRows: [null] }),
+        () => 1000
+      ).listFederationTrustSourceRequestedAttributes('tenant_b', 'trust-source-1')
+    ).rejects.toMatchObject({ status: 404 });
+    await expect(
+      new IdentityMappingControlPlaneRepository(
+        createAdapter({ queryOneRows: [{ active_metadata_document_id: null }] }),
+        () => 1000
+      ).listFederationTrustSourceRequestedAttributes('tenant_a', 'trust-source-1')
+    ).resolves.toEqual({ attributes: [], spTotal: 0, spRead: 0 });
+  });
+
   it('groups keyword tokens by kind and leaves out what is not a category', () => {
     expect(
       groupFederationEntityKeywords([

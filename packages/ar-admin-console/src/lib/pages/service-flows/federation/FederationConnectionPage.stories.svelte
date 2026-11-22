@@ -678,3 +678,25 @@
 		await expect(canvasElement.textContent).not.toMatch(/trust every|すべてのプロバイダーを信頼/);
 	}}
 />
+
+<Story
+	name="The mapping node shows what the federation's services ask for, and whether the output source has it"
+	args={mappingPage.args}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findByRole('heading', { name: 'Test federation' });
+		// Not in the output source's own node: it is about what is sent, so it sits with the mapping.
+		await userEvent.click(
+			canvas.getByRole('button', { name: new RegExp(t('sf.part.mapping-schemas')) })
+		);
+		await expect(canvas.queryByText(t('sf.fed.req.title'))).toBeNull();
+		await userEvent.click(
+			canvas.getByRole('button', { name: new RegExp(t('sf.part.mapping-sets')) })
+		);
+		await canvas.findByText(t('sf.fed.req.title'));
+		// The attributes come with how many services require each.
+		await canvas.findByText('eduPersonPrincipalName');
+		await canvas.findByText(t('sf.fed.req.required', { count: 390 }));
+		await canvas.findByText(t('sf.fed.req.askedBy', { count: 412 }));
+	}}
+/>

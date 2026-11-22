@@ -135,6 +135,9 @@ export async function answerFederationMock(
 				});
 				return { status: 200, body: { ...page, items: page.items.map(wireEntity) } };
 			}
+			if (view === 'requested-attributes' && method === 'GET') {
+				return { status: 200, body: await client.requestedAttributes(id) };
+			}
 			if (view === 'refresh-history' && method === 'GET') {
 				const limit = Number.parseInt(query.get('limit') ?? '', 10);
 				return {

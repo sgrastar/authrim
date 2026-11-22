@@ -758,6 +758,18 @@ export const enServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 	'sf.dp.field.edit': 'Edit the output source',
 	'sf.dp.field.hint':
 		'The attributes sent to the app or service. A mapping sends into this output source.',
+	'sf.fed.req.title': 'Attributes the services ask for',
+	'sf.fed.req.desc':
+		"The attributes the federation's service providers ask for in their metadata. An attribute some of them mark required has to be sent, or those services cannot sign people in.",
+	'sf.fed.req.required': 'Required by {count}',
+	'sf.fed.req.optional': 'Optional',
+	'sf.fed.req.askedBy': 'Asked for by {count}',
+	'sf.fed.req.sendable': 'In the output source',
+	'sf.fed.req.notSendable': 'Not in the output source',
+	'sf.fed.req.partial':
+		'Only {read} of {total} service providers are counted. Fetching the metadata again counts all of them.',
+	'sf.fed.req.none': 'No service provider asks for attributes in its metadata.',
+	'sf.fed.req.loadFailed': 'The attributes the services ask for could not be loaded.',
 	'sf.fed.flow.exclusions': 'Participation and exclusions',
 	'sf.fed.flow.exclusionsItem': 'Participation, exclusions and entities',
 	'sf.fed.flow.exclusionsCount': '{count} set aside',

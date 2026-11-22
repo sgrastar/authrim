@@ -258,6 +258,8 @@ describe('entity summaries', () => {
       entityCategories: undefined,
       entityCategorySupport: undefined,
       registrationAuthority: undefined,
+      // An SP carries the list of what it asks for, empty when it asks for nothing.
+      requestedAttributes: [],
     });
   });
 

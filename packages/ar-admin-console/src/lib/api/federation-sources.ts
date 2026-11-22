@@ -124,6 +124,25 @@ export interface FederationEntityQuery {
 	limit?: number;
 	cursor?: string;
 }
+/** One attribute the service providers of a federation ask for, counted over them. */
+export interface FederationRequestedAttribute {
+	/** The SAML Attribute Name (an OID URN, typically). */
+	name: string;
+	friendlyName: string | null;
+	/** Service providers that ask for it. */
+	requestedBy: number;
+	/** Of those, the ones that mark it required. */
+	requiredBy: number;
+}
+/**
+ * What the service providers of a federation ask to receive. `spRead` is how many of the `spTotal`
+ * carry the list: a snapshot imported before the lists were kept has none until it is refreshed.
+ */
+export interface FederationRequestedAttributes {
+	attributes: FederationRequestedAttribute[];
+	spTotal: number;
+	spRead: number;
+}
 /** The keywords of one kind (a location, an organization type) the entities carry. */
 export interface FederationKeywordCategory {
 	type: string;
@@ -204,6 +223,8 @@ export interface FederationSourcesClient {
 		query?: { role?: FederationEntityRole },
 		signal?: AbortSignal
 	): Promise<FederationKeywordCategory[]>;
+	/** The attributes the federation's service providers ask for, with how many require each. */
+	requestedAttributes(id: string, signal?: AbortSignal): Promise<FederationRequestedAttributes>;
 	refreshHistory(
 		id: string,
 		limit?: number,
@@ -522,6 +543,24 @@ export const httpFederationSources: FederationSourcesClient = {
 				})
 			};
 		});
+	},
+	async requestedAttributes(id, signal) {
+		const result = object(
+			await send(`${TRUST}/${encodeURIComponent(id)}/requested-attributes`, { signal })
+		);
+		return {
+			attributes: (Array.isArray(result.attributes) ? result.attributes : []).map((attribute) => {
+				const row = object(attribute);
+				return {
+					name: str(row.name),
+					friendlyName: str(row.friendlyName) || null,
+					requestedBy: num(row.requestedBy) ?? 0,
+					requiredBy: num(row.requiredBy) ?? 0
+				};
+			}),
+			spTotal: num(result.spTotal) ?? 0,
+			spRead: num(result.spRead) ?? 0
+		};
 	},
 	async refreshHistory(id, limit, signal) {
 		const result = object(

@@ -8,6 +8,7 @@ import {
   parseAggregateMetadata,
   verifyAggregateMetadata,
   verifyAggregateMetadataSignature,
+  withoutRequestedAttributes,
 } from '../aggregate-metadata';
 import { signXml } from '../../common/signature';
 
@@ -138,6 +139,42 @@ const aggregateXml = `<?xml version="1.0" encoding="UTF-8"?>
 </md:EntitiesDescriptor>`;
 
 const signableAggregateXml = `<md:EntitiesDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata" ID="_signed_aggregate"><md:EntityDescriptor entityID="https://sp.example.test/sp"><md:SPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol"><md:AssertionConsumerService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST" Location="https://sp.example.test/acs" index="0" isDefault="true"/></md:SPSSODescriptor></md:EntityDescriptor></md:EntitiesDescriptor>`;
+
+const requestedAttributesXml = `<md:EntitiesDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata" ID="_requested"><md:EntityDescriptor entityID="https://sp.example.test/sp"><md:SPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol"><md:AttributeConsumingService index="0"><md:ServiceName xml:lang="en">One</md:ServiceName><md:RequestedAttribute Name="urn:oid:1.3.6.1.4.1.5923.1.1.1.6" FriendlyName="eduPersonPrincipalName" isRequired="true"/><md:RequestedAttribute Name="urn:oid:0.9.2342.19200300.100.1.3" FriendlyName="mail"/></md:AttributeConsumingService><md:AttributeConsumingService index="1"><md:ServiceName xml:lang="en">Two</md:ServiceName><md:RequestedAttribute Name="urn:oid:0.9.2342.19200300.100.1.3" isRequired="1"/><md:RequestedAttribute Name="" isRequired="true"/></md:AttributeConsumingService><md:AssertionConsumerService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST" Location="https://sp.example.test/acs" index="0"/></md:SPSSODescriptor></md:EntityDescriptor><md:EntityDescriptor entityID="https://plain.example.test/sp"><md:SPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol"><md:AssertionConsumerService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST" Location="https://plain.example.test/acs" index="0"/></md:SPSSODescriptor></md:EntityDescriptor><md:EntityDescriptor entityID="https://idp.example.test/idp"><md:IDPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol"><md:SingleSignOnService Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect" Location="https://idp.example.test/sso"/></md:IDPSSODescriptor></md:EntityDescriptor></md:EntitiesDescriptor>`;
+
+describe('requested attributes of service providers', () => {
+  it('merges what an SP asks for by name, and counts it required if any service says so', () => {
+    const [sp, plain, idp] = parseAggregateMetadata(requestedAttributesXml).entities;
+    expect(sp.requestedAttributes).toEqual([
+      {
+        name: 'urn:oid:1.3.6.1.4.1.5923.1.1.1.6',
+        friendlyName: 'eduPersonPrincipalName',
+        required: true,
+      },
+      // Optional in one service, required (xs:boolean "1") in the other; the name is kept.
+      { name: 'urn:oid:0.9.2342.19200300.100.1.3', friendlyName: 'mail', required: true },
+    ]);
+    // An SP that asks for nothing still carries an empty list: it was read.
+    expect(plain.requestedAttributes).toEqual([]);
+    // Only an SP has the list.
+    expect(idp.requestedAttributes).toBeUndefined();
+  });
+
+  it('keeps a label within its limit when a later service repeats the attribute', () => {
+    // A label repeated by a second service must obey the same limit, or one hostile entity could
+    // make the stored summary too large for the whole federation to refresh.
+    const long = 'x'.repeat(600);
+    const xml = `<md:EntitiesDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata" ID="_long"><md:EntityDescriptor entityID="https://sp.example.test/sp"><md:SPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol"><md:AttributeConsumingService index="0"><md:RequestedAttribute Name="urn:a"/></md:AttributeConsumingService><md:AttributeConsumingService index="1"><md:RequestedAttribute Name="urn:a" FriendlyName="${long}"/></md:AttributeConsumingService></md:SPSSODescriptor></md:EntityDescriptor></md:EntitiesDescriptor>`;
+    const [sp] = parseAggregateMetadata(xml).entities;
+    expect(sp.requestedAttributes).toEqual([{ name: 'urn:a', required: false }]);
+  });
+
+  it('is left out of a preview', () => {
+    const [sp] = parseAggregateMetadata(requestedAttributesXml).entities;
+    expect('requestedAttributes' in withoutRequestedAttributes(sp)).toBe(false);
+    expect(withoutRequestedAttributes(sp).entityId).toBe('https://sp.example.test/sp');
+  });
+});
 
 describe('SAML aggregate metadata', () => {
   it('detects and summarizes aggregate metadata including nested entity descriptors', () => {

@@ -12416,6 +12416,39 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
+  '/api/admin/federation/trust-sources/{trustSourceId}/requested-attributes':
+    get:
+      tags:
+        - Federation
+      operationId: getApiAdminFederationTrustSourcesByTrustSourceIdRequestedAttributes
+      summary: List the attributes the service providers of a federation ask for.
+      description: >-
+        The attributes the service providers of the source's active document ask to receive
+        (RequestedAttribute in their metadata), each with how many of them ask for it and how many
+        mark it required. An entity of both roles counts as a service provider. The lists are kept
+        when metadata is imported, so a snapshot imported before they were kept has none until its
+        next refresh (spRead is then lower than spTotal).
+      responses:
+        '200':
+          $ref: '#/components/responses/FederationTrustSourceRequestedAttributes'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      parameters:
+        - name: trustSourceId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Federation trust source identifier.
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
   '/api/admin/federation/trust-sources/{trustSourceId}/refresh-history':
     get:
       tags:
@@ -46691,6 +46724,12 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/FederationTrustSourceEntityKeywordsResponse'
+    FederationTrustSourceRequestedAttributes:
+      description: The attributes a federation source's service providers ask for, with counts.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/FederationTrustSourceRequestedAttributesResponse'
     FederationRefreshHistory:
       description: Recent refresh jobs of a federation source, newest first.
       content:
@@ -69907,6 +69946,45 @@ components:
             - saml_idp
             - saml_sp
             - null
+    FederationTrustSourceRequestedAttributesResponse:
+      type: object
+      required:
+        - attributes
+        - spTotal
+        - spRead
+      properties:
+        attributes:
+          type: array
+          description: Most-required first, then most-requested.
+          items:
+            type: object
+            required:
+              - name
+              - friendlyName
+              - requestedBy
+              - requiredBy
+            properties:
+              name:
+                type: string
+                description: The SAML Attribute Name (an OID URN, typically).
+              friendlyName:
+                type:
+                  - string
+                  - 'null'
+              requestedBy:
+                type: integer
+                description: Service providers that ask for the attribute.
+              requiredBy:
+                type: integer
+                description: Of those, the ones that mark it required.
+        spTotal:
+          type: integer
+          description: Service providers in the active document.
+        spRead:
+          type: integer
+          description: >-
+            Of those, how many carry the list of requested attributes (a snapshot imported before
+            the lists were kept has none until it is refreshed).
     FederationTrustSourceEntityKeywordsResponse:
       type: object
       additionalProperties: false

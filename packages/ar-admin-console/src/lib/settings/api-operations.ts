@@ -351,6 +351,7 @@ const ROWS: readonly (readonly [ApiMethod, string, string, ApiOperation['spec']]
 	["DELETE","/api/admin/federation/trust-sources/{trustSourceId}","Delete a federation trust source.","admin"],
 	["GET","/api/admin/federation/trust-sources/{trustSourceId}/entities","Search the entities of a federation trust source.","admin"],
 	["GET","/api/admin/federation/trust-sources/{trustSourceId}/entity-keywords","List the keywords of the entities of a federation trust source.","admin"],
+	["GET","/api/admin/federation/trust-sources/{trustSourceId}/requested-attributes","List the attributes the service providers of a federation ask for.","admin"],
 	["GET","/api/admin/federation/trust-sources/{trustSourceId}/metadata-documents","List federation metadata documents.","admin"],
 	["GET","/api/admin/federation/trust-sources/{trustSourceId}/refresh-history","List recent refreshes of a federation trust source.","admin"],
 	["GET","/api/admin/flow-assignments","List Flow assignments.","admin"],

@@ -1174,6 +1174,21 @@ export interface SAMLMetadataEntitySummary {
   entityCategorySupport?: string[];
   /** Registration authority declared by mdrpi:RegistrationInfo. */
   registrationAuthority?: string;
+  /**
+   * The attributes a service provider's metadata asks for (RequestedAttribute), one entry per
+   * attribute name. Kept for the entity summaries of a federation's stored snapshot, where they
+   * are counted per attribute; an empty list means the entity was read and asks for none. Left
+   * out of previews, which only list entities.
+   */
+  requestedAttributes?: SAMLMetadataEntityRequestedAttribute[];
+}
+
+/** One attribute an SP asks for, merged over its AttributeConsumingServices. */
+export interface SAMLMetadataEntityRequestedAttribute {
+  name: string;
+  friendlyName?: string;
+  /** Whether any AttributeConsumingService of the SP marks it isRequired. */
+  required: boolean;
 }
 
 export interface SAMLMetadataKeywordFacetValue {

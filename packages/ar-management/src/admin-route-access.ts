@@ -326,6 +326,11 @@ const MOVED_MAPPING_ROUTES: ReadonlyArray<readonly [string, AdminRouteMethod[], 
     'federation trust sources',
   ],
   [
+    '/api/admin/federation/trust-sources/:trustSourceId/requested-attributes',
+    ['GET'],
+    'federation trust sources',
+  ],
+  [
     '/api/admin/federation/trust-sources/:trustSourceId/refresh-history',
     ['GET'],
     'federation trust sources',

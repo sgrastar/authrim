@@ -785,6 +785,18 @@ export const deServiceFlows: Record<keyof typeof jaServiceFlows, string> = {
 	'sf.dp.field.edit': 'Ausgabequelle bearbeiten',
 	'sf.dp.field.hint':
 		'Die Attribute, die an App oder Dienst gesendet werden. Eine Zuordnung sendet in diese Ausgabequelle.',
+	'sf.fed.req.title': 'Attribute, die die Dienste anfordern',
+	'sf.fed.req.desc':
+		'Die Attribute, die die Service Provider der Föderation in ihren Metadaten anfordern. Ein Attribut, das manche als erforderlich markieren, muss gesendet werden, sonst können sich Personen bei diesen Diensten nicht anmelden.',
+	'sf.fed.req.required': 'Erforderlich für {count}',
+	'sf.fed.req.optional': 'Optional',
+	'sf.fed.req.askedBy': 'Angefordert von {count}',
+	'sf.fed.req.sendable': 'In der Ausgabequelle',
+	'sf.fed.req.notSendable': 'Nicht in der Ausgabequelle',
+	'sf.fed.req.partial':
+		'Nur {read} von {total} Service Providern sind erfasst. Ein erneutes Abrufen der Metadaten erfasst alle.',
+	'sf.fed.req.none': 'Kein Service Provider fordert in seinen Metadaten Attribute an.',
+	'sf.fed.req.loadFailed': 'Die angeforderten Attribute konnten nicht geladen werden.',
 	'sf.fed.flow.exclusions': 'Teilnahme und Ausschlüsse',
 	'sf.fed.flow.exclusionsItem': 'Teilnahme, Ausschlüsse und Entitäten',
 	'sf.fed.flow.exclusionsCount': '{count} ausgeschlossen',
