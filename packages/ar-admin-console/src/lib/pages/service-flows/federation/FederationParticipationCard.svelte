@@ -23,6 +23,8 @@
 		onreloadmappings?: () => void;
 		disabled?: boolean;
 		spMappingManaged?: boolean;
+		/** Taking part (with the registration authorities that narrow it), or the mappings the roles use. */
+		section?: 'participation' | 'mapping';
 	}
 	let {
 		form = $bindable(),
@@ -31,40 +33,75 @@
 		mappingLoading = false,
 		onreloadmappings,
 		disabled = false,
-		spMappingManaged = false
+		spMappingManaged = false,
+		section = 'participation'
 	}: Props = $props();
 	/** What still stops the page from being saved, in the words of the wizard. */
-	const problems = $derived(federationProblems(form));
+	const MAPPING_FIELDS = ['spMappingSet', 'idpMappingSet'];
+	const problems = $derived(
+		federationProblems(form).filter((problem) =>
+			section === 'mapping'
+				? MAPPING_FIELDS.includes(problem.field)
+				: !MAPPING_FIELDS.includes(problem.field)
+		)
+	);
+	/** The mapping section has something to show only where a mapping is chosen on this card. */
+	const mappingHere = $derived(
+		(form.spRole && !spMappingManaged) || form.idpRole || mappingFailed || problems.length > 0
+	);
 </script>
 
-<Card title={t('sf.fed.participation.title')} description={t('sf.fed.participation.description')}>
-	<FederationParticipationFields
-		bind:form
-		{mappingSets}
-		{mappingFailed}
-		{mappingLoading}
-		{onreloadmappings}
-		{disabled}
-		{spMappingManaged}
-	/>
-	{#if problems.length > 0}
-		<Callout tone="warning" title={t('sf.fed.remaining')}>
-			<ul class="problems">
-				{#each problems as problem (problem.field)}<li>{problem.message}</li>{/each}
-			</ul>
-		</Callout>
-	{/if}
-	<Disclosure title={t('sf.fed.advanced')}>
-		<TextArea
-			label={t('sf.fed.ra.label')}
-			hint={t('sf.fed.ra.hint')}
-			mono
-			rows={3}
+{#if section === 'participation'}
+	<Card title={t('sf.fed.participation.title')} description={t('sf.fed.participation.description')}>
+		<FederationParticipationFields
+			bind:form
+			{mappingSets}
+			{mappingFailed}
+			{mappingLoading}
+			{onreloadmappings}
 			{disabled}
-			bind:value={form.registrationAuthorities}
+			{spMappingManaged}
+			section="participation"
 		/>
-	</Disclosure>
-</Card>
+		{#if problems.length > 0}
+			<Callout tone="warning" title={t('sf.fed.remaining')}>
+				<ul class="problems">
+					{#each problems as problem (problem.field)}<li>{problem.message}</li>{/each}
+				</ul>
+			</Callout>
+		{/if}
+		<Disclosure title={t('sf.fed.advanced')}>
+			<TextArea
+				label={t('sf.fed.ra.label')}
+				hint={t('sf.fed.ra.hint')}
+				mono
+				rows={3}
+				{disabled}
+				bind:value={form.registrationAuthorities}
+			/>
+		</Disclosure>
+	</Card>
+{:else if mappingHere}
+	<Card title={t('sf.group.mapping')}>
+		<FederationParticipationFields
+			bind:form
+			{mappingSets}
+			{mappingFailed}
+			{mappingLoading}
+			{onreloadmappings}
+			{disabled}
+			{spMappingManaged}
+			section="mapping"
+		/>
+		{#if problems.length > 0}
+			<Callout tone="warning" title={t('sf.fed.remaining')}>
+				<ul class="problems">
+					{#each problems as problem (problem.field)}<li>{problem.message}</li>{/each}
+				</ul>
+			</Callout>
+		{/if}
+	</Card>
+{/if}
 
 <style>
 	.problems {

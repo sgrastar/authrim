@@ -479,7 +479,7 @@ export function kindRole(kind: ConnectionKind): { badge: string; line: string } 
 		sp: { badge: 'sf.role.out.badge', line: 'sf.role.sp.line' },
 		op: { badge: 'sf.role.in.badge', line: 'sf.role.in.line' },
 		idp: { badge: 'sf.role.in.badge', line: 'sf.role.in.line' },
-		federation: { badge: 'sf.role.fed.badge', line: 'sf.role.fed.line' }
+		federation: { badge: 'sf.role.fed.badge', line: 'sf.blurb.federation' }
 	};
 	return { badge: t(keys[kind].badge), line: t(keys[kind].line) };
 }

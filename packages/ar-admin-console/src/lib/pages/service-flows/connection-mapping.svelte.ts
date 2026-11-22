@@ -78,6 +78,8 @@ export class ConnectionMappingState {
 	newKey = $state('');
 	/** The output source picked before any mapping exists: a new mapping starts with it. */
 	chosenProfileId = $state('');
+	/** A copy of another mapping has been made and not saved: it is unsaved work from the start. */
+	copied = $state(false);
 	base: MappingSetContent | null = null;
 	pending: {
 		request: MappingSetSaveRequest & { field_mapping_key: string };
@@ -119,6 +121,7 @@ export class ConnectionMappingState {
 	get dirty() {
 		return (
 			this.form.dirty ||
+			this.copied ||
 			!!this.pending ||
 			this.phase === 'binding_failed' ||
 			this.selected !== this.bound
@@ -214,6 +217,7 @@ export class ConnectionMappingState {
 
 	async select(id: string) {
 		this.chosenProfileId = '';
+		this.copied = false;
 		this.checkGeneration++;
 		this.checking = false;
 		this.changes = null;
@@ -280,6 +284,7 @@ export class ConnectionMappingState {
 	}
 
 	create() {
+		this.copied = false;
 		this.checkGeneration++;
 		this.checking = false;
 		this.changes = null;
@@ -302,6 +307,41 @@ export class ConnectionMappingState {
 		});
 		// With an output source already chosen the mapping can be made at once.
 		this.configure();
+		this.phase = 'ready';
+	}
+
+	/**
+	 * A new mapping that starts as a copy of the one selected: the same output source and the same
+	 * attributes, with a name of its own to give. The selected one is never touched.
+	 */
+	copyFromSelected(name: string) {
+		const detail = this.detail;
+		if (!detail || !this.context || this.readonlyReason || this.locked) return;
+		const mappings = copyValue(this.form.value.mappings);
+		const context = this.context;
+		const catalogVersionId = detail.content?.catalogVersionId ?? this.defaultCatalogVersionId();
+		this.checkGeneration++;
+		this.checking = false;
+		this.changes = null;
+		this.checkFailed = false;
+		this.copied = true;
+		this.selected = '';
+		this.detail = null;
+		this.pending = null;
+		this.savedSet = null;
+		this.bindingKey = '';
+		this.newKey = crypto.randomUUID();
+		// A fresh set: its rules are made anew from the attributes, not copied by id.
+		this.base = { catalogVersionId, rules: [] };
+		this.context = context;
+		this.readonlyReason = this.pinned;
+		this.form.reset({
+			name,
+			description: detail.description ?? '',
+			profileId: detail.destination_profile_id ?? '',
+			catalogVersionId,
+			mappings
+		});
 		this.phase = 'ready';
 	}
 
@@ -463,6 +503,9 @@ export class ConnectionMappingState {
 				this.changes = null;
 				this.base = copyValue(attempt.request.content);
 				this.form.commit();
+				// It exists now: from here it is a mapping that was chosen, not one being made.
+				this.newKey = '';
+				this.copied = false;
 				this.pending = null;
 				this.savedSet = null;
 				this.bindingKey = '';

@@ -7,6 +7,7 @@
 		CLASSIFICATIONS,
 		LEGAL_BASES,
 		MULTIPLICITIES,
+		PERSISTENT_NAMEID_TYPE,
 		VALUE_TYPES,
 		emptyRow,
 		type ProfileRow
@@ -44,7 +45,13 @@
 			key: 'valueType',
 			label: t('sf.dp.col.type'),
 			kind: 'select',
-			options: options(VALUE_TYPES),
+			options:
+				protocol === 'saml'
+					? [
+							...options(VALUE_TYPES),
+							{ value: PERSISTENT_NAMEID_TYPE, label: t('sf.dp.type.persistentId') }
+						]
+					: options(VALUE_TYPES),
 			width: '9rem'
 		},
 		{
@@ -54,6 +61,17 @@
 			placeholder: t('sf.dp.col.allowedHint'),
 			width: '16%'
 		},
+		...(protocol === 'saml'
+			? ([
+					{
+						key: 'examples',
+						label: t('sf.dp.col.examples'),
+						kind: 'text',
+						placeholder: t('sf.dp.col.allowedHint'),
+						width: '18%'
+					}
+				] satisfies EditColumn[])
+			: []),
 		{
 			key: 'multiplicity',
 			label: t('sf.dp.col.multiplicity'),

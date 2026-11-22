@@ -37,6 +37,8 @@ export const VALUE_TYPES = [
 	'date',
 	'datetime'
 ] as const;
+/** The kind a persistent identifier (eduPersonTargetedID) takes: SAML only, a value of its own. */
+export const PERSISTENT_NAMEID_TYPE = 'saml:persistent-nameid';
 export const CLASSIFICATIONS = ['internal', 'public', 'pii', 'regulated', 'secret'] as const;
 export const MULTIPLICITIES = ['single', 'multi'] as const;
 export const LEGAL_BASES = [
@@ -57,6 +59,11 @@ export interface ProfileRow extends Record<string, unknown> {
 	valueType: string;
 	/** Comma separated; empty: anything. */
 	allowedValues: string;
+	/** SAML: sample values to show what a value looks like, comma separated. */
+	examples: string;
+	/** What the sample values were when loaded, and as text: unchanged text keeps them exactly. */
+	examplesRaw: unknown[];
+	examplesLoaded: string;
 	multiplicity: string;
 	nullable: boolean;
 	required: boolean;
@@ -93,6 +100,9 @@ export function emptyRow(_protocol: DestinationProtocol): ProfileRow {
 		label: '',
 		valueType: 'string',
 		allowedValues: '',
+		examples: '',
+		examplesRaw: [],
+		examplesLoaded: '',
 		multiplicity: 'single',
 		nullable: true,
 		required: false,
@@ -127,6 +137,18 @@ const text = (value: unknown, fallback = ''): string =>
 const list = (value: unknown): string[] =>
 	Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
 
+/**
+ * The sample values of an entry as text for the table, with the values as they were: a sample that
+ * has a comma in it, or is not text, comes back unchanged when its text is not edited.
+ */
+function sampleValues(
+	value: unknown
+): Pick<ProfileRow, 'examples' | 'examplesRaw' | 'examplesLoaded'> {
+	const raw = Array.isArray(value) ? value : [];
+	const examples = raw.map((item) => String(item)).join(', ');
+	return { examples, examplesRaw: raw, examplesLoaded: examples };
+}
+
 /** "a, b ,,c" → ["a", "b", "c"], without repeats. */
 export function splitValues(value: string): string[] {
 	return [
@@ -145,6 +167,7 @@ const SAML_EDITED = [
 	'label',
 	'valueType',
 	'allowedValues',
+	'examples',
 	'valueMultiplicity',
 	'nullable',
 	'nameFormat',
@@ -193,6 +216,7 @@ export function formFromSchema(
 				label: text(entry.label),
 				valueType: text(entry.valueType, 'string'),
 				allowedValues: list(entry.allowedValues).join(', '),
+				...sampleValues(entry.examples),
 				multiplicity: text(entry.valueMultiplicity, 'single'),
 				nullable: entry.nullable !== false,
 				nameFormat: text(entry.nameFormat, DEFAULT_NAME_FORMAT),
@@ -248,6 +272,7 @@ export function schemaFromForm(form: ProfileForm): Record<string, unknown> {
 				...(splitValues(row.allowedValues).length > 0
 					? { allowedValues: splitValues(row.allowedValues) }
 					: {}),
+				...(sampleValuesToSave(row).length > 0 ? { examples: sampleValuesToSave(row) } : {}),
 				valueMultiplicity: row.multiplicity === 'multi' ? 'multi' : 'single',
 				nullable: row.nullable,
 				// What is personal is released on a basis: one is given when none was chosen.
@@ -281,6 +306,13 @@ export function schemaFromForm(form: ProfileForm): Record<string, unknown> {
 			surfaces: [...(row.idToken ? ['id_token'] : []), ...(row.userinfo ? ['userinfo'] : [])]
 		}))
 	};
+}
+
+/** The sample values to keep: as loaded while the text is as loaded, else what the text says. */
+function sampleValuesToSave(
+	row: Pick<ProfileRow, 'examples' | 'examplesRaw' | 'examplesLoaded'>
+): unknown[] {
+	return row.examples === row.examplesLoaded ? row.examplesRaw : splitValues(row.examples);
 }
 
 const PERSONAL = new Set(['pii', 'regulated']);
