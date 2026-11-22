@@ -447,6 +447,16 @@ export const GENERAL: SettingsPageDef = {
 			]
 		},
 		{
+			// The platform's list is what every tenant that sets none of its own is held to. It is
+			// on this page, not beside the tenant's own on Administrators: a page keeps one
+			// value per setting, so the same setting cannot be edited twice on one page.
+			id: 'admin-second-factor-platform',
+			title: 'set.section.adminSecondFactorPlatform',
+			description: 'set.section.adminSecondFactorPlatform.desc',
+			level: 'platform',
+			settings: [{ key: 'security.admin_second_factor_allowed_kinds', depth: 'primary' }]
+		},
+		{
 			id: 'login-entry-platform',
 			title: 'set.section.loginEntryPlatform',
 			description: 'set.section.loginEntryPlatform.desc',

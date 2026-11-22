@@ -39,6 +39,9 @@ export const arSettings: Record<keyof typeof jaSettings, string> = {
 	'set.section.adminSignIn': 'تسجيل دخول المسؤولين',
 	'set.section.adminSignIn.desc':
 		'المدة التي يبقى فيها مسؤولو هذا المستأجر مسجّلين، والتحققات المطلوبة قبل أي عملية.',
+	'set.section.adminSecondFactorPlatform': 'العوامل الثانية للمسؤولين في كل المستأجرين',
+	'set.section.adminSecondFactorPlatform.desc':
+		'أنواع العامل الثاني التي يجوز للمسؤولين استخدامها في كل مستأجر لا يحدد قائمته الخاصة. السماح بتطبيقات المصادقة (TOTP) هنا يجعلها متاحة في كل المستأجرين.',
 	'set.section.adminSignInPlatform': 'تسجيل دخول المسؤولين لكل المستأجرين',
 	'set.section.adminSignInPlatform.desc':
 		'ينطبق على مسؤولي كل المستأجرين. لا يغيّره إلا مسؤولو المنصة.',
