@@ -2926,7 +2926,13 @@ async function handleAuthorizationCodeGrant(
   const baseExpiresIn = accessTtlResult.value;
   // Apply Profile-based TTL limit (Human Auth / AI Ephemeral Auth two-layer model)
   // RFC 6749 §4.2.2: Access token lifetime is controlled by the authorization server
-  const expiresIn = Math.min(baseExpiresIn, tenantProfile.max_token_ttl_seconds);
+  // A wallet grant's token is short-lived: it is used once, at the credential endpoint, and its
+  // revocation record (kept for an hour) must outlast it.
+  const expiresIn = Math.min(
+    baseExpiresIn,
+    tenantProfile.max_token_ttl_seconds,
+    isWalletClient(clientMetadata) ? 600 : Number.MAX_SAFE_INTEGER
+  );
 
   if (accountRouteResult.status === 'rejected') {
     log.error(
@@ -3298,6 +3304,12 @@ async function handleAuthorizationCodeGrant(
     accessTokenClaims.claims = authCodeData.claims;
     accessTokenClaims.claims_request_protected = authCodeData.claimsRequestProtected === true;
   }
+
+  // A token of a wallet that authenticated with its client attestation says so; the credential
+  // endpoint accepts no other grant (a stored client of the same id gets no such token).
+  // Set for a wallet and for nobody else, whatever a claim rule produced.
+  if (walletClient) accessTokenClaims.attestation_authenticated = true;
+  else delete accessTokenClaims.attestation_authenticated;
 
   // Add DPoP confirmation (cnf) claim if DPoP is used
   if (dpopJkt || authorizationCodeMTLSThumbprint) {

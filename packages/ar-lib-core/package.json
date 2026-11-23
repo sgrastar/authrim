@@ -115,6 +115,11 @@
       "types": "./src/vc/wallet-allowlist.ts",
       "default": "./src/vc/wallet-allowlist.ts"
     },
+    "./vc/key-attestation": {
+      "import": "./dist/vc/key-attestation.js",
+      "types": "./src/vc/key-attestation.ts",
+      "default": "./src/vc/key-attestation.ts"
+    },
     "./test/setup": "./src/test/setup.ts",
     "./test/fixtures": "./src/test/fixtures.ts"
   },

@@ -25,6 +25,10 @@ import {
   getTenantIdFromContext,
   type DatabaseAdapter,
   type Env as CoreEnv,
+  loadWalletAllowlist,
+  recordReplayJti,
+  validateDPoPProof,
+  verifyKeyAttestation,
 } from '@authrim/ar-lib-core';
 import { sha256Base64url } from '../../utils/crypto';
 import { calculateJwkThumbprint } from '../../utils/jwk-thumbprint';
@@ -34,13 +38,19 @@ import {
   decodeVCIProofNonce,
   validateVCIAccessToken,
   validateProofOfPossession,
+  type TokenValidationResult,
 } from '../services/token-validation';
+import {
+  checkOpTokenRevocation,
+  validateOpAccessToken,
+  type OpTokenResult,
+} from '../services/op-token-validation';
 import { getRequestIssuerUrl } from '../../request-identifiers';
 import {
   getCredentialConfiguration,
   type CredentialSubjectKind,
 } from '../credential-configurations';
-import { invalidTokenError, vciError } from '../oauth-errors';
+import { invalidDpopTokenError, invalidTokenError, vciError } from '../oauth-errors';
 import {
   getCredentialOfferStoreById,
   getCredentialOfferStoreByProofNonce,
@@ -117,7 +127,8 @@ export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Re
    * issuance (never back to claimable) and revokes a recorded credential. Best effort, in order of
    * importance for the offer: the issuance stays `issuing` only until its lease expires.
    */
-  const abandon = async (): Promise<void> => {
+  const abandon = async (): Promise<boolean> => {
+    let compensated = true;
     if (nonceReservation) {
       const reservation = nonceReservation;
       nonceReservation = undefined;
@@ -133,7 +144,12 @@ export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Re
             }),
           })
         )
-        .catch(() => undefined);
+        .then((released) => {
+          if (!released.ok) compensated = false;
+        })
+        .catch(() => {
+          compensated = false;
+        });
     }
     if (pendingCredential) {
       const credential = pendingCredential;
@@ -144,7 +160,14 @@ export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Re
         credentialId: credential.id,
         from: ['pending', 'active'],
         to: 'revoked',
-      }).catch(() => undefined);
+      })
+        .then((result) => {
+          // A concurrent writer won the row: it may still be pending.
+          if (result?.outcome === 'conflict') compensated = false;
+        })
+        .catch(() => {
+          compensated = false;
+        });
     }
     if (issuance) {
       const claimed = issuance;
@@ -154,29 +177,82 @@ export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Re
         tenantId: claimed.tenantId,
         accessTokenJti: claimed.accessTokenJti,
         now: Date.now(),
-      }).catch(() => undefined);
+      }).catch(() => {
+        compensated = false;
+      });
     }
+    return compensated;
   };
 
+  /**
+   * A client-visible refusal after the request touched state. If a compensation did not complete,
+   * the outcome is unknown and is answered 503 (the replication writer keeps its permit).
+   */
+  const refuse = async (respond: () => Response): Promise<Response> =>
+    (await abandon()) ? respond() : vciError(c, 503, 'temporarily_unavailable');
+
   try {
-    // Verify access token
+    // Verify access token: a Bearer token of the pre-authorized Authorization Server, or a
+    // DPoP-bound token of the Authrim OP (HAIP). The two never satisfy each other's path.
     const authHeader = c.req.header('Authorization');
-    if (!authHeader?.startsWith('Bearer ')) {
+    const isOpPath = authHeader?.startsWith('DPoP ') === true;
+    if (!authHeader?.startsWith('Bearer ') && !isOpPath) {
       return invalidTokenError(c);
     }
 
-    const accessToken = authHeader.substring(7);
+    const accessToken = authHeader.substring(isOpPath ? 5 : 7);
 
-    // Validate access token and extract user/credential info
-    const tokenResult = await validateVCIAccessToken(
-      c.env,
-      accessToken,
-      requestIssuerUrl,
-      getTenantIdFromContext(c)
-    );
-
-    if (!tokenResult.valid) {
-      return invalidTokenError(c);
+    let opToken: Extract<OpTokenResult, { valid: true }> | undefined;
+    let tokenResult: TokenValidationResult;
+    if (isOpPath) {
+      const validated = await validateOpAccessToken(c.env, accessToken, {
+        issuer: requestIssuerUrl,
+        tenantId: getTenantIdFromContext(c),
+      });
+      if (!validated.valid) return invalidDpopTokenError(c, 'invalid_token');
+      const revocation = await checkOpTokenRevocation(c.env, validated.jti, validated.tenantId);
+      if (revocation === 'revoked') return invalidDpopTokenError(c, 'invalid_token');
+      // No state was written yet; the wallet retries. Below 500 so the outer writer settles.
+      if (revocation === 'unknown') return vciError(c, 424, 'temporarily_unavailable');
+      opToken = validated;
+      // The proof is for this request and this token, made with the key the token is bound to.
+      const proof = c.req.header('DPoP');
+      const dpop = proof
+        ? await validateDPoPProof(
+            proof,
+            'POST',
+            // The URL the wallet called, without query or fragment (RFC 9449 §4.3).
+            c.req.url.split(/[?#]/u)[0],
+            accessToken,
+            c.env as unknown as CoreEnv,
+            validated.clientId,
+            validated.tenantId
+          )
+        : null;
+      // The replay store failing is not a bad proof: the outcome of its write is unknown.
+      if (dpop && !dpop.valid && dpop.error === 'server_error') {
+        return vciError(c, 503, 'temporarily_unavailable');
+      }
+      if (!dpop?.valid || !dpop.jkt || dpop.jkt !== validated.jkt) {
+        return invalidDpopTokenError(c, 'invalid_dpop_proof');
+      }
+      tokenResult = {
+        valid: true,
+        userId: validated.userId,
+        tenantId: validated.tenantId,
+        jti: validated.jti,
+      };
+    } else {
+      // Validate access token and extract user/credential info
+      tokenResult = await validateVCIAccessToken(
+        c.env,
+        accessToken,
+        requestIssuerUrl,
+        getTenantIdFromContext(c)
+      );
+      if (!tokenResult.valid) {
+        return invalidTokenError(c);
+      }
     }
 
     // SECURITY: tenantId comes from the signed access token, which was validated above.
@@ -216,7 +292,18 @@ export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Re
     if (!configuration) {
       return vciError(c, 400, 'unknown_credential_configuration');
     }
-    if (configuration.id !== tokenResult.credentialConfigurationId) {
+    if (opToken) {
+      // The OP flow issues the configurations that declare a HAIP key attestation, to the scope
+      // the token was granted.
+      if (!configuration.haipKeyAttestation || !opToken.scopes.includes(configuration.scope)) {
+        return vciError(
+          c,
+          400,
+          'invalid_credential_request',
+          'credential_configuration_id is not authorized by the access token'
+        );
+      }
+    } else if (configuration.id !== tokenResult.credentialConfigurationId) {
       return vciError(
         c,
         400,
@@ -251,6 +338,49 @@ export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Re
     }
     if (proofResult.holderPublicKey && !holderBinding) holderBinding = proofResult.holderPublicKey;
 
+    // A proof that names a client names the wallet that obtained the token.
+    if (opToken) {
+      const proofIssuer = decodeProofIssuer(proofJwt);
+      if (proofIssuer !== undefined && proofIssuer !== opToken.clientId) {
+        return vciError(c, 400, 'invalid_proof');
+      }
+    }
+
+    // HAIP: the holder key must be attested by a provider the wallet type's allowlist entry trusts,
+    // bound to this request's nonce and strong enough for the configuration.
+    if (opToken && configuration.haipKeyAttestation) {
+      const attestation = decodeKeyAttestationHeader(proofJwt);
+      let anchors: Awaited<
+        ReturnType<typeof loadWalletAllowlist>
+      >['entries'][number]['keyAttestationRoots'] = [];
+      try {
+        // Read now, not copied into the token: a wallet type removed since the token was issued
+        // can no longer obtain a credential.
+        const entry = (
+          await loadWalletAllowlist(c.env as unknown as CoreEnv, tenantId)
+        ).entries.find((candidate) => candidate.enabled && candidate.clientId === opToken.clientId);
+        anchors = entry?.keyAttestationRoots ?? [];
+      } catch {
+        return vciError(c, 424, 'temporarily_unavailable');
+      }
+      const attested =
+        attestation && proofResult.holderPublicKey
+          ? await verifyKeyAttestation({
+              jwt: attestation,
+              anchors,
+              now: Math.floor(Date.now() / 1000),
+              expectedNonce,
+              expectedAudience: requestIssuerUrl,
+              proofKey: proofResult.holderPublicKey,
+              requiredKeyStorage: configuration.haipKeyAttestation.requiredKeyStorage,
+            })
+          : null;
+      if (!attested?.ok) {
+        log.warn('Key attestation refused', { reason: attested?.error ?? 'missing' });
+        return vciError(c, 400, 'invalid_proof');
+      }
+    }
+
     let nonceStore: ReturnType<typeof getCredentialOfferStoreByProofNonce>;
     try {
       nonceStore = getCredentialOfferStoreByProofNonce(c.env, expectedNonce, tokenResult.tenantId);
@@ -274,9 +404,12 @@ export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Re
         }),
       })
     );
-    const reserveResult = reserveResponse.ok
-      ? ((await reserveResponse.json()) as { reserved: boolean; reservationId?: string })
-      : null;
+    // A store that did not answer is an unknown outcome; only an explicit refusal is a bad nonce.
+    if (!reserveResponse.ok) return vciError(c, 503, 'temporarily_unavailable');
+    const reserveResult = (await reserveResponse.json()) as {
+      reserved: boolean;
+      reservationId?: string;
+    };
     if (!reserveResult?.reserved || !reserveResult.reservationId) {
       return vciError(c, 400, 'invalid_nonce');
     }
@@ -291,45 +424,65 @@ export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Re
     const vcConfig = createVCConfigManager(c.env);
     // An admin credential is always holder-bound (design D3), whatever the tenant configures.
     if ((isAdminCredential || (await vcConfig.isHolderBindingRequired())) && !holderBinding) {
-      await abandon();
-      return vciError(c, 400, 'invalid_proof');
+      return refuse(() => vciError(c, 400, 'invalid_proof'));
     }
 
-    if (!tokenResult.offerId) throw new Error('vci_access_token_missing_offer_id');
-    const offerId = tokenResult.offerId;
-    const offerShard = getCredentialOfferStoreById(c.env, offerId, tenantId);
-    // The offer ID is signed, but its shard may no longer be configured (a jurisdiction change
-    // refuses earlier offers): the token is no longer usable.
-    if (!(await isConfiguredShard(c.env, tenantId, offerShard.resolution))) {
-      await abandon();
-      return invalidTokenError(c);
+    // The grant behind the issuance. A pre-authorized token names an offer, which is claimed in the
+    // offer store; an OP token has no offer, and its single issuance is the first use of its jti.
+    let offerStore: DurableObjectStub | undefined;
+    let offerId: string | undefined;
+    let offer: { claims: Record<string, unknown>; subjectKind: CredentialSubjectKind };
+    if (opToken) {
+      offer = { claims: {}, subjectKind: 'admin' };
+    } else {
+      if (!tokenResult.offerId) throw new Error('vci_access_token_missing_offer_id');
+      offerId = tokenResult.offerId;
+      const offerShard = getCredentialOfferStoreById(c.env, offerId, tenantId);
+      // The offer ID is signed, but its shard may no longer be configured (a jurisdiction change
+      // refuses earlier offers): the token is no longer usable.
+      if (!(await isConfiguredShard(c.env, tenantId, offerShard.resolution))) {
+        return refuse(() => invalidTokenError(c));
+      }
+      offerStore = offerShard.stub;
+      offer = await loadOffer(offerStore, {
+        offerId,
+        tenantId,
+        userId: tokenResult.userId,
+        credentialConfigurationId: configuration.id,
+      });
     }
-    const offerStore = offerShard.stub;
-    const offer = await loadOffer(offerStore, {
-      offerId,
-      tenantId,
-      userId: tokenResult.userId,
-      credentialConfigurationId: configuration.id,
-    });
     // An end-user offer can never yield an admin credential, nor an admin offer an end-user one.
     if (offer.subjectKind !== configuration.subjectKind) {
-      await abandon();
-      return vciError(c, 400, 'invalid_credential_request');
+      return refuse(() => vciError(c, 400, 'invalid_credential_request'));
     }
 
-    // D4 step 1: exactly one issuance per offer. A concurrent, repeated or later request —
+    // D4 step 1: exactly one issuance per grant. A concurrent, repeated or later request —
     // including one with the same access token — loses here and gets no credential.
-    const claimResult = await callOfferStore<{ claimed: boolean }>(offerStore, '/issuance/claim', {
-      id: offerId,
-      tenantId,
-      accessTokenJti: tokenResult.jti,
-      now: Date.now(),
-    });
-    if (!claimResult.claimed) {
-      await abandon();
-      return vciError(c, 400, 'invalid_credential_request');
+    if (offerStore && offerId) {
+      const claimResult = await callOfferStore<{ claimed: boolean }>(
+        offerStore,
+        '/issuance/claim',
+        { id: offerId, tenantId, accessTokenJti: tokenResult.jti, now: Date.now() }
+      );
+      if (!claimResult.claimed) {
+        return refuse(() => vciError(c, 400, 'invalid_credential_request'));
+      }
+      issuance = { stub: offerStore, offerId, tenantId, accessTokenJti: tokenResult.jti };
+    } else if (opToken) {
+      // Kept until the token expires; a failed issuance burns the token, and the wallet signs in
+      // again for a new one.
+      const outcome = await recordReplayJti(c.env as unknown as CoreEnv, {
+        tenantId,
+        shardKey: opToken.jti,
+        jti: `vci-op-token:${opToken.jti}`,
+        issuedAt: Math.floor(Date.now() / 1000),
+        // Past the last moment the token is accepted (its expiry plus the validator's tolerance).
+        ttlSeconds: Math.max(120, opToken.expiresAt - Math.floor(Date.now() / 1000) + 120),
+      });
+      if (outcome !== 'recorded') {
+        return refuse(() => vciError(c, 400, 'invalid_credential_request'));
+      }
     }
-    issuance = { stub: offerStore, offerId, tenantId, accessTokenJti: tokenResult.jti };
 
     // D4 step 2: admin credentials never resolve end-user custom claims; theirs are built below
     // from the eligibility result.
@@ -396,6 +549,18 @@ export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Re
     // The signed `exp`, recorded with the credential so a list entry's lifetime is known.
     const expiresAt = Math.floor(Date.now() / 1000) + configuration.validitySeconds;
 
+    // OP path: a subject that is not an eligible administrator is refused before a status list
+    // slot is spent (the check below stays: eligibility may change while the credential is made).
+    if (opToken && isAdminCredential) {
+      const early = await c.env.ADMIN_CREDENTIAL_ELIGIBILITY?.checkAdminCredentialEligibility({
+        tenantId,
+        adminUserId: tokenResult.userId,
+      });
+      if (!early?.eligible) {
+        return refuse(() => vciError(c, 400, 'invalid_credential_request'));
+      }
+    }
+
     // D4 step 3: reserve an unpredictable status list slot and record the credential as `pending`
     // before anything is signed, so a revocation can always find it.
     const reserved = await reserveCredentialStatusSlot(adapter, {
@@ -418,8 +583,7 @@ export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Re
         }
       );
       if (!eligibility?.eligible) {
-        await abandon();
-        return vciError(c, 400, 'invalid_credential_request');
+        return refuse(() => vciError(c, 400, 'invalid_credential_request'));
       }
       claims = {
         sub: tokenResult.userId,
@@ -456,7 +620,8 @@ export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Re
     const sdjwtvc = await createSDJWTVCWithSigner(
       claims,
       requestIssuerUrl,
-      (payload) => signSDJWTIssuer(c.env, tenantId, payload),
+      (payload) =>
+        signSDJWTIssuer(c.env, tenantId, payload, opToken ? { requireX5c: true } : undefined),
       options
     );
 
@@ -476,8 +641,7 @@ export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Re
       'active'
     );
     if (!activated) {
-      await abandon();
-      return vciError(c, 400, 'invalid_credential_request');
+      return refuse(() => vciError(c, 400, 'invalid_credential_request'));
     }
 
     const completeResponse = await nonceReservation.stub.fetch(
@@ -498,26 +662,71 @@ export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Re
     nonceReservation = undefined;
 
     // D4 step 7: `issuing → issued`, remembering the holder key for the console's confirmation.
-    const issued = await callOfferStore<{ completed: boolean }>(offerStore, '/issuance/complete', {
-      id: offerId,
-      tenantId,
-      accessTokenJti: tokenResult.jti,
-      holderJkt,
-      now: Date.now(),
-    });
-    if (!issued.completed) throw new Error('vci_issuance_completion_failed');
+    if (offerStore && offerId) {
+      const issued = await callOfferStore<{ completed: boolean }>(
+        offerStore,
+        '/issuance/complete',
+        {
+          id: offerId,
+          tenantId,
+          accessTokenJti: tokenResult.jti,
+          holderJkt,
+          now: Date.now(),
+        }
+      );
+      if (!issued.completed) throw new Error('vci_issuance_completion_failed');
+    }
     issuance = undefined;
     pendingCredential = undefined;
     c.header('Cache-Control', 'no-store');
     c.header('Pragma', 'no-cache');
     return c.json(response);
   } catch (error) {
-    await abandon();
+    const compensated = await abandon();
     log.error('Credential issuance failed', {}, error as Error);
-    if (error instanceof ShardConfigUnavailableError) {
-      return vciError(c, 503, 'temporarily_unavailable');
+    // Refusals known before anything was signed. When every compensation completed they are
+    // answered below 500, so the replication writer settles its permit; otherwise the outcome is
+    // unknown and stays 5xx.
+    const known =
+      error instanceof ShardConfigUnavailableError ||
+      (error instanceof Error &&
+        (error.message.includes('x5c_required') ||
+          error.message.includes('vc_issuer_key_retention_cap_reached')));
+    if (known) {
+      return compensated
+        ? vciError(c, 424, 'temporarily_unavailable')
+        : vciError(c, 503, 'temporarily_unavailable');
     }
     return vciError(c, 500, 'server_error');
+  }
+}
+
+/** The `iss` of a proof JWT (not verified here): undefined when absent, null when unreadable. */
+function decodeProofIssuer(proofJwt: string): string | undefined | null {
+  try {
+    const part = proofJwt.split('.')[1] ?? '';
+    const padded = part.replace(/-/gu, '+').replace(/_/gu, '/');
+    const payload = JSON.parse(atob(padded + '='.repeat((4 - (padded.length % 4)) % 4))) as {
+      iss?: unknown;
+    };
+    if (payload.iss === undefined) return undefined;
+    return typeof payload.iss === 'string' ? payload.iss : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The `key_attestation` header of a proof JWT (not verified here). */
+function decodeKeyAttestationHeader(proofJwt: string): string | null {
+  try {
+    const part = proofJwt.split('.')[0] ?? '';
+    const padded = part.replace(/-/gu, '+').replace(/_/gu, '/');
+    const header = JSON.parse(atob(padded + '='.repeat((4 - (padded.length % 4)) % 4))) as {
+      key_attestation?: unknown;
+    };
+    return typeof header.key_attestation === 'string' ? header.key_attestation : null;
+  } catch {
+    return null;
   }
 }
 
@@ -575,10 +784,18 @@ async function loadOffer(
 /**
  * Sign within KeyManager so private key material never crosses the DO boundary.
  */
-async function signSDJWTIssuer(env: Env, tenantId: string, payload: JWTPayload): Promise<string> {
+async function signSDJWTIssuer(
+  env: Env,
+  tenantId: string,
+  payload: JWTPayload,
+  options?: { requireX5c: boolean }
+): Promise<string> {
   const doId = env.KEY_MANAGER.idFromName(`${tenantId}-v3`);
   const stub = env.KEY_MANAGER.get(doId) as unknown as VcCertificateKeyManager & {
-    signSDJWTIssuerRpc(input: JWTPayload): Promise<{ token: string }>;
+    signSDJWTIssuerRpc(
+      input: JWTPayload,
+      options?: { requireX5c: boolean }
+    ): Promise<{ token: string }>;
   };
   // HAIP `x5c`: give the signing key its issuer certificate first. Never blocks the issuance.
   if (typeof payload.iss === 'string') {
@@ -593,5 +810,9 @@ async function signSDJWTIssuer(env: Env, tenantId: string, payload: JWTPayload):
   }
   // A fresh stub: if the certificate calls broke the first one, the signing must not share its fate.
   const signer = env.KEY_MANAGER.get(doId) as unknown as typeof stub;
-  return (await signer.signSDJWTIssuerRpc(payload)).token;
+  return (
+    await (options
+      ? signer.signSDJWTIssuerRpc(payload, options)
+      : signer.signSDJWTIssuerRpc(payload))
+  ).token;
 }

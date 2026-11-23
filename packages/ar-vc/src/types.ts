@@ -30,6 +30,10 @@ export interface Env extends SamlDrWriterEnv {
   CREDENTIAL_OFFER_STORE: DurableObjectNamespace;
   KEY_MANAGER: DurableObjectNamespace;
   RATE_LIMITER?: DurableObjectNamespace;
+  /** DPoP proof and OP access token replay records (HAIP credential endpoint). */
+  DPOP_JTI_STORE?: DurableObjectNamespace;
+  /** Revocation of OP access tokens (HAIP credential endpoint). */
+  TOKEN_REVOCATION_STORE?: DurableObjectNamespace;
 
   // Service Bindings
   POLICY_SERVICE: Fetcher;

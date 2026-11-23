@@ -541,7 +541,8 @@ const COMPONENT_DO_BINDINGS: Record<WorkerComponent, string[]> = {
     // LITE_TXN_STORE: such a start consumes the lite UI transaction's one-time start grant.
     'LITE_TXN_STORE',
   ],
-  'ar-vc': ['KEY_MANAGER', 'RATE_LIMITER', 'TOKEN_REVOCATION_STORE'],
+  // DPOP_JTI_STORE: the HAIP credential endpoint records DPoP proofs and OP access token ids once.
+  'ar-vc': ['KEY_MANAGER', 'RATE_LIMITER', 'TOKEN_REVOCATION_STORE', 'DPOP_JTI_STORE'],
 };
 
 const COMPONENT_LOCAL_DO_BINDINGS: Partial<

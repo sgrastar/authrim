@@ -13,7 +13,8 @@ import { getVciAuthorizationServer } from '../routes/metadata';
 const log = createLogger().module('VCI-TOKEN');
 
 const MAX_VCI_ACCESS_TOKEN_SIZE = 8 * 1024;
-const MAX_VCI_PROOF_JWT_SIZE = 8 * 1024;
+// Room for a key attestation (certificate chain) in the proof header of the HAIP path.
+const MAX_VCI_PROOF_JWT_SIZE = 16 * 1024;
 
 function requireTenantId(tenantId: string | undefined, context: string): string {
   const normalized = tenantId?.trim();

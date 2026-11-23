@@ -7,7 +7,7 @@
  * @see https://openid.net/specs/openid-4-verifiable-credential-issuance-1_0.html#appendix-A.3
  */
 
-import { ADMIN_CREDENTIAL_CONFIGURATION_ID } from '@authrim/ar-lib-core';
+import { ADMIN_CREDENTIAL_CONFIGURATION_ID, type KeyStorageLevel } from '@authrim/ar-lib-core';
 
 export type CredentialSubjectKind = 'end_user' | 'admin';
 
@@ -39,6 +39,12 @@ export interface CredentialConfigurationDefinition {
   validitySeconds: number;
   display: CredentialDisplay[];
   claims: CredentialClaimDescriptor[];
+  /**
+   * HAIP issuance (authorization code flow through the Authrim OP with a wallet attestation): the
+   * holder key must be attested with at least this key storage. Absent means the configuration is
+   * not offered over that flow.
+   */
+  haipKeyAttestation?: { requiredKeyStorage: KeyStorageLevel };
 }
 
 const DAY_SECONDS = 86_400;
@@ -95,6 +101,7 @@ const CONFIGURATIONS: readonly CredentialConfigurationDefinition[] = [
     vct: 'https://authrim.com/credentials/admin/v1',
     scope: 'authrim_admin_credential',
     subjectKind: 'admin',
+    haipKeyAttestation: { requiredKeyStorage: 'iso_18045_high' },
     selectivelyDisclosableClaims: ['email', 'name'],
     validitySeconds: 30 * DAY_SECONDS,
     display: [
@@ -150,7 +157,8 @@ export function isReservedCredentialConfiguration(id: string): boolean {
 
 /** The `credential_configurations_supported` entry for issuer metadata (Final, Appendix A.3). */
 export function toCredentialConfigurationMetadata(
-  configuration: CredentialConfigurationDefinition
+  configuration: CredentialConfigurationDefinition,
+  options: { haip?: boolean } = {}
 ): Record<string, unknown> {
   return {
     format: 'dc+sd-jwt',
@@ -159,7 +167,18 @@ export function toCredentialConfigurationMetadata(
     cryptographic_binding_methods_supported: ['jwk'],
     credential_signing_alg_values_supported: [VCI_SIGNING_ALGORITHM],
     proof_types_supported: {
-      jwt: { proof_signing_alg_values_supported: [VCI_SIGNING_ALGORITHM] },
+      jwt: {
+        proof_signing_alg_values_supported: [VCI_SIGNING_ALGORITHM],
+        // Advertised only where the tenant serves HAIP wallets; the pre-authorized flow of other
+        // wallets does not carry a key attestation.
+        ...(configuration.haipKeyAttestation && options.haip === true
+          ? {
+              key_attestations_required: {
+                key_storage: [configuration.haipKeyAttestation.requiredKeyStorage],
+              },
+            }
+          : {}),
+      },
     },
     credential_metadata: {
       display: configuration.display,

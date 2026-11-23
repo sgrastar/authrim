@@ -286,7 +286,7 @@ describe('Issuer Metadata Route', () => {
           vct: string;
           cryptographic_binding_methods_supported: string[];
           credential_signing_alg_values_supported: string[];
-          proof_types_supported: { jwt: { proof_signing_alg_values_supported: string[] } };
+          proof_types_supported: { jwt: Record<string, unknown> };
           credential_metadata: {
             display: Array<{ name: string; locale: string }>;
             claims: Array<{ path: string[]; mandatory?: boolean }>;
@@ -309,6 +309,7 @@ describe('Issuer Metadata Route', () => {
       expect(configuration.scope).toMatch(/^authrim_/);
       expect(configuration.cryptographic_binding_methods_supported).toEqual(['jwk']);
       expect(configuration.credential_signing_alg_values_supported).toEqual(['ES256']);
+      // Without a HAIP wallet on the tenant's allowlist, no key attestation is advertised.
       expect(configuration.proof_types_supported).toEqual({
         jwt: { proof_signing_alg_values_supported: ['ES256'] },
       });
