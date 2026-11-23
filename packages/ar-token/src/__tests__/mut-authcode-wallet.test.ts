@@ -11,6 +11,7 @@ import {
   useCodeStore,
   postToken,
   expectOAuthError,
+  accessTokenClaims,
   DIRECT_AUTH_REDIRECT_URI,
 } from './helpers/mut-authcode-harness';
 import { describe, it, expect, beforeEach } from 'vitest';
@@ -66,6 +67,10 @@ describe('wallet client at the token endpoint', () => {
     expect(body.access_token).toBeDefined();
     expect(body.id_token).toBeUndefined();
     expect(body.refresh_token).toBeUndefined();
+    // The token says it is a wallet grant; the credential endpoint accepts no other.
+    expect(accessTokenClaims().attestation_authenticated).toBe(true);
+    // Short-lived: used once at the credential endpoint, within its revocation record.
+    expect(Number(body.expires_in)).toBeLessThanOrEqual(600);
     expect(mocks.createIDToken).not.toHaveBeenCalled();
     expect(mocks.createRefreshToken).not.toHaveBeenCalled();
     expect(walletAuth.authenticate).toHaveBeenCalledWith(

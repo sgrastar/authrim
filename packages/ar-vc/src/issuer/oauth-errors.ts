@@ -25,7 +25,7 @@ export type VciCredentialErrorCode =
   | 'invalid_nonce'
   | 'server_error';
 
-type ErrorStatus = 400 | 401 | 500 | 503;
+type ErrorStatus = 400 | 401 | 424 | 500 | 503;
 
 function noStore(c: Context): void {
   c.header('Cache-Control', 'no-store');
@@ -40,6 +40,16 @@ export function vciError(
 ): Response {
   noStore(c);
   return c.json(description ? { error, error_description: description } : { error }, status);
+}
+
+/** RFC 9449 §7.1: a DPoP-bound access token or its proof is unusable at the Credential Endpoint. */
+export function invalidDpopTokenError(
+  c: Context,
+  error: 'invalid_token' | 'invalid_dpop_proof'
+): Response {
+  noStore(c);
+  c.header('WWW-Authenticate', `DPoP error="${error}", algs="ES256"`);
+  return c.json({ error }, 401);
 }
 
 /** RFC 6750 §3: a missing or unusable access token at the Credential Endpoint. */

@@ -10,6 +10,8 @@
 
 import type { Context } from 'hono';
 import type { Env } from '../../types';
+import { getTenantIdFromContext, loadWalletAllowlist } from '@authrim/ar-lib-core';
+import type { Env as CoreEnv } from '@authrim/ar-lib-core';
 import { getRequestIssuerUrl } from '../../request-identifiers';
 import {
   listCredentialConfigurations,
@@ -29,9 +31,23 @@ export function getVciAuthorizationServer(credentialIssuer: string): string {
 export async function issuerMetadataRoute(c: Context<{ Bindings: Env }>): Promise<Response> {
   const baseUrl = getRequestIssuerUrl(c);
 
+  // The Authrim OP is a second authorization server (authorization code flow with PAR and DPoP,
+  // clients authenticated by wallet attestation) once the tenant has allowlisted a wallet. It
+  // comes after the pre-authorized one, which wallets that read the first entry keep using.
+  let opEnabled = false;
+  try {
+    opEnabled = (
+      await loadWalletAllowlist(c.env as unknown as CoreEnv, getTenantIdFromContext(c as never))
+    ).entries.some((entry) => entry.enabled && entry.keyAttestationRoots.length > 0);
+  } catch {
+    // An unreadable allowlist accepts no wallet, so the OP is not advertised.
+  }
+
   const metadata = {
     credential_issuer: baseUrl,
-    authorization_servers: [getVciAuthorizationServer(baseUrl)],
+    authorization_servers: opEnabled
+      ? [getVciAuthorizationServer(baseUrl), baseUrl]
+      : [getVciAuthorizationServer(baseUrl)],
     credential_endpoint: `${baseUrl}/vci/credential`,
     nonce_endpoint: `${baseUrl}/vci/nonce`,
     deferred_credential_endpoint: `${baseUrl}/vci/deferred`,
@@ -39,7 +55,7 @@ export async function issuerMetadataRoute(c: Context<{ Bindings: Env }>): Promis
     credential_configurations_supported: Object.fromEntries(
       listCredentialConfigurations().map((configuration) => [
         configuration.id,
-        toCredentialConfigurationMetadata(configuration),
+        toCredentialConfigurationMetadata(configuration, { haip: opEnabled }),
       ])
     ),
   };

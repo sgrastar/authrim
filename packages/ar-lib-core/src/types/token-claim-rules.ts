@@ -184,6 +184,8 @@ export const RESERVED_CLAIMS = [
   'authrim_subject_ref',
   'authrim_subject_account',
   'authrim_subject_principal',
+  // Written by the token endpoint for a wallet that authenticated with its client attestation.
+  'attestation_authenticated',
   'original_issuer',
   // A person's identity assurance: computed from their evidence when an ID token or UserInfo
   // response is made, never stated by a rule (assurance.enabled, the evidence, the claim request
