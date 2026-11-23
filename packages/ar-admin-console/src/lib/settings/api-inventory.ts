@@ -464,7 +464,7 @@ export const API_GROUPS: readonly ApiGroup[] = [
 		id: 'admin-ip-allowlist',
 		name: 'Admin IP allowlist',
 		kind: 'records',
-		page: 'authentication/ip-allowlist',
+		page: 'settings/team-ip-allowlist',
 		paths: [`${A}/ip-allowlist`],
 		note: 'Restricts admin access, not end users’ sign-in.'
 	},

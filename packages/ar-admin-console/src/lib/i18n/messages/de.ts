@@ -19,6 +19,7 @@ import { deStepUp } from './step-up/de';
 import { deAdminAudit } from './admin-audit/de';
 import { deUserAudit } from './user-audit/de';
 import { deTeam } from './team/de';
+import { deIpAllowlist } from './ip-allowlist/de';
 import { deMachineAccess } from './machine-access/de';
 import { deTenants } from './tenants/de';
 import { deAuthMethods } from './auth-methods/de';
@@ -50,6 +51,7 @@ export const de = {
 	...deAdminAudit,
 	...deUserAudit,
 	...deTeam,
+	...deIpAllowlist,
 	...deMachineAccess,
 	...deTenants,
 	...deAuthMethods,
@@ -123,6 +125,7 @@ export const de = {
 	'nav.set.team': 'Administratoren',
 	'nav.set.teamGroups': 'Administratorgruppen',
 	'nav.set.teamRoles': 'Administratorrollen',
+	'nav.set.teamIpAllowlist': 'IP-Beschränkung für Administratoren',
 	'nav.plat.tenants': 'Mandanten',
 	'nav.plat.releases': 'Steuerungsebene',
 	'nav.plat.scale': 'Skalierung',
@@ -134,7 +137,6 @@ export const de = {
 	'nav.apps.machine': 'Maschinenzugriff',
 	'nav.auth.tokenRefresh': 'Externe Tokenerneuerung',
 	'nav.auth.discovery': 'Mandantenerkennung',
-	'nav.auth.ipAllowlist': 'IP-Zulassungsliste',
 	'nav.auth.sessionProfiles': 'Sitzungsprofile',
 	'nav.auth.logout': 'Abmeldung',
 	'nav.custom.loginUi': 'Anmeldeoberfläche',
