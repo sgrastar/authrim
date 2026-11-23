@@ -1104,7 +1104,7 @@
 	/* Source · steps · target, the steps a little wider; state and toggle at the end.
 	   Every line and the heading share the columns, so they stay aligned. */
 	.mapping {
-		--map-cols: minmax(8rem, 1fr) minmax(11rem, 1.3fr) minmax(8rem, 1fr) 2.5rem;
+		--map-cols: minmax(8rem, 1fr) minmax(11rem, 1.3fr) minmax(8rem, 1.15fr) 2.5rem;
 		--map-gap: 12px;
 		display: grid;
 		gap: 8px;
