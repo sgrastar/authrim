@@ -371,6 +371,10 @@ import {
   adminSignInConfirmationPoliciesListHandler,
   adminSignInConfirmationPolicyUpsertHandler,
 } from './admin-consent-policies';
+import {
+  adminWalletAllowlistGetHandler,
+  adminWalletAllowlistPutHandler,
+} from './wallet-allowlist-admin';
 import { revokeHandler, batchRevokeHandler } from './revoke';
 import {
   adminUserAssuranceEvidenceCreateHandler,
@@ -4036,6 +4040,8 @@ app.post(
 app.delete('/api/admin/consent-statements/:sid/versions/:vid', adminConsentVersionDeleteHandler);
 
 // Client/SP trust and sign-in confirmation
+app.get('/api/admin/wallet-attestation-allowlist', adminWalletAllowlistGetHandler);
+app.put('/api/admin/wallet-attestation-allowlist', adminWalletAllowlistPutHandler);
 app.get('/api/admin/client-trust-policies', adminClientTrustPoliciesListHandler);
 app.put('/api/admin/client-trust-policies', adminClientTrustPolicyUpsertHandler);
 app.get('/api/admin/sign-in-confirmation-policies', adminSignInConfirmationPoliciesListHandler);

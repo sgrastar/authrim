@@ -2,7 +2,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { ADMIN_STEP_UP_OPERATIONS } from '../admin-step-up';
+import { ADMIN_STEP_UP_ALWAYS_ENFORCED, ADMIN_STEP_UP_OPERATIONS } from '../admin-step-up';
 
 /** The workers that serve the Admin API, whose routes call the step-up gate. */
 const SOURCES = ['../../../../ar-management/src', '../../../../ar-saml/src'].map((path) =>
@@ -34,6 +34,10 @@ function escapeRegExp(value: string): string {
 }
 
 describe('admin step-up catalog coverage', () => {
+  it('never switches off or exempts the wallet allowlist change', () => {
+    expect(ADMIN_STEP_UP_ALWAYS_ENFORCED.has('wallet_allowlist.update')).toBe(true);
+  });
+
   const text = SOURCES.flatMap(sources)
     .map((path) => readFileSync(path, 'utf8'))
     .join('\n');

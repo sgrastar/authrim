@@ -871,12 +871,16 @@ async function validateLoggingSecretMaterial(
 
 const NON_SECRET_KEY_FILES = new Set([
   'public.jwk.json',
+  // HAIP x5c CA: public certificates and fingerprints (the private keys are not listed here).
+  'vc_issuing_ca_certificate.b64.txt',
+  'vc_x5c_issuing_ca_sha256.txt',
   'tenant_runtime_registry_signing_key_id.txt',
   'tenant_runtime_registry_verify.jwks.json',
   'downstream_grant_introspection_client_id.txt',
 ]);
 
 const ADDITIONAL_PRIVATE_KEY_FILES = [
+  'vc_root_ca_private.pem',
   'setup_token.txt',
   'setup_machine_private.pem',
   'admin_ui_bff_private.pem',

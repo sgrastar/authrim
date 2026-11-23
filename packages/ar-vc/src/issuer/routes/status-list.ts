@@ -15,6 +15,7 @@
  * @see https://w3c-ccg.github.io/vc-status-list-2021/
  */
 
+import { ensureVcSigningCertificate, type VcCertificateKeyManager } from '../services/issuer-ca';
 import type { Context } from 'hono';
 import type { JWTPayload } from 'jose';
 import type { Env } from '../../types';
@@ -130,10 +131,21 @@ async function generateTokenStatusListJWT(
     status_list: { bits: listData.bits, lst: listData.encoded_list },
   };
 
-  const signingStub = keyManager as unknown as {
+  const signingStub = keyManager as unknown as VcCertificateKeyManager & {
     signStatusListCredentialRpc(input: JWTPayload): Promise<{ token: string }>;
   };
-  return (await signingStub.signStatusListCredentialRpc(payload)).token;
+  // HAIP `x5c` on the Token Status List: give the signing key its issuer certificate first.
+  await ensureVcSigningCertificate(
+    env,
+    signingStub,
+    issuerUrl,
+    listData.tenant_id,
+    Date.now(),
+    payload.exp * 1000
+  );
+  // A fresh stub: if the certificate calls broke the first one, the signing must not share its fate.
+  const signer = env.KEY_MANAGER.get(keyManagerId) as unknown as typeof signingStub;
+  return (await signer.signStatusListCredentialRpc(payload)).token;
 }
 
 /**

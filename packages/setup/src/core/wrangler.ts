@@ -1819,6 +1819,14 @@ export function generateEnvVars(
   if (componentSecrets.includes('VC_PROFILE_CONTRACT_HMAC_SECRET')) {
     vars['VC_PROFILE_CONTRACT_HMAC_SECRET'] = ''; // Set via secret
   }
+  // HAIP x5c: the issuing CA (credential issuer) and the fingerprints KeyManager pins chains to.
+  for (const name of [
+    'VC_ISSUING_CA_PRIVATE_KEY_PEM',
+    'VC_ISSUING_CA_CERTIFICATE',
+    'VC_X5C_ISSUING_CA_SHA256',
+  ] as const) {
+    if (componentSecrets.includes(name)) vars[name] = ''; // Set via secret
+  }
 
   // ar-router: UI proxy configuration
   // In multi-tenant mode, the login UI must also be reachable on issuer/tenant hosts so

@@ -148,6 +148,21 @@
       "required": true
     },
     {
+      "name": "VC_ISSUING_CA_PRIVATE_KEY_PEM",
+      "capability": "vc_issuer_certificate.issue",
+      "required": false
+    },
+    {
+      "name": "VC_ISSUING_CA_CERTIFICATE",
+      "capability": "vc_issuer_certificate.issue",
+      "required": false
+    },
+    {
+      "name": "VC_X5C_ISSUING_CA_SHA256",
+      "capability": "vc_issuer_certificate.trust",
+      "required": false
+    },
+    {
       "name": "TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS",
       "capability": "runtime_registry.verify",
       "required": true

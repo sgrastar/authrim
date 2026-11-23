@@ -80,6 +80,7 @@ import {
 } from './managed-worker-deploy.js';
 import { checkWranglerStatus } from './wrangler-sync.js';
 import { writePrivateFileAtomically } from './atomic-file.js';
+import { assertVcCaFilesConsistent } from './vc-issuing-ca.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import {
   beginPhase,
@@ -4665,6 +4666,18 @@ export async function loadDeploySecretsFromKeys(
           ? value.trim()
           : value;
     }
+  }
+  if (keysDir) {
+    // The HAIP x5c CA files are all-or-nothing and must be one generation.
+    const read = async (name: string): Promise<string | undefined> => {
+      const path = join(keysDir, name);
+      return existsSync(path) ? readFile(path, 'utf-8') : undefined;
+    };
+    assertVcCaFilesConsistent({
+      privateKeyPem: await read('vc_issuing_ca_private.pem'),
+      certificateBase64: await read('vc_issuing_ca_certificate.b64.txt'),
+      fingerprints: await read('vc_x5c_issuing_ca_sha256.txt'),
+    });
   }
   return secrets;
 }

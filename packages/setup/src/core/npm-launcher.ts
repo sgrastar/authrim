@@ -12,6 +12,9 @@ const PATH_OPTIONS = new Set([
   '--config',
   '--keys-dir',
   '--cloudflare-bootstrap-token-file',
+  '--root-key',
+  '--root-certificate',
+  '--root-key-out',
 ]);
 
 export function resolveLauncherPaths(args: string[], cwd: string): string[] {

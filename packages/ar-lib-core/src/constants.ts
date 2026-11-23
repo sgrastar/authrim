@@ -247,6 +247,7 @@ export const CLIENT_AUTH_METHODS = {
   CLIENT_SECRET_BASIC: 'client_secret_basic',
   CLIENT_SECRET_JWT: 'client_secret_jwt',
   PRIVATE_KEY_JWT: 'private_key_jwt',
+  ATTEST_JWT_CLIENT_AUTH: 'attest_jwt_client_auth',
   NONE: 'none',
 } as const;
 

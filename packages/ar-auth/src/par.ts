@@ -47,6 +47,10 @@ import {
   type AppSecurityRequirements,
   resolveEffectiveSettings,
   falRequiresSignedPushedRequest,
+  authenticateWalletClient,
+  hasWalletAttestationHeaders,
+  walletScopeAllowed,
+  WALLET_ONLY_SCOPE,
   type FAPIProtocolSettings,
   type OIDCProtocolSettings,
   FAPI2_MESSAGE_SIGNING_ALGS,
@@ -352,8 +356,47 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
       throw new RFCError('invalid_client', 401, clientValidation.error || 'Invalid client_id');
     }
 
-    // Verify client exists (request-level cached)
-    const clientData = await getClientCached(c, c.env, params.client_id);
+    // A wallet authenticates with a client attestation (HAIP, attest_jwt_client_auth). It is the
+    // only credential that identifies a wallet type, so its verification replaces the client
+    // lookup: the client is the allowlisted wallet type the attestation names.
+    const requestHeaders = { get: (name: string) => c.req.header(name) ?? null };
+    let walletAuthenticated = false;
+    let clientData: Awaited<ReturnType<typeof getClientCached>>;
+    if (hasWalletAttestationHeaders(requestHeaders)) {
+      const wallet = await authenticateWalletClient({
+        env: c.env,
+        tenantId: getTenantIdFromContext(c),
+        headers: requestHeaders,
+        issuer,
+        clientId: params.client_id,
+      });
+      if (!wallet.ok) {
+        log.warn('Wallet attestation refused', { reason: wallet.error });
+        throw new RFCError(
+          wallet.error === 'wallet_allowlist_unavailable'
+            ? 'temporarily_unavailable'
+            : 'invalid_client',
+          wallet.error === 'wallet_allowlist_unavailable' ? 503 : 401,
+          'Client authentication failed'
+        );
+      }
+      // A wallet type and a stored client never share an id: with a stored row (disabled too) the
+      // authorize and token endpoints would resolve another client than this one.
+      if (
+        await getClientCached(c, c.env, params.client_id, {
+          includeDisabled: true,
+          storedOnly: true,
+        })
+      ) {
+        log.warn('Wallet client id collides with a stored client');
+        throw new RFCError('invalid_client', 401, 'Client authentication failed');
+      }
+      walletAuthenticated = true;
+      clientData = wallet.client;
+    } else {
+      // Verify client exists (request-level cached)
+      clientData = await getClientCached(c, c.env, params.client_id);
+    }
     if (!clientData) {
       throw new RFCError('invalid_client', 401, 'Client authentication failed');
     }
@@ -407,6 +450,7 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
       clientSecretPost: typeof formData.client_secret === 'string',
       clientAssertion: Boolean(client_assertion),
       clientAssertionType: client_assertion_type,
+      attestation: walletAuthenticated,
     });
     if (!methodValidation.valid) {
       return c.json(
@@ -477,6 +521,17 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
     // P3: FAPI 2.0 Specific Requirements
     // =========================================================================
     if (fapiConfig.enabled) {
+      // The token endpoint accepts only private_key_jwt under FAPI; a wallet is refused at both
+      // endpoints rather than accepted here and refused there.
+      if (walletAuthenticated) {
+        return c.json(
+          {
+            error: 'invalid_client',
+            error_description: 'FAPI 2.0 requires private_key_jwt authentication for PAR',
+          },
+          401
+        );
+      }
       // FAPI 2.0: Require private_key_jwt authentication
       if (fapiConfig.requirePrivateKeyJwt !== false) {
         if (
@@ -1042,10 +1097,32 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
       params.cancel_uri = customRedirectValidation.validatedUris?.cancel_uri;
     }
 
-    // Validate scope
-    const scopeValidation = validateScope(params.scope);
+    // Validate scope. A wallet asks for credential scopes only, not for an OIDC login.
+    const scopeValidation = walletAuthenticated
+      ? validateScope(params.scope, { requireOpenid: false })
+      : validateScope(params.scope);
     if (!scopeValidation.valid) {
       throw new RFCError('invalid_scope', 400, scopeValidation.error || 'Invalid scope');
+    }
+    if (!walletAuthenticated && params.scope.split(' ').includes(WALLET_ONLY_SCOPE)) {
+      throw new RFCError('invalid_scope', 400, 'Scope not allowed for this client');
+    }
+    if (walletAuthenticated) {
+      if (!walletScopeAllowed(params.scope)) {
+        throw new RFCError('invalid_scope', 400, 'Scope not allowed for this client');
+      }
+      // A wallet asks for the credential scope alone: no rich authorization details ride along.
+      if (params.authorization_details) {
+        throw new RFCError('invalid_request', 400, 'authorization_details is not allowed');
+      }
+      // What authorize would refuse is refused here: the code flow with PKCE S256 only.
+      if (
+        params.response_type !== 'code' ||
+        !params.code_challenge ||
+        params.code_challenge_method !== 'S256'
+      ) {
+        throw new RFCError('invalid_request', 400, 'The code flow with PKCE (S256) is required');
+      }
     }
 
     // RFC 9396: Rich Authorization Requests (RAR) validation
@@ -1170,6 +1247,14 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
         action: 'dpop_validate',
         jktPrefix: dpopJkt?.substring(0, 16),
       });
+    }
+    // The wallet's tokens are DPoP-bound: the code is bound to the key from this request on.
+    if (walletAuthenticated && !dpopJkt && !params.dpop_jkt) {
+      throw new RFCError(
+        'invalid_request',
+        400,
+        'A DPoP key binding (DPoP proof or dpop_jkt) is required'
+      );
     }
 
     dpopJkt ??= params.dpop_jkt;

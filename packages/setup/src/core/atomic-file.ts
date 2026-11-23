@@ -306,7 +306,8 @@ export async function consumePrivateFileSecurely<T>(
 export async function writePrivateFileAtomically(
   path: string,
   content: string,
-  mode = 0o600
+  mode = 0o600,
+  options: { exclusive?: boolean } = {}
 ): Promise<void> {
   const directory = dirname(path);
   await mkdir(directory, { recursive: true, mode: 0o700 });
@@ -322,7 +323,12 @@ export async function writePrivateFileAtomically(
     await handle.sync();
     await handle.close();
     handle = undefined;
-    await rename(temporaryPath, path);
+    if (options.exclusive) {
+      // link(2) fails with EEXIST instead of replacing: a file that appeared meanwhile survives.
+      await link(temporaryPath, path);
+    } else {
+      await rename(temporaryPath, path);
+    }
     const directoryHandle = await open(directory, 'r').catch(() => undefined);
     if (directoryHandle) {
       try {

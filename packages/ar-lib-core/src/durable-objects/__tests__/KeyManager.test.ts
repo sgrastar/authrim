@@ -7,8 +7,10 @@ import {
   generateKeyPair,
   importJWK,
   jwtVerify,
+  type JWK,
 } from 'jose';
 import { KeyManager } from '../KeyManager.ts';
+import { base64ToBytes, buildCertificate, bytesToBase64 } from '../../vc/x509-certificate';
 import type { Env } from '../../types/env';
 import type { KeyManagerTenantBackupSnapshot } from '../../services/tenant-portability/key-manager-portability';
 
@@ -1627,6 +1629,532 @@ describe('KeyManager Durable Object', () => {
       await expect(keyManager.signStatusListCredentialRpc(mutate(validPayload()))).rejects.toThrow(
         'invalid_status_list_signing_input'
       );
+    });
+  });
+
+  describe('VC issuer key certificate chain (x5c)', () => {
+    const HOST = 'issuer.example.com';
+    const HOUR = 60 * 60 * 1000;
+
+    interface CaKey {
+      privateKey: CryptoKey;
+      publicJwk: JWK;
+    }
+
+    async function newCaKey(): Promise<CaKey> {
+      const { publicKey, privateKey } = await generateKeyPair('ES256', { extractable: true });
+      const jwk = await exportJWK(publicKey);
+      return { privateKey, publicJwk: { kty: 'EC', crv: 'P-256', x: jwk.x, y: jwk.y } };
+    }
+
+    const signWith = (key: CaKey) => async (tbs: Uint8Array) =>
+      new Uint8Array(
+        await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, key.privateKey, tbs)
+      );
+
+    async function fingerprint(base64Der: string): Promise<string> {
+      const digest = new Uint8Array(
+        await crypto.subtle.digest('SHA-256', base64ToBytes(base64Der))
+      );
+      return Array.from(digest, (byte) => byte.toString(16).padStart(2, '0')).join('');
+    }
+
+    /**
+     * Issuing CA plus a leaf for `publicKey`. Returns the `x5c` chain (root excluded) and the
+     * root certificate. Unless `trust` is false the environment is told to trust this CA.
+     */
+    async function issueChain(
+      publicKey: JWK,
+      options: {
+        host?: string;
+        extraHost?: string;
+        leafLifetimeMs?: number;
+        caLifetimeMs?: number;
+        trust?: boolean;
+        withRoot?: boolean;
+        caPathLength?: number;
+        leafCommonName?: string;
+        eku?: boolean;
+      } = {}
+    ): Promise<string[]> {
+      const now = Date.now();
+      const root = await newCaKey();
+      const ca = await newCaKey();
+      const rootCert = await buildCertificate(
+        {
+          subject: { commonName: 'Test Root CA', organization: 'Test' },
+          issuer: { commonName: 'Test Root CA', organization: 'Test' },
+          subjectPublicKey: root.publicJwk,
+          issuerPublicKey: root.publicJwk,
+          notBefore: new Date(now - 2000 * HOUR),
+          notAfter: new Date(now + 5000 * HOUR),
+          isCA: true,
+          pathLength: 1,
+        },
+        signWith(root)
+      );
+      const caCert = await buildCertificate(
+        {
+          subject: { commonName: 'Test Issuing CA', organization: 'Test' },
+          issuer: { commonName: 'Test Root CA', organization: 'Test' },
+          subjectPublicKey: ca.publicJwk,
+          issuerPublicKey: root.publicJwk,
+          notBefore: new Date(now - HOUR),
+          notAfter: new Date(now + (options.caLifetimeMs ?? 1000 * HOUR)),
+          isCA: true,
+          pathLength: options.caPathLength ?? 0,
+        },
+        signWith(root)
+      );
+      const host = options.host ?? HOST;
+      const leafCert = await buildCertificate(
+        {
+          subject: { commonName: options.leafCommonName ?? host },
+          issuer: { commonName: 'Test Issuing CA', organization: 'Test' },
+          subjectPublicKey: publicKey,
+          issuerPublicKey: ca.publicJwk,
+          notBefore: new Date(now - 5 * 60_000),
+          notAfter: new Date(now + (options.leafLifetimeMs ?? 48 * HOUR)),
+          dnsNames: [host, ...(options.extraHost ? [options.extraHost] : [])],
+          isCA: false,
+          extraExtensions: options.eku
+            ? [
+                {
+                  oid: '2.5.29.37',
+                  critical: false,
+                  value: Uint8Array.from([
+                    0x30, 0x0a, 0x06, 0x08, 0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x01,
+                  ]),
+                },
+              ]
+            : undefined,
+        },
+        signWith(ca)
+      );
+      const chain = [bytesToBase64(leafCert), bytesToBase64(caCert)];
+      if (options.trust !== false) env.VC_X5C_ISSUING_CA_SHA256 = await fingerprint(chain[1]);
+      return options.withRoot ? [...chain, bytesToBase64(rootCert)] : chain;
+    }
+
+    const vcPayload = (extra: Record<string, unknown> = {}) => ({
+      iss: 'https://issuer.example.com',
+      vct: 'https://authrim.com/credentials/admin/v1',
+      iat: Math.floor(Date.now() / 1000),
+      exp: Math.floor(Date.now() / 1000) + 3600,
+      _sd_alg: 'sha-256',
+      _sd: ['digest-a'],
+      ...extra,
+    });
+
+    const statusPayload = (iss = 'https://issuer.example.com') => {
+      const now = Math.floor(Date.now() / 1000);
+      return {
+        iss,
+        sub: `${iss}/vci/status-lists/list-a`,
+        iat: now,
+        exp: now + 86400,
+        ttl: 300,
+        status_list: { bits: 2, lst: 'eJzTBwAAAQAB' },
+      };
+    };
+
+    const register = (kid: string, chain: string[], issuerHost = HOST) =>
+      keyManager.setVcIssuerKeyCertificateChainRpc({ kid, chain, issuerHost });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('adds x5c to SD-JWT VCs and status list tokens once a chain is stored', async () => {
+      const key = await keyManager.rotateECKeysRpc('ES256');
+      const chain = await issueChain(key.publicJWK);
+      const stored = await register(key.kid, chain);
+      expect(stored.kid).toBe(key.kid);
+      expect(stored.leafNotAfter).toBeGreaterThan(Date.now());
+      expect(stored.chainNotAfter).toBeLessThanOrEqual(stored.leafNotAfter);
+
+      const publicKey = await importJWK(key.publicJWK, 'ES256');
+      const credential = await keyManager.signSDJWTIssuerRpc(vcPayload());
+      await expect(jwtVerify(credential.token, publicKey)).resolves.toBeDefined();
+      expect(decodeProtectedHeader(credential.token)).toEqual({
+        alg: 'ES256',
+        typ: 'dc+sd-jwt',
+        kid: key.kid,
+        x5c: chain,
+      });
+
+      const list = await keyManager.signStatusListCredentialRpc(statusPayload());
+      await expect(jwtVerify(list.token, publicKey)).resolves.toBeDefined();
+      expect(decodeProtectedHeader(list.token)).toEqual({
+        alg: 'ES256',
+        typ: 'statuslist+jwt',
+        kid: key.kid,
+        x5c: chain,
+      });
+    });
+
+    it('leaves the header unchanged for a key without a chain', async () => {
+      const key = await keyManager.rotateECKeysRpc('ES256');
+      const credential = await keyManager.signSDJWTIssuerRpc(vcPayload());
+      expect(decodeProtectedHeader(credential.token)).toEqual({
+        alg: 'ES256',
+        typ: 'dc+sd-jwt',
+        kid: key.kid,
+      });
+    });
+
+    it('keeps the chain across a restart of the Durable Object', async () => {
+      const key = await keyManager.rotateECKeysRpc('ES256');
+      const chain = await issueChain(key.publicJWK);
+      await register(key.kid, chain);
+
+      const restarted = new KeyManager(state as unknown as DurableObjectState, env);
+      const credential = await restarted.signSDJWTIssuerRpc(vcPayload());
+      expect(decodeProtectedHeader(credential.token).x5c).toEqual(chain);
+    });
+
+    it('does not carry the chain over to a rotated key', async () => {
+      const first = await keyManager.rotateECKeysRpc('ES256');
+      await register(first.kid, await issueChain(first.publicJWK));
+      const second = await keyManager.rotateECKeysRpc('ES256');
+      const credential = await keyManager.signSDJWTIssuerRpc(vcPayload());
+      expect(decodeProtectedHeader(credential.token)).toEqual({
+        alg: 'ES256',
+        typ: 'dc+sd-jwt',
+        kid: second.kid,
+      });
+    });
+
+    it('stops sending x5c once the leaf has expired', async () => {
+      vi.useFakeTimers({ now: Date.UTC(2026, 10, 22) });
+      const key = await keyManager.rotateECKeysRpc('ES256');
+      await register(key.kid, await issueChain(key.publicJWK, { leafLifetimeMs: 2 * HOUR }));
+      expect(
+        decodeProtectedHeader((await keyManager.signSDJWTIssuerRpc(vcPayload())).token).x5c
+      ).toBeDefined();
+
+      vi.setSystemTime(Date.UTC(2026, 10, 22) + 3 * HOUR);
+      const late = await keyManager.signSDJWTIssuerRpc(vcPayload());
+      expect(decodeProtectedHeader(late.token).x5c).toBeUndefined();
+    });
+
+    it('stops sending x5c when the issuing CA expires before the leaf', async () => {
+      vi.useFakeTimers({ now: Date.UTC(2026, 10, 22) });
+      const key = await keyManager.rotateECKeysRpc('ES256');
+      const stored = await register(
+        key.kid,
+        await issueChain(key.publicJWK, { leafLifetimeMs: 100 * HOUR, caLifetimeMs: 2 * HOUR })
+      );
+      expect(stored.chainNotAfter).toBeLessThan(stored.leafNotAfter);
+
+      vi.setSystemTime(Date.UTC(2026, 10, 22) + 3 * HOUR); // CA expired, leaf still valid
+      const late = await keyManager.signSDJWTIssuerRpc(vcPayload());
+      expect(decodeProtectedHeader(late.token).x5c).toBeUndefined();
+      const list = await keyManager.signStatusListCredentialRpc(statusPayload());
+      expect(decodeProtectedHeader(list.token).x5c).toBeUndefined();
+    });
+
+    it('sends x5c only when the chain outlives the credential', async () => {
+      const key = await keyManager.rotateECKeysRpc('ES256');
+      const chain = await issueChain(key.publicJWK, { leafLifetimeMs: 48 * HOUR });
+      await register(key.kid, chain);
+      const nowSeconds = Math.floor(Date.now() / 1000);
+
+      const within = await keyManager.signSDJWTIssuerRpc(vcPayload({ exp: nowSeconds + 3600 }));
+      expect(decodeProtectedHeader(within.token).x5c).toEqual(chain);
+      const beyond = await keyManager.signSDJWTIssuerRpc(
+        vcPayload({ exp: nowSeconds + 30 * 86400 })
+      );
+      expect(decodeProtectedHeader(beyond.token).x5c).toBeUndefined();
+    });
+
+    it('sends x5c only for the issuer host the chain was validated for', async () => {
+      const key = await keyManager.rotateECKeysRpc('ES256');
+      const chain = await issueChain(key.publicJWK);
+      await register(key.kid, chain);
+
+      for (const iss of ['https://other.example.com', 'http://issuer.example.com', 'not a url']) {
+        const token = (await keyManager.signSDJWTIssuerRpc(vcPayload({ iss }))).token;
+        expect(decodeProtectedHeader(token).x5c).toBeUndefined();
+      }
+      const list = await keyManager.signStatusListCredentialRpc(
+        statusPayload('https://other.example.com')
+      );
+      expect(decodeProtectedHeader(list.token).x5c).toBeUndefined();
+
+      const tenantPath = await keyManager.signSDJWTIssuerRpc(
+        vcPayload({ iss: 'https://ISSUER.example.com/t1' })
+      );
+      expect(decodeProtectedHeader(tenantPath.token).x5c).toEqual(chain);
+      const didWeb = await keyManager.signSDJWTIssuerRpc(
+        vcPayload({ iss: 'did:web:issuer.example.com' })
+      );
+      expect(decodeProtectedHeader(didWeb.token).x5c).toEqual(chain);
+    });
+
+    it('refuses a chain whose leaf certifies another key', async () => {
+      const key = await keyManager.rotateECKeysRpc('ES256');
+      const other = await newCaKey();
+      await expect(register(key.kid, await issueChain(other.publicJwk))).rejects.toThrow(
+        'leaf_key_mismatch'
+      );
+    });
+
+    it('refuses another host, a second name, a wrong-name issuer and malformed chains', async () => {
+      const key = await keyManager.rotateECKeysRpc('ES256');
+      await expect(
+        register(key.kid, await issueChain(key.publicJWK, { host: 'other.example.com' }))
+      ).rejects.toThrow('leaf_host_mismatch');
+      await expect(
+        register(key.kid, await issueChain(key.publicJWK, { extraHost: 'www.example.com' }))
+      ).rejects.toThrow('leaf_host_mismatch');
+      await expect(register(key.kid, ['not base64!', 'AAAA'])).rejects.toThrow();
+      await expect(register(key.kid, [])).rejects.toThrow('invalid_certificate_chain');
+      // Nothing was stored by the failed attempts.
+      const credential = await keyManager.signSDJWTIssuerRpc(vcPayload());
+      expect(decodeProtectedHeader(credential.token).x5c).toBeUndefined();
+    });
+
+    it('accepts exactly leaf plus issuing CA: a chain that includes the root is refused', async () => {
+      const key = await keyManager.rotateECKeysRpc('ES256');
+      await expect(
+        register(key.kid, await issueChain(key.publicJWK, { withRoot: true }))
+      ).rejects.toThrow('invalid_certificate_chain');
+    });
+
+    it('refuses a chain that does not end in the configured issuing CA', async () => {
+      const key = await keyManager.rotateECKeysRpc('ES256');
+      const chain = await issueChain(key.publicJWK);
+      // The environment trusts another CA than the one that issued this chain.
+      env.VC_X5C_ISSUING_CA_SHA256 = 'a'.repeat(64);
+      await expect(register(key.kid, chain)).rejects.toThrow('untrusted_issuing_ca');
+      // A structurally valid chain from a different PKI is equally refused.
+      const other = await issueChain(key.publicJWK, { trust: false });
+      await expect(register(key.kid, other)).rejects.toThrow('untrusted_issuing_ca');
+    });
+
+    it('refuses every chain until an issuing CA is configured', async () => {
+      const key = await keyManager.rotateECKeysRpc('ES256');
+      const chain = await issueChain(key.publicJWK, { trust: false });
+      delete env.VC_X5C_ISSUING_CA_SHA256;
+      await expect(register(key.kid, chain)).rejects.toThrow('vc_x5c_trust_anchor_not_configured');
+      env.VC_X5C_ISSUING_CA_SHA256 = 'not-a-fingerprint, ';
+      await expect(register(key.kid, chain)).rejects.toThrow('vc_x5c_trust_anchor_not_configured');
+    });
+
+    it('refuses an unknown key id, a bad key id and a revoked key', async () => {
+      const key = await keyManager.rotateECKeysRpc('ES256');
+      const chain = await issueChain(key.publicJWK);
+      await expect(register('no-such-key', chain)).rejects.toThrow('vc_issuer_key_not_found');
+      await expect(register('  ', chain)).rejects.toThrow('invalid_kid');
+
+      // An emergency rotation revokes the key; a chain can no longer be attached to it.
+      await keyManager.revokeVcIssuerKeyRpc(key.kid, 'key compromise suspected, rotated');
+      await expect(register(key.kid, chain)).rejects.toThrow('vc_issuer_key_not_found');
+    });
+
+    it('does not send x5c for a credential without an exp', async () => {
+      const key = await keyManager.rotateECKeysRpc('ES256');
+      await register(key.kid, await issueChain(key.publicJWK));
+      const without = await keyManager.signSDJWTIssuerRpc(vcPayload({ exp: undefined }));
+      expect(decodeProtectedHeader(without.token).x5c).toBeUndefined();
+      // An exp that is not a finite number is either refused by the JWT library or, if it is
+      // signed, never earns a certificate chain.
+      for (const exp of ['soon', Number.NaN, Number.POSITIVE_INFINITY]) {
+        const signed = await keyManager.signSDJWTIssuerRpc(vcPayload({ exp })).catch(() => null);
+        if (signed) expect(decodeProtectedHeader(signed.token).x5c).toBeUndefined();
+      }
+    });
+
+    it('requires x5c when the caller asks, for both VC and status list signing', async () => {
+      const key = await keyManager.rotateECKeysRpc('ES256');
+      // No chain yet: the default signing falls back, the required signing refuses.
+      await expect(keyManager.signSDJWTIssuerRpc(vcPayload())).resolves.toBeDefined();
+      await expect(
+        keyManager.signSDJWTIssuerRpc(vcPayload(), { requireX5c: true })
+      ).rejects.toThrow('x5c_required');
+      await expect(
+        keyManager.signStatusListCredentialRpc(statusPayload(), { requireX5c: true })
+      ).rejects.toThrow('x5c_required');
+
+      const chain = await issueChain(key.publicJWK);
+      await register(key.kid, chain);
+      const vc = await keyManager.signSDJWTIssuerRpc(vcPayload(), { requireX5c: true });
+      expect(decodeProtectedHeader(vc.token).x5c).toEqual(chain);
+      const list = await keyManager.signStatusListCredentialRpc(statusPayload(), {
+        requireX5c: true,
+      });
+      expect(decodeProtectedHeader(list.token).x5c).toEqual(chain);
+
+      // The chain stops fitting: another host, or a credential that outlives the chain.
+      await expect(
+        keyManager.signSDJWTIssuerRpc(vcPayload({ iss: 'https://other.example.com' }), {
+          requireX5c: true,
+        })
+      ).rejects.toThrow('x5c_required');
+      const beyond = Math.floor(Date.now() / 1000) + 365 * 86400;
+      await expect(
+        keyManager.signSDJWTIssuerRpc(vcPayload({ exp: beyond }), { requireX5c: true })
+      ).rejects.toThrow('x5c_required');
+    });
+
+    it('refuses malformed signing options', async () => {
+      await keyManager.rotateECKeysRpc('ES256');
+      for (const options of [
+        { requireX5c: 'yes' },
+        { other: true },
+        null,
+        'x',
+        [],
+        new Map([['requireX5c', true]]),
+      ]) {
+        await expect(keyManager.signSDJWTIssuerRpc(vcPayload(), options as never)).rejects.toThrow(
+          'invalid_vc_signing_options'
+        );
+      }
+    });
+
+    it('stops sending x5c when the issuing CA leaves the allowlist', async () => {
+      const key = await keyManager.rotateECKeysRpc('ES256');
+      const chain = await issueChain(key.publicJWK);
+      await register(key.kid, chain);
+      expect(
+        decodeProtectedHeader((await keyManager.signSDJWTIssuerRpc(vcPayload())).token).x5c
+      ).toEqual(chain);
+
+      env.VC_X5C_ISSUING_CA_SHA256 = 'b'.repeat(64);
+      const after = await keyManager.signSDJWTIssuerRpc(vcPayload());
+      expect(decodeProtectedHeader(after.token).x5c).toBeUndefined();
+      await expect(
+        keyManager.signSDJWTIssuerRpc(vcPayload(), { requireX5c: true })
+      ).rejects.toThrow('x5c_required');
+    });
+
+    it('refuses chains outside the Authrim profile', async () => {
+      const key = await keyManager.rotateECKeysRpc('ES256');
+      await expect(
+        register(key.kid, await issueChain(key.publicJWK, { leafCommonName: 'other.example.com' }))
+      ).rejects.toThrow('leaf_subject_mismatch');
+      await expect(
+        register(key.kid, await issueChain(key.publicJWK, { caPathLength: 1 }))
+      ).rejects.toThrow('issuing_ca_path_length');
+      await expect(
+        register(key.kid, await issueChain(key.publicJWK, { eku: true }))
+      ).rejects.toThrow('extended_key_usage_not_allowed');
+    });
+
+    it('sends x5c on the Token Status List only, not on the legacy Bitstring Status List', async () => {
+      const key = await keyManager.rotateECKeysRpc('ES256');
+      const chain = await issueChain(key.publicJWK);
+      await register(key.kid, chain);
+      const now = Math.floor(Date.now() / 1000);
+      const legacy = {
+        iss: 'did:web:issuer.example.com',
+        sub: 'https://issuer.example.com/vci/status/list-a',
+        iat: now,
+        exp: now + 3600,
+        vc: {
+          type: ['VerifiableCredential', 'BitstringStatusListCredential'],
+          credentialSubject: {
+            type: 'BitstringStatusList',
+            statusPurpose: 'revocation',
+            encodedList: 'encoded-list',
+          },
+        },
+      };
+      const token = await keyManager.signStatusListCredentialRpc(legacy);
+      expect(decodeProtectedHeader(token.token).x5c).toBeUndefined();
+      await expect(
+        keyManager.signStatusListCredentialRpc(legacy, { requireX5c: true })
+      ).rejects.toThrow('x5c_required');
+      // The Token Status List of the same key still carries it.
+      const list = await keyManager.signStatusListCredentialRpc(statusPayload());
+      expect(decodeProtectedHeader(list.token).x5c).toEqual(chain);
+    });
+
+    it('refuses signing options that are not a plain record', async () => {
+      await keyManager.rotateECKeysRpc('ES256');
+      class Custom {
+        requireX5c = true;
+      }
+      for (const options of [new Custom(), Object.create({ requireX5c: true }) as object]) {
+        await expect(keyManager.signSDJWTIssuerRpc(vcPayload(), options as never)).rejects.toThrow(
+          'invalid_vc_signing_options'
+        );
+      }
+      // A record without a prototype is plain.
+      const bare = Object.assign(Object.create(null) as object, { requireX5c: false });
+      await expect(keyManager.signSDJWTIssuerRpc(vcPayload(), bare)).resolves.toBeDefined();
+    });
+
+    it('tells the certificate issuer which key needs a chain, and what the key already has', async () => {
+      // The key is created on first use; it has no chain yet.
+      const first = await keyManager.getVcSigningCertificateStateRpc();
+      expect(first).toMatchObject({
+        issuerHost: null,
+        caSha256: null,
+        chainNotAfter: null,
+      });
+      expect(first.publicJWK).not.toHaveProperty('d');
+      expect(Object.keys(first.publicJWK).sort()).toEqual(['crv', 'kty', 'x', 'y']);
+
+      const chain = await issueChain(first.publicJWK);
+      const stored = await register(first.kid, chain);
+      const after = await keyManager.getVcSigningCertificateStateRpc();
+      expect(after).toMatchObject({ kid: first.kid, issuerHost: HOST });
+      expect(after.chainNotAfter).toBe(stored.chainNotAfter);
+      expect(after.caSha256).toMatch(/^[0-9a-f]{64}$/u);
+
+      // After a rotation the new key is the one that needs a chain.
+      const second = await keyManager.rotateECKeysRpc('ES256');
+      const rotated = await keyManager.getVcSigningCertificateStateRpc();
+      expect(rotated.kid).toBe(second.kid);
+      expect(rotated.chainNotAfter).toBeNull();
+    });
+
+    it('never makes a revoked key active again, so its chain does not come back', async () => {
+      const first = await keyManager.rotateECKeysRpc('ES256');
+      const chain = await issueChain(first.publicJWK);
+      await register(first.kid, chain);
+      const second = await keyManager.rotateECKeysRpc('ES256'); // the first key is now in overlap
+      await keyManager.revokeVcIssuerKeyRpc(first.kid, 'key compromise suspected, revoked');
+
+      await expect(keyManager.setActiveECKey(first.kid)).rejects.toThrow('EC key not found');
+      const active = await keyManager.getActiveECKeyRpc('ES256');
+      expect(active?.kid).toBe(second.kid);
+      const token = await keyManager.signSDJWTIssuerRpc(vcPayload());
+      expect(decodeProtectedHeader(token.token)).toMatchObject({ kid: second.kid });
+      expect(decodeProtectedHeader(token.token).x5c).toBeUndefined();
+    });
+
+    it('does not sign with a chain whose storage failed, even in the same instance', async () => {
+      const key = await keyManager.rotateECKeysRpc('ES256');
+      const chain = await issueChain(key.publicJWK);
+      vi.spyOn(state.storage, 'put').mockRejectedValueOnce(new Error('synthetic storage failure'));
+      await expect(register(key.kid, chain)).rejects.toThrow('synthetic storage failure');
+
+      const credential = await keyManager.signSDJWTIssuerRpc(vcPayload());
+      expect(decodeProtectedHeader(credential.token).x5c).toBeUndefined();
+      // The same chain registers once storage works again.
+      await expect(register(key.kid, chain)).resolves.toMatchObject({ kid: key.kid });
+    });
+
+    it('lets a chained key be exported and restored, without the chain', async () => {
+      const key = await keyManager.rotateECKeysRpc('ES256');
+      const chain = await issueChain(key.publicJWK);
+      await register(key.kid, chain);
+      await keyManager.getExistingSecretRpc('field-mapping-hash');
+
+      const exported = await keyManager.exportTenantBackupStateRpc();
+      expect(JSON.stringify(exported)).not.toContain('certificateChain');
+      expect(await keyManager.verifyTenantBackupStateRpc(exported)).toBe(true);
+
+      const restoredState = new MockDurableObjectState();
+      const restored = new KeyManager(restoredState as unknown as DurableObjectState, env);
+      await restored.importTenantBackupStateRpc(exported);
+      const credential = await restored.signSDJWTIssuerRpc(vcPayload());
+      expect(decodeProtectedHeader(credential.token)).toMatchObject({ kid: key.kid });
+      expect(decodeProtectedHeader(credential.token).x5c).toBeUndefined();
     });
   });
 

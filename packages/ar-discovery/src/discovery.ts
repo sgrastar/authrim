@@ -7,6 +7,7 @@ import type {
   TenantProfile,
 } from '@authrim/ar-lib-core';
 import {
+  loadWalletAllowlist,
   SUPPORTED_JWE_ALG,
   SUPPORTED_JWE_ENC,
   REQUEST_OBJECT_ENCRYPTION_ALGS,
@@ -240,7 +241,20 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
   const profileHash = `profile=${tenantProfile.type}`;
   const assuranceClaimsHash = `ea=${eduPersonAssuranceSupported}`;
   const signingAlgorithmsHash = `oidc_algs=${publishedSigningAlgorithms.join(',')}:id_token_algs=${idTokenSigningAlgorithms.join(',')}`;
-  const settingsHash = `${currentSettingsJson}:acr=${acrValuesSupported.join(',')}:issuer=${issuer}:async=${asyncEnabled}:te=${tokenExchangeEnabled}:cc=${clientCredentialsEnabled}:ns=${nativeSSOEnabled}:rar=${rarEnabled}:ai=${aiScopesEnabled}:idjag=${idJagEnabled}:fe=${flowEngineEnabled}:${profileHash}:${logoutHash}:${signingAlgorithmsHash}:${assuranceClaimsHash}:cuc=${cibaUserCodeSupported}:pc=${promptCreateSupported}:dcrcap=${dcrCapabilityEnabled}`;
+  // Wallets may authenticate by attestation only where the tenant has allowlisted one (and not
+  // under FAPI, which accepts private_key_jwt alone), so it is advertised only then.
+  let walletAttestationEnabled = false;
+  if (!fapiConfig.enabled) {
+    try {
+      walletAttestationEnabled = (await loadWalletAllowlist(c.env, tenantId)).entries.some(
+        (entry) => entry.enabled
+      );
+    } catch {
+      // An unreadable list accepts no wallet, so nothing is advertised.
+    }
+  }
+
+  const settingsHash = `${currentSettingsJson}:acr=${acrValuesSupported.join(',')}:issuer=${issuer}:async=${asyncEnabled}:te=${tokenExchangeEnabled}:cc=${clientCredentialsEnabled}:ns=${nativeSSOEnabled}:rar=${rarEnabled}:ai=${aiScopesEnabled}:idjag=${idJagEnabled}:fe=${flowEngineEnabled}:${profileHash}:${logoutHash}:${signingAlgorithmsHash}:${assuranceClaimsHash}:cuc=${cibaUserCodeSupported}:pc=${promptCreateSupported}:dcrcap=${dcrCapabilityEnabled}:wallet=${walletAttestationEnabled}`;
   // A digest of everything the metadata depends on: a fixed-length key, however long the settings
   // (a KV key is at most 512 bytes).
   const settingsDigest = Array.from(
@@ -436,12 +450,23 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
     // Dynamic token endpoint auth methods based on OIDC config
     token_endpoint_auth_methods_supported: fapiConfig.enabled
       ? ['private_key_jwt']
-      : oidcConfig.tokenEndpointAuthMethodsSupported || [
-          'client_secret_basic',
-          'client_secret_post',
-          'private_key_jwt',
-          'none',
+      : [
+          ...(
+            oidcConfig.tokenEndpointAuthMethodsSupported || [
+              'client_secret_basic',
+              'client_secret_post',
+              'private_key_jwt',
+              'none',
+            ]
+          ).filter((method) => method !== 'attest_jwt_client_auth'),
+          ...(walletAttestationEnabled ? ['attest_jwt_client_auth'] : []),
         ],
+    ...(walletAttestationEnabled
+      ? {
+          client_attestation_signing_alg_values_supported: ['ES256'],
+          client_attestation_pop_signing_alg_values_supported: ['ES256'],
+        }
+      : {}),
     token_endpoint_auth_signing_alg_values_supported: fapiConfig.enabled
       ? [...FAPI2_MESSAGE_SIGNING_ALGS]
       : [...CLIENT_ASSERTION_SIGNING_ALGS],

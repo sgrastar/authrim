@@ -74,6 +74,7 @@ import {
   resolveAccountDataContextFromHono,
   generateSecureRandomString,
   getSessionCookieSameSite,
+  resolveWalletClient,
 } from '@authrim/ar-lib-core';
 import { answerFormPostAsData, formPostAnsweredAsData, redirectWithError } from './authorize';
 import { answerInformationRelease, loadInformationReleaseScreen } from './consent-release';
@@ -302,10 +303,13 @@ export async function consentGetHandler(c: Context<{ Bindings: Env }>) {
     // Load client metadata via Repository
     const tenantId = getTenantIdFromContext(c);
     const tenantAuthCtx = createAuthContextFromHono(c, tenantId);
-    const [client, trustPolicy] = await Promise.all([
+    const [storedClient, trustPolicy] = await Promise.all([
       tenantAuthCtx.repositories.client.findByClientId(client_id),
       resolveClientTrustPolicy(tenantAuthCtx.coreAdapter, tenantId, 'oidc_client', client_id),
     ]);
+
+    // A wallet type on the tenant's allowlist has no stored row; it is a client all the same.
+    const client = storedClient ?? (await resolveWalletClient(c.env, tenantId, client_id));
 
     // Map to clientRow format for compatibility
     const clientRow =
@@ -1057,7 +1061,7 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
 
     if (granularScopesEnabled && selected_scopes && selected_scopes.length > 0) {
       // Validate: openid is required and cannot be deselected
-      if (!selected_scopes.includes('openid')) {
+      if (requestedScope.split(' ').includes('openid') && !selected_scopes.includes('openid')) {
         return c.json(
           {
             error: 'invalid_request',

@@ -93,6 +93,8 @@ interface CredentialOptions {
   kid?: string;
   typ?: string;
   committed?: string[];
+  /** Certificate chain in the issuer JWT header (HAIP credentials). */
+  x5c?: string[];
 }
 
 async function issuerJwt(options: CredentialOptions = {}): Promise<string> {
@@ -109,6 +111,7 @@ async function issuerJwt(options: CredentialOptions = {}): Promise<string> {
       alg: 'ES256',
       typ: options.typ ?? 'dc+sd-jwt',
       kid: options.kid ?? 'vc-key-1',
+      ...(options.x5c ? { x5c: options.x5c } : {}),
     })
     .setIssuer(options.iss ?? ISSUER)
     .setIssuedAt(NOW - 60)
@@ -390,6 +393,25 @@ describe('verifyAdminPresentation', () => {
       holderJkt: keys.holderJkt,
       credentialId: 'cred-1',
     });
+  });
+
+  it('accepts a credential whose issuer JWT header carries an x5c chain (HAIP issuance)', async () => {
+    // The admin verifier resolves the key by `kid` from the tenant's own keys and does not
+    // evaluate certificates, so the extra header member changes nothing about acceptance.
+    const req = request();
+    await expect(
+      verify(vpToken(await presentation(req, { x5c: ['AAAA', 'BBBB'] })), req)
+    ).resolves.toEqual({ ok: true, holderJkt: keys.holderJkt, credentialId: 'cred-1' });
+  });
+
+  it('still refuses an x5c credential whose kid is not a tenant key', async () => {
+    // A certificate in the header never stands in for the tenant's own key.
+    const req = request();
+    const result = await verify(
+      vpToken(await presentation(req, { x5c: ['AAAA', 'BBBB'], kid: 'unknown-key' })),
+      req
+    );
+    expect(result.ok).toBe(false);
   });
 
   it('accepts committed disclosures and refuses ones the issuer did not sign', async () => {

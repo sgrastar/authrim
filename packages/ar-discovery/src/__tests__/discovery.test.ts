@@ -3,7 +3,7 @@ import { Hono } from 'hono';
 import { clearDiscoveryMetadataCache, discoveryHandler } from '../discovery';
 import type { Env } from '@authrim/ar-lib-core/types/env';
 import type { OIDCProviderMetadata } from '@authrim/ar-lib-core/types/oidc';
-import { clearNativeSSOConfigCache } from '@authrim/ar-lib-core';
+import { buildCertificate, bytesToBase64, clearNativeSSOConfigCache } from '@authrim/ar-lib-core';
 
 /**
  * Create a mock environment for testing
@@ -611,6 +611,91 @@ describe('Discovery Handler', () => {
       expect(metadata.token_endpoint_auth_methods_supported).toContain('none');
       expect(metadata.token_endpoint_auth_methods_supported).toContain('private_key_jwt');
       expect(metadata.token_endpoint_auth_methods_supported).not.toContain('client_secret_jwt');
+    });
+
+    describe('wallet attestation (attest_jwt_client_auth)', () => {
+      /** A wallet type with a real (self-issued) root: an enabled entry needs one. */
+      async function entry(enabled: boolean) {
+        const pair = (await crypto.subtle.generateKey(
+          { name: 'ECDSA', namedCurve: 'P-256' },
+          true,
+          ['sign', 'verify']
+        )) as CryptoKeyPair;
+        const jwk = (await crypto.subtle.exportKey('jwk', pair.publicKey)) as {
+          x: string;
+          y: string;
+        };
+        const publicJwk = { kty: 'EC', crv: 'P-256', x: jwk.x, y: jwk.y };
+        const name = { commonName: 'Wallet Root', organization: 'Wallet Co' };
+        const now = Date.now();
+        const der = await buildCertificate(
+          {
+            subject: name,
+            issuer: name,
+            subjectPublicKey: publicJwk,
+            issuerPublicKey: publicJwk,
+            notBefore: new Date(now - 3600_000),
+            notAfter: new Date(now + 365 * 24 * 3600_000),
+            isCA: true,
+            pathLength: 1,
+          },
+          async (tbs) =>
+            new Uint8Array(
+              await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, pair.privateKey, tbs)
+            )
+        );
+        const sha256 = [...new Uint8Array(await crypto.subtle.digest('SHA-256', der))]
+          .map((byte) => byte.toString(16).padStart(2, '0'))
+          .join('');
+        return {
+          clientId: 'keyring-wallet',
+          label: 'Keyring',
+          enabled,
+          attestationRoots: [{ certificate: bytesToBase64(der), sha256 }],
+          keyAttestationRoots: [],
+          redirectUris: ['https://wallet.example.com/cb'],
+        };
+      }
+      const envWith = (list: string | null) => {
+        const env = createMockEnv();
+        env.SETTINGS = createMockKV({
+          get: async (key: string) => (key.endsWith(':wallet-attestation-allowlist') ? list : null),
+        });
+        return env;
+      };
+      const fetchMetadata = (env: Env) =>
+        fetchDiscoveryMetadata(
+          'default',
+          'https://test.example.com/.well-known/openid-configuration',
+          env
+        );
+
+      it('is not advertised without an enabled wallet on the allowlist', async () => {
+        for (const list of [
+          null,
+          JSON.stringify({ version: 1, updatedAt: 1, revision: 1, entries: [await entry(false)] }),
+          'not json',
+        ]) {
+          clearDiscoveryMetadataCache();
+          const metadata = await fetchMetadata(envWith(list));
+          expect(metadata.token_endpoint_auth_methods_supported).not.toContain(
+            'attest_jwt_client_auth'
+          );
+          expect(metadata.client_attestation_signing_alg_values_supported).toBeUndefined();
+        }
+      });
+
+      it('is advertised, with ES256 for both tokens, once a wallet is enabled', async () => {
+        const metadata = await fetchMetadata(
+          envWith(
+            JSON.stringify({ version: 1, updatedAt: 1, revision: 1, entries: [await entry(true)] })
+          )
+        );
+        expect(metadata.token_endpoint_auth_methods_supported).toContain('attest_jwt_client_auth');
+        expect(metadata.token_endpoint_auth_methods_supported).toContain('private_key_jwt');
+        expect(metadata.client_attestation_signing_alg_values_supported).toEqual(['ES256']);
+        expect(metadata.client_attestation_pop_signing_alg_values_supported).toEqual(['ES256']);
+      });
     });
   });
 

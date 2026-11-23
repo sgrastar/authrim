@@ -430,6 +430,9 @@ export {
 // Phase 9: VC (Verifiable Credentials)
 export * from './vc/haip-policy';
 export * from './vc/sd-jwt-vc';
+export * from './vc/x509-certificate';
+export * from './vc/wallet-attestation';
+export * from './vc/wallet-allowlist';
 export * from './vc/status-list';
 export * from './vc/status-list-manager';
 export * from './vc/status-list-codec';
