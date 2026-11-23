@@ -19,6 +19,7 @@ import { arStepUp } from './step-up/ar';
 import { arAdminAudit } from './admin-audit/ar';
 import { arUserAudit } from './user-audit/ar';
 import { arTeam } from './team/ar';
+import { arIpAllowlist } from './ip-allowlist/ar';
 import { arMachineAccess } from './machine-access/ar';
 import { arTenants } from './tenants/ar';
 import { arAuthMethods } from './auth-methods/ar';
@@ -50,6 +51,7 @@ export const ar = {
 	...arAdminAudit,
 	...arUserAudit,
 	...arTeam,
+	...arIpAllowlist,
 	...arMachineAccess,
 	...arTenants,
 	...arAuthMethods,
@@ -123,6 +125,7 @@ export const ar = {
 	'nav.set.team': 'المسؤولون',
 	'nav.set.teamGroups': 'مجموعات المسؤولين',
 	'nav.set.teamRoles': 'أدوار المسؤولين',
+	'nav.set.teamIpAllowlist': 'تقييد عناوين IP للمسؤولين',
 	'nav.plat.tenants': 'المستأجرون',
 	'nav.plat.releases': 'مستوى التحكم',
 	'nav.plat.scale': 'التوسع',
@@ -134,7 +137,6 @@ export const ar = {
 	'nav.apps.machine': 'وصول الأنظمة',
 	'nav.auth.tokenRefresh': 'تجديد الرموز الخارجية',
 	'nav.auth.discovery': 'اكتشاف المستأجر',
-	'nav.auth.ipAllowlist': 'قائمة عناوين IP المسموحة',
 	'nav.auth.sessionProfiles': 'ملفات تعريف الجلسة',
 	'nav.auth.logout': 'تسجيل الخروج',
 	'nav.custom.loginUi': 'واجهة تسجيل الدخول',
