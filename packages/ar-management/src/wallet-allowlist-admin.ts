@@ -7,6 +7,7 @@
 import type { Context } from 'hono';
 import type { AdminAuthContext, Env } from '@authrim/ar-lib-core';
 import {
+  createAuthContextFromHono,
   getLogger,
   getTenantIdFromContext,
   loadWalletAllowlist,
@@ -90,6 +91,31 @@ export async function adminWalletAllowlistPutHandler(c: Context<{ Bindings: Env 
   }
   if (current.revision !== expectedRevision) {
     return c.json({ error: 'conflict', error_description: 'The allowlist has changed' }, 409);
+  }
+  // A wallet type's id is a client id nothing else may hold: a stored client of the same id would
+  // be resolved instead of the wallet at authorize and token.
+  try {
+    const stored = createAuthContextFromHono(c, tenantId).coreAdapter;
+    for (const entry of next.entries) {
+      const row = await stored.queryOne<{ client_id: string }>(
+        'SELECT client_id FROM oauth_clients WHERE tenant_id = ? AND client_id = ?',
+        [tenantId, entry.clientId]
+      );
+      if (row) {
+        return c.json(
+          {
+            error: 'conflict',
+            error_description: 'A registered client already uses this client id',
+          },
+          409
+        );
+      }
+    }
+  } catch {
+    return c.json(
+      { error: 'server_error', error_description: 'Clients could not be checked' },
+      500
+    );
   }
   // The receipt is spent here, after every check that can still refuse the request.
   const refused = await requireAdminStepUp(c as never, {

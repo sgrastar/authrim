@@ -14,8 +14,11 @@ import type { Env } from '../../types';
 import {
   buildDOInstanceName,
   createLogger,
+  findOAuthClientConsentRevocation,
   getRevocationStoreByJti,
+  isAccessTokenConsentWithdrawn,
   resolveIssuedTokenAccount,
+  resolveTenantMetadataContext,
   type Env as CoreEnv,
 } from '@authrim/ar-lib-core';
 
@@ -128,6 +131,18 @@ export async function validateOpAccessToken(
       false
     );
     if (!account.ok) return fail('Subject unavailable');
+    // The person's consent for this wallet, as the OP holds it: a withdrawal ends the token.
+    const consentDb = (
+      await resolveTenantMetadataContext(env as unknown as CoreEnv, input.tenantId)
+    ).coreDb;
+    const consent = await findOAuthClientConsentRevocation(consentDb, {
+      tenantId: input.tenantId,
+      userId: account.userId,
+      clientId: payload.client_id,
+    });
+    if (isAccessTokenConsentWithdrawn(consent, payload as Record<string, unknown>)) {
+      return fail('Consent withdrawn');
+    }
     if (typeof payload.jti !== 'string' || !payload.jti) return fail('Missing jti');
     if (typeof payload.client_id !== 'string' || !payload.client_id) return fail('Missing client');
     if (typeof payload.exp !== 'number') return fail('Missing expiry');

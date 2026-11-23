@@ -27,6 +27,9 @@ import {
   ADMIN_SECOND_FACTOR_MINIMUM,
   markIdempotentResponseRetryable,
   AdminSecondFactorRepository,
+  ADMIN_CREDENTIAL_CONFIGURATION_ID,
+  buildHaipCredentialOffer,
+  loadWalletAllowlist,
 } from '@authrim/ar-lib-core';
 import { writeAdminAuditLog } from '../../admin-shared';
 import { isFreshAdminHuman } from '../../agent-fresh-auth';
@@ -90,7 +93,7 @@ export function withRenewalHint(credentialOffer: string, jkts: string[]): string
   return `${credentialOffer}${separator}${RENEW_HOLDER_JKT_PARAM}=${usable.join(',')}`;
 }
 
-function refuse(c: WalletContext, error: string, status: 403 | 404 | 503) {
+function refuse(c: WalletContext, error: string, status: 403 | 404 | 409 | 503) {
   c.header('Cache-Control', 'no-store');
   return c.json({ error }, status);
 }
@@ -211,6 +214,74 @@ myWalletCredentialsRouter.post(
       },
       201
     );
+  }
+);
+
+/**
+ * An issuer-initiated offer for a HAIP wallet: the authorization code grant at this tenant's OP,
+ * by value, on the `haip-vci://` scheme. Nothing is stored or secret in it; the wallet starts a
+ * normal authorization and the issuer decides then (the credential endpoint re-checks eligibility).
+ * Wallet-initiated issuance needs no offer.
+ */
+myWalletCredentialsRouter.post(
+  '/haip-offer',
+  async (c, next) => {
+    const profile = await getRateLimitProfileAsync(c.env, 'strict');
+    return rateLimitMiddleware({
+      ...profile,
+      endpoints: ['/api/admin/me/wallet-credentials/haip-offer'],
+      endpointClass: 'mgmt_admin_wallet_credential_offer',
+    })(c as unknown as Context<{ Bindings: Env }>, next);
+  },
+  async (c, next) => {
+    const auth = c.get('adminAuth');
+    if (!auth || !isFreshAdminHuman(auth, Date.now())) {
+      return refuse(c, 'wallet_credential_fresh_auth_required', 403);
+    }
+    return next();
+  },
+  async (c) => {
+    const home = await resolveHome(c);
+    if (home instanceof Response) return home;
+
+    const adapter = requireDedicatedAdminDatabaseAdapter(c.env, 'admin-wallet-credential');
+    const eligibility = await evaluateAdminCredentialEligibility(adapter, {
+      tenantId: home.tenantId,
+      adminUserId: home.adminUserId,
+      now: Date.now(),
+    });
+    if (!eligibility.eligible) {
+      return refuse(c, 'wallet_credential_not_eligible', 403);
+    }
+    // Only a tenant with a wallet that can pass the key attestation has a HAIP flow to offer.
+    let serves = false;
+    try {
+      serves = (await loadWalletAllowlist(c.env, home.tenantId)).entries.some(
+        (entry) => entry.enabled && entry.keyAttestationRoots.length > 0
+      );
+    } catch {
+      return refuse(c, 'wallet_credential_unavailable', 503);
+    }
+    if (!serves) {
+      return refuse(c, 'wallet_credential_haip_not_configured', 409);
+    }
+    const canonicalIssuer = new URL(await getCanonicalTenantBaseUrlAsync(c.env, home.tenantId));
+    if (canonicalIssuer.protocol !== 'https:') {
+      return refuse(c, 'wallet_credential_unavailable', 503);
+    }
+    const { offer, uri } = buildHaipCredentialOffer({
+      credentialIssuer: canonicalIssuer.origin,
+      credentialConfigurationId: ADMIN_CREDENTIAL_CONFIGURATION_ID,
+    });
+    await writeAdminAuditLog(c, {
+      action: 'admin_wallet_credential.haip_offer_created',
+      resourceType: 'admin_wallet_credential_offer',
+      resourceId: home.adminUserId,
+      result: 'success',
+      metadata: {},
+    });
+    c.header('Cache-Control', 'no-store');
+    return c.json({ credentialOffer: uri, credentialOfferObject: offer }, 201);
   }
 );
 

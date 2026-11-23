@@ -29,6 +29,7 @@ const core = vi.hoisted(() => ({
   updateStatusIfCurrent: vi.fn(),
   resolveTenantMetadataContext: vi.fn(),
   getRevocationStoreByJti: vi.fn(),
+  findOAuthClientConsentRevocation: vi.fn(),
 }));
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
@@ -50,6 +51,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     reserveCredentialStatusSlot: core.reserveCredentialStatusSlot,
     transitionCredentialStatus: core.transitionCredentialStatus,
     getRevocationStoreByJti: core.getRevocationStoreByJti,
+    findOAuthClientConsentRevocation: core.findOAuthClientConsentRevocation,
     IssuedCredentialRepository: class {
       updateStatusIfCurrent = core.updateStatusIfCurrent;
     },
@@ -57,6 +59,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
 });
 
 import { credentialRoute } from '../credential';
+import { issueCredentialDpopNonce } from '../../services/dpop-nonce';
 import { issuerMetadataRoute } from '../metadata';
 
 const ISSUER = 'https://authrim.com';
@@ -64,6 +67,7 @@ const CREDENTIAL_ENDPOINT = `${ISSUER}/vci/credential`;
 const PROOF_NONCE =
   'g1:apac:3:cn_550e8400-e29b-41d4-a716-446655440000.abcdefghijklmnopqrstuvwxyzABCDEF';
 const WALLET = 'keyring-wallet';
+const SERVER_SECRET = 'test-server-secret';
 const CONFIGURATION = 'AuthrimAdminCredential';
 const SCOPE = 'authrim_admin_credential';
 
@@ -172,6 +176,7 @@ beforeAll(async () => {
   };
 });
 
+const lastHeaders: Record<string, string> = {};
 const revocation = {
   revoked: false,
   status: 200,
@@ -205,10 +210,18 @@ async function opToken(
 
 async function dpopProof(
   token: string,
-  overrides: { key?: Pair; htu?: string; ath?: string } = {}
+  overrides: { key?: Pair; htu?: string; ath?: string; nonce?: string | null } = {}
 ): Promise<string> {
   const key = overrides.key ?? fx.dpop;
+  const nonce =
+    overrides.nonce === undefined
+      ? await issueCredentialDpopNonce(
+          { VC_TRANSACTION_CODE_HMAC_SECRET: SERVER_SECRET } as Env,
+          'default'
+        )
+      : overrides.nonce;
   return new SignJWT({
+    ...(nonce ? { nonce } : {}),
     htm: 'POST',
     htu: overrides.htu ?? CREDENTIAL_ENDPOINT,
     iat: nowSeconds(),
@@ -341,6 +354,7 @@ function setup(options: { allowlist?: string | null } = {}) {
     },
     ADMIN_CREDENTIAL_ELIGIBILITY: { checkAdminCredentialEligibility: eligibility },
     ISSUER_URL: ISSUER,
+    VC_TRANSACTION_CODE_HMAC_SECRET: SERVER_SECRET,
     C_NONCE_EXPIRY_SECONDS: '300',
   } as unknown as Env;
   const harness: Harness = {
@@ -390,9 +404,12 @@ async function call(
         status: status ?? 200,
         headers: { 'Content-Type': 'application/json' },
       }),
-    header: vi.fn(),
+    header: vi.fn((name: string, value: string) => {
+      lastHeaders[name] = value;
+    }),
     get: vi.fn().mockReturnValue(undefined),
   } as unknown as Context<{ Bindings: Env }>;
+  for (const key of Object.keys(lastHeaders)) delete lastHeaders[key];
   return credentialRoute(c);
 }
 
@@ -410,6 +427,7 @@ beforeEach(() => {
     index: 7,
   });
   core.updateStatusIfCurrent.mockResolvedValue(true);
+  core.findOAuthClientConsentRevocation.mockResolvedValue({ generation: 0, revokedAt: null });
   core.transitionCredentialStatus.mockResolvedValue({ outcome: 'changed', previous: 'pending' });
   revocation.revoked = false;
   revocation.legacy = { status: 200, body: { revoked: false } };
@@ -753,6 +771,32 @@ describe('HAIP credential issuance: failures and what they tell the replication 
     expect((await call(env, { token: await opToken() })).status).toBe(401);
   });
 
+  it('ends a token when the person withdrew the consent it was issued under', async () => {
+    const { env, harness } = setup();
+    // The token carries the consent generation it was granted under; the OP has since moved on.
+    core.findOAuthClientConsentRevocation.mockResolvedValue({
+      generation: 2,
+      revokedAt: Date.now(),
+    });
+    const response = await call(env, { token: await opToken({ authrim_consent_generation: 1 }) });
+    expect(response.status).toBe(401);
+    expect(harness.signSDJWTIssuerRpc).not.toHaveBeenCalled();
+    // The same generation is current: fine.
+    core.findOAuthClientConsentRevocation.mockResolvedValue({
+      generation: 1,
+      revokedAt: Date.now(),
+    });
+    expect(
+      (await call(env, { token: await opToken({ authrim_consent_generation: 1 }) })).status
+    ).toBe(200);
+    // The lookup is made for the account of the token and its wallet.
+    expect(core.findOAuthClientConsentRevocation).toHaveBeenCalledWith(expect.anything(), {
+      tenantId: 'default',
+      userId: 'admin-1',
+      clientId: WALLET,
+    });
+  });
+
   it('resolves the subject of the token to its account', async () => {
     const { env } = setup();
     // A sealed reference that is not one cannot be opened: the token has no usable subject.
@@ -773,5 +817,61 @@ describe('HAIP credential issuance: failures and what they tell the replication 
       authorization_servers: string[];
     };
     expect(data.authorization_servers).toEqual([`${ISSUER}/vci`]);
+  });
+});
+
+describe('HAIP credential issuance: the server DPoP nonce', () => {
+  it('sends a proof without the current nonce back for one, and gives a fresh one on success', async () => {
+    const { env } = setup();
+    const token = await opToken();
+    for (const nonce of [null, 'stale.nonce', '0.aaaa', 'x'.repeat(200)]) {
+      const response = await call(env, { token, dpop: await dpopProof(token, { nonce }) });
+      expect(response.status).toBe(401);
+      expect(await response.json()).toEqual({ error: 'use_dpop_nonce' });
+      expect(lastHeaders['DPoP-Nonce']).toMatch(/^\d+\.[A-Za-z0-9_-]+$/u);
+      expect(lastHeaders['WWW-Authenticate']).toContain('use_dpop_nonce');
+    }
+    const ok = await call(env);
+    expect(ok.status).toBe(200);
+    expect(lastHeaders['DPoP-Nonce']).toMatch(/^\d+\.[A-Za-z0-9_-]+$/u);
+  });
+
+  it('accepts a nonce of the previous window only, and refuses one of another tenant or secret', async () => {
+    const { env } = setup();
+    const previous = await issueCredentialDpopNonce(
+      { VC_TRANSACTION_CODE_HMAC_SECRET: SERVER_SECRET } as Env,
+      'default',
+      Date.now() - 120_000
+    );
+    const older = await issueCredentialDpopNonce(
+      { VC_TRANSACTION_CODE_HMAC_SECRET: SERVER_SECRET } as Env,
+      'default',
+      Date.now() - 600_000
+    );
+    const otherTenant = await issueCredentialDpopNonce(
+      { VC_TRANSACTION_CODE_HMAC_SECRET: SERVER_SECRET } as Env,
+      'tenant-2'
+    );
+    const otherSecret = await issueCredentialDpopNonce(
+      { VC_TRANSACTION_CODE_HMAC_SECRET: 'another-secret' } as Env,
+      'default'
+    );
+    const token = await opToken();
+    expect(
+      (await call(env, { token, dpop: await dpopProof(token, { nonce: previous }) })).status
+    ).toBe(200);
+    for (const nonce of [older, otherTenant, otherSecret]) {
+      const t = await opToken();
+      const response = await call(env, { token: t, dpop: await dpopProof(t, { nonce }) });
+      expect(response.status).toBe(401);
+    }
+  });
+
+  it('is a temporary failure when the issuer has no server secret to derive a nonce from', async () => {
+    const { env } = setup();
+    (
+      env as unknown as { VC_TRANSACTION_CODE_HMAC_SECRET?: string }
+    ).VC_TRANSACTION_CODE_HMAC_SECRET = undefined;
+    expect((await call(env)).status).toBe(424);
   });
 });

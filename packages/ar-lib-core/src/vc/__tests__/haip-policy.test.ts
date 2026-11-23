@@ -52,10 +52,25 @@ describe('HAIP Policy', () => {
       expect(policy.requireIssuerTrust).toBe(true);
     });
 
-    it('should return draft-06 for final-1.0 (placeholder)', () => {
+    it('should return the Final profile: x509_hash only, did no longer a HAIP scheme, a trust chain', () => {
       const policy = getHaipPolicy('final-1.0');
 
-      expect(policy).toEqual(HAIP_DRAFT_06);
+      expect(policy.allowedClientIdSchemes).toEqual(['x509_hash']);
+      expect(policy.requireTrustChain).toBe(true);
+      expect(policy.requireDirectPost).toBe(true);
+      expect(policy.requireRequestObject).toBe(true);
+      // The rest is the draft's baseline.
+      expect({
+        ...policy,
+        allowedClientIdSchemes: undefined,
+        requireTrustChain: undefined,
+      }).toEqual({
+        ...HAIP_DRAFT_06,
+        allowedClientIdSchemes: undefined,
+        requireTrustChain: undefined,
+      });
+      // The draft is unchanged.
+      expect(HAIP_DRAFT_06.allowedClientIdSchemes).toContain('did');
     });
 
     it('should return a copy, not the original', () => {

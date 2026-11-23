@@ -407,6 +407,10 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
   authenticated('/api/admin/me/wallet-credentials', 'current admin wallet credential list'),
   authenticated('/api/admin/me/wallet-credentials/offers', 'current admin wallet credential offer'),
   authenticated(
+    '/api/admin/me/wallet-credentials/haip-offer',
+    'current admin wallet credential HAIP offer'
+  ),
+  authenticated(
     '/api/admin/me/wallet-credentials/offers/*',
     'current admin wallet credential offer progress'
   ),

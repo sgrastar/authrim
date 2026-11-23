@@ -81,7 +81,9 @@ export type HaipClientIdScheme =
   | 'did'
   | 'verifier_attestation'
   | 'x509_san_dns'
-  | 'x509_san_uri';
+  | 'x509_san_uri'
+  /** OpenID4VP 1.0: `x509_hash:<base64url SHA-256 of the verifier certificate>` (HAIP 1.0 Final). */
+  | 'x509_hash';
 
 /**
  * HAIP-compliant signature algorithms
@@ -125,6 +127,17 @@ export const HAIP_DRAFT_06: HaipPolicy = {
 };
 
 /**
+ * HAIP 1.0 Final (2025-12-24) for the verifier: the signed request names the verifier by
+ * `x509_hash`, the wallet answers encrypted (`direct_post.jwt`), `did` is no longer a HAIP client
+ * identifier scheme, and the issuer's `x5c` chain is the issuer trust (a pinned trust anchor).
+ */
+export const HAIP_FINAL_1_0: HaipPolicy = {
+  ...HAIP_DRAFT_06,
+  allowedClientIdSchemes: ['x509_hash'],
+  requireTrustChain: true,
+};
+
+/**
  * Standard (non-HAIP) policy
  * Relaxed requirements for general use cases
  */
@@ -149,9 +162,7 @@ export function getHaipPolicy(version: HaipProfileVersion): HaipPolicy {
     case 'draft-06':
       return { ...HAIP_DRAFT_06 };
     case 'final-1.0':
-      // When Final is released, update this
-      // For now, use draft-06 as baseline
-      return { ...HAIP_DRAFT_06 };
+      return { ...HAIP_FINAL_1_0 };
     default:
       return { ...HAIP_DRAFT_06 };
   }

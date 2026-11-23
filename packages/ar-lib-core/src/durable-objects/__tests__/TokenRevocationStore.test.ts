@@ -109,6 +109,44 @@ describe('TokenRevocationStore', () => {
     vi.useRealTimers();
   });
 
+  describe('storage failures', () => {
+    const revoke = (jti: string) =>
+      store.fetch(
+        new Request('http://localhost/revoke', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ jti, ttl: 3600, reason: 'test' }),
+        })
+      );
+
+    it('does not answer "not revoked" from an empty list when the stored list cannot be read', async () => {
+      expect((await revoke('jti-1')).status).toBe(201);
+      // A restart that cannot read storage.
+      const restarted = new TokenRevocationStore(
+        mockState as unknown as DurableObjectState,
+        mockEnv
+      );
+      const get = vi
+        .spyOn(mockState.storage, 'get')
+        .mockRejectedValueOnce(new Error('storage unavailable'));
+      const failed = await restarted.fetch(
+        new Request('http://localhost/check?jti=jti-1', { method: 'GET' })
+      );
+      expect(failed.status).toBe(500);
+      // The next request reads again and finds the revocation.
+      get.mockRestore();
+      const retried = await restarted.fetch(
+        new Request('http://localhost/check?jti=jti-1', { method: 'GET' })
+      );
+      expect(await retried.json()).toMatchObject({ revoked: true });
+    });
+
+    it('does not report a revocation that could not be stored', async () => {
+      vi.spyOn(mockState.storage, 'put').mockRejectedValueOnce(new Error('write failed'));
+      expect((await revoke('jti-2')).status).toBe(500);
+    });
+  });
+
   describe('Revoke Token', () => {
     it('should revoke a token', async () => {
       const response = await store.fetch(

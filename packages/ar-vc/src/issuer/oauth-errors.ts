@@ -52,6 +52,14 @@ export function invalidDpopTokenError(
   return c.json({ error }, 401);
 }
 
+/** RFC 9449 §8: the proof needs the server's nonce; the response carries a fresh one. */
+export function useDpopNonceError(c: Context, nonce: string): Response {
+  noStore(c);
+  c.header('DPoP-Nonce', nonce);
+  c.header('WWW-Authenticate', 'DPoP error="use_dpop_nonce", algs="ES256"');
+  return c.json({ error: 'use_dpop_nonce' }, 401);
+}
+
 /** RFC 6750 §3: a missing or unusable access token at the Credential Endpoint. */
 export function invalidTokenError(c: Context): Response {
   noStore(c);

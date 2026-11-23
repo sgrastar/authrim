@@ -87,7 +87,10 @@ export class TokenRevocationStore {
         });
       }
     } catch (error) {
+      // Not initialized: an empty list would answer "not revoked" for revoked tokens. The caller
+      // gets the failure and the next request tries again.
       this.log.error('Failed to initialize from Durable Storage', {}, error as Error);
+      throw error;
     }
 
     this.initialized = true;
@@ -106,7 +109,9 @@ export class TokenRevocationStore {
 
       await this.state.storage.put('state', stateToSave);
     } catch (error) {
+      // A revocation that was not stored must not be reported as made.
       this.log.error('Failed to save to Durable Storage', {}, error as Error);
+      throw error;
     }
   }
 
@@ -137,7 +142,8 @@ export class TokenRevocationStore {
 
     if (cleaned > 0) {
       this.log.info('Cleaned up expired tokens', { count: cleaned });
-      await this.saveState();
+      // Housekeeping only: a failure here loses no revocation (the next cleanup saves again).
+      await this.saveState().catch(() => undefined);
     }
   }
 
@@ -155,7 +161,8 @@ export class TokenRevocationStore {
     // Check if expired (token expired naturally, can remove from revocation list)
     if (record.expiresAt <= Date.now()) {
       this.revokedTokens.delete(jti);
-      await this.saveState();
+      // The answer does not depend on this save.
+      await this.saveState().catch(() => undefined);
       return null;
     }
 
