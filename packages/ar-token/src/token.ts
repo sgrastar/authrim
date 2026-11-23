@@ -2508,7 +2508,12 @@ async function handleAuthorizationCodeGrant(
     ((formData.resource !== undefined && formData.resource !== walletResource) ||
       formData.audience !== undefined)
   ) {
-    return oauthError(c, 'invalid_target', 'Requested resource does not match the authorization grant', 400);
+    return oauthError(
+      c,
+      'invalid_target',
+      'Requested resource does not match the authorization grant',
+      400
+    );
   }
   const audienceResolution = resolveAccessTokenAudience(c, clientMetadata, {
     resource: walletResource ?? formData.resource,

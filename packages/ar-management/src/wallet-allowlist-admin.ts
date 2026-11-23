@@ -45,13 +45,12 @@ export async function adminWalletAllowlistGetHandler(c: Context<{ Bindings: Env 
   }
 }
 
-export async function adminWalletAllowlistPutHandler(
-  c: Context<{ Bindings: Env; Variables: { adminAuth?: AdminAuthContext } }>
-) {
-  const plain = c as unknown as Context<{ Bindings: Env }>;
-  const log = getLogger(plain).module('WALLET_ALLOWLIST');
-  const tenantId = getTenantIdFromContext(plain);
-  const auth = c.get('adminAuth');
+export async function adminWalletAllowlistPutHandler(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('WALLET_ALLOWLIST');
+  const tenantId = getTenantIdFromContext(c);
+  const auth = (
+    c as unknown as Context<{ Bindings: Env; Variables: { adminAuth?: AdminAuthContext } }>
+  ).get('adminAuth');
   if (!auth?.userId) return c.json({ error: 'unauthorized' }, 401);
   let body: Record<string, unknown>;
   try {
@@ -60,7 +59,10 @@ export async function adminWalletAllowlistPutHandler(
     return c.json({ error: 'invalid_request', error_description: 'Invalid JSON' }, 400);
   }
   if (typeof body !== 'object' || body === null || Array.isArray(body)) {
-    return c.json({ error: 'invalid_request', error_description: 'A JSON object is required' }, 400);
+    return c.json(
+      { error: 'invalid_request', error_description: 'A JSON object is required' },
+      400
+    );
   }
   const expectedRevision = body.expected_revision;
   if (

@@ -451,12 +451,14 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
     token_endpoint_auth_methods_supported: fapiConfig.enabled
       ? ['private_key_jwt']
       : [
-          ...(oidcConfig.tokenEndpointAuthMethodsSupported || [
-            'client_secret_basic',
-            'client_secret_post',
-            'private_key_jwt',
-            'none',
-          ]).filter((method) => method !== 'attest_jwt_client_auth'),
+          ...(
+            oidcConfig.tokenEndpointAuthMethodsSupported || [
+              'client_secret_basic',
+              'client_secret_post',
+              'private_key_jwt',
+              'none',
+            ]
+          ).filter((method) => method !== 'attest_jwt_client_auth'),
           ...(walletAttestationEnabled ? ['attest_jwt_client_auth'] : []),
         ],
     ...(walletAttestationEnabled

@@ -663,10 +663,12 @@ describe('Discovery Handler', () => {
         });
         return env;
       };
-      const fetchMetadata = async (env: Env) =>
-        (await (
-          await app.request('/.well-known/openid-configuration', { method: 'GET' }, env)
-        ).json()) as OIDCProviderMetadata;
+      const fetchMetadata = (env: Env) =>
+        fetchDiscoveryMetadata(
+          'default',
+          'https://test.example.com/.well-known/openid-configuration',
+          env
+        );
 
       it('is not advertised without an enabled wallet on the allowlist', async () => {
         for (const list of [

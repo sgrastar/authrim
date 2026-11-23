@@ -1,8 +1,4 @@
 import {
-  adminWalletAllowlistGetHandler,
-  adminWalletAllowlistPutHandler,
-} from './wallet-allowlist-admin';
-import {
   getConnectionInboundMapping,
   putConnectionInboundMapping,
   previewConnectionInboundMapping,
@@ -375,6 +371,10 @@ import {
   adminSignInConfirmationPoliciesListHandler,
   adminSignInConfirmationPolicyUpsertHandler,
 } from './admin-consent-policies';
+import {
+  adminWalletAllowlistGetHandler,
+  adminWalletAllowlistPutHandler,
+} from './wallet-allowlist-admin';
 import { revokeHandler, batchRevokeHandler } from './revoke';
 import {
   adminUserAssuranceEvidenceCreateHandler,
@@ -4003,10 +4003,6 @@ app.delete('/api/admin/users/:userId/consents/:clientId', adminUserConsentRevoke
 // =============================================================================
 // Rate limiting for consent management endpoints (moderate profile)
 app.use('/api/admin/consent-statements/*', async (c, next) => {
-  const profile = await getRateLimitProfileAsync(c.env, 'moderate');
-  return rateLimitMiddleware(profile)(c, next);
-});
-app.use('/api/admin/wallet-attestation-allowlist', async (c, next) => {
   const profile = await getRateLimitProfileAsync(c.env, 'moderate');
   return rateLimitMiddleware(profile)(c, next);
 });

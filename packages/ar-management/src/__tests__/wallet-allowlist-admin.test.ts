@@ -6,7 +6,7 @@ const mocks = vi.hoisted(() => ({
   stepUp: vi.fn(async (_c: unknown, _descriptor: unknown): Promise<Response | null> => null),
   load: vi.fn(),
   save: vi.fn(),
-  auth: vi.fn(() => ({ userId: 'admin-1' }) as { userId?: string } | undefined),
+  auth: vi.fn((): { userId?: string } | undefined => ({ userId: 'admin-1' })),
 }));
 
 vi.mock('../admin-step-up-gate', () => ({ requireAdminStepUp: mocks.stepUp }));
@@ -44,7 +44,7 @@ function app() {
     await next();
   });
   hono.get('/w', adminWalletAllowlistGetHandler);
-  hono.put('/w', adminWalletAllowlistPutHandler as never);
+  hono.put('/w', adminWalletAllowlistPutHandler);
   return hono;
 }
 
@@ -87,9 +87,8 @@ describe('GET', () => {
     const text = await response.text();
     expect(response.status).toBe(200);
     expect(text).not.toContain('SECRETISH');
-    expect(JSON.parse(text).entries[0].attestation_roots).toEqual([
-      { sha256: 'a'.repeat(64), label: 'Root' },
-    ]);
+    const shown = JSON.parse(text) as { entries: { attestation_roots: unknown[] }[] };
+    expect(shown.entries[0].attestation_roots).toEqual([{ sha256: 'a'.repeat(64), label: 'Root' }]);
   });
 
   it('answers 500 when the stored list is unreadable', async () => {

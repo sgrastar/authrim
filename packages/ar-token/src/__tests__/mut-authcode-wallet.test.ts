@@ -119,7 +119,10 @@ describe('wallet client at the token endpoint', () => {
   });
 
   it('grants only for the tenant issuer: another resource or an audience is refused', async () => {
-    for (const extra of [{ resource: 'https://evil.example.com' }, { audience: 'svc://other' }]) {
+    for (const extra of [
+      { resource: 'https://evil.example.com' },
+      { audience: 'svc://other' },
+    ] as Record<string, string>[]) {
       useCodeStore(env, code());
       const result = await postToken(env, request(extra), attestation);
       expectOAuthError(result, 400, 'invalid_target');

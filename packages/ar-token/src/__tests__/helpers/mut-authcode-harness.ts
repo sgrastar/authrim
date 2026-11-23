@@ -95,7 +95,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
         ? actual.loadClientContractCached(...args)
         : Promise.resolve(override as Awaited<ReturnType<typeof actual.loadClientContractCached>>);
     },
-    authenticateWalletClient: (...args: unknown[]) => walletAuth.authenticate(...args),
+    authenticateWalletClient: (...args: unknown[]): unknown => walletAuth.authenticate(...args),
     ensureAccountAuthenticationState: mocks.ensureAccountAuthenticationState,
     findCanonicalAccountAuthenticationState: vi.fn(
       async (_a: unknown, _t: string, userId: string) => ({
