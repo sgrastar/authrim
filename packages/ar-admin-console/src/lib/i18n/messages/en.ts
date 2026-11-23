@@ -19,6 +19,7 @@ import { enStepUp } from './step-up/en';
 import { enAdminAudit } from './admin-audit/en';
 import { enUserAudit } from './user-audit/en';
 import { enTeam } from './team/en';
+import { enIpAllowlist } from './ip-allowlist/en';
 import { enMachineAccess } from './machine-access/en';
 import { enTenants } from './tenants/en';
 import { enAuthMethods } from './auth-methods/en';
@@ -50,6 +51,7 @@ export const en = {
 	...enAdminAudit,
 	...enUserAudit,
 	...enTeam,
+	...enIpAllowlist,
 	...enMachineAccess,
 	...enTenants,
 	...enAuthMethods,
@@ -123,6 +125,7 @@ export const en = {
 	'nav.set.team': 'Administrators',
 	'nav.set.teamGroups': 'Administrator groups',
 	'nav.set.teamRoles': 'Administrator roles',
+	'nav.set.teamIpAllowlist': 'Administrator IP limit',
 	'nav.plat.tenants': 'Tenants',
 	'nav.plat.releases': 'Control plane',
 	'nav.plat.scale': 'Scale',
@@ -134,7 +137,6 @@ export const en = {
 	'nav.apps.machine': 'Machine access',
 	'nav.auth.tokenRefresh': 'External token refresh',
 	'nav.auth.discovery': 'Tenant discovery',
-	'nav.auth.ipAllowlist': 'IP allowlist',
 	'nav.auth.sessionProfiles': 'Session profiles',
 	'nav.auth.logout': 'Logout',
 	'nav.custom.loginUi': 'Login UI',
