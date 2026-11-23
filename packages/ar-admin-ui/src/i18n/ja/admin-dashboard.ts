@@ -34,6 +34,21 @@ const adminDashboard = {
 	admin_login_timeout: '認証がタイムアウトしました。もう一度お試しください。',
 	admin_login_with_passkey: 'パスキーでログイン',
 	admin_login_hint: '登録済みパスキーを持つ管理者のみ、この領域にアクセスできます。',
+	admin_login_wallet_divider: 'または',
+	admin_login_wallet_same_device: 'このデバイスのウォレットを開く',
+	admin_login_wallet_cross_device: '別のデバイスのウォレットで読み取る',
+	admin_login_wallet_scan_hint:
+		'管理者資格情報を保持するウォレットでこのコードを読み取ってください。',
+	admin_login_wallet_waiting: 'ウォレットの応答を待っています...',
+	admin_login_wallet_processing: '資格情報を確認しています...',
+	admin_login_wallet_cancel: 'キャンセル',
+	admin_login_wallet_failed: 'ウォレットでのログインに失敗しました。もう一度お試しください。',
+	admin_login_wallet_expired:
+		'ウォレットでのログインの有効期限が切れました。最初からやり直してください。',
+	admin_login_wallet_not_allowed: 'この管理者はウォレットでログインできません。',
+	admin_login_wallet_unavailable: 'このテナントではウォレットでのログインを利用できません。',
+	admin_login_wallet_completing: 'ログインを完了しています...',
+	admin_login_wallet_qr_alt: 'ウォレットを開くための QR コード',
 	admin_login_theme_label: 'テーマ',
 	admin_login_theme_light: 'ライト',
 	admin_login_theme_dark: 'ダーク'

@@ -27,9 +27,16 @@
 	let selectedTenantId = $state('');
 
 	// Login and invitation enrollment are public Admin surfaces without dashboard chrome.
-	const isPublicAdminPage = $derived(
-		page.url.pathname === '/admin/login' || page.url.pathname === '/admin/join'
-	);
+	const isPublicAdminPage = $derived(isPublicAdminPath(page.url.pathname));
+
+	function isPublicAdminPath(pathname: string): boolean {
+		// The wallet login callback runs before the session exists, like the login page itself.
+		return (
+			pathname === '/admin/login' ||
+			pathname === '/admin/login/wallet' ||
+			pathname === '/admin/join'
+		);
+	}
 
 	// Mobile menu state
 	let mobileMenuOpen = $state(false);
@@ -515,7 +522,7 @@
 
 		// Capture current path at mount time to avoid race conditions with navigation
 		const currentPath = page.url.pathname;
-		const isOnPublicAdminPage = currentPath === '/admin/login' || currentPath === '/admin/join';
+		const isOnPublicAdminPage = isPublicAdminPath(currentPath);
 
 		// Skip auth checks while logging in or accepting an invitation.
 		if (isOnPublicAdminPage) {
@@ -608,8 +615,7 @@
 	}
 
 	$effect(() => {
-		const isOnPublicAdminPage =
-			page.url.pathname === '/admin/login' || page.url.pathname === '/admin/join';
+		const isOnPublicAdminPage = isPublicAdminPath(page.url.pathname);
 		const isAuthenticated = adminAuth.isAuthenticated;
 
 		if (isOnPublicAdminPage) {
