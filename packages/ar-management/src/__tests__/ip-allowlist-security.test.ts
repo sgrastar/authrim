@@ -394,12 +394,10 @@ describe('IP allowlist lock-out guard and list state', () => {
       asMe
     );
     expect(allowed.status).toBe(201);
+    const override: unknown = expect.objectContaining({ lockout_override: true });
     expect(mocks.audit).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({
-        action: 'ip_allowlist.create',
-        metadata: expect.objectContaining({ lockout_override: true }),
-      })
+      expect.objectContaining({ action: 'ip_allowlist.create', metadata: override })
     );
   });
 
