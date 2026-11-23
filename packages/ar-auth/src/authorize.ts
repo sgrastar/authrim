@@ -7,6 +7,9 @@ import {
   validateClientId,
   validateRedirectUri,
   validateScope,
+  isWalletClient,
+  walletScopeAllowed,
+  WALLET_ONLY_SCOPE,
   getClientAllowedScopes,
   validateState,
   validateNonce,
@@ -2882,9 +2885,24 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   }
 
   // Validate scope
-  const scopeValidation = validateScope(scope);
+  // A wallet type (attestation-authenticated) asks for credential scopes only, not an OIDC login.
+  const walletClient = isWalletClient(clientMetadata);
+  const scopeValidation = walletClient
+    ? validateScope(scope, { requireOpenid: false })
+    : validateScope(scope);
   if (!scopeValidation.valid) {
     return sendError('invalid_scope', scopeValidation.error);
+  }
+  if (walletClient && !walletScopeAllowed(scope)) {
+    return sendError('invalid_scope', 'Scope not allowed for this client');
+  }
+  // The credential scope belongs to wallet types only, and a wallet's request is the one it pushed
+  // after authenticating: a direct request is refused whatever else it carries.
+  if (!walletClient && splitScopes(scope ?? '').includes(WALLET_ONLY_SCOPE)) {
+    return sendError('invalid_scope', 'Scope not allowed for this client');
+  }
+  if (walletClient && !par_request_uri) {
+    return sendError('invalid_request', 'A pushed authorization request is required');
   }
 
   // OIDC Core 11: offline_access is ignored unless the response returns an authorization code

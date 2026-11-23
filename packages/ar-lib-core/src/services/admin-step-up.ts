@@ -74,6 +74,9 @@ export const ADMIN_STEP_UP_OPERATIONS = {
   'admin.grace.extend': 'L2',
   'admin.recovery.settings.update': 'L2',
   'admin_credential.revoke': 'L2',
+  // Changing which wallet types may authenticate for credential issuance, or the roots they are
+  // trusted through.
+  'wallet_allowlist.update': 'L2',
   'machine.permission.grant': 'L2',
   'admin.email.update': 'L2',
   // Publishing a logging policy settles where logs go and, by replacing the routing rules for the
@@ -99,6 +102,8 @@ export const ADMIN_STEP_UP_OPERATIONS = {
  */
 export const ADMIN_STEP_UP_ALWAYS_ENFORCED: ReadonlySet<AdminStepUpOperation> = new Set([
   'admin_step_up.policy.relax',
+  // The roots a wallet is trusted through: never switched off, never exempt for a machine.
+  'wallet_allowlist.update',
   'admin.second_factor.add',
   'admin.second_factor.remove',
   // A machine can never switch the code handoff on, exemption or not.

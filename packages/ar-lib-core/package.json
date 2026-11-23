@@ -100,6 +100,21 @@
       "import": "./dist/constants.js",
       "default": "./src/constants.ts"
     },
+    "./vc/x509-certificate": {
+      "import": "./dist/vc/x509-certificate.js",
+      "types": "./src/vc/x509-certificate.ts",
+      "default": "./src/vc/x509-certificate.ts"
+    },
+    "./vc/wallet-attestation": {
+      "import": "./dist/vc/wallet-attestation.js",
+      "types": "./src/vc/wallet-attestation.ts",
+      "default": "./src/vc/wallet-attestation.ts"
+    },
+    "./vc/wallet-allowlist": {
+      "import": "./dist/vc/wallet-allowlist.js",
+      "types": "./src/vc/wallet-allowlist.ts",
+      "default": "./src/vc/wallet-allowlist.ts"
+    },
     "./test/setup": "./src/test/setup.ts",
     "./test/fixtures": "./src/test/fixtures.ts"
   },

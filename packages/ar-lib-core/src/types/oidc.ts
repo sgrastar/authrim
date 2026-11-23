@@ -26,6 +26,9 @@ export interface OIDCProviderMetadata {
   scopes_supported: string[];
   claims_supported: string[];
   token_endpoint_auth_methods_supported?: string[];
+  /** Attestation-based client authentication: algorithms of the attestation and of its PoP. */
+  client_attestation_signing_alg_values_supported?: string[];
+  client_attestation_pop_signing_alg_values_supported?: string[];
   token_endpoint_auth_signing_alg_values_supported?: string[];
   code_challenge_methods_supported?: string[];
   registration_endpoint?: string;
@@ -289,6 +292,7 @@ export interface ClientRegistrationRequest {
     | 'client_secret_post'
     | 'client_secret_jwt'
     | 'private_key_jwt'
+    | 'attest_jwt_client_auth'
     | 'none';
   /** JWS algorithm registered for private_key_jwt/client_secret_jwt authentication. */
   token_endpoint_auth_signing_alg?: string;

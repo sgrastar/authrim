@@ -364,6 +364,60 @@ describe('KV Utilities', () => {
       expect(env.DB.prepare).toHaveBeenCalled();
     });
 
+    describe('a wallet type on the tenant allowlist', () => {
+      const key = 'settings:tenant:default:wallet-attestation-allowlist';
+      const list = (enabled: boolean) =>
+        JSON.stringify({
+          version: 1,
+          updatedAt: 7,
+          revision: 2,
+          entries: [
+            {
+              clientId: 'keyring-wallet',
+              label: 'Keyring',
+              enabled,
+              attestationRoots: [],
+              keyAttestationRoots: [],
+              redirectUris: ['https://wallet.example.com/cb'],
+            },
+          ],
+        });
+
+      it('resolves to a virtual client only for the tenant that lists it (disabled ones on request)', async () => {
+        await authrimConfigKV.put(key, list(false));
+        // Disabled: not a usable client.
+        expect(await getClient(env, 'default', 'keyring-wallet', env.DB)).toBeNull();
+        const found = await getClient(env, 'default', 'keyring-wallet', env.DB, {
+          includeDisabled: true,
+        });
+        expect(found).toMatchObject({
+          client_id: 'keyring-wallet',
+          enabled: false,
+          token_endpoint_auth_method: 'attest_jwt_client_auth',
+          tenant_id: 'default',
+        });
+        expect(found?.client_secret_hash).toBeUndefined();
+        // Another tenant's list does not make it a client here.
+        expect(
+          await getClient(env, 'other', 'keyring-wallet', env.DB, { includeDisabled: true })
+        ).toBeNull();
+      });
+
+      it('is not a client when the list is missing, corrupt or does not name it', async () => {
+        expect(
+          await getClient(env, 'default', 'keyring-wallet', env.DB, { includeDisabled: true })
+        ).toBeNull();
+        await authrimConfigKV.put(key, '{"version":9}');
+        expect(
+          await getClient(env, 'default', 'keyring-wallet', env.DB, { includeDisabled: true })
+        ).toBeNull();
+        await authrimConfigKV.put(key, list(false));
+        expect(
+          await getClient(env, 'default', 'unlisted', env.DB, { includeDisabled: true })
+        ).toBeNull();
+      });
+    });
+
     it('should isolate cached client metadata by tenant', async () => {
       const clientId = 'shared-client-id';
 

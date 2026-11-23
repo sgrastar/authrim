@@ -631,6 +631,11 @@ export interface Env extends LogIcebergSettingsEnv {
   RP_TOKEN_ENCRYPTION_KEY?: string; // Encryption key for external IdP tokens (32-byte hex string)
   /** Experimental source capture remains unavailable until all writers can be verified. */
   ENABLE_SAML_DR_EXPORT?: string;
+  /**
+   * Comma-separated lower-case hex SHA-256 fingerprints of the Authrim issuing CA certificates a
+   * VC signing key's `x5c` chain may end in. Unset or empty: no chain can be attached to a key.
+   */
+  VC_X5C_ISSUING_CA_SHA256?: string;
   /** Opt-in cross-provider writer authority. Partial configuration fails closed. */
   AUTHRIM_REPLICATION_WRITER?: string;
   AUTHRIM_REPLICATION_WRITER_SECRET?: string;

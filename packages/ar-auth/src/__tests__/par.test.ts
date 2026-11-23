@@ -26,6 +26,7 @@ const {
   mockJwtVerify,
   mockImportJWK,
   mockCreateRemoteJWKSet,
+  mockAuthenticateWalletClient,
 } = vi.hoisted(() => {
   const logger = {
     module: vi.fn().mockReturnThis(),
@@ -57,6 +58,7 @@ const {
     mockJwtVerify: vi.fn(),
     mockImportJWK: vi.fn(),
     mockCreateRemoteJWKSet: vi.fn(),
+    mockAuthenticateWalletClient: vi.fn(),
   };
 });
 
@@ -78,6 +80,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     isInternalUrl: mockIsInternalUrl,
     validateAuthorizationDetails: mockValidateAuthorizationDetails,
     getClientCached: mockGetClientCached,
+    authenticateWalletClient: mockAuthenticateWalletClient,
     getPARRequestStoreForNewRequest: mockGetPARRequestStoreForNewRequest,
     getLogger: mockGetLogger,
   };
@@ -1656,6 +1659,201 @@ describe('PAR Handler', () => {
         'authorization_details parameter is not supported. Enable RAR feature to use Rich Authorization Requests.',
     });
     expect(mockStoreRequestRpc).not.toHaveBeenCalled();
+  });
+
+  describe('wallet attestation (attest_jwt_client_auth)', () => {
+    const walletClient = {
+      client_id: 'keyring-wallet',
+      redirect_uris: ['https://wallet.example.com/cb'],
+      token_endpoint_auth_method: 'attest_jwt_client_auth',
+    };
+    const walletHeaders = {
+      'content-type': 'application/x-www-form-urlencoded',
+      'oauth-client-attestation': 'attestation.jwt.value',
+      'oauth-client-attestation-pop': 'pop.jwt.value',
+    };
+    const walletBody = (scope: string, extra: Record<string, unknown> = {}) => ({
+      client_id: 'keyring-wallet',
+      response_type: 'code',
+      redirect_uri: 'https://wallet.example.com/cb',
+      scope,
+      code_challenge: 'c'.repeat(43),
+      code_challenge_method: 'S256',
+      dpop_jkt: 'A'.repeat(43),
+      ...extra,
+    });
+
+    it('authenticates a wallet without any stored client and stores the request', async () => {
+      mockAuthenticateWalletClient.mockResolvedValue({ ok: true, client: walletClient });
+      mockGetClientCached.mockResolvedValue(null);
+      const c = createMockContext({
+        headers: walletHeaders,
+        body: walletBody('authrim_admin_credential'),
+      });
+      const response = await parHandler(c);
+      expect(response.status).toBe(201);
+      expect(mockGetClientCached).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        'keyring-wallet',
+        { includeDisabled: true, storedOnly: true }
+      );
+      expect(mockAuthenticateWalletClient).toHaveBeenCalledWith(
+        expect.objectContaining({ issuer: 'https://op.example.com', clientId: 'keyring-wallet' })
+      );
+      expect(mockStoreRequestRpc).toHaveBeenCalled();
+    });
+
+    it('refuses a failed attestation without a hint of why, and an unavailable allowlist as 503', async () => {
+      mockAuthenticateWalletClient.mockResolvedValue({ ok: false, error: 'pop_replayed' });
+      let response = await parHandler(
+        createMockContext({ headers: walletHeaders, body: walletBody('authrim_admin_credential') })
+      );
+      expect(response.status).toBe(401);
+      await expect(response.json()).resolves.toMatchObject({
+        error: 'invalid_client',
+        error_description: 'Client authentication failed',
+      });
+      mockAuthenticateWalletClient.mockResolvedValue({
+        ok: false,
+        error: 'wallet_allowlist_unavailable',
+      });
+      response = await parHandler(
+        createMockContext({ headers: walletHeaders, body: walletBody('authrim_admin_credential') })
+      );
+      expect(response.status).toBe(503);
+      expect(mockStoreRequestRpc).not.toHaveBeenCalled();
+    });
+
+    it('lets a wallet ask for the credential scope only', async () => {
+      mockAuthenticateWalletClient.mockResolvedValue({ ok: true, client: walletClient });
+      mockGetClientCached.mockResolvedValue(null);
+      // The real scope validator, with the OIDC requirement lifted for a wallet only.
+      const { validateScope } =
+        await vi.importActual<typeof import('@authrim/ar-lib-core')>('@authrim/ar-lib-core');
+      mockValidateScope.mockImplementation(validateScope);
+      for (const scope of [
+        'openid authrim_admin_credential',
+        'openid',
+        'authrim_admin_credential admin',
+      ]) {
+        const response = await parHandler(
+          createMockContext({ headers: walletHeaders, body: walletBody(scope) })
+        );
+        expect(response.status, scope).toBe(400);
+        await expect(response.json()).resolves.toMatchObject({ error: 'invalid_scope' });
+      }
+      expect(mockStoreRequestRpc).not.toHaveBeenCalled();
+    });
+
+    it('refuses rich authorization details from a wallet, and the credential scope from anyone else', async () => {
+      mockAuthenticateWalletClient.mockResolvedValue({ ok: true, client: walletClient });
+      mockGetClientCached.mockResolvedValue(null);
+      const withDetails = await parHandler(
+        createMockContext({
+          headers: walletHeaders,
+          body: walletBody('authrim_admin_credential', {
+            authorization_details: '[{"type":"payment_initiation"}]',
+          }),
+        })
+      );
+      expect(withDetails.status).toBe(400);
+      // An ordinary client asking for the wallets' scope.
+      mockGetClientCached.mockResolvedValue({
+        client_id: 'client-123',
+        redirect_uris: ['https://client.example.com/callback'],
+        token_endpoint_auth_method: 'none',
+      });
+      const ordinary = await parHandler(
+        createMockContext({
+          headers: { 'content-type': 'application/x-www-form-urlencoded' },
+          body: {
+            client_id: 'client-123',
+            response_type: 'code',
+            redirect_uri: 'https://client.example.com/callback',
+            scope: 'openid authrim_admin_credential',
+          },
+        })
+      );
+      expect(ordinary.status).toBe(400);
+      await expect(ordinary.json()).resolves.toMatchObject({ error: 'invalid_scope' });
+      expect(mockStoreRequestRpc).not.toHaveBeenCalled();
+    });
+
+    it('refuses a wallet whose id collides with a stored client, disabled or not', async () => {
+      mockAuthenticateWalletClient.mockResolvedValue({ ok: true, client: walletClient });
+      mockGetClientCached.mockResolvedValue({ client_id: 'keyring-wallet', enabled: false });
+      const response = await parHandler(
+        createMockContext({ headers: walletHeaders, body: walletBody('authrim_admin_credential') })
+      );
+      expect(response.status).toBe(401);
+      expect(mockStoreRequestRpc).not.toHaveBeenCalled();
+    });
+
+    it('requires PKCE S256, the code flow and a DPoP key binding from a wallet', async () => {
+      mockAuthenticateWalletClient.mockResolvedValue({ ok: true, client: walletClient });
+      mockGetClientCached.mockResolvedValue(null);
+      const run = (extra: Record<string, unknown>) =>
+        parHandler(
+          createMockContext({
+            headers: walletHeaders,
+            body: walletBody('authrim_admin_credential', extra),
+          })
+        );
+      for (const extra of [
+        { code_challenge: undefined },
+        { code_challenge_method: 'plain' },
+        { response_type: 'token' },
+        { dpop_jkt: undefined },
+      ]) {
+        expect((await run(extra)).status, JSON.stringify(extra)).toBe(400);
+      }
+      expect(mockStoreRequestRpc).not.toHaveBeenCalled();
+    });
+
+    it('never lets an attestation authenticate an ordinary client', async () => {
+      // The attestation headers make the lookup go through the wallet allowlist only; a stored
+      // client is not consulted, so its own method cannot be bypassed with them.
+      mockAuthenticateWalletClient.mockResolvedValue({ ok: false, error: 'wallet_not_allowed' });
+      const response = await parHandler(
+        createMockContext({
+          headers: walletHeaders,
+          body: { ...walletBody('openid'), client_id: 'client-123' },
+        })
+      );
+      expect(response.status).toBe(401);
+      expect(mockGetClientCached).not.toHaveBeenCalled();
+    });
+
+    it('refuses a wallet under FAPI, as the token endpoint does, even without requirePrivateKeyJwt', async () => {
+      mockAuthenticateWalletClient.mockResolvedValue({ ok: true, client: walletClient });
+      mockGetClientCached.mockResolvedValue(null);
+      const response = await parHandler(
+        createMockContext({
+          headers: walletHeaders,
+          body: walletBody('authrim_admin_credential'),
+          env: {
+            SETTINGS: {
+              get: platformSettingsGet({ fapi: { enabled: true, requirePrivateKeyJwt: false } }),
+            } as unknown as KVNamespace,
+          },
+        })
+      );
+      expect(response.status).toBe(401);
+      expect(mockStoreRequestRpc).not.toHaveBeenCalled();
+    });
+
+    it('refuses a wallet client that presents no attestation', async () => {
+      mockGetClientCached.mockResolvedValue(walletClient);
+      const response = await parHandler(
+        createMockContext({
+          headers: { 'content-type': 'application/x-www-form-urlencoded' },
+          body: walletBody('authrim_admin_credential'),
+        })
+      );
+      expect(response.status).toBe(401);
+      expect(mockAuthenticateWalletClient).not.toHaveBeenCalled();
+    });
   });
 
   it('stores the DPoP key thumbprint with a successful PAR request', async () => {

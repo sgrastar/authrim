@@ -153,6 +153,8 @@ export interface ClientAuthenticationPresentation {
   clientSecretPost: boolean;
   clientAssertion: boolean;
   clientAssertionType?: string;
+  /** `OAuth-Client-Attestation` (and `-PoP`) headers presented (attest_jwt_client_auth). */
+  attestation?: boolean;
 }
 
 export type ClientAuthenticationMethodValidationResult =
@@ -172,7 +174,8 @@ export function validateRegisteredClientAuthenticationMethod(
   const presentedCount =
     Number(presentation.basic) +
     Number(presentation.clientSecretPost) +
-    Number(presentation.clientAssertion);
+    Number(presentation.clientAssertion) +
+    Number(presentation.attestation === true);
 
   if (presentedCount > 1) {
     return {
@@ -184,6 +187,12 @@ export function validateRegisteredClientAuthenticationMethod(
   // Preserve compatibility for legacy records that predate explicit method metadata.
   // Newly registered clients always have an explicit token_endpoint_auth_method.
   const registeredMethod = client.token_endpoint_auth_method;
+  if (presentation.attestation === true && registeredMethod !== 'attest_jwt_client_auth') {
+    return {
+      valid: false,
+      errorDescription: `Client must authenticate using ${registeredMethod ?? 'its registered method'}`,
+    };
+  }
   if (!registeredMethod) {
     return { valid: true };
   }
@@ -195,6 +204,10 @@ export function validateRegisteredClientAuthenticationMethod(
   switch (registeredMethod) {
     case 'private_key_jwt':
       if (presentedCount === 1 && hasJwtBearerAssertion) return { valid: true };
+      break;
+    case 'attest_jwt_client_auth':
+      // Only a wallet attestation authenticates this client; a secret or assertion never does.
+      if (presentedCount === 1 && presentation.attestation === true) return { valid: true };
       break;
     case 'client_secret_jwt':
       // Legacy rows may still contain this method. Authrim stores only a one-way

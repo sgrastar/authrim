@@ -54,6 +54,18 @@ export interface Env extends SamlDrWriterEnv {
   VC_TRANSACTION_CODE_HMAC_SECRET?: string;
   VC_EVIDENCE_HMAC_SECRET?: string;
   VC_PROFILE_CONTRACT_HMAC_SECRET?: string;
+  /**
+   * The Authrim issuing CA (HAIP `x5c`). All three must be set for certificates to be issued:
+   * the PKCS#8 PEM of its private key (a Worker secret), its certificate (base64 DER) and the
+   * fingerprint list that `KeyManager` pins chains to.
+   */
+  VC_ISSUING_CA_PRIVATE_KEY_PEM?: string;
+  VC_ISSUING_CA_CERTIFICATE?: string;
+  VC_X5C_ISSUING_CA_SHA256?: string;
+  /** Leaf certificate lifetime in days (8 to 825), default 400. */
+  VC_X5C_LEAF_LIFETIME_DAYS?: string;
+  /** Optional comma-separated issuer hosts (or `*.domain`) that may receive a certificate. */
+  VC_X5C_ALLOWED_ISSUER_HOSTS?: string;
   RATE_LIMIT_PROFILE?: string;
 }
 

@@ -164,6 +164,11 @@ import {
   validateJWTBearerAssertion,
   validateClientAssertion,
   parseOAuthClientAuthenticationParams,
+  authenticateWalletClient,
+  hasWalletAttestationHeaders,
+  isWalletClient,
+  walletScopeAllowed,
+  WALLET_ONLY_SCOPE,
   authenticateConfidentialOAuthClient,
   isDeviceCodePublicClient,
   validateRegisteredClientAuthenticationMethod,
@@ -1439,6 +1444,36 @@ async function resolveClientAssertionValidationOptions(
   };
 }
 
+/**
+ * A wallet's client attestation at the token endpoint (HAIP, attest_jwt_client_auth). When the
+ * request carries attestation headers they are verified against the tenant's wallet allowlist for
+ * the client the request names; otherwise nothing is presented and the client's registered method
+ * decides (a wallet client then fails it, since only an attestation authenticates one).
+ */
+async function authenticateTokenWallet(
+  c: Context<{ Bindings: Env }>,
+  clientMetadata: ClientMetadata
+): Promise<{ presented: false } | { presented: true; response?: Response }> {
+  const headers = { get: (name: string) => c.req.header(name) ?? null };
+  if (!hasWalletAttestationHeaders(headers)) return { presented: false };
+  const wallet = await authenticateWalletClient({
+    env: c.env,
+    tenantId: getTenantIdFromContext(c),
+    headers,
+    issuer: getRequestIssuer(c),
+    clientId: clientMetadata.client_id,
+  });
+  if (wallet.ok) return { presented: true };
+  moduleLogger.warn('Wallet attestation refused', { reason: wallet.error });
+  return {
+    presented: true,
+    response:
+      wallet.error === 'wallet_allowlist_unavailable'
+        ? oauthError(c, 'temporarily_unavailable', 'Client authentication is unavailable', 503)
+        : oauthError(c, 'invalid_client', 'Client authentication failed', 401),
+  };
+}
+
 async function resolveTokenClientAuthenticationPolicy(
   c: Context<{ Bindings: Env }>,
   clientMetadata: ClientMetadata,
@@ -1447,6 +1482,7 @@ async function resolveTokenClientAuthenticationPolicy(
   presentation: {
     basic: boolean;
     clientSecretPost: boolean;
+    attestation?: boolean;
   }
 ): Promise<
   | { ok: true; assertionOptions: ClientAssertionValidationOptions | undefined }
@@ -2387,6 +2423,10 @@ async function handleAuthorizationCodeGrant(
 
   // Authenticate the client before atomically consuming the authorization code. Otherwise an
   // attacker with a leaked code could invalidate it using deliberately bad client credentials.
+  const walletAuthentication = await authenticateTokenWallet(c, clientMetadata);
+  if (walletAuthentication.presented && walletAuthentication.response) {
+    return walletAuthentication.response;
+  }
   const clientAuthenticationPolicy = await timeTokenRequestDiagnosticOperation(
     c,
     'token_client_auth_policy',
@@ -2399,6 +2439,7 @@ async function handleAuthorizationCodeGrant(
         {
           basic: basicAuth.success,
           clientSecretPost: typeof formData.client_secret === 'string',
+          attestation: walletAuthentication.presented,
         }
       )
   );
@@ -2458,15 +2499,27 @@ async function handleAuthorizationCodeGrant(
 
   // Authorization-code grants are created for the client's configured default target. A token
   // request may repeat that target, but it must not retarget the user's grant to another resource.
+  // A wallet's grant is for the credential issuer, this tenant's issuer; it has no configured
+  // default target to inherit, and may not name another.
+  const walletClient = isWalletClient(clientMetadata);
+  const walletResource = walletClient ? getRequestIssuer(c) : undefined;
+  if (
+    walletClient &&
+    ((formData.resource !== undefined && formData.resource !== walletResource) ||
+      formData.audience !== undefined)
+  ) {
+    return oauthError(c, 'invalid_target', 'Requested resource does not match the authorization grant', 400);
+  }
   const audienceResolution = resolveAccessTokenAudience(c, clientMetadata, {
-    resource: formData.resource,
-    audience: formData.audience,
+    resource: walletResource ?? formData.resource,
+    audience: walletClient ? undefined : formData.audience,
     rejectResourceAudienceMismatch: true,
   });
   if (!audienceResolution.ok) {
     return oauthError(c, 'invalid_target', audienceResolution.description, 400);
   }
-  const authorizationGrantResource = getClientDefaultResource(clientMetadata).value;
+  const authorizationGrantResource =
+    walletResource ?? getClientDefaultResource(clientMetadata).value;
   const requestedGrantResources = [...new Set(audienceResolution.targets)];
   if (
     !authorizationGrantResource ||
@@ -2757,6 +2810,22 @@ async function handleAuthorizationCodeGrant(
     return oauthError(c, 'invalid_scope', 'Authorization grant scope is not allowed', 400);
   }
 
+  // The credential scope is the wallets' alone, whatever else a stored client is registered for.
+  if (!walletClient && parseScopeList(authCodeData.scope).includes(WALLET_ONLY_SCOPE)) {
+    return oauthError(c, 'invalid_scope', 'Authorization grant scope is not allowed', 400);
+  }
+
+  // A wallet (attestation-authenticated client) only redeems a code from the pushed, DPoP-bound
+  // code flow for credential scopes: never one from Direct Auth or one without a key binding.
+  if (
+    walletClient &&
+    (redirect_uri === DIRECT_AUTH_GRANT_REDIRECT_URI ||
+      !authCodeData.dpopJkt ||
+      !walletScopeAllowed(authCodeData.scope))
+  ) {
+    return oauthError(c, 'invalid_grant', 'Authorization code is not valid for this client', 400);
+  }
+
   // DPoP Authorization Code Binding verification (RFC 9449)
   // If the authorization code was bound to a DPoP key, verify the same key is used
   if (authCodeData.dpopJkt) {
@@ -2805,6 +2874,7 @@ async function handleAuthorizationCodeGrant(
   const browserRefreshTokenPolicy = getBrowserRefreshTokenPolicy(clientMetadata);
   const lifetimes = tokenLifetimes(c, tenantId, client_id);
   const shouldIssueRefreshToken =
+    !walletClient &&
     (!isBrowserPublicClientRequest ||
       (browserRefreshTokenPolicy === 'dpop_bound' && tokenType === 'DPoP' && Boolean(dpopJkt))) &&
     (await lifetimes.issuesRefreshTokenFor(authCodeData.scope));
@@ -3597,118 +3667,121 @@ async function handleAuthorizationCodeGrant(
   }
   idTokenClaims = idTokenConsent.claims;
 
-  let idToken: string;
-  try {
-    // Check if client requests SD-JWT ID Token (RFC 9901)
-    // SD-JWT for a client that requests it, where the tenant enables it (feature.enable_sd_jwt).
-    const useSDJWT =
-      clientMetadata.id_token_signed_response_type === 'sd-jwt' &&
-      (await resolvePolicyFlags(c.env, getTenantIdFromContext(c))).sdJwt;
+  // A wallet asks for credentials, not an OIDC login: it gets no ID token.
+  let idToken: string | undefined;
+  if (!walletClient) {
+    try {
+      // Check if client requests SD-JWT ID Token (RFC 9901)
+      // SD-JWT for a client that requests it, where the tenant enables it (feature.enable_sd_jwt).
+      const useSDJWT =
+        clientMetadata.id_token_signed_response_type === 'sd-jwt' &&
+        (await resolvePolicyFlags(c.env, getTenantIdFromContext(c))).sdJwt;
 
-    if (useSDJWT) {
-      // Create SD-JWT ID Token with selective disclosure
-      const rawSelectiveClaims = clientMetadata.sd_jwt_selective_claims;
-      const selectiveClaims: string[] = Array.isArray(rawSelectiveClaims)
-        ? rawSelectiveClaims
-        : ['email', 'phone_number', 'address', 'birthdate'];
-      idToken = await createClientSDJWTIDToken(
-        c.env,
-        tenantId,
-        clientMetadata,
-        idTokenClaims as Omit<IDTokenClaims, 'iat' | 'exp'>,
-        await lifetimes.idToken(),
-        selectiveClaims,
-        {
-          userId: authCodeData.sub,
-          consentGeneration: authCodeData.consent_generation ?? consentWithdrawal.generation,
-          releaseApproval: authCodeData.release_approval,
-        }
-      );
-      log.debug('Created SD-JWT ID Token', { clientId: client_id, action: 'SD-JWT' });
-    } else {
-      // For Authorization Code Flow, ID token should only contain standard claims
-      // Scope-based claims (profile, email) are returned from UserInfo endpoint
-      const idTokenExpiresIn = await lifetimes.idToken();
-      idToken = await timeTokenRequestDiagnosticOperation(c, 'token_id_create', () =>
-        createClientIDToken(
+      if (useSDJWT) {
+        // Create SD-JWT ID Token with selective disclosure
+        const rawSelectiveClaims = clientMetadata.sd_jwt_selective_claims;
+        const selectiveClaims: string[] = Array.isArray(rawSelectiveClaims)
+          ? rawSelectiveClaims
+          : ['email', 'phone_number', 'address', 'birthdate'];
+        idToken = await createClientSDJWTIDToken(
           c.env,
           tenantId,
           clientMetadata,
           idTokenClaims as Omit<IDTokenClaims, 'iat' | 'exp'>,
-          idTokenExpiresIn,
+          await lifetimes.idToken(),
+          selectiveClaims,
           {
             userId: authCodeData.sub,
             consentGeneration: authCodeData.consent_generation ?? consentWithdrawal.generation,
             releaseApproval: authCodeData.release_approval,
           }
-        )
+        );
+        log.debug('Created SD-JWT ID Token', { clientId: client_id, action: 'SD-JWT' });
+      } else {
+        // For Authorization Code Flow, ID token should only contain standard claims
+        // Scope-based claims (profile, email) are returned from UserInfo endpoint
+        const idTokenExpiresIn = await lifetimes.idToken();
+        idToken = await timeTokenRequestDiagnosticOperation(c, 'token_id_create', () =>
+          createClientIDToken(
+            c.env,
+            tenantId,
+            clientMetadata,
+            idTokenClaims as Omit<IDTokenClaims, 'iat' | 'exp'>,
+            idTokenExpiresIn,
+            {
+              userId: authCodeData.sub,
+              consentGeneration: authCodeData.consent_generation ?? consentWithdrawal.generation,
+              releaseApproval: authCodeData.release_approval,
+            }
+          )
+        );
+      }
+
+      // JWE: Check if client requires ID token encryption (RFC 7516)
+      // Note: SD-JWT can also be encrypted (nested: SD-JWT inside JWE)
+      // Note: clientMetadata was already fetched during client authentication above
+      if (isIDTokenEncryptionRequired(clientMetadata)) {
+        const alg = clientMetadata.id_token_encrypted_response_alg as string;
+        const enc = clientMetadata.id_token_encrypted_response_enc as string;
+
+        // Validate encryption algorithms
+        try {
+          validateJWEOptions(alg, enc);
+        } catch (validationError) {
+          // Security: Log internal details but return generic message to prevent information leakage
+          log.error('Invalid JWE options', { validationError });
+          return c.json(
+            {
+              error: 'invalid_client_metadata',
+              error_description: 'Client encryption configuration is invalid',
+            },
+            400
+          );
+        }
+
+        // Get client's public key for encryption
+        const publicKey = await getClientPublicKey(clientMetadata, undefined, alg as JWEAlgorithm);
+        if (!publicKey) {
+          log.error('Client requires encryption but no public key available', {});
+          return c.json(
+            {
+              error: 'invalid_client_metadata',
+              error_description:
+                'Client requires ID token encryption but no public key (jwks or jwks_uri) is configured',
+            },
+            400
+          );
+        }
+
+        // Encrypt the signed ID token (nested JWT: JWS inside JWE)
+        try {
+          idToken = await encryptJWT(idToken, publicKey, {
+            alg: alg as JWEAlgorithm,
+            enc: enc as JWEEncryption,
+            cty: 'JWT', // Content type is JWT (the signed ID token)
+            kid: publicKey.kid,
+          });
+        } catch (encryptError) {
+          log.error('Failed to encrypt ID token', {}, encryptError as Error);
+          return c.json(
+            {
+              error: 'server_error',
+              error_description: 'Failed to encrypt ID token',
+            },
+            500
+          );
+        }
+      }
+    } catch (error) {
+      log.error('Failed to create ID token', {}, error as Error);
+      return c.json(
+        {
+          error: 'server_error',
+          error_description: 'Failed to create ID token',
+        },
+        500
       );
     }
-
-    // JWE: Check if client requires ID token encryption (RFC 7516)
-    // Note: SD-JWT can also be encrypted (nested: SD-JWT inside JWE)
-    // Note: clientMetadata was already fetched during client authentication above
-    if (isIDTokenEncryptionRequired(clientMetadata)) {
-      const alg = clientMetadata.id_token_encrypted_response_alg as string;
-      const enc = clientMetadata.id_token_encrypted_response_enc as string;
-
-      // Validate encryption algorithms
-      try {
-        validateJWEOptions(alg, enc);
-      } catch (validationError) {
-        // Security: Log internal details but return generic message to prevent information leakage
-        log.error('Invalid JWE options', { validationError });
-        return c.json(
-          {
-            error: 'invalid_client_metadata',
-            error_description: 'Client encryption configuration is invalid',
-          },
-          400
-        );
-      }
-
-      // Get client's public key for encryption
-      const publicKey = await getClientPublicKey(clientMetadata, undefined, alg as JWEAlgorithm);
-      if (!publicKey) {
-        log.error('Client requires encryption but no public key available', {});
-        return c.json(
-          {
-            error: 'invalid_client_metadata',
-            error_description:
-              'Client requires ID token encryption but no public key (jwks or jwks_uri) is configured',
-          },
-          400
-        );
-      }
-
-      // Encrypt the signed ID token (nested JWT: JWS inside JWE)
-      try {
-        idToken = await encryptJWT(idToken, publicKey, {
-          alg: alg as JWEAlgorithm,
-          enc: enc as JWEEncryption,
-          cty: 'JWT', // Content type is JWT (the signed ID token)
-          kid: publicKey.kid,
-        });
-      } catch (encryptError) {
-        log.error('Failed to encrypt ID token', {}, encryptError as Error);
-        return c.json(
-          {
-            error: 'server_error',
-            error_description: 'Failed to encrypt ID token',
-          },
-          500
-        );
-      }
-    }
-  } catch (error) {
-    log.error('Failed to create ID token', {}, error as Error);
-    return c.json(
-      {
-        error: 'server_error',
-        error_description: 'Failed to create ID token',
-      },
-      500
-    );
   }
 
   // Generate Refresh Token
@@ -4030,7 +4103,7 @@ async function handleAuthorizationCodeGrant(
     access_token: accessToken,
     token_type: tokenType, // 'Bearer' or 'DPoP' depending on DPoP usage
     expires_in: expiresIn,
-    id_token: idToken,
+    ...(idToken !== undefined && { id_token: idToken }),
     ...(refreshToken && { refresh_token: refreshToken }),
     ...refreshTokenExpiryMetadata,
     scope: authCodeData.scope, // OAuth 2.0 spec: include scope for clarity

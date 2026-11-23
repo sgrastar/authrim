@@ -82,6 +82,9 @@ function createMocks() {
 // mock factories below read it only then.
 export const mocks = createMocks();
 
+/** The wallet attestation authenticator, replaceable per test (wallet clients, HAIP). */
+export const walletAuth = { authenticate: vi.fn() };
+
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   return {
@@ -92,6 +95,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
         ? actual.loadClientContractCached(...args)
         : Promise.resolve(override as Awaited<ReturnType<typeof actual.loadClientContractCached>>);
     },
+    authenticateWalletClient: (...args: unknown[]) => walletAuth.authenticate(...args),
     ensureAccountAuthenticationState: mocks.ensureAccountAuthenticationState,
     findCanonicalAccountAuthenticationState: vi.fn(
       async (_a: unknown, _t: string, userId: string) => ({

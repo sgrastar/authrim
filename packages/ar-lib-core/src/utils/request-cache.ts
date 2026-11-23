@@ -186,11 +186,11 @@ export async function getClientCached(
   c: Context<{ Bindings: Env }>,
   env: Env,
   clientId: string,
-  options: { includeDisabled?: boolean } = {}
+  options: { includeDisabled?: boolean; storedOnly?: boolean } = {}
 ): Promise<ClientMetadata | null> {
   const cache = getRequestCache(c);
   const authCtx = createAuthContextFromHono(c, getTenantIdFromRequestCacheContext(c));
-  const cacheKey = `${authCtx.tenantId}:${clientId}${options.includeDisabled ? ':include-disabled' : ''}`;
+  const cacheKey = `${authCtx.tenantId}:${clientId}${options.includeDisabled ? ':include-disabled' : ''}${options.storedOnly ? ':stored-only' : ''}`;
 
   // Check request-level cache
   if (cache.clients.has(cacheKey)) {
@@ -200,9 +200,10 @@ export async function getClientCached(
 
   // Cache miss - fetch from KV/D1
   cache.stats.clientMiss++;
-  const clientMetadata = options.includeDisabled
-    ? await getClient(env, authCtx.tenantId, clientId, authCtx.coreAdapter, options)
-    : await getClient(env, authCtx.tenantId, clientId, authCtx.coreAdapter);
+  const clientMetadata =
+    options.includeDisabled || options.storedOnly
+      ? await getClient(env, authCtx.tenantId, clientId, authCtx.coreAdapter, options)
+      : await getClient(env, authCtx.tenantId, clientId, authCtx.coreAdapter);
 
   // Store in request cache (including null for not-found)
   cache.clients.set(cacheKey, clientMetadata);

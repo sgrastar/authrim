@@ -1,4 +1,8 @@
 import {
+  adminWalletAllowlistGetHandler,
+  adminWalletAllowlistPutHandler,
+} from './wallet-allowlist-admin';
+import {
   getConnectionInboundMapping,
   putConnectionInboundMapping,
   previewConnectionInboundMapping,
@@ -4002,6 +4006,10 @@ app.use('/api/admin/consent-statements/*', async (c, next) => {
   const profile = await getRateLimitProfileAsync(c.env, 'moderate');
   return rateLimitMiddleware(profile)(c, next);
 });
+app.use('/api/admin/wallet-attestation-allowlist', async (c, next) => {
+  const profile = await getRateLimitProfileAsync(c.env, 'moderate');
+  return rateLimitMiddleware(profile)(c, next);
+});
 app.use('/api/admin/client-trust-policies/*', async (c, next) => {
   const profile = await getRateLimitProfileAsync(c.env, 'moderate');
   return rateLimitMiddleware(profile)(c, next);
@@ -4036,6 +4044,8 @@ app.post(
 app.delete('/api/admin/consent-statements/:sid/versions/:vid', adminConsentVersionDeleteHandler);
 
 // Client/SP trust and sign-in confirmation
+app.get('/api/admin/wallet-attestation-allowlist', adminWalletAllowlistGetHandler);
+app.put('/api/admin/wallet-attestation-allowlist', adminWalletAllowlistPutHandler);
 app.get('/api/admin/client-trust-policies', adminClientTrustPoliciesListHandler);
 app.put('/api/admin/client-trust-policies', adminClientTrustPolicyUpsertHandler);
 app.get('/api/admin/sign-in-confirmation-policies', adminSignInConfirmationPoliciesListHandler);

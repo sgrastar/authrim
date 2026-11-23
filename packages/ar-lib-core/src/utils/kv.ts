@@ -962,7 +962,7 @@ export async function getClient(
   tenantId: string,
   clientId: string,
   coreDbSource: DatabaseSource,
-  options: { includeDisabled?: boolean } = {}
+  options: { includeDisabled?: boolean; storedOnly?: boolean } = {}
 ): Promise<ClientMetadata | null> {
   // Client metadata is a security boundary for redirect URIs, secrets, and
   // revocation. Always read it from D1 so admin changes take effect immediately.
@@ -1065,7 +1065,14 @@ export async function getClient(
     updated_at: number;
   }>('SELECT * FROM oauth_clients WHERE tenant_id = ? AND client_id = ?', [tenantId, clientId]);
 
-  if (!result || (!options.includeDisabled && result.enabled === 0)) {
+  if (!result) {
+    // A wallet type on the tenant's allowlist is a client that is never stored (design D, S2).
+    // Loaded on demand: the allowlist module depends on pieces that depend on this one.
+    if (options.storedOnly || !(env.SETTINGS ?? env.AUTHRIM_CONFIG)) return null;
+    const { resolveWalletClient } = await import('../vc/wallet-allowlist');
+    return resolveWalletClient(env, tenantId, clientId, options);
+  }
+  if (!options.includeDisabled && result.enabled === 0) {
     return null;
   }
 

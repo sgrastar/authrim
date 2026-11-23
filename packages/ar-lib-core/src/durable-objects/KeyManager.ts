@@ -33,6 +33,7 @@ import type { Env } from '../types/env';
 import type { KeyStatus } from '../types/admin';
 import { readRequestJsonWithLimit } from '../utils/body-limits';
 import { createLogger } from '../utils/logger';
+import { validateVcSigningChain } from '../vc/x509-certificate';
 import {
   keyManagerTenantBackupSnapshotIsEmpty,
   keyManagerTenantBackupSnapshotsEqual,
@@ -127,6 +128,189 @@ interface StoredECKey {
   expiresAt?: number;
   revokedAt?: number;
   revokedReason?: string;
+  /**
+   * VC signing keys only: the certificate chain for this key as base64 DER entries, leaf first,
+   * trust anchor excluded (the `x5c` header value). Set by `setVcIssuerKeyCertificateChainRpc`
+   * after the chain has been validated against this key.
+   */
+  certificateChain?: string[];
+  /** The earliest `notAfter` of any certificate in `certificateChain`, epoch milliseconds. */
+  certificateNotAfter?: number;
+  /** The issuer host the leaf was validated for; `x5c` is sent only for credentials of this host. */
+  certificateIssuerHost?: string;
+  /**
+   * SHA-256 (lower-case hex) of the issuing CA certificate that ended the chain when it was
+   * registered. `x5c` is sent only while this CA is still in the configured allowlist.
+   */
+  certificateCaSha256?: string;
+}
+
+/**
+ * The UTF-8 size of a value's JSON text, or null when it cannot be serialised (a cycle, a BigInt,
+ * undefined). The signing libraries measure and sign bytes, so limits are in bytes, not code units.
+ */
+function jsonByteLength(value: unknown): number | null {
+  try {
+    const text = JSON.stringify(value);
+    return typeof text === 'string' ? new TextEncoder().encode(text).byteLength : null;
+  } catch {
+    return null;
+  }
+}
+
+/** A JWT claims object: a plain, non-null object whose time claims, if present, are finite. */
+function isSignablePayload(payload: unknown): payload is JWTPayload {
+  if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) return false;
+  const claims = payload as Record<string, unknown>;
+  return ['iat', 'exp', 'nbf'].every(
+    (name) =>
+      claims[name] === undefined ||
+      (typeof claims[name] === 'number' && Number.isFinite(claims[name]))
+  );
+}
+
+/**
+ * The active VC ES256 key, created on first use. The retention cap is an expected refusal (it is
+ * raised before anything is written), returned as null; any other failure, a failed save
+ * included, propagates.
+ */
+async function ensureVcKeyOrRefusal(
+  ensure: () => Promise<StoredECKey>
+): Promise<StoredECKey | null> {
+  try {
+    return await ensure();
+  } catch (error) {
+    if (error instanceof Error && error.message === 'vc_issuer_key_retention_cap_reached') {
+      return null;
+    }
+    throw error;
+  }
+}
+
+/** An expected refusal returned out of a write-permit scope instead of thrown (see the RPCs). */
+interface Refusal {
+  refused: string;
+}
+
+/** What the certificate issuer needs to know about the active VC signing key. */
+export interface VcSigningCertificateState {
+  kid: string;
+  /** The public key to certify (no private member). */
+  publicJWK: JWK;
+  /** The host the stored chain was validated for, or null when the key has no chain. */
+  issuerHost: string | null;
+  /** SHA-256 (lower-case hex) of the issuing CA that ended the stored chain, or null. */
+  caSha256: string | null;
+  /** The earliest `notAfter` of the stored chain (epoch milliseconds), or null. */
+  chainNotAfter: number | null;
+}
+
+/** Options of the two VC signing RPCs. */
+export interface VcSigningOptions {
+  /**
+   * Fail the signing instead of falling back to a header without `x5c`. HAIP flows set this: a
+   * credential without the issuer certificate chain is not a HAIP credential.
+   */
+  requireX5c?: boolean;
+}
+
+/** The options of a VC signing RPC, or null when they are not a plain `{ requireX5c?: boolean }`. */
+function parseVcSigningOptions(options: unknown): VcSigningOptions | null {
+  if (options === undefined) return { requireX5c: false };
+  if (
+    typeof options !== 'object' ||
+    options === null ||
+    ![Object.prototype, null].includes(Object.getPrototypeOf(options) as object | null) ||
+    Object.keys(options).some((key) => key !== 'requireX5c') ||
+    (Object.hasOwn(options, 'requireX5c') &&
+      typeof (options as VcSigningOptions).requireX5c !== 'boolean')
+  ) {
+    return null;
+  }
+  return {
+    requireX5c:
+      Object.hasOwn(options, 'requireX5c') && (options as VcSigningOptions).requireX5c === true,
+  };
+}
+
+/** The configured Authrim issuing CA fingerprints: lower-case hex SHA-256, comma separated. */
+function trustedIssuingCaFingerprints(value: string | undefined): string[] {
+  return (value ?? '')
+    .split(',')
+    .map((entry) => entry.trim().toLowerCase())
+    .filter((entry) => /^[0-9a-f]{64}$/u.test(entry));
+}
+
+export interface SetVcIssuerKeyCertificateChainInput {
+  kid: string;
+  /** Base64 DER certificates, leaf first, trust anchor excluded. */
+  chain: string[];
+  /** The credential issuer host the leaf must name. */
+  issuerHost: string;
+}
+
+/**
+ * Certificate chains are not part of a tenant backup: a chain ties a key to the Authrim CA and to
+ * the tenant's issuer host at one point in time, and a restored key gets a new chain from the CA
+ * service. Backup export, verification and comparison all see the state without them.
+ */
+function withoutVcCertificateChains(
+  snapshot: KeyManagerTenantBackupSnapshot
+): KeyManagerTenantBackupSnapshot {
+  for (const key of snapshot.vcEc.keys as Partial<StoredECKey>[]) {
+    delete key.certificateChain;
+    delete key.certificateNotAfter;
+    delete key.certificateIssuerHost;
+    delete key.certificateCaSha256;
+  }
+  return snapshot;
+}
+
+/** The host of a credential issuer identifier: an https URL or `did:web:<host>`. */
+function issuerHostOf(issuer: unknown): string | null {
+  if (typeof issuer !== 'string') return null;
+  if (issuer.startsWith('did:web:')) {
+    const host = issuer.slice('did:web:'.length);
+    return /^[a-z0-9.-]{1,253}$/u.test(host) ? host : null;
+  }
+  try {
+    const url = new URL(issuer);
+    return url.protocol === 'https:' ? url.hostname.toLowerCase() : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The `x5c` protected-header member for a VC signing key, or undefined when it must not be sent.
+ * The chain is sent only while every certificate in it is valid, while its issuing CA is still
+ * trusted, for a token whose `iss` is on the host the leaf was validated for, and only for a token
+ * with a finite `exp` that the chain outlives (a verifier checking the chain later must still find
+ * it valid). Otherwise a token falls back to key resolution through the published JWKS, as before
+ * certificates existed, unless the caller required `x5c`.
+ */
+function x5cHeader(
+  key: StoredECKey,
+  now: number,
+  payload: JWTPayload,
+  trustedCas: string[]
+): { x5c: string[] } | undefined {
+  const host = issuerHostOf(payload.iss);
+  if (
+    !key.certificateChain ||
+    key.certificateChain.length === 0 ||
+    typeof key.certificateNotAfter !== 'number' ||
+    key.certificateNotAfter <= now ||
+    !key.certificateIssuerHost ||
+    host !== key.certificateIssuerHost ||
+    !key.certificateCaSha256 ||
+    !trustedCas.includes(key.certificateCaSha256)
+  ) {
+    return undefined;
+  }
+  if (typeof payload.exp !== 'number' || !Number.isFinite(payload.exp)) return undefined;
+  if (payload.exp * 1000 > key.certificateNotAfter) return undefined;
+  return { x5c: key.certificateChain };
 }
 
 export interface SignVCIAccessTokenInput {
@@ -542,6 +726,8 @@ export const SAML_DR_KEY_MANAGER_SURFACE = {
     'getAllECPublicKeysRpc',
     'getVcIssuerJwksRpc',
     'revokeVcIssuerKeyRpc',
+    'setVcIssuerKeyCertificateChainRpc',
+    'getVcSigningCertificateStateRpc',
     'rotateECKeysRpc',
     'rotateECKeysWithPrivateRpc',
     'emergencyRotateECKeysRpc',
@@ -648,7 +834,8 @@ function isValidLegacyStatusListPayload(payload: JWTPayload, now: number): boole
     Array.isArray(vc?.type) &&
     vc.type.includes('BitstringStatusListCredential') &&
     subject?.type === 'BitstringStatusList' &&
-    ['revocation', 'suspension'].includes(String(subject.statusPurpose)) &&
+    typeof subject.statusPurpose === 'string' &&
+    ['revocation', 'suspension'].includes(subject.statusPurpose) &&
     typeof subject.encodedList === 'string'
   );
 }
@@ -1270,37 +1457,69 @@ export class KeyManager extends DurableObject<Env> {
   }
 
   /** Sign a bounded SD-JWT VC issuer payload without exporting the EC private key. */
-  async signSDJWTIssuerRpc(payload: JWTPayload): Promise<SignSDJWTIssuerResult> {
-    return runSamlDrCoveredOperation(this.env, undefined, async () => {
-      await this.#initializeState();
-      const now = Math.floor(Date.now() / 1000);
-      const issuer = typeof payload.iss === 'string' ? payload.iss.trim() : '';
-      const vct = typeof payload.vct === 'string' ? payload.vct.trim() : '';
-      const encodedPayload = JSON.stringify(payload);
-      const disclosureHashes = payload._sd;
-      if (
-        !issuer ||
-        issuer.length > 2048 ||
-        !vct ||
-        vct.length > 512 ||
-        typeof payload.iat !== 'number' ||
-        Math.abs(payload.iat - now) > 300 ||
-        payload._sd_alg !== 'sha-256' ||
-        encodedPayload.length > 64 * 1024 ||
-        (disclosureHashes !== undefined &&
-          (!Array.isArray(disclosureHashes) ||
-            disclosureHashes.length > 128 ||
-            disclosureHashes.some((value) => typeof value !== 'string' || value.length > 128)))
-      ) {
-        throw new Error('invalid_sd_jwt_issuer_signing_input');
+  async signSDJWTIssuerRpc(
+    payload: JWTPayload,
+    options?: VcSigningOptions
+  ): Promise<SignSDJWTIssuerResult> {
+    const outcome = await runSamlDrCoveredOperation(
+      this.env,
+      undefined,
+      async (): Promise<SignSDJWTIssuerResult | Refusal> => {
+        // Admission comes first for every guarded RPC; the options are checked inside it, and an
+        // expected refusal is returned, not thrown: an exception inside a replication write
+        // permit is kept as an unconfirmed write and would block a later primary switch.
+        const parsed = parseVcSigningOptions(options);
+        if (!parsed) return { refused: 'invalid_vc_signing_options' };
+        const requireX5c = parsed.requireX5c === true;
+        if (!isSignablePayload(payload)) return { refused: 'invalid_sd_jwt_issuer_signing_input' };
+        await this.#initializeState();
+        const now = Math.floor(Date.now() / 1000);
+        const issuer = typeof payload.iss === 'string' ? payload.iss.trim() : '';
+        const vct = typeof payload.vct === 'string' ? payload.vct.trim() : '';
+        const encodedBytes = jsonByteLength(payload);
+        const disclosureHashes = payload._sd;
+        if (
+          !issuer ||
+          issuer.length > 2048 ||
+          !vct ||
+          vct.length > 512 ||
+          typeof payload.iat !== 'number' ||
+          Math.abs(payload.iat - now) > 300 ||
+          payload._sd_alg !== 'sha-256' ||
+          encodedBytes === null ||
+          encodedBytes > 64 * 1024 ||
+          (disclosureHashes !== undefined &&
+            (!Array.isArray(disclosureHashes) ||
+              disclosureHashes.length > 128 ||
+              disclosureHashes.some((value) => typeof value !== 'string' || value.length > 128)))
+        ) {
+          return { refused: 'invalid_sd_jwt_issuer_signing_input' };
+        }
+        const activeKey = await ensureVcKeyOrRefusal(() => this.#ensureActiveVcES256Key());
+        if (!activeKey) return { refused: 'vc_issuer_key_retention_cap_reached' };
+        const x5c = x5cHeader(
+          activeKey,
+          Date.now(),
+          payload,
+          trustedIssuingCaFingerprints(this.env.VC_X5C_ISSUING_CA_SHA256)
+        );
+        // An expected refusal is returned, not thrown: an exception inside a replication write
+        // permit is kept as an unconfirmed write and would block a later switch of the primary.
+        if (requireX5c && !x5c) return { refused: 'x5c_required' };
+        const privateKey = await importPKCS8(activeKey.privatePEM, 'ES256');
+        const token = await new SignJWT(payload)
+          .setProtectedHeader({
+            alg: 'ES256',
+            typ: 'dc+sd-jwt',
+            kid: activeKey.kid,
+            ...x5c,
+          })
+          .sign(privateKey);
+        return { token, kid: activeKey.kid };
       }
-      const activeKey = await this.#ensureActiveVcES256Key();
-      const privateKey = await importPKCS8(activeKey.privatePEM, 'ES256');
-      const token = await new SignJWT(payload)
-        .setProtectedHeader({ alg: 'ES256', typ: 'dc+sd-jwt', kid: activeKey.kid })
-        .sign(privateKey);
-      return { token, kid: activeKey.kid };
-    });
+    );
+    if ('refused' in outcome) throw new Error(outcome.refused);
+    return outcome;
   }
 
   /**
@@ -1331,27 +1550,58 @@ export class KeyManager extends DurableObject<Env> {
    * the Token Status List (https `iss`, `sub` the list URI on the same origin, `ttl`,
    * `status_list: { bits, lst }`) and the legacy Bitstring Status List JWT (did:web `iss`, `vc`).
    */
-  async signStatusListCredentialRpc(payload: JWTPayload): Promise<SignStatusListCredentialResult> {
-    return runSamlDrCoveredOperation(this.env, undefined, async () => {
-      await this.#initializeState();
-      const now = Math.floor(Date.now() / 1000);
-      const encodedPayload = JSON.stringify(payload);
-      if (encodedPayload.length > 4 * 1024 * 1024)
-        throw new Error('invalid_status_list_signing_input');
-      const valid =
-        'status_list' in payload
-          ? isValidTokenStatusListPayload(payload, now)
-          : isValidLegacyStatusListPayload(payload, now);
-      if (!valid) {
-        throw new Error('invalid_status_list_signing_input');
+  async signStatusListCredentialRpc(
+    payload: JWTPayload,
+    options?: VcSigningOptions
+  ): Promise<SignStatusListCredentialResult> {
+    const outcome = await runSamlDrCoveredOperation(
+      this.env,
+      undefined,
+      async (): Promise<SignStatusListCredentialResult | Refusal> => {
+        const parsed = parseVcSigningOptions(options);
+        if (!parsed) return { refused: 'invalid_vc_signing_options' };
+        const requireX5c = parsed.requireX5c === true;
+        await this.#initializeState();
+        const now = Math.floor(Date.now() / 1000);
+        if (!isSignablePayload(payload)) return { refused: 'invalid_status_list_signing_input' };
+        const encodedBytes = jsonByteLength(payload);
+        if (encodedBytes === null || encodedBytes > 4 * 1024 * 1024)
+          return { refused: 'invalid_status_list_signing_input' };
+        const valid =
+          'status_list' in payload
+            ? isValidTokenStatusListPayload(payload, now)
+            : isValidLegacyStatusListPayload(payload, now);
+        if (!valid) {
+          return { refused: 'invalid_status_list_signing_input' };
+        }
+        const activeKey = await ensureVcKeyOrRefusal(() => this.#ensureActiveVcES256Key());
+        if (!activeKey) return { refused: 'vc_issuer_key_retention_cap_reached' };
+        // HAIP asks for `x5c` on the Token Status List only; the legacy Bitstring Status List
+        // credential (a did:web `vc` JWT) keeps resolving its key through the DID document.
+        const x5c =
+          'status_list' in payload
+            ? x5cHeader(
+                activeKey,
+                Date.now(),
+                payload,
+                trustedIssuingCaFingerprints(this.env.VC_X5C_ISSUING_CA_SHA256)
+              )
+            : undefined;
+        if (requireX5c && !x5c) return { refused: 'x5c_required' };
+        const privateKey = await importPKCS8(activeKey.privatePEM, 'ES256');
+        const token = await new SignJWT(payload)
+          .setProtectedHeader({
+            alg: 'ES256',
+            typ: 'statuslist+jwt',
+            kid: activeKey.kid,
+            ...x5c,
+          })
+          .sign(privateKey);
+        return { token, kid: activeKey.kid };
       }
-      const activeKey = await this.#ensureActiveVcES256Key();
-      const privateKey = await importPKCS8(activeKey.privatePEM, 'ES256');
-      const token = await new SignJWT(payload)
-        .setProtectedHeader({ alg: 'ES256', typ: 'statuslist+jwt', kid: activeKey.kid })
-        .sign(privateKey);
-      return { token, kid: activeKey.kid };
-    });
+    );
+    if ('refused' in outcome) throw new Error(outcome.refused);
+    return outcome;
   }
 
   /**
@@ -1453,6 +1703,122 @@ export class KeyManager extends DurableObject<Env> {
       });
       return { revoked: true };
     });
+  }
+
+  /**
+   * RPC: Attach a certificate chain to one VC issuer ES256 key. The chain is validated here: the
+   * leaf must certify exactly this key and name the issuer host, every certificate must be valid
+   * now and signed by the next, and no certificate may be self-signed (the trust anchor is never
+   * delivered). Later credentials and status list tokens signed with the key carry it as `x5c`.
+   */
+  async setVcIssuerKeyCertificateChainRpc(
+    input: SetVcIssuerKeyCertificateChainInput
+  ): Promise<{ kid: string; leafNotAfter: number; chainNotAfter: number }> {
+    type Registered = { kid: string; leafNotAfter: number; chainNotAfter: number };
+    const outcome = await runSamlDrCoveredOperation(
+      this.env,
+      undefined,
+      async (): Promise<Registered | Refusal> => {
+        // Admission comes first for every guarded RPC. Every expected rejection from here on,
+        // including a bad argument, is returned, not thrown, so no write permit is left open.
+        const kid = typeof input?.kid === 'string' ? input.kid.trim() : '';
+        if (!kid || kid.length > 256) return { refused: 'invalid_kid' };
+        if (typeof input.issuerHost !== 'string') return { refused: 'invalid_issuer_host' };
+        const host = input.issuerHost.trim().toLowerCase();
+        await this.#initializeState();
+        await this.#initializeECState();
+        const findKey = (): StoredECKey | undefined =>
+          this.#getECState().keys.find(
+            (candidate) =>
+              candidate.kid === kid &&
+              candidate.algorithm === 'ES256' &&
+              candidate.status !== 'revoked'
+          );
+        const target = findKey();
+        if (!target) return { refused: 'vc_issuer_key_not_found' };
+
+        const trusted = trustedIssuingCaFingerprints(this.env.VC_X5C_ISSUING_CA_SHA256);
+        if (trusted.length === 0) return { refused: 'vc_x5c_trust_anchor_not_configured' };
+
+        // Only a failed save (an unknown outcome) throws from inside the permit.
+        let info: Awaited<ReturnType<typeof validateVcSigningChain>>;
+        try {
+          info = await validateVcSigningChain(input.chain, {
+            publicKey: target.publicJWK,
+            issuerHost: host,
+            now: Date.now(),
+            expectedLength: 2,
+            authrimProfile: true,
+            trustedFinalCertificateSha256: trusted,
+          });
+        } catch (error) {
+          return { refused: error instanceof Error ? error.message : 'invalid_certificate_chain' };
+        }
+
+        // The validation awaited: look the key up again, so a key that was revoked or cleaned up
+        // in the meantime is neither updated nor reported as updated.
+        const key = findKey();
+        if (
+          !key ||
+          key.publicJWK.x !== target.publicJWK.x ||
+          key.publicJWK.y !== target.publicJWK.y
+        ) {
+          return { refused: 'vc_issuer_key_not_found' };
+        }
+        const previous = {
+          certificateChain: key.certificateChain,
+          certificateNotAfter: key.certificateNotAfter,
+          certificateIssuerHost: key.certificateIssuerHost,
+          certificateCaSha256: key.certificateCaSha256,
+        };
+        key.certificateChain = info.x5c;
+        key.certificateNotAfter = info.chainNotAfter;
+        key.certificateIssuerHost = host;
+        key.certificateCaSha256 = info.finalCertificateSha256;
+        try {
+          await this.#saveECState();
+        } catch (error) {
+          // Keep memory equal to storage: a chain that was not saved must not be signed with.
+          Object.assign(key, previous);
+          throw error;
+        }
+        log.info('VC issuer key certificate chain stored', {
+          kid,
+          chainNotAfter: new Date(info.chainNotAfter).toISOString(),
+        });
+        return { kid, leafNotAfter: info.leafNotAfter, chainNotAfter: info.chainNotAfter };
+      }
+    );
+    if ('refused' in outcome) throw new Error(outcome.refused);
+    return outcome;
+  }
+
+  /**
+   * RPC: The active VC ES256 signing key and the state of its certificate chain, so the component
+   * that holds the issuing CA can tell whether a certificate is needed. The key is created if it
+   * does not exist yet. No private material and no chain is returned.
+   */
+  async getVcSigningCertificateStateRpc(): Promise<VcSigningCertificateState> {
+    const outcome = await runSamlDrCoveredOperation(
+      this.env,
+      undefined,
+      async (): Promise<VcSigningCertificateState | Refusal> => {
+        await this.#initializeState();
+        await this.#initializeECState();
+        const key = await ensureVcKeyOrRefusal(() => this.#ensureActiveVcES256Key());
+        if (!key) return { refused: 'vc_issuer_key_retention_cap_reached' };
+        const jwk = key.publicJWK;
+        return {
+          kid: key.kid,
+          publicJWK: { kty: 'EC', crv: 'P-256', x: jwk.x, y: jwk.y },
+          issuerHost: key.certificateIssuerHost ?? null,
+          caSha256: key.certificateCaSha256 ?? null,
+          chainNotAfter: key.certificateNotAfter ?? null,
+        };
+      }
+    );
+    if ('refused' in outcome) throw new Error(outcome.refused);
+    return outcome;
   }
 
   /**
@@ -1563,15 +1929,17 @@ export class KeyManager extends DurableObject<Env> {
   }
 
   #currentTenantBackupState(): KeyManagerTenantBackupSnapshot {
-    return structuredClone({
-      kind: 'authrim.key_manager_tenant_backup.v1',
-      version: 1,
-      rsa: { ...this.#getState(), secrets: this.#getState().secrets ?? {} },
-      vcEc: this.#getECState(),
-      oidcEs256: this.#getOIDCECState(),
-      oidcPs256: this.#getOIDCPS256State(),
-      requestObjectEnc: this.#getRequestObjectEncState(),
-    });
+    return withoutVcCertificateChains(
+      structuredClone({
+        kind: 'authrim.key_manager_tenant_backup.v1',
+        version: 1,
+        rsa: { ...this.#getState(), secrets: this.#getState().secrets ?? {} },
+        vcEc: this.#getECState(),
+        oidcEs256: this.#getOIDCECState(),
+        oidcPs256: this.#getOIDCPS256State(),
+        requestObjectEnc: this.#getRequestObjectEncState(),
+      })
+    );
   }
 
   /** A failed save must never turn an uncommitted in-memory value into backup authority. */
@@ -1587,15 +1955,17 @@ export class KeyManager extends DurableObject<Env> {
       ]);
       if (!rsa || !vcEc || !oidcEs256 || !oidcPs256 || !requestObjectEnc)
         throw new Error('saml_dr_key_manager_authority_uninitialized');
-      return structuredClone({
-        kind: 'authrim.key_manager_tenant_backup.v1',
-        version: 1,
-        rsa: { ...rsa, secrets: rsa.secrets ?? {} },
-        vcEc,
-        oidcEs256,
-        oidcPs256,
-        requestObjectEnc,
-      });
+      return withoutVcCertificateChains(
+        structuredClone({
+          kind: 'authrim.key_manager_tenant_backup.v1',
+          version: 1,
+          rsa: { ...rsa, secrets: rsa.secrets ?? {} },
+          vcEc,
+          oidcEs256,
+          oidcPs256,
+          requestObjectEnc,
+        })
+      );
     });
   }
 
@@ -2676,7 +3046,9 @@ export class KeyManager extends DurableObject<Env> {
 
       const state = this.#getECState();
       const key = state.keys.find((k) => k.kid === kid);
-      if (!key) {
+      // A revoked key is never made active again: its certificate chain and signatures would
+      // otherwise come back with it.
+      if (!key || key.status === 'revoked') {
         // SECURITY: Do not expose kid value in error to prevent key enumeration
         throw new Error('EC key not found');
       }

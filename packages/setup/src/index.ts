@@ -31,6 +31,7 @@ import {
   rotateSmokeRpcSigningKeyCommand,
 } from './cli/commands/signing-key-rotate.js';
 import { rotateLookupHmacKeyCommand } from './cli/commands/lookup-hmac-rotate.js';
+import { vcCaInitCommand } from './cli/commands/vc-ca-init.js';
 import { adminRecoverSecondFactorCommand } from './cli/commands/admin-recover-second-factor.js';
 import { controlProvisionCommand } from './cli/commands/control-provision.js';
 import { registerLocalCommands } from './cli/commands/local.js';
@@ -233,6 +234,27 @@ program
   .option('--dry-run', 'Validate the environment without changing key state')
   .option('-y, --yes', 'Skip confirmation prompts')
   .action(rotateLookupHmacKeyCommand);
+
+program
+  .command('vc-ca-init')
+  .description(
+    'Create the Authrim CA for HAIP x5c: a root CA (keep offline) and an issuing CA for the credential issuer'
+  )
+  .option('--env <name>', 'Environment name', 'prod')
+  .option('--keys-dir <path>', 'Keys directory')
+  .option('--root-key <file>', 'Issue a new issuing CA under this existing root private key (PEM)')
+  .option(
+    '--root-certificate <file>',
+    'Certificate of that root (default: vc_root_ca_certificate.pem in the keys directory)'
+  )
+  .option('--root-key-out <file>', 'Where to write a newly created root private key')
+  .option('--organization <name>', 'Organization name in the CA certificates', 'Authrim')
+  .option('--root-ca-years <n>', 'Root CA lifetime in years (default 20)')
+  .option('--issuing-ca-years <n>', 'Issuing CA lifetime in years (default 5)')
+  .option('--force', 'Replace an existing issuing CA (old files are kept as .bak)')
+  .option('--dry-run', 'Show what would be written without writing')
+  .option('-y, --yes', 'Skip the confirmation prompt')
+  .action(vcCaInitCommand);
 
 const adminProgram = program.command('admin').description('Administrator account operations');
 

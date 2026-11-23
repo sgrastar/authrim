@@ -201,6 +201,11 @@
       "required": true
     },
     {
+      "name": "VC_X5C_ISSUING_CA_SHA256",
+      "capability": "vc_issuer_certificate.trust",
+      "required": false
+    },
+    {
       "name": "LOG_ARCHIVE_CONTENT_HMAC_KEY",
       "required": false,
       "capability": "logging.archive.encrypt"

@@ -4,6 +4,7 @@
  * Issues credentials to the wallet.
  */
 
+import { ensureVcSigningCertificate, type VcCertificateKeyManager } from '../services/issuer-ca';
 import { isConfiguredShard, ShardConfigUnavailableError } from '../../utils/configured-shard';
 import type { Context } from 'hono';
 import type { Env } from '../../types';
@@ -576,8 +577,21 @@ async function loadOffer(
  */
 async function signSDJWTIssuer(env: Env, tenantId: string, payload: JWTPayload): Promise<string> {
   const doId = env.KEY_MANAGER.idFromName(`${tenantId}-v3`);
-  const stub = env.KEY_MANAGER.get(doId) as unknown as {
+  const stub = env.KEY_MANAGER.get(doId) as unknown as VcCertificateKeyManager & {
     signSDJWTIssuerRpc(input: JWTPayload): Promise<{ token: string }>;
   };
-  return (await stub.signSDJWTIssuerRpc(payload)).token;
+  // HAIP `x5c`: give the signing key its issuer certificate first. Never blocks the issuance.
+  if (typeof payload.iss === 'string') {
+    await ensureVcSigningCertificate(
+      env,
+      stub,
+      payload.iss,
+      tenantId,
+      Date.now(),
+      typeof payload.exp === 'number' ? payload.exp * 1000 : undefined
+    );
+  }
+  // A fresh stub: if the certificate calls broke the first one, the signing must not share its fate.
+  const signer = env.KEY_MANAGER.get(doId) as unknown as typeof stub;
+  return (await signer.signSDJWTIssuerRpc(payload)).token;
 }

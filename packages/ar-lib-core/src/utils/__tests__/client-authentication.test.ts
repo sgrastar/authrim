@@ -1325,6 +1325,33 @@ describe('Registered client authentication method enforcement', () => {
     });
   });
 
+  it('accepts a wallet attestation only for a wallet client, and nothing else for it', () => {
+    const none = { basic: false, clientSecretPost: false, clientAssertion: false };
+    expect(
+      validateRegisteredClientAuthenticationMethod(client('attest_jwt_client_auth'), {
+        ...none,
+        attestation: true,
+      })
+    ).toEqual({ valid: true });
+    // Nothing presented, or a secret / assertion instead or as well: refused.
+    for (const presentation of [
+      none,
+      { ...none, basic: true },
+      { ...none, clientSecretPost: true },
+      { ...none, attestation: true, clientSecretPost: true },
+    ]) {
+      expect(
+        validateRegisteredClientAuthenticationMethod(client('attest_jwt_client_auth'), presentation)
+      ).toMatchObject({ valid: false });
+    }
+    // An attestation never authenticates an ordinary client, a legacy one included.
+    for (const method of ['private_key_jwt', 'client_secret_basic', 'none', undefined] as const) {
+      expect(
+        validateRegisteredClientAuthenticationMethod(client(method), { ...none, attestation: true })
+      ).toMatchObject({ valid: false });
+    }
+  });
+
   it('rejects authentication downgrade and multiple presented methods', () => {
     expect(
       validateRegisteredClientAuthenticationMethod(client('private_key_jwt'), {

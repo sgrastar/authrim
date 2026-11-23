@@ -2622,6 +2622,13 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     'client trust policies'
   ),
   ...byMethod(
+    '/api/admin/wallet-attestation-allowlist',
+    ADMIN_PERMISSIONS.SETTINGS_READ,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    'wallet attestation allowlist'
+  ),
+  ...byMethod(
     '/api/admin/sign-in-confirmation-policies',
     ADMIN_PERMISSIONS.SETTINGS_READ,
     ADMIN_PERMISSIONS.SETTINGS_WRITE,
