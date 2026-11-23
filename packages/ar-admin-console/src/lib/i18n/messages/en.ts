@@ -886,6 +886,10 @@ export const en = {
 	'map.sample.absent': 'Missing value',
 	'map.sample.null': 'Null value',
 	'map.sample.empty': '(empty text)',
+	'map.sample.illustrative': 'Illustration',
+	'map.sample.illustrativeHint':
+		'A made-up value that shows the shape. The real one is decided when the mapping runs.',
+	'map.targetSample': 'Sample: {values}',
 	'map.sample.atSignIn': 'Set at run time',
 	'map.fix.first': 'Use the first value',
 	'map.fix.join': 'Join with commas',

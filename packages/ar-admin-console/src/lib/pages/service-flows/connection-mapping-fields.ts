@@ -12,6 +12,46 @@ import type { MappingType } from '#lib/ui/patterns/mapping-model.js';
 export const isRecord = (value: unknown): value is Record<string, unknown> =>
 	value !== null && typeof value === 'object' && !Array.isArray(value);
 
+/** The sample values a profile row carries, as the field's `examples` (nothing when it has none). */
+function exampleList(value: unknown): { examples?: string[] } {
+	if (!Array.isArray(value)) return {};
+	const examples = value.filter(
+		(item): item is string => typeof item === 'string' && item.trim() !== ''
+	);
+	return examples.length > 0 ? { examples } : {};
+}
+
+/**
+ * A descriptor the server sent, with the sample values its profile carries (the descriptor has
+ * none): so the mapping can say under an attribute what a value looks like.
+ */
+export function withProfileExamples(
+	descriptor: DestinationDescriptor,
+	profile: MappingDestinationProfile | undefined
+): DestinationDescriptor {
+	const version = profile ? servingVersion(profile) : null;
+	const rows = version
+		? profile?.destinationType === 'oidc'
+			? version.schema.claims
+			: version.schema.attributes
+		: null;
+	if (!Array.isArray(rows)) return descriptor;
+	const byKey = new Map<string, string[]>();
+	for (const row of rows) {
+		if (!isRecord(row)) continue;
+		const key = profile?.destinationType === 'oidc' ? row.claimName : row.name;
+		const { examples } = exampleList(row.examples);
+		if (typeof key === 'string' && examples) byKey.set(key, examples);
+	}
+	return {
+		...descriptor,
+		fields: descriptor.fields.map((field) => {
+			const examples = field.examples ?? byKey.get(field.key);
+			return examples ? { ...field, examples } : field;
+		})
+	};
+}
+
 function valueType(value: unknown, multi: boolean): MappingType {
 	if (multi) {
 		if (value && value !== 'string') throw new Error('Unsupported multi-valued field type');
@@ -62,7 +102,8 @@ export function profileDescriptor(profile: MappingDestinationProfile): Destinati
 					: typeof row.type === 'string'
 						? row.type
 						: null,
-			valueMultiplicity: row.valueMultiplicity === 'multi' ? 'multi' : 'single'
+			valueMultiplicity: row.valueMultiplicity === 'multi' ? 'multi' : 'single',
+			...exampleList(row.examples)
 		};
 	});
 	return {
@@ -126,6 +167,7 @@ export function codecContext(
 		label: field.label,
 		required: field.required,
 		type: valueType(field.valueType, field.valueMultiplicity === 'multi'),
+		...(field.examples?.length ? { samples: field.examples } : {}),
 		ref: {
 			side: 'destination',
 			namespace: protocol === 'oidc' ? 'oidc.claim' : 'saml.attribute',

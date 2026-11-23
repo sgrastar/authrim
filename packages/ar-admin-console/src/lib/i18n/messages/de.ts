@@ -900,6 +900,10 @@ export const de = {
 	'map.sample.absent': 'Fehlender Wert',
 	'map.sample.null': 'Nullwert',
 	'map.sample.empty': '(leerer Text)',
+	'map.sample.illustrative': 'Beispiel',
+	'map.sample.illustrativeHint':
+		'Ein erfundener Wert, der nur die Form zeigt. Der echte Wert entsteht erst bei der Ausführung.',
+	'map.targetSample': 'Beispiel: {values}',
 	'map.sample.atSignIn': 'Wird zur Laufzeit bestimmt',
 	'map.fix.first': 'Ersten Wert verwenden',
 	'map.fix.join': 'Mit Kommas verbinden',

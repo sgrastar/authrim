@@ -42,6 +42,8 @@ export interface MappingField {
 	required?: boolean;
 	/** Sending side: a sample value (a recent sign-in, a test user), for the sample output. */
 	example?: unknown;
+	/** Receiving side: what a value looks like, from the output source's sample values. */
+	samples?: readonly string[];
 }
 
 /**
