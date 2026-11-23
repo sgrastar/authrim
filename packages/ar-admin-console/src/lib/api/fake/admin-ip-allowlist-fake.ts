@@ -4,7 +4,7 @@
  * caller without the write permission is refused (403). The API takes IPv6 too, so an entry like
  * that can be given to show how the page lists one.
  */
-import { ApiError } from '../api-error';
+import { ApiError, ConflictError } from '../api-error';
 import type { IpAllowlist, IpAllowlistClient, IpAllowlistEntry } from '../admin-ip-allowlist';
 
 export type FakeIpAllowlistCall = keyof IpAllowlistClient;
@@ -14,6 +14,11 @@ export interface FakeIpAllowlistOptions {
 	/** The address the API sees (default: an office address). */
 	currentIp?: string | null;
 	delay?: number;
+	/**
+	 * Calls the API would refuse as `would_lock_out` unless the change goes on with `allowLockout`
+	 * (the console's own check missed it, or judged by another address).
+	 */
+	lockout?: FakeIpAllowlistCall[];
 	failOn?: Partial<Record<FakeIpAllowlistCall, 403 | 404 | 409 | 500>>;
 }
 
@@ -60,6 +65,11 @@ export function fakeIpAllowlist(options: FakeIpAllowlistOptions = {}): FakeIpAll
 	let next = 100;
 	const currentIp = options.currentIp === undefined ? '203.0.113.5' : options.currentIp;
 
+	function guard(call: FakeIpAllowlistCall, change?: { allowLockout?: boolean }) {
+		if (change?.allowLockout || !options.lockout?.includes(call)) return;
+		throw new ConflictError('Would lock out', { error: 'would_lock_out', current_ip: currentIp });
+	}
+
 	async function enter(call: FakeIpAllowlistCall) {
 		if (options.delay) await new Promise((resolve) => setTimeout(resolve, options.delay));
 		const status = options.failOn?.[call];
@@ -79,8 +89,9 @@ export function fakeIpAllowlist(options: FakeIpAllowlistOptions = {}): FakeIpAll
 			await enter('list');
 			return { entries: entries.map((entry) => ({ ...entry })), currentIp };
 		},
-		async create(input) {
+		async create(input, change) {
 			await enter('create');
+			guard('create', change);
 			const range = input.ip_range.trim();
 			invalid(range);
 			if (entries.some((entry) => entry.ip_range === range)) {
@@ -98,8 +109,9 @@ export function fakeIpAllowlist(options: FakeIpAllowlistOptions = {}): FakeIpAll
 			entries = [...entries, entry];
 			return { ...entry };
 		},
-		async update(id, changes) {
+		async update(id, changes, change) {
 			await enter('update');
+			guard('update', change);
 			const found = entries.find((entry) => entry.id === id);
 			if (!found) throw new ApiError(404, 'not_found', 'Not found');
 			if (changes.ip_range !== undefined) {
@@ -115,15 +127,17 @@ export function fakeIpAllowlist(options: FakeIpAllowlistOptions = {}): FakeIpAll
 			found.updated_at = Date.now();
 			return { ...found };
 		},
-		async setEnabled(id, enabled) {
+		async setEnabled(id, enabled, change) {
 			await enter('setEnabled');
+			guard('setEnabled', change);
 			const found = entries.find((entry) => entry.id === id);
 			if (!found) throw new ApiError(404, 'not_found', 'Not found');
 			found.enabled = enabled;
 			found.updated_at = Date.now();
 		},
-		async remove(id) {
+		async remove(id, change) {
 			await enter('remove');
+			guard('remove', change);
 			if (!entries.some((entry) => entry.id === id)) {
 				throw new ApiError(404, 'not_found', 'Not found');
 			}

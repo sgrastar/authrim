@@ -20,6 +20,7 @@ import { enAdminAudit } from './admin-audit/en';
 import { enUserAudit } from './user-audit/en';
 import { enTeam } from './team/en';
 import { enIpAllowlist } from './ip-allowlist/en';
+import { enAccountPages } from './account-pages/en';
 import { enMachineAccess } from './machine-access/en';
 import { enTenants } from './tenants/en';
 import { enAuthMethods } from './auth-methods/en';
@@ -52,6 +53,7 @@ export const en = {
 	...enUserAudit,
 	...enTeam,
 	...enIpAllowlist,
+	...enAccountPages,
 	...enMachineAccess,
 	...enTenants,
 	...enAuthMethods,

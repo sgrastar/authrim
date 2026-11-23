@@ -8,7 +8,7 @@
  * are asked for too, so the page works the limit out from the entries itself.
  */
 import { API_BASE_URL, adminFetch } from './admin-request';
-import { errorFromResponse } from './api-error';
+import { ApiError, errorFromResponse } from './api-error';
 
 export interface IpAllowlistEntry {
 	id: string;
@@ -27,17 +27,36 @@ export interface IpAllowlist {
 	currentIp: string | null;
 }
 
+/**
+ * A change the API refused because it would leave the caller's own address outside the limit
+ * (409 `would_lock_out`). Repeating it with `allowLockout` goes on with it.
+ */
+export function isLockoutRefusal(failure: unknown): boolean {
+	return (
+		failure instanceof ApiError && failure.status === 409 && failure.body.error === 'would_lock_out'
+	);
+}
+
+export interface ChangeOptions {
+	/** Go on with a change that would leave the caller outside the limit (`?allow_lockout=true`). */
+	allowLockout?: boolean;
+}
+
 export interface IpAllowlistClient {
 	/** Every entry, disabled ones too. */
 	list(signal?: AbortSignal): Promise<IpAllowlist>;
 	/** A range already listed answers 409; an address the API does not accept, 400. */
-	create(input: { ip_range: string; description: string }): Promise<IpAllowlistEntry>;
+	create(
+		input: { ip_range: string; description: string },
+		options?: ChangeOptions
+	): Promise<IpAllowlistEntry>;
 	update(
 		id: string,
-		changes: { ip_range?: string; description?: string }
+		changes: { ip_range?: string; description?: string },
+		options?: ChangeOptions
 	): Promise<IpAllowlistEntry>;
-	setEnabled(id: string, enabled: boolean): Promise<void>;
-	remove(id: string): Promise<void>;
+	setEnabled(id: string, enabled: boolean, options?: ChangeOptions): Promise<void>;
+	remove(id: string, options?: ChangeOptions): Promise<void>;
 }
 
 type Row = Record<string, unknown>;
@@ -71,8 +90,8 @@ async function readJson(response: Response): Promise<Row> {
 export function httpIpAllowlist(tenantId: string): IpAllowlistClient {
 	const base = `${API_BASE_URL}/api/admin/ip-allowlist`;
 	const entryUrl = (id: string) => `${base}/${encodeURIComponent(id)}`;
-	const send = (url: string, method: string, body?: unknown) =>
-		adminFetch(url, {
+	const send = (url: string, method: string, body?: unknown, options?: ChangeOptions) =>
+		adminFetch(options?.allowLockout ? `${url}?allow_lockout=true` : url, {
 			method,
 			tenantId,
 			...(body === undefined ? {} : { includeJsonContentType: true, body: JSON.stringify(body) })
@@ -90,34 +109,43 @@ export function httpIpAllowlist(tenantId: string): IpAllowlistClient {
 				currentIp: current && current !== 'unknown' ? current : null
 			};
 		},
-		async create(input) {
+		async create(input, options) {
 			const description = input.description.trim();
 			return ipAllowlistEntryFromRow(
 				await readJson(
-					await send(base, 'POST', {
-						ip_range: input.ip_range.trim(),
-						...(description ? { description } : {})
-					})
+					await send(
+						base,
+						'POST',
+						{ ip_range: input.ip_range.trim(), ...(description ? { description } : {}) },
+						options
+					)
 				)
 			);
 		},
-		async update(id, changes) {
+		async update(id, changes, options) {
 			return ipAllowlistEntryFromRow(
 				await readJson(
-					await send(entryUrl(id), 'PATCH', {
-						...(changes.ip_range !== undefined ? { ip_range: changes.ip_range.trim() } : {}),
-						...(changes.description !== undefined
-							? { description: changes.description.trim() }
-							: {})
-					})
+					await send(
+						entryUrl(id),
+						'PATCH',
+						{
+							...(changes.ip_range !== undefined ? { ip_range: changes.ip_range.trim() } : {}),
+							...(changes.description !== undefined
+								? { description: changes.description.trim() }
+								: {})
+						},
+						options
+					)
 				)
 			);
 		},
-		async setEnabled(id, enabled) {
-			await readJson(await send(`${entryUrl(id)}/${enabled ? 'enable' : 'disable'}`, 'POST'));
+		async setEnabled(id, enabled, options) {
+			await readJson(
+				await send(`${entryUrl(id)}/${enabled ? 'enable' : 'disable'}`, 'POST', undefined, options)
+			);
 		},
-		async remove(id) {
-			await readJson(await send(entryUrl(id), 'DELETE'));
+		async remove(id, options) {
+			await readJson(await send(entryUrl(id), 'DELETE', undefined, options));
 		}
 	};
 }

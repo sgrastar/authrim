@@ -20,6 +20,7 @@ import { deAdminAudit } from './admin-audit/de';
 import { deUserAudit } from './user-audit/de';
 import { deTeam } from './team/de';
 import { deIpAllowlist } from './ip-allowlist/de';
+import { deAccountPages } from './account-pages/de';
 import { deMachineAccess } from './machine-access/de';
 import { deTenants } from './tenants/de';
 import { deAuthMethods } from './auth-methods/de';
@@ -52,6 +53,7 @@ export const de = {
 	...deUserAudit,
 	...deTeam,
 	...deIpAllowlist,
+	...deAccountPages,
 	...deMachineAccess,
 	...deTenants,
 	...deAuthMethods,

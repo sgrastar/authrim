@@ -56,4 +56,20 @@ describe('the lite launcher', () => {
 		expect(filter('launcher_favorites=1')).toEqual(['a']);
 		expect(filter('launcher_q=home&launcher_category=Home')).toEqual(['c']);
 	});
+
+	it('shows only the launchers the slot was given, and counts and filters among them', () => {
+		const url = new URL('https://id.example/account');
+		const slot = liteAccountLaunchers(json, url, 'en', ['b', 'c', 'gone']);
+		expect(slot.launchers.map((item) => item.id)).toEqual(['b', 'c']);
+		expect(slot.total).toBe(2);
+		expect(slot.categories).toEqual(['Home', 'Work']);
+		// An empty choice shows none; no choice shows every one.
+		expect(liteAccountLaunchers(json, url, 'en', []).launchers).toEqual([]);
+		expect(liteAccountLaunchers(json, url, 'en', null).total).toBe(3);
+		// A launcher not drawn for its own link is not made drawable by being chosen.
+		expect(liteAccountLaunchers(json, url, 'en', ['d']).launchers).toEqual([]);
+		// The page's filters apply within the choice.
+		const favourites = new URL('https://id.example/account?launcher_favorites=1');
+		expect(liteAccountLaunchers(json, favourites, 'en', ['b', 'c']).launchers).toEqual([]);
+	});
 });

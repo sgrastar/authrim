@@ -19,6 +19,7 @@ import { jaAdminAudit } from './admin-audit/ja';
 import { jaUserAudit } from './user-audit/ja';
 import { jaTeam } from './team/ja';
 import { jaIpAllowlist } from './ip-allowlist/ja';
+import { jaAccountPages } from './account-pages/ja';
 import { jaMachineAccess } from './machine-access/ja';
 import { jaTenants } from './tenants/ja';
 import { jaAuthMethods } from './auth-methods/ja';
@@ -55,6 +56,7 @@ export const ja = {
 	...jaUserAudit,
 	...jaTeam,
 	...jaIpAllowlist,
+	...jaAccountPages,
 	...jaMachineAccess,
 	...jaTenants,
 	...jaAuthMethods,
