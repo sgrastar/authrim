@@ -3,13 +3,20 @@
 	import { onMount } from 'svelte';
 	import { LL } from '$i18n/i18n-svelte';
 	import { accountAPI, type AccountLauncher } from '#lib/api/account.js';
+	import { launchersInSlot } from './account-launcher-filter.js';
 	import AccountLauncherWidget from './widgets/AccountLauncherWidget.svelte';
 	import type { AccountWidgetHeadingLevel } from './widgets/types';
 
 	let {
 		title = '',
-		headingLevel = 2
-	}: { title?: string; headingLevel?: AccountWidgetHeadingLevel } = $props();
+		headingLevel = 2,
+		launcherIds
+	}: {
+		title?: string;
+		headingLevel?: AccountWidgetHeadingLevel;
+		/** The launchers this slot shows, by id; absent: every launcher the account may open. */
+		launcherIds?: readonly string[];
+	} = $props();
 
 	let launchers = $state<AccountLauncher[]>([]);
 	let loading = $state(true);
@@ -25,7 +32,8 @@
 		if (result.error) {
 			error = $LL.account_launcherLoadFailed();
 		} else {
-			launchers = result.data?.launchers ?? [];
+			const all = result.data?.launchers ?? [];
+			launchers = launchersInSlot(all, launcherIds);
 		}
 		loading = false;
 	}

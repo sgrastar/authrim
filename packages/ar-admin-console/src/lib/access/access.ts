@@ -227,6 +227,30 @@ export function teamAccess(access: AdminAccess): TeamAccess {
 }
 
 /**
+ * What the admin can do on the administrator IP limit (Settings → Administrator IP limit), as
+ * the Admin API checks it. Delete takes the delete permission and the write one, since the route
+ * is gated by the first and the handler by the second.
+ */
+export interface IpAllowlistAccess {
+	/** See the limit (`admin:ip_allowlist:read`). */
+	read: boolean;
+	/** Add, change, switch on and off (`admin:ip_allowlist:write`, with read). */
+	write: boolean;
+	/** Delete an entry (`admin:ip_allowlist:delete` and write, with read). */
+	remove: boolean;
+}
+
+export function ipAllowlistAccess(access: AdminAccess): IpAllowlistAccess {
+	const read = hasPermission(access, 'admin:ip_allowlist:read');
+	const write = read && hasPermission(access, 'admin:ip_allowlist:write');
+	return {
+		read,
+		write,
+		remove: write && hasPermission(access, 'admin:ip_allowlist:delete')
+	};
+}
+
+/**
  * What the admin can do on an end user's page (Users → All users → one user), as the Admin API
  * checks it. The role requirement for suspending, locking and reactivating is the API's
  * (`requireAnyRole(ADMIN_ROLE_GROUPS.tenantAdmin)` on top of `admin:users:write`): it is mirrored

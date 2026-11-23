@@ -19,6 +19,8 @@ import { arStepUp } from './step-up/ar';
 import { arAdminAudit } from './admin-audit/ar';
 import { arUserAudit } from './user-audit/ar';
 import { arTeam } from './team/ar';
+import { arIpAllowlist } from './ip-allowlist/ar';
+import { arAccountPages } from './account-pages/ar';
 import { arMachineAccess } from './machine-access/ar';
 import { arTenants } from './tenants/ar';
 import { arAuthMethods } from './auth-methods/ar';
@@ -50,6 +52,8 @@ export const ar = {
 	...arAdminAudit,
 	...arUserAudit,
 	...arTeam,
+	...arIpAllowlist,
+	...arAccountPages,
 	...arMachineAccess,
 	...arTenants,
 	...arAuthMethods,
@@ -123,6 +127,7 @@ export const ar = {
 	'nav.set.team': 'المسؤولون',
 	'nav.set.teamGroups': 'مجموعات المسؤولين',
 	'nav.set.teamRoles': 'أدوار المسؤولين',
+	'nav.set.teamIpAllowlist': 'تقييد عناوين IP للمسؤولين',
 	'nav.plat.tenants': 'المستأجرون',
 	'nav.plat.releases': 'مستوى التحكم',
 	'nav.plat.scale': 'التوسع',
@@ -134,7 +139,6 @@ export const ar = {
 	'nav.apps.machine': 'وصول الأنظمة',
 	'nav.auth.tokenRefresh': 'تجديد الرموز الخارجية',
 	'nav.auth.discovery': 'اكتشاف المستأجر',
-	'nav.auth.ipAllowlist': 'قائمة عناوين IP المسموحة',
 	'nav.auth.sessionProfiles': 'ملفات تعريف الجلسة',
 	'nav.auth.logout': 'تسجيل الخروج',
 	'nav.custom.loginUi': 'واجهة تسجيل الدخول',
@@ -881,6 +885,9 @@ export const ar = {
 	'map.sample.absent': 'قيمة مفقودة',
 	'map.sample.null': 'قيمة null',
 	'map.sample.empty': '(نص فارغ)',
+	'map.sample.illustrative': 'توضيحي',
+	'map.sample.illustrativeHint': 'قيمة مصطنعة تُظهر الشكل فقط. تُحدَّد القيمة الفعلية عند التشغيل.',
+	'map.targetSample': 'مثال: {values}',
 	'map.sample.atSignIn': 'يُحدَّد وقت التشغيل',
 	'map.fix.first': 'استخدام القيمة الأولى',
 	'map.fix.join': 'الدمج بفواصل',

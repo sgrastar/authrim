@@ -1646,6 +1646,146 @@ describe('Settings API v2', () => {
         expect(savedDocument.pages[0]?.draft.screens[0]?.show_for_guests).toBe(false);
       });
 
+      it('accepts a published account page whose screen carries the guest registration widget', async () => {
+        const mockKV = createMockKV();
+        const { app, mockEnv } = createTestApp({ kv: mockKV });
+        const getRes = await app.request(
+          '/api/admin/tenants/tenant_123/settings/login-ui',
+          { method: 'GET' },
+          mockEnv
+        );
+        const current = await getRes.json<SettingsGetResult>();
+        const now = Date.now();
+        const draft = {
+          schema_version: 'authrim.account_page.v1',
+          screens: [
+            {
+              id: 'overview',
+              screen_key: 'account_overview',
+              width: 'full',
+              enabled: true,
+              condition: 'always',
+              show_for_guests: true,
+            },
+          ],
+        };
+        // The built-in overview screen has this widget; the preset places that screen.
+        const document = {
+          schema_version: 'authrim.account_pages.v1',
+          default_page_id: 'default-page',
+          pages: [
+            {
+              id: 'default-page',
+              name: 'Default',
+              base_preset_id: 'authrim-default',
+              base_preset_version: 3,
+              draft,
+              published: {
+                ...draft,
+                resolved_at: new Date(now).toISOString(),
+                screen_snapshots: {
+                  account_overview: {
+                    screen_kind: 'account',
+                    screen_key: 'account_overview',
+                    fields: [
+                      { block_type: 'heading', label: 'Overview' },
+                      { block_type: 'account_upgrade_widget', field: 'account.upgrade' },
+                    ],
+                  },
+                },
+              },
+              published_version: 1,
+              published_at: new Date(now).toISOString(),
+              created_at: now,
+              updated_at: now,
+            },
+          ],
+        };
+
+        const patchRes = await app.request(
+          '/api/admin/tenants/tenant_123/settings/login-ui',
+          {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              ifMatch: current.version,
+              set: { 'login-ui.account_pages': JSON.stringify(document) },
+            }),
+          },
+          mockEnv
+        );
+        expect(patchRes.status).toBe(200);
+        const result = await patchRes.json<{ applied: string[]; rejected: object }>();
+        expect(result.applied).toContain('login-ui.account_pages');
+        expect(result.rejected).toEqual({});
+      });
+
+      it('checks the launchers a launcher slot of an account page shows', async () => {
+        const mockKV = createMockKV();
+        const { app, mockEnv } = createTestApp({ kv: mockKV });
+        const now = Date.now();
+        const save = async (launcherIds: unknown) => {
+          // Each save is over the version the last one left.
+          const getRes = await app.request(
+            '/api/admin/tenants/tenant_123/settings/login-ui',
+            { method: 'GET' },
+            mockEnv
+          );
+          const current = await getRes.json<SettingsGetResult>();
+          const document = {
+            schema_version: 'authrim.account_pages.v1',
+            default_page_id: 'default-page',
+            pages: [
+              {
+                id: 'default-page',
+                name: 'Default',
+                base_preset_id: 'authrim-default',
+                base_preset_version: 3,
+                draft: {
+                  schema_version: 'authrim.account_page.v1',
+                  screens: [
+                    {
+                      id: 'apps',
+                      screen_key: 'account_launchers',
+                      width: 'full',
+                      enabled: true,
+                      condition: 'always',
+                      show_for_guests: true,
+                      launcher_ids: launcherIds,
+                    },
+                  ],
+                },
+                published_version: 0,
+                published_at: '',
+                created_at: now,
+                updated_at: now,
+              },
+            ],
+          };
+          const response = await app.request(
+            '/api/admin/tenants/tenant_123/settings/login-ui',
+            {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                ifMatch: current.version,
+                set: { 'login-ui.account_pages': JSON.stringify(document) },
+              }),
+            },
+            mockEnv
+          );
+          return response.status;
+        };
+
+        expect(await save(['mail', 'plc_00000000-0000-0000-0000-000000000000'])).toBe(200);
+        expect(await save([])).toBe(200);
+        expect(await save(['mail', 'mail'])).toBe(400);
+        expect(await save(['not safe'])).toBe(400);
+        expect(await save([7])).toBe(400);
+        expect(await save('mail')).toBe(400);
+        expect(await save(Array.from({ length: 101 }, (_, index) => `l${index}`))).toBe(400);
+      });
+
       it('rejects untrusted external post-login redirect URLs', async () => {
         const mockKV = createMockKV();
         const { app, mockEnv } = createTestApp({ kv: mockKV });

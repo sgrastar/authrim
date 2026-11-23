@@ -196,10 +196,6 @@ export const TENANT_AREAS: readonly NavArea[] = [
 				label: 'nav.auth.protection',
 				platform: 'tenant',
 				requires: { settings: ['rate-limit'] }
-			},
-			{
-				id: 'ip-allowlist',
-				label: 'nav.auth.ipAllowlist'
 			}
 		]
 	},
@@ -227,7 +223,9 @@ export const TENANT_AREAS: readonly NavArea[] = [
 			},
 			{
 				id: 'account-page',
-				label: 'nav.custom.accountPage'
+				label: 'nav.custom.accountPage',
+				// The account page editor: …/account-page/<page id>.
+				details: true
 			},
 			{
 				id: 'launchers',
@@ -365,6 +363,13 @@ export const TENANT_AREAS: readonly NavArea[] = [
 				requires: { permission: 'admin:admin_roles:read' },
 				// …/team-roles/<id> and …/team-roles/new: a role's page.
 				details: true
+			},
+			{
+				id: 'team-ip-allowlist',
+				label: 'nav.set.teamIpAllowlist',
+				platform: 'tenant',
+				// Which addresses the tenant's administrators may sign in from (not end users).
+				requires: { permission: 'admin:ip_allowlist:read' }
 			}
 		]
 	}

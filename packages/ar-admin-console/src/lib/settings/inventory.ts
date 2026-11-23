@@ -56,7 +56,6 @@ export const DRAFT_PAGES: readonly DraftPage[] = [
 	},
 	{ id: 'authentication/directory', scope: 'tenant' },
 	{ id: 'authentication/protection', scope: 'tenant' },
-	{ id: 'authentication/ip-allowlist', scope: 'tenant' },
 	{
 		id: 'authentication/tokens',
 		title: 'App defaults',
@@ -107,6 +106,7 @@ export const DRAFT_PAGES: readonly DraftPage[] = [
 		scope: 'tenant',
 		note: 'A built page (Admin sign-in); the list of administrators is not built yet.'
 	},
+	{ id: 'settings/team-ip-allowlist', scope: 'tenant' },
 	{ id: 'plat-tenants/discovery', scope: 'platform' },
 	{
 		id: 'plat-tenants/bulk-apply',

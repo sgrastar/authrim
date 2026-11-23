@@ -33,3 +33,14 @@ export function launcherPicture(value: string | null | undefined): string | null
 		return null;
 	}
 }
+
+/**
+ * The launchers a launcher slot shows: the ones its page chose, by id (none when the choice is
+ * empty), or every one the account may open when the slot was given no choice.
+ */
+export function launchersInSlot(
+	launchers: readonly AccountLauncher[],
+	ids: readonly string[] | undefined
+): AccountLauncher[] {
+	return ids ? launchers.filter((launcher) => ids.includes(launcher.id)) : [...launchers];
+}

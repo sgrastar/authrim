@@ -20,6 +20,7 @@ const ACCOUNT_SCREEN_BLOCK_TYPES = new Set([
   'link',
   'divider',
   'layout_row',
+  'account_upgrade_widget',
   'account_profile_widget',
   'account_device_list_widget',
   'account_session_widget',
@@ -87,6 +88,19 @@ function sanitizeSnapshotLocalizations(value: unknown): ScreenResponse['localiza
   return result;
 }
 
+/** The launchers a launcher slot shows: safe ids, no repeats, at most 100; undefined when not a list. */
+function normalizeLauncherIds(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const ids: string[] = [];
+  for (const raw of value.slice(0, 400)) {
+    if (typeof raw !== 'string' || !/^[A-Za-z0-9_-]{1,96}$/u.test(raw) || ids.includes(raw))
+      continue;
+    ids.push(raw);
+    if (ids.length >= 100) break;
+  }
+  return ids;
+}
+
 function normalizePlacement(
   value: unknown,
   index: number,
@@ -120,6 +134,9 @@ function normalizePlacement(
       record.condition === 'multiple_sessions'
         ? record.condition
         : 'always',
+    ...(normalizeLauncherIds(record.launcher_ids)
+      ? { launcher_ids: normalizeLauncherIds(record.launcher_ids) }
+      : {}),
   };
 }
 

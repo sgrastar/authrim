@@ -18,6 +18,8 @@ import { jaStepUp } from './step-up/ja';
 import { jaAdminAudit } from './admin-audit/ja';
 import { jaUserAudit } from './user-audit/ja';
 import { jaTeam } from './team/ja';
+import { jaIpAllowlist } from './ip-allowlist/ja';
+import { jaAccountPages } from './account-pages/ja';
 import { jaMachineAccess } from './machine-access/ja';
 import { jaTenants } from './tenants/ja';
 import { jaAuthMethods } from './auth-methods/ja';
@@ -53,6 +55,8 @@ export const ja = {
 	...jaAdminAudit,
 	...jaUserAudit,
 	...jaTeam,
+	...jaIpAllowlist,
+	...jaAccountPages,
 	...jaMachineAccess,
 	...jaTenants,
 	...jaAuthMethods,
@@ -126,6 +130,7 @@ export const ja = {
 	'nav.set.team': '管理者ユーザー',
 	'nav.set.teamGroups': '管理者グループ',
 	'nav.set.teamRoles': '管理者ロール',
+	'nav.set.teamIpAllowlist': '管理者の IP 制限',
 	'nav.plat.tenants': 'テナント',
 	'nav.plat.releases': 'コントロールプレーン',
 	'nav.plat.scale': 'スケール',
@@ -137,7 +142,6 @@ export const ja = {
 	'nav.apps.machine': 'マシン間アクセス',
 	'nav.auth.tokenRefresh': '外部トークン更新',
 	'nav.auth.discovery': 'テナント判定',
-	'nav.auth.ipAllowlist': 'IP 許可リスト',
 	'nav.auth.sessionProfiles': 'セッションプロフィール',
 	'nav.auth.logout': 'ログアウト',
 	'nav.custom.loginUi': 'ログイン UI',
@@ -893,6 +897,9 @@ export const ja = {
 	'map.sample.absent': '値が未設定',
 	'map.sample.null': 'null値',
 	'map.sample.empty': '（空の文字）',
+	'map.sample.illustrative': 'イメージ',
+	'map.sample.illustrativeHint': '形だけを示すダミーの値です。実際の値は実行時に決まります。',
+	'map.targetSample': 'サンプル：{values}',
 	'map.sample.atSignIn': '実行時に決まります',
 	'map.fix.first': '最初の値だけにする',
 	'map.fix.join': 'カンマでつなげる',
