@@ -20,6 +20,7 @@ const ACCOUNT_SCREEN_BLOCK_TYPES = new Set([
   'link',
   'divider',
   'layout_row',
+  'account_upgrade_widget',
   'account_profile_widget',
   'account_device_list_widget',
   'account_session_widget',

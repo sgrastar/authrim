@@ -44,6 +44,18 @@ const snapshot = (screenKey: string, blockType: string) => ({
   localizations: {},
 });
 
+describe('publishedAccountPageFromSettings', () => {
+  it('keeps the guest registration widget of a published screen', () => {
+    const page = publishedAccountPageFromSettings(
+      settingsWithPage([placement('overview', 'account_overview')], {
+        account_overview: snapshot('account_overview', 'account_upgrade_widget'),
+      })
+    );
+    const fields = page.screens.flatMap((screen) => screen.fields);
+    expect(fields.map((field) => field.block_type)).toContain('account_upgrade_widget');
+  });
+});
+
 describe('passkeyPlacementId', () => {
   it('finds the built-in passkeys placement on the default page', () => {
     expect(passkeyPlacementId(publishedAccountPageFromSettings(null))).toBe('passkeys');

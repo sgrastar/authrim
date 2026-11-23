@@ -305,6 +305,7 @@ export function validateLoginUIPatch(body: SettingsPatchRequest): {
                     'text',
                     'link',
                     'divider',
+                    'account_upgrade_widget',
                     'account_profile_widget',
                     'account_device_list_widget',
                     'account_session_widget',

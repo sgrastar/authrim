@@ -20,6 +20,7 @@ import { arAdminAudit } from './admin-audit/ar';
 import { arUserAudit } from './user-audit/ar';
 import { arTeam } from './team/ar';
 import { arIpAllowlist } from './ip-allowlist/ar';
+import { arAccountPages } from './account-pages/ar';
 import { arMachineAccess } from './machine-access/ar';
 import { arTenants } from './tenants/ar';
 import { arAuthMethods } from './auth-methods/ar';
@@ -52,6 +53,7 @@ export const ar = {
 	...arUserAudit,
 	...arTeam,
 	...arIpAllowlist,
+	...arAccountPages,
 	...arMachineAccess,
 	...arTenants,
 	...arAuthMethods,
