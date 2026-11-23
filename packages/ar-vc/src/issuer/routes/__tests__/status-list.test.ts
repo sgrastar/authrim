@@ -2,6 +2,7 @@
  * Status List Route Tests
  */
 
+import { buildCertificate, bytesToBase64 } from '@authrim/ar-lib-core';
 import { describe, it, expect, vi, beforeEach, beforeAll, afterEach } from 'vitest';
 import { Hono } from 'hono';
 import { statusListRoute, statusListJsonRoute } from '../status-list';
@@ -302,6 +303,82 @@ describe('Status List Routes', () => {
         ttl: 300,
         status_list: { bits: 2, lst: mockTslListData.encoded_list },
       });
+    });
+
+    it('requires an x5c chain for a tenant that serves HAIP wallets, and only then', async () => {
+      const { privateKey, publicKey } = await generateKeyPair('ES256', { extractable: true });
+      const jwk = await exportJWK(publicKey);
+      const publicJwk = { kty: 'EC', crv: 'P-256', x: jwk.x, y: jwk.y };
+      const name = { commonName: 'Wallet Root', organization: 'Wallet Co' };
+      const der = await buildCertificate(
+        {
+          subject: name,
+          issuer: name,
+          subjectPublicKey: publicJwk,
+          issuerPublicKey: publicJwk,
+          notBefore: new Date(Date.now() - 3600_000),
+          notAfter: new Date(Date.now() + 365 * 24 * 3600_000),
+          isCA: true,
+          pathLength: 1,
+        },
+        async (tbs) =>
+          new Uint8Array(
+            await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, privateKey, tbs)
+          )
+      );
+      const sha256 = [...new Uint8Array(await crypto.subtle.digest('SHA-256', der))]
+        .map((byte) => byte.toString(16).padStart(2, '0'))
+        .join('');
+      const root = { certificate: bytesToBase64(der), sha256 };
+      const withWallet = (env: Env, keyRoots: unknown[]): Env => {
+        (env as unknown as { SETTINGS: KVNamespace }).SETTINGS = {
+          get: vi.fn(async (key: string) =>
+            key.endsWith(':wallet-attestation-allowlist')
+              ? JSON.stringify({
+                  version: 1,
+                  updatedAt: 1,
+                  revision: 1,
+                  entries: [
+                    {
+                      clientId: 'keyring-wallet',
+                      label: 'Keyring',
+                      enabled: true,
+                      attestationRoots: [root],
+                      keyAttestationRoots: keyRoots,
+                      redirectUris: ['https://wallet.example.com/cb'],
+                    },
+                  ],
+                })
+              : null
+          ),
+        } as unknown as KVNamespace;
+        return env;
+      };
+      const signRpc = (env: Env) =>
+        (
+          env.KEY_MANAGER as unknown as {
+            get: () => { signStatusListCredentialRpc: ReturnType<typeof vi.fn> };
+          }
+        ).get().signStatusListCredentialRpc;
+
+      // No HAIP wallet: signed as before, without the option.
+      const plain = createMockEnv(mockTslListData);
+      expect((await request(plain)).status).toBe(200);
+      expect(signRpc(plain).mock.calls[0]).toHaveLength(1);
+      // A wallet without key attestation roots cannot obtain HAIP credentials: the same.
+      const noRoots = withWallet(createMockEnv(mockTslListData), []);
+      expect((await request(noRoots)).status).toBe(200);
+      expect(signRpc(noRoots).mock.calls[0]).toHaveLength(1);
+      // A HAIP tenant: the chain is required, and without it the list is not served below the
+      // standard (retry later, answered below 500 as nothing was signed).
+      const haip = withWallet(createMockEnv(mockTslListData), [root]);
+      expect((await request(haip)).status).toBe(200);
+      expect(signRpc(haip).mock.calls[0][1]).toEqual({ requireX5c: true });
+      const refused = withWallet(createMockEnv(mockTslListData), [root]);
+      signRpc(refused).mockRejectedValue(new Error('x5c_required'));
+      const response = await request(refused);
+      expect(response.status).toBe(424);
+      expect(await response.json()).toEqual({ error: 'temporarily_unavailable' });
     });
 
     it('answers 304 within a window and a fresh token once the window and ETag change', async () => {

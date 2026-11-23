@@ -24,6 +24,7 @@ import {
   getLogger,
   getTenantIdFromContext,
   resolveTenantMetadataContext,
+  loadWalletAllowlist,
   type Env as CoreEnv,
 } from '@authrim/ar-lib-core';
 import { getRequestIssuerUrl } from '../../request-identifiers';
@@ -132,8 +133,14 @@ async function generateTokenStatusListJWT(
   };
 
   const signingStub = keyManager as unknown as VcCertificateKeyManager & {
-    signStatusListCredentialRpc(input: JWTPayload): Promise<{ token: string }>;
+    signStatusListCredentialRpc(
+      input: JWTPayload,
+      options?: { requireX5c: boolean }
+    ): Promise<{ token: string }>;
   };
+  // A tenant that issues over HAIP signs its lists with an `x5c` chain or not at all: HAIP
+  // credentials reference these lists (HAIP 1.0 section 6.1).
+  const requireX5c = await servesHaipWallets(env, listData.tenant_id);
   // HAIP `x5c` on the Token Status List: give the signing key its issuer certificate first.
   await ensureVcSigningCertificate(
     env,
@@ -145,7 +152,23 @@ async function generateTokenStatusListJWT(
   );
   // A fresh stub: if the certificate calls broke the first one, the signing must not share its fate.
   const signer = env.KEY_MANAGER.get(keyManagerId) as unknown as typeof signingStub;
-  return (await signer.signStatusListCredentialRpc(payload)).token;
+  return (
+    await (requireX5c
+      ? signer.signStatusListCredentialRpc(payload, { requireX5c: true })
+      : signer.signStatusListCredentialRpc(payload))
+  ).token;
+}
+
+/** Whether the tenant has a wallet that can obtain HAIP credentials (key attestation roots set). */
+async function servesHaipWallets(env: Env, tenantId: string): Promise<boolean> {
+  try {
+    return (await loadWalletAllowlist(env as unknown as CoreEnv, tenantId)).entries.some(
+      (entry) => entry.enabled && entry.keyAttestationRoots.length > 0
+    );
+  } catch {
+    // An unreadable allowlist serves no wallet.
+    return false;
+  }
 }
 
 /**
@@ -256,6 +279,11 @@ export async function statusListRoute(c: Context<{ Bindings: Env }>): Promise<Re
     });
   } catch (err) {
     log.error('Failed to generate status list credential', {}, err as Error);
+    // No certificate chain for a list a HAIP credential refers to: retry later (below 500, as the
+    // signing refused before anything was signed).
+    if (err instanceof Error && err.message.includes('x5c_required')) {
+      return c.json({ error: 'temporarily_unavailable' }, 424);
+    }
     return c.json(
       {
         error: 'server_error',

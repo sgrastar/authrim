@@ -50,7 +50,17 @@ import {
   getCredentialConfiguration,
   type CredentialSubjectKind,
 } from '../credential-configurations';
-import { invalidDpopTokenError, invalidTokenError, vciError } from '../oauth-errors';
+import {
+  invalidDpopTokenError,
+  invalidTokenError,
+  useDpopNonceError,
+  vciError,
+} from '../oauth-errors';
+import {
+  issueCredentialDpopNonce,
+  readDpopProofNonce,
+  verifyCredentialDpopNonce,
+} from '../services/dpop-nonce';
 import {
   getCredentialOfferStoreById,
   getCredentialOfferStoreByProofNonce,
@@ -217,6 +227,17 @@ export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Re
       opToken = validated;
       // The proof is for this request and this token, made with the key the token is bound to.
       const proof = c.req.header('DPoP');
+      // The server's DPoP nonce: a proof without a current one is sent back for a fresh nonce
+      // (RFC 9449 section 8). Without a server secret there is none to give, which is a failure.
+      const fresh = await issueCredentialDpopNonce(c.env, validated.tenantId);
+      if (!fresh) return vciError(c, 424, 'temporarily_unavailable');
+      if (
+        proof &&
+        !(await verifyCredentialDpopNonce(c.env, validated.tenantId, readDpopProofNonce(proof)))
+      ) {
+        return useDpopNonceError(c, fresh);
+      }
+      c.header('DPoP-Nonce', fresh);
       const dpop = proof
         ? await validateDPoPProof(
             proof,

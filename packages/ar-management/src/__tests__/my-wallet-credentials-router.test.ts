@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   revokeFactor: vi.fn(async (): Promise<unknown> => ({ revoked: true })),
   revokeKeyring: vi.fn(async () => true),
   stepUp: vi.fn(async (_c: unknown, _descriptor: unknown): Promise<Response | null> => null),
+  allowlist: vi.fn(),
 }));
 
 vi.mock('../admin-step-up-gate', () => ({ requireAdminStepUp: mocks.stepUp }));
@@ -44,6 +45,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     requiredIdempotencyMiddleware: () => pass,
     requireDedicatedAdminDatabaseAdapter: vi.fn(() => ({ queryOne: mocks.queryOne })),
     evaluateAdminCredentialEligibility: mocks.evaluate,
+    loadWalletAllowlist: mocks.allowlist,
     createAuthContextFromHono: () => ({
       coreAdapter: { query: mocks.coreQuery, queryOne: mocks.coreQueryOne },
     }),
@@ -94,6 +96,8 @@ function createApp(env: Partial<Env> = {}) {
     post: () => app.request('/api/admin/me/wallet-credentials/offers', { method: 'POST' }, fullEnv),
     get: (id = 'offer-1') =>
       app.request(`/api/admin/me/wallet-credentials/offers/${id}`, {}, fullEnv),
+    haip: () =>
+      app.request('/api/admin/me/wallet-credentials/haip-offer', { method: 'POST' }, fullEnv),
     list: () => app.request('/api/admin/me/wallet-credentials', {}, fullEnv),
     revoke: (id = 'cred-1') =>
       app.request(`/api/admin/me/wallet-credentials/${id}/revoke`, { method: 'POST' }, fullEnv),
@@ -113,6 +117,63 @@ describe('my wallet credential offers', () => {
     mocks.issuer.mockResolvedValue('https://idp.example.test/some/path');
     mocks.createOffer.mockResolvedValue(OFFER);
     mocks.getStatus.mockResolvedValue({ offerId: 'offer-1', state: 'pending', expiresAt: 5 });
+  });
+
+  describe('POST /haip-offer', () => {
+    const wallet = (overrides: Record<string, unknown> = {}) => ({
+      version: 1,
+      updatedAt: 1,
+      revision: 1,
+      entries: [
+        {
+          clientId: 'keyring-wallet',
+          label: 'Keyring',
+          enabled: true,
+          attestationRoots: [],
+          keyAttestationRoots: [{ certificate: 'x', sha256: 'a'.repeat(64) }],
+          redirectUris: ['https://wallet.example.com/cb'],
+          ...overrides,
+        },
+      ],
+    });
+
+    it('offers the authorization code grant at the tenant OP on haip-vci, with an audit without the offer', async () => {
+      mocks.allowlist.mockResolvedValue(wallet());
+      const response = await createApp().haip();
+      expect(response.status).toBe(201);
+      expect(response.headers.get('Cache-Control')).toBe('no-store');
+      const body = await response.json<{
+        credentialOffer: string;
+        credentialOfferObject: Record<string, unknown>;
+      }>();
+      expect(body.credentialOffer.startsWith('haip-vci://?credential_offer=')).toBe(true);
+      expect(body.credentialOfferObject).toEqual({
+        credential_issuer: 'https://idp.example.test',
+        credential_configuration_ids: ['AuthrimAdminCredential'],
+        grants: {
+          authorization_code: { authorization_server: 'https://idp.example.test' },
+        },
+      });
+      expect(mocks.createOffer).not.toHaveBeenCalled();
+      const audit = JSON.stringify(mocks.writeAdminAuditLog.mock.calls[0][1]);
+      expect(audit).toContain('admin_wallet_credential.haip_offer_created');
+      expect(audit).not.toContain('haip-vci');
+    });
+
+    it('refuses without a HAIP wallet, for a non-administrator, without fresh authentication and when the list is unreadable', async () => {
+      mocks.allowlist.mockResolvedValue(wallet({ keyAttestationRoots: [] }));
+      expect((await createApp().haip()).status).toBe(409);
+      mocks.allowlist.mockResolvedValue(wallet({ enabled: false }));
+      expect((await createApp().haip()).status).toBe(409);
+      mocks.allowlist.mockRejectedValue(new Error('corrupt'));
+      expect((await createApp().haip()).status).toBe(503);
+      mocks.allowlist.mockResolvedValue(wallet());
+      mocks.evaluate.mockResolvedValue({ eligible: false });
+      expect((await createApp().haip()).status).toBe(403);
+      mocks.evaluate.mockResolvedValue({ eligible: true, email: 'a@example.com', name: 'A' });
+      mocks.getAuth.mockReturnValue(freshAuth({ authenticationTimeMs: Date.now() - 3600_000 }));
+      expect((await createApp().haip()).status).toBe(403);
+    });
   });
 
   describe('POST /offers', () => {

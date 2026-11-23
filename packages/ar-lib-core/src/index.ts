@@ -434,6 +434,7 @@ export * from './vc/x509-certificate';
 export * from './vc/wallet-attestation';
 export * from './vc/wallet-allowlist';
 export * from './vc/key-attestation';
+export * from './vc/haip-offer';
 export * from './vc/status-list';
 export * from './vc/status-list-manager';
 export * from './vc/status-list-codec';

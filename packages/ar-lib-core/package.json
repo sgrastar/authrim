@@ -120,6 +120,11 @@
       "types": "./src/vc/key-attestation.ts",
       "default": "./src/vc/key-attestation.ts"
     },
+    "./vc/haip-offer": {
+      "import": "./dist/vc/haip-offer.js",
+      "types": "./src/vc/haip-offer.ts",
+      "default": "./src/vc/haip-offer.ts"
+    },
     "./test/setup": "./src/test/setup.ts",
     "./test/fixtures": "./src/test/fixtures.ts"
   },

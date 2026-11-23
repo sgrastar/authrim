@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   load: vi.fn(),
   save: vi.fn(),
   auth: vi.fn((): { userId?: string } | undefined => ({ userId: 'admin-1' })),
+  storedClient: vi.fn(async (): Promise<unknown> => null),
 }));
 
 vi.mock('../admin-step-up-gate', () => ({ requireAdminStepUp: mocks.stepUp }));
@@ -18,6 +19,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     getLogger: () => ({
       module: () => ({ error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() }),
     }),
+    createAuthContextFromHono: () => ({ coreAdapter: { queryOne: mocks.storedClient } }),
     loadWalletAllowlist: mocks.load,
     saveWalletAllowlist: mocks.save,
   };
@@ -59,6 +61,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.auth.mockReturnValue({ userId: 'admin-1' });
   mocks.stepUp.mockResolvedValue(null);
+  mocks.storedClient.mockResolvedValue(null);
   mocks.load.mockResolvedValue({ version: 1, updatedAt: 5, revision: 3, entries: [] });
   mocks.save.mockImplementation(
     async (_env: unknown, input: { allowlist: { entries: unknown[] } }) => ({
@@ -142,6 +145,19 @@ describe('PUT', () => {
       expect((await put(body)).status).toBe(400);
     }
     expect(mocks.stepUp).not.toHaveBeenCalled();
+    expect(mocks.save).not.toHaveBeenCalled();
+  });
+
+  it('refuses an id a registered client already uses, before the step-up is spent', async () => {
+    mocks.storedClient.mockResolvedValue({ client_id: 'keyring-wallet' });
+    const response = await put({ expected_revision: 3, entries: [ENTRY] });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: 'conflict' });
+    expect(mocks.stepUp).not.toHaveBeenCalled();
+    expect(mocks.save).not.toHaveBeenCalled();
+    // A check that cannot be made is not a pass.
+    mocks.storedClient.mockRejectedValue(new Error('db down'));
+    expect((await put({ expected_revision: 3, entries: [ENTRY] })).status).toBe(500);
     expect(mocks.save).not.toHaveBeenCalled();
   });
 
