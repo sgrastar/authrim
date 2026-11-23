@@ -5,6 +5,7 @@
 	import DestinationProfileDemo from '../stories/DestinationProfileDemo.svelte';
 	import SourceProfileDemo from '../stories/SourceProfileDemo.svelte';
 	import MappingEditor from './MappingEditor.svelte';
+	import { newStep, type Mapping } from './mapping-model';
 
 	const { Story } = defineMeta({
 		title: 'Patterns/Attribute mapping',
@@ -19,6 +20,26 @@
 			}
 		}
 	});
+
+	const OID = 'urn:oid:1.3.6.1.4.1.5923.1.1.1.6';
+	/** An attribute that has sample values, mapped from a persistent identifier made for each recipient. */
+	const targeted: Mapping[] = [
+		{
+			id: 'upn',
+			sources: [],
+			target: OID,
+			steps: [
+				{
+					...newStep('persistent_identifier', 'pid'),
+					params: {
+						...newStep('persistent_identifier', 'pid').params,
+						format: 'saml_targeted_id',
+						algorithm: 'shibboleth'
+					}
+				}
+			]
+		}
+	];
 </script>
 
 <Story
@@ -153,3 +174,45 @@
 		await expect(canvas.getByText('mail')).toBeVisible();
 	}}
 />
+
+<Story
+	name="Sample values of an attribute, and a persistent identifier shown as an illustration"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(await canvas.findByRole('button', { name: /eduPersonPrincipalName/ }));
+		// Under the identifier: what a value looks like, then the line a note may add.
+		await canvas.findByText(
+			t('map.targetSample', { values: 'taro@example.ac.jp, hanako@example.ac.jp' })
+		);
+		// The sample output is not "decided at sign-in": it is the shape, marked as an illustration.
+		// On the step's value and on the output.
+		await expect(
+			(await canvas.findAllByText(t('map.sample.illustrative'))).length
+		).toBeGreaterThanOrEqual(2);
+		await expect(canvas.queryByText(t('map.sample.atSignIn'))).toBeNull();
+		await expect(
+			(
+				await canvas.findAllByText(
+					/^https:\/\/idp\.example\.org\/idp!https:\/\/sp\.example\.org\/sp!/
+				)
+			).length
+		).toBeGreaterThanOrEqual(1);
+	}}
+>
+	{#snippet template()}
+		<MappingEditor
+			label="Mapping"
+			direction="outbound"
+			sources={[]}
+			targets={[
+				{
+					key: OID,
+					label: 'eduPersonPrincipalName',
+					type: 'string',
+					samples: ['taro@example.ac.jp', 'hanako@example.ac.jp']
+				}
+			]}
+			mappings={structuredClone(targeted)}
+		/>
+	{/snippet}
+</Story>

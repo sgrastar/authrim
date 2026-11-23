@@ -546,6 +546,11 @@
 		return { text: String(value) };
 	}
 
+	/** A few of an attribute's sample values for a line of text, with "…" when there are more. */
+	const SAMPLES_SHOWN = 3;
+	const sampleList = (samples: readonly string[]) =>
+		samples.slice(0, SAMPLES_SHOWN).join(', ') + (samples.length > SAMPLES_SHOWN ? ' …' : '');
+
 	/** Every step in order: "To lower case → Combine attributes (space)". */
 	const stepsSummary = (mapping: Mapping) => mapping.steps.map(stepSummary).join(t('map.stepsSep'));
 </script>
@@ -590,6 +595,12 @@
 				>{shown.text}</span
 			>
 			{#if type}<TypeBadge size="sm">{type}</TypeBadge>{/if}
+			{#if sample.known && sample.illustrative}
+				<!-- Made up to show the shape (a persistent identifier): not what will be sent. -->
+				<span class="sample__tag" title={t('map.sample.illustrativeHint')}
+					>{t('map.sample.illustrative')}</span
+				>
+			{/if}
 		{/each}
 	</span>
 {/snippet}
@@ -784,6 +795,12 @@
 								{#if target.label && target.label !== target.key}<code class="mrow__tkey"
 										>{target.key}</code
 									>{/if}
+								{#if target.samples?.length}
+									<!-- What a value looks like, from the output source's sample values. -->
+									<span class="mrow__tnote2"
+										>{t('map.targetSample', { values: sampleList(target.samples) })}</span
+									>
+								{/if}
 								{#if targetNote?.(target.key)}<span class="mrow__tnote2"
 										>{targetNote(target.key)}</span
 									>{/if}
@@ -1895,6 +1912,15 @@
 	}
 
 	/* While open, the attribute's own name (the identifier) sits under its label. */
+	.sample__tag {
+		padding: 0 6px;
+		border: 1px solid var(--border-subtle);
+		border-radius: 999px;
+		color: var(--text-muted);
+		font-size: var(--fs-caption);
+		white-space: nowrap;
+	}
+
 	.mrow__tnote2 {
 		display: block;
 		margin-block-start: 2px;

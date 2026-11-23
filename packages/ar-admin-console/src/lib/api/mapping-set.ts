@@ -84,6 +84,8 @@ export interface DestinationDescriptor {
 		valueType: string | null;
 		valueMultiplicity: 'single' | 'multi' | null;
 		allowedValues: string[];
+		/** What a value looks like (the output source's sample values); not always sent. */
+		examples?: string[];
 	}[];
 	nameId?: { format: string | null; classification: string };
 }

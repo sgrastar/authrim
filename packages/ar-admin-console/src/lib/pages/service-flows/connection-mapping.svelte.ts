@@ -18,7 +18,11 @@ import {
 } from '#lib/ui/patterns/mapping-codec.js';
 import type { Mapping } from '#lib/ui/patterns/mapping-model.js';
 import { copyValue, Draft } from '#lib/ui/save/draft.svelte.js';
-import { codecContext, profileDescriptor } from './connection-mapping-fields.js';
+import {
+	codecContext,
+	profileDescriptor,
+	withProfileExamples
+} from './connection-mapping-fields.js';
 import { setChangePreviewOf } from './connection-mapping-preview.js';
 import { ApiError, ReleasePausedError } from '#lib/api/api-error.js';
 import type { DestinationProfilesClient } from '#lib/api/destination-profiles.js';
@@ -256,7 +260,10 @@ export class ConnectionMappingState {
 				else {
 					this.context = codecContext(
 						this.resources.protocol,
-						detail.destination_profile,
+						withProfileExamples(
+							detail.destination_profile,
+							this.allProfiles.find((profile) => profile.id === detail.destination_profile_id)
+						),
 						catalog,
 						detail.content
 					);
