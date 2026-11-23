@@ -1,21 +1,28 @@
 import { describe, expect, it } from 'vitest';
 import type { PageRecord } from '#lib/api/account-pages.js';
+import { stepPart } from '#lib/ui/builder/layout-model.js';
+import { Draft } from '#lib/ui/save/draft.svelte.js';
 import type { Screen } from '#lib/api/screens.js';
 import {
-	addPlacement,
 	buildPublication,
+	canonicalRows,
+	hasLauncherSlot,
+	launcherIdsOf,
 	definitionToTranslations,
-	movePlacement,
 	newPage,
+	normalizeLayout,
 	normalizeDefinition,
+	layoutToPlacements,
+	placementsToLayout,
 	pageState,
+	previewBlocks,
+	settingsKey,
 	parsePagesDocument,
 	placementIdFor,
 	placementRows,
 	presetDefinition,
 	publishedPage,
 	snapshotsStale,
-	removePlacement,
 	translationsToLocalizations,
 	translationsTooLong,
 	unplaced
@@ -119,29 +126,44 @@ describe('what is stored', () => {
 	});
 });
 
-describe('places of a page', () => {
-	const base = { ...presetDefinition(), screens: [] };
-
-	it('adds a screen once, with an id of its own, and finds what is left', () => {
-		const one = addPlacement(base, screen('account_profile'));
-		const again = addPlacement(one, screen('account_profile'));
-		expect(again.screens).toHaveLength(1);
-		expect(one.screens[0]).toMatchObject({
-			id: 'profile',
-			width: 'full',
-			enabled: true,
-			condition: 'always'
+describe('a place id that is also a property of every object', () => {
+	const weird = ['__proto__', 'constructor', 'toString', 'hasOwnProperty'];
+	const definition = () =>
+		normalizeDefinition({
+			screens: weird.map((id, at) => ({ id, screen_key: `account_w${at}` }))
 		});
-		expect(unplaced(one, ALL).map((s) => s.screen_key)).not.toContain('account_profile');
-		expect(placementIdFor(screen('account_profile'), ['profile'])).toBe('profile-2');
+
+	it('is kept as it is, so a link to it still points at it', () => {
+		expect(definition().screens.map((p) => p.id)).toEqual(weird);
 	});
 
-	it('moves a place one step and leaves an end where it is', () => {
-		let page = addPlacement(addPlacement(base, screen('account_a')), screen('account_b'));
-		page = movePlacement(page, 'b', -1);
-		expect(page.screens.map((p) => p.id)).toEqual(['b', 'a']);
-		expect(movePlacement(page, 'b', -1)).toBe(page);
-		expect(removePlacement(page, 'a').screens.map((p) => p.id)).toEqual(['b']);
+	it('keeps each place its own settings, whatever its id', () => {
+		const placements = definition().screens.map((p, at) => ({ ...p, enabled: at % 2 === 0 }));
+		const { rows, settings } = placementsToLayout(placements, []);
+		expect(Object.keys(settings)).toEqual(weird.map((id) => settingsKey(id)));
+		const back = layoutToPlacements(rows, settings);
+		expect(back.map((p) => [p.id, p.enabled])).toEqual(placements.map((p) => [p.id, p.enabled]));
+	});
+
+	it('is told changed and put back like any other when its settings change', () => {
+		const { settings } = placementsToLayout(definition().screens, []);
+		const draft = new Draft({ settings });
+		expect(draft.dirty).toBe(false);
+		draft.value.settings[settingsKey('__proto__')].enabled = false;
+		expect(draft.dirty).toBe(true);
+		draft.discard();
+		expect(draft.dirty).toBe(false);
+		expect(draft.value.settings[settingsKey('__proto__')].enabled).toBe(true);
+	});
+});
+
+describe('places of a page', () => {
+	it('finds the screens that are not yet placed and names a new place after its screen', () => {
+		const half = presetDefinition().screens.filter((p) => p.screen_key !== 'account_profile');
+		const page = { ...presetDefinition(), screens: half };
+		expect(unplaced(page, ALL).map((s) => s.screen_key)).toEqual(['account_profile']);
+		expect(placementIdFor(screen('account_profile'), [])).toBe('profile');
+		expect(placementIdFor(screen('account_profile'), ['profile'])).toBe('profile-2');
 	});
 
 	it('lays half places side by side, a lone half in a row of its own', () => {
@@ -162,6 +184,244 @@ describe('places of a page', () => {
 			p('e', 'full')
 		]);
 		expect(rows.map((row) => row.map((x) => x.id))).toEqual([['a'], ['b', 'c'], ['d'], ['e']]);
+	});
+});
+
+describe('the page as rows of columns', () => {
+	const ids = (rows: { columns: { id: string }[][] }[]) =>
+		rows.map((row) => row.columns.map((column) => column.map((part) => part.id)));
+
+	it('shows a full place as a row of one column and half places side by side as a row of two', () => {
+		const preset = presetDefinition();
+		const { rows, settings } = placementsToLayout(preset.screens, ALL);
+		expect(ids(rows)[0]).toEqual([['overview']]);
+		// Profile and devices are half: one row, two columns. Sessions and passkeys likewise.
+		expect(ids(rows)[2]).toEqual([['profile'], ['devices']]);
+		expect(settings[settingsKey('passkeys')]).toMatchObject({
+			condition: 'passkey_enabled',
+			enabled: true
+		});
+	});
+
+	it('gives back the places it was made from', () => {
+		const preset = presetDefinition();
+		const { rows, settings } = placementsToLayout(preset.screens, ALL);
+		expect(layoutToPlacements(rows, settings)).toEqual(preset.screens);
+		// A half place alone keeps its width through a row of two columns with one empty.
+		const lone = [{ ...preset.screens[2], width: 'half' as const }];
+		const made = placementsToLayout(lone, ALL);
+		expect(made.rows[0].columns).toHaveLength(2);
+		expect(layoutToPlacements(made.rows, made.settings)).toEqual(lone);
+	});
+
+	it('is the row that sets the width, so a part moved into a row of two becomes half', () => {
+		const { rows, settings } = placementsToLayout(presetDefinition().screens.slice(0, 2), ALL);
+		const merged = [{ id: 'r', columns: [rows[0].columns[0], rows[1].columns[0]] }];
+		expect(layoutToPlacements(merged, settings).map((p) => p.width)).toEqual(['half', 'half']);
+	});
+
+	it('keeps a column to one place and a row to two columns, passing the rest on without loss', () => {
+		let n = 0;
+		const part = (id: string) => ({ id, kind: id, label: id });
+		const rows = normalizeLayout(
+			[
+				{ id: 'a', columns: [[part('p'), part('q')], [part('r')], [part('s')]] },
+				{ id: 'b', columns: [[], []] },
+				{ id: 'c', columns: [[part('t')]] }
+			],
+			() => `new-${++n}`
+		);
+		expect(ids(rows)).toEqual([[['p'], ['r']], [['q']], [['s']], [['t']]]);
+		expect(rows.map((row) => row.columns.length)).toEqual([2, 1, 1, 1]);
+	});
+});
+
+describe('the layout the page keeps', () => {
+	let n = 0;
+	const fresh = () => `new-${++n}`;
+	const part = (id: string) => ({ id, kind: `account_${id}`, label: id });
+	const shape = (rows: { columns: { id: string }[][] }[]) =>
+		rows.map((row) => row.columns.map((column) => column.map((p) => p.id)));
+
+	it('moves a part in the second column only to the first, as the stored places say it', () => {
+		const rows = canonicalRows([{ id: 'r', columns: [[], [part('a')]] }], fresh);
+		expect(shape(rows)).toEqual([[['a'], []]]);
+	});
+
+	it('shows a half place followed by a row of two as reloading would: halves pair up in order', () => {
+		const rows = canonicalRows(
+			[
+				{ id: 'r1', columns: [[part('a')], []] },
+				{ id: 'r2', columns: [[part('b')], [part('c')]] }
+			],
+			fresh
+		);
+		expect(shape(rows)).toEqual([
+			[['a'], ['b']],
+			[['c'], []]
+		]);
+		// Row ids stay with the rows they were.
+		expect(rows.map((row) => row.id)).toEqual(['r1', 'r2']);
+	});
+
+	it('is what is saved and read back: the canvas shows no state the places cannot say', () => {
+		const layouts = [
+			[{ id: 'a', columns: [[part('x')]] }],
+			[
+				{ id: 'a', columns: [[part('x')], [part('y')]] },
+				{ id: 'b', columns: [[part('z')], []] }
+			],
+			[
+				{ id: 'a', columns: [[part('x')], []] },
+				{ id: 'b', columns: [[part('y')], [part('z')]] }
+			],
+			[
+				{ id: 'a', columns: [[], [part('x')]] },
+				{ id: 'b', columns: [[part('y')]] }
+			]
+		];
+		for (const layout of layouts) {
+			const shown = canonicalRows(layout, fresh);
+			const placements = layoutToPlacements(shown, {});
+			const back = placementsToLayout(
+				placements,
+				placements.map((p) => screen(p.screen_key))
+			).rows;
+			expect(shape(back)).toEqual(shape(shown));
+			// Showing it again changes nothing.
+			expect(shape(canonicalRows(shown, fresh))).toEqual(shape(shown));
+		}
+	});
+
+	it('swaps two full-width places by the keyboard: a step past the row, not into its column', () => {
+		const rows = [
+			{ id: 'r1', columns: [[part('a')]] },
+			{ id: 'r2', columns: [[part('b')]] }
+		];
+		expect(shape(canonicalRows(stepPart(rows, 'b', 'up', fresh, 1), fresh))).toEqual([
+			[['b']],
+			[['a']]
+		]);
+		expect(shape(canonicalRows(stepPart(rows, 'a', 'down', fresh, 1), fresh))).toEqual([
+			[['b']],
+			[['a']]
+		]);
+	});
+});
+
+describe('the keyboard in a row of two', () => {
+	let n = 0;
+	const fresh = () => `new-${++n}`;
+	const part = (id: string) => ({ id, kind: `account_${id}`, label: id });
+	const shape = (rows: { columns: { id: string }[][] }[]) =>
+		rows.map((row) => row.columns.map((column) => column.map((p) => p.id)));
+
+	it('exchanges two half places side by side, so each keeps its width and the order changes', () => {
+		const rows = [{ id: 'r', columns: [[part('a')], [part('b')]] }];
+		expect(shape(canonicalRows(stepPart(rows, 'a', 'right', fresh, 1), fresh))).toEqual([
+			[['b'], ['a']]
+		]);
+		expect(shape(canonicalRows(stepPart(rows, 'b', 'left', fresh, 1), fresh))).toEqual([
+			[['b'], ['a']]
+		]);
+		// Into an empty column it simply moves, and an end stays where it is.
+		const alone = [{ id: 'r', columns: [[part('a')], []] }];
+		expect(shape(stepPart(alone, 'a', 'right', fresh, 1))).toEqual([[[], ['a']]]);
+		expect(shape(stepPart(rows, 'a', 'left', fresh, 1))).toEqual([[['a'], ['b']]]);
+	});
+});
+
+describe('the blocks of a place as the Login UI lays them out', () => {
+	const field = (block_type: string, extra: Record<string, unknown> = {}) =>
+		({ block_type, label: block_type, ...extra }) as never;
+	const withFields = (fields: unknown[]) => screen('account_x', { fields: fields as never });
+
+	it('drops the row markers and keeps the order the blocks ask for', () => {
+		const blocks = previewBlocks(
+			{ width: 'full' },
+			withFields([
+				field('text', { order: 2 }),
+				field('layout_row', { order: 1 }),
+				field('heading', { order: 1 }),
+				field('divider')
+			])
+		);
+		expect(blocks.map((b) => b.kind)).toEqual(['divider', 'heading', 'text']);
+	});
+
+	it('puts a block in the column it asks for only in a full-width place', () => {
+		const fields = [
+			field('heading', { layout_column: 1 }),
+			field('account_profile_widget', { layout_column: 2 }),
+			field('text', { layout_column: 3 }),
+			field('divider')
+		];
+		expect(previewBlocks({ width: 'full' }, withFields(fields)).map((b) => b.column)).toEqual([
+			1,
+			2,
+			null,
+			null
+		]);
+		// A half-width place is one column, whatever the blocks ask for.
+		expect(previewBlocks({ width: 'half' }, withFields(fields)).map((b) => b.column)).toEqual([
+			null,
+			null,
+			null,
+			null
+		]);
+	});
+});
+
+describe('the launcher slot', () => {
+	it('keeps the chosen launchers through the page, the layout and back', () => {
+		const definition = normalizeDefinition({
+			screens: [
+				{ id: 'apps', screen_key: 'account_launchers', launcher_ids: ['a', 'b', 'a', 'bad id'] },
+				{ id: 'profile', screen_key: 'account_profile' }
+			]
+		});
+		expect(definition.screens[0].launcher_ids).toEqual(['a', 'b']);
+		expect('launcher_ids' in definition.screens[1]).toBe(false);
+		const { rows, settings } = placementsToLayout(definition.screens, ALL);
+		expect(layoutToPlacements(rows, settings)).toEqual(definition.screens);
+		// An empty choice is kept: the slot shows none.
+		expect(launcherIdsOf([])).toEqual([]);
+		expect(launcherIdsOf('a')).toBeUndefined();
+		expect(launcherIdsOf(Array.from({ length: 150 }, (_, i) => `l${i}`))).toHaveLength(100);
+	});
+
+	it('is a screen holding the launcher widget; a page can place one', () => {
+		const launchers = screen('account_launchers', {
+			fields: [{ block_type: 'account_launcher_widget' }] as never
+		});
+		const second = screen('account_more_apps', {
+			fields: [{ block_type: 'account_launcher_widget' }] as never
+		});
+		expect(hasLauncherSlot(launchers)).toBe(true);
+		expect(hasLauncherSlot(screen('account_profile'))).toBe(false);
+		expect(hasLauncherSlot(undefined)).toBe(false);
+		const place = (id: string, key: string, enabled = true) => ({
+			id,
+			screen_key: key,
+			width: 'full' as const,
+			enabled,
+			condition: 'always' as const,
+			show_for_guests: true
+		});
+		const draft = {
+			...presetDefinition(),
+			screens: [place('a', 'account_launchers'), place('b', 'account_more_apps')]
+		};
+		expect(buildPublication(draft, [launchers, second], '2026-11-23T00:00:00.000Z')).toMatchObject({
+			ok: false,
+			problem: { code: 'multiple_launcher_slots' }
+		});
+		// A slot that is switched off is not a second one.
+		const off = {
+			...presetDefinition(),
+			screens: [place('a', 'account_launchers'), place('b', 'account_more_apps', false)]
+		};
+		expect(buildPublication(off, [launchers, second], '2026-11-23T00:00:00.000Z').ok).toBe(true);
 	});
 });
 
@@ -229,7 +489,13 @@ describe('publishing', () => {
 		const live = publishedPage(page, page.draft, built.published, 2000);
 		expect(live.published_version).toBe(1);
 		expect(pageState(live)).toBe('published');
-		const changed = { ...live, draft: movePlacement(live.draft, live.draft.screens[0].id, 1) };
+		const changed = {
+			...live,
+			draft: {
+				...live.draft,
+				screens: live.draft.screens.map((p, i) => (i === 0 ? { ...p, enabled: false } : p))
+			}
+		};
 		expect(pageState(changed)).toBe('changed');
 	});
 });

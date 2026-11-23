@@ -7,12 +7,20 @@
 	import type {
 		AccountPagesClient,
 		AccountPagesState,
+		LauncherChoice,
 		PageDefinition,
-		PageRecord,
-		Placement
+		PageRecord
 	} from '#lib/api/account-pages.js';
 	import { ApiError } from '#lib/api/api-error.js';
-	import { t } from '#lib/i18n/i18n.svelte.js';
+	import { t, type MessageKey } from '#lib/i18n/i18n.svelte.js';
+	import {
+		findPart,
+		insertPart,
+		removePart,
+		type LayoutPart,
+		type LayoutRow
+	} from '#lib/ui/builder/layout-model.js';
+	import LayoutCanvas from '#lib/ui/builder/LayoutCanvas.svelte';
 	import PartPalette from '#lib/ui/builder/PartPalette.svelte';
 	import TranslationTable, { type Translations } from '#lib/ui/builder/TranslationTable.svelte';
 	import Callout from '#lib/ui/patterns/Callout.svelte';
@@ -33,31 +41,36 @@
 	import SaveScope from '#lib/ui/save/SaveScope.svelte';
 	import Page from '#lib/ui/templates/Page.svelte';
 	import { toast } from '#lib/ui/toast/toast.svelte.js';
-	import AccountPageCanvas from './AccountPageCanvas.svelte';
 	import AccountPageInspector from './AccountPageInspector.svelte';
 	import AccountPagePreview from './AccountPagePreview.svelte';
 	import { pagesErrorKey, publishProblemMessage } from './account-page-errors';
 	import {
+		MAX_LAUNCHERS,
 		MAX_PLACEMENTS,
-		addPlacement,
 		buildPublication,
+		canonicalRows,
+		defaultPlaceSettings,
 		definitionToTranslations,
-		movePlacement,
+		layoutToPlacements,
 		pageState,
+		partFor,
+		placementIdFor,
+		placementsToLayout,
 		publishedPage,
-		removePlacement,
 		screenOf,
+		settingsKey,
 		translationsTooLong,
 		translationsToLocalizations,
-		unplaced
+		type PlaceSettings
 	} from './account-page-model';
 
 	/**
-	 * One account page: its layout (the screens to place on the left, the page in the middle, the
-	 * selected place's settings on the right), a preview, and the page's text in each language.
-	 * Save keeps the draft; Publish saves what is on screen and makes it the live page (a snapshot
-	 * of every screen it places). There is no rollback: a published page is changed by changing the
-	 * draft and publishing again.
+	 * One account page: its layout in rows (the screens to place on the left, the page in the
+	 * middle, the selected place's settings on the right), a preview, and the page's text in each
+	 * language. The layout is arranged as the screen builder's is, in rows of one or two columns:
+	 * a screen in a row of two is half width. Save keeps the draft; Publish saves what is on
+	 * screen and makes it the live page (a snapshot of every screen it places). There is no
+	 * rollback: a published page is changed by changing the draft and publishing again.
 	 */
 	interface Props {
 		client: AccountPagesClient;
@@ -66,15 +79,19 @@
 		listHref: string;
 		/** Where a screen is edited, from the screen's id. */
 		screenHref?: (screenId: string) => string;
+		/** The tenant's launchers, to choose from in a launcher slot. */
+		loadLaunchers?: (signal?: AbortSignal) => Promise<LauncherChoice[]>;
 	}
 
-	let { client, id, canWrite, listHref, screenHref }: Props = $props();
+	let { client, id, canWrite, listHref, screenHref, loadLaunchers }: Props = $props();
 
 	interface EditorValue {
 		name: string;
 		title: string;
 		description: string;
-		screens: Placement[];
+		/** The places in rows of columns, each part a place (its id is the place's id). */
+		rows: LayoutRow[];
+		settings: Record<string, PlaceSettings>;
 		translations: Translations;
 	}
 
@@ -82,15 +99,23 @@
 		name: '',
 		title: '',
 		description: '',
-		screens: [],
+		rows: [],
+		settings: {},
 		translations: {}
 	});
 
 	let phase = $state<'loading' | 'ready' | 'missing' | 'failed'>('loading');
 	let loaded = $state<AccountPagesState | null>(null);
+	/** The launchers to choose from; null when they could not be read (or none were offered). */
+	let launchers = $state<LauncherChoice[] | null>(null);
 	let draft = $state(new Draft<EditorValue>(blank()));
 	let tab = $state('builder');
+	// A reader has no layout tab: it starts on the preview.
+	$effect(() => {
+		if (readonly && tab === 'builder') tab = 'preview';
+	});
 	let selected = $state<string | null>(null);
+	let selectedRow = $state<string | null>(null);
 	let publishing = $state(false);
 	let editingName = $state(false);
 	let nameError = $state('');
@@ -99,13 +124,19 @@
 	const value = $derived(draft.value);
 	const readonly = $derived(!canWrite);
 	const stateOfPage = $derived(page ? pageState(page, loaded?.screens) : 'unpublished');
+	const screens = $derived(loaded?.screens ?? []);
 
-	function valueOf(record: PageRecord): EditorValue {
+	let rowCounter = 0;
+	const newRowId = () => `row-${Date.now().toString(36)}-${++rowCounter}`;
+
+	function valueOf(record: PageRecord, available: AccountPagesState['screens']): EditorValue {
+		const layout = placementsToLayout(record.draft.screens, available);
 		return {
 			name: record.name,
 			title: record.draft.title ?? '',
 			description: record.draft.description ?? '',
-			screens: record.draft.screens.map((item) => ({ ...item })),
+			rows: layout.rows,
+			settings: layout.settings,
 			translations: definitionToTranslations(record.draft)
 		};
 	}
@@ -121,7 +152,7 @@
 			...(title ? { title } : {}),
 			...(description ? { description } : {}),
 			...(localizations ? { localizations } : {}),
-			screens: from.screens.map((item) => ({ ...item }))
+			screens: layoutToPlacements(from.rows, from.settings)
 		};
 	}
 
@@ -129,13 +160,18 @@
 		phase = 'loading';
 		try {
 			loaded = await client.load();
+			// The launchers are for the launcher slot's choice only: the page does not wait on them.
+			void (loadLaunchers ?? (async () => null))()
+				.then((list) => (launchers = list))
+				.catch(() => (launchers = null));
 			const record = loaded.document.pages.find((item) => item.id === id);
 			if (!record) {
 				phase = 'missing';
 				return;
 			}
-			draft.reset(valueOf(record));
+			draft.reset(valueOf(record, loaded.screens));
 			selected = null;
+			selectedRow = null;
 			phase = 'ready';
 		} catch {
 			phase = 'failed';
@@ -160,11 +196,17 @@
 	}
 
 	async function save(from: EditorValue) {
-		if (!page) throw new SaveStopped();
+		if (!page || readonly) throw new SaveStopped();
 		if (!from.name.trim()) {
 			nameError = t('ap.editor.nameRequired');
 			editingName = true;
 			toast.error(t('ap.editor.nameRequired'));
+			throw new SaveStopped();
+		}
+		if (
+			Object.values(from.settings).some((own) => (own.launcher_ids?.length ?? 0) > MAX_LAUNCHERS)
+		) {
+			toast.error(t('ap.launchers.limit', { max: String(MAX_LAUNCHERS) }));
 			throw new SaveStopped();
 		}
 		if (translationsTooLong(from.translations)) {
@@ -216,44 +258,82 @@
 	}
 
 	// ---- Layout ----
-	const screens = $derived(loaded?.screens ?? []);
-	const free = $derived(unplaced({ ...definitionStub(), screens: value.screens }, screens));
-	const full = $derived(value.screens.length >= MAX_PLACEMENTS);
-	const place = $derived(value.screens.findIndex((item) => item.id === selected));
+	const placed = $derived(
+		new Set(value.rows.flatMap((row) => row.columns.flat()).map((part) => part.kind))
+	);
+	const free = $derived(screens.filter((screen) => !placed.has(screen.screen_key)));
+	const count = $derived(value.rows.reduce((sum, row) => sum + row.columns.flat().length, 0));
+	const full = $derived(count >= MAX_PLACEMENTS);
 
-	function definitionStub(): PageDefinition {
-		return { schema_version: 'authrim.account_page.v1', screens: [] };
+	/** A new place for a screen: an id of its own, shown always, and its settings. */
+	function create(kind: string): LayoutPart {
+		const screen = screens.find((item) => item.screen_key === kind);
+		// Ids in use are those of the places on the page now (a removed place gives its id back).
+		const taken = value.rows.flatMap((row) => row.columns.flat()).map((part) => part.id);
+		const partId = screen ? placementIdFor(screen, taken) : kind;
+		draft.value.settings[settingsKey(partId)] = defaultPlaceSettings();
+		return screen ? partFor(screen, partId) : { id: partId, kind, label: kind };
 	}
 
-	function add(screenKey: string) {
-		const screen = screens.find((item) => item.screen_key === screenKey);
-		if (!screen || readonly) return;
-		const next = addPlacement({ ...definitionStub(), screens: value.screens }, screen);
-		draft.value.screens = next.screens;
-		selected = next.screens[next.screens.length - 1]?.id ?? null;
-	}
-
-	function move(placementId: string, step: -1 | 1) {
-		draft.value.screens = movePlacement(
-			{ ...definitionStub(), screens: value.screens },
-			placementId,
-			step
-		).screens;
+	function add(kind: string) {
+		if (readonly || full) return;
+		const part = create(kind);
+		draft.value.rows = insertPart(
+			value.rows,
+			part,
+			{ kind: 'row', index: value.rows.length },
+			newRowId
+		);
+		selected = part.id;
+		selectedRow = null;
 	}
 
 	function remove() {
 		if (selected === null) return;
-		draft.value.screens = removePlacement(
-			{ ...definitionStub(), screens: value.screens },
-			selected
-		).screens;
+		draft.value.rows = removePart(value.rows, selected);
 		selected = null;
 	}
 
-	const changedPlace = (placement: Placement) => {
-		const saved = draft.saved.screens.find((item) => item.id === placement.id);
-		return !saved || JSON.stringify(saved) !== JSON.stringify(placement);
-	};
+	// The page keeps one place to a column and two columns to a row, in the order of its places:
+	// what the canvas lets through beyond that is put right, so what is shown is what is saved.
+	$effect(() => {
+		const rows = draft.value.rows;
+		const next = untrack(() => canonicalRows(rows, newRowId));
+		const same = JSON.stringify(next) === JSON.stringify(untrack(() => $state.snapshot(rows)));
+		if (!same) {
+			untrack(() => {
+				draft.value.rows = next;
+			});
+		}
+	});
+
+	// The settings of a place that is no longer on the page are dropped, so a place added again
+	// starts as new and keeps the id its screen is known by.
+	$effect(() => {
+		const keys = new Set(
+			draft.value.rows.flatMap((row) => row.columns.flat()).map((p) => settingsKey(p.id))
+		);
+		untrack(() => {
+			for (const key of Object.keys(draft.value.settings)) {
+				if (!keys.has(key)) delete draft.value.settings[key];
+			}
+		});
+	});
+
+	const place = $derived(selected ? findPart(value.rows, selected) : null);
+	const chosen = $derived(place ? value.rows[place.row].columns[place.column][place.index] : null);
+
+	const changedPart = (part: LayoutPart) =>
+		!findPart(draft.saved.rows, part.id) ||
+		JSON.stringify(draft.saved.settings[settingsKey(part.id)]) !==
+			JSON.stringify(value.settings[settingsKey(part.id)]);
+
+	/** The second line of a place, under its name: whether it is shown, and when. */
+	function timingOf(part: LayoutPart): string {
+		const own = value.settings[settingsKey(part.id)];
+		if (own && !own.enabled) return t('ap.place.hidden');
+		return t(`ap.condition.${own?.condition ?? 'always'}` as MessageKey);
+	}
 
 	// ---- Text in each language ----
 	const languages = LOGIN_UI_LOCALES.map((code) => ({
@@ -265,11 +345,14 @@
 		{ id: 'description', label: t('ap.text.rowDescription'), source: value.description }
 	]);
 
+	// Read only: the layout is shown in the preview, not offered to be changed.
 	const tabs = $derived([
-		{ id: 'builder', label: t('ap.tab.builder'), icon: 'list' as const },
+		...(readonly ? [] : [{ id: 'builder', label: t('ap.tab.builder'), icon: 'list' as const }]),
 		{ id: 'preview', label: t('ap.tab.preview'), icon: 'app' as const },
 		{ id: 'localize', label: t('ap.tab.localize'), icon: 'translate' as const }
 	]);
+
+	const previewPlacements = $derived(layoutToPlacements(value.rows, value.settings));
 
 	// ---- The page's name, edited in its title ----
 	let nameBefore = '';
@@ -410,33 +493,39 @@
 										/>
 									{/if}
 								</Card>
-								<AccountPageCanvas
-									placements={value.screens}
-									{screens}
-									{selected}
-									disabled={readonly}
-									changed={changedPlace}
-									onselect={(placementId) => (selected = placementId)}
-									onmove={move}
+								<LayoutCanvas
+									label={t('ap.page.title')}
+									bind:rows={draft.value.rows}
+									bind:selected
+									bind:selectedRow
+									{create}
+									changed={changedPart}
+									secondary={timingOf}
+									maxColumns={2}
+									columnCapacity={1}
 								/>
-								{#if place >= 0}
+								{#if chosen && value.settings[settingsKey(chosen.id)]}
 									<AccountPageInspector
-										bind:placement={draft.value.screens[place]}
-										screen={screenOf(value.screens[place], screens)}
-										screenHref={screenHref && screenOf(value.screens[place], screens)
-											? screenHref(screenOf(value.screens[place], screens)!.id)
+										id={chosen.id}
+										bind:settings={draft.value.settings[settingsKey(chosen.id)]}
+										screen={screenOf({ screen_key: chosen.kind }, screens)}
+										screenKey={chosen.kind}
+										{launchers}
+										screenHref={screenHref && screenOf({ screen_key: chosen.kind }, screens)
+											? screenHref(screenOf({ screen_key: chosen.kind }, screens)!.id)
 											: undefined}
 										disabled={readonly}
 										onremove={remove}
 									/>
 								{:else}
-									<AccountPageInspector placement={null} onremove={remove} />
+									<AccountPageInspector id={null} onremove={remove} />
 								{/if}
 							</div>
 						{:else if current === 'preview'}
 							<AccountPagePreview
-								placements={value.screens}
+								placements={previewPlacements}
 								{screens}
+								{launchers}
 								title={value.title}
 								description={value.description}
 							/>

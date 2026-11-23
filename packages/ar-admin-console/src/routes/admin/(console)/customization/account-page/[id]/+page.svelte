@@ -3,6 +3,7 @@
 	import { settingsLevel } from '#lib/access/access.js';
 	import { adminAccess } from '#lib/access/admin-access.svelte.js';
 	import { httpAccountPages } from '#lib/api/account-pages.js';
+	import { httpLaunchers } from '#lib/api/launchers.js';
 	import { tenantScope } from '#lib/auth/tenant-scope.svelte.js';
 	import { t } from '#lib/i18n/i18n.svelte.js';
 	import { parsePagesDocument } from '#lib/pages/customization/account-pages/account-page-model.js';
@@ -28,5 +29,11 @@
 		{canWrite}
 		listHref={BASE}
 		screenHref={(screenId) => `/admin/customization/screens/${encodeURIComponent(screenId)}`}
+		loadLaunchers={async (signal) =>
+			(await httpLaunchers.list(signal)).map((launcher) => ({
+				id: launcher.id,
+				name: launcher.name,
+				enabled: launcher.enabled
+			}))}
 	/>
 {/key}

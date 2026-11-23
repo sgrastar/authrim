@@ -26,6 +26,8 @@ export function publishProblemMessage(problem: PublishProblem): {
 			return { key: 'ap.err.screenMissing', values: { key: problem.screenKey } };
 		case 'multiple_widgets':
 			return { key: 'ap.err.multipleWidgets', values: { name: problem.name } };
+		case 'multiple_launcher_slots':
+			return { key: 'ap.err.multipleLauncherSlots' };
 		case 'link_target':
 			return { key: 'ap.err.linkTarget', values: { target: problem.target } };
 	}

@@ -329,6 +329,13 @@ export async function liteAccountPage(event: RequestEvent) {
 			placement.blocks.flatMap((block) => (block.kind === 'widget' ? [block.widget] : []))
 		)
 	);
+	// The launcher slot's choice: the launchers the placement of the launcher widget shows.
+	const launcherSlotIds =
+		shown.find((placement) =>
+			page.screens
+				.find((screen) => screen.screenKey === placement.screenKey)
+				?.fields.some((field) => field.blockType === 'account_launcher_widget')
+		)?.launcherIds ?? null;
 	const cursor = event.url.searchParams.get('activity_cursor');
 	// An authenticator being added, as the transaction keeps it before its list is read.
 	const enrollSeen = drawn.has('account_totp_widget') ? readLiteAccountTotpEnroll(txn.data) : null;
@@ -506,7 +513,9 @@ export async function liteAccountPage(event: RequestEvent) {
 			!readLiteAccountStepUp(txn.data)
 				? { registration: guestAttempt.options, operation: guestAttempt.operationId }
 				: null,
-		launcher: launcherList?.ok ? liteAccountLaunchers(launcherList.json, event.url, locale) : null,
+		launcher: launcherList?.ok
+			? liteAccountLaunchers(launcherList.json, event.url, locale, launcherSlotIds)
+			: null,
 		// An authenticator may be added (the tenant offers them: the SPA's widget's condition).
 		totpAddEnabled: conditions.totpManagementEnabled,
 		activityIncomplete:

@@ -5,13 +5,17 @@
  */
 import {
 	buildPublication,
-	movePlacement,
 	newPage,
 	parsePagesDocument,
 	publishedPage
 } from '#lib/pages/customization/account-pages/account-page-model.js';
 import { ApiError, ConflictError } from '../api-error';
-import type { AccountPagesClient, AccountPagesState, PagesDocument } from '../account-pages';
+import type {
+	AccountPagesClient,
+	AccountPagesState,
+	LauncherChoice,
+	PagesDocument
+} from '../account-pages';
 import type { Screen } from '../screens';
 
 /** Three pages: one live and shown to users, one live with changes since, one never published. */
@@ -26,7 +30,12 @@ export function sampleDocument(): PagesDocument {
 		...live,
 		id: 'partners',
 		name: 'Partner portal',
-		draft: movePlacement(live.draft, live.draft.screens[0].id, 1)
+		draft: {
+			...live.draft,
+			screens: live.draft.screens.map((place, at) =>
+				at === 0 ? { ...place, enabled: false } : place
+			)
+		}
 	};
 	return {
 		schema_version: 'authrim.account_pages.v1',
@@ -37,6 +46,16 @@ export function sampleDocument(): PagesDocument {
 
 /** A deep copy that reads through the page's reactive state (a structured clone cannot). */
 const copy = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
+
+/** The tenant's launchers, one of them switched off. */
+export function sampleLauncherChoices(): LauncherChoice[] {
+	return [
+		{ id: 'lnc-portal', name: 'Learning portal', enabled: true },
+		{ id: 'lnc-library', name: 'Library', enabled: true },
+		{ id: 'lnc-mail', name: 'Mail', enabled: true },
+		{ id: 'lnc-wiki', name: 'Staff wiki', enabled: false }
+	];
+}
 
 export type FakeAccountPagesCall = keyof AccountPagesClient;
 
@@ -50,7 +69,7 @@ export interface FakeAccountPagesOptions {
 }
 
 const SCREENS: ReadonlyArray<[string, string, string[]]> = [
-	['account_overview', 'Overview', ['heading', 'account_upgrade_widget']],
+	['account_overview', 'Overview', ['account_upgrade_widget']],
 	['account_launchers', 'Applications', ['account_launcher_widget']],
 	['account_profile', 'Profile', ['account_profile_widget']],
 	['account_devices', 'Devices', ['account_device_list_widget']],

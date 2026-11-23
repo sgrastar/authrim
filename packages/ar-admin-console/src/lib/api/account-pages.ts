@@ -35,6 +35,19 @@ export interface Placement {
 	enabled: boolean;
 	condition: PlacementCondition;
 	show_for_guests: boolean;
+	/**
+	 * For a screen with the launcher widget: the launchers the slot shows, by id. Absent, every
+	 * launcher the user may see; present, only those (an empty list shows none).
+	 */
+	launcher_ids?: string[];
+}
+
+/** A launcher the tenant can put in a launcher slot (its own, or one the platform shares). */
+export interface LauncherChoice {
+	id: string;
+	name: string;
+	/** Switched off in Customization → Launchers: it is not shown to anyone, slot or not. */
+	enabled: boolean;
 }
 
 export interface PageLocalization {

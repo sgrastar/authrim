@@ -56,6 +56,34 @@ describe('publishedAccountPageFromSettings', () => {
   });
 });
 
+describe('the launchers of a launcher slot', () => {
+  const read = (extra: Record<string, unknown>) =>
+    publishedAccountPageFromSettings(
+      settingsWithPage([placement('apps', 'account_launchers', extra)], {
+        account_launchers: snapshot('account_launchers', 'account_launcher_widget'),
+      })
+    ).definition.screens[0];
+
+  it('keeps the chosen launchers, safe ids only, once each', () => {
+    expect(
+      read({
+        launcher_ids: ['a', 'b', 'a', 'bad id', 7, 'plc_00000000-0000-0000-0000-000000000000'],
+      }).launcher_ids
+    ).toEqual(['a', 'b', 'plc_00000000-0000-0000-0000-000000000000']);
+  });
+
+  it('keeps an empty choice (the slot shows none) and leaves the key out when there is no list', () => {
+    expect(read({ launcher_ids: [] }).launcher_ids).toEqual([]);
+    expect('launcher_ids' in read({})).toBe(false);
+    expect('launcher_ids' in read({ launcher_ids: 'a' })).toBe(false);
+  });
+
+  it('holds at most 100', () => {
+    const many = Array.from({ length: 150 }, (_, index) => `l${index}`);
+    expect(read({ launcher_ids: many }).launcher_ids).toHaveLength(100);
+  });
+});
+
 describe('passkeyPlacementId', () => {
   it('finds the built-in passkeys placement on the default page', () => {
     expect(passkeyPlacementId(publishedAccountPageFromSettings(null))).toBe('passkeys');

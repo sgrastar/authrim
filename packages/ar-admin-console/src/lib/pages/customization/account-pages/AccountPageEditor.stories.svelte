@@ -4,6 +4,7 @@
 	import {
 		fakeAccountPages,
 		sampleAccountScreens,
+		sampleLauncherChoices,
 		sampleDocument
 	} from '#lib/api/fake/account-pages-fake.js';
 	import { t } from '#lib/i18n/i18n.svelte.js';
@@ -36,9 +37,9 @@
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		await canvas.findByText(t('ap.inspector.none'));
-		await userEvent.click(
-			canvas.getByRole('button', { name: t('ap.place.select', { name: 'Profile' }) })
-		);
+		// A row of two columns holds two half-width places.
+		await expect(canvas.getAllByRole('button', { name: /^2 columns/ }).length).toBeGreaterThan(0);
+		await userEvent.click(canvas.getByRole('button', { name: /^Select Profile/ }));
 		await canvas.findByText(t('ap.inspector.condition'));
 		await expect(canvas.getByText('profile')).toBeVisible();
 	}}
@@ -55,23 +56,20 @@
 </Story>
 
 <Story
-	name="Move, remove and add, then save"
+	name="Make a row two columns, remove and add, then save"
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		const body = within(canvasElement.ownerDocument.body);
 		toast.dismissAll();
 		await canvas.findByText(t('ap.inspector.none'));
-		await userEvent.click(
-			canvas.getByRole('button', { name: t('ap.place.down', { name: 'Overview' }) })
-		);
-		await userEvent.click(
-			canvas.getByRole('button', { name: t('ap.place.select', { name: 'Devices' }) })
-		);
+		// Overview was a full-width place; two columns make it half width.
+		await userEvent.click(canvas.getAllByRole('button', { name: /^2 columns/ })[0]);
+		await userEvent.click(canvas.getByRole('button', { name: /^Select Devices/ }));
 		await userEvent.click(canvas.getByRole('button', { name: t('ap.inspector.remove') }));
 		// A removed screen is offered again on the left.
-		await userEvent.click(
-			await canvas.findByRole('button', { name: t('ap.screens.addNamed', { name: 'Devices' }) })
-		);
+		await userEvent.click(await canvas.findByRole('button', { name: /Devices/ }));
+		// It comes back under the id it had, so a link to it keeps working.
+		await expect(await canvas.findByText('devices')).toBeVisible();
 		await userEvent.click(await body.findByRole('button', { name: /^Save/ }));
 		await body.findByText(t('ap.toast.saved'));
 		await waitForSettledToasts();
@@ -109,6 +107,41 @@
 			canWrite
 			{listHref}
 			{screenHref}
+		/>
+	{/snippet}
+</Story>
+
+<Story
+	name="Choose the launchers of the launcher slot"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const body = within(canvasElement.ownerDocument.body);
+		toast.dismissAll();
+		await canvas.findByText(t('ap.inspector.none'));
+		await userEvent.click(canvas.getByRole('button', { name: /^Select Applications/ }));
+		// Every launcher is shown until some are chosen.
+		await canvas.findByText(t('ap.launchers.allNote'));
+		await userEvent.click(canvas.getByRole('radio', { name: t('ap.launchers.selected') }));
+		await canvas.findByText(t('ap.launchers.empty'));
+		await userEvent.click(await canvas.findByRole('checkbox', { name: 'Library' }));
+		await userEvent.click(canvas.getByRole('checkbox', { name: 'Mail' }));
+		await expect(canvas.queryByText(t('ap.launchers.empty'))).toBeNull();
+		// A launcher that is switched off is listed as such.
+		await expect(canvas.getByRole('checkbox', { name: /Staff wiki/ })).not.toBeChecked();
+		await userEvent.click(await body.findByRole('button', { name: /^Save/ }));
+		await body.findByText(t('ap.toast.saved'));
+		await waitForSettledToasts();
+	}}
+>
+	{#snippet template()}
+		<Toaster />
+		<AccountPageEditor
+			client={fakeAccountPages()}
+			id="authrim-default"
+			canWrite
+			{listHref}
+			{screenHref}
+			loadLaunchers={async () => sampleLauncherChoices()}
 		/>
 	{/snippet}
 </Story>
@@ -218,6 +251,9 @@
 		await canvas.findByText(t('ap.editor.readOnly'));
 		await expect(canvas.queryByRole('button', { name: t('ap.publish') })).toBeNull();
 		await expect(canvas.queryByRole('button', { name: t('ap.editor.editName') })).toBeNull();
+		// A reader sees the page in the preview; the layout is not offered to be changed.
+		await expect(canvas.queryByRole('tab', { name: t('ap.tab.builder') })).toBeNull();
+		await canvas.findByText(t('ap.preview.note'));
 	}}
 >
 	{#snippet template()}

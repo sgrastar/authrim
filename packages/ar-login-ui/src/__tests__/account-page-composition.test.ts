@@ -35,6 +35,8 @@ describe('Account Page published composition', () => {
 	// The placement's classes and styles: AccountScreenPlacement.test.ts.
 	it('renders full-width overview placements as a visible card spanning the account grid', () => {
 		expect(source).toContain("full={placement.width === 'full'}");
+		// The launcher slot shows the launchers its placement chose.
+		expect(source).toContain('launcherIds={placement.launcher_ids}');
 		expect(source).toContain("overview={screen.screen_key === 'account_overview'}");
 	});
 

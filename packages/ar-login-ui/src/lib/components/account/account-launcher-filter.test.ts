@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AccountLauncher } from '#lib/api/account.js';
-import { launcherMatchesSearch, launcherPicture } from './account-launcher-filter';
+import { launcherMatchesSearch, launcherPicture, launchersInSlot } from './account-launcher-filter';
 
 const launcher: AccountLauncher = {
 	id: 'launcher-1',
@@ -55,5 +55,18 @@ describe('launcherPicture', () => {
 		]) {
 			expect(launcherPicture(value)).toBeNull();
 		}
+	});
+});
+
+describe('the launchers of a launcher slot', () => {
+	const many = ['a', 'b', 'c'].map((id) => ({ ...launcher, id }));
+
+	it('are the ones chosen, in the order the account gets them', () => {
+		expect(launchersInSlot(many, ['c', 'a', 'gone']).map((item) => item.id)).toEqual(['a', 'c']);
+	});
+
+	it('are none for an empty choice and every one when nothing was chosen', () => {
+		expect(launchersInSlot(many, [])).toEqual([]);
+		expect(launchersInSlot(many, undefined).map((item) => item.id)).toEqual(['a', 'b', 'c']);
 	});
 });

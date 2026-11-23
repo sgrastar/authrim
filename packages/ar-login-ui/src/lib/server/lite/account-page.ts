@@ -47,6 +47,8 @@ export interface LiteAccountPlacement {
 	enabled: boolean;
 	condition: LiteAccountCondition;
 	showForGuests: boolean;
+	/** A launcher slot's launchers by id; null: every launcher. */
+	launcherIds?: string[] | null;
 }
 
 export interface LiteAccountField {
@@ -108,7 +110,13 @@ export function readLiteAccountPage(json: unknown): LiteAccountPageView | null {
 				typeof item.condition === 'string' && CONDITIONS.has(item.condition)
 					? (item.condition as LiteAccountCondition)
 					: 'always',
-			showForGuests: item.show_for_guests !== false
+			showForGuests: item.show_for_guests !== false,
+			launcherIds: Array.isArray(item.launcher_ids)
+				? item.launcher_ids.filter(
+						(value): value is string =>
+							typeof value === 'string' && /^[A-Za-z0-9_-]{1,96}$/u.test(value)
+					)
+				: null
 		});
 	}
 	const screens: LiteAccountScreen[] = [];
