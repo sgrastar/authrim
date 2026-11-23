@@ -11,6 +11,7 @@ import type {
 	MappingValueReference,
 	SourceValueEnvelope
 } from '@authrim/ar-lib-field-mapping/contract';
+import { pseudoPersistentIdentifier } from './persistent-identifier-preview';
 import {
 	runtimeTransformParams,
 	transformDef,
@@ -25,14 +26,22 @@ import {
  *
  * Steps run as the console orders them (see mapping-model): until a combining step, on each
  * source attribute's value; the combining step makes one value of them; later steps work on
- * that. Persistent identifier steps depend on the account, the app and the salt
- * at sign-in, so from there the sample says so instead of guessing.
+ * that. A persistent identifier depends on the account, the app and the salt at sign-in, so
+ * its sample is made up (see persistent-identifier-preview): the shape it will have, marked
+ * as an illustration, and what comes after works on that. Hashes are decided at sign-in, and
+ * the sample says so instead of guessing.
  *
  */
 
 /** A value at one point, or "decided at sign-in". */
 export type SampleValue =
-	| { known: true; value: unknown; state?: Exclude<MappingEvaluationValue['kind'], 'value'> }
+	| {
+			known: true;
+			value: unknown;
+			state?: Exclude<MappingEvaluationValue['kind'], 'value'>;
+			/** Made up to show the shape (a persistent identifier), not what the mapping will make. */
+			illustrative?: boolean;
+	  }
 	| { known: false };
 
 /** Keep runtime states explicit at the display boundary; null remains an ordinary value. */
@@ -118,15 +127,24 @@ export function previewMapping(
 	const inputSamples = input.map((value) => sampleValue(evaluationValue(value)));
 	const rows: (MappingValueReference[] | undefined)[] = [];
 	let atSignIn = false;
+	/** From this step on, the values rest on a made-up identifier. */
+	let illustrativeFrom: number | undefined;
 
 	for (const [index, step] of mapping.steps.entries()) {
 		const def = transformDef(step.transform);
 		const schema = TRANSFORM_OPERATION_SCHEMAS.find(
 			(schema) => schema.operation === step.transform
 		);
+		// A persistent identifier is made up for the sample, unless the runtime's context is given.
+		const pseudo =
+			!atSignIn && step.transform === 'persistent_identifier' && !options.runtimeContext
+				? pseudoPersistentIdentifier(step.params)
+				: null;
+		if (pseudo !== null) illustrativeFrom ??= index;
 		if (
 			atSignIn ||
-			(AT_RUN_TIME.has(step.transform) &&
+			(pseudo === null &&
+				AT_RUN_TIME.has(step.transform) &&
 				!(step.transform === 'persistent_identifier' && options.runtimeContext))
 		) {
 			atSignIn = true;
@@ -153,8 +171,9 @@ export function previewMapping(
 			const stepIndex = graph.transforms.length;
 			graph.transforms.push({
 				id,
-				operation: schema?.operation ?? 'hash',
-				parameters: runtimeTransformParams(step),
+				// The made-up identifier goes in as a constant: what comes after works on it.
+				operation: pseudo !== null ? 'constant_text' : (schema?.operation ?? 'hash'),
+				parameters: pseudo !== null ? { value: pseudo } : runtimeTransformParams(step),
 				inputs
 			});
 			return { stepIndex };
@@ -187,13 +206,20 @@ export function previewMapping(
 		('stepIndex' in ref ? result?.steps.get(ref.stepIndex) : sourceSamples[ref.edgeIndex]) ?? {
 			kind: 'failed'
 		};
+	// What rests on a made-up identifier is marked, so it is not read as what the mapping makes.
+	const mark = (sample: SampleValue, index: number): SampleValue =>
+		illustrativeFrom !== undefined && index >= illustrativeFrom && sample.known
+			? { ...sample, illustrative: true }
+			: sample;
 	return {
 		input: inputSamples,
-		steps: rows.map((row) => (row ? row.map((ref) => sampleValue(read(ref))) : [AT_SIGN_IN])),
+		steps: rows.map((row, index) =>
+			row ? row.map((ref) => mark(sampleValue(read(ref)), index)) : [AT_SIGN_IN]
+		),
 		output: atSignIn
 			? AT_SIGN_IN
 			: result
-				? sampleValue(result.output)
+				? mark(sampleValue(result.output), mapping.steps.length)
 				: sampleValue({ kind: 'absent' })
 	};
 }
