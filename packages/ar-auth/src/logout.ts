@@ -1267,9 +1267,11 @@ export async function backChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
       const authCtx = createAuthContextFromHono(c, tenantId);
       const client = await authCtx.repositories.client.findByClientId(id);
 
-      // Verify client secret against stored SHA-256 hash
+      // Verify client secret against stored SHA-256 hash. A wallet client is authenticated by its
+      // attestation, which this endpoint does not verify: a secret recorded for it is no proof.
       if (
         !client ||
+        (client.token_endpoint_auth_method as string) === 'attest_jwt_client_auth' ||
         !client.client_secret_hash ||
         !(await verifyClientSecretHash(secret, client.client_secret_hash))
       ) {

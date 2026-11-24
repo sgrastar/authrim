@@ -495,6 +495,11 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
 
   // Cast to ClientMetadata for type safety
   const clientMetadata = clientRecord as unknown as ClientMetadata;
+  // A wallet client is authenticated by its attestation, which this endpoint does not verify: a
+  // secret recorded for it does not stand in for that.
+  if (clientMetadata.token_endpoint_auth_method === 'attest_jwt_client_auth') {
+    return createErrorResponse(c, AR_ERROR_CODES.CLIENT_AUTH_FAILED);
+  }
 
   // =========================================================================
   // Client Authentication (supports multiple methods)

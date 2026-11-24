@@ -38,6 +38,11 @@ export interface GuideStep {
 	 */
 	target?: string;
 	title: MessageKey;
+	/**
+	 * The step's name in the list of steps (`GuideSteps`): short, a name and not a sentence.
+	 * Left out, the title is used, which is right when the title already is a name.
+	 */
+	label?: MessageKey;
 	body: MessageKey;
 	/** What the person is asked to do, shown apart from the explanation (for steps that wait). */
 	action?: MessageKey;
@@ -97,6 +102,7 @@ export const CHECKLIST: readonly ChecklistItem[] = [
 				path: OVERVIEW,
 				target: '[data-guide="nav-settings"]',
 				title: 'ob.signIn.s1.title',
+				label: 'ob.signIn.s1.label',
 				body: 'ob.signIn.s1.body'
 			},
 			{
@@ -126,12 +132,14 @@ export const CHECKLIST: readonly ChecklistItem[] = [
 				path: OVERVIEW,
 				target: '[data-guide="nav-customization"]',
 				title: 'ob.theme.nav.title',
+				label: 'ob.theme.nav.label',
 				body: 'ob.theme.nav.body'
 			},
 			{
 				path: THEME_LIST,
 				target: subNavLink(THEME_LIST),
 				title: 'ob.theme.sub.title',
+				label: 'ob.theme.sub.label',
 				body: 'ob.theme.sub.body'
 			},
 			{
@@ -146,18 +154,21 @@ export const CHECKLIST: readonly ChecklistItem[] = [
 				path: THEME_EDITOR,
 				target: '[data-guide="theme-sections"] [role="tab"][data-tab="layout"]',
 				title: 'ob.theme.s2.title',
+				label: 'ob.theme.s2.label',
 				body: 'ob.theme.s2.body'
 			},
 			{
 				path: THEME_EDITOR,
 				target: '[data-guide="theme-sections"] [role="tab"][data-tab="look"]',
 				title: 'ob.theme.s3.title',
+				label: 'ob.theme.s3.label',
 				body: 'ob.theme.s3.body'
 			},
 			{
 				path: THEME_EDITOR,
 				target: '[data-guide="theme-sections"] [role="tab"][data-tab="images"]',
 				title: 'ob.theme.s4.title',
+				label: 'ob.theme.s4.label',
 				body: 'ob.theme.s4.body',
 				action: 'ob.theme.s4.action',
 				advance: 'click'
@@ -191,6 +202,7 @@ export const CHECKLIST: readonly ChecklistItem[] = [
 				path: THEME_EDITOR,
 				target: '[data-guide="theme-save"]',
 				title: 'ob.theme.s6.title',
+				label: 'ob.theme.s6.label',
 				body: 'ob.theme.s6.body',
 				action: 'ob.theme.s6.action',
 				advance: { signal: 'theme.saved' },
@@ -216,12 +228,14 @@ export const CHECKLIST: readonly ChecklistItem[] = [
 				path: OVERVIEW,
 				target: '[data-guide="nav-access"]',
 				title: 'ob.schema.nav.title',
+				label: 'ob.schema.nav.label',
 				body: 'ob.schema.nav.body'
 			},
 			{
 				path: SCHEMA_LIST,
 				target: subNavLink(SCHEMA_LIST),
 				title: 'ob.schema.sub.title',
+				label: 'ob.schema.sub.label',
 				body: 'ob.schema.sub.body'
 			},
 			{
@@ -249,12 +263,14 @@ export const CHECKLIST: readonly ChecklistItem[] = [
 				path: OVERVIEW,
 				target: '[data-guide="nav-customization"]',
 				title: 'ob.screens.nav.title',
+				label: 'ob.screens.nav.label',
 				body: 'ob.screens.nav.body'
 			},
 			{
 				path: SCREEN_LIST,
 				target: subNavLink(SCREEN_LIST),
 				title: 'ob.screens.sub.title',
+				label: 'ob.screens.sub.label',
 				body: 'ob.screens.sub.body'
 			},
 			{
@@ -288,6 +304,7 @@ export const CHECKLIST: readonly ChecklistItem[] = [
 				path: SCREEN_EDITOR,
 				target: '.save-bar',
 				title: 'ob.screens.s5.title',
+				label: 'ob.screens.s5.label',
 				body: 'ob.screens.s5.body',
 				action: 'ob.screens.s5.action',
 				advance: { signal: 'screen.saved' },
@@ -315,6 +332,7 @@ export const CHECKLIST: readonly ChecklistItem[] = [
 				path: OVERVIEW,
 				target: '[data-guide="account-settings"]',
 				title: 'ob.secondFactor.settings.title',
+				label: 'ob.secondFactor.settings.label',
 				body: 'ob.secondFactor.settings.body',
 				action: 'ob.secondFactor.settings.action',
 				// The menu closed again: point at what opens it.

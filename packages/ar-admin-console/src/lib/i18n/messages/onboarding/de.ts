@@ -153,5 +153,19 @@ export const deOnboarding: Record<keyof typeof jaOnboarding, string> = {
 		'Schließen Sie die Anleitung. Diesen Punkt können Sie in der Liste von Hand als erledigt markieren.',
 
 	'ob.steps.label': 'Schritte: {name}',
-	'ob.steps.progress': 'Fortschritt: {name}'
+	'ob.steps.progress': 'Fortschritt: {name}',
+
+	'ob.signIn.s1.label': 'Mandant finden',
+	'ob.theme.nav.label': 'Anpassung finden',
+	'ob.schema.nav.label': 'Zugriffssteuerung finden',
+	'ob.screens.nav.label': 'Anpassung finden',
+	'ob.theme.sub.label': 'Designs finden',
+	'ob.theme.s2.label': 'Layout finden',
+	'ob.theme.s3.label': 'Design finden',
+	'ob.theme.s4.label': 'Hintergrundbilder finden',
+	'ob.theme.s6.label': 'Das erstellte Design speichern',
+	'ob.schema.sub.label': 'Attributschema finden',
+	'ob.screens.sub.label': 'Bildschirme finden',
+	'ob.screens.s5.label': 'Den erstellten Bildschirm speichern',
+	'ob.secondFactor.settings.label': 'Persönliche Einstellungen finden'
 };

@@ -9,7 +9,12 @@
 
 import type { ClientMetadata } from '../types/oidc';
 import type { Env } from '../types/env';
-import { loadWalletAttestationAnchors, type WalletAttestationAnchor } from './wallet-attestation';
+import { loadWalletAttestationAnchors } from './wallet-attestation';
+import type {
+  WalletAllowlist,
+  WalletAllowlistEntry,
+  WalletAttestationAnchor,
+} from '../types/wallet-allowlist';
 
 export const WALLET_ALLOWLIST_SCOPES = ['authrim_admin_credential'] as const;
 /** The credential scope: only an attestation-authenticated wallet may be granted it. */
@@ -18,27 +23,7 @@ export const MAX_ENTRIES = 16;
 export const MAX_ROOTS_PER_ENTRY = 8;
 export const MAX_REDIRECT_URIS = 8;
 
-export interface WalletAllowlistEntry {
-  /** The wallet type's identifier: the attestation `sub` and the OAuth `client_id`. */
-  clientId: string;
-  label: string;
-  enabled: boolean;
-  /** Roots a client attestation's chain may end at. */
-  attestationRoots: WalletAttestationAnchor[];
-  /** Roots a key attestation's chain may end at (used by the credential endpoint, S3). */
-  keyAttestationRoots: WalletAttestationAnchor[];
-  /** Redirect URIs the wallet may use (https app links or a registered custom scheme). */
-  redirectUris: string[];
-}
-
-export interface WalletAllowlist {
-  version: 1;
-  /** Epoch ms of the last change. */
-  updatedAt: number;
-  /** Counts changes; an update names the revision it was made against. */
-  revision: number;
-  entries: WalletAllowlistEntry[];
-}
+export type { WalletAllowlist, WalletAllowlistEntry };
 
 export const EMPTY_WALLET_ALLOWLIST: WalletAllowlist = {
   version: 1,

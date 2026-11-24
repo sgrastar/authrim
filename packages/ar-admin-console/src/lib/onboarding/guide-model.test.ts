@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { hasMessage, t } from '#lib/i18n/i18n.svelte.js';
+import { hasMessage, t, type MessageKey } from '#lib/i18n/i18n.svelte.js';
 import { CHECKLIST, type ChecklistItem, type GuideStep } from './checklist';
 import {
 	canGoBack,
@@ -178,6 +178,36 @@ describe('the console’s checklist', () => {
 		expect(steps[2]).toMatchObject({ advance: 'click', clickOn: 'a[href]' });
 		expect(canGoBack(steps, 2, '/admin/settings/general')).toBe(true);
 		expect(canGoBack(steps, 1, '/admin/settings/general')).toBe(false);
+	});
+
+	it('names every step in the list of steps, and a step titled as a sentence has a short name', () => {
+		for (const entry of CHECKLIST) {
+			for (const entryStep of entry.steps) {
+				if (entryStep.label) expect(hasMessage(entryStep.label)).toBe(true);
+				// The steps that point at a header category are titled "… is here": named by place.
+				if (entryStep.target?.startsWith('[data-guide="nav-')) expect(entryStep.label).toBeTruthy();
+			}
+		}
+		// Steps named by place, and the two that save what was made.
+		const labelled = CHECKLIST.flatMap((entry) => entry.steps.map((entryStep) => entryStep.label));
+		for (const key of [
+			'ob.theme.sub.label',
+			'ob.theme.s2.label',
+			'ob.theme.s3.label',
+			'ob.theme.s4.label',
+			'ob.theme.s6.label',
+			'ob.schema.sub.label',
+			'ob.screens.sub.label',
+			'ob.screens.s5.label',
+			'ob.secondFactor.settings.label'
+		]) {
+			expect(labelled).toContain(key);
+		}
+		// The label is a name, not the sentence the popover is titled with.
+		const first = CHECKLIST[0].steps[0];
+		expect(first.label).toBeTruthy();
+		expect(t(first.label as MessageKey)).not.toBe(t(first.title));
+		expect(t(first.label as MessageKey).length).toBeLessThan(t(first.title).length);
 	});
 
 	it('lists the second-factor guide fifth, through the account menu to the security keys', () => {
