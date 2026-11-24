@@ -146,5 +146,19 @@ export const enOnboarding: Record<keyof typeof jaOnboarding, string> = {
 		'Close the guide. You can mark this item as done by hand from the list.',
 
 	'ob.steps.label': 'Steps of {name}',
-	'ob.steps.progress': 'Progress of {name}'
+	'ob.steps.progress': 'Progress of {name}',
+
+	'ob.signIn.s1.label': 'Finding Tenant',
+	'ob.theme.nav.label': 'Finding Customization',
+	'ob.schema.nav.label': 'Finding Access Control',
+	'ob.screens.nav.label': 'Finding Customization',
+	'ob.theme.sub.label': 'Finding Themes',
+	'ob.theme.s2.label': 'Finding Layout',
+	'ob.theme.s3.label': 'Finding Look',
+	'ob.theme.s4.label': 'Finding Background images',
+	'ob.theme.s6.label': 'Saving the theme you made',
+	'ob.schema.sub.label': 'Finding Attribute schema',
+	'ob.screens.sub.label': 'Finding Screens',
+	'ob.screens.s5.label': 'Saving the screen you made',
+	'ob.secondFactor.settings.label': 'Finding Personal settings'
 };
