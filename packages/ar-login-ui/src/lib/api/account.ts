@@ -294,6 +294,8 @@ export type AccountPageDefinition = {
 			| 'consent_records_available'
 			| 'multiple_sessions';
 		show_for_guests: boolean;
+		/** A launcher slot's launchers by id; absent: every launcher. */
+		launcher_ids?: string[];
 	}>;
 };
 

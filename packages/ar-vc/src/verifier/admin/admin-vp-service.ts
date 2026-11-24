@@ -387,7 +387,7 @@ export type AdminResponseOutcome =
   | { kind: 'unavailable' };
 
 /** The admin credential row at a status list entry of the tenant's core database. */
-async function findAdminCredential(
+export async function findAdminCredential(
   env: Env,
   tenantId: string,
   listId: string,
@@ -421,6 +421,21 @@ async function findAdminCredential(
     status: row.status,
     holderBinding,
   };
+}
+
+/** The status of one admin credential row by its public id, or null when there is none. */
+export async function findAdminCredentialStatus(
+  env: Env,
+  tenantId: string,
+  publicId: string
+): Promise<{ userId: string; status: string } | null> {
+  const context = await resolveTenantMetadataContext(env as unknown as CoreEnv, tenantId);
+  const adapter = ensureDatabaseAdapter(context.coreDb, 'vc-admin-presentation');
+  const row = await adapter.queryOne<{ user_id: string; status: string }>(
+    `SELECT user_id, status FROM issued_credentials WHERE tenant_id = ? AND public_id = ?`,
+    [tenantId, publicId]
+  );
+  return row ? { userId: row.user_id, status: row.status } : null;
 }
 
 /**

@@ -10,12 +10,14 @@
 
 import { Hono } from 'hono';
 import type { Context } from 'hono';
-import type { Env, AdminAuthContext } from '@authrim/ar-lib-core';
+import type { Env, AdminAuthContext, AdminIpAllowlistEntry } from '@authrim/ar-lib-core';
 
 // Define context type with adminAuth variable
 type AdminContext = Context<{ Bindings: Env; Variables: { adminAuth?: AdminAuthContext } }>;
 import {
   AdminIpAllowlistRepository,
+  adminIpMatchesRange,
+  getAdminRequestClientIp,
   createErrorResponse,
   AR_ERROR_CODES,
   getTenantIdFromContext,
@@ -75,6 +77,71 @@ async function createAuditLog(
     severity: 'warn', // IP changes are security-sensitive
     metadata,
   });
+}
+
+/**
+ * The allowlist is a way to lock oneself out: once an enabled entry exists, only the addresses in
+ * an enabled range reach the admin console and the Admin API. A change that would leave the
+ * caller's own address outside a limit they were not outside of is refused (409 `would_lock_out`)
+ * unless the request says `?allow_lockout=true`. It is a guard against a slip, not a security
+ * boundary: the check and the write are two steps, so a concurrent change can still pass it.
+ */
+const LOCKOUT_ERROR = 'would_lock_out';
+
+type RangeEntry = Pick<AdminIpAllowlistEntry, 'ip_range' | 'enabled'>;
+
+/** The address the allowlist judges the caller by (what the middleware enforces with). */
+function clientIpOf(c: { req: { header: (name: string) => string | undefined } }): string | null {
+  return getAdminRequestClientIp((name) => c.req.header(name));
+}
+
+function leavesCallerOutside(
+  before: readonly RangeEntry[],
+  after: readonly RangeEntry[],
+  clientIp: string | null
+): boolean {
+  // With no address the caller matches no range: they are outside whenever a limit is on. That
+  // can only be started here (an active limit refuses a caller with no address already), and a
+  // limit started with no address in view shuts them out of the next request.
+  const outside = (entries: readonly RangeEntry[]) => {
+    const enabled = entries.filter((entry) => entry.enabled);
+    return (
+      enabled.length > 0 &&
+      !enabled.some((entry) => clientIp !== null && adminIpMatchesRange(clientIp, entry.ip_range))
+    );
+  };
+  return outside(after) && !outside(before);
+}
+
+/** The body of the refusal (409). */
+function lockoutRefusalBody(clientIp: string | null) {
+  return {
+    error: LOCKOUT_ERROR,
+    error_description:
+      'This change would leave the current IP address outside the allowlist. Repeat it with allow_lockout=true to continue.',
+    current_ip: clientIp,
+  };
+}
+
+/**
+ * Judges a change against the entries as they are now. `refusal` is the body to answer 409 with,
+ * or null to go on; `overridden` tells the caller to note in the audit log that the guard was
+ * passed on request.
+ */
+function lockoutGuard(
+  c: {
+    req: {
+      header: (name: string) => string | undefined;
+      query: (name: string) => string | undefined;
+    };
+  },
+  before: readonly RangeEntry[],
+  after: readonly RangeEntry[]
+): { refusal: ReturnType<typeof lockoutRefusalBody> | null; overridden: boolean } {
+  const clientIp = clientIpOf(c);
+  if (!leavesCallerOutside(before, after, clientIp)) return { refusal: null, overridden: false };
+  if (c.req.query('allow_lockout') === 'true') return { refusal: null, overridden: true };
+  return { refusal: lockoutRefusalBody(clientIp), overridden: false };
 }
 
 /**
@@ -183,15 +250,15 @@ ipAllowlistRouter.get('/', async (c) => {
       ? await ipRepo.getAllEntries(tenantId)
       : await ipRepo.getEnabledEntries(tenantId);
 
-    // Get current client IP for reference
-    const currentIp =
-      c.req.header('cf-connecting-ip') || c.req.header('x-forwarded-for') || 'unknown';
+    // The address the allowlist judges this caller by.
+    const currentIp = clientIpOf(c) ?? 'unknown';
 
     return c.json({
       items: entries,
       total: entries.length,
       current_ip: currentIp,
-      restriction_active: entries.length > 0,
+      // Only an enabled entry limits anyone; the list may hold disabled ones too.
+      restriction_active: entries.some((entry) => entry.enabled),
     });
   } catch (error) {
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
@@ -243,8 +310,12 @@ ipAllowlistRouter.post('/', async (c) => {
       enabled?: boolean;
     }>();
 
-    // Validate required fields
-    if (!body.ip_range) {
+    // Validate required fields. The flag is what the lock-out guard judges by, so it must be a
+    // boolean, not something that is stored one way and read another.
+    if (typeof body.ip_range !== 'string' || !body.ip_range.trim()) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
+    }
+    if (body.enabled !== undefined && typeof body.enabled !== 'boolean') {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
     }
 
@@ -260,16 +331,12 @@ ipAllowlistRouter.post('/', async (c) => {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
     }
 
-    // Warn if adding an entry would lock out current IP
-    const currentIp = c.req.header('cf-connecting-ip') || c.req.header('x-forwarded-for');
-    const existingEntries = await ipRepo.getEnabledEntries(tenantId);
-
-    // If this is the first entry, warn about self-lockout
-    if (existingEntries.length === 0 && currentIp) {
-      const wouldMatch = await ipRepo.isIpAllowed(tenantId, currentIp);
-      // After adding the entry, would the current IP still be allowed?
-      // This is a simplified check - the actual check would need to include the new entry
-    }
+    const current = await ipRepo.getAllEntries(tenantId);
+    const guard = lockoutGuard(c, current, [
+      ...current,
+      { ip_range: body.ip_range.trim(), enabled: body.enabled ?? true },
+    ]);
+    if (guard.refusal) return c.json(guard.refusal, 409);
 
     const entry = await ipRepo.createEntry({
       tenant_id: tenantId,
@@ -284,6 +351,7 @@ ipAllowlistRouter.post('/', async (c) => {
     await createAuditLog(c, 'ip_allowlist.create', entry.id, 'success', {
       ip_range: entry.ip_range,
       ip_version: entry.ip_version,
+      ...(guard.overridden ? { lockout_override: true } : {}),
     });
 
     return c.json(entry, 201);
@@ -322,6 +390,18 @@ ipAllowlistRouter.patch('/:id', async (c) => {
       enabled?: boolean;
     }>();
 
+    // What decides who gets in must be what the guard judges: an empty range or a flag that is not
+    // a boolean would be stored as given.
+    if (
+      body.ip_range !== undefined &&
+      (typeof body.ip_range !== 'string' || !body.ip_range.trim())
+    ) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
+    }
+    if (body.enabled !== undefined && typeof body.enabled !== 'boolean') {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
+    }
+
     // Validate IP format if being updated
     let ipVersion: 4 | 6 | undefined;
     if (body.ip_range) {
@@ -332,8 +412,30 @@ ipAllowlistRouter.patch('/:id', async (c) => {
       ipVersion = validation.version;
     }
 
+    // A range already listed under another entry is refused, as on create.
+    const newRange = body.ip_range?.trim();
+    if (
+      newRange &&
+      newRange !== existing.ip_range &&
+      (await ipRepo.entryExists(tenantId, newRange))
+    ) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
+    }
+
+    const current = await ipRepo.getAllEntries(tenantId);
+    const guard = lockoutGuard(
+      c,
+      current,
+      current.map((item) =>
+        item.id === id
+          ? { ip_range: newRange ?? item.ip_range, enabled: body.enabled ?? item.enabled }
+          : item
+      )
+    );
+    if (guard.refusal) return c.json(guard.refusal, 409);
+
     const entry = await ipRepo.updateEntry(id, {
-      ip_range: body.ip_range?.trim(),
+      ip_range: newRange,
       ip_version: ipVersion,
       description: body.description,
       enabled: body.enabled,
@@ -346,6 +448,7 @@ ipAllowlistRouter.patch('/:id', async (c) => {
     // Create audit log
     await createAuditLog(c, 'ip_allowlist.update', id, 'success', {
       changes: body,
+      ...(guard.overridden ? { lockout_override: true } : {}),
     });
 
     return c.json(entry);
@@ -378,11 +481,20 @@ ipAllowlistRouter.delete('/:id', async (c) => {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
+    const current = await ipRepo.getAllEntries(tenantId);
+    const guard = lockoutGuard(
+      c,
+      current,
+      current.filter((item) => item.id !== id)
+    );
+    if (guard.refusal) return c.json(guard.refusal, 409);
+
     await ipRepo.deleteEntry(id);
 
     // Create audit log
     await createAuditLog(c, 'ip_allowlist.delete', id, 'success', {
       ip_range: existing.ip_range,
+      ...(guard.overridden ? { lockout_override: true } : {}),
     });
 
     return c.json({ success: true, message: 'IP allowlist entry deleted' });
@@ -414,13 +526,27 @@ ipAllowlistRouter.post('/:id/enable', async (c) => {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
+    const current = await ipRepo.getAllEntries(tenantId);
+    const guard = lockoutGuard(
+      c,
+      current,
+      current.map((item) => (item.id === id ? { ip_range: item.ip_range, enabled: true } : item))
+    );
+    if (guard.refusal) return c.json(guard.refusal, 409);
+
     const success = await ipRepo.enableEntry(id);
     if (!success) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
     // Create audit log
-    await createAuditLog(c, 'ip_allowlist.enable', id, 'success');
+    await createAuditLog(
+      c,
+      'ip_allowlist.enable',
+      id,
+      'success',
+      guard.overridden ? { lockout_override: true } : undefined
+    );
 
     return c.json({ success: true, message: 'IP allowlist entry enabled' });
   } catch (error) {
@@ -451,13 +577,27 @@ ipAllowlistRouter.post('/:id/disable', async (c) => {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
+    const current = await ipRepo.getAllEntries(tenantId);
+    const guard = lockoutGuard(
+      c,
+      current,
+      current.map((item) => (item.id === id ? { ip_range: item.ip_range, enabled: false } : item))
+    );
+    if (guard.refusal) return c.json(guard.refusal, 409);
+
     const success = await ipRepo.disableEntry(id);
     if (!success) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
     // Create audit log
-    await createAuditLog(c, 'ip_allowlist.disable', id, 'success');
+    await createAuditLog(
+      c,
+      'ip_allowlist.disable',
+      id,
+      'success',
+      guard.overridden ? { lockout_override: true } : undefined
+    );
 
     return c.json({ success: true, message: 'IP allowlist entry disabled' });
   } catch (error) {

@@ -19,10 +19,11 @@ import {
 	moveOn,
 	moveOnSignal,
 	waitsForPerson,
+	wordingOf,
 	type Move
 } from './guide-model';
 import { onboardingProgress } from './progress.svelte';
-import type { GuideSignal } from './signals';
+import { guideFact, onGuideFactChange, type GuideSignal } from './signals';
 
 interface Active {
 	itemId: string;
@@ -250,11 +251,15 @@ function popoverOf(
 	pathname: string,
 	action = step.action
 ) {
+	// The step as this environment words it (a detour has its own action and keeps it).
+	const wording = wordingOf(step, guideFact);
+	const body = wording.body;
+	if (action === step.action) action = wording.action;
 	const waits = waitsForPerson(step);
 	const back = canGoBack(item.steps, index, pathname);
 	return {
 		title: escapeHtml(t(step.title)),
-		description: escapeHtml(t(step.body)),
+		description: escapeHtml(t(body)),
 		instruction: action ? escapeHtml(t(action)) : undefined,
 		showButtons: [
 			...(back ? (['previous'] as const) : []),
@@ -347,6 +352,14 @@ export const guide = {
 	get activeItemId(): string | null {
 		return active?.itemId ?? null;
 	},
+	/** The item being walked through, whole. */
+	get activeItem(): ChecklistItem | null {
+		return active ? itemOf(active.itemId) : null;
+	},
+	/** The step the guide is at (0-based); -1 when none is running. */
+	get activeIndex(): number {
+		return active?.index ?? -1;
+	},
 	/** Storybook and tests: other items than the console's checklist. */
 	useItems(next: readonly ChecklistItem[]): void {
 		items = next;
@@ -356,7 +369,10 @@ export const guide = {
 		host = next;
 		if (!active) active = recall();
 		void render();
+		// A page learned something about the environment that a step's wording depends on.
+		const stopFacts = onGuideFactChange(() => void render());
 		return () => {
+			stopFacts();
 			generation += 1;
 			takeDown();
 			host = null;

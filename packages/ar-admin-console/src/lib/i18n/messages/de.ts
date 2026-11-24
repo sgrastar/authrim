@@ -20,6 +20,7 @@ import { deAdminAudit } from './admin-audit/de';
 import { deUserAudit } from './user-audit/de';
 import { deTeam } from './team/de';
 import { deIpAllowlist } from './ip-allowlist/de';
+import { deAccountPages } from './account-pages/de';
 import { deMachineAccess } from './machine-access/de';
 import { deTenants } from './tenants/de';
 import { deAuthMethods } from './auth-methods/de';
@@ -52,6 +53,7 @@ export const de = {
 	...deUserAudit,
 	...deTeam,
 	...deIpAllowlist,
+	...deAccountPages,
 	...deMachineAccess,
 	...deTenants,
 	...deAuthMethods,
@@ -69,7 +71,7 @@ export const de = {
 	'nav.cluster.configure': 'Konfigurieren',
 	'nav.cluster.operate': 'Betrieb',
 	'nav.cluster.platform': 'Plattform',
-	'nav.overview': 'Übersicht',
+	'nav.overview': 'Start',
 	'nav.wip': 'In Arbeit',
 	'nav.users': 'Benutzer',
 	'nav.access': 'Zugriffssteuerung',
@@ -350,6 +352,16 @@ export const de = {
 	'login.error.security':
 		'Stellen Sie sicher, dass die Seite über eine sichere (HTTPS-)Verbindung geöffnet ist.',
 	'login.error.generic': 'Ein unerwarteter Fehler ist aufgetreten.',
+	'login.wallet.divider': 'oder',
+	'login.wallet.sameDevice': 'Wallet auf diesem Gerät öffnen',
+	'login.wallet.completing': 'Anmeldung wird abgeschlossen…',
+	'login.wallet.back': 'Zurück zur Anmeldung',
+	'login.error.walletFailed':
+		'Die Anmeldung per Wallet war nicht erfolgreich. Bitte versuchen Sie es erneut.',
+	'login.error.walletExpired': 'Die Anmeldung per Wallet ist abgelaufen. Bitte starten Sie neu.',
+	'login.error.walletNotAllowed': 'Dieser Administrator darf sich nicht per Wallet anmelden.',
+	'login.error.walletUnavailable':
+		'Die Anmeldung per Wallet ist für diesen Tenant nicht verfügbar.',
 	'join.title': 'Als Administrator beitreten',
 	'join.subtitle': 'Geben Sie die E-Mail-Adresse und den Einladungscode aus Ihrer Einladung ein.',
 	'join.email': 'E-Mail-Adresse',

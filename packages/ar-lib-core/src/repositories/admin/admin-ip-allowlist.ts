@@ -8,6 +8,7 @@
 
 import type { DatabaseAdapter } from '../../db/adapter';
 import { requireTenantId } from '../tenant';
+import { adminIpMatchesRange } from '../../utils/admin-ip-match';
 import { BaseRepository, type BaseEntity, generateId, getCurrentTimestamp } from '../base';
 import type {
   AdminIpAllowlistEntry,
@@ -315,158 +316,11 @@ export class AdminIpAllowlistRepository extends BaseRepository<AdminIpAllowlistE
   }
 
   /**
-   * Check if an IP matches an allowlist entry
-   *
-   * @param ip - IP address to check
-   * @param entry - Allowlist entry
-   * @returns True if IP matches
+   * Check if an IP matches an allowlist entry, by the rule the admin-auth middleware enforces
+   * (a single copy of it, shared), so the check endpoint answers what enforcement would.
    */
   private ipMatchesEntry(ip: string, entry: AdminIpAllowlistEntry): boolean {
-    const ipRange = entry.ip_range;
-
-    // Check for CIDR notation
-    if (ipRange.includes('/')) {
-      return this.ipMatchesCidr(ip, ipRange);
-    }
-
-    // Exact match
-    return ip === ipRange;
-  }
-
-  /**
-   * Check if an IP matches a CIDR range
-   *
-   * @param ip - IP address to check
-   * @param cidr - CIDR notation (e.g., 192.168.1.0/24)
-   * @returns True if IP is in CIDR range
-   */
-  private ipMatchesCidr(ip: string, cidr: string): boolean {
-    const [rangeIp, prefixLengthStr] = cidr.split('/');
-    const prefixLength = parseInt(prefixLengthStr, 10);
-
-    // IPv4 handling
-    if (!ip.includes(':') && !rangeIp.includes(':')) {
-      return this.ipv4MatchesCidr(ip, rangeIp, prefixLength);
-    }
-
-    // IPv6 handling
-    if (ip.includes(':') && rangeIp.includes(':')) {
-      return this.ipv6MatchesCidr(ip, rangeIp, prefixLength);
-    }
-
-    // IP version mismatch
-    return false;
-  }
-
-  /**
-   * Check if IPv4 matches CIDR
-   */
-  private ipv4MatchesCidr(ip: string, rangeIp: string, prefixLength: number): boolean {
-    const ipBinary = this.ipv4ToBinary(ip);
-    const rangeBinary = this.ipv4ToBinary(rangeIp);
-
-    if (!ipBinary || !rangeBinary) {
-      return false;
-    }
-
-    // Compare prefix bits
-    const mask = (-1 << (32 - prefixLength)) >>> 0;
-    return (ipBinary & mask) === (rangeBinary & mask);
-  }
-
-  /**
-   * Convert IPv4 address to 32-bit integer
-   */
-  private ipv4ToBinary(ip: string): number | null {
-    const parts = ip.split('.');
-    if (parts.length !== 4) {
-      return null;
-    }
-
-    let result = 0;
-    for (const part of parts) {
-      const num = parseInt(part, 10);
-      if (isNaN(num) || num < 0 || num > 255) {
-        return null;
-      }
-      result = (result << 8) | num;
-    }
-
-    return result >>> 0; // Convert to unsigned
-  }
-
-  /**
-   * Check if IPv6 matches CIDR (simplified)
-   */
-  private ipv6MatchesCidr(ip: string, rangeIp: string, prefixLength: number): boolean {
-    // Expand IPv6 addresses to full form
-    const expandedIp = this.expandIpv6(ip);
-    const expandedRange = this.expandIpv6(rangeIp);
-
-    if (!expandedIp || !expandedRange) {
-      return false;
-    }
-
-    // Convert to hexadecimal string and compare prefix
-    const ipHex = expandedIp.replace(/:/g, '');
-    const rangeHex = expandedRange.replace(/:/g, '');
-
-    // Calculate number of hex characters to compare
-    const hexChars = Math.ceil(prefixLength / 4);
-    const remainingBits = prefixLength % 4;
-
-    // Compare full hex characters
-    if (
-      ipHex.substring(0, hexChars - (remainingBits > 0 ? 1 : 0)) !==
-      rangeHex.substring(0, hexChars - (remainingBits > 0 ? 1 : 0))
-    ) {
-      return false;
-    }
-
-    // Compare remaining bits if any
-    if (remainingBits > 0) {
-      const ipNibble = parseInt(ipHex[hexChars - 1], 16);
-      const rangeNibble = parseInt(rangeHex[hexChars - 1], 16);
-      const mask = (0xf << (4 - remainingBits)) & 0xf;
-      if ((ipNibble & mask) !== (rangeNibble & mask)) {
-        return false;
-      }
-    }
-
-    return true;
-  }
-
-  /**
-   * Expand IPv6 address to full form
-   */
-  private expandIpv6(ip: string): string | null {
-    // Handle :: expansion
-    if (ip.includes('::')) {
-      const parts = ip.split('::');
-      if (parts.length > 2) {
-        return null;
-      }
-
-      const leftParts = parts[0] ? parts[0].split(':') : [];
-      const rightParts = parts[1] ? parts[1].split(':') : [];
-      const missingParts = 8 - leftParts.length - rightParts.length;
-
-      const allParts = [...leftParts, ...Array(missingParts).fill('0'), ...rightParts];
-
-      if (allParts.length !== 8) {
-        return null;
-      }
-
-      return allParts.map((p) => p.padStart(4, '0')).join(':');
-    }
-
-    // Already in full form
-    const parts = ip.split(':');
-    if (parts.length !== 8) {
-      return null;
-    }
-
-    return parts.map((p) => p.padStart(4, '0')).join(':');
+    return adminIpMatchesRange(ip, entry.ip_range);
   }
 
   /**

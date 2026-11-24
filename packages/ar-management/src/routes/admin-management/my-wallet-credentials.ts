@@ -116,7 +116,8 @@ async function resolveHome(
   ) {
     return refuse(c, 'wallet_credential_session_required', 403);
   }
-  const tenantId = getTenantIdFromContext(c);
+  // The admin's own credentials, under the tenant their session lives in (no selected tenant).
+  const tenantId = auth.sessionTenantId ?? getTenantIdFromContext(c);
   const adapter = requireDedicatedAdminDatabaseAdapter(c.env, 'admin-wallet-credential');
   const session = await adapter.queryOne<SessionRow>(
     `SELECT tenant_id, derived_target_tenant_id

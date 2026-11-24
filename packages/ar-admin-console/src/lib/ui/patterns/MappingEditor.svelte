@@ -1162,6 +1162,9 @@
 
 	.mapping__table {
 		display: grid;
+		/* The one column is the table's own width, not the widest unbreakable text in it: a long
+		   identifier, URL or hash wraps inside its cell instead of widening every column. */
+		grid-template-columns: minmax(0, 1fr);
 		gap: var(--space-related);
 		min-width: 40rem;
 	}
@@ -1926,6 +1929,8 @@
 		margin-block-start: 2px;
 		color: var(--text-secondary);
 		font-size: var(--fs-caption);
+		/* Sample values are often one long word (a URL, an identifier). */
+		overflow-wrap: anywhere;
 	}
 
 	.mrow__tkey {

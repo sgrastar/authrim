@@ -223,7 +223,9 @@ export const TENANT_AREAS: readonly NavArea[] = [
 			},
 			{
 				id: 'account-page',
-				label: 'nav.custom.accountPage'
+				label: 'nav.custom.accountPage',
+				// The account page editor: …/account-page/<page id>.
+				details: true
 			},
 			{
 				id: 'launchers',
