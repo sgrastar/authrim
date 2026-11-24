@@ -381,6 +381,97 @@ describe('Status List Routes', () => {
       expect(await response.json()).toEqual({ error: 'temporarily_unavailable' });
     });
 
+    it('serves HAIP wallets when ANY enabled entry has key attestation roots, and an enabled flag is needed', async () => {
+      const { privateKey, publicKey } = await generateKeyPair('ES256', { extractable: true });
+      const jwk = await exportJWK(publicKey);
+      const publicJwk = { kty: 'EC', crv: 'P-256', x: jwk.x, y: jwk.y };
+      const name = { commonName: 'Wallet Root', organization: 'Wallet Co' };
+      const der = await buildCertificate(
+        {
+          subject: name,
+          issuer: name,
+          subjectPublicKey: publicJwk,
+          issuerPublicKey: publicJwk,
+          notBefore: new Date(Date.now() - 3600_000),
+          notAfter: new Date(Date.now() + 365 * 24 * 3600_000),
+          isCA: true,
+          pathLength: 1,
+        },
+        async (tbs) =>
+          new Uint8Array(
+            await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, privateKey, tbs)
+          )
+      );
+      const sha256 = [...new Uint8Array(await crypto.subtle.digest('SHA-256', der))]
+        .map((byte) => byte.toString(16).padStart(2, '0'))
+        .join('');
+      const root = { certificate: bytesToBase64(der), sha256 };
+      const entry = (clientId: string, enabled: boolean, keyAttestationRoots: unknown[]) => ({
+        clientId,
+        label: clientId,
+        enabled,
+        attestationRoots: [root],
+        keyAttestationRoots,
+        redirectUris: ['https://wallet.example.com/cb'],
+      });
+      const optionFor = async (entries: unknown[]) => {
+        const env = createMockEnv(mockTslListData);
+        (env as unknown as { SETTINGS: unknown }).SETTINGS = {
+          get: vi.fn(async (key: string) =>
+            // Only the tenant of the list has an allowlist: another tenant's key would find none.
+            key === 'settings:tenant:tenant1:wallet-attestation-allowlist'
+              ? JSON.stringify({ version: 1, updatedAt: 1, revision: 1, entries })
+              : null
+          ),
+        };
+        expect((await request(env)).status).toBe(200);
+        const rpc = (
+          env.KEY_MANAGER as unknown as {
+            get: () => { signStatusListCredentialRpc: ReturnType<typeof vi.fn> };
+          }
+        ).get().signStatusListCredentialRpc;
+        return (rpc.mock.calls[0] as unknown[]).slice(1);
+      };
+
+      // Disabled, although it has roots: not a HAIP wallet.
+      expect(await optionFor([entry('disabled', false, [root])])).toEqual([]);
+      // Enabled but without roots, and disabled with roots, in the same list: neither is a HAIP wallet.
+      expect(
+        await optionFor([
+          entry('enabled-no-roots', true, []),
+          entry('disabled-roots', false, [root]),
+        ])
+      ).toEqual([]);
+      // The first entry does not count, the second one does.
+      expect(await optionFor([entry('first', true, []), entry('second', true, [root])])).toEqual([
+        { requireX5c: true },
+      ]);
+    });
+
+    it('signs WITHOUT the x5c requirement when the allowlist cannot be read (today), whatever the tenant serves', async () => {
+      const signRpc = (env: Env) =>
+        (
+          env.KEY_MANAGER as unknown as {
+            get: () => { signStatusListCredentialRpc: ReturnType<typeof vi.fn> };
+          }
+        ).get().signStatusListCredentialRpc;
+      for (const settings of [
+        {
+          get: vi.fn(async () => {
+            throw new Error('kv down');
+          }),
+        },
+        { get: vi.fn(async () => '{"version":9}') },
+        { get: vi.fn(async () => 'not json') },
+      ]) {
+        const env = createMockEnv(mockTslListData);
+        (env as unknown as { SETTINGS: unknown }).SETTINGS = settings;
+        expect((await request(env)).status).toBe(200);
+        // The unreadable list is treated as "serves no wallet": no option is passed.
+        expect(signRpc(env).mock.calls[0]).toHaveLength(1);
+      }
+    });
+
     it('answers 304 within a window and a fresh token once the window and ETag change', async () => {
       const first = await request(createMockEnv(mockTslListData));
       const etag = first.headers.get('ETag');
