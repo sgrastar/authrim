@@ -204,13 +204,10 @@ async function relayCallbackToCanonicalOrigin(
     if (!handle) {
       return redirectWithError(c, 'invalid_state', 'The provider response was already received');
     }
-    return new Response(null, {
-      status: 303,
-      headers: {
-        Location: relayedCallbackUrl(providerIdOrSlug, canonicalOrigin, handle),
-        'Cache-Control': 'no-store',
-        'Referrer-Policy': 'no-referrer',
-      },
+    return c.newResponse(null, 303, {
+      Location: relayedCallbackUrl(providerIdOrSlug, canonicalOrigin, handle),
+      'Cache-Control': 'no-store',
+      'Referrer-Policy': 'no-referrer',
     });
   } catch (error) {
     log.warn('Failed to relay the provider response to the custom domain', {
@@ -562,13 +559,10 @@ async function completeExternalAuthentication(
     const redirectUrl = new URL(authState.redirectUri);
     redirectUrl.searchParams.set('handoff_token', handoffToken);
     redirectUrl.searchParams.set('state', authState.state);
-    return new Response(null, {
-      status: 302,
-      headers: {
-        Location: redirectUrl.toString(),
-        'Referrer-Policy': 'no-referrer',
-        'Cache-Control': 'no-store',
-      },
+    return c.newResponse(null, 302, {
+      Location: redirectUrl.toString(),
+      'Referrer-Policy': 'no-referrer',
+      'Cache-Control': 'no-store',
     });
   }
 
@@ -594,13 +588,10 @@ async function completeExternalAuthentication(
   });
   const redirectUrl = new URL(authState.redirectUri);
   redirectUrl.searchParams.set('code', authCode);
-  return new Response(null, {
-    status: 302,
-    headers: {
-      Location: redirectUrl.toString(),
-      'Referrer-Policy': 'no-referrer',
-      'Cache-Control': 'no-store',
-    },
+  return c.newResponse(null, 302, {
+    Location: redirectUrl.toString(),
+    'Referrer-Policy': 'no-referrer',
+    'Cache-Control': 'no-store',
   });
 }
 
@@ -679,13 +670,10 @@ async function beginExternalIdpProvisioningContinuation(
   redirect.searchParams.set('provisioning_token', token);
   redirect.searchParams.set('provisioning_tenant', continuation.authState.tenantId);
   redirect.searchParams.set('state', continuation.authState.state);
-  return new Response(null, {
-    status: 302,
-    headers: {
-      Location: redirect.toString(),
-      'Cache-Control': 'no-store',
-      'Referrer-Policy': 'no-referrer',
-    },
+  return c.newResponse(null, 302, {
+    Location: redirect.toString(),
+    'Cache-Control': 'no-store',
+    'Referrer-Policy': 'no-referrer',
   });
 }
 
@@ -1522,6 +1510,26 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
           diagnosticSessionId,
         }
       : undefined;
+    // An OpenID Connect provider is believed through its ID Token (validated against the nonce
+    // this sign-in sent): its UserInfo alone never names the person. A FAPI plain OAuth profile
+    // has no ID Token by design and reads its resource instead.
+    if (
+      provider.providerType === 'oidc' &&
+      !(fapi2Enabled && fapi2Config?.profile === 'plain_oauth')
+    ) {
+      if (!tokens.id_token) {
+        throw new ExternalIdPError(
+          ExternalIdPErrorCode.CALLBACK_FAILED,
+          'Missing ID token from OpenID Connect provider'
+        );
+      }
+      if (!authState.nonce) {
+        throw new ExternalIdPError(
+          ExternalIdPErrorCode.CALLBACK_FAILED,
+          'Missing nonce for ID token validation'
+        );
+      }
+    }
     if (provider.providerType === 'oidc' && tokens.id_token && authState.nonce) {
       if (fapi2Enabled) fapi2Stage = 'id-token';
       // Use the new options-based signature for comprehensive OIDC validation
@@ -1570,7 +1578,10 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
           resourceUrl: fapi2Config.resourceUrl,
           accessToken: tokens.access_token,
         });
-        if (idTokenSub && typeof resourceData.sub === 'string') {
+        // The resource names no other person than the validated ID Token: a subject of another
+        // type is as much a mismatch as another value.
+        if (idTokenSub && resourceData.sub !== undefined) {
+          if (typeof resourceData.sub !== 'string') throw new UserInfoSubjectMismatchError();
           assertUserInfoSubjectMatches(idTokenSub, resourceData.sub);
         }
         await recordCallbackDiagnostic(log, () =>
@@ -1583,13 +1594,11 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
             details: {
               dpop_authorization_scheme_accepted: true,
               subject_consistent:
-                !idTokenSub ||
-                typeof resourceData.sub !== 'string' ||
-                resourceData.sub === idTokenSub,
+                !idTokenSub || resourceData.sub === undefined || resourceData.sub === idTokenSub,
             },
           })
         );
-        userInfo = { ...userInfo, ...resourceData };
+        userInfo = { ...userInfo, ...resourceData, sub: userInfo.sub };
       } else if (provider.alwaysFetchUserinfo && !fapi2Client) {
         try {
           const {
@@ -2199,13 +2208,10 @@ async function redirectToLinkResult(
   tenantId: string,
   outcome: Parameters<typeof accountPageLinkResultUrl>[2]
 ): Promise<Response> {
-  return new Response(null, {
-    status: 302,
-    headers: {
-      Location: await accountPageLinkResultUrl(c.env, tenantId, outcome),
-      'Referrer-Policy': 'no-referrer',
-      'Cache-Control': 'no-store',
-    },
+  return c.newResponse(null, 302, {
+    Location: await accountPageLinkResultUrl(c.env, tenantId, outcome),
+    'Referrer-Policy': 'no-referrer',
+    'Cache-Control': 'no-store',
   });
 }
 
@@ -2225,13 +2231,10 @@ async function redirectWithError(
   if (liteReturn) {
     const url = new URL(liteReturn);
     url.searchParams.set('error', error);
-    return new Response(null, {
-      status: 302,
-      headers: {
-        Location: url.toString(),
-        'Referrer-Policy': 'no-referrer',
-        'Cache-Control': 'no-store',
-      },
+    return c.newResponse(null, 302, {
+      Location: url.toString(),
+      'Referrer-Policy': 'no-referrer',
+      'Cache-Control': 'no-store',
     });
   }
   const tenantId = getTenantIdFromContext(c);
@@ -2256,13 +2259,10 @@ async function redirectWithError(
     redirectUrl.searchParams.set('tenant_hint', tenantId);
   }
 
-  return new Response(null, {
-    status: 302,
-    headers: {
-      Location: redirectUrl.toString(),
-      'Referrer-Policy': 'no-referrer',
-      'Cache-Control': 'no-store',
-    },
+  return c.newResponse(null, 302, {
+    Location: redirectUrl.toString(),
+    'Referrer-Policy': 'no-referrer',
+    'Cache-Control': 'no-store',
   });
 }
 

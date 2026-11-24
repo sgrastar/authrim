@@ -52,12 +52,9 @@ export async function handleFrontchannelLogout(c: Context<{ Bindings: Env }>): P
           },
         })
         .catch(() => undefined);
-      return new Response('Invalid front-channel logout request', {
-        status: 400,
-        headers: {
-          'Cache-Control': 'no-store',
-          'Content-Type': 'text/plain; charset=utf-8',
-        },
+      return c.newResponse('Invalid front-channel logout request', 400, {
+        'Cache-Control': 'no-store',
+        'Content-Type': 'text/plain; charset=utf-8',
       });
     }
 
@@ -108,13 +105,10 @@ export async function handleFrontchannelLogout(c: Context<{ Bindings: Env }>): P
       })
       .catch(() => undefined);
 
-    return new Response('<!doctype html><title>Logout complete</title>', {
-      status: 200,
-      headers: {
-        'Cache-Control': 'no-store',
-        'Content-Type': 'text/html; charset=utf-8',
-        'Content-Security-Policy': "default-src 'none'; frame-ancestors *",
-      },
+    return c.newResponse('<!doctype html><title>Logout complete</title>', 200, {
+      'Cache-Control': 'no-store',
+      'Content-Type': 'text/html; charset=utf-8',
+      'Content-Security-Policy': "default-src 'none'; frame-ancestors *",
     });
   } catch (error) {
     await diagnostic
@@ -130,12 +124,9 @@ export async function handleFrontchannelLogout(c: Context<{ Bindings: Env }>): P
     log.warn('Front-channel logout session invalidation failed', {
       errorType: error instanceof Error ? error.name : 'UnknownError',
     });
-    return new Response('Front-channel logout failed', {
-      status: 500,
-      headers: {
-        'Cache-Control': 'no-store',
-        'Content-Type': 'text/plain; charset=utf-8',
-      },
+    return c.newResponse('Front-channel logout failed', 500, {
+      'Cache-Control': 'no-store',
+      'Content-Type': 'text/plain; charset=utf-8',
     });
   } finally {
     await diagnostic?.cleanup().catch(() => undefined);

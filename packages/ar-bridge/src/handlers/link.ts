@@ -297,6 +297,8 @@ export async function handleUnlinkIdentity(c: Context<{ Bindings: Env }>): Promi
       removal.accountId !== account.accountId ||
       (removal.status !== 201 && removal.status !== 202)
     ) {
+      // The removal was asked for and may have taken effect: the tokens are revoked all the same.
+      await revokeTokens();
       throw new Error('external_idp_route_removal_response_invalid');
     }
 

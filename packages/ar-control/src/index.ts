@@ -1340,7 +1340,7 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
     if (request.method === 'POST' && url.pathname === '/api/internal/control/bootstrap/advance') {
       const authorization = request.headers.get('Authorization');
       const match = authorization?.match(
-        /^Bearer ([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)$/u
+        /^Bearer +([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)$/iu
       );
       if (!match) {
         return new Response(null, {

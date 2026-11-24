@@ -51,6 +51,19 @@ function accessTokenHash(accessToken: string): string {
   return createHash('sha256').update(accessToken, 'ascii').digest('base64url');
 }
 
+function isUseDpopNonceError(body: string): boolean {
+  try {
+    const parsed: unknown = JSON.parse(body);
+    return (
+      typeof parsed === 'object' &&
+      parsed !== null &&
+      (parsed as Record<string, unknown>).error === 'use_dpop_nonce'
+    );
+  } catch {
+    return false;
+  }
+}
+
 function publicJwk(privateJwk: jose.JWK): jose.JWK {
   const { d: _privateExponent, p: _p, q: _q, dp: _dp, dq: _dq, qi: _qi, ...publicKey } = privateJwk;
   return publicKey;
@@ -241,7 +254,17 @@ export class Fapi2Client {
         maxResponseSize: MAX_RESPONSE_BYTES,
       });
       const challengeNonce = response.headers.get('DPoP-Nonce') ?? undefined;
-      if (!response.ok && challengeNonce && attempt === 0) {
+      // RFC 9449 section 9: a resource server asks for a nonce with 401 and
+      // WWW-Authenticate: DPoP error="use_dpop_nonce".
+      if (
+        !response.ok &&
+        challengeNonce &&
+        attempt === 0 &&
+        response.status === 401 &&
+        /\bDPoP\b[^,]*\berror="?use_dpop_nonce"?/i.test(
+          response.headers.get('WWW-Authenticate') ?? ''
+        )
+      ) {
         nonce = challengeNonce;
         await readResponseTextWithLimit(response, MAX_RESPONSE_BYTES).catch(() => undefined);
         continue;
@@ -280,12 +303,18 @@ export class Fapi2Client {
         maxResponseSize: MAX_RESPONSE_BYTES,
       });
       const challengeNonce = response.headers.get('DPoP-Nonce') ?? undefined;
-      if (!response.ok && challengeNonce && attempt === 0) {
-        nonce = challengeNonce;
-        await readResponseTextWithLimit(response, MAX_RESPONSE_BYTES).catch(() => undefined);
-        continue;
+      if (!response.ok) {
+        // RFC 9449 section 8: an authorization server asks for a nonce with the error
+        // use_dpop_nonce (400); any other failure is not retried.
+        const errorBody = await readResponseTextWithLimit(response, MAX_RESPONSE_BYTES).catch(
+          () => ''
+        );
+        if (challengeNonce && attempt === 0 && isUseDpopNonceError(errorBody)) {
+          nonce = challengeNonce;
+          continue;
+        }
+        throw new Error(`FAPI endpoint request failed: HTTP ${response.status}`);
       }
-      if (!response.ok) throw new Error(`FAPI endpoint request failed: HTTP ${response.status}`);
       return JSON.parse(await readResponseTextWithLimit(response, MAX_RESPONSE_BYTES)) as Record<
         string,
         unknown
