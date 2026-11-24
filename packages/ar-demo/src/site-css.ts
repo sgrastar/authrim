@@ -51,13 +51,13 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
 /* Two columns: the rules, the buttons and the numbers on one side, the fine print on the other. */
 .columns{display:grid;gap:2rem 3.5rem;margin-top:.5rem}
 .notices.fine{max-width:34rem;margin:1.4rem auto 0;font-size:.82rem;line-height:1.7;text-align:start}
-.notices.fine ul{gap:.7rem;list-style:disc;padding-inline-start:1.2rem}
+.columns>.notices ul{gap:.7rem;list-style:disc;padding-inline-start:1.2rem}
 .admin{margin-top:2rem}
 .admin p{max-width:22rem;margin:0 auto .7rem;color:var(--ink-soft);font-size:.88rem;line-height:1.6;text-wrap:balance}
 .admin .btn{width:min(100%,300px);background:transparent;color:var(--ink);box-shadow:inset 0 0 0 2px var(--ink)}
 .admin .btn:hover{background:var(--ink);color:var(--btn-ink)}
 .columns>.notices{margin:0 auto;text-align:start}
-@media (min-width:56rem){.columns{grid-template-columns:minmax(0,1fr) minmax(0,1fr);grid-template-rows:auto 1fr;align-items:start}.columns>.main{grid-column:1;grid-row:1 / span 2}.columns>.notices{grid-column:2;grid-row:1;margin:1.5rem 0 0}.columns>.notices.fine{grid-row:2}}
+@media (min-width:56rem){.columns{grid-template-columns:minmax(0,1fr) minmax(0,1fr);grid-template-rows:auto 1fr;align-items:start}.columns>.main{grid-column:1;grid-row:1 / span 2}.columns>.notices{grid-column:2;grid-row:1;margin:1.5rem 0 0}.columns>.notices.fine{grid-row:2;margin-top:.9rem}.columns{row-gap:0}}
 /* The check, when it shows, and the button are one block: same width, same corners. */
 form{display:grid;width:min(100%,300px);margin:2rem auto 0}
 /* The check takes no room until it has something to ask. */
