@@ -56,15 +56,15 @@
 	.wallet {
 		display: flex;
 		flex-direction: column;
-		gap: var(--space-3, 0.75rem);
+		gap: var(--space-related);
 	}
 
 	.wallet__divider {
 		display: flex;
 		align-items: center;
-		gap: var(--space-3, 0.75rem);
-		color: var(--text-muted, #6b7280);
-		font-size: 0.8125rem;
+		gap: var(--space-related);
+		color: var(--text-muted);
+		font-size: var(--fs-small);
 	}
 
 	.wallet__divider::before,
@@ -72,6 +72,6 @@
 		content: '';
 		flex: 1;
 		height: 1px;
-		background: var(--border, #d1d5db);
+		background: var(--border);
 	}
 </style>
