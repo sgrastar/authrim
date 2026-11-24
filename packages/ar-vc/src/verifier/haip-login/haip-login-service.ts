@@ -231,7 +231,12 @@ export async function createHaipLoginRequest(
     now: nowSeconds,
     vct: adminCredentialVct(),
     encryptionKey,
-    issuingCaAki: verifier.issuingCaAki,
+    // While more than one issuing CA is trusted (a CA rollover) the query names none: it would hide
+    // the credentials issued under the CA this verifier's own chain does not end at. Acceptance
+    // is checked against the pinned CA list either way.
+    ...(new Set(trustedIssuingCaSha256(env)).size > 1
+      ? {}
+      : { issuingCaAki: verifier.issuingCaAki }),
   });
   const { token: requestObject } = await keyManager(env, input.tenantId).signHaipLoginRequestRpc(
     payload

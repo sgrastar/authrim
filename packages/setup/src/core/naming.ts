@@ -287,7 +287,9 @@ export const WORKER_DEPLOYMENT_DEPENDENCIES: Record<WorkerComponent, readonly Wo
   'ar-policy': ['ar-lib-core', 'ar-plugin-runner'],
   'ar-saml': ['ar-lib-core', 'ar-plugin-runner'],
   'ar-vc': ['ar-lib-core'],
-  'ar-auth': ['ar-lib-core', 'ar-bridge', 'ar-plugin-runner'],
+  // ar-vc: the administrator wallet sign-in binds VC_ISSUER (the VC -> Management bootstrap config
+  // lets ar-vc exist first, without Management).
+  'ar-auth': ['ar-lib-core', 'ar-bridge', 'ar-plugin-runner', 'ar-vc'],
   'ar-management': [
     'ar-lib-core',
     'ar-control',

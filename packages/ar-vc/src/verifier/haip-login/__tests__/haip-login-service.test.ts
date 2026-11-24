@@ -251,6 +251,36 @@ describe('starting a login', () => {
     expect(await getHaipLoginRequestObject(env, 'tenant-1', 'other-id', NOW + 1_000)).toBeNull();
   });
 
+  const authoritiesOf = (keyManager: {
+    signHaipLoginRequestRpc: { mock: { calls: unknown[][] } };
+  }) =>
+    (
+      (keyManager.signHaipLoginRequestRpc.mock.calls[0][0] as Record<string, unknown>)
+        .dcql_query as { credentials: Array<{ trusted_authorities?: unknown }> }
+    ).credentials[0].trusted_authorities;
+
+  it('names the issuing CA in the query', async () => {
+    const { env, keyManager } = await envFor();
+    await start(env);
+    expect(authoritiesOf(keyManager)).toEqual([{ type: 'aki', values: ['AKI'] }]);
+  });
+
+  it('names no CA in the query while two CAs are trusted (a rollover)', async () => {
+    const { env, keyManager } = await envFor();
+    (env as unknown as { VC_X5C_ISSUING_CA_SHA256: string }).VC_X5C_ISSUING_CA_SHA256 =
+      `${fx.caSha256},${'a'.repeat(64)}`;
+    await start(env);
+    expect(authoritiesOf(keyManager)).toBeUndefined();
+  });
+
+  it('keeps naming the CA when the same CA is listed twice', async () => {
+    const { env, keyManager } = await envFor();
+    (env as unknown as { VC_X5C_ISSUING_CA_SHA256: string }).VC_X5C_ISSUING_CA_SHA256 =
+      `${fx.caSha256},${fx.caSha256.toUpperCase()}`;
+    await start(env);
+    expect(authoritiesOf(keyManager)).toEqual([{ type: 'aki', values: ['AKI'] }]);
+  });
+
   it('is not offered without a usable certificate chain for this host', async () => {
     for (const verifier of [
       null,
