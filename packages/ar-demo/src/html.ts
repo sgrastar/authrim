@@ -124,8 +124,10 @@ export function startPage(lang: Lang, config: Config, tally: Tally | null = null
   const all = copy.notices(config.tenantTtlHours);
   const items = (lines: string[]): string =>
     lines.map((line) => `<li>${esc(line)}</li>`).join('\n');
-  // The first four are the plain rules, set under the heading beside the start button; the rest
-  // (where the database is, the second factor) are fine print, in the column on the other side.
+  // The first four are the plain rules, set under the heading; the rest (where the database is,
+  // the second factor) are fine print. Both sit in the right column on a wide screen (the rules
+  // first, then the fine print), beside the start button, the admin link and the counts; on a
+  // narrow one the rules come first, then those, then the fine print.
   const notices = items(all.slice(0, 4));
   const finePrint = items(all.slice(4));
   // The admin console's own sign-in page, for a tenant that already exists. It takes no parameters.
@@ -140,13 +142,13 @@ export function startPage(lang: Lang, config: Config, tally: Tally | null = null
 <p class="intro">${esc(copy.intro1)}</p>
 <p class="intro">${esc(copy.intro2)}</p>
 <div class="columns">
-<div class="main">
 <div class="notices">
 <h2>${esc(copy.noticeTitle)}</h2>
 <ul>
 ${notices}
 </ul>
 </div>
+<div class="main">
 <form id="start-form" method="post" action="/start">
 <div class="check"><div id="check" class="cf-turnstile" data-sitekey="${esc(config.turnstileSiteKey)}" data-language="${esc(copy.turnstile)}"></div></div>
 <button type="submit" class="start-btn" data-wait="${esc(plain(copy.startChecking))}">${esc(copy.start)}</button>
