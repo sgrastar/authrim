@@ -52,7 +52,7 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
 .columns{display:grid;gap:2rem 3.5rem;margin-top:.5rem}
 .notices.fine{max-width:34rem;margin:1.4rem auto 0;font-size:.82rem;line-height:1.7;text-align:start}
 .columns{padding:1.6rem 1.75rem;border:1px solid var(--line);border-radius:14px;background:color-mix(in srgb,var(--glass) 15%,transparent);box-shadow:0 18px 48px var(--shadow)}
-@supports ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){.columns{-webkit-backdrop-filter:blur(14px) saturate(1.15);backdrop-filter:blur(14px) saturate(1.15)}}
+@supports ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){.columns{-webkit-backdrop-filter:blur(3px) saturate(1.15);backdrop-filter:blur(3px) saturate(1.15)}}
 .columns>.notices ul{gap:.7rem;list-style:disc;padding-inline-start:1.2rem}
 .admin{margin-top:2rem}
 .admin p{max-width:22rem;margin:0 auto .7rem;color:var(--ink-soft);font-size:.88rem;line-height:1.6;text-wrap:balance}
