@@ -115,12 +115,16 @@ export const blocks = {
 		code_input_mode: method,
 		text: 'Enter the code from your email or authenticator app.'
 	}),
-	consent: (): SampleField => ({
+	consent: (presentation?: {
+		consent_display?: 'inline' | 'modal';
+		consent_require_scroll?: boolean;
+	}): SampleField => ({
 		field: 'consent.policy',
 		label: 'Consent confirmation',
 		required: true,
 		block_type: 'consent_widget',
-		text: 'Review the consent items required for this step.'
+		text: 'Review the consent items required for this step.',
+		...presentation
 	}),
 	security: (timing: 'initial' | 'submit' = 'initial'): SampleField => ({
 		field: 'security.verification',
@@ -321,6 +325,27 @@ export const consentPolicy: FlowRuntimeConsentPolicyContent = {
 			display_order: 2
 		}
 	]
+};
+
+/** The same terms, but with the texts kept in Authrim (a long one scrolls): for the widget's own settings. */
+export const consentPolicyWithText: FlowRuntimeConsentPolicyContent = {
+	...consentPolicy,
+	items: consentPolicy.items.map((item) =>
+		item.statement_id === 'newsletter'
+			? item
+			: {
+					...item,
+					document_url: null,
+					// The privacy notice is the step's own exception: drawn in place.
+					text_display: item.statement_id === 'privacy' ? ('inline' as const) : null,
+					inline_content: (
+						'<p><strong>1. Scope.</strong> These terms apply to every service we provide.</p>' +
+						'<p><strong>2. Your account.</strong> You are responsible for what is done with your account.</p>' +
+						'<p><strong>3. Changes.</strong> We tell you before these terms change.</p>' +
+						'<p><strong>4. Ending.</strong> You can close your account at any time.</p>'
+					).repeat(5)
+				}
+	)
 };
 
 export const destinationFieldConsent: FlowRuntimeDestinationFieldConsentContent = {

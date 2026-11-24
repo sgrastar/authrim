@@ -377,6 +377,45 @@ describe('builderToFields', () => {
 		expect(plan).not.toHaveProperty('options');
 	});
 
+	it("reads and writes a consent part's default presentation, saving only what is not the default", () => {
+		const screen = fieldsToBuilder(
+			[
+				part({
+					block_type: 'consent_widget',
+					block_id: 'terms',
+					field: 'consent.terms',
+					consent_display: 'modal',
+					consent_require_scroll: true
+				})
+			],
+			ids()
+		);
+		expect(screen.settings.terms).toMatchObject({
+			consentDisplay: 'modal',
+			consentRequireScroll: true
+		});
+		const [saved] = builderToFields(screen);
+		expect(saved).toMatchObject({ consent_display: 'modal', consent_require_scroll: true });
+
+		// Back to the defaults: the properties go, the part is the plain one again.
+		screen.settings.terms.consentDisplay = 'inline';
+		screen.settings.terms.consentRequireScroll = false;
+		const [plain] = builderToFields(screen);
+		expect(plain).not.toHaveProperty('consent_display');
+		expect(plain).not.toHaveProperty('consent_require_scroll');
+	});
+
+	it('writes a divider with no words as one line, its label kept as a name of its own', () => {
+		const screen = fieldsToBuilder(
+			[part({ block_type: 'divider', block_id: 'line', field: 'line', label: 'Divider' })],
+			ids()
+		);
+		// The name "Divider" is not words to show: the builder reads the part with no label.
+		expect(screen.rows[0].columns[0][0].label).toBe('');
+		const [saved] = builderToFields(screen);
+		expect(saved).toMatchObject({ block_type: 'divider', label: 'Divider', text: null });
+	});
+
 	it('keeps a legacy yes/no in its form while stored to the profile, a checkbox once it is not', () => {
 		const screen = fieldsToBuilder(
 			[

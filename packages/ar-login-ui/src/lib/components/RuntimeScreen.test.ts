@@ -293,6 +293,68 @@ describe('RuntimeScreen signup email fields', () => {
 		expect(body).toMatch(/<input[^>]*checked[^>]*\/>\s*<span[^>]*>\s*<strong[^>]*>Name<\/strong>/);
 	});
 
+	it("draws a text in a dialog by the widget's default, unless the step's entry says otherwise", () => {
+		setLocale('en');
+		const item = (
+			statement_id: string,
+			title: string,
+			text_display: 'inline' | 'modal' | null
+		) => ({
+			statement_id,
+			slug: statement_id,
+			category: 'terms',
+			title,
+			description: '',
+			document_url: null,
+			inline_content: '<p>The text of ' + title + '</p>',
+			version: '20261113',
+			version_id: 'v-' + statement_id,
+			is_required: false,
+			content_mode: 'checkbox' as const,
+			options: [],
+			attribute_value_display: null,
+			checkbox_mode: 'optional' as const,
+			checkbox_default_checked: false,
+			text_display,
+			require_scroll: null,
+			binding_type: null,
+			binding_value: null,
+			evidence_profile: null,
+			language_fallback: null,
+			display_order: 1
+		});
+		const body = render(RuntimeScreen, {
+			props: {
+				screen: {
+					fields: [
+						{
+							field: 'consent.terms',
+							label: 'Terms',
+							block_type: 'consent_widget',
+							consent_display: 'modal'
+						}
+					]
+				},
+				consentPolicy: {
+					id: 'p',
+					display_name: '',
+					description: null,
+					language: 'en',
+					default_language: 'en',
+					items: [item('a', 'Alpha', null), item('b', 'Bravo', 'inline')]
+				}
+			}
+		}).body;
+
+		// Alpha follows the widget (a dialog: its button, and the text only in the dialog's body);
+		// Bravo's entry says in place (the statement page's frame).
+		expect(body).toContain('Open Alpha');
+		expect(body).not.toContain('Open Bravo');
+		expect(body).toContain('statement-consent-frame');
+		// The step's order is kept: nothing is hidden or reordered.
+		expect(body.indexOf('>Alpha<')).toBeLessThan(body.indexOf('>Bravo<'));
+	});
+
 	it('renders Destination Profile choices when a legacy custom screen lacks a consent widget', () => {
 		setLocale('en');
 		const body = render(RuntimeScreen, {

@@ -8,6 +8,7 @@
 	import {
 		allMethods,
 		consentPolicy as sampleConsentPolicy,
+		consentPolicyWithText as sampleConsentPolicyWithText,
 		destinationFieldConsent,
 		externalProviders as sampleProviders,
 		type SampleScreen
@@ -29,6 +30,8 @@
 		guest?: boolean;
 		guestRetention?: string;
 		withConsent?: boolean;
+		/** The statements drawn with a text of their own (to show the widget's dialog and scroll). */
+		consentWithText?: boolean;
 		withDestinationFields?: boolean;
 		humanVerification?: boolean;
 		humanVerificationVisible?: boolean;
@@ -53,6 +56,7 @@
 		guest = true,
 		guestRetention = '',
 		withConsent = false,
+		consentWithText = false,
 		withDestinationFields = false,
 		humanVerification = false,
 		humanVerificationVisible = false,
@@ -99,7 +103,11 @@
 		onGuestLogin={() => onAction?.('guest')}
 		{fieldValues}
 		fieldErrors={errors}
-		consentPolicy={withConsent ? sampleConsentPolicy : null}
+		consentPolicy={withConsent
+			? consentWithText
+				? sampleConsentPolicyWithText
+				: sampleConsentPolicy
+			: null}
 		consentDecisions={decisions}
 		destinationFieldConsent={withDestinationFields ? destinationFieldConsent : null}
 		destinationFieldDecisions={destinationDecisions}

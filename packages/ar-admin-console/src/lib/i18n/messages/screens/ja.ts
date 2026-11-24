@@ -206,6 +206,15 @@ export const jaScreens = {
 	'sc.set.captchaSubmit': '送信するとき',
 	'sc.set.dividerLabel': 'ラベル（任意）',
 	'sc.set.dividerHint': '例：「または」。空欄のときは、線だけを表示します。',
+	'sc.set.consentDisplay': '本文の見せ方（既定）',
+	'sc.set.consentInline': 'その場に表示',
+	'sc.set.consentModal': 'モーダルで表示',
+	'sc.set.consentRequireScroll': '最後までスクロールしたら同意できる（既定）',
+	'sc.set.consentScrollNote':
+		'「最後までスクロール」は、この画面でだけ確認します。サーバーが記録するのは同意の結果で、本文を読んだかどうかは分かりません。軽量版の Login UI にはこれを確認するスクリプトが無いため、軽量版は使えません。',
+	'sc.set.consentWhere':
+		'どの同意文を、どの順番で、必須にするかどうかは、サービスフローの同意ステップで設定します。同意文ごとに、ここでの既定と違う見せ方にすることもできます。',
+	'sc.set.consentWhereLink': 'サービスを開く',
 	'sc.set.widgetNote':
 		'この部品は、入力・操作・確認・読み込み中・成功とエラーの表示をまとめて受け持ちます。',
 	'sc.set.rowSettings': '行の設定',

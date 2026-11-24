@@ -72,3 +72,17 @@ An admin builds each screen from **blocks** in the Admin console. Per block:
 | order                             | position in the list                                                                                                                                     | Blocks render in saved order         |
 
 A method that is off (or not offered by the flow) hides its widget even without a condition. Guest login shows on login only.
+
+A `divider` draws the words in its `text` between two lines; with no text it is one unbroken line.
+
+### How a consent widget shows a statement
+
+Which statements are asked, in which order, and whether each is required is the Flow consent step's `statements` list (its entries are `statement_id` and `required`), never the screen's. The widget and the step only decide how a statement with a **text of its own** (not a link to a document) is shown. A link or a statement with no text is drawn as before.
+
+| Setting                                    | Values                      | Effect                                                                                                                                           |
+| ------------------------------------------ | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `consent_display` (widget)                 | `inline` (default), `modal` | The default for every statement of the step: in a scrolling frame in place, or behind an “Open” button in a dialog whose “I agree” ticks the box |
+| `consent_require_scroll` (widget)          | on / off (default off)      | The box (or the dialog's “I agree”) stays off until the text is scrolled to its end                                                              |
+| `display`, `require_scroll` (a step entry) | as above, or absent         | Overrides the widget for that statement only; absent follows the widget                                                                          |
+
+The scroll requirement is kept by the Login UI only: the server records the answer, not whether the text was read. The lightweight Login UI has no script to check it, so a screen or a step that requires it cannot be used there (the dialog is drawn as a disclosure instead).

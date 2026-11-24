@@ -11,6 +11,7 @@
 	import StatementConsentItem from '#lib/components/StatementConsentItem.svelte';
 	import TurnstileWidget from '#lib/components/TurnstileWidget.svelte';
 	import { sanitizeRuntimeConsentHtml } from '#lib/consent/runtime-consent-html.js';
+	import { consentItemSetting } from '#lib/consent/statement-display.js';
 	import { withRequestedTotpCodeInput } from '#lib/authrim/runtime-code-input.js';
 	import {
 		authWidgetMethod as readAuthWidgetMethod,
@@ -48,6 +49,9 @@
 		link_exit?: string | null;
 		/** A link part drawn as a button. */
 		link_style?: 'text' | 'button' | null;
+		/** A consent widget: how a statement's text is shown unless the Flow step says otherwise. */
+		consent_display?: 'inline' | 'modal' | null;
+		consent_require_scroll?: boolean | null;
 	};
 
 	type RuntimeFieldOption = { value: string; label: string };
@@ -279,7 +283,9 @@
 			href: readString(value.href),
 			link_action: readString(value.link_action),
 			link_exit: readString(value.link_exit),
-			link_style: value.link_style === 'button' ? 'button' : null
+			link_style: value.link_style === 'button' ? 'button' : null,
+			consent_display: value.consent_display === 'modal' ? 'modal' : null,
+			consent_require_scroll: value.consent_require_scroll === true ? true : null
 		};
 	}
 
@@ -893,6 +899,8 @@
 									checked={consentDecisions[item.statement_id] === true}
 									required={item.is_required || item.checkbox_mode === 'required'}
 									linkDocument={item.content_mode === 'radio'}
+									display={consentItemSetting(item, field).display}
+									requireScroll={consentItemSetting(item, field).requireScroll}
 									{disabled}
 									onchange={(checked) => onConsentDecisionChange?.(item.statement_id, checked)}
 								/>
@@ -1719,9 +1727,13 @@
 	.runtime-screen-divider {
 		display: flex;
 		align-items: center;
-		gap: 0.75rem;
 		color: var(--text-secondary);
 		font-size: var(--auth-copy-size, 0.875rem);
+	}
+
+	/* No label: one unbroken line (a gap would cut it in the middle). */
+	.runtime-screen-divider.has-label {
+		gap: 0.75rem;
 	}
 
 	.runtime-screen-divider::before,

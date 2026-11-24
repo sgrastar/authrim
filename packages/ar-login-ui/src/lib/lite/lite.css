@@ -252,6 +252,11 @@ nav.lang a {
 	border-radius: 0.4rem;
 	overflow-wrap: anywhere;
 }
+.statement-details summary {
+	cursor: pointer;
+	margin: 0 0 0.4rem;
+	color: var(--accent);
+}
 .statement-page-body {
 	overflow-wrap: anywhere;
 }

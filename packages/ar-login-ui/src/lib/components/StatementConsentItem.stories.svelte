@@ -103,6 +103,59 @@
 	{#snippet template(args)}{@render frame(args)}{/snippet}
 </Story>
 
+<!-- The consent widget's own presentation (`consent_statements` of the screen's part). -->
+<Story
+	name="Text in a box, scrolled to the end first"
+	args={{ requireScroll: true }}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		// The checkbox waits for the end of the text (here the box scrolls, so it starts locked).
+		await expect(canvas.getByRole('checkbox')).toBeDisabled();
+		await expect(canvas.getByText('Scroll to the end to agree.')).toBeInTheDocument();
+	}}
+>
+	{#snippet template(args)}
+		<LoginUIFrame>
+			<div style="max-width: 28rem">
+				<StatementConsentItem
+					{...args}
+					item={{ ...BASE, inline_content: BASE.inline_content.repeat(6) }}
+				/>
+			</div>
+		</LoginUIFrame>
+	{/snippet}
+</Story>
+
+<Story
+	name="Text in a dialog"
+	args={{ display: 'modal' }}
+	play={async ({ args, canvasElement }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(canvas.getByRole('button', { name: 'Open Terms of Service' }));
+		const dialog = within(canvasElement.querySelector('dialog') as HTMLElement);
+		await userEvent.click(dialog.getByRole('button', { name: 'I agree' }));
+		await expect(args.onchange).toHaveBeenCalledWith(true);
+	}}
+>
+	{#snippet template(args)}{@render frame(args)}{/snippet}
+</Story>
+
+<Story
+	name="Text in a dialog, scrolled to the end first"
+	args={{ display: 'modal', requireScroll: true }}
+>
+	{#snippet template(args)}
+		<LoginUIFrame>
+			<div style="max-width: 28rem">
+				<StatementConsentItem
+					{...args}
+					item={{ ...BASE, inline_content: BASE.inline_content.repeat(6) }}
+				/>
+			</div>
+		</LoginUIFrame>
+	{/snippet}
+</Story>
+
 <Story
 	name="Shown only"
 	args={{ asks: false, item: { ...BASE, description: 'Read before you continue.' } }}

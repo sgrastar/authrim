@@ -10,6 +10,7 @@
 	import type { RuntimeStepView } from '../auth-entry-types';
 	import { getRuntimeConsentOptionHtml } from './runtime-consent';
 	import StatementConsentItem from '#lib/components/StatementConsentItem.svelte';
+	import { consentItemSetting } from '#lib/consent/statement-display.js';
 
 	type Props = {
 		step: RuntimeStepView;
@@ -129,6 +130,8 @@
 									checked={decisions[item.statement_id] === true}
 									required={item.is_required || item.checkbox_mode === 'required'}
 									linkDocument={item.content_mode === 'radio'}
+									display={consentItemSetting(item, null).display}
+									requireScroll={consentItemSetting(item, null).requireScroll}
 									onchange={(checked) => (decisions[item.statement_id] = checked)}
 								/>
 							{/if}

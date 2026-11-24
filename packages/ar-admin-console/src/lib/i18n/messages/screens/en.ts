@@ -205,6 +205,15 @@ export const enScreens: Record<keyof typeof jaScreens, string> = {
 	'sc.set.captchaSubmit': 'On submit',
 	'sc.set.dividerLabel': 'Label (optional)',
 	'sc.set.dividerHint': 'For example “or”. Left empty, only the line shows.',
+	'sc.set.consentDisplay': 'How to show the text (default)',
+	'sc.set.consentInline': 'In place',
+	'sc.set.consentModal': 'In a dialog',
+	'sc.set.consentRequireScroll': 'Agree only after scrolling to the end (default)',
+	'sc.set.consentScrollNote':
+		'Scrolling to the end is checked on this screen only; the server records the answer, not whether the text was read. The lightweight Login UI has no script to check it, so a tenant using it cannot be switched to that mode.',
+	'sc.set.consentWhere':
+		'Which statements are asked, in which order, and whether each is required is set in the consent step of the service flow, where a statement can also be shown differently from these defaults.',
+	'sc.set.consentWhereLink': 'Open the services',
 	'sc.set.widgetNote':
 		'This widget handles its own inputs, actions, checks, loading, success and error states.',
 	'sc.set.rowSettings': 'Row settings',

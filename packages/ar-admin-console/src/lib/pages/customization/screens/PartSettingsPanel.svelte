@@ -40,6 +40,8 @@
 	 * Identity Schema (`schemaFields`). Existing unlinked fields keep their saved values until an
 	 * attribute is chosen here; the answer configuration is hidden while its UX is reconsidered.
 	 */
+	const SERVICE_FLOWS = '/admin/applications/all';
+
 	interface Props {
 		part?: LayoutPart | null;
 		settings?: PartSettings | null;
@@ -278,6 +280,31 @@
 					rows={3}
 					bind:value={settings.text}
 				/>
+				<SegmentedControl
+					label={setting('consentDisplay')}
+					hideLabel={false}
+					size="sm"
+					field="{path}.consentDisplay"
+					bind:value={
+						() => settings?.consentDisplay ?? 'inline',
+						(value) =>
+							settings && (settings.consentDisplay = value === 'modal' ? 'modal' : 'inline')
+					}
+					options={[
+						{ value: 'inline', label: setting('consentInline') },
+						{ value: 'modal', label: setting('consentModal') }
+					]}
+				/>
+				<Checkbox field="{path}.consentRequireScroll" bind:checked={settings.consentRequireScroll}>
+					{setting('consentRequireScroll')}
+				</Checkbox>
+				{#if settings.consentRequireScroll}
+					<Callout>{setting('consentScrollNote')}</Callout>
+				{/if}
+				<Callout>
+					{setting('consentWhere')}
+					<Link href={SERVICE_FLOWS} standalone>{setting('consentWhereLink')}</Link>
+				</Callout>
 				<Checkbox field="{path}.required" bind:checked={settings.required}>
 					{setting('required')}
 				</Checkbox>

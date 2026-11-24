@@ -48,6 +48,11 @@ describe('AccountScreenBlock', () => {
 		expect(renderBlock({ field: field({ block_type: 'divider', text: 'or' }) })).toMatch(
 			/class="account-screen__divider[^"]*"><span>or<\/span>/
 		);
+		// No text: one unbroken line (no label span, no gap class).
+		const bare = renderBlock({ field: field({ block_type: 'divider', text: null }) });
+		expect(bare).toMatch(/class="account-screen__divider[^"]*"/);
+		expect(bare).not.toContain('<span>');
+		expect(bare).not.toContain('has-label');
 		expect(renderBlock({ field: field({ block_type: 'account_profile_widget' }) })).toBe('');
 	});
 

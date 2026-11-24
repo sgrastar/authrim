@@ -111,7 +111,9 @@
 								><Icon name="shieldCheck" />{extra?.text || part.label}</span
 							>
 						{:else if part.kind === 'divider'}
-							<span class="screen__divider"><span>{part.label}</span></span>
+							<span class="screen__divider" class:has-label={Boolean(part.label)}
+								>{#if part.label}<span>{part.label}</span>{/if}</span
+							>
 						{:else if part.kind === 'link' && extra?.linkStyle === 'button'}
 							<span class="screen__button screen__button--quiet">{part.label}</span>
 						{:else if part.kind === 'link' || part.kind === 'auth_switch_link'}
@@ -195,9 +197,13 @@
 	.screen__divider {
 		display: flex;
 		align-items: center;
-		gap: 10px;
 		color: var(--ol-copy, var(--text-muted));
 		font-size: var(--fs-caption);
+	}
+
+	/* No label: one unbroken line (a gap would cut it in the middle). */
+	.screen__divider.has-label {
+		gap: 10px;
 	}
 
 	.screen__divider::before,
