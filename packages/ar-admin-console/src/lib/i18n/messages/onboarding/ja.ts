@@ -142,5 +142,19 @@ export const jaOnboarding = {
 		'案内を閉じてください。この項目は、一覧で「完了にする」を押して、手動で完了にできます。',
 
 	'ob.steps.label': '{name}の手順',
-	'ob.steps.progress': '「{name}」の進み具合'
+	'ob.steps.progress': '「{name}」の進み具合',
+
+	'ob.signIn.s1.label': 'テナントの場所',
+	'ob.theme.nav.label': 'カスタマイズの場所',
+	'ob.schema.nav.label': 'アクセス制御の場所',
+	'ob.screens.nav.label': 'カスタマイズの場所',
+	'ob.theme.sub.label': 'テーマの場所',
+	'ob.theme.s2.label': 'レイアウトの場所',
+	'ob.theme.s3.label': 'デザインの場所',
+	'ob.theme.s4.label': '背景画像の場所',
+	'ob.theme.s6.label': '作成したテーマの保存',
+	'ob.schema.sub.label': '属性スキーマの場所',
+	'ob.screens.sub.label': 'スクリーンの場所',
+	'ob.screens.s5.label': '作成したスクリーンの保存',
+	'ob.secondFactor.settings.label': '個人設定の場所'
 } as const;

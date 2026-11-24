@@ -139,5 +139,19 @@ export const arOnboarding: Record<keyof typeof jaOnboarding, string> = {
 		'أغلق الدليل. يمكنك وضع علامة «تم» على هذا البند يدويًا من القائمة.',
 
 	'ob.steps.label': 'خطوات «{name}»',
-	'ob.steps.progress': 'التقدّم في «{name}»'
+	'ob.steps.progress': 'التقدّم في «{name}»',
+
+	'ob.signIn.s1.label': 'مكان المستأجر',
+	'ob.theme.nav.label': 'مكان التخصيص',
+	'ob.schema.nav.label': 'مكان التحكم في الوصول',
+	'ob.screens.nav.label': 'مكان التخصيص',
+	'ob.theme.sub.label': 'مكان السمات المرئية',
+	'ob.theme.s2.label': 'مكان التخطيط',
+	'ob.theme.s3.label': 'مكان المظهر',
+	'ob.theme.s4.label': 'مكان الصور الخلفية',
+	'ob.theme.s6.label': 'حفظ السمة التي أنشأتها',
+	'ob.schema.sub.label': 'مكان مخطط السمات',
+	'ob.screens.sub.label': 'مكان الشاشات',
+	'ob.screens.s5.label': 'حفظ الشاشة التي أنشأتها',
+	'ob.secondFactor.settings.label': 'مكان الإعدادات الشخصية'
 };
