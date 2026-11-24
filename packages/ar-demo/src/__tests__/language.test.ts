@@ -501,7 +501,9 @@ describe('every language renders every page', () => {
     expect(SITE_CSS).toContain('.backdrop{direction:ltr;position:fixed;inset:0');
     // solid by default (no script, no WebGL), glass once the city is behind it
     expect(SITE_CSS).toMatch(/\.window\{[^}]*background:var\(--glass-solid\)/);
-    expect(SITE_CSS).toContain('[data-scene=city] .window{background:color-mix(in srgb,var(--glass) 30%,transparent)}');
+    expect(SITE_CSS).toContain(
+      '[data-scene=city] .window{background:color-mix(in srgb,var(--glass) 30%,transparent)}'
+    );
     expect(SITE_CSS).toContain('backdrop-filter:blur(16px)');
     expect(SITE_CSS).not.toMatch(/@font-face|url\(/);
   });
