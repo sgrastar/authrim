@@ -55,7 +55,11 @@ export interface Copy extends GateTexts {
   intro1: string;
   intro2: string;
   noticeTitle: string;
-  notices: (hours: number) => [string, string, string, string, string];
+  /**
+   * Six notes. The first four are the plain rules (the left column, under the heading); the last
+   * two (where the database is, the second factor) are fine print (the right column).
+   */
+  notices: (hours: number) => [string, string, string, string, string, string];
   start: string;
   /** On the start button while the check is still answering. */
   startChecking: string;
@@ -65,6 +69,10 @@ export interface Copy extends GateTexts {
    */
   tallyActive: string;
   tallyCreated: string;
+  /** The line above the link for a tenant that already exists. */
+  adminLead: string;
+  /** The link into the admin console's sign-in. */
+  adminConsole: string;
   skipLabel: string;
   sealLabel: string;
   retry: string;
@@ -112,7 +120,8 @@ export const COPY: Record<Lang, Copy> = {
     notices: (hours) => [
       p('これは|動作確認のための|デモ環境です。'),
       p('実際の|個人情報や|本物の|認証情報は|入力しないでください。'),
-      p(`作成した|ものは|すべて、|約${hours}時間後に|自動で|削除されます。`),
+      p(`作成した|ものは|すべて、|約${hours}時間で|自動的に|削除されます。`),
+      p('本環境は|開発中の|ものです。|一部|使用できない|機能等が|あります。'),
       p(
         '本マルチテナント環境では、|データベースが|APAC(アジア地域)と|なっています。|使用環境によっては|通信が|遅い|場合があります。'
       ),
@@ -124,6 +133,8 @@ export const COPY: Record<Lang, Copy> = {
     startChecking: '確認しています…',
     tallyActive: p('使用中の|枠'),
     tallyCreated: p('これまでに|作られた|テナント'),
+    adminLead: p('すでに|作成済みの|テナントの|管理画面は|こちらから'),
+    adminConsole: 'Admin Console へ',
     gateTitle: p('デモ環境を|準備しています'),
     gateTitleReady: p('デモ環境の|準備が|できました'),
     gateChecking: p('受付を|確認しています'),
@@ -187,6 +198,7 @@ export const COPY: Record<Lang, Copy> = {
       'This is a demo environment for testing only.',
       'Do not enter real personal data or real credentials.',
       `Everything you create is deleted automatically after about ${hours} ${hours === 1 ? 'hour' : 'hours'}.`,
+      'This environment is still under development, so some features are not available.',
       'In this multi-tenant environment the database is in APAC (Asia-Pacific). Depending on where you are, connections may be slow.',
       'Important operations use step-up authentication, which asks for two factors. A second factor from hardware such as a YubiKey, or approval in a dedicated phone app, is normally recommended, but for convenience this demo also lets you register a TOTP authenticator (a 6-digit code).',
     ],
@@ -194,6 +206,8 @@ export const COPY: Record<Lang, Copy> = {
     startChecking: 'Checking…',
     tallyActive: 'Demo slots in use',
     tallyCreated: 'Tenants created so far',
+    adminLead: 'To open the admin console of a tenant you have already created, go here',
+    adminConsole: 'Go to the Admin Console',
     gateTitle: 'Preparing your demo environment',
     gateTitleReady: 'Your demo environment is ready',
     gateChecking: 'Checking your request',
@@ -247,6 +261,7 @@ export const COPY: Record<Lang, Copy> = {
       'Dies ist eine Demo-Umgebung nur zum Ausprobieren.',
       'Gib keine echten personenbezogenen Daten und keine echten Zugangsdaten ein.',
       `Alles, was du anlegst, wird nach etwa ${hours} ${hours === 1 ? 'Stunde' : 'Stunden'} automatisch gelöscht.`,
+      'Diese Umgebung befindet sich noch in Entwicklung, daher sind einige Funktionen nicht verfügbar.',
       'In dieser Multi-Tenant-Umgebung liegt die Datenbank in APAC (Asien-Pazifik). Je nach Standort können Verbindungen langsam sein.',
       'Für wichtige Vorgänge wird eine Step-up-Authentifizierung mit zwei Faktoren verwendet. Als zweiter Faktor wird eigentlich Hardware wie ein YubiKey oder die Freigabe in einer eigenen Smartphone-App empfohlen; in dieser Demo kannst du aus Bequemlichkeit auch eine TOTP-Authenticator-App (6-stelliger Code) registrieren.',
     ],
@@ -254,6 +269,8 @@ export const COPY: Record<Lang, Copy> = {
     startChecking: 'Wird geprüft…',
     tallyActive: 'Belegte Demo-Plätze',
     tallyCreated: 'Bisher angelegte Tenants',
+    adminLead: 'Zur Verwaltungsoberfläche eines bereits angelegten Tenants geht es hier',
+    adminConsole: 'Zur Admin Console',
     gateTitle: 'Deine Demo-Umgebung wird vorbereitet',
     gateTitleReady: 'Deine Demo-Umgebung ist bereit',
     gateChecking: 'Deine Anfrage wird geprüft',
@@ -310,6 +327,7 @@ export const COPY: Record<Lang, Copy> = {
       'هذه بيئة تجريبية لأغراض الاختبار فقط.',
       'لا تُدخل بيانات شخصية حقيقية ولا بيانات اعتماد حقيقية.',
       `يُحذف كل ما تنشئه تلقائيًا بعد نحو ${arabicHours(hours)}.`,
+      'هذه البيئة ما زالت قيد التطوير، لذا بعض الميزات غير متاحة.',
       'في هذه البيئة متعددة المستأجرين توجد قاعدة البيانات في منطقة APAC (آسيا والمحيط الهادئ). قد يكون الاتصال بطيئًا بحسب مكان استخدامك.',
       'تعتمد العمليات المهمة المصادقة المعزّزة (Step-up) بعاملين. يُفضَّل عادةً أن يكون العامل الثاني عبر جهاز مثل YubiKey أو الموافقة من تطبيق هاتف مخصص، لكن هذه البيئة التجريبية تتيح لك للتيسير تسجيل تطبيق TOTP (رمز من 6 أرقام).',
     ],
@@ -317,6 +335,8 @@ export const COPY: Record<Lang, Copy> = {
     startChecking: 'جارٍ التحقق…',
     tallyActive: 'الأماكن المشغولة الآن',
     tallyCreated: 'المستأجرون المُنشَؤون حتى الآن',
+    adminLead: 'للدخول إلى لوحة إدارة مستأجر أنشأتَه من قبل، تفضّل من هنا',
+    adminConsole: 'إلى Admin Console',
     gateTitle: 'جارٍ تجهيز البيئة التجريبية',
     gateTitleReady: 'البيئة التجريبية جاهزة',
     gateChecking: 'جارٍ التحقق من طلبك',
