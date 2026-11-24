@@ -246,7 +246,6 @@ export async function handleIdentity(
 ): Promise<HandleIdentityResult> {
   const { provider, userInfo, tokens, linkingUserId, tenantId } = params;
   const rawClaims = params.upstreamClaims ?? userInfo;
-  const tenantD1 = true;
   const defaultUserStoreSources = await resolveTenantUserStoreSourcesFromEnv(env, tenantId);
 
   // 1. Explicit linking to existing account
@@ -260,13 +259,11 @@ export async function handleIdentity(
       );
     }
 
-    const accountContext = tenantD1
-      ? await resolveAccountDataContext(env, {
-          tenantId,
-          accountId: `account:${linkingUserId}`,
-        })
-      : undefined;
-    if (accountContext && accountContext.legacyUserId !== linkingUserId) {
+    const accountContext = await resolveAccountDataContext(env, {
+      tenantId,
+      accountId: `account:${linkingUserId}`,
+    });
+    if (accountContext.legacyUserId !== linkingUserId) {
       throw new Error('external_idp_link_account_mismatch');
     }
     // The external account may already sign in to another account, whose data lives elsewhere:
@@ -296,7 +293,7 @@ export async function handleIdentity(
       tenantId,
       provider.id,
       userInfo.sub,
-      accountContext?.piiDb ?? defaultUserStoreSources.piiDb
+      accountContext.piiDb
     );
     if (existingIdentity && existingIdentity.userId !== linkingUserId) {
       throw new ExternalIdPError(
@@ -317,17 +314,13 @@ export async function handleIdentity(
     };
     const linkedIdentityId =
       existingIdentity?.id ??
-      (accountContext
-        ? await createLinkedIdentity(env, identityInput, accountContext.piiDb)
-        : await createLinkedIdentity(env, identityInput, defaultUserStoreSources.piiDb));
-    if (accountContext) {
-      await publishTenantD1ExternalIdpRoute(env, {
-        accountContext,
-        linkedIdentityId,
-        providerId: provider.id,
-        providerUserId: userInfo.sub,
-      });
-    }
+      (await createLinkedIdentity(env, identityInput, accountContext.piiDb));
+    await publishTenantD1ExternalIdpRoute(env, {
+      accountContext,
+      linkedIdentityId,
+      providerId: provider.id,
+      providerUserId: userInfo.sub,
+    });
 
     // Log audit event
     await logAuditEvent(env, {
@@ -350,17 +343,15 @@ export async function handleIdentity(
 
   // 2. Check for existing linked identity
   let externalRoute: Awaited<ReturnType<typeof resolveAccountDataContextByIdentifier>> | undefined;
-  if (tenantD1) {
-    try {
-      externalRoute = await resolveAccountDataContextByIdentifier(env, {
-        tenantId,
-        indexKind: 'external_subject',
-        identifier: { issuer: provider.id, subject: userInfo.sub },
-      });
-    } catch (routeError) {
-      if (!(routeError instanceof Error && routeError.message === 'account_data_route_not_found')) {
-        throw routeError;
-      }
+  try {
+    externalRoute = await resolveAccountDataContextByIdentifier(env, {
+      tenantId,
+      indexKind: 'external_subject',
+      identifier: { issuer: provider.id, subject: userInfo.sub },
+    });
+  } catch (routeError) {
+    if (!(routeError instanceof Error && routeError.message === 'account_data_route_not_found')) {
+      throw routeError;
     }
   }
   const existingLink = externalRoute
@@ -416,7 +407,7 @@ export async function handleIdentity(
       stitchedFromExisting: false,
     };
   }
-  if (tenantD1 && externalRoute) {
+  if (externalRoute) {
     // The account was provisioned by an earlier sign-in that did not finish; finishing it (its
     // roles, organizations and identity) is still a sign-up, so the tenant's switch holds, and a
     // sign-in that may not create an account (lite mode) does not finish it either.
@@ -435,9 +426,6 @@ export async function handleIdentity(
       providerId: provider.id,
       providerUserId: userInfo.sub,
     });
-    if (!completed.linkedIdentityId) {
-      throw new Error('external_idp_jit_identity_activation_failed');
-    }
     await updateLinkedIdentity(
       env,
       tenantId,
@@ -466,7 +454,7 @@ export async function handleIdentity(
 
   // Check if user with this email already exists
   let emailRoute: Awaited<ReturnType<typeof resolveAccountDataContextByIdentifier>> | undefined;
-  if (tenantD1 && userInfo.email) {
+  if (userInfo.email) {
     try {
       emailRoute = await resolveAccountDataContextByIdentifier(env, {
         tenantId,
@@ -619,7 +607,8 @@ export async function handleIdentity(
     }
 
     // Check verified email requirement from JIT config
-    if (jitConfig.require_verified_email && userInfo.email && !userInfo.email_verified) {
+    // A required verified email must be there: no email is not a verified one.
+    if (jitConfig.require_verified_email && (!userInfo.email || !userInfo.email_verified)) {
       throw new ExternalIdPError(
         ExternalIdPErrorCode.EMAIL_NOT_VERIFIED,
         'A verified email is required for automatic account creation.',
@@ -709,22 +698,11 @@ export async function handleIdentity(
       };
     }
 
-    const linkedIdentityId =
-      jitResult.linkedIdentityId ??
-      (await createLinkedIdentity(
-        env,
-        {
-          userId: jitResult.userId,
-          providerId: provider.id,
-          providerUserId: userInfo.sub,
-          providerEmail: userInfo.email,
-          emailVerified: userInfo.email_verified,
-          tokens,
-          rawClaims,
-          tenantId,
-        },
-        defaultUserStoreSources.piiDb
-      ));
+    // A provisioned account that is not pending always comes with its activated identity.
+    const linkedIdentityId = jitResult.linkedIdentityId;
+    if (!linkedIdentityId) {
+      throw new Error('external_idp_jit_identity_activation_failed');
+    }
 
     // Log audit event for JIT provisioning
     await logAuditEvent(env, {
@@ -1031,6 +1009,11 @@ interface JITProvisioningResult {
   };
 }
 
+/** What applying a stored plan gives: always the identity it activated (or found active). */
+type AppliedJitPlan = Required<
+  Pick<JITProvisioningResult, 'linkedIdentityId' | 'roles_assigned' | 'orgs_joined'>
+>;
+
 interface TenantD1JITProvisioningParams extends JITProvisioningParams {
   providerUserId: string;
   tokens: TokenResponse;
@@ -1145,6 +1128,14 @@ async function publishTenantD1ExternalIdpRoute(
   }
 }
 
+/** The identity a completed JIT hands on: its stored id must be a non-empty string. */
+function assertLinkedIdentityId(id: unknown): string {
+  if (typeof id !== 'string' || id.length === 0) {
+    throw new Error('external_idp_jit_identity_id_invalid');
+  }
+  return id;
+}
+
 async function applyTenantD1JITPlan(
   env: Env,
   input: {
@@ -1154,7 +1145,7 @@ async function applyTenantD1JITPlan(
     providerUserId: string;
     plan: TenantD1JITPlan;
   }
-): Promise<Pick<JITProvisioningResult, 'linkedIdentityId' | 'roles_assigned' | 'orgs_joined'>> {
+): Promise<AppliedJitPlan> {
   const account = await resolveAccountDataContextByIdentifier(env, {
     tenantId: input.tenantId,
     indexKind: 'external_subject',
@@ -1179,12 +1170,18 @@ async function applyTenantD1JITPlan(
       account.piiDb
     );
     if (active?.userId === input.userId) {
-      return { linkedIdentityId: active.id, roles_assigned: [], orgs_joined: [] };
+      return {
+        linkedIdentityId: assertLinkedIdentityId(active.id),
+        roles_assigned: [],
+        orgs_joined: [],
+      };
     }
   }
   if (!pending || pending.userId !== input.userId) {
     throw new Error('external_idp_jit_pending_identity_not_found');
   }
+  // Checked before anything is written: the stored id is what the sign-in goes on with.
+  const pendingId = assertLinkedIdentityId(pending.id);
 
   const customClaimSources = await resolveCustomClaimRuntimeSourcesFromEnv(env, input.tenantId);
   await persistCustomClaimWrite({
@@ -1258,7 +1255,11 @@ async function applyTenantD1JITPlan(
     accountAuthenticationEnv: env,
   });
   await activatePendingLinkedIdentity(env, pending, account.piiDb);
-  return { linkedIdentityId: pending.id, roles_assigned: rolesAssigned, orgs_joined: orgsJoined };
+  return {
+    linkedIdentityId: pendingId,
+    roles_assigned: rolesAssigned,
+    orgs_joined: orgsJoined,
+  };
 }
 
 function parseTenantD1JITPlan(value: string): TenantD1JITPlan {
@@ -1354,7 +1355,7 @@ export async function completeTenantD1ExternalIdpJIT(
     providerId: string;
     providerUserId: string;
   }
-): Promise<Pick<JITProvisioningResult, 'linkedIdentityId' | 'roles_assigned' | 'orgs_joined'>> {
+): Promise<AppliedJitPlan> {
   const account = await resolveAccountDataContextByIdentifier(env, {
     tenantId: input.tenantId,
     indexKind: 'external_subject',
@@ -1379,7 +1380,11 @@ export async function completeTenantD1ExternalIdpJIT(
       account.piiDb
     );
     if (active?.userId === input.userId) {
-      return { linkedIdentityId: active.id, roles_assigned: [], orgs_joined: [] };
+      return {
+        linkedIdentityId: assertLinkedIdentityId(active.id),
+        roles_assigned: [],
+        orgs_joined: [],
+      };
     }
   }
   if (!pending || pending.userId !== input.userId) {

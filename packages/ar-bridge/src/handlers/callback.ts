@@ -944,9 +944,6 @@ export async function handleExternalProvisioningResume(
       throw new Error('external_idp_provisioning_consume_mismatch');
     }
     deleteCookie(c, continuationCookieName(loaded.digest), { path: '/' });
-    if (!completed.linkedIdentityId) {
-      throw new Error('external_idp_provisioning_provider_mismatch');
-    }
     return await completeExternalAuthentication(c, {
       authState: loaded.continuation.authState,
       provider,
@@ -1762,7 +1759,11 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
     if (isTwitterProvider(provider) && provider.providerType === 'oauth2') {
       const quirks = provider.providerQuirks as TwitterProviderQuirks | undefined;
       if (quirks?.userFields) {
-        const twitterUserInfo = await fetchTwitterUserInfo(tokens.access_token, quirks);
+        const twitterUserInfo = await fetchTwitterUserInfo(
+          tokens.access_token,
+          quirks.userFields,
+          quirks.expansions
+        );
         if (twitterUserInfo) {
           userInfo = { ...userInfo, ...twitterUserInfo };
         }
@@ -1775,8 +1776,13 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
     const inbound = await mapOIDCInboundUserInfo(c.env, authState.tenantId, provider, userInfo);
     userInfo = inbound?.userInfo ?? normalizeUserInfo(userInfo, provider.attributeMapping);
 
-    // Ensure sub is present (required for identity linking)
-    if (!userInfo.sub) {
+    // The subject must be a non-empty string (a number is taken as its text): an object or
+    // another type names no account.
+    const mappedSub: unknown = userInfo.sub;
+    if (typeof mappedSub === 'number' && Number.isFinite(mappedSub)) {
+      userInfo = { ...userInfo, sub: String(mappedSub) };
+    }
+    if (typeof userInfo.sub !== 'string' || userInfo.sub.trim() === '') {
       if (link) return redirectToLinkResult(c, link.tenantId, { linked: false, reason: 'failed' });
       return recordFailure(
         redirectWithError(
@@ -2347,7 +2353,7 @@ function normalizeUserInfo(userInfo: UserInfo, attributeMapping: Record<string, 
     const value = getNestedValue(userInfo, sourcePath);
     if (value !== undefined) {
       // Convert numbers to strings for sub (required for OIDC compatibility)
-      if (targetClaim === 'sub' && typeof value === 'number') {
+      if (targetClaim === 'sub' && typeof value === 'number' && Number.isFinite(value)) {
         (normalized as Record<string, unknown>)[targetClaim] = String(value);
       } else {
         (normalized as Record<string, unknown>)[targetClaim] = value;
@@ -2516,21 +2522,18 @@ function isFacebookProvider(provider: UpstreamProvider): boolean {
 async function fetchFacebookUserInfo(
   accessToken: string,
   appSecret: string,
-  quirks?: FacebookProviderQuirks
+  quirks: FacebookProviderQuirks
 ): Promise<Record<string, unknown> | null> {
   try {
-    const apiVersion = quirks?.apiVersion || 'v20.0';
-    const fields = quirks?.fields?.join(',') || 'id,name,email,picture.type(large)';
+    const apiVersion = quirks.apiVersion || 'v20.0';
+    const fields = quirks.fields?.join(',') || 'id,name,email,picture.type(large)';
 
     const url = new URL(`https://graph.facebook.com/${apiVersion}/me`);
     url.searchParams.set('fields', fields);
     url.searchParams.set('access_token', accessToken);
 
-    // Add app_secret_proof if enabled
-    if (quirks?.useAppSecretProof) {
-      const proof = await generateAppSecretProof(accessToken, appSecret);
-      url.searchParams.set('appsecret_proof', proof);
-    }
+    // The caller re-fetches only for a provider that asks for the app secret proof.
+    url.searchParams.set('appsecret_proof', await generateAppSecretProof(accessToken, appSecret));
 
     const data = await safeFetchJson<Record<string, unknown>>(url.toString(), {
       timeoutMs: 5000,
@@ -2572,23 +2575,20 @@ function isTwitterProvider(provider: UpstreamProvider): boolean {
  * Fetch user info from Twitter API v2 with user.fields
  *
  * @param accessToken - Twitter access token
- * @param quirks - Twitter provider quirks
+ * @param userFields - The `user.fields` the provider is configured to ask for
+ * @param expansions - The `expansions` to ask for, if any
  * @returns User info or null if failed
  */
 async function fetchTwitterUserInfo(
   accessToken: string,
-  quirks?: TwitterProviderQuirks
+  userFields: string,
+  expansions?: string
 ): Promise<Record<string, unknown> | null> {
   try {
     const url = new URL('https://api.twitter.com/2/users/me');
-
-    // Add user.fields
-    const userFields = quirks?.userFields || 'id,name,username,profile_image_url';
     url.searchParams.set('user.fields', userFields);
-
-    // Add expansions if specified
-    if (quirks?.expansions) {
-      url.searchParams.set('expansions', quirks.expansions);
+    if (expansions) {
+      url.searchParams.set('expansions', expansions);
     }
 
     const data = await safeFetchJson<Record<string, unknown>>(url.toString(), {

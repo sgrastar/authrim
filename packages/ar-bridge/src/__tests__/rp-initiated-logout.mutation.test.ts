@@ -101,7 +101,10 @@ beforeEach(() => {
   mocks.decrypt.mockResolvedValue('upstream.id.token');
   mocks.getSession.mockResolvedValue(sessionRecord());
   mocks.sessionFetch.mockResolvedValue(new Response(null, { status: 204 }));
-  mocks.findByClientId.mockResolvedValue({ redirect_uris: '["https://rp.example/after"]' });
+  mocks.findByClientId.mockResolvedValue({
+    redirect_uris: '["https://rp.example/signin"]',
+    post_logout_redirect_uris: '["https://rp.example/after"]',
+  });
   mocks.fromProvider.mockReturnValue({ discover: mocks.discover });
   mocks.discover.mockResolvedValue({ end_session_endpoint: 'https://op.example/end-session' });
   mocks.getChallengeStore.mockResolvedValue({
@@ -232,26 +235,40 @@ describe('starting the logout', () => {
   });
 
   describe('post-logout redirect URIs', () => {
+    it('accepts a registered post-logout URI for a disabled client too, as ar-auth does', async () => {
+      mocks.findByClientId.mockResolvedValue({
+        enabled: false,
+        post_logout_redirect_uris: '["https://rp.example/after"]',
+      });
+      expect(
+        (await logout('post_logout_redirect_uri=https%3A%2F%2Frp.example%2Fafter')).status
+      ).toBe(302);
+    });
+
     it.each([
       ['a JSON list', '["https://rp.example/other","https://rp.example/after"]'],
       ['a single URI', 'https://rp.example/after'],
       ['an array', ['https://rp.example/after', 5]],
     ])('accepts a registered one from %s', async (_name, redirectUris) => {
-      mocks.findByClientId.mockResolvedValue({ redirect_uris: redirectUris });
+      mocks.findByClientId.mockResolvedValue({ post_logout_redirect_uris: redirectUris });
       const response = await logout('post_logout_redirect_uri=https%3A%2F%2Frp.example%2Fafter');
       expect(response.status).toBe(302);
     });
 
     it.each([
-      ['an unregistered one', { redirect_uris: '["https://rp.example/other"]' }],
-      ['no such client', null],
-      ['a malformed list', { redirect_uris: '[oops' }],
-      ['a non-list JSON value', { redirect_uris: '[]x' }],
-      ['an object list', { redirect_uris: { a: 1 } }],
+      ['an unregistered one', { post_logout_redirect_uris: '["https://rp.example/other"]' }],
       [
-        'a disabled client without logout URIs',
+        'one registered only as a login redirect URI',
+        { redirect_uris: '["https://rp.example/after"]' },
+      ],
+      [
+        'one registered only as a login redirect URI of a disabled client',
         { enabled: false, redirect_uris: '["https://rp.example/after"]' },
       ],
+      ['no such client', null],
+      ['a malformed list', { post_logout_redirect_uris: '[oops' }],
+      ['a non-list JSON value', { post_logout_redirect_uris: '[]x' }],
+      ['an object list', { post_logout_redirect_uris: { a: 1 } }],
     ])('refuses %s with 400', async (_name, client) => {
       mocks.findByClientId.mockResolvedValue(client);
       const response = await logout('post_logout_redirect_uri=https%3A%2F%2Frp.example%2Fafter');

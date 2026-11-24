@@ -26,6 +26,39 @@ const MAX_RESOURCES = 16;
 const RETRY_SECONDS = 15;
 const STABILIZATION_SECONDS = 30;
 const LEASE_SECONDS = 15 * 60;
+const GENERIC_FAILURE_CODE = 'plugin_resource_binding_reconciliation_failed';
+const PERMANENT_CODES: ReadonlySet<string> = new Set([
+  'plugin_resource_binding_activation_prerequisite_invalid',
+  'plugin_resource_binding_activation_reflection_failed',
+  'plugin_resource_binding_group_invalid',
+  'plugin_resource_binding_map_invalid',
+  'plugin_resource_binding_newer_deployment_detected',
+  'plugin_resource_binding_patch_result_missing',
+  'plugin_resource_binding_plan_invalid',
+  'plugin_resource_binding_plan_mismatch',
+  'plugin_resource_binding_provider_identity_missing',
+  'plugin_resource_binding_restore_invalid',
+  'plugin_resource_binding_rollback_failed',
+  'plugin_resource_binding_runner_inventory_invalid',
+  'plugin_resource_binding_smoke_mismatch',
+  'plugin_resource_binding_spec_invalid',
+  'plugin_resource_binding_stabilization_smoke_failed',
+  'control_worker_active_deployment_ambiguous',
+  'control_worker_concurrent_deployment_detected',
+  'control_worker_restore_settings_missing',
+  'control_worker_restore_settings_invalid',
+]);
+const TRANSIENT_CODES: ReadonlySet<string> = new Set([
+  'plugin_resource_binding_smoke_unavailable',
+  'plugin_resource_binding_smoke_failed',
+  'control_service_binding_invocation_budget_exhausted',
+  'control_worker_active_deployment_missing',
+  'control_worker_deployment_lease_busy',
+  'control_worker_deployment_lease_lost',
+  'control_worker_patch_propagating',
+  'control_worker_settings_preservation_failed',
+  'control_worker_source_version_changed',
+]);
 
 type ResourceKind = 'd1' | 'kv_namespace' | 'r2_bucket';
 type ResourceAccess = 'read_only' | 'read_write';
@@ -367,23 +400,19 @@ function classify(error: unknown): { code: string; permanent: boolean } {
     }
     return { code: 'plugin_resource_binding_provider_failed', permanent: false };
   }
-  const code = error instanceof Error ? error.message : '';
-  if (
-    code.startsWith('plugin_resource_binding_') &&
-    code !== 'plugin_resource_binding_smoke_unavailable' &&
-    code !== 'plugin_resource_binding_smoke_failed'
-  ) {
-    return { code, permanent: true };
+  const message = error instanceof Error ? error.message : '';
+  // Library messages may append a detail after ':'; only the stable head is ever persisted.
+  const head = message.split(':', 1)[0] ?? '';
+  if (PERMANENT_CODES.has(head)) return { code: head, permanent: true };
+  if (/^worker_settings_(?:binding|bindings|payload|restore)_[a-z0-9_]{1,100}$/u.test(head)) {
+    return { code: head, permanent: true };
   }
-  if (
-    code.startsWith('worker_settings_binding_') ||
-    code.startsWith('worker_settings_payload_too_large') ||
-    code === 'control_worker_active_deployment_ambiguous' ||
-    code === 'control_worker_concurrent_deployment_detected'
-  ) {
-    return { code, permanent: true };
-  }
-  return { code: code || 'plugin_resource_binding_reconciliation_failed', permanent: false };
+  if (TRANSIENT_CODES.has(head)) return { code: head, permanent: false };
+  return {
+    code: GENERIC_FAILURE_CODE,
+    // Unknown messages that claim a binding-plan code are treated as plan defects, not retried.
+    permanent: message.startsWith('plugin_resource_binding_') && !TRANSIENT_CODES.has(head),
+  };
 }
 
 class PluginResourceBindingRepository implements WorkerBindingPatchState<
@@ -391,6 +420,17 @@ class PluginResourceBindingRepository implements WorkerBindingPatchState<
   DeploymentLease
 > {
   constructor(private readonly db: D1Database) {}
+
+  /** The engine-facing view of this repository whose blocking is fenced by the held lease. */
+  holding(
+    holder: DeploymentLease
+  ): WorkerBindingPatchState<PluginResourceBindingTarget, DeploymentLease> {
+    const fenced: WorkerBindingPatchState<PluginResourceBindingTarget, DeploymentLease> =
+      Object.create(this) as PluginResourceBindingRepository;
+    fenced.markBlocked = (target, errorCode, now) =>
+      this.markBlocked(target, errorCode, now, holder);
+    return fenced;
+  }
 
   async ensurePendingTargets(now: number): Promise<void> {
     const candidates = await this.db
@@ -968,24 +1008,60 @@ class PluginResourceBindingRepository implements WorkerBindingPatchState<
   async markBlocked(
     targetValue: PluginResourceBindingTarget,
     errorCode: string,
-    now: number
+    now: number,
+    holder?: DeploymentLease
   ): Promise<void> {
+    // A run that lost its lease to a newer fencing token must not overwrite the newer run's state.
+    const leaseGuard = holder
+      ? `AND EXISTS (
+           SELECT 1 FROM control_worker_deployment_leases lease
+            WHERE lease.environment_id = ? AND lease.worker_script_name = ?
+              AND lease.owner_operation_id = ? AND lease.fencing_token = ?
+         )`
+      : '';
+    const leaseParams = holder
+      ? [
+          holder.environmentId,
+          holder.workerScriptName,
+          holder.ownerOperationId,
+          holder.fencingToken,
+        ]
+      : [];
     await this.db.batch([
-      this.db
-        .prepare(
-          `UPDATE control_plugin_resource_binding_reconciliations
-              SET state = 'blocked', last_error_code = ?, updated_at = ?
-            WHERE operation_id = ? AND plugin_installation_id = ? AND state <> 'succeeded'`
-        )
-        .bind(errorCode, now, targetValue.operationId, targetValue.pluginInstallationId),
       this.db
         .prepare(
           `UPDATE control_operations
               SET status = 'blocked', next_attempt_at = NULL, last_error_code = ?,
                   last_error_redacted = ?, updated_at = ?
-            WHERE operation_id = ? AND environment_id = ? AND status <> 'succeeded'`
+            WHERE operation_id = ? AND environment_id = ? AND status <> 'succeeded'
+              ${leaseGuard}`
         )
-        .bind(errorCode, errorCode, now, targetValue.operationId, targetValue.environmentId),
+        .bind(
+          errorCode,
+          errorCode,
+          now,
+          targetValue.operationId,
+          targetValue.environmentId,
+          ...leaseParams
+        ),
+      this.db
+        .prepare(
+          `UPDATE control_plugin_resource_binding_reconciliations
+              SET state = CASE
+                    WHEN expected_source_version_id IS NULL
+                      OR previous_restore_settings_json IS NULL THEN state
+                    ELSE 'blocked' END,
+                  last_error_code = ?, updated_at = ?
+            WHERE operation_id = ? AND plugin_installation_id = ? AND state <> 'succeeded'
+              ${leaseGuard}`
+        )
+        .bind(
+          errorCode,
+          now,
+          targetValue.operationId,
+          targetValue.pluginInstallationId,
+          ...leaseParams
+        ),
     ]);
   }
 
@@ -1363,7 +1439,7 @@ export class PluginResourceBindingReconciler {
         return 'deferred';
       }
       if (targetValue.state === 'rollback_required') {
-        return await this.rollback(targetValue, deploymentLease, deployments, desiredBindings);
+        return await this.rollback(targetValue, deploymentLease, deployments);
       }
       if (targetValue.state === 'pending') {
         const patched = await ensureWorkerBindingsPatched({
@@ -1373,7 +1449,7 @@ export class PluginResourceBindingReconciler {
           deploymentsBefore: deployments,
           activeBefore: active,
           api: this.api,
-          state: this.repository,
+          state: this.repository.holding(deploymentLease),
           now: this.now,
           retrySeconds: RETRY_SECONDS,
         });
@@ -1382,9 +1458,25 @@ export class PluginResourceBindingReconciler {
       }
       return await this.runSmokeSeries(targetValue, deploymentLease, smoke, map);
     } catch (error) {
+      if (
+        error instanceof Error &&
+        (error.message === 'plugin_resource_binding_fence_lost' ||
+          error.message === 'plugin_resource_binding_smoke_fence_lost')
+      ) {
+        // Another run advanced this target: leave its persisted state and the lease untouched.
+        return 'deferred';
+      }
       const failure = classify(error);
       if (failure.permanent) {
-        await this.repository.markBlocked(targetValue, failure.code, now);
+        await this.repository.markBlocked(
+          targetValue,
+          failure.code,
+          now,
+          // The success batch already released the lease, so this failure has no token to present.
+          failure.code === 'plugin_resource_binding_activation_reflection_failed'
+            ? undefined
+            : (deploymentLease ?? undefined)
+        );
         if (deploymentLease) await this.repository.releaseDeploymentLease(deploymentLease);
         return 'blocked';
       }
@@ -1520,8 +1612,7 @@ export class PluginResourceBindingReconciler {
   private async rollback(
     targetValue: PluginResourceBindingTarget,
     value: DeploymentLease,
-    deployments: CloudflareWorkerDeployment[],
-    desiredBindings: CloudflareWorkerBinding[]
+    deployments: CloudflareWorkerDeployment[]
   ): Promise<'blocked' | 'deferred'> {
     const active = activeWorkerDeployment(deployments);
     if (
@@ -1533,7 +1624,8 @@ export class PluginResourceBindingReconciler {
       await this.repository.markBlocked(
         targetValue,
         'plugin_resource_binding_newer_deployment_detected',
-        this.now()
+        this.now(),
+        value
       );
       return 'blocked';
     }
@@ -1545,13 +1637,15 @@ export class PluginResourceBindingReconciler {
       verifyWorkerSettingsRestoreIntent({
         restoreSettings: restore,
         after: reflected,
-        desiredBindings,
+        // A restore removes the planned bindings, so none of them may be expected afterwards.
+        desiredBindings: [],
       }).length > 0
     ) {
       await this.repository.markBlocked(
         targetValue,
         'plugin_resource_binding_rollback_failed',
-        this.now()
+        this.now(),
+        value
       );
       return 'blocked';
     }

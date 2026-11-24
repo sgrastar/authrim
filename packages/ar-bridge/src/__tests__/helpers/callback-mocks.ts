@@ -50,9 +50,22 @@ const M = vi.hoisted(() => ({
   logTokenValidation: vi.fn(),
   logAuthDecision: vi.fn(),
   diagCleanup: vi.fn(),
+  relayOrigin: vi.fn(),
+  keepRelayed: vi.fn(),
+  takeRelayed: vi.fn(),
+  isPending: vi.fn(),
+  moduleNames: [] as string[],
+  warnLog: vi.fn(),
+  infoLog: vi.fn(),
 }));
 
 export { M };
+
+/** The module logger of the handler: names are recorded, the levels are spies. */
+function recordedModule(name: string) {
+  M.moduleNames.push(name);
+  return { warn: M.warnLog, info: M.infoLog, debug: vi.fn(), error: M.errorLog };
+}
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@authrim/ar-lib-core')>()),
@@ -77,9 +90,14 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => ({
   readExternalProviderReauthPolicy: M.reauthPolicy,
   safeFetchJson: M.safeFetchJson,
   scheduleSignInAttemptFailureRecord: M.scheduleFailure,
-  getLogger: () => ({
-    module: () => ({ warn: vi.fn(), info: vi.fn(), debug: vi.fn(), error: M.errorLog }),
-  }),
+  getExternalCallbackRelayOrigin: M.relayOrigin,
+  getLogger: () => ({ module: recordedModule }),
+  createLogger: () => ({ module: recordedModule }),
+}));
+vi.mock('../../services/callback-relay', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../services/callback-relay')>()),
+  keepRelayedCallback: M.keepRelayed,
+  takeRelayedCallback: M.takeRelayed,
 }));
 vi.mock('../../services/external-email-check', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../services/external-email-check')>()),
@@ -110,6 +128,7 @@ vi.mock('../../utils/crypto', async (importOriginal) => ({
 vi.mock('../../utils/state', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../utils/state')>()),
   consumeAuthState: M.consumeAuthState,
+  isPendingAuthState: M.isPending,
 }));
 vi.mock('../../services/fapi2-provider', () => ({
   isFapi2Provider: M.isFapi2,
@@ -157,6 +176,11 @@ afterEach(() => vi.useRealTimers());
 
 export function setupCallbackMocks(): void {
   vi.clearAllMocks();
+  M.moduleNames.length = 0;
+  M.relayOrigin.mockReset().mockReturnValue(null);
+  M.keepRelayed.mockReset().mockResolvedValue('handle-1');
+  M.takeRelayed.mockReset().mockResolvedValue(null);
+  M.isPending.mockReset().mockResolvedValue(true);
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(T0);
   M.getProvider.mockResolvedValue(oauthProvider);

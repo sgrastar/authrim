@@ -147,6 +147,8 @@ function classifyError(error: unknown): { code: string; permanent: boolean } {
     code === 'control_worker_script_environment_mismatch' ||
     code === 'control_worker_active_deployment_ambiguous' ||
     code === 'control_worker_binding_batch_conflict' ||
+    code === 'control_worker_restore_settings_missing' ||
+    code === 'control_worker_restore_settings_invalid' ||
     code.startsWith('worker_settings_binding_') ||
     code.startsWith('worker_settings_payload_too_large')
   ) {

@@ -1123,7 +1123,16 @@ describe('Identity Stitching Service', () => {
       });
 
       it('should use placeholder email if not provided', async () => {
-        const env = createMockEnv();
+        // an email is not required of the sign-up here (a required verified email refuses none)
+        const env = createMockEnv({
+          SETTINGS: {
+            get: vi.fn(async (key: string) =>
+              key === 'settings:tenant:default:external-idp'
+                ? JSON.stringify({ 'external_idp.jit_require_verified_email': false })
+                : null
+            ),
+          },
+        });
         vi.mocked(linkedIdentityStore.findLinkedIdentity).mockResolvedValueOnce(null);
         vi.mocked(linkedIdentityStore.createLinkedIdentity).mockResolvedValueOnce('new-linked-id');
 

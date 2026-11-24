@@ -31,11 +31,14 @@ import { LINKEDIN_DEFAULT_CONFIG, validateLinkedInConfig } from '../providers/li
 import {
   TWITTER_DEFAULT_CONFIG,
   createTwitterConfig,
+  TWITTER_CLAIM_MAPPINGS,
+  TWITTER_REVOCATION_ENDPOINT,
   getTwitterEffectiveEndpoints,
   getTwitterUserInfoUrl,
   validateTwitterConfig,
 } from '../providers/twitter';
 import type { UpstreamProvider } from '../types';
+import { rec } from './helpers/mock-args';
 
 type Partial_ = Partial<UpstreamProvider>;
 
@@ -183,6 +186,55 @@ describe('Twitter / X', () => {
         includeEmail: false,
       },
     });
+  });
+
+  it('keeps its constants, claim mappings and presentation exact', () => {
+    expect(TWITTER_REVOCATION_ENDPOINT).toBe('https://api.twitter.com/2/oauth2/revoke');
+    expect(TWITTER_DEFAULT_CONFIG).toMatchObject({
+      jitProvisioning: true,
+      iconUrl: 'https://abs.twimg.com/favicons/twitter.3.ico',
+      buttonColor: '#000000',
+      buttonText: 'Continue with X',
+    });
+    expect(TWITTER_CLAIM_MAPPINGS).toStrictEqual({
+      sub: 'data.id',
+      preferred_username: 'data.username',
+      name: 'data.name',
+      picture: 'data.profile_image_url',
+      email: 'data.email',
+      profile: 'data.url',
+      description: 'data.description',
+      location: 'data.location',
+      verified: 'data.verified',
+      verified_type: 'data.verified_type',
+      created_at: 'data.created_at',
+      protected: 'data.protected',
+      public_metrics: 'data.public_metrics',
+    });
+  });
+
+  it('reads scopes separated by any whitespace or commas, and none as missing', () => {
+    expect(validateTwitterConfig({ ...valid(), scopes: 'users.read\ttweet.read' })).toEqual([]);
+    expect(validateTwitterConfig({ ...valid(), scopes: 'users.read\n,tweet.read' })).toEqual([]);
+    expect(validateTwitterConfig({ ...valid(), scopes: undefined })).toEqual([
+      'users.read scope is required to fetch user profile',
+    ]);
+    expect(validateTwitterConfig({ ...valid(), scopes: 'xusers.read' })).toEqual([
+      'users.read scope is required to fetch user profile',
+    ]);
+  });
+
+  it('builds a configuration from the user fields alone', () => {
+    const fields = createTwitterConfig({ userFields: 'id,name' });
+    expect(fields.providerQuirks).toEqual({
+      ...TWITTER_DEFAULT_CONFIG.providerQuirks,
+      userFields: 'id,name',
+    });
+    expect(fields.userinfoEndpoint).toBe(
+      'https://api.twitter.com/2/users/me?user.fields=id%2Cname'
+    );
+    const email = createTwitterConfig({ includeEmail: true });
+    expect(rec(email.providerQuirks).userFields).toBe('id,name,username,profile_image_url');
   });
 
   it('builds the userinfo URL from the fields and expansions', () => {

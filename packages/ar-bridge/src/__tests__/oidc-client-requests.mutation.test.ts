@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   fetch: vi.fn<(url: string, options?: RequestInit) => Promise<Response>>(),
   jwtVerify: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
   warn: vi.fn(),
+  limits: [] as number[],
 }));
 
 vi.mock('@authrim/ar-lib-core', () => ({
@@ -33,7 +34,10 @@ vi.mock('@authrim/ar-lib-core', () => ({
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     return response.json();
   },
-  readResponseTextWithLimit: async (response: Response) => response.text(),
+  readResponseTextWithLimit: async (response: Response, limit: number) => {
+    mocks.limits.push(limit);
+    return response.text();
+  },
 }));
 vi.mock('jose', async (importOriginal) => ({
   ...(await importOriginal<typeof import('jose')>()),
@@ -71,6 +75,7 @@ const client = (overrides: Partial<OIDCRPClientConfig> = {}) => new OIDCRPClient
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.limits.length = 0;
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(NOW_S * 1000);
   mocks.fetch.mockImplementation(async () => json(DISCOVERY));
@@ -452,6 +457,32 @@ describe('createAuthorizationUrl', () => {
       );
     });
 
+    it('refuses a request_uri without a publisher for an unsigned object too, and publishes with one', async () => {
+      const unsigned = (extra: Partial<OIDCRPClientConfig> = {}) =>
+        signed({ requestObjectSigningAlg: 'none', privateKeyJwk: undefined, ...extra });
+      await expect(start(unsigned(), { requestUri: 'https://rp.example/ro' })).rejects.toThrow(
+        'request_uri requires a request object publisher'
+      );
+      const publish = vi.fn().mockResolvedValue(undefined);
+      const url = new URL(
+        await start(unsigned(), {
+          requestUri: 'https://rp.example/ro',
+          publishRequestObject: publish,
+        })
+      );
+      expect(url.searchParams.get('request_uri')).toBe('https://rp.example/ro');
+      expect(url.searchParams.has('request')).toBe(false);
+      expect(String(callArg(publish, 0, 0)).endsWith('.')).toBe(true);
+      const byValue = new URL(await start(unsigned()));
+      expect(String(byValue.searchParams.get('request')).endsWith('.')).toBe(true);
+      expect([...byValue.searchParams.keys()].sort()).toEqual([
+        'client_id',
+        'request',
+        'response_type',
+        'scope',
+      ]);
+    });
+
     it('refuses request objects without a usable key', async () => {
       await expect(start(signed({ privateKeyJwk: undefined }))).rejects.toThrow(
         'Request Object is enabled but no compatible signing key is configured'
@@ -596,5 +627,128 @@ describe('exchangeCode', () => {
     expect(await client({ tokenEndpoint: `${ISSUER}/token` }).handleCallback('c', 'v')).toEqual(
       tokenResponse
     );
+  });
+});
+
+describe('fromProvider', () => {
+  const provider = (quirks: Record<string, unknown> | undefined): UpstreamProvider => ({
+    id: 'p',
+    tenantId: 't',
+    name: 'P',
+    providerType: 'oidc',
+    enabled: true,
+    priority: 0,
+    issuer: ISSUER,
+    clientId: 'client-1',
+    clientSecretEncrypted: 'x',
+    scopes: 'openid, email profile',
+    attributeMapping: {},
+    autoLinkEmail: false,
+    jitProvisioning: false,
+    requireEmailVerified: false,
+    providerQuirks: quirks as UpstreamProvider['providerQuirks'],
+    createdAt: 0,
+    updatedAt: 0,
+  });
+  const built = (quirks: Record<string, unknown> | undefined) =>
+    rec(
+      (
+        OIDCRPClient.fromProvider(provider(quirks), 'https://rp.example/cb', 's') as unknown as {
+          config: unknown;
+        }
+      ).config
+    );
+
+  it('splits the scopes on whitespace and commas', () => {
+    expect(built({}).scopes).toEqual(['openid', 'email', 'profile']);
+  });
+
+  it.each([
+    [
+      'a text value',
+      { dynamicClientRegistration: { userinfoSignedResponseAlg: 'ES256' } },
+      'ES256',
+    ],
+    ['an empty text value', { dynamicClientRegistration: { userinfoSignedResponseAlg: '' } }, ''],
+    [
+      'a value that is not text',
+      { dynamicClientRegistration: { userinfoSignedResponseAlg: 5 } },
+      undefined,
+    ],
+    [
+      'a registration that is a list',
+      { dynamicClientRegistration: [{ userinfoSignedResponseAlg: 'ES256' }] },
+      undefined,
+    ],
+    ['a registration that is text', { dynamicClientRegistration: 'ES256' }, undefined],
+    ['a registration that is null', { dynamicClientRegistration: null }, undefined],
+    ['no registration', {}, undefined],
+  ])('reads the userinfo signing algorithm from %s', (_n, quirks, expected) => {
+    expect(built(quirks).userinfoSignedResponseAlg).toBe(expected);
+  });
+
+  it.each([
+    ['a FAPI object', { fapi2: { discoveryUrl: 'https://op.example/d' } }, 'https://op.example/d'],
+    ['a discovery URL that is not text', { fapi2: { discoveryUrl: 5 } }, undefined],
+    ['a FAPI list', { fapi2: [{ discoveryUrl: 'https://op.example/d' }] }, undefined],
+    ['FAPI text', { fapi2: 'https://op.example/d' }, undefined],
+    ['FAPI null', { fapi2: null }, undefined],
+    ['no FAPI', {}, undefined],
+  ])('reads the discovery URL from %s', (_n, quirks, expected) => {
+    expect(built(quirks).discoveryUrl).toBe(expected);
+  });
+
+  it('keeps only the trusted audiences that are non-empty text', () => {
+    expect(built({ trustedAudiences: ['a', '', 5, 'b'] }).trustedAudiences).toEqual(['a', 'b']);
+    expect(built({ trustedAudiences: 'a' }).trustedAudiences).toBeUndefined();
+    expect(built({}).trustedAudiences).toBeUndefined();
+  });
+});
+
+describe('response size limits', () => {
+  const KB = 1024;
+  const tokens = { access_token: 'at', token_type: 'Bearer' };
+
+  it('reads at most 64 KiB of a discovery document and of a registration answer', async () => {
+    await client().discover();
+    expect(mocks.limits).toEqual([64 * KB]);
+    mocks.limits.length = 0;
+    mocks.fetch.mockImplementation(async (url: string) =>
+      url.endsWith('/register')
+        ? json(
+            {
+              client_id: 'new',
+              client_secret: 's',
+              token_endpoint_auth_method: 'client_secret_basic',
+            },
+            { status: 201 }
+          )
+        : json({ ...DISCOVERY, registration_endpoint: `${ISSUER}/register` })
+    );
+    await client().registerClient({
+      redirect_uris: ['https://rp.example/callback'],
+      token_endpoint_auth_method: 'client_secret_basic',
+    });
+    expect(mocks.limits).toEqual([64 * KB, 64 * KB]);
+  });
+
+  it('reads at most 64 KiB of a token answer, and drains 16 KiB of a failed refresh', async () => {
+    mocks.fetch.mockImplementation(async (url: string) =>
+      url.endsWith('/token') ? json(tokens) : json(DISCOVERY)
+    );
+    await client({ tokenEndpoint: `${ISSUER}/token` }).refreshTokens('r');
+    expect(mocks.limits.at(-1)).toBe(64 * KB);
+    mocks.limits.length = 0;
+    mocks.fetch.mockImplementation(async () => new Response('nope', { status: 400 }));
+    await expect(client({ tokenEndpoint: `${ISSUER}/token` }).refreshTokens('r')).rejects.toThrow(
+      'Token refresh failed: HTTP 400'
+    );
+    expect(mocks.limits.at(-1)).toBe(16 * KB);
+    mocks.limits.length = 0;
+    mocks.fetch.mockImplementation(async (url: string) =>
+      url.endsWith('/token') ? json(tokens) : json(DISCOVERY)
+    );
+    await client({ tokenEndpoint: `${ISSUER}/token` }).exchangeCode('c', 'v');
+    expect(mocks.limits.at(-1)).toBe(64 * KB);
   });
 });
