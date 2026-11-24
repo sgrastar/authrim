@@ -17,7 +17,7 @@ import type { Context, Next } from 'hono';
 import type { Env } from '@authrim/ar-lib-core/types/env';
 import { getLogger, createLogger, DEFAULT_TENANT_ID, type Logger } from '@authrim/ar-lib-core';
 import { SCIM_SCHEMAS } from '../types/scim';
-import type { ScimError, ScimErrorType } from '../types/scim';
+import type { ScimError } from '../types/scim';
 
 /**
  * Default SCIM authentication rate limit configuration
@@ -437,21 +437,12 @@ async function hashToken(token: string): Promise<string> {
 /**
  * Return SCIM-compliant error response
  */
-function scimErrorResponse(
-  c: Context,
-  status: 400 | 401 | 403 | 404 | 409 | 500,
-  detail: string,
-  scimType?: ScimErrorType
-) {
+function scimErrorResponse(c: Context, status: 400 | 401 | 403 | 404 | 409 | 500, detail: string) {
   const error: ScimError = {
     schemas: [SCIM_SCHEMAS.ERROR],
     status: status.toString(),
     detail,
   };
-
-  if (scimType) {
-    error.scimType = scimType;
-  }
 
   return c.json(error, status);
 }
@@ -580,43 +571,4 @@ export async function listScimTokens(
   }
 
   return tokens;
-}
-
-/**
- * Optional: Database-based token validation
- *
- * If you prefer to store SCIM tokens in the database instead of KV,
- * you can create a `scim_tokens` table and use this function.
- */
-export async function validateScimTokenFromDB(
-  db: D1Database,
-  token: string,
-  log?: Logger
-): Promise<boolean> {
-  const logger = log ?? createLogger().module('SCIM-AUTH');
-  try {
-    const tokenHash = await hashToken(token);
-
-    const result = await db
-      .prepare(
-        `SELECT id, expires_at, enabled FROM scim_tokens
-         WHERE token_hash = ? AND enabled = 1`
-      )
-      .bind(tokenHash)
-      .first<{ id: string; expires_at: string | null; enabled: number }>();
-
-    if (!result) {
-      return false;
-    }
-
-    // Check expiration
-    if (result.expires_at && new Date(result.expires_at) < new Date()) {
-      return false;
-    }
-
-    return true;
-  } catch (error) {
-    logger.error('DB token validation error', {}, error as Error);
-    return false;
-  }
 }
