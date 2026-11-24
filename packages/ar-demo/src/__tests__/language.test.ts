@@ -231,7 +231,7 @@ describe('every language renders every page', () => {
     for (const lang of LANGS) {
       const copy = COPY[lang];
       expect(Object.keys(copy.errors).sort()).toEqual([...ERROR_KINDS].sort());
-      expect(copy.notices(7)).toHaveLength(5);
+      expect(copy.notices(7)).toHaveLength(6);
       for (const [key, value] of Object.entries(copy)) {
         if (typeof value === 'string') expect(value.trim(), `${lang}.${key}`).not.toBe('');
       }
@@ -264,7 +264,8 @@ describe('every language renders every page', () => {
     expect(COPY.ja.notices(3).map(plain)).toEqual([
       'これは動作確認のためのデモ環境です。',
       '実際の個人情報や本物の認証情報は入力しないでください。',
-      '作成したものはすべて、約3時間後に自動で削除されます。',
+      '作成したものはすべて、約3時間で自動的に削除されます。',
+      '本環境は開発中のものです。一部使用できない機能等があります。',
       '本マルチテナント環境では、データベースがAPAC(アジア地域)となっています。使用環境によっては通信が遅い場合があります。',
       '重要な操作を行う場合、２つの要素で認証を行うステップアップ認証を採用しています。本来、２つ目の認証ではYubikeyなどのハードウェアを使用した許可か専用スマホアプリでの許可が推奨されますが、このデモ環境では利便性を考慮し、6桁のコードを利用するTOTP形式でも登録可能です。',
     ]);
@@ -285,7 +286,7 @@ describe('every language renders every page', () => {
       expect(text, text).not.toMatch(/^\u200b|\u200b$|\u200b\u200b/);
     }
     // the lifetime keeps its unit: "約24時間後に" stays in one piece
-    expect(ja.notices(24)[2]).toContain('約24時間後に');
+    expect(ja.notices(24)[2]).toContain('約24時間で');
     // other languages carry no marks
     for (const lang of LANGS.filter((code) => code !== 'ja')) {
       expect(JSON.stringify(COPY[lang].notices(2))).not.toContain('\u200b');
@@ -361,9 +362,10 @@ describe('every language renders every page', () => {
   });
 
   it.each([...LANGS])(
-    'start page in %s: five notices, the lifetime, switcher, Turnstile',
+    'start page in %s: six notices, two columns, the admin console link, the lifetime, switcher, Turnstile',
     async (lang) => {
-      const html = startPage(lang, await configFor(7));
+      const config = await configFor(7);
+      const html = startPage(lang, config);
       const copy = COPY[lang];
       for (const notice of copy.notices(7)) expect(html).toContain(notice);
       expect(copy.notices(7)[2]).toContain('7');
@@ -381,11 +383,19 @@ describe('every language renders every page', () => {
       expect(html).toContain('<section class="hero">');
       expect(html).not.toContain('class="window"');
       expect(html).not.toContain('class="panel"');
-      expect(html.match(/<li>/g)).toHaveLength(5 + LANGS.length);
+      expect(html.match(/<li>/g)).toHaveLength(6 + LANGS.length);
       expect(html).toContain(`<h2>${copy.noticeTitle}</h2>`);
-      // The database and second-factor notes are fine print, below the language links.
-      const [, , , regionNote, stepUpNote] = copy.notices(7);
+      // Two columns: the rules, the buttons, the numbers and the language links on one side; the
+      // database and second-factor notes, as fine print, in the other.
+      const [, , , devNote, regionNote, stepUpNote] = copy.notices(7);
+      expect(html).toContain('<div class="columns">');
+      expect(html.indexOf(devNote)).toBeLessThan(html.indexOf('id="start-form"'));
       expect(html.indexOf(regionNote)).toBeGreaterThan(html.indexOf('class="lang"'));
+      // The way into the admin console of a tenant that already exists, after the start button.
+      expect(html).toContain(`<p>${copy.adminLead}</p>`);
+      expect(html).toContain(`href="${config.consoleOrigin}/admin/login">${copy.adminConsole}</a>`);
+      expect(html.indexOf('class="admin"')).toBeGreaterThan(html.indexOf('class="start-btn"'));
+      expect(html.indexOf('class="admin"')).toBeLessThan(html.indexOf('class="lang"'));
       expect(html.indexOf(stepUpNote)).toBeGreaterThan(html.indexOf(regionNote));
       expect(html).toContain('class="notices fine"');
       expect(html).not.toContain('class="brand"');
@@ -460,7 +470,7 @@ describe('every language renders every page', () => {
       expect(html).toContain(`after about ${hours} hours`);
     }
     expect(startPage('en', await configFor(1))).toContain('after about 1 hour.');
-    expect(startPage('ja', await configFor(3))).toContain('約3時間後');
+    expect(startPage('ja', await configFor(3))).toContain('約3時間で');
   });
 
   it('renders no inline style, handler or inline script anywhere', async () => {
