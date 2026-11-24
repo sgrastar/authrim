@@ -39,6 +39,7 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
 /* The first page: words on the empty sheet, no window. */
 .start.scene,.error.scene{place-items:center}
 .hero{width:min(100%,45rem);text-align:center}
+.start .hero{width:min(100%,60rem)}
 .hero h1{font-size:clamp(2.8rem,8.4vw,5.6rem);font-weight:640;letter-spacing:-.035em;line-height:1.02;direction:ltr}
 .hero h1 span{color:var(--ink-muted);font-weight:420}
 .hero .intro{max-width:31em;margin:0 auto;color:var(--ink-soft);font-size:clamp(.98rem,1.5vw,1.12rem);line-height:1.85;text-wrap:balance}
@@ -47,7 +48,15 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
 .notices h2{font-size:.88rem;font-weight:620;color:var(--ink-soft)}
 .notices ul{list-style:none;padding:0;margin-top:.3rem;display:grid;gap:.15rem}
 .notices li{text-wrap:pretty}
-.notices.fine{margin-top:1.4rem;font-size:.76rem;line-height:1.65}
+/* Two columns: the rules, the buttons and the numbers on one side, the fine print on the other. */
+.columns{display:grid;gap:2rem 3.5rem;margin-top:.5rem}
+.notices.fine{max-width:34rem;margin:1.4rem auto 0;font-size:.82rem;line-height:1.7;text-align:start}
+.notices.fine ul{gap:.7rem;list-style:disc;padding-inline-start:1.2rem}
+.admin{margin-top:2rem}
+.admin p{max-width:22rem;margin:0 auto .7rem;color:var(--ink-soft);font-size:.88rem;line-height:1.6;text-wrap:balance}
+.admin .btn{width:min(100%,300px);background:transparent;color:var(--ink);box-shadow:inset 0 0 0 2px var(--ink)}
+.admin .btn:hover{background:var(--ink);color:var(--btn-ink)}
+@media (min-width:56rem){.columns{grid-template-columns:minmax(0,1fr) minmax(0,1fr);align-items:start}.notices.fine{margin:1.5rem 0 0}}
 /* The check, when it shows, and the button are one block: same width, same corners. */
 form{display:grid;width:min(100%,300px);margin:2rem auto 0}
 /* The check takes no room until it has something to ask. */
