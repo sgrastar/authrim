@@ -1615,7 +1615,13 @@
 						runtimeFlowStep?.component === 'authentication_method_selector' ||
 						runtimeFlowStep?.component === 'registration_method_selector'
 					) {
-						if (!(await submitRuntimeStep('mail_otp'))) return;
+						if (
+							!(await submitRuntimeStep(
+								'mail_otp',
+								getRuntimeStepSubmitInputForAuthenticatedAction()
+							))
+						)
+							return;
 					}
 					if (runtimeFlowStep?.component === 'email_verification') {
 						if (!(await submitRuntimeStep('verified'))) return;
@@ -2059,7 +2065,9 @@
 			onRuntimeFieldValueChange={handleRuntimeScreenFieldValueChange}
 			onRuntimeAuthAction={handleRuntimeScreenAuthAction}
 			onRuntimeBack={goBackRuntimeScreen}
-			onRuntimeExit={(handle) => completeRuntimeOnlyStep(handle)}
+			onRuntimeExit={(handle) =>
+				// A screen that asks for consent judges it on every way out, as on its submit.
+				completeRuntimeOnlyStep(handle, getRuntimeStepSubmitInputForAuthenticatedAction())}
 			onConsentDecisionChange={setRuntimeConsentDecision}
 			onDestinationFieldDecisionChange={setRuntimeDestinationFieldDecision}
 			onConsentSelectedValueChange={setRuntimeConsentSelectedValue}

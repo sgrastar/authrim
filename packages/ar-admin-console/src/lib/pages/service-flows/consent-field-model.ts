@@ -11,6 +11,7 @@ import {
 	statementName,
 	statementStatus
 } from '#lib/pages/customization/statements/statement-model.js';
+import { screenShowsConsentWidget } from '@authrim/ar-lib-core/types/screens';
 import type { FlowConsentStatement } from '@authrim/ar-lib-core/services/flow-consent-statements';
 import type { FlowConsentStep } from '@authrim/ar-lib-core/types/flow-step-condition';
 import type { AccountFlowState, AccountValue } from './flow-spec';
@@ -171,4 +172,36 @@ export function consentLabel(
 		known: true,
 		choosable: isChoosable(item)
 	};
+}
+
+/** Whether a screen draws a consent box that is shown (the rule the publish check applies). */
+export function screenHasConsentWidget(
+	fields: Parameters<typeof screenShowsConsentWidget>[0]
+): boolean {
+	return screenShowsConsentWidget(fields);
+}
+
+/** The key holding the statements the first sign-up screen asks itself (it has a consent box). */
+export const FIRST_SCREEN_STATEMENTS_KEY = 'reg.screenStatements';
+
+/**
+ * Where the statements a sign-up screen step asks on the screen itself are kept: the first screen
+ * (`reg-screen`) and each more screen (`reg-extra-screen:<n>`) hold their own. These are stored
+ * on the screen's own node, apart from the flow's consent steps; null for any other part.
+ */
+export function screenStatementsKey(part: string): string | null {
+	if (part === 'reg-screen') return FIRST_SCREEN_STATEMENTS_KEY;
+	const match = /^reg-extra-screen:(\d+)$/u.exec(part);
+	return match ? `reg.extraScreenStatements:${match[1]}` : null;
+}
+
+/** The statement ids two lists both ask (what a person would be asked twice). */
+export function sharedStatementIds(
+	a: AccountValue | undefined,
+	b: AccountValue | undefined
+): string[] {
+	const ids = new Set(consentEntries(a).map((entry) => entry.statementId));
+	return [...new Set(consentEntries(b).map((entry) => entry.statementId))].filter((id) =>
+		ids.has(id)
+	);
 }

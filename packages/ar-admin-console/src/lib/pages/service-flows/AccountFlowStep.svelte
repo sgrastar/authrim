@@ -11,6 +11,7 @@
 	import SessionProfileField from './SessionProfileField.svelte';
 	import StepConditionsField from './StepConditionsField.svelte';
 	import ScreenField from './ScreenField.svelte';
+	import ScreenConsentSection from './ScreenConsentSection.svelte';
 	import UnregisteredField from './UnregisteredField.svelte';
 	import {
 		partDef,
@@ -20,6 +21,7 @@
 		type FlowId
 	} from './account-flow-model';
 	import { exitDestinations, exitKey } from './screen-exits';
+	import { screenStatementsKey } from './consent-field-model';
 
 	/**
 	 * One setting of the sign-up or sign-in flow, drawn from its description in the model: a short
@@ -205,6 +207,18 @@
 		/>
 	{/if}
 {/each}
+{#if flow === 'registration' && screenStatementsKey(part)}
+	{@const screenField = def.fields.find((field) => field.kind === 'screen')}
+	{#if screenField}
+		<ScreenConsentSection
+			bind:form
+			screenKey={typeof form.values[screenField.key] === 'string'
+				? (form.values[screenField.key] as string)
+				: ''}
+			statementsKey={screenStatementsKey(part) as string}
+		/>
+	{/if}
+{/if}
 {#if def.note}
 	<Callout tone="info">{t(def.note)}</Callout>
 {/if}

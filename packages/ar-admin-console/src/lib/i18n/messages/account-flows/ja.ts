@@ -43,6 +43,11 @@ export const jaAccountFlows = {
 	'af.group.general': 'フロー全体の設定',
 	'af.group.complete': '登録の完了',
 	'af.group.identity': '認証方式',
+	'af.screenConsent.title': '同意文',
+	'af.screenConsent.lead':
+		'この画面には同意の入力欄があります。ここで選んだ同意文は、この画面の登録ボタンと一緒に求め、同意をまとめて記録します。表示する人は、この画面を表示する人と同じです。',
+	'af.screenConsent.twice':
+		'同じ同意文を、フローの「登録時の同意」でも求めています。同じ人に2回求めることになります。どちらかから外してください。',
 	'af.group.regConsent': '登録時の同意',
 	'af.group.authenticate': '利用者の認証',
 	'af.group.finish': 'ログインの完了',

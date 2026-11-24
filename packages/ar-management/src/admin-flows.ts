@@ -47,6 +47,8 @@ import {
   requireDedicatedAdminDatabaseAdapter,
   readFlowConsentStatements,
   MAX_FLOW_CONSENT_STATEMENTS,
+  screenShowsConsentWidget,
+  type ScreenField,
 } from '@authrim/ar-lib-core';
 
 type AdminContext = Context<{ Bindings: Env; Variables: { adminAuth?: AdminAuthContext } }>;
@@ -603,6 +605,29 @@ async function validateDraftReferences(
         );
       }
     }
+
+    // A screen that asks for consent itself (its own statements, agreed to with its own submit)
+    // needs a consent box that is shown: without one the person cannot agree, and a required
+    // statement would stop them for good.
+    if (
+      (node.type === 'registration' || node.type === 'screen') &&
+      (readFlowConsentStatements(node.config)?.length ?? 0) > 0
+    ) {
+      const screenRef = readConfigString(node.config, 'screen_ref');
+      if (screenRef) {
+        issues.push(
+          ...(await validateConsentScreenReference(db, tenantId, node.id, path, screenRef, true))
+        );
+      } else {
+        issues.push({
+          level: 'error',
+          code: 'missing_consent_screen',
+          message: 'A step that asks for consent on its screen must name the screen (screen_ref).',
+          path: `${path}.screen_ref`,
+          node_id: node.id,
+        });
+      }
+    }
   }
 
   return issues;
@@ -613,7 +638,9 @@ async function validateConsentScreenReference(
   tenantId: string,
   nodeId: string,
   path: string,
-  screenRef: string
+  screenRef: string,
+  /** The consent box must also be shown (a screen that asks for consent on its own submit). */
+  shownOnly = false
 ): Promise<FlowValidationIssue[]> {
   const screen = await db.queryOne<{
     id: string;
@@ -660,7 +687,9 @@ async function validateConsentScreenReference(
   }
   if (
     !Array.isArray(fields) ||
-    !fields.some((field) => isRecord(field) && field.block_type === 'consent_widget')
+    !(shownOnly
+      ? screenShowsConsentWidget(fields.filter((field): field is ScreenField => isRecord(field)))
+      : fields.some((field) => isRecord(field) && field.block_type === 'consent_widget'))
   ) {
     return [
       {

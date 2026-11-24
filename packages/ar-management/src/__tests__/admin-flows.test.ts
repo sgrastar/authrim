@@ -623,6 +623,65 @@ describe('admin Flow management handlers', () => {
     expect(body.errors).toEqual([]);
   });
 
+  describe('a screen that asks for consent on its own submit', () => {
+    const screenEditor = () => ({
+      nodes: [
+        { id: 'entry', type: 'entry' },
+        {
+          id: 'screen-1',
+          type: 'screen',
+          config: { screen_ref: 'signup', statements: [{ statement_id: 'terms', required: true }] },
+        },
+        { id: 'complete', type: 'complete' },
+      ],
+      edges: [
+        { id: 'entry:next->screen-1', source: 'entry', source_handle: 'next', target: 'screen-1' },
+        {
+          id: 'screen-1:submitted->complete',
+          source: 'screen-1',
+          source_handle: 'submitted',
+          target: 'complete',
+        },
+      ],
+    });
+    const asks = (fields: unknown[]) => {
+      // The statement is checked first, then the screen it is asked on.
+      mocks.db.queryOne
+        .mockResolvedValueOnce({ is_active: 1, current_version_id: 'version-1' })
+        .mockResolvedValueOnce({ id: 'signup', is_active: 1, fields_json: JSON.stringify(fields) });
+    };
+
+    it('accepts a screen that shows a consent box', async () => {
+      asks([{ field: 'consent', label: 'Consent', block_type: 'consent_widget' }]);
+      const body = await validateEditor(screenEditor());
+      expect(body.errors).toEqual([]);
+    });
+
+    it('refuses a step that asks for consent but names no screen', async () => {
+      mocks.db.queryOne.mockResolvedValueOnce({ is_active: 1, current_version_id: 'version-1' });
+      const editor = screenEditor();
+      delete (editor.nodes[1].config as { screen_ref?: string }).screen_ref;
+      const body = await validateEditor(editor);
+      expect(body.errors).toMatchObject([{ code: 'missing_consent_screen', node_id: 'screen-1' }]);
+    });
+
+    it('refuses a screen with no consent box, or one that is never shown', async () => {
+      asks([{ field: 'title', label: 'Title', block_type: 'heading' }]);
+      let body = await validateEditor(screenEditor());
+      expect(body.errors).toMatchObject([{ code: 'missing_consent_widget', node_id: 'screen-1' }]);
+      asks([
+        {
+          field: 'consent',
+          label: 'Consent',
+          block_type: 'consent_widget',
+          display_condition: { mode: 'hidden' },
+        },
+      ]);
+      body = await validateEditor(screenEditor());
+      expect(body.errors).toMatchObject([{ code: 'missing_consent_widget', node_id: 'screen-1' }]);
+    });
+  });
+
   it('rejects a custom consent screen that has no consent widget', async () => {
     mocks.db.queryOne.mockResolvedValueOnce({
       id: 'screen-review-only',
