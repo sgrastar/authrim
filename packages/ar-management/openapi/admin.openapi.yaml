@@ -31555,8 +31555,9 @@ paths:
       operationId: getApiAdminIpAllowlist
       summary: List admin IP allowlist entries
       description: >-
-        Lists enabled admin IP allowlist entries by default. When the list is empty, admin IP
-        restrictions are inactive.
+        Lists enabled admin IP allowlist entries by default. `restriction_active` is true when at
+        least one listed entry is enabled; with no enabled entry, admin IP restrictions are
+        inactive. `current_ip` is the address the allowlist judges this caller by.
       responses:
         '200':
           $ref: '#/components/responses/AdminIpAllowlistList'
@@ -31579,13 +31580,17 @@ paths:
       operationId: postApiAdminIpAllowlist
       summary: Create admin IP allowlist entry
       description: >-
-        Adds an IPv4, IPv6, or CIDR range to the admin IP allowlist. Duplicate ranges return a
-        conflict error.
+        Adds an IPv4, IPv6, or CIDR range to the admin IP allowlist. A range already listed returns
+        a conflict error with the generic error body. An entry that would leave the caller's own
+        address outside the limit (the first enabled entry, or one the caller is not in while the
+        caller was inside) is refused with `409 would_lock_out` unless `allow_lockout=true`.
+      parameters:
+        - $ref: '#/components/parameters/AdminIpAllowlistAllowLockout'
       responses:
         '201':
           $ref: '#/components/responses/AdminIpAllowlistEntry'
         '409':
-          $ref: '#/components/responses/Error'
+          $ref: '#/components/responses/AdminIpAllowlistWouldLockOut'
         default:
           $ref: '#/components/responses/Error'
       requestBody:
@@ -31599,10 +31604,15 @@ paths:
         - Admin IP Allowlist
       operationId: deleteApiAdminIpAllowlistById
       summary: Delete admin IP allowlist entry
-      description: Deletes an admin IP allowlist entry and records an audit log.
+      description: >-
+        Deletes an admin IP allowlist entry and records an audit log. Deleting the last enabled
+        range that covers the caller's address is refused with `409 would_lock_out` unless
+        `allow_lockout=true`.
       responses:
         '200':
           $ref: '#/components/responses/AdminIpAllowlistDelete'
+        '409':
+          $ref: '#/components/responses/AdminIpAllowlistWouldLockOut'
         default:
           $ref: '#/components/responses/Error'
       parameters:
@@ -31612,6 +31622,7 @@ paths:
           schema:
             type: string
           description: IP allowlist entry ID.
+        - $ref: '#/components/parameters/AdminIpAllowlistAllowLockout'
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -31641,10 +31652,16 @@ paths:
         - Admin IP Allowlist
       operationId: patchApiAdminIpAllowlistById
       summary: Update admin IP allowlist entry
-      description: 'Updates the IP range, description, or enabled flag for one admin IP allowlist entry.'
+      description: >-
+        Updates the IP range, description, or enabled flag for one admin IP allowlist entry. A range
+        another entry already has returns a conflict error with the generic error body. A change
+        that would leave the caller's own address outside the limit is refused with
+        `409 would_lock_out` unless `allow_lockout=true`.
       responses:
         '200':
           $ref: '#/components/responses/AdminIpAllowlistEntry'
+        '409':
+          $ref: '#/components/responses/AdminIpAllowlistWouldLockOut'
         default:
           $ref: '#/components/responses/Error'
       parameters:
@@ -31653,6 +31670,7 @@ paths:
           required: true
           schema:
             type: string
+        - $ref: '#/components/parameters/AdminIpAllowlistAllowLockout'
       requestBody:
         $ref: '#/components/requestBodies/AdminIpAllowlistUpdate'
       security:
@@ -31664,10 +31682,14 @@ paths:
         - Admin IP Allowlist
       operationId: postApiAdminIpAllowlistByIdDisable
       summary: Disable admin IP allowlist entry
-      description: Disables one admin IP allowlist entry and records an audit log.
+      description: >-
+        Disables one admin IP allowlist entry and records an audit log. Disabling the last enabled range that covers the caller's address is refused with
+        `409 would_lock_out` unless `allow_lockout=true`.
       responses:
         '200':
           $ref: '#/components/responses/AdminIpAllowlistMutation'
+        '409':
+          $ref: '#/components/responses/AdminIpAllowlistWouldLockOut'
         default:
           $ref: '#/components/responses/Error'
       parameters:
@@ -31676,6 +31698,7 @@ paths:
           required: true
           schema:
             type: string
+        - $ref: '#/components/parameters/AdminIpAllowlistAllowLockout'
       requestBody:
         $ref: '#/components/requestBodies/AdminEmptyObject'
       security:
@@ -31687,10 +31710,14 @@ paths:
         - Admin IP Allowlist
       operationId: postApiAdminIpAllowlistByIdEnable
       summary: Enable admin IP allowlist entry
-      description: Enables one admin IP allowlist entry and records an audit log.
+      description: >-
+        Enables one admin IP allowlist entry and records an audit log. Enabling an entry that starts a limit the caller's address is outside of is refused with
+        `409 would_lock_out` unless `allow_lockout=true`.
       responses:
         '200':
           $ref: '#/components/responses/AdminIpAllowlistMutation'
+        '409':
+          $ref: '#/components/responses/AdminIpAllowlistWouldLockOut'
         default:
           $ref: '#/components/responses/Error'
       parameters:
@@ -31699,6 +31726,7 @@ paths:
           required: true
           schema:
             type: string
+        - $ref: '#/components/parameters/AdminIpAllowlistAllowLockout'
       requestBody:
         $ref: '#/components/requestBodies/AdminEmptyObject'
       security:
@@ -42329,6 +42357,16 @@ components:
       name: authrim_admin_session
       description: Admin UI session cookie for browser usage.
   parameters:
+    AdminIpAllowlistAllowLockout:
+      name: allow_lockout
+      in: query
+      required: false
+      schema:
+        type: boolean
+        default: false
+      description: >-
+        Go on with a change that would leave the caller's own address outside the allowlist. Without
+        it such a change is refused with `409 would_lock_out`. The audit log notes the override.
     TenantDisasterRecoveryOperationId:
       name: operationId
       in: path
@@ -52694,6 +52732,22 @@ components:
               latency_ms: 25
               metadata: {}
             audit_id: audit_123
+    AdminIpAllowlistWouldLockOut:
+      description: >-
+        Conflict. Either the generic error body (a range already listed), or `would_lock_out`: the
+        change would leave the caller's own address outside the allowlist.
+      content:
+        application/json:
+          schema:
+            anyOf:
+              - $ref: '#/components/schemas/AdminIpAllowlistWouldLockOut'
+              - $ref: '#/components/schemas/Error'
+          example:
+            error: would_lock_out
+            error_description: >-
+              This change would leave the current IP address outside the allowlist. Repeat it with
+              allow_lockout=true to continue.
+            current_ip: 203.0.113.10
     AdminIpAllowlistList:
       description: Admin IP allowlist entries.
       content:
@@ -82800,8 +82854,27 @@ components:
           type: integer
         current_ip:
           type: string
+          description: The address the allowlist judges this caller by (`unknown` when none).
         restriction_active:
           type: boolean
+          description: True when at least one listed entry is enabled.
+    AdminIpAllowlistWouldLockOut:
+      type: object
+      additionalProperties: false
+      required:
+        - error
+        - error_description
+        - current_ip
+      properties:
+        error:
+          type: string
+          enum:
+            - would_lock_out
+        error_description:
+          type: string
+        current_ip:
+          type: string
+          nullable: true
     AdminIpAllowlistCreateRequest:
       type: object
       additionalProperties: false

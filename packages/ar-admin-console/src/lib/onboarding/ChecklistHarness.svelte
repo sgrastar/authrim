@@ -12,9 +12,11 @@
 		activeItemId?: string | null;
 		/** The progress cannot be read. */
 		fail?: boolean;
+		/** What tells an item is already done (none: the stand-in asks no API). */
+		probes?: Readonly<Record<string, () => Promise<boolean>>>;
 	}
 
-	let { completed = [], activeItemId = null, fail = false }: Props = $props();
+	let { completed = [], activeItemId = null, fail = false, probes = {} }: Props = $props();
 
 	$effect(() =>
 		untrack(() => {
@@ -27,5 +29,5 @@
 </script>
 
 <Page>
-	<OnboardingChecklist {activeItemId} onstart={() => {}} onstop={() => {}} />
+	<OnboardingChecklist {activeItemId} {probes} onstart={() => {}} onstop={() => {}} />
 </Page>

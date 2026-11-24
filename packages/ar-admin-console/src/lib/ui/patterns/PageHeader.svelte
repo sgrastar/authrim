@@ -22,6 +22,11 @@
 		titleEditor?: Snippet;
 		/** The title element, so a page that replaces what was on screen can move focus to it. */
 		titleElement?: HTMLHeadingElement | null;
+		/**
+		 * The page needs no drawn heading (its first block says what it is), but keeps one for
+		 * screen readers and for moving focus. Nothing else of the header is drawn.
+		 */
+		hidden?: boolean;
 	}
 
 	let {
@@ -33,36 +38,41 @@
 		badges,
 		titleAction,
 		titleEditor,
-		titleElement = $bindable(null)
+		titleElement = $bindable(null),
+		hidden = false
 	}: Props = $props();
 </script>
 
-<header class="page-head">
-	{#if back}<div class="page-head__back">{@render back()}</div>{/if}
-	{#if eyebrow}<div class="page-head__eyebrow">{@render eyebrow()}</div>{/if}
-	<div class="page-head__row">
-		<div class="page-head__text">
-			{#if titleEditor}
-				<h1 class="sr-only" bind:this={titleElement} tabindex="-1">{title}</h1>
-				{@render titleEditor()}
-			{:else if titleAction}
-				<div class="page-head__title-inline">
+{#if hidden}
+	<h1 class="sr-only" bind:this={titleElement} tabindex="-1">{title}</h1>
+{:else}
+	<header class="page-head">
+		{#if back}<div class="page-head__back">{@render back()}</div>{/if}
+		{#if eyebrow}<div class="page-head__eyebrow">{@render eyebrow()}</div>{/if}
+		<div class="page-head__row">
+			<div class="page-head__text">
+				{#if titleEditor}
+					<h1 class="sr-only" bind:this={titleElement} tabindex="-1">{title}</h1>
+					{@render titleEditor()}
+				{:else if titleAction}
+					<div class="page-head__title-inline">
+						<h1 bind:this={titleElement} tabindex="-1">{title}</h1>
+						{@render titleAction()}
+					</div>
+				{:else}
 					<h1 bind:this={titleElement} tabindex="-1">{title}</h1>
-					{@render titleAction()}
-				</div>
-			{:else}
-				<h1 bind:this={titleElement} tabindex="-1">{title}</h1>
-			{/if}
-			{#if description}<p>{description}</p>{/if}
-		</div>
-		{#if badges || actions}
-			<div class="page-head__aside">
-				{#if badges}<div class="page-head__badges">{@render badges()}</div>{/if}
-				{#if actions}<div class="page-head__actions">{@render actions()}</div>{/if}
+				{/if}
+				{#if description}<p>{description}</p>{/if}
 			</div>
-		{/if}
-	</div>
-</header>
+			{#if badges || actions}
+				<div class="page-head__aside">
+					{#if badges}<div class="page-head__badges">{@render badges()}</div>{/if}
+					{#if actions}<div class="page-head__actions">{@render actions()}</div>{/if}
+				</div>
+			{/if}
+		</div>
+	</header>
+{/if}
 
 <style>
 	.page-head {

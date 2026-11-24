@@ -1648,6 +1648,28 @@ describe('the lite account page', () => {
 			]);
 		});
 
+		it('shows only the launchers the page’s launcher slot chose', async () => {
+			launcherPage();
+			const capabilities = routes['/api/account/capabilities'];
+			routes['/api/account/capabilities'] = (body, init) => {
+				const original = capabilities(body, init) as Response;
+				return original
+					.clone()
+					.json()
+					.then(
+						(data: {
+							account_page: { definition: { screens: Array<Record<string, unknown>> } };
+						}) => {
+							data.account_page.definition.screens[0].launcher_ids = ['wiki'];
+							return json(data);
+						}
+					) as unknown as Response;
+			};
+			const chosen = (await view()) as Page;
+			expect(chosen.widgets.launcher?.launchers.map((item) => item.id)).toEqual(['wiki']);
+			expect(chosen.widgets.launcher?.total).toBe(1);
+		});
+
 		it('sets a favourite, and says when it could not', async () => {
 			launcherPage();
 			const puts: Array<Record<string, unknown>> = [];

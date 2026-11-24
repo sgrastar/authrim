@@ -1564,7 +1564,10 @@
 								onUnlink={unlinkSocialAccount}
 							/>
 						{:else if field.block_type === 'account_launcher_widget'}
-							<AccountLauncherSection title={accountWidgetTitle(field)} />
+							<AccountLauncherSection
+								title={accountWidgetTitle(field)}
+								launcherIds={placement.launcher_ids}
+							/>
 						{/if}
 					{/snippet}
 				</AccountScreenPlacement>

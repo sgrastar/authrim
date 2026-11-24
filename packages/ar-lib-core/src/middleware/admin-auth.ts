@@ -56,6 +56,7 @@ export {
   resolveMachineExplicitTenantScope,
   resolveMachineTenantScope,
 };
+import { adminIpMatchesRange, getAdminRequestClientIp } from '../utils/admin-ip-match';
 import { importJWK, type CryptoKey, type JWK, type JWTPayload } from 'jose';
 
 const log = createLogger().module('ADMIN-AUTH');
@@ -757,8 +758,7 @@ export async function isAdminRequestIpAllowedForTenant(
     }
 
     // Get client IP from Cloudflare header after determining that an allowlist is active.
-    const clientIp =
-      c.req.header('CF-Connecting-IP') || c.req.header('X-Forwarded-For')?.split(',')[0]?.trim();
+    const clientIp = getAdminRequestClientIp((name) => c.req.header(name));
 
     if (!clientIp) {
       log.warn('Could not determine client IP for active allowlist check');
@@ -767,7 +767,7 @@ export async function isAdminRequestIpAllowedForTenant(
 
     // Check if client IP matches any entry
     for (const entry of entries) {
-      if (ipMatches(clientIp, entry.ip_range)) {
+      if (adminIpMatchesRange(clientIp, entry.ip_range)) {
         return true;
       }
     }
@@ -778,112 +778,6 @@ export async function isAdminRequestIpAllowedForTenant(
     log.error('IP allowlist check failed', {}, error as Error);
     return false;
   }
-}
-
-/**
- * Check if an IP matches a range (single IP or CIDR)
- */
-function ipMatches(ip: string, range: string): boolean {
-  // Exact match
-  if (ip === range) {
-    return true;
-  }
-
-  // CIDR match
-  if (range.includes('/')) {
-    return ipMatchesCidr(ip, range);
-  }
-
-  return false;
-}
-
-/**
- * Check if an IP matches an IPv4 or IPv6 CIDR range.
- */
-function ipMatchesCidr(ip: string, cidr: string): boolean {
-  const cidrParts = cidr.split('/');
-  if (cidrParts.length !== 2 || !/^\d+$/.test(cidrParts[1])) {
-    return false;
-  }
-  const [rangeIp, prefixLengthStr] = cidrParts;
-  const prefixLength = Number(prefixLengthStr);
-
-  // IPv4 handling
-  if (!ip.includes(':') && !rangeIp.includes(':')) {
-    const ipNum = ipv4ToNumber(ip);
-    const rangeNum = ipv4ToNumber(rangeIp);
-
-    if (ipNum === null || rangeNum === null || prefixLength < 0 || prefixLength > 32) {
-      return false;
-    }
-
-    const mask = prefixLength === 0 ? 0 : (-1 << (32 - prefixLength)) >>> 0;
-    return (ipNum & mask) === (rangeNum & mask);
-  }
-
-  // IPv6 handling. Parse both compressed and full notation and compare prefix bits.
-  if (ip.includes(':') && rangeIp.includes(':')) {
-    const ipNum = ipv6ToBigInt(ip);
-    const rangeNum = ipv6ToBigInt(rangeIp);
-    if (ipNum === null || rangeNum === null || prefixLength < 0 || prefixLength > 128) {
-      return false;
-    }
-    const hostBits = BigInt(128 - prefixLength);
-    return ipNum >> hostBits === rangeNum >> hostBits;
-  }
-
-  return false;
-}
-
-/**
- * Convert IPv4 address to 32-bit number
- */
-function ipv4ToNumber(ip: string): number | null {
-  const parts = ip.split('.');
-  if (parts.length !== 4) {
-    return null;
-  }
-
-  let result = 0;
-  for (const part of parts) {
-    if (!/^\d{1,3}$/.test(part)) {
-      return null;
-    }
-    const num = Number(part);
-    if (num > 255) {
-      return null;
-    }
-    result = (result << 8) | num;
-  }
-
-  return result >>> 0;
-}
-
-function ipv6ToBigInt(ip: string): bigint | null {
-  if (ip.includes('.') || ip.includes(':::') || (ip.match(/::/g) ?? []).length > 1) {
-    return null;
-  }
-
-  const compressed = ip.includes('::');
-  const [leftText, rightText = ''] = compressed ? ip.split('::') : [ip, ''];
-  const left = leftText ? leftText.split(':') : [];
-  const right = rightText ? rightText.split(':') : [];
-  if ((!compressed && left.length !== 8) || (compressed && left.length + right.length >= 8)) {
-    return null;
-  }
-
-  const groups = compressed
-    ? [...left, ...Array(8 - left.length - right.length).fill('0'), ...right]
-    : left;
-  if (groups.length !== 8 || groups.some((group) => !/^[0-9a-fA-F]{1,4}$/.test(group))) {
-    return null;
-  }
-
-  let result = 0n;
-  for (const group of groups) {
-    result = (result << 16n) | BigInt(`0x${group}`);
-  }
-  return result;
 }
 
 function resolveAdminRequestTenantId(c: Context<{ Bindings: Env }>): string | null {
@@ -913,6 +807,13 @@ function isPlatformAdminSessionPath(path: string): boolean {
       path
     ) ||
     /^\/api\/admin\/me\/second-factor-recovery(?:\/(?:complete|cancel))?\/?$/u.test(path) ||
+    // Keyring as a second factor or for recovery: the same admin-own routes, under the session's tenant.
+    /^\/api\/admin\/me\/keyring\/(?:step-up|enroll)(?:\/[^/]+(?:\/response)?)?\/?$/u.test(path) ||
+    // The admin's own passkeys and administrator credentials (wallet): kept under the session's tenant.
+    /^\/api\/admin\/me\/passkeys(?:\/[^/]+)?\/?$/u.test(path) ||
+    /^\/api\/admin\/me\/wallet-credentials(?:\/(?:offers(?:\/[^/]+)?|haip-offer|[^/]+\/revoke))?\/?$/u.test(
+      path
+    ) ||
     // Each admin's notice email choices, under the session's own tenant.
     /^\/api\/admin\/me\/notice-preferences\/?$/u.test(path) ||
     /^\/api\/admin\/agent-login-handoffs\/alh_[A-Za-z0-9_-]{32}\/approve\/?$/u.test(path)

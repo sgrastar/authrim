@@ -446,10 +446,16 @@ function isProxyEnabled(platformEnv?: Record<string, unknown>): boolean {
 	return isLocalAdminProxyEnabled(platformEnv) || isFixedHttpsBffProxyEnabled(platformEnv);
 }
 
+/** Wallet (HAIP) login runs before any session exists, like the passkey login. */
+function isAdminWalletLoginPath(pathname: string): boolean {
+	return pathname.startsWith('/api/admin/auth/wallet-login/');
+}
+
 function isAdminBootstrapProxyPath(pathname: string): boolean {
 	return (
 		pathname === '/api/admin/auth/passkey/options' ||
 		pathname === '/api/admin/auth/passkey/verify' ||
+		isAdminWalletLoginPath(pathname) ||
 		pathname.startsWith('/api/admin/invitations/') ||
 		pathname.startsWith('/api/admin/setup-token/')
 	);
@@ -540,17 +546,22 @@ function passesCsrfCheck(event: RequestEvent): boolean {
 	}
 }
 
-function getForwardedAdminCookie(cookieHeader: string | null): string | null {
+function getForwardedAdminCookie(cookieHeader: string | null, pathname = ''): string | null {
 	if (!cookieHeader) {
 		return null;
 	}
 
-	const adminSessionCookie = cookieHeader
+	// The wallet login binds its request to the browser with a short-lived cookie; only the wallet
+	// login routes need it, so it is forwarded to them alone.
+	const forwardedNames = isAdminWalletLoginPath(pathname)
+		? ['authrim_admin_session=', 'authrim_admin_wallet_login=']
+		: ['authrim_admin_session='];
+	const forwarded = cookieHeader
 		.split(';')
 		.map((part) => part.trim())
-		.find((part) => part.startsWith('authrim_admin_session='));
+		.filter((part) => forwardedNames.some((name) => part.startsWith(name)));
 
-	return adminSessionCookie || null;
+	return forwarded.length > 0 ? forwarded.join('; ') : null;
 }
 
 function createProxyRequestId(): string {
@@ -634,7 +645,10 @@ export function buildProxyHeaders(
 
 	headers.set('X-Request-Id', requestId);
 
-	const adminCookie = getForwardedAdminCookie(event.request.headers.get('cookie'));
+	const adminCookie = getForwardedAdminCookie(
+		event.request.headers.get('cookie'),
+		event.url.pathname
+	);
 	if (adminCookie) {
 		headers.set('Cookie', adminCookie);
 	}

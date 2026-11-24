@@ -13,6 +13,7 @@
 	import './guide.css';
 	import { CHECKLIST } from './checklist';
 	import { guide } from './guide.svelte';
+	import ConnectedGuideSteps from './ConnectedGuideSteps.svelte';
 	import OnboardingChecklist from './OnboardingChecklist.svelte';
 	import { onboardingProgress } from './progress.svelte';
 
@@ -98,7 +99,7 @@
 <Page>
 	{#if path === HOME}
 		<PageHeader title={t('nav.overview')} />
-		<OnboardingChecklist items={theme} activeItemId={guide.activeItemId} />
+		<OnboardingChecklist items={theme} activeItemId={guide.activeItemId} probes={{}} />
 	{:else if path === LIST}
 		<PageHeader title={t('nav.custom.branding')}>
 			{#snippet actions()}
@@ -156,6 +157,9 @@
 		</div>
 	{/if}
 </Page>
+
+<!-- The list of the running guide's steps, as the console's layout shows it. -->
+<ConnectedGuideSteps />
 
 <style>
 	.stand-in {

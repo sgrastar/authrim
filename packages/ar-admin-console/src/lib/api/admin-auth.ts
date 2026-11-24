@@ -80,6 +80,27 @@ export interface LoginResult {
 	};
 }
 
+export interface WalletLoginStart {
+	requestId: string;
+	expiresAt: number;
+	/** `haip-vp://` link that opens the wallet on this device. */
+	deepLink?: string;
+}
+
+export type WalletLoginProgress = 'pending' | 'processing' | 'verified' | 'failed' | 'expired';
+
+const WALLET_LOGIN_BASE = '/api/admin/auth/wallet-login';
+// Request ids carry their shard (`g1:apac:3:vp_<uuid>`).
+const WALLET_REQUEST_ID = /^[A-Za-z0-9_.:-]{16,256}$/;
+
+async function walletLoginError(response: Response): Promise<AuthError> {
+	const body = await response.json().catch(() => ({ error: 'unknown_error' }));
+	return new AuthError(
+		typeof body.error === 'string' ? body.error : 'wallet_login_failed',
+		'Wallet login failed'
+	);
+}
+
 /**
  * Admin Authentication API
  */
@@ -248,6 +269,59 @@ export const adminAuthAPI = {
 		});
 		// Redirect to login page after logout
 		window.location.href = '/admin/login';
+	},
+
+	/**
+	 * Start a wallet (HAIP) login. The server binds the request to this browser with a cookie.
+	 * POST /api/admin/auth/wallet-login/start
+	 */
+	async startWalletLogin(): Promise<WalletLoginStart> {
+		const response = await adminFetch(`${API_BASE_URL}${WALLET_LOGIN_BASE}/start`, {
+			method: 'POST',
+			skipTenantHeader: true,
+			headers: { 'Content-Type': 'application/json' },
+			credentials: 'include',
+			body: JSON.stringify({ flow: 'same_device' })
+		});
+		if (!response.ok) throw await walletLoginError(response);
+		const body = await response.json();
+		if (typeof body.request_id !== 'string' || !WALLET_REQUEST_ID.test(body.request_id)) {
+			throw new AuthError('wallet_login_failed', 'Wallet login failed');
+		}
+		return {
+			requestId: body.request_id,
+			expiresAt: Number(body.expires_at),
+			...(typeof body.deep_link === 'string' ? { deepLink: body.deep_link } : {})
+		};
+	},
+
+	/** GET /api/admin/auth/wallet-login/status */
+	async getWalletLoginStatus(requestId: string): Promise<WalletLoginProgress> {
+		const response = await adminFetch(
+			`${API_BASE_URL}${WALLET_LOGIN_BASE}/status?request_id=${encodeURIComponent(requestId)}`,
+			{ skipTenantHeader: true, credentials: 'include', headers: buildHeaders() }
+		);
+		if (!response.ok) throw await walletLoginError(response);
+		const body = await response.json();
+		return body.status as WalletLoginProgress;
+	},
+
+	/**
+	 * Exchange a verified wallet login for the Admin session.
+	 * POST /api/admin/auth/wallet-login/complete
+	 */
+	async completeWalletLogin(requestId: string, responseCode?: string): Promise<void> {
+		const response = await adminFetch(`${API_BASE_URL}${WALLET_LOGIN_BASE}/complete`, {
+			method: 'POST',
+			skipTenantHeader: true,
+			headers: { 'Content-Type': 'application/json' },
+			credentials: 'include',
+			body: JSON.stringify({
+				request_id: requestId,
+				...(responseCode ? { response_code: responseCode } : {})
+			})
+		});
+		if (!response.ok) throw await walletLoginError(response);
 	}
 };
 
@@ -257,6 +331,12 @@ export function authErrorKey(error: unknown): MessageKey {
 		switch (error.code) {
 			case 'forbidden':
 				return 'login.error.forbidden';
+			case 'wallet_login_not_allowed':
+				return 'login.error.walletNotAllowed';
+			case 'wallet_login_unavailable':
+				return 'login.error.walletUnavailable';
+			case 'wallet_login_failed':
+				return 'login.error.walletFailed';
 			case 'session_expired':
 			case 'invalid_token':
 			case 'invalid_credentials':

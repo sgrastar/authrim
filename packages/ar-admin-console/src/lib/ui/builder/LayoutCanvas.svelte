@@ -44,6 +44,16 @@
 		changed?: (part: LayoutPart) => boolean;
 		/** What a part is ("Passkey", "Divider"): its first line, above the name users see. */
 		role?: (part: LayoutPart) => string;
+		/** The most columns a row may have (up to three): a page that takes two offers 1 | 2. */
+		maxColumns?: number;
+		/** The most parts a column holds (default: any number); keyboard moves step past full columns. */
+		columnCapacity?: number;
+		/**
+		 * A part's second line, under its name: the name users see comes first, in bold, and this
+		 * follows it in small type (a page whose parts are known by their names, such as screens).
+		 * Without it, `role` comes first and the name under it.
+		 */
+		secondary?: (part: LayoutPart) => string;
 	}
 
 	let {
@@ -53,7 +63,10 @@
 		selectedRow = $bindable(null),
 		create,
 		changed,
-		role
+		role,
+		maxColumns = MAX_COLUMNS,
+		columnCapacity,
+		secondary
 	}: Props = $props();
 
 	/** The part's name for buttons and announcements: its label, or what it is. */
@@ -66,7 +79,9 @@
 
 	const MOVE_TYPE = 'application/x-authrim-move-part';
 	const ROW_TYPE = 'application/x-authrim-move-row';
-	const COLUMN_CHOICES = Array.from({ length: MAX_COLUMNS }, (_, index) => index + 1);
+	const COLUMN_CHOICES = $derived(
+		Array.from({ length: Math.max(1, Math.min(maxColumns, MAX_COLUMNS)) }, (_, index) => index + 1)
+	);
 
 	const busy = useBusy();
 	let root = $state<HTMLDivElement>();
@@ -195,7 +210,7 @@
 		)[event.key as 'ArrowUp' | 'ArrowDown' | 'ArrowLeft' | 'ArrowRight'];
 		if (!direction) return;
 		event.preventDefault();
-		rows = stepPart(rows, part.id, direction, newRowId);
+		rows = stepPart(rows, part.id, direction, newRowId, columnCapacity);
 		announceMove(part.id);
 		await tick();
 		root.querySelector<HTMLElement>(`[data-part="${CSS.escape(part.id)}"] .part__main`)?.focus();
@@ -351,7 +366,10 @@
 									onclick={() => selectPart(part.id)}
 									onkeydown={(event) => keyMove(event, part)}
 								>
-									{#if role}
+									{#if secondary}
+										<span class="part__role">{part.label || role?.(part) || part.kind}</span>
+										{#if secondary(part)}<small>{secondary(part)}</small>{/if}
+									{:else if role}
 										<span class="part__role">{role(part)}</span>
 										{#if part.label}<small>{part.label}</small>{/if}
 									{:else}

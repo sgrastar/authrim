@@ -14,7 +14,7 @@
  */
 import type { MessageKey } from '#lib/i18n/i18n.svelte.js';
 import type { IconName } from '#lib/ui/icons/icons.js';
-import type { GuideSignal } from './signals';
+import type { GuideFact, GuideSignal } from './signals';
 
 /**
  * What moves a step on:
@@ -38,6 +38,11 @@ export interface GuideStep {
 	 */
 	target?: string;
 	title: MessageKey;
+	/**
+	 * The step's name in the list of steps (`GuideSteps`): short, a name and not a sentence.
+	 * Left out, the title is used, which is right when the title already is a name.
+	 */
+	label?: MessageKey;
 	body: MessageKey;
 	/** What the person is asked to do, shown apart from the explanation (for steps that wait). */
 	action?: MessageKey;
@@ -55,6 +60,11 @@ export interface GuideStep {
 	 * the rest of the page is not dimmed. Steps that point at one thing leave it out.
 	 */
 	dim?: boolean;
+	/**
+	 * Other texts for the step while a fact about the environment holds (see `signals.ts`): the
+	 * first variant whose fact holds replaces the step's `body` and, if it has one, its `action`.
+	 */
+	variants?: readonly { when: GuideFact; body: MessageKey; action?: MessageKey }[];
 	/** Moving on from this step finishes the item. The last step always does. */
 	completes?: boolean;
 }
@@ -74,6 +84,7 @@ const THEME_EDITOR = '/admin/customization/branding/*';
 const SCHEMA_LIST = '/admin/access/schema-setting';
 const SCREEN_LIST = '/admin/customization/screens';
 const SCREEN_EDITOR = '/admin/customization/screens/*';
+const ACCOUNT_SETTINGS = '/admin/me';
 
 /** The left navigation's link to a page (its rows carry no name of their own). */
 const subNavLink = (href: string) => `.subnav a.subnav__item[href="${href}"]`;
@@ -91,6 +102,7 @@ export const CHECKLIST: readonly ChecklistItem[] = [
 				path: OVERVIEW,
 				target: '[data-guide="nav-settings"]',
 				title: 'ob.signIn.s1.title',
+				label: 'ob.signIn.s1.label',
 				body: 'ob.signIn.s1.body'
 			},
 			{
@@ -120,12 +132,14 @@ export const CHECKLIST: readonly ChecklistItem[] = [
 				path: OVERVIEW,
 				target: '[data-guide="nav-customization"]',
 				title: 'ob.theme.nav.title',
+				label: 'ob.theme.nav.label',
 				body: 'ob.theme.nav.body'
 			},
 			{
 				path: THEME_LIST,
 				target: subNavLink(THEME_LIST),
 				title: 'ob.theme.sub.title',
+				label: 'ob.theme.sub.label',
 				body: 'ob.theme.sub.body'
 			},
 			{
@@ -140,18 +154,21 @@ export const CHECKLIST: readonly ChecklistItem[] = [
 				path: THEME_EDITOR,
 				target: '[data-guide="theme-sections"] [role="tab"][data-tab="layout"]',
 				title: 'ob.theme.s2.title',
+				label: 'ob.theme.s2.label',
 				body: 'ob.theme.s2.body'
 			},
 			{
 				path: THEME_EDITOR,
 				target: '[data-guide="theme-sections"] [role="tab"][data-tab="look"]',
 				title: 'ob.theme.s3.title',
+				label: 'ob.theme.s3.label',
 				body: 'ob.theme.s3.body'
 			},
 			{
 				path: THEME_EDITOR,
 				target: '[data-guide="theme-sections"] [role="tab"][data-tab="images"]',
 				title: 'ob.theme.s4.title',
+				label: 'ob.theme.s4.label',
 				body: 'ob.theme.s4.body',
 				action: 'ob.theme.s4.action',
 				advance: 'click'
@@ -185,6 +202,7 @@ export const CHECKLIST: readonly ChecklistItem[] = [
 				path: THEME_EDITOR,
 				target: '[data-guide="theme-save"]',
 				title: 'ob.theme.s6.title',
+				label: 'ob.theme.s6.label',
 				body: 'ob.theme.s6.body',
 				action: 'ob.theme.s6.action',
 				advance: { signal: 'theme.saved' },
@@ -210,12 +228,14 @@ export const CHECKLIST: readonly ChecklistItem[] = [
 				path: OVERVIEW,
 				target: '[data-guide="nav-access"]',
 				title: 'ob.schema.nav.title',
+				label: 'ob.schema.nav.label',
 				body: 'ob.schema.nav.body'
 			},
 			{
 				path: SCHEMA_LIST,
 				target: subNavLink(SCHEMA_LIST),
 				title: 'ob.schema.sub.title',
+				label: 'ob.schema.sub.label',
 				body: 'ob.schema.sub.body'
 			},
 			{
@@ -243,12 +263,14 @@ export const CHECKLIST: readonly ChecklistItem[] = [
 				path: OVERVIEW,
 				target: '[data-guide="nav-customization"]',
 				title: 'ob.screens.nav.title',
+				label: 'ob.screens.nav.label',
 				body: 'ob.screens.nav.body'
 			},
 			{
 				path: SCREEN_LIST,
 				target: subNavLink(SCREEN_LIST),
 				title: 'ob.screens.sub.title',
+				label: 'ob.screens.sub.label',
 				body: 'ob.screens.sub.body'
 			},
 			{
@@ -282,9 +304,70 @@ export const CHECKLIST: readonly ChecklistItem[] = [
 				path: SCREEN_EDITOR,
 				target: '.save-bar',
 				title: 'ob.screens.s5.title',
+				label: 'ob.screens.s5.label',
 				body: 'ob.screens.s5.body',
 				action: 'ob.screens.s5.action',
 				advance: { signal: 'screen.saved' },
+				dim: false
+			}
+		]
+	},
+	{
+		id: 'second-factor',
+		icon: 'fingerprint',
+		title: 'ob.secondFactor.title',
+		description: 'ob.secondFactor.desc',
+		steps: [
+			// The way there: the account menu in the header (on the overview, so starting the guide
+			// moves nowhere), then its personal settings.
+			{
+				path: OVERVIEW,
+				target: '[data-guide="account-menu"]',
+				title: 'ob.secondFactor.menu.title',
+				body: 'ob.secondFactor.menu.body',
+				action: 'ob.secondFactor.menu.action',
+				advance: 'click'
+			},
+			{
+				path: OVERVIEW,
+				target: '[data-guide="account-settings"]',
+				title: 'ob.secondFactor.settings.title',
+				label: 'ob.secondFactor.settings.label',
+				body: 'ob.secondFactor.settings.body',
+				action: 'ob.secondFactor.settings.action',
+				// The menu closed again: point at what opens it.
+				fallback: {
+					target: '[data-guide="account-menu"]',
+					action: 'ob.secondFactor.settings.fallback'
+				},
+				advance: 'navigate'
+			},
+			{
+				path: ACCOUNT_SETTINGS,
+				target: '[data-guide="second-factors"]',
+				title: 'ob.secondFactor.keys.title',
+				body: 'ob.secondFactor.keys.body',
+				// Where nothing can be registered now, that comes first; then where an app can be.
+				variants: [
+					{ when: 'second-factor.blocked', body: 'ob.secondFactor.keys.bodyBlocked' },
+					{ when: 'second-factor.totp', body: 'ob.secondFactor.keys.bodyTotp' }
+				]
+			},
+			{
+				path: ACCOUNT_SETTINGS,
+				target: '[data-guide="second-factor-add"]',
+				title: 'ob.secondFactor.add.title',
+				body: 'ob.secondFactor.add.body',
+				variants: [
+					{
+						when: 'second-factor.blocked',
+						body: 'ob.secondFactor.add.bodyBlocked',
+						action: 'ob.secondFactor.add.actionBlocked'
+					},
+					{ when: 'second-factor.totp', body: 'ob.secondFactor.add.bodyTotp' }
+				],
+				action: 'ob.secondFactor.add.action',
+				advance: { signal: 'second-factor.added' },
 				dim: false
 			}
 		]

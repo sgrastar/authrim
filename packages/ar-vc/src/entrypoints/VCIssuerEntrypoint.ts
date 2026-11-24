@@ -12,6 +12,10 @@ import type {
   CreateAdminCredentialOfferServiceResult,
   CreateCredentialOfferServiceInput,
   CreateCredentialOfferServiceResult,
+  CreateHaipLoginInput,
+  CreateHaipLoginResult,
+  HaipLoginRef,
+  HaipLoginResult,
 } from '@authrim/ar-lib-core';
 import { ADMIN_CREDENTIAL_CONFIGURATION_ID, isValidTenantIdentifier } from '@authrim/ar-lib-core';
 import type { Env } from '../types';
@@ -21,6 +25,11 @@ import {
   getAdminPresentationStatus,
   submitAdminPresentationResponse,
 } from '../verifier/admin/admin-vp-service';
+import {
+  consumeHaipLoginResult,
+  createHaipLoginRequest,
+  getHaipLoginStatus,
+} from '../verifier/haip-login/haip-login-service';
 import type {
   AdminOfferProgress,
   CreateCredentialOfferInput,
@@ -324,6 +333,27 @@ export class VCIssuerEntrypoint extends WorkerEntrypoint<Env> {
     });
   }
 
+  /** Start a login by a HAIP presentation. */
+  async createHaipLoginRequest(input: CreateHaipLoginInput): Promise<CreateHaipLoginResult> {
+    return runSamlDrCoveredOperation(this.env, this.ctx, (env) =>
+      createHaipLoginRequest(env, input)
+    );
+  }
+
+  /** Null unless the request is of exactly this browser. */
+  async getHaipLoginStatus(input: HaipLoginRef) {
+    return runSamlDrCoveredOperation(this.env, this.ctx, (env) => getHaipLoginStatus(env, input));
+  }
+
+  /** The verified result, once, to the browser that started the request. */
+  async consumeHaipLoginResult(
+    input: HaipLoginRef & { responseCode?: string }
+  ): Promise<HaipLoginResult | null> {
+    return runSamlDrCoveredOperation(this.env, this.ctx, (env) =>
+      consumeHaipLoginResult(env, input)
+    );
+  }
+
   /** Start an administrator presentation (second factor of a step-up, or its enrolment). */
   async createAdminPresentationRequest(
     input: CreateAdminPresentationInput
@@ -407,10 +437,13 @@ export class VCIssuerEntrypoint extends WorkerEntrypoint<Env> {
 
 export const SAML_DR_WRITER_SURFACES = [
   'rpc:VCIssuerEntrypoint.consumeAdminPresentation',
+  'rpc:VCIssuerEntrypoint.consumeHaipLoginResult',
   'rpc:VCIssuerEntrypoint.createAdminCredentialOffer',
   'rpc:VCIssuerEntrypoint.createAdminPresentationRequest',
   'rpc:VCIssuerEntrypoint.createCredentialOffer',
+  'rpc:VCIssuerEntrypoint.createHaipLoginRequest',
   'rpc:VCIssuerEntrypoint.getAdminCredentialOfferStatus',
   'rpc:VCIssuerEntrypoint.getAdminPresentationStatus',
+  'rpc:VCIssuerEntrypoint.getHaipLoginStatus',
   'rpc:VCIssuerEntrypoint.submitAdminPresentationResponse',
 ] as const;

@@ -1,10 +1,10 @@
 /** The first-steps checklist on the overview, and its guides (`#lib/onboarding/checklist`). */
 export const jaOnboarding = {
-	'ob.title': 'はじめかた',
+	'ob.title': 'Authrim 101',
 	'ob.lead':
-		'新しい環境でまず試すことを並べました。「案内を始める」を押すと、その画面へ移動し、操作する場所を順に示します。',
+		'Authrim を触り始める人のための、入門レッスンです。「案内を始める」を押すと、その画面へ移動し、操作する場所を順に示します。',
 	'ob.progress': '{done} / {total} 完了',
-	'ob.progressLabel': 'はじめかたの進み具合',
+	'ob.progressLabel': 'Authrim 101 の進み具合',
 	'ob.allDone': 'すべて完了しました。案内は何度でも見直せます。',
 	'ob.loadFailed': '進み具合を読み込めませんでした。',
 	'ob.saveFailed': '進み具合を保存できませんでした。',
@@ -111,5 +111,50 @@ export const jaOnboarding = {
 		'追加した部品の設定です。保存先の項目で、入力された値を保存する属性を、好きなものに選んでみてください。',
 	'ob.screens.s5.title': '保存する',
 	'ob.screens.s5.body': '部品の並びや設定は、好きなように変えてみてください。',
-	'ob.screens.s5.action': '終わったら保存を押してください。案内はそこで終わりです。'
+	'ob.screens.s5.action': '終わったら保存を押してください。案内はそこで終わりです。',
+
+	'ob.secondFactor.title': '二要素認証を登録してみよう',
+	'ob.secondFactor.desc': '重要な操作の前に求められる、2 つ目の認証手段を登録します。',
+	'ob.secondFactor.menu.title': 'アカウントのメニュー',
+	'ob.secondFactor.menu.body':
+		'自分のログイン手段や、2 つ目の認証手段は、右上のアカウントのメニューから「個人設定」を開いて管理します。',
+	'ob.secondFactor.menu.action': 'アカウントのアイコンを押してください。',
+	'ob.secondFactor.settings.title': '個人設定',
+	'ob.secondFactor.settings.body': 'ここから、自分用の設定のページへ移動できます。',
+	'ob.secondFactor.settings.action': '「個人設定」を押してください。',
+	'ob.secondFactor.settings.fallback':
+		'メニューが閉じました。もう一度、アカウントのアイコンを押してください。',
+	'ob.secondFactor.keys.title': '2 つ目の認証手段',
+	'ob.secondFactor.keys.body':
+		'Passkey でのログインに加えて、鍵の交換や管理者の権限の変更のような重要な操作では、もう 1 つの認証手段を求められます。それを、この枠で登録します。セキュリティキー（物理キー）を登録できます。',
+	'ob.secondFactor.keys.bodyTotp':
+		'Passkey でのログインに加えて、鍵の交換や管理者の権限の変更のような重要な操作では、もう 1 つの認証手段を求められます。それを、この枠で登録します。セキュリティキー（物理キー）のほか、この環境では、スマートフォンの認証アプリ（TOTP）も使えます。',
+	'ob.secondFactor.add.title': '登録する',
+	'ob.secondFactor.add.body': 'このボタンから、2 つ目の認証手段を登録できます。',
+	'ob.secondFactor.add.bodyTotp':
+		'このボタンから、セキュリティキーか、認証アプリ（TOTP）のどちらかを選んで登録できます。認証アプリは、表示される QR コードを読み取り、アプリに出る 6 桁の数字を入力します。',
+	'ob.secondFactor.add.action': '登録を最後まで進めてください。登録できると、案内は終わります。',
+	'ob.secondFactor.keys.bodyBlocked':
+		'Passkey でのログインに加えて、鍵の交換や管理者の権限の変更のような重要な操作では、もう 1 つの認証手段を求められます。それを、この枠で管理します。いまは、この枠から新しく登録できない状態です（登録できる期間が過ぎたか、復旧を申請中です）。',
+	'ob.secondFactor.add.bodyBlocked':
+		'いまは、この枠に登録のボタンが出ていないため、2 つ目の認証手段をここで登録する練習はできません。',
+	'ob.secondFactor.add.actionBlocked':
+		'案内を閉じてください。この項目は、一覧で「完了にする」を押して、手動で完了にできます。',
+
+	'ob.steps.label': '{name}の手順',
+	'ob.steps.progress': '「{name}」の進み具合',
+
+	'ob.signIn.s1.label': 'テナントの場所',
+	'ob.theme.nav.label': 'カスタマイズの場所',
+	'ob.schema.nav.label': 'アクセス制御の場所',
+	'ob.screens.nav.label': 'カスタマイズの場所',
+	'ob.theme.sub.label': 'テーマの場所',
+	'ob.theme.s2.label': 'レイアウトの場所',
+	'ob.theme.s3.label': 'デザインの場所',
+	'ob.theme.s4.label': '背景画像の場所',
+	'ob.theme.s6.label': '作成したテーマの保存',
+	'ob.schema.sub.label': '属性スキーマの場所',
+	'ob.screens.sub.label': 'スクリーンの場所',
+	'ob.screens.s5.label': '作成したスクリーンの保存',
+	'ob.secondFactor.settings.label': '個人設定の場所'
 } as const;

@@ -90,6 +90,7 @@ export * from './types/did';
 export * from './types/openid4vp';
 export * from './types/openid4vci';
 export * from './types/vc-service';
+export * from './types/vc-runtime-ports';
 export * from './types/credential-profile';
 
 // Phase A-6: Logout Types
@@ -123,6 +124,7 @@ export * from './types/settings/assurance-levels';
 // Utils
 export * from './db';
 export * from './utils/request-path';
+export * from './utils/admin-ip-match';
 export * from './utils/audit-log';
 export * from './utils/client-authentication';
 export * from './utils/client-scopes';
@@ -184,6 +186,7 @@ export * from './utils/token-revocation-sharding';
 export * from './utils/region-sharding';
 export * from './utils/dpop-jti-sharding';
 export * from './utils/jti-replay-guard';
+export * from './utils/vc-runtime-ports';
 export * from './utils/par-sharding';
 export * from './utils/saml-request-store';
 export * from './utils/device-code-sharding';
@@ -661,7 +664,11 @@ export type { ActorStorage, StoragePutOptions, StorageListOptions } from './acto
 export { CloudflareActorContext } from './actor';
 
 // Durable Objects
-export { KeyManager, assertImportableSigningKey } from './durable-objects/KeyManager';
+export {
+  KeyManager,
+  assertImportableSigningKey,
+  haipLoginRequestShape,
+} from './durable-objects/KeyManager';
 export { ChallengeStore } from './durable-objects/ChallengeStore';
 export { DeviceSecretRouteStore } from './durable-objects/DeviceSecretRouteStore';
 export type { DeviceSecretRouteHint } from './durable-objects/DeviceSecretRouteStore';

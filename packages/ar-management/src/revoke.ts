@@ -161,6 +161,11 @@ export async function revokeHandler(c: Context<{ Bindings: Env }>) {
 
   // Cast to ClientMetadata for type safety
   const clientMetadata = clientRecord as unknown as ClientMetadata;
+  // A wallet client is authenticated by its attestation, which this endpoint does not verify: it
+  // is neither a public client nor one with a secret here.
+  if (clientMetadata.token_endpoint_auth_method === 'attest_jwt_client_auth') {
+    return createErrorResponse(c, AR_ERROR_CODES.CLIENT_AUTH_FAILED);
+  }
 
   // =========================================================================
   // Client Authentication (supports multiple methods)
@@ -627,6 +632,10 @@ export async function batchRevokeHandler(c: Context<{ Bindings: Env }>) {
   }
 
   const clientMetadata = clientRecord as unknown as ClientMetadata;
+  // See the single revocation: an attestation client is not authenticated here.
+  if (clientMetadata.token_endpoint_auth_method === 'attest_jwt_client_auth') {
+    return createErrorResponse(c, AR_ERROR_CODES.CLIENT_AUTH_FAILED);
+  }
 
   // Verify client_secret for confidential clients
   if (clientMetadata.client_secret_hash) {

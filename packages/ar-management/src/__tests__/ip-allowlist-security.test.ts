@@ -330,8 +330,157 @@ describe('IP allowlist security boundaries', () => {
 
   it('fails closed and does not audit when storage fails', async () => {
     mocks.createEntry.mockRejectedValue(new Error('database unavailable'));
-    const response = await request('/', 'POST', { ip_range: '192.0.2.1' });
+    // The caller is the address being added, so the lock-out guard lets the write be tried.
+    const response = await request(
+      '/',
+      'POST',
+      { ip_range: '192.0.2.1' },
+      {
+        ...writeHeaders,
+        'cf-connecting-ip': '192.0.2.1',
+      }
+    );
     expect(response.status).toBe(500);
     expect(mocks.audit).not.toHaveBeenCalled();
+  });
+});
+
+describe('IP allowlist lock-out guard and list state', () => {
+  const me = '203.0.113.5';
+  const asMe = { ...writeHeaders, 'cf-connecting-ip': me };
+  const covering = entry({ id: 'a', ip_range: '203.0.113.0/24' });
+  const elsewhere = entry({ id: 'b', ip_range: '198.51.100.0/24' });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.getAllEntries.mockResolvedValue([]);
+    mocks.getEnabledEntries.mockResolvedValue([]);
+    mocks.getEntry.mockResolvedValue(covering);
+    mocks.entryExists.mockResolvedValue(false);
+    mocks.createEntry.mockResolvedValue(entry({ id: 'n' }));
+    mocks.updateEntry.mockImplementation(async (id: string) => entry({ id }));
+    mocks.deleteEntry.mockResolvedValue(true);
+    mocks.enableEntry.mockResolvedValue(true);
+    mocks.disableEntry.mockResolvedValue(true);
+  });
+
+  it('says the limit is off when only disabled entries are listed, and names the address it judges by', async () => {
+    mocks.getAllEntries.mockResolvedValue([entry({ enabled: false })]);
+    const response = await request('/?include_disabled=true', 'GET', undefined, {
+      ...readHeaders,
+      'x-forwarded-for': '203.0.113.5, 10.0.0.1',
+    });
+    await expect(response.json()).resolves.toMatchObject({
+      restriction_active: false,
+      current_ip: '203.0.113.5',
+      total: 1,
+    });
+  });
+
+  it('refuses a first entry that leaves the caller outside, unless asked to go on', async () => {
+    const refused = await request('/', 'POST', { ip_range: '198.51.100.0/24' }, asMe);
+    expect(refused.status).toBe(409);
+    await expect(refused.json()).resolves.toMatchObject({
+      error: 'would_lock_out',
+      current_ip: me,
+    });
+    expect(mocks.createEntry).not.toHaveBeenCalled();
+    expect(mocks.audit).not.toHaveBeenCalled();
+
+    const allowed = await request(
+      '/?allow_lockout=true',
+      'POST',
+      { ip_range: '198.51.100.0/24' },
+      asMe
+    );
+    expect(allowed.status).toBe(201);
+    const override: unknown = expect.objectContaining({ lockout_override: true });
+    expect(mocks.audit).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: 'ip_allowlist.create', metadata: override })
+    );
+  });
+
+  it('lets in an entry that covers the caller, or one that is not enabled', async () => {
+    expect((await request('/', 'POST', { ip_range: '203.0.113.0/24' }, asMe)).status).toBe(201);
+    expect(
+      (await request('/', 'POST', { ip_range: '198.51.100.0/24', enabled: false }, asMe)).status
+    ).toBe(201);
+  });
+
+  it('refuses switching off, deleting or editing away the last range that covers the caller', async () => {
+    mocks.getAllEntries.mockResolvedValue([covering, elsewhere]);
+    expect((await request('/a/disable', 'POST', {}, asMe)).status).toBe(409);
+    expect((await request('/a', 'DELETE', undefined, asMe)).status).toBe(409);
+    expect((await request('/a', 'PATCH', { ip_range: '192.0.2.0/24' }, asMe)).status).toBe(409);
+    expect((await request('/a', 'PATCH', { enabled: false }, asMe)).status).toBe(409);
+    expect(mocks.disableEntry).not.toHaveBeenCalled();
+    expect(mocks.deleteEntry).not.toHaveBeenCalled();
+    expect(mocks.updateEntry).not.toHaveBeenCalled();
+
+    expect((await request('/a/disable?allow_lockout=true', 'POST', {}, asMe)).status).toBe(200);
+    expect(mocks.disableEntry).toHaveBeenCalledWith('a');
+  });
+
+  it('refuses enabling an entry that starts a limit the caller is outside of', async () => {
+    mocks.getAllEntries.mockResolvedValue([{ ...elsewhere, enabled: false }]);
+    mocks.getEntry.mockResolvedValue({ ...elsewhere, enabled: false });
+    expect((await request('/b/enable', 'POST', {}, asMe)).status).toBe(409);
+    expect(mocks.enableEntry).not.toHaveBeenCalled();
+  });
+
+  it('does not hold a change that leaves the caller inside, lifts the limit, or only edits text', async () => {
+    mocks.getAllEntries.mockResolvedValue([covering, elsewhere]);
+    mocks.getEntry.mockResolvedValue(elsewhere);
+    expect((await request('/b/disable', 'POST', {}, asMe)).status).toBe(200);
+    expect((await request('/b', 'DELETE', undefined, asMe)).status).toBe(200);
+    expect((await request('/b', 'PATCH', { description: 'branch' }, asMe)).status).toBe(200);
+
+    mocks.getAllEntries.mockResolvedValue([covering]);
+    mocks.getEntry.mockResolvedValue(covering);
+    // Deleting the only entry takes the limit off: the caller is not shut out.
+    expect((await request('/a', 'DELETE', undefined, asMe)).status).toBe(200);
+  });
+
+  it('does not blame a change for a limit the caller was outside of already', async () => {
+    mocks.getAllEntries.mockResolvedValue([elsewhere]);
+    expect((await request('/', 'POST', { ip_range: '192.0.2.0/24' }, asMe)).status).toBe(201);
+  });
+
+  it('holds a first entry when the caller has no address to judge by, since the next request would be refused', async () => {
+    expect((await request('/', 'POST', { ip_range: '198.51.100.0/24' })).status).toBe(409);
+    expect(mocks.createEntry).not.toHaveBeenCalled();
+    // With a limit already on, no address is outside it already: this change is not what does it.
+    mocks.getAllEntries.mockResolvedValue([elsewhere]);
+    expect((await request('/', 'POST', { ip_range: '192.0.2.0/24' })).status).toBe(201);
+  });
+
+  it('refuses what it would store differently from what the guard judged', async () => {
+    mocks.getAllEntries.mockResolvedValue([covering, elsewhere]);
+    expect((await request('/a', 'PATCH', { ip_range: '' }, asMe)).status).toBe(400);
+    expect((await request('/a', 'PATCH', { ip_range: '   ' }, asMe)).status).toBe(400);
+    expect((await request('/a', 'PATCH', { ip_range: 5 }, asMe)).status).toBe(400);
+    expect((await request('/a', 'PATCH', { enabled: null }, asMe)).status).toBe(400);
+    expect((await request('/a', 'PATCH', { enabled: 'false' }, asMe)).status).toBe(400);
+    expect(
+      (await request('/', 'POST', { ip_range: '203.0.113.0/24', enabled: 'false' }, asMe)).status
+    ).toBe(400);
+    expect((await request('/', 'POST', { ip_range: 7 }, asMe)).status).toBe(400);
+    expect(mocks.updateEntry).not.toHaveBeenCalled();
+    expect(mocks.createEntry).not.toHaveBeenCalled();
+  });
+
+  it('refuses to move an entry onto a range another entry has, but not to keep its own', async () => {
+    mocks.entryExists.mockResolvedValue(true);
+    mocks.getAllEntries.mockResolvedValue([covering]);
+    expect((await request('/a', 'PATCH', { ip_range: '198.51.100.0/24' }, asMe)).status).toBe(409);
+    expect(mocks.entryExists).toHaveBeenCalledWith('tenant-a', '198.51.100.0/24');
+    expect(mocks.updateEntry).not.toHaveBeenCalled();
+
+    mocks.entryExists.mockClear();
+    expect(
+      (await request('/a', 'PATCH', { ip_range: '203.0.113.0/24', description: 'x' }, asMe)).status
+    ).toBe(200);
+    expect(mocks.entryExists).not.toHaveBeenCalled();
   });
 });

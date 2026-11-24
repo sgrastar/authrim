@@ -153,7 +153,65 @@ export interface AdminPresentationResult {
   verifiedAt: number;
 }
 
+/** Login of an administrator by a HAIP presentation (design D-L): the sign-in's view of it. */
+export type HaipLoginFlow = 'cross_device' | 'same_device';
+
+export interface CreateHaipLoginInput {
+  tenantId: string;
+  /** https origin of the tenant. */
+  credentialIssuer: string;
+  flow: HaipLoginFlow;
+  /** A secret of the starting browser; only its hash is kept. */
+  bindingSecret: string;
+  /** same_device: this tenant's own address the wallet sends the browser to (https, no query). */
+  redirectUri?: string;
+}
+
+export interface CreateHaipLoginResult {
+  requestId: string;
+  expiresAt: number;
+  /** What a QR code carries (cross-device). */
+  qr: string;
+  /** The `haip-vp://` link a wallet on the same device opens. */
+  deepLink: string;
+}
+
+export interface HaipLoginRef {
+  tenantId: string;
+  requestId: string;
+  bindingSecret: string;
+}
+
+export type HaipLoginStatus =
+  | 'pending'
+  | 'processing'
+  | 'verified'
+  | 'failed'
+  | 'expired'
+  | 'consumed';
+
+export interface HaipLoginResult {
+  /** The administrator the credential names (`sub`). */
+  adminUserId: string;
+  holderJkt: string;
+  credentialId: string;
+  verifiedAt: number;
+}
+
 export interface VCIssuerServiceBinding {
+  /** Start a login by a HAIP presentation. Throws `haip_login_unavailable` without a usable chain. */
+  createHaipLoginRequest(input: CreateHaipLoginInput): Promise<CreateHaipLoginResult>;
+  /** Null unless the request is this browser's. */
+  getHaipLoginStatus(input: HaipLoginRef): Promise<{
+    status: HaipLoginStatus;
+    flow: HaipLoginFlow;
+    expiresAt: number;
+    errorCode?: string;
+  } | null>;
+  /** The verified result, once, to the browser that started the request. */
+  consumeHaipLoginResult(
+    input: HaipLoginRef & { responseCode?: string }
+  ): Promise<HaipLoginResult | null>;
   /** Start an administrator presentation (QR, cross-device). */
   createAdminPresentationRequest(
     input: CreateAdminPresentationInput

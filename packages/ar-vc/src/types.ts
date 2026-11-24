@@ -6,6 +6,7 @@ import type { SamlDrWriterEnv } from '@authrim/ar-lib-core/services/tenant-porta
  */
 
 import type {
+  Env as CoreEnv,
   AdminCredentialEligibilityServiceBinding,
   PresentationDefinition,
   DCQLQuery,
@@ -43,6 +44,9 @@ export interface Env extends SamlDrWriterEnv {
    * credentials are never issued.
    */
   ADMIN_CREDENTIAL_ELIGIBILITY?: AdminCredentialEligibilityServiceBinding;
+  /** Ports of a runtime other than Cloudflare (absent on Cloudflare). */
+  VC_RUNTIME_PORTS?: CoreEnv['VC_RUNTIME_PORTS'];
+  AUTH_RUNTIME_PORTS?: CoreEnv['AUTH_RUNTIME_PORTS'];
 
   // Verifier Environment Variables
   VERIFIER_IDENTIFIER: string;

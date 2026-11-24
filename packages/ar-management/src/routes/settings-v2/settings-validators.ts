@@ -282,6 +282,19 @@ export function validateLoginUIPatch(body: SettingsPatchRequest): {
             ) {
               throw new Error('Account page show_for_guests must be boolean');
             }
+            if (placement.launcher_ids !== undefined) {
+              const ids = placement.launcher_ids;
+              if (
+                !Array.isArray(ids) ||
+                ids.length > 100 ||
+                new Set(ids).size !== ids.length ||
+                ids.some((item) => typeof item !== 'string' || !/^[A-Za-z0-9_-]{1,96}$/u.test(item))
+              ) {
+                throw new Error(
+                  'Account page launcher_ids must be a list of up to 100 unique launcher IDs'
+                );
+              }
+            }
             if (placement.enabled !== false && snapshots !== undefined) {
               if (!snapshots || typeof snapshots !== 'object' || Array.isArray(snapshots))
                 throw new Error('Published definitions require screen snapshots');
@@ -305,6 +318,7 @@ export function validateLoginUIPatch(body: SettingsPatchRequest): {
                     'text',
                     'link',
                     'divider',
+                    'account_upgrade_widget',
                     'account_profile_widget',
                     'account_device_list_widget',
                     'account_session_widget',
