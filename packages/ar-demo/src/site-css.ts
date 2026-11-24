@@ -85,7 +85,7 @@ form{display:grid;width:min(100%,300px);margin:2rem auto 0}
 
 /* The window: only once there is something to report. Glass over the city, solid without it. */
 .window{width:min(100%,27rem);padding:1.6rem 1.75rem 1.4rem;border:1px solid var(--line);border-radius:14px;background:var(--glass-solid);box-shadow:0 24px 60px var(--shadow);text-align:start}
-[data-scene=city] .window{background:var(--glass)}
+[data-scene=city] .window{background:color-mix(in srgb,var(--glass) 30%,transparent)}
 @supports ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){[data-scene=city] .window{-webkit-backdrop-filter:blur(16px) saturate(1.2);backdrop-filter:blur(16px) saturate(1.2)}}
 @supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){[data-scene=city] .window{background:var(--glass-solid)}}
 .window h1{font-size:1.32rem;font-weight:620;line-height:1.35;overflow-wrap:anywhere;text-wrap:balance}
