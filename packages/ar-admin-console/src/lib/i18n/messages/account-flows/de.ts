@@ -383,6 +383,13 @@ export const deAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 	'af.consent.none':
 		'Es gibt keine Erklärungen zur Auswahl. Erstellen und veröffentlichen Sie eine.',
 	'af.consent.required': 'Erforderlich',
+	'af.consent.display': 'Darstellung des Texts',
+	'af.consent.byScreen': 'Wie auf der Seite festgelegt',
+	'af.consent.displayInline': 'Direkt auf der Seite',
+	'af.consent.displayModal': 'In einem Dialog',
+	'af.consent.scroll': 'Zuerst bis zum Ende scrollen',
+	'af.consent.scrollYes': 'Erforderlich',
+	'af.consent.scrollNo': 'Nicht erforderlich',
 	'af.consent.moveUp': 'Nach oben: {name}',
 	'af.consent.moveDown': 'Nach unten: {name}',
 	'af.consent.remove': 'Entfernen: {name}',

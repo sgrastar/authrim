@@ -135,7 +135,9 @@ function readSettings(field: Field, kind: string): PartSettings {
 			: 'url',
 		linkExit: text(field.link_exit),
 		linkStyle: field.link_style === 'button' ? 'button' : 'text',
-		timing: field.human_verification_timing === 'submit' ? 'submit' : 'initial'
+		timing: field.human_verification_timing === 'submit' ? 'submit' : 'initial',
+		consentDisplay: field.consent_display === 'modal' ? 'modal' : 'inline',
+		consentRequireScroll: field.consent_require_scroll === true
 	});
 }
 
@@ -231,6 +233,11 @@ function writeSettings(
 		external_idp_show_action_text: kind === 'auth_widget' ? settings.actionText : undefined,
 		code_input_mode: kind === 'code_input_widget' ? settings.codeMode : undefined,
 		human_verification_timing: kind === 'security_verification' ? settings.timing : undefined,
+		// Defaults are not saved: a screen that says nothing shows a text in place, unscrolled.
+		consent_display:
+			kind === 'consent_widget' && settings.consentDisplay === 'modal' ? 'modal' : undefined,
+		consent_require_scroll:
+			kind === 'consent_widget' && settings.consentRequireScroll ? true : undefined,
 		show_label: LABEL_KINDS.has(kind) ? settings.showLabel : undefined,
 		store_to_profile: input ? settings.linked : undefined,
 		answer_targets: keptOff ? [...settings.answerTargets] : undefined,
@@ -250,6 +257,12 @@ function removed(kind: string, settings: PartSettings): string[] {
 			...(settings.linkAction === 'url' ? ['link_action'] : ['href']),
 			...(settings.linkAction === 'exit' ? [] : ['link_exit']),
 			...(settings.linkStyle === 'button' ? [] : ['link_style'])
+		];
+	}
+	if (kind === 'consent_widget') {
+		return [
+			...(settings.consentDisplay === 'modal' ? [] : ['consent_display']),
+			...(settings.consentRequireScroll ? [] : ['consent_require_scroll'])
 		];
 	}
 	if (!INPUT_KINDS.has(kind)) return [];

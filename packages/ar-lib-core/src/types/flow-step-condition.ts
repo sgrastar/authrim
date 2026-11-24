@@ -138,6 +138,8 @@ export function consentStepConfig(
     statements: statements.map((entry) => ({
       statement_id: entry.statement_id,
       required: entry.required,
+      ...(entry.display !== undefined ? { display: entry.display } : {}),
+      ...(entry.require_scroll !== undefined ? { require_scroll: entry.require_scroll } : {}),
     })),
   };
 }

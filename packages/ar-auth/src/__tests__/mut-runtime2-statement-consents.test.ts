@@ -38,6 +38,8 @@ function item(statementId: string) {
     attribute_value_display: null,
     checkbox_mode: 'optional' as const,
     checkbox_default_checked: false,
+    text_display: null,
+    require_scroll: null,
     binding_type: null,
     binding_value: null,
     evidence_profile: null,

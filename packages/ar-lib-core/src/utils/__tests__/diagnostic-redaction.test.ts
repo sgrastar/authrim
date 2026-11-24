@@ -596,5 +596,28 @@ describe('redactSecretPathsInLogLine', () => {
       '--> GET /vci/offers/[REDACTED] 200 3ms'
     );
     expect(redactSecretPathsInLogLine('--> POST /token 200 3ms')).toBe('--> POST /token 200 3ms');
+    // The query string is logged too: the one-time code of a wallet login return stays out of it.
+    const wallet = redactSecretPathsInLogLine(
+      '<-- GET /admin/login/wallet?request_id=g1:apac:0:vp_1&response_code=SECRETSECRET'
+    );
+    expect(wallet).not.toContain('SECRETSECRET');
+    expect(wallet).toContain('/admin/login/wallet?');
+    expect(wallet).toContain('request_id=g1:apac:0:vp_1');
+    expect(
+      redactSecretPathsInLogLine('--> GET /oauth/authorize?scope=openid&state=abc 302 2ms')
+    ).toBe('--> GET /oauth/authorize?scope=openid&state=abc 302 2ms');
+    // Encoded names, a value with `;`, and the device authorization link are covered too.
+    for (const line of [
+      '<-- GET /admin/login/wallet?response%5Fcode=SECRETSECRET',
+      '<-- GET /admin/login/wallet?x=1&RESPONSE_CODE=SECRETSECRET&y=2',
+      '<-- GET /device?user_code=SECRETSECRET',
+      '<-- GET /cb?client_secret=abc;SECRETSECRET',
+    ]) {
+      expect(redactSecretPathsInLogLine(line), line).not.toContain('SECRETSECRET');
+    }
+    // A public value that contains `?` or `=` is left as it was.
+    expect(redactSecretPathsInLogLine('<-- GET /a?next=/b?c=d&scope=openid')).toBe(
+      '<-- GET /a?next=/b?c=d&scope=openid'
+    );
   });
 });

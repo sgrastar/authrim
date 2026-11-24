@@ -17,11 +17,14 @@ export function partName(kind: string): string {
 }
 
 /**
- * The label a new part is added with: its name, except the sign-in / sign-up link, whose label is
+ * The label a new part is added with: its name, except a divider (no words on its line) and the
+ * sign-in / sign-up link, whose label is
  * the wording it shows (the standard English one, which the screens show in the visitor's
  * language until the admin writes their own).
  */
 export function newPartLabel(kind: string, screenKind: string): string {
+	// A divider's label is the words drawn on its line: a new one has none (one unbroken line).
+	if (kind === 'divider') return '';
 	if (kind !== 'auth_switch_link') return partName(kind);
 	return screenKind === 'registration'
 		? 'Already have an account? Sign in'

@@ -576,6 +576,7 @@ export async function liteStepPage(event: RequestEvent) {
 					...consent,
 					items: consent.items.map((item) => ({
 						...item,
+						openLabel: LL.consent_statement_open(),
 						readLabel: LL.consent_statement_read({ title: item.title }),
 						agreeLabel: LL.consent_statement_agree({ title: item.title })
 					}))

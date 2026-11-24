@@ -39,6 +39,7 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
 /* The first page: words on the empty sheet, no window. */
 .start.scene,.error.scene{place-items:center}
 .hero{width:min(100%,45rem);text-align:center}
+.start .hero{width:min(100%,60rem)}
 .hero h1{font-size:clamp(2.8rem,8.4vw,5.6rem);font-weight:640;letter-spacing:-.035em;line-height:1.02;direction:ltr}
 .hero h1 span{color:var(--ink-muted);font-weight:420}
 .hero .intro{max-width:31em;margin:0 auto;color:var(--ink-soft);font-size:clamp(.98rem,1.5vw,1.12rem);line-height:1.85;text-wrap:balance}
@@ -47,7 +48,18 @@ a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-off
 .notices h2{font-size:.88rem;font-weight:620;color:var(--ink-soft)}
 .notices ul{list-style:none;padding:0;margin-top:.3rem;display:grid;gap:.15rem}
 .notices li{text-wrap:pretty}
-.notices.fine{margin-top:1.4rem;font-size:.76rem;line-height:1.65}
+/* Two columns: the rules, the buttons and the numbers on one side, the fine print on the other. */
+.columns{display:grid;gap:2rem 3.5rem;margin-top:.5rem}
+.notices.fine{max-width:34rem;margin:1.4rem auto 0;font-size:.82rem;line-height:1.7;text-align:start}
+.columns{padding:1.6rem 1.75rem;border:1px solid var(--line);border-radius:14px;background:color-mix(in srgb,var(--glass) 15%,transparent);box-shadow:0 18px 48px var(--shadow)}
+@supports ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){.columns{-webkit-backdrop-filter:blur(3px) saturate(1.15);backdrop-filter:blur(3px) saturate(1.15)}}
+.columns>.notices ul{gap:.7rem;list-style:disc;padding-inline-start:1.2rem}
+.admin{margin-top:2rem}
+.admin p{max-width:22rem;margin:0 auto .7rem;color:var(--ink-soft);font-size:.88rem;line-height:1.6;text-wrap:balance}
+.admin .btn{width:min(100%,300px);background:transparent;color:var(--ink);box-shadow:inset 0 0 0 2px var(--ink)}
+.admin .btn:hover{background:var(--ink);color:var(--btn-ink)}
+.columns>.notices{margin:0 auto;text-align:start}
+@media (min-width:56rem){.columns{grid-template-columns:minmax(0,20rem) minmax(0,1fr);grid-template-rows:auto 1fr;align-items:start}.columns>.main{grid-column:1;grid-row:1 / span 2;align-self:center}.columns>.notices{grid-column:2;grid-row:1;margin:0}.columns>.notices.fine{grid-row:2;margin-top:.9rem}.columns{row-gap:0}}
 /* The check, when it shows, and the button are one block: same width, same corners. */
 form{display:grid;width:min(100%,300px);margin:2rem auto 0}
 /* The check takes no room until it has something to ask. */
@@ -73,7 +85,7 @@ form{display:grid;width:min(100%,300px);margin:2rem auto 0}
 
 /* The window: only once there is something to report. Glass over the city, solid without it. */
 .window{width:min(100%,27rem);padding:1.6rem 1.75rem 1.4rem;border:1px solid var(--line);border-radius:14px;background:var(--glass-solid);box-shadow:0 24px 60px var(--shadow);text-align:start}
-[data-scene=city] .window{background:var(--glass)}
+[data-scene=city] .window{background:color-mix(in srgb,var(--glass) 30%,transparent)}
 @supports ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){[data-scene=city] .window{-webkit-backdrop-filter:blur(16px) saturate(1.2);backdrop-filter:blur(16px) saturate(1.2)}}
 @supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){[data-scene=city] .window{background:var(--glass-solid)}}
 .window h1{font-size:1.32rem;font-weight:620;line-height:1.35;overflow-wrap:anywhere;text-wrap:balance}

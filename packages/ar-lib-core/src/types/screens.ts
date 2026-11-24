@@ -121,6 +121,16 @@ export function screenLinkExits(
   }
   return exits;
 }
+/**
+ * How a consent statement with a text of its own (not a link to a document) is shown:
+ * `inline` draws the text in a scrolling frame in place, with the checkbox below it; `modal`
+ * shows a button that opens the text in a dialog, whose own agree button ticks the box.
+ * A `consent_widget` sets the default for its screen; a statement of the Flow's consent step may
+ * override it (`FlowConsentStatement`). Which statements are asked, and in which order, is the
+ * step's alone.
+ */
+export type ScreenConsentDisplay = 'modal' | 'inline';
+export const SCREEN_CONSENT_DISPLAYS: readonly ScreenConsentDisplay[] = ['inline', 'modal'];
 export type ScreenCanvasLayout = 'narrow' | 'wide';
 export type ScreenHumanVerificationTiming = 'initial' | 'submit';
 export type ScreenDisplayConditionMode = 'always' | 'feature_enabled' | 'hidden';
@@ -168,6 +178,13 @@ export interface ScreenField {
   /** A `link` part: drawn as a text link (the default) or as a button. */
   link_style?: ScreenLinkStyle | null;
   human_verification_timing?: ScreenHumanVerificationTiming | null;
+  /** A `consent_widget` part: how the statements of the step are shown unless one says otherwise. */
+  consent_display?: ScreenConsentDisplay | null;
+  /**
+   * A `consent_widget` part: the box can be ticked only once the text has been scrolled to its
+   * end (default false). Kept by the Login UI only; the server cannot tell whether it was read.
+   */
+  consent_require_scroll?: boolean | null;
   display_condition?: ScreenDisplayCondition | null;
   layout_columns?: number | null;
   layout_column?: number | null;

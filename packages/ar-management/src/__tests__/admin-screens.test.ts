@@ -279,6 +279,67 @@ describe('admin screens', () => {
     });
   });
 
+  describe('a consent widget', () => {
+    const consentScreen = (extra: Record<string, unknown>, blockType = 'consent_widget') =>
+      adminScreenCreateHandler(
+        createMutationContext({
+          screen_key: 'terms',
+          display_name: 'Terms',
+          screen_kind: 'consent',
+          fields: [
+            {
+              field: 'consent.terms',
+              label: 'Terms',
+              block_type: blockType,
+              ...extra,
+            },
+          ],
+        })
+      );
+    const saved = () => {
+      const row = rows.find((item) => item.screen_key === 'terms');
+      return (JSON.parse(String(row?.fields_json)) as Array<Record<string, unknown>>)[0];
+    };
+
+    it('saves how it shows a text unless the Flow step says otherwise', async () => {
+      const response = await consentScreen({
+        consent_display: 'modal',
+        consent_require_scroll: true,
+      });
+      expect(response.status).toBe(201);
+      expect(saved()).toMatchObject({ consent_display: 'modal', consent_require_scroll: true });
+    });
+
+    it('saves nothing for the defaults (in place, no scroll requirement)', async () => {
+      const response = await consentScreen({ consent_require_scroll: false });
+      expect(response.status).toBe(201);
+      expect(saved()).not.toHaveProperty('consent_require_scroll');
+      expect(saved()).not.toHaveProperty('consent_display');
+    });
+
+    it('does not take a list of statements: which are asked is the Flow step’s', async () => {
+      const response = await consentScreen({ consent_statements: [{ statement_id: 'tos' }] });
+      expect(response.status).toBe(201);
+      expect(saved()).not.toHaveProperty('consent_statements');
+    });
+
+    it('drops them on any other part', async () => {
+      const response = await consentScreen({ consent_display: 'modal' }, 'heading');
+      expect(response.status).toBe(201);
+      expect(saved()).not.toHaveProperty('consent_display');
+    });
+
+    it.each([
+      [{ consent_display: 'popup' }, 'inline or modal'],
+      [{ consent_require_scroll: 'yes' }, 'must be a boolean'],
+    ])('refuses %j', async (extra, reason) => {
+      const response = await consentScreen(extra);
+      expect(response.status).toBe(400);
+      expect(String((await readJson(response)).error_description)).toContain(reason);
+      expect(rows.some((row) => row.screen_key === 'terms')).toBe(false);
+    });
+  });
+
   it('rejects unsupported blocks in Account screens', async () => {
     const response = await adminScreenCreateHandler(
       createMutationContext({

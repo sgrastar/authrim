@@ -1427,13 +1427,56 @@ export function redactSecretPathSegments(path: string): string {
 }
 
 /**
+ * Query parameters that are secret only in an access log line. `response_code` is also a plain
+ * status name elsewhere (see isSecretName), so it is not a secret name in general; in a URL it is
+ * the one-time code a wallet login redirect carries back to the console. `user_code` is the
+ * confirmation code of a device authorization link (`verification_uri_complete`).
+ */
+const LOG_LINE_SECRET_QUERY_NAMES = new Set(['response_code', 'user_code']);
+
+function decodeQueryName(raw: string): string {
+  try {
+    return decodeURIComponent(raw.replace(/\+/gu, ' '));
+  } catch {
+    return raw;
+  }
+}
+
+/**
+ * The query string of an access log path (without its `?`), with the WHOLE value of every secret
+ * parameter replaced. It is read the way a server reads it: items split at `&`, name and value at
+ * the item's first `=`, the name percent-decoded (`response%5Fcode`).
+ */
+function redactLogLineQuery(query: string): string {
+  return query
+    .split('&')
+    .map((item) => {
+      const equals = item.indexOf('=');
+      if (equals < 0) return item;
+      const name = decodeQueryName(item.slice(0, equals));
+      return LOG_LINE_SECRET_QUERY_NAMES.has(name.toLowerCase()) || isSecretName(name)
+        ? `${item.slice(0, equals)}=[REDACTED]`
+        : item;
+    })
+    .join('&');
+}
+
+/**
  * An access log line (hono/logger: `<-- GET /path`, `--> GET /path 200 3ms`) safe to write: each
- * path in it as redactSecretPathSegments leaves it.
+ * path in it as redactSecretPathSegments leaves it, and the values of secret query parameters
+ * (`response_code`, `code`, ...) replaced.
  */
 export function redactSecretPathsInLogLine(line: string): string {
   return line
     .split(' ')
-    .map((part) => (part.startsWith('/') ? redactSecretPathSegments(part) : part))
+    .map((part) => {
+      if (!part.startsWith('/')) return part;
+      // hono/logger prints the query string too (`/admin/login/wallet?response_code=...`).
+      const query = part.indexOf('?');
+      if (query < 0) return redactSecretPathSegments(part);
+      const redacted = redactLogLineQuery(part.slice(query + 1));
+      return `${redactSecretPathSegments(part.slice(0, query))}?${redacted}`;
+    })
     .join(' ');
 }
 

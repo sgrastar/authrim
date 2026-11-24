@@ -1,13 +1,17 @@
 /**
  * The consent statements a flow asks, as the console holds them: an ordered list of
  * `<statement id>:required` / `<statement id>:optional` entries (a flow value is a list of
- * strings), and the spec's `{ statement_id, required }` it is saved as.
+ * strings), and the spec's `{ statement_id, required }` it is saved as. An entry may carry how
+ * its text is shown, after a `|` (an id may hold `:` but never `|`): `|inline` or `|modal`, and
+ * `|scroll` or `|noscroll` (the text has to be scrolled to its end, or has not). Without them the
+ * entry follows the screen's consent widget.
  */
 import type { ConsentStatementListItem } from '#lib/api/consent-statements.js';
 import {
 	statementName,
 	statementStatus
 } from '#lib/pages/customization/statements/statement-model.js';
+import type { FlowConsentStatement } from '@authrim/ar-lib-core/services/flow-consent-statements';
 import type { FlowConsentStep } from '@authrim/ar-lib-core/types/flow-step-condition';
 import type { AccountFlowState, AccountValue } from './flow-spec';
 import { valueOfWhen, whenOf } from './step-condition-model';
@@ -15,21 +19,40 @@ import { valueOfWhen, whenOf } from './step-condition-model';
 /** The most statements one step can ask (`MAX_FLOW_CONSENT_STATEMENTS` in ar-lib-core). */
 export const MAX_CONSENT_STATEMENTS = 50;
 
+export type ConsentTextDisplay = 'inline' | 'modal';
+
 export interface ConsentEntry {
 	statementId: string;
 	required: boolean;
+	/** How its text is shown; absent: as the screen's consent widget says. */
+	display?: ConsentTextDisplay;
+	/** Whether its text has to be scrolled to its end first; absent: as the widget says. */
+	requireScroll?: boolean;
 }
 
 export function encodeConsent(entry: ConsentEntry): string {
-	return `${entry.statementId}:${entry.required ? 'required' : 'optional'}`;
+	const head = `${entry.statementId}:${entry.required ? 'required' : 'optional'}`;
+	const flags = [
+		...(entry.display ? [entry.display] : []),
+		...(entry.requireScroll === undefined ? [] : [entry.requireScroll ? 'scroll' : 'noscroll'])
+	];
+	return [head, ...flags].join('|');
 }
 
 export function decodeConsent(value: string): ConsentEntry | null {
-	const at = value.lastIndexOf(':');
+	const [head, ...flags] = value.split('|');
+	const at = head.lastIndexOf(':');
 	if (at <= 0) return null;
-	const flag = value.slice(at + 1);
+	const flag = head.slice(at + 1);
 	if (flag !== 'required' && flag !== 'optional') return null;
-	return { statementId: value.slice(0, at), required: flag === 'required' };
+	const entry: ConsentEntry = { statementId: head.slice(0, at), required: flag === 'required' };
+	for (const token of flags) {
+		if (token === 'inline' || token === 'modal') entry.display = token;
+		else if (token === 'scroll') entry.requireScroll = true;
+		else if (token === 'noscroll') entry.requireScroll = false;
+		else return null;
+	}
+	return entry;
 }
 
 /** The entries of a flow value, in order (anything unreadable is dropped). */
@@ -42,15 +65,22 @@ export function consentValue(entries: readonly ConsentEntry[]): string[] {
 }
 
 /** The spec's statements for a flow value (each statement once). */
-export function consentSpecOf(
-	value: AccountValue | undefined
-): { statement_id: string; required: boolean }[] {
+export function consentSpecOf(value: AccountValue | undefined): FlowConsentStatement[] {
 	const seen = new Set<string>();
 	return consentEntries(value).flatMap((entry) => {
 		if (seen.has(entry.statementId)) return [];
 		seen.add(entry.statementId);
-		return [{ statement_id: entry.statementId, required: entry.required }];
+		return [specOf(entry)];
 	});
+}
+
+function specOf(entry: ConsentEntry): FlowConsentStatement {
+	return {
+		statement_id: entry.statementId,
+		required: entry.required,
+		...(entry.display ? { display: entry.display } : {}),
+		...(entry.requireScroll === undefined ? {} : { require_scroll: entry.requireScroll })
+	};
 }
 
 const CONSENT_STEP = /^consent:([1-9][0-9]*)$/u;
@@ -103,11 +133,14 @@ export function setConsentSteps(
 }
 
 /** The flow value for a spec's statements. */
-export function consentValueOf(
-	statements: readonly { statement_id: string; required: boolean }[]
-): string[] {
+export function consentValueOf(statements: readonly FlowConsentStatement[]): string[] {
 	return consentValue(
-		statements.map((entry) => ({ statementId: entry.statement_id, required: entry.required }))
+		statements.map((entry) => ({
+			statementId: entry.statement_id,
+			required: entry.required,
+			...(entry.display ? { display: entry.display } : {}),
+			...(entry.require_scroll === undefined ? {} : { requireScroll: entry.require_scroll })
+		}))
 	);
 }
 

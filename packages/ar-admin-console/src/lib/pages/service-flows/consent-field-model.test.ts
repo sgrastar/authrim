@@ -24,6 +24,30 @@ describe('consent field value', () => {
 		expect(consentSpecOf(consentValueOf(spec))).toEqual(spec);
 	});
 
+	it('round-trips how a text is shown, only when the entry says', () => {
+		const spec = [
+			{ statement_id: 'a', required: true, display: 'modal' as const, require_scroll: true },
+			{ statement_id: 'b', required: false, display: 'inline' as const, require_scroll: false },
+			{ statement_id: 'c:d', required: true, require_scroll: true },
+			{ statement_id: 'e', required: true }
+		];
+		expect(consentValueOf(spec)).toEqual([
+			'a:required|modal|scroll',
+			'b:optional|inline|noscroll',
+			'c:d:required|scroll',
+			'e:required'
+		]);
+		expect(consentSpecOf(consentValueOf(spec))).toEqual(spec);
+		// The entry follows the widget again once both are cleared.
+		expect(encodeConsent({ statementId: 'a', required: true })).toBe('a:required');
+	});
+
+	it('drops an entry whose presentation it cannot read', () => {
+		expect(consentEntries(['a:required|popup', 'b:required|modal'])).toEqual([
+			{ statementId: 'b', required: true, display: 'modal' }
+		]);
+	});
+
 	it('keeps colons inside an id and drops unreadable entries', () => {
 		expect(decodeConsent(encodeConsent({ statementId: 'x:y', required: true }))).toEqual({
 			statementId: 'x:y',
