@@ -527,6 +527,45 @@ describe('TokenRevocationStore', () => {
     });
   });
 
+  describe('retention of a repeated revocation (characterization, AWS portability P1)', () => {
+    const post = (path: string, body: unknown) =>
+      store.fetch(
+        new Request(`http://localhost${path}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        })
+      );
+    const check = async (jti: string) =>
+      (
+        await (
+          await store.fetch(new Request(`http://localhost/check?jti=${jti}`))
+        ).json<{
+          revoked: boolean;
+        }>()
+      ).revoked;
+
+    it('the expiry of the LAST revoke wins and is counted from that call: a shorter ttl shortens the retention', async () => {
+      expect((await post('/revoke', { jti: 'jti-x', ttl: 3600 })).status).toBe(201);
+      expect(await check('jti-x')).toBe(true);
+      vi.advanceTimersByTime(1_000_000);
+      // A repeated revoke with a short ttl, 1,000 s after the first one.
+      expect((await post('/revoke', { jti: 'jti-x', ttl: 10 })).status).toBe(201);
+      vi.advanceTimersByTime(9_999);
+      expect(await check('jti-x')).toBe(true);
+      vi.advanceTimersByTime(1);
+      // Today the longer retention (3,600 s from the first call) is gone.
+      expect(await check('jti-x')).toBe(false);
+    });
+
+    it('a longer ttl extends it', async () => {
+      expect((await post('/revoke', { jti: 'jti-y', ttl: 10 })).status).toBe(201);
+      expect((await post('/revoke', { jti: 'jti-y', ttl: 3600 })).status).toBe(201);
+      vi.advanceTimersByTime(60 * 1000);
+      expect(await check('jti-y')).toBe(true);
+    });
+  });
+
   describe('Unknown Endpoints', () => {
     it('should return 404 for unknown path', async () => {
       const response = await store.fetch(

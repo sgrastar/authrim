@@ -30,11 +30,15 @@ const core = vi.hoisted(() => ({
   resolveTenantMetadataContext: vi.fn(),
   getRevocationStoreByJti: vi.fn(),
   findOAuthClientConsentRevocation: vi.fn(),
+  recordReplayJti: vi.fn(),
 }));
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
+  // The issuance claim of the route goes through the real function, observed by a spy.
+  core.recordReplayJti.mockImplementation(actual.recordReplayJti);
   return {
     ...actual,
+    recordReplayJti: core.recordReplayJti,
     createSDJWTVCWithSigner: vi.fn(
       async (
         _claims: Record<string, unknown>,
@@ -873,5 +877,144 @@ describe('HAIP credential issuance: the server DPoP nonce', () => {
       env as unknown as { VC_TRANSACTION_CODE_HMAC_SECRET?: string }
     ).VC_TRANSACTION_CODE_HMAC_SECRET = undefined;
     expect((await call(env)).status).toBe(424);
+  });
+});
+
+describe('HAIP credential issuance: when a token is used up (characterization, AWS portability P1)', () => {
+  it('a refusal after the issuance claim leaves the token spent: the wallet needs a new token', async () => {
+    const { env, harness } = setup();
+    const token = await opToken();
+    // The key attestation passes, the claim is recorded, then signing is refused (no chain).
+    harness.signSDJWTIssuerRpc.mockRejectedValueOnce(new Error('x5c_required'));
+    expect((await call(env, { token })).status).toBe(424);
+    expect(harness.signSDJWTIssuerRpc).toHaveBeenCalledTimes(1);
+
+    // The same token, with the signer healthy again, never reaches eligibility or signing. The proof
+    // nonce is reserved first and released after the duplicate claim is found.
+    harness.signSDJWTIssuerRpc.mockClear();
+    harness.eligibility.mockClear();
+    harness.offerCalls.length = 0;
+    const again = await call(env, { token });
+    expect(again.status).toBe(400);
+    expect(await again.json()).toMatchObject({ error: 'invalid_credential_request' });
+    expect(harness.eligibility).not.toHaveBeenCalled();
+    expect(harness.signSDJWTIssuerRpc).not.toHaveBeenCalled();
+    expect(harness.offerCalls).toEqual(['/nonce/reserve', '/nonce/release']);
+    // A new token works.
+    expect((await call(env, { token: await opToken() })).status).toBe(200);
+  });
+
+  it('a revocation status that cannot be told is refused BEFORE the claim: the same token may be tried again', async () => {
+    const { env, harness } = setup();
+    const token = await opToken();
+    const record = (
+      env as unknown as {
+        AUTH_RUNTIME_PORTS: { replayGuard: { record: ReturnType<typeof vi.fn> } };
+      }
+    ).AUTH_RUNTIME_PORTS.replayGuard.record;
+    // The very same DPoP proof is used for both calls: nothing was recorded by the first one.
+    const dpop = await dpopProof(token);
+    revocation.legacy = { status: 500, body: {} };
+    const unknown = await call(env, { token, dpop });
+    expect(unknown.status).toBe(424);
+    expect(await unknown.json()).toEqual({ error: 'temporarily_unavailable' });
+    expect(record).not.toHaveBeenCalled();
+    expect(harness.eligibility).not.toHaveBeenCalled();
+    revocation.legacy = { status: 200, body: { revoked: false } };
+    expect((await call(env, { token, dpop })).status).toBe(200);
+  });
+
+  it('an unknown revocation status answers 424 even to a proof without the server nonce (it is asked first)', async () => {
+    const { env } = setup();
+    const token = await opToken();
+    revocation.legacy = { status: 500, body: {} };
+    const response = await call(env, { token, dpop: await dpopProof(token, { nonce: null }) });
+    expect(response.status).toBe(424);
+    expect(await response.json()).toEqual({ error: 'temporarily_unavailable' });
+  });
+
+  it('an explicit refusal of the nonce store is a 400 invalid_nonce (not a 503), also before the claim', async () => {
+    const { env, harness } = setup();
+    const token = await opToken();
+    harness.nonceReserve.mockImplementationOnce(async () => Response.json({ reserved: false }));
+    const refused = await call(env, { token });
+    expect(refused.status).toBe(400);
+    expect(await refused.json()).toMatchObject({ error: 'invalid_nonce' });
+    expect((await call(env, { token })).status).toBe(200);
+  });
+
+  it('a failing nonce store (unknown outcome) is a 503 before the claim: the same token and a good proof may be tried again', async () => {
+    const { env, harness } = setup();
+    const token = await opToken();
+    harness.nonceReserve.mockImplementationOnce(async () => new Response('x', { status: 500 }));
+    expect((await call(env, { token })).status).toBe(503);
+    expect((await call(env, { token })).status).toBe(200);
+  });
+
+  it('keeps the claim for the token up to its last accepted moment: ttl = max(120, exp - now + 120) seconds', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      // Frozen at the real now: the certificates of the fixtures are valid around it.
+      const start = Date.now();
+      vi.setSystemTime(start);
+      const cases = [
+        { at: 0, ttl: 420 }, // 300 s left + 120
+        { at: 240_000, ttl: 180 }, // 60 s left + 120
+        { at: 301_000, ttl: 120 }, // 1 s past the expiry (inside the validator's 5 s tolerance): the floor
+      ];
+      for (const { at, ttl } of cases) {
+        vi.setSystemTime(start);
+        const { env } = setup();
+        const token = await opToken();
+        vi.setSystemTime(start + at);
+        core.recordReplayJti.mockClear();
+        expect((await call(env, { token })).status, `at ${at}`).toBe(200);
+        const claims = core.recordReplayJti.mock.calls
+          .map(([, input]) => input as { jti: string; ttlSeconds: number })
+          .filter((input) => input.jti.startsWith('vci-op-token:'));
+        expect(claims, `at ${at}`).toHaveLength(1);
+        expect(claims[0].ttlSeconds, `at ${at}`).toBe(ttl);
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a missing eligibility binding counts as ineligible, but only after the claim: the token is spent', async () => {
+    const { env, harness } = setup();
+    const token = await opToken();
+    (env as unknown as { ADMIN_CREDENTIAL_ELIGIBILITY?: unknown }).ADMIN_CREDENTIAL_ELIGIBILITY =
+      undefined;
+    const refused = await call(env, { token });
+    expect(refused.status).toBe(400);
+    expect(await refused.json()).toMatchObject({ error: 'invalid_credential_request' });
+    expect(harness.signSDJWTIssuerRpc).not.toHaveBeenCalled();
+    // It is refused at the early check: no status list slot was spent.
+    expect(core.reserveCredentialStatusSlot).not.toHaveBeenCalled();
+
+    // The configuration is repaired; the spent token still does not work.
+    (env as unknown as { ADMIN_CREDENTIAL_ELIGIBILITY: unknown }).ADMIN_CREDENTIAL_ELIGIBILITY = {
+      checkAdminCredentialEligibility: harness.eligibility,
+    };
+    const again = await call(env, { token });
+    expect(again.status).toBe(400);
+    expect(harness.eligibility).not.toHaveBeenCalled();
+    expect((await call(env, { token: await opToken() })).status).toBe(200);
+  });
+
+  it('the second eligibility check (after the slot is reserved) also comes before signing', async () => {
+    const { env, harness } = setup();
+    harness.eligibility
+      .mockResolvedValueOnce({ eligible: true, email: 'a@example.com', name: 'A' })
+      .mockResolvedValue({ eligible: false });
+    expect((await call(env)).status).toBe(400);
+    expect(core.reserveCredentialStatusSlot).toHaveBeenCalledTimes(1);
+    expect(harness.eligibility).toHaveBeenCalledTimes(2);
+    expect(harness.signSDJWTIssuerRpc).not.toHaveBeenCalled();
+    // Early check, then the slot, then the check again.
+    const [early, late] = harness.eligibility.mock.invocationCallOrder;
+    const [slot] = core.reserveCredentialStatusSlot.mock.invocationCallOrder;
+    expect(early).toBeLessThan(slot);
+    expect(slot).toBeLessThan(late);
   });
 });

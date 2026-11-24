@@ -19,6 +19,7 @@ import type { AuthRuntimePorts } from './auth-runtime-ports';
 import type { RuntimeDataPorts } from './runtime-data-ports';
 import type { AuditRuntimePorts } from './audit-runtime-ports';
 import type { EventRuntimePorts } from './event-runtime-ports';
+import type { VcRuntimePorts } from './vc-runtime-ports';
 import type {
   AdminCredentialEligibilityServiceBinding,
   VCIssuerServiceBinding,
@@ -452,6 +453,8 @@ export interface Env extends LogIcebergSettingsEnv {
   SAML_RUNTIME_PORTS?: SAMLRuntimePorts;
   /** Optional tenant-scoped sign-in state ports for non-Worker runtimes. */
   AUTH_RUNTIME_PORTS?: AuthRuntimePorts;
+  /** Optional HAIP / administrator-credential ports for non-Worker runtimes (absent on Cloudflare). */
+  VC_RUNTIME_PORTS?: VcRuntimePorts;
   /** Setup-generated binding identity metadata; not a user-configurable backup option. */
   AUTHRIM_FIXED_DATABASE_IDS?: string;
   // D1 Databases
