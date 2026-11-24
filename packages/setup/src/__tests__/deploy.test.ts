@@ -3915,6 +3915,7 @@ describe('deployAll', () => {
     const rootDir = createTempRoot();
     createWorkerPackage(rootDir, 'ar-plugin-runner', '1.0.0');
     createWorkerPackage(rootDir, 'ar-bridge', '1.0.0');
+    createWorkerPackage(rootDir, 'ar-vc', '1.0.0');
     createWorkerPackage(rootDir, 'ar-auth', '1.0.0');
     const started: string[] = [];
     vi.mocked(execa).mockImplementation(async (_command, _args, options) => {
@@ -3932,13 +3933,18 @@ describe('deployAll', () => {
       ['ar-auth']
     );
 
-    expect(summary.successCount).toBe(3);
-    expect(summary.results.map((result) => result.component)).toEqual([
-      'ar-plugin-runner',
-      'ar-bridge',
+    // ar-vc is a dependency too: ar-auth binds VC_ISSUER for the wallet sign-in.
+    expect(summary.successCount).toBe(4);
+    expect(summary.results.map((result) => result.component).sort()).toEqual([
       'ar-auth',
+      'ar-bridge',
+      'ar-plugin-runner',
+      'ar-vc',
     ]);
-    expect(started).toEqual(['ar-plugin-runner', 'ar-bridge', 'ar-auth']);
+    expect(started.at(-1)).toBe('ar-auth');
+    expect(new Set(started)).toEqual(
+      new Set(['ar-plugin-runner', 'ar-bridge', 'ar-vc', 'ar-auth'])
+    );
   });
 
   it('runs the first-deploy dependency DAG with a maximum concurrency of two', async () => {
@@ -4522,13 +4528,17 @@ describe('deployAll', () => {
       expect(new Set(started.slice(1))).toEqual(new Set(['ar-bridge', 'ar-vc']));
     });
 
+    // ar-auth binds VC_ISSUER (the wallet sign-in), so it waits for ar-vc as well as ar-bridge.
     releases.get('ar-bridge')!.resolve(successfulCommandResult());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(started).not.toContain('ar-auth');
+
+    releases.get('ar-vc')!.resolve(successfulCommandResult());
     await vi.waitFor(() => expect(started).toContain('ar-auth'));
-    releases.get('ar-auth')!.resolve(successfulCommandResult());
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(started).not.toContain('ar-management');
 
-    releases.get('ar-vc')!.resolve(successfulCommandResult());
+    releases.get('ar-auth')!.resolve(successfulCommandResult());
     await vi.waitFor(() => expect(started.at(-1)).toBe('ar-management'));
     releases.get('ar-management')!.resolve(successfulCommandResult());
 
@@ -4680,7 +4690,7 @@ describe('deployAll', () => {
         env: 'test',
         rootDir,
         deploymentStrategy: 'staged',
-        existingComponents: ['ar-lib-core', 'ar-plugin-runner', 'ar-bridge', ...selected],
+        existingComponents: ['ar-lib-core', 'ar-plugin-runner', 'ar-bridge', 'ar-vc', ...selected],
         concurrency: 2,
       },
       [...selected]

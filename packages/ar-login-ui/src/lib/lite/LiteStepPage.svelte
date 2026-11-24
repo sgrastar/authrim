@@ -93,6 +93,23 @@
 	{/if}
 {/snippet}
 
+{#snippet statementText(item: { html: string | null; frame: string | null; title: string })}
+	{#if item.html}
+		<!-- eslint-disable-next-line svelte/no-at-html-tags -- sanitized (runtime-consent-html) -->
+		<div class="statement-text">{@html item.html}</div>
+	{/if}
+	{#if item.frame}
+		<iframe
+			class="statement-frame"
+			src={item.frame}
+			title={item.title}
+			loading="lazy"
+			referrerpolicy="same-origin"
+			sandbox="allow-popups allow-popups-to-escape-sandbox"
+		></iframe>
+	{/if}
+{/snippet}
+
 {#snippet consentPart(
 	consent: NonNullable<typeof data.consent>,
 	label: string,
@@ -146,19 +163,14 @@
 						<!-- eslint-disable-next-line svelte/no-at-html-tags -- sanitized (runtime-consent-html) -->
 						<p class="statement-description">{@html item.descriptionHtml}</p>
 					{/if}
-					{#if item.html}
-						<!-- eslint-disable-next-line svelte/no-at-html-tags -- sanitized (runtime-consent-html) -->
-						<div class="statement-text">{@html item.html}</div>
-					{/if}
-					{#if item.frame}
-						<iframe
-							class="statement-frame"
-							src={item.frame}
-							title={item.title}
-							loading="lazy"
-							referrerpolicy="same-origin"
-							sandbox="allow-popups allow-popups-to-escape-sandbox"
-						></iframe>
+					{#if item.collapsed}
+						<!-- Opened on request, as the SPA's dialog: a disclosure needs no script. -->
+						<details class="statement-details">
+							<summary>{item.openLabel}</summary>
+							{@render statementText(item)}
+						</details>
+					{:else}
+						{@render statementText(item)}
 					{/if}
 					{#if item.link}
 						<p>

@@ -1514,6 +1514,27 @@ type RootTranslation = {
 	 */
 	consent_statement_newTab: string;
 	/**
+	 * O​p​e​n
+	 */
+	consent_statement_open: string;
+	/**
+	 * O​p​e​n​ ​{​t​i​t​l​e​}
+	 * @param {unknown} title
+	 */
+	consent_statement_openLabel: RequiredParams<'title'>;
+	/**
+	 * I​ ​a​g​r​e​e
+	 */
+	consent_statement_agreeButton: string;
+	/**
+	 * C​l​o​s​e
+	 */
+	consent_statement_close: string;
+	/**
+	 * S​c​r​o​l​l​ ​t​o​ ​t​h​e​ ​e​n​d​ ​t​o​ ​a​g​r​e​e​.
+	 */
+	consent_statement_scrollHint: string;
+	/**
 	 * V​e​r​s​i​o​n​ ​o​f​ ​{​d​a​t​e​}
 	 * @param {string} date
 	 */
@@ -3630,6 +3651,26 @@ export type TranslationFunctions = {
 	 * (opens in a new tab)
 	 */
 	consent_statement_newTab: () => LocalizedString;
+	/**
+	 * Open
+	 */
+	consent_statement_open: () => LocalizedString;
+	/**
+	 * Open {title}
+	 */
+	consent_statement_openLabel: (arg: { title: unknown }) => LocalizedString;
+	/**
+	 * I agree
+	 */
+	consent_statement_agreeButton: () => LocalizedString;
+	/**
+	 * Close
+	 */
+	consent_statement_close: () => LocalizedString;
+	/**
+	 * Scroll to the end to agree.
+	 */
+	consent_statement_scrollHint: () => LocalizedString;
 	/**
 	 * Version of {date}
 	 */

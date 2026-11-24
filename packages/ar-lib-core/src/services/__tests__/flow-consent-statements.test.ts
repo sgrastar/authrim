@@ -36,6 +36,32 @@ describe('readFlowConsentStatements', () => {
     expect(readFlowConsentStatements({ statements: [] })).toEqual([]);
   });
 
+  it('reads how a text is shown, as an override only when given', async () => {
+    expect(
+      readFlowConsentStatements({
+        statements: [
+          { ...tos, display: 'modal', require_scroll: true },
+          { ...news, display: 'inline', require_scroll: false },
+        ],
+      })
+    ).toEqual([
+      { ...tos, display: 'modal', require_scroll: true },
+      { ...news, display: 'inline', require_scroll: false },
+    ]);
+    // No key is made up: an entry without them follows the screen's widget.
+    expect(readFlowConsentStatements({ statements: [tos] })?.[0]).not.toHaveProperty('display');
+    expect(readFlowConsentStatements({ statements: [tos] })?.[0]).not.toHaveProperty(
+      'require_scroll'
+    );
+  });
+
+  it('refuses a presentation that is not one', async () => {
+    expect(readFlowConsentStatements({ statements: [{ ...tos, display: 'popup' }] })).toBeNull();
+    expect(
+      readFlowConsentStatements({ statements: [{ ...tos, require_scroll: 'yes' }] })
+    ).toBeNull();
+  });
+
   it('refuses a malformed list rather than asking for part of it', async () => {
     expect(readFlowConsentStatements({})).toBeNull();
     expect(readFlowConsentStatements({ statements: 'tos' })).toBeNull();

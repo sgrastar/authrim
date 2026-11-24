@@ -15,7 +15,11 @@
  */
 import type { FlowRuntimeStep } from '#lib/api/flow-runtime.js';
 import { sanitizeRuntimeConsentHtml } from '#lib/consent/runtime-consent-html.js';
-import { statementPresentation } from '#lib/consent/statement-display.js';
+import {
+	consentItemSetting,
+	statementPresentation,
+	type ConsentWidgetDefaults
+} from '#lib/consent/statement-display.js';
 import {
 	consentStepKey,
 	type ConsentPresentationDestination,
@@ -79,6 +83,11 @@ export interface LiteFlowConsentItem {
 	 * `embedded` in a frame (`frame`), a link to its `external` document (`link`), or `plain`.
 	 */
 	display: 'embedded' | 'inline' | 'external' | 'plain';
+	/**
+	 * The widget asks for this statement's text to be opened on request (the SPA's dialog): drawn
+	 * as a disclosure, which needs no script. Only a statement with a text of its own.
+	 */
+	collapsed: boolean;
 	/** The text itself, sanitized, for a statement whose key cannot be a page path (`inline`). */
 	html: string | null;
 	/** The statement page's text alone, framed in the screen. */
@@ -112,6 +121,30 @@ export interface LiteFlowConsent {
 	fields: LiteFlowConsentField[];
 }
 
+/** How the screen's consent widget shows a statement's text by default, if it says. */
+function consentWidgetDefaults(step: FlowRuntimeStep | null): ConsentWidgetDefaults | null {
+	for (const screen of [step?.config?.screen, step?.content?.screen]) {
+		if (!isRecord(screen) || !Array.isArray(screen.fields)) continue;
+		for (const field of screen.fields) {
+			// A widget that is never shown says nothing of how the page draws.
+			if (
+				isRecord(field) &&
+				isRecord(field.display_condition) &&
+				field.display_condition.mode === 'hidden'
+			) {
+				continue;
+			}
+			if (isRecord(field) && field.block_type === 'consent_widget') {
+				return {
+					consent_display: field.consent_display === 'modal' ? 'modal' : null,
+					consent_require_scroll: field.consent_require_scroll === true
+				};
+			}
+		}
+	}
+	return null;
+}
+
 /**
  * The step's consent as the page draws it: null when the step has none; `unsupported` when it has
  * one the page cannot draw in full.
@@ -124,6 +157,7 @@ export function readLiteFlowConsent(
 	const destination = isRecord(content.destination_field_consent)
 		? content.destination_field_consent
 		: null;
+	const widgetDefaults = consentWidgetDefaults(step);
 	const rawItems = policy && Array.isArray(policy.items) ? policy.items : [];
 	// The language the step is drawn in: its statements' frames and pages show their text in it.
 	const language = typeof policy?.language === 'string' ? policy.language : null;
@@ -154,6 +188,10 @@ export function readLiteFlowConsent(
 			language
 		);
 		const display = presentation.kind;
+		const setting = consentItemSetting(raw, widgetDefaults);
+		const hasText = presentation.kind === 'embedded' || presentation.kind === 'inline';
+		// A text that has to be scrolled to its end needs a script, which this page has none of.
+		if (hasText && setting.requireScroll) return 'unsupported';
 		const frame = presentation.kind === 'embedded' ? presentation.src : null;
 		// An external document is linked from the description only, as the admin writes it; a choice
 		// of options (which shows no description) keeps its link.
@@ -197,6 +235,7 @@ export function readLiteFlowConsent(
 			title,
 			descriptionHtml: description ? sanitizeRuntimeConsentHtml(description) : null,
 			display,
+			collapsed: hasText && setting.display === 'modal',
 			html,
 			frame,
 			link,

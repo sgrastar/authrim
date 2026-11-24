@@ -568,6 +568,73 @@ describe('a consent step', () => {
 		expect(await liteConsentDigest(drawn, 'int-2')).not.toBe(digest);
 	});
 
+	describe('how a text is shown (the widget default, and the step override)', () => {
+		const TEXT = { ...POLICY.items[0], inline_content: '<p>The text.</p>', document_url: null };
+		const stepWith = (widget: Record<string, unknown>, item: Record<string, unknown> = {}) =>
+			({
+				...CONSENT_STEP,
+				config: { screen: { display_name: 'Consent', fields: [{ ...WIDGET, ...widget }] } },
+				content: { consent_policy: { ...POLICY, items: [{ ...TEXT, ...item }, POLICY.items[1]] } }
+			}) as never;
+		const read = (widget: Record<string, unknown>, item?: Record<string, unknown>) =>
+			readLiteFlowConsent(stepWith(widget, item)) as LiteFlowConsent;
+
+		it('keeps the step order whatever the widget says', () => {
+			expect(read({ consent_display: 'modal' }).items.map((item) => item.id)).toEqual([
+				'tos',
+				'share'
+			]);
+		});
+
+		it('draws a text opened on request as a disclosure, only for a statement with a text', () => {
+			expect(read({ consent_display: 'modal' }).items.map((item) => item.collapsed)).toEqual([
+				true,
+				false
+			]);
+			expect(read({}).items[0].collapsed).toBe(false);
+			// The step's entry wins over the widget, both ways.
+			expect(
+				read({ consent_display: 'modal' }, { text_display: 'inline' }).items[0].collapsed
+			).toBe(false);
+			expect(read({}, { text_display: 'modal' }).items[0].collapsed).toBe(true);
+		});
+
+		it('does not draw a text that has to be scrolled to its end: it has no script to tell', () => {
+			expect(read({ consent_require_scroll: true })).toBe('unsupported');
+			expect(read({}, { require_scroll: true })).toBe('unsupported');
+			// The step's entry can lift the widget's requirement for one statement.
+			expect(read({ consent_require_scroll: true }, { require_scroll: false })).not.toBe(
+				'unsupported'
+			);
+		});
+
+		it('takes the default from the widget that is shown, not one that is hidden', () => {
+			const consent = readLiteFlowConsent({
+				...CONSENT_STEP,
+				config: {
+					screen: {
+						display_name: 'Consent',
+						fields: [
+							{
+								...WIDGET,
+								display_condition: { mode: 'hidden' },
+								consent_require_scroll: true
+							},
+							WIDGET
+						]
+					}
+				}
+			} as never);
+			expect(consent).not.toBe('unsupported');
+		});
+
+		it('keys what the page draws, so a form drawn with another presentation is not this one', async () => {
+			const inPlace = await liteConsentDigest(read({}), 'int-1');
+			const dialog = await liteConsentDigest(read({ consent_display: 'modal' }), 'int-1');
+			expect(dialog).not.toBe(inPlace);
+		});
+	});
+
 	it('does not draw an option whose words are too long, or a decision too large to keep', async () => {
 		const radio = POLICY.items[1] as (typeof POLICY.items)[1] & {
 			options: Array<Record<string, string>>;

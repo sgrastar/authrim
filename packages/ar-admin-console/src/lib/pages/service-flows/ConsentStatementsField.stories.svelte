@@ -53,6 +53,25 @@
 	}}
 ></Story>
 
+<!-- How a text is shown: the screen's default, or this statement's own (a link has no text to show). -->
+<Story
+	name="How each text is shown"
+	args={{ answer: 'some', initial: ['stmt_terms:required|modal|scroll', 'stmt_privacy:optional'] }}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const displays = await canvas.findAllByRole('combobox', { name: t('af.consent.display') });
+		// The terms keep a text of their own: shown in a dialog, scrolled to the end first.
+		await expect(displays).toHaveLength(1);
+		await expect(displays[0]).toHaveValue('modal');
+		await expect(canvas.getByRole('combobox', { name: t('af.consent.scroll') })).toHaveValue(
+			'scroll'
+		);
+		// Back to the screen's default.
+		await userEvent.selectOptions(displays[0], '');
+		await expect(displays[0]).toHaveValue('');
+	}}
+/>
+
 <!-- The text the person is asked to agree to, read without leaving the flow. -->
 <Story
 	name="Reading a chosen statement"

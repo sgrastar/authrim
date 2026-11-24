@@ -44,6 +44,20 @@ describe('liteScreenIssues', () => {
     ]);
   });
 
+  it('refuses a consent text that has to be scrolled to its end (the lite UI has no script)', () => {
+    const consent = (consent_require_scroll: boolean) =>
+      field({ block_type: 'consent_widget', consent_display: 'modal', consent_require_scroll });
+    expect(liteScreenIssues('consent', [consent(true)], ON)).toEqual([
+      {
+        code: 'screen_block_unsupported',
+        subject: 'consent',
+        detail: 'consent_widget:require_scroll',
+      },
+    ]);
+    // A dialog (drawn as a disclosure) needs no script.
+    expect(liteScreenIssues('consent', [consent(false)], ON)).toEqual([]);
+  });
+
   it('refuses an unknown method and a widget that names none', () => {
     expect(
       liteScreenIssues(
@@ -116,6 +130,17 @@ describe('liteAccountScreenIssues', () => {
 });
 
 describe('liteFlowComponentIssues', () => {
+  it('refuses a consent statement that has to be scrolled to its end, once', () => {
+    const consent = (require_scroll: boolean) => ({
+      component: 'consent_policy',
+      config: { statements: [{ statement_id: 'tos', required: true, require_scroll }] },
+    });
+    expect(liteFlowComponentIssues('flow-1', [consent(true), consent(true)])).toEqual([
+      { code: 'flow_component_unsupported', subject: 'flow-1', detail: 'consent:require_scroll' },
+    ]);
+    expect(liteFlowComponentIssues('flow-1', [consent(false)])).toEqual([]);
+  });
+
   it('names each unsupported component once', () => {
     expect(
       liteFlowComponentIssues('flow-1', [

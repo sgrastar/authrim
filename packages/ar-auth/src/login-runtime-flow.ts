@@ -273,6 +273,13 @@ interface RuntimeConsentPolicyItem extends FlowRuntimeJsonObject {
   attribute_value_display: 'names' | 'masked_values' | 'full_values' | null;
   checkbox_mode: 'none' | 'required' | 'optional';
   checkbox_default_checked: boolean;
+  /**
+   * The Flow step's override of how its text is drawn (null: as the screen's consent widget
+   * says). Presentation only: what is asked and recorded does not depend on it.
+   */
+  text_display: 'inline' | 'modal' | null;
+  /** The step's override of the scroll requirement (null: as the widget says); kept by the UI. */
+  require_scroll: boolean | null;
   binding_type: string | null;
   binding_value: string | null;
   evidence_profile: string | null;
@@ -1700,6 +1707,7 @@ async function resolveRuntimeConsentStatementsContent(
   const requirements = await resolveStatementRequirements(db, tenantId, statements);
   const items: RuntimeConsentPolicyItem[] = [];
   for (const requirement of requirements) {
+    const own = statements.find((entry) => entry.statement_id === requirement.statement_id);
     const localization = await getConsentLocalizationForRuntime(
       db,
       tenantId,
@@ -1722,6 +1730,8 @@ async function resolveRuntimeConsentStatementsContent(
       attribute_value_display: null,
       checkbox_mode: requirement.is_required ? 'required' : 'optional',
       checkbox_default_checked: false,
+      text_display: own?.display ?? null,
+      require_scroll: own?.require_scroll ?? null,
       binding_type: null,
       binding_value: null,
       evidence_profile: null,

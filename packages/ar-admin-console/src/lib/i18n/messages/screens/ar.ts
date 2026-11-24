@@ -196,6 +196,15 @@ export const arScreens: Record<keyof typeof jaScreens, string> = {
 	'sc.set.captchaSubmit': 'عند الإرسال',
 	'sc.set.dividerLabel': 'التسمية (اختياري)',
 	'sc.set.dividerHint': 'مثل «أو». إذا تُرك فارغًا، يظهر الخط فقط.',
+	'sc.set.consentDisplay': 'طريقة عرض النص (الافتراضية)',
+	'sc.set.consentInline': 'في مكانه',
+	'sc.set.consentModal': 'في نافذة منبثقة',
+	'sc.set.consentRequireScroll': 'لا يمكن الموافقة إلا بعد التمرير إلى النهاية (افتراضي)',
+	'sc.set.consentScrollNote':
+		'يُتحقَّق من التمرير إلى النهاية في هذه الشاشة فقط؛ فالخادم يسجّل الإجابة ولا يعرف إن قُرئ النص. لا تتوفر في واجهة تسجيل الدخول الخفيفة شيفرة للتحقق، لذا لا يمكن تحويل مستأجر إليها.',
+	'sc.set.consentWhere':
+		'تحديد النصوص المطلوبة وترتيبها وكونها إلزامية يتم في خطوة الموافقة في مسار الخدمة، وهناك يمكن أيضًا عرض نص بطريقة تختلف عن هذه الإعدادات الافتراضية.',
+	'sc.set.consentWhereLink': 'فتح الخدمات',
 	'sc.set.widgetNote': 'يتولى هذا المكوّن مدخلاته وإجراءاته وتحققه وحالات التحميل والنجاح والخطأ.',
 	'sc.set.rowSettings': 'إعدادات الصف',
 	'sc.set.rowColumns': 'الأعمدة',

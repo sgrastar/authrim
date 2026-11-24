@@ -12,6 +12,7 @@ import {
   OIDC_STANDARD_CLAIM_SCOPE,
   MAX_SCREEN_OPTION_VALUE_LENGTH,
   RESERVED_CLAIMS,
+  SCREEN_CONSENT_DISPLAYS,
   SCREEN_ANSWER_TARGETS,
   SCREEN_CHOICE_BLOCK_TYPES,
   SCREEN_INPUT_BLOCK_TYPES,
@@ -23,6 +24,7 @@ import {
 import type {
   Env,
   ScreenAnswerTarget,
+  ScreenConsentDisplay,
   ScreenDisplayCondition,
   ScreenField,
   ScreenFieldOption,
@@ -1872,6 +1874,41 @@ function readHumanVerificationTiming(value: unknown): ScreenField['human_verific
     : undefined;
 }
 
+/**
+ * How a `consent_widget` shows the text of a statement unless the Flow step's entry for it says
+ * otherwise (`display`: in place or in a dialog; `require_scroll`: the text has to be scrolled to
+ * its end first). Which statements are asked, and in which order, is the Flow step's, not the
+ * screen's. A string is why it cannot be saved; reading a stored screen (not strict) leaves out
+ * what is unusable.
+ */
+function readConsentDefaults(
+  record: Row,
+  blockType: NonNullable<ScreenField['block_type']>,
+  field: string,
+  strict: boolean
+): Pick<ScreenField, 'consent_display' | 'consent_require_scroll'> | string {
+  if (blockType !== 'consent_widget') return {};
+  const where = `Field "${field}"`;
+  const result: Pick<ScreenField, 'consent_display' | 'consent_require_scroll'> = {};
+  const display = record.consent_display;
+  if (display !== undefined && display !== null) {
+    if ((SCREEN_CONSENT_DISPLAYS as readonly unknown[]).includes(display)) {
+      result.consent_display = display as ScreenConsentDisplay;
+    } else if (strict) {
+      return `${where}: consent_display must be inline or modal`;
+    }
+  }
+  const scroll = record.consent_require_scroll;
+  if (scroll !== undefined && scroll !== null) {
+    if (typeof scroll === 'boolean') {
+      if (scroll) result.consent_require_scroll = true;
+    } else if (strict) {
+      return `${where}: consent_require_scroll must be a boolean`;
+    }
+  }
+  return result;
+}
+
 function readCodeInputMode(value: unknown): ScreenField['code_input_mode'] {
   return typeof value === 'string' && SCREEN_CODE_INPUT_MODES.has(value)
     ? (value as ScreenField['code_input_mode'])
@@ -2137,6 +2174,8 @@ function normalizeFieldsDetailed(value: unknown, strict = true): FieldsResult {
     if (!blockType) return { ok: false, error: `Field "${field}": unknown block_type` };
     const link = readLinkTarget(record, blockType, field, strict);
     if (typeof link === 'string') return { ok: false, error: link };
+    const consent = readConsentDefaults(record, blockType, field, strict);
+    if (typeof consent === 'string') return { ok: false, error: consent };
     const answer = readInputAnswer(record, blockType, field, strict);
     if (typeof answer === 'string') return { ok: false, error: answer };
     // An answer of its own must not share a key with another answer, nor with an attribute the
@@ -2189,6 +2228,7 @@ function normalizeFieldsDetailed(value: unknown, strict = true): FieldsResult {
       help_text: readTrimmed(record.help_text)?.slice(0, 1000),
       placeholder: readTrimmed(record.placeholder)?.slice(0, 500),
       ...link,
+      ...consent,
       human_verification_timing: readHumanVerificationTiming(record.human_verification_timing),
       display_condition: readDisplayCondition(record.display_condition),
       layout_columns: readPositiveInteger(record.layout_columns, 4),

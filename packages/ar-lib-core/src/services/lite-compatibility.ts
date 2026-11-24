@@ -144,6 +144,16 @@ export function liteScreenIssues(
       issues.push({ code: 'screen_block_unsupported', subject: screenKey, detail: blockType });
       continue;
     }
+    // A text that has to be scrolled to its end before it can be agreed to needs a script; the
+    // lite UI has none, so it cannot keep what the screen asks for.
+    if (blockType === 'consent_widget' && field.consent_require_scroll === true) {
+      issues.push({
+        code: 'screen_block_unsupported',
+        subject: screenKey,
+        detail: 'consent_widget:require_scroll',
+      });
+      continue;
+    }
     if (blockType !== 'auth_widget') continue;
     const method = typeof field.auth_method === 'string' ? field.auth_method.trim() : '';
     if (LITE_AUTH_METHODS.has(method)) continue;
@@ -176,11 +186,27 @@ export function liteAccountScreenIssues(
 /** The components of a published Flow the lite UI cannot drive (`subject`: the Flow's ID). */
 export function liteFlowComponentIssues(
   flowId: string,
-  steps: ReadonlyArray<{ component?: unknown }>
+  steps: ReadonlyArray<{ component?: unknown; config?: unknown }>
 ): LiteModeIssue[] {
   const issues: LiteModeIssue[] = [];
   const seen = new Set<string>();
   for (const step of steps) {
+    // A consent statement whose text has to be scrolled to its end needs a script the lite UI lacks.
+    const statements = (step.config as { statements?: unknown } | null | undefined)?.statements;
+    if (
+      Array.isArray(statements) &&
+      statements.some(
+        (entry) => (entry as { require_scroll?: unknown } | null)?.require_scroll === true
+      ) &&
+      !seen.has('consent:require_scroll')
+    ) {
+      seen.add('consent:require_scroll');
+      issues.push({
+        code: 'flow_component_unsupported',
+        subject: flowId,
+        detail: 'consent:require_scroll',
+      });
+    }
     const component = typeof step.component === 'string' ? step.component : 'unknown';
     if (LITE_FLOW_COMPONENTS.has(component) || seen.has(component)) continue;
     seen.add(component);

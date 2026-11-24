@@ -141,6 +141,14 @@ describe('WORKER_DEPLOYMENT_DEPENDENCIES', () => {
     expect(WORKER_DEPLOYMENT_DEPENDENCIES['ar-auth']).toContain('ar-bridge');
   });
 
+  it('should require ar-vc before ar-auth: ar-auth binds VC_ISSUER for the wallet sign-in', () => {
+    expect(WORKER_DEPLOYMENT_DEPENDENCIES['ar-auth']).toContain('ar-vc');
+    const order = getDeploymentOrder(new Set(['ar-auth', 'ar-vc'])).flat();
+    expect(order.indexOf('ar-vc')).toBeLessThan(order.indexOf('ar-auth'));
+    // ar-vc must not wait for ar-auth (or for Management, which waits for both).
+    expect(WORKER_DEPLOYMENT_DEPENDENCIES['ar-vc']).toEqual(['ar-lib-core']);
+  });
+
   it('should require every service-binding target before ar-management', () => {
     expect(WORKER_DEPLOYMENT_DEPENDENCIES['ar-management']).toEqual(
       expect.arrayContaining(['ar-auth', 'ar-bridge', 'ar-vc'])

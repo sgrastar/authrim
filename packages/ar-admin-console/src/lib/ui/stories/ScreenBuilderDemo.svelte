@@ -123,7 +123,7 @@
 	};
 
 	function create(kind: string): LayoutPart {
-		const created = part(kind, partName(kind));
+		const created = part(kind, kind === 'divider' ? '' : partName(kind));
 		screen.value.settings = {
 			...screen.value.settings,
 			[created.id]: defaultSettings(kindDefaults(kind))

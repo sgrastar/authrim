@@ -88,6 +88,37 @@ export function statementPresentation(
 	return { kind: 'plain' };
 }
 
+/** What a `consent_widget` of the screen says by default (`consent_display`, `consent_require_scroll`). */
+export interface ConsentWidgetDefaults {
+	consent_display?: 'inline' | 'modal' | null;
+	consent_require_scroll?: boolean | null;
+}
+
+export interface ConsentItemSetting {
+	display: 'inline' | 'modal';
+	requireScroll: boolean;
+}
+
+/**
+ * How a statement's text is shown: what the Flow step's entry for it says (`text_display`,
+ * `require_scroll` on the item; the SDK's item type does not list them), else the screen's
+ * consent widget, else in place with no scroll requirement. Presentation only: which statements
+ * are asked, in which order and whether they are required is the step's, so nothing here hides
+ * or reorders an item.
+ */
+export function consentItemSetting(
+	item: object,
+	widget: ConsentWidgetDefaults | null | undefined
+): ConsentItemSetting {
+	const own = item as { text_display?: unknown; require_scroll?: unknown };
+	const display = own.text_display ?? widget?.consent_display;
+	const requireScroll = own.require_scroll ?? widget?.consent_require_scroll;
+	return {
+		display: display === 'modal' ? 'modal' : 'inline',
+		requireScroll: requireScroll === true
+	};
+}
+
 /** A version (YYYYMMDD) as a date in the reader's language; the raw value when it is not one. */
 export function formatStatementVersion(version: string, locale: string): string {
 	const match = /^(\d{4})(\d{2})(\d{2})$/u.exec(version);

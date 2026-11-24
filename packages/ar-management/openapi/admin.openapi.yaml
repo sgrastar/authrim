@@ -16228,6 +16228,33 @@ paths:
                           - button
                           - null
                         description: A link part drawn as a text link (the default) or a button.
+                      consent_display:
+                        type:
+                          - string
+                          - 'null'
+                        enum:
+                          - inline
+                          - modal
+                          - null
+                        description: >-
+                          A consent_widget part: how the text of a consent statement (one with a text
+                          of its own, not a link to a document) is shown unless the Flow step's entry
+                          for that statement says otherwise (its display). inline draws the text in a
+                          scrolling frame with the checkbox below it; modal shows an open button and
+                          the text in a dialog whose agree button ticks the box. Default inline.
+                          Which statements are asked, which are required and in which order is the
+                          Flow consent step's statements list, not the screen's. Ignored on any other
+                          part.
+                      consent_require_scroll:
+                        type:
+                          - boolean
+                          - 'null'
+                        description: >-
+                          A consent_widget part: the box can be ticked (or, in a dialog, agreed) only
+                          once the text has been scrolled to its end, unless the Flow step's entry for
+                          the statement says otherwise (its require_scroll). Default false. Kept by the
+                          Login UI only; the server records the answer, not whether the text was read,
+                          and the lightweight Login UI cannot keep it.
                       human_verification_timing:
                         type:
                           - string
@@ -16611,6 +16638,33 @@ paths:
                           - button
                           - null
                         description: A link part drawn as a text link (the default) or a button.
+                      consent_display:
+                        type:
+                          - string
+                          - 'null'
+                        enum:
+                          - inline
+                          - modal
+                          - null
+                        description: >-
+                          A consent_widget part: how the text of a consent statement (one with a text
+                          of its own, not a link to a document) is shown unless the Flow step's entry
+                          for that statement says otherwise (its display). inline draws the text in a
+                          scrolling frame with the checkbox below it; modal shows an open button and
+                          the text in a dialog whose agree button ticks the box. Default inline.
+                          Which statements are asked, which are required and in which order is the
+                          Flow consent step's statements list, not the screen's. Ignored on any other
+                          part.
+                      consent_require_scroll:
+                        type:
+                          - boolean
+                          - 'null'
+                        description: >-
+                          A consent_widget part: the box can be ticked (or, in a dialog, agreed) only
+                          once the text has been scrolled to its end, unless the Flow step's entry for
+                          the statement says otherwise (its require_scroll). Default false. Kept by the
+                          Login UI only; the server records the answer, not whether the text was read,
+                          and the lightweight Login UI cannot keep it.
                       human_verification_timing:
                         type:
                           - string

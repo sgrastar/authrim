@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+	consentItemSetting,
 	formatStatementVersion,
 	statementEmbedHref,
 	statementPageHref,
@@ -64,5 +65,43 @@ describe('statement links', () => {
 		expect(formatStatementVersion('20261113', 'en')).toBe('November 13, 2026');
 		expect(formatStatementVersion('20261113', 'ja')).toBe('2026年11月13日');
 		expect(formatStatementVersion('v1', 'en')).toBe('v1');
+	});
+});
+
+describe('consentItemSetting', () => {
+	it('shows in place without a scroll requirement unless something says so', () => {
+		expect(consentItemSetting({}, undefined)).toEqual({ display: 'inline', requireScroll: false });
+		expect(consentItemSetting({}, null)).toEqual({ display: 'inline', requireScroll: false });
+	});
+
+	it("takes the screen's consent widget as the default", () => {
+		const widget = { consent_display: 'modal' as const, consent_require_scroll: true };
+		expect(consentItemSetting({}, widget)).toEqual({ display: 'modal', requireScroll: true });
+		// An item the step did not override (null) follows the widget too.
+		expect(consentItemSetting({ text_display: null, require_scroll: null }, widget)).toEqual({
+			display: 'modal',
+			requireScroll: true
+		});
+	});
+
+	it("lets the Flow step's entry override either, in both directions", () => {
+		const widget = { consent_display: 'modal' as const, consent_require_scroll: true };
+		expect(consentItemSetting({ text_display: 'inline', require_scroll: false }, widget)).toEqual({
+			display: 'inline',
+			requireScroll: false
+		});
+		expect(consentItemSetting({ text_display: 'modal', require_scroll: true }, {})).toEqual({
+			display: 'modal',
+			requireScroll: true
+		});
+	});
+
+	it('reads nothing else as a presentation', () => {
+		expect(
+			consentItemSetting(
+				{ text_display: 'popup', require_scroll: 'yes' },
+				{ consent_display: null }
+			)
+		).toEqual({ display: 'inline', requireScroll: false });
 	});
 });
