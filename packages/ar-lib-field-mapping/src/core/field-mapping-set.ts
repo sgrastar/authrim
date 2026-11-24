@@ -1,4 +1,3 @@
-import { buildTraceEntry } from './trace';
 import { reason } from './reason-registry';
 import type {
   DiscardedRuleSummary,
@@ -112,14 +111,4 @@ function compareRules(left: FieldMappingRule, right: FieldMappingRule): number {
   }
 
   return left.id.localeCompare(right.id);
-}
-
-export function fieldMappingTraceForRule(rule: FieldMappingRule) {
-  return buildTraceEntry({
-    reason:
-      rule.action === 'deny' || rule.action === 'lock'
-        ? reason('policy.deny_locked')
-        : reason('policy.rule_selected'),
-    ruleId: rule.id,
-  });
 }

@@ -141,11 +141,7 @@ export function persistentIdentifierSettingsProblem(
   if ((p.digest !== undefined || p.encoding !== undefined) && algorithm !== 'shibboleth') {
     return 'digest_or_encoding';
   }
-  const scoped =
-    format === 'saml_pairwise_id' ||
-    format === 'saml_subject_id' ||
-    algorithm === 'simplesamlphp_pairwise_id' ||
-    algorithm === 'simplesamlphp_subject_id';
+  const scoped = format === 'saml_pairwise_id' || format === 'saml_subject_id';
   if (
     p.scope !== undefined &&
     (typeof p.scope !== 'string' || !IDENTIFIER_SCOPE_PATTERN.test(p.scope))
@@ -738,7 +734,7 @@ function normalizeArrayValue(
 }
 
 function booleanParameter(value: unknown): boolean {
-  return value === true || value === 'true';
+  return value === true;
 }
 
 function isEmptyArrayItem(value: unknown): boolean {
@@ -810,22 +806,12 @@ function textToBoolean(
     'inactive',
     'disabled',
   ]);
-  const nullValues = parseTextValueSet(parameters?.nullValues, [
-    '',
-    'null',
-    'none',
-    'n/a',
-    'unknown',
-  ]);
 
   if (trueValues.has(normalized)) {
     return true;
   }
   if (falseValues.has(normalized)) {
     return false;
-  }
-  if (nullValues.has(normalized)) {
-    return null;
   }
   return null;
 }
@@ -836,9 +822,6 @@ function parseTextValueSet(value: unknown, defaults: string[]): Set<string> {
     .split(/[\n,]+/u)
     .map((item) => item.trim().toLowerCase())
     .filter((item) => item.length > 0);
-  if (value === undefined) {
-    values.push(...defaults.map((item) => item.trim().toLowerCase()));
-  }
   return new Set(values);
 }
 
@@ -863,16 +846,13 @@ function buildJsonValue(
       continue;
     }
     const key = uniqueJsonKey(jsonBuildKey(source, keyMap), seenKeys);
-    output[key] = parseJsonText(rawValue) ?? (rawValue === undefined ? null : rawValue);
+    output[key] = parseJsonText(rawValue) ?? rawValue;
   }
   return isJsonWithinBudget(output) ? output : undefined;
 }
 
 function parseKeyMap(value: unknown): Record<string, string> {
   if (typeof value !== 'string' || value.trim().length === 0) {
-    return {};
-  }
-  if (value.length > TRANSFORM_KEY_MAP_MAX_CHARS) {
     return {};
   }
   try {
@@ -941,8 +921,6 @@ function parseJsonText(value: unknown): Record<string, unknown> | unknown[] | un
   if (typeof value !== 'string') return undefined;
   const trimmed = value.trim();
   if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return undefined;
-  if (jsonByteLength(trimmed) > TRANSFORM_JSON_MAX_BYTES)
-    throw new TransformFailure('transform.limit_exceeded');
   let parsed: unknown;
   try {
     parsed = JSON.parse(trimmed);
@@ -1088,7 +1066,7 @@ function isParameterValueValid(
         return new TextEncoder().encode(value).length <= TRANSFORM_LIMITS.tableBytes;
       if (parameter.name === 'entries') return value.length <= TRANSFORM_LIMITS.tableBytes;
       if (parameter.name === 'path') {
-        return value.length <= TRANSFORM_JSON_PATH_MAX_CHARS && parseJsonPath(value) !== null;
+        return parseJsonPath(value) !== null;
       }
       if (parameter.name === 'keyMap') {
         return value.length <= TRANSFORM_KEY_MAP_MAX_CHARS;

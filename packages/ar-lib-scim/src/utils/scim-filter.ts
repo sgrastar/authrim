@@ -147,11 +147,6 @@ class ScimFilterTokenizer {
     // Otherwise, it's an attribute path
     return { type: 'ATTRIBUTE', value };
   }
-
-  public hasMore(): boolean {
-    this.skipWhitespace();
-    return this.current !== null;
-  }
 }
 
 /**
