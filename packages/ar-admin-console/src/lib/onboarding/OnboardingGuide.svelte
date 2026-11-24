@@ -6,6 +6,7 @@
 	import { tenantScope } from '#lib/auth/tenant-scope.svelte.js';
 	import { i18n, t } from '#lib/i18n/i18n.svelte.js';
 	import { toast } from '#lib/ui/toast/toast.svelte.js';
+	import ConnectedGuideSteps from './ConnectedGuideSteps.svelte';
 	import { guide } from './guide.svelte';
 	import { saveFailedKey } from './progress.svelte';
 	import { onGuideSignal } from './signals';
@@ -13,8 +14,8 @@
 	/**
 	 * Runs the first-steps guides for the whole console: placed once in the console's layout, it
 	 * shows the step that belongs to the page after every navigation (and after a reload), hears
-	 * what pages report, and ends the guide when the tenant changes. It renders nothing itself;
-	 * Driver.js draws the popover.
+	 * what pages report, and ends the guide when the tenant changes. Driver.js draws the popover;
+	 * the list of the guide's steps, at the bottom start, is drawn here.
 	 */
 	interface Props {
 		/** Where the checklist is. */
@@ -58,3 +59,5 @@
 		untrack(() => guide.stop());
 	});
 </script>
+
+<ConnectedGuideSteps />

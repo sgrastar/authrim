@@ -9,8 +9,12 @@
 	import ProgressBar from '#lib/ui/primitives/ProgressBar.svelte';
 	import { toast } from '#lib/ui/toast/toast.svelte.js';
 	import { CHECKLIST, type ChecklistItem } from './checklist';
+	import { onDestroy } from 'svelte';
+	import { SvelteSet } from 'svelte/reactivity';
+	import { tenantScope } from '#lib/auth/tenant-scope.svelte.js';
 	import { guide } from './guide.svelte';
 	import { onboardingProgress, saveFailedKey } from './progress.svelte';
+	import { SATISFIED_BY, type Probe } from './satisfied';
 
 	/**
 	 * The first-steps checklist: things to try in a new environment, each with a guide that
@@ -26,13 +30,16 @@
 		onstop?: () => void;
 		/** The item whose guide is in progress. */
 		activeItemId?: string | null;
+		/** What tells that an item is already done in this environment (`satisfied.ts`). */
+		probes?: Readonly<Record<string, Probe>>;
 	}
 
 	let {
 		items = CHECKLIST,
 		onstart = (itemId) => guide.start(itemId),
 		onstop = () => guide.stop(),
-		activeItemId = guide.activeItemId
+		activeItemId = guide.activeItemId,
+		probes = SATISFIED_BY
 	}: Props = $props();
 
 	const done = $derived(items.filter((item) => onboardingProgress.has(item.id)).length);
@@ -40,7 +47,45 @@
 	// The one to do next gets the primary button.
 	const nextId = $derived(items.find((item) => !onboardingProgress.has(item.id))?.id ?? null);
 
+	// An item the admin has already done is checked for them, once per tenant and visit. Each item
+	// is dealt with once: whatever the admin does to it afterwards (an item that was checked
+	// already, or one they unchecked on purpose) is not undone. An answer that arrives late is
+	// dropped when it no longer belongs: another tenant is selected, the page is gone, or the
+	// admin has changed an item meanwhile.
+	const dealtWith = new SvelteSet<string>();
+	let manualChanges = 0;
+	let gone = false;
+	onDestroy(() => {
+		gone = true;
+	});
+	$effect(() => {
+		if (onboardingProgress.phase !== 'ready') return;
+		// What was read is the selected tenant's, not the one before it (read again a moment later).
+		if (onboardingProgress.stateTenant !== tenantScope.tenantId) return;
+		for (const item of items) {
+			const key = `${tenantScope.tenantId}:${item.id}`;
+			if (dealtWith.has(key)) continue;
+			dealtWith.add(key);
+			const probe = probes[item.id];
+			if (!probe || onboardingProgress.has(item.id)) continue;
+			const tenant = tenantScope.tenantId;
+			const changes = manualChanges;
+			void probe()
+				.then((satisfied) => {
+					const stale =
+						gone ||
+						tenantScope.tenantId !== tenant ||
+						manualChanges !== changes ||
+						onboardingProgress.has(item.id);
+					return satisfied && !stale ? onboardingProgress.complete(item.id) : undefined;
+				})
+				// Unreadable: the item stays as it is; the admin can still do or check it.
+				.catch(() => undefined);
+		}
+	});
+
 	async function mark(item: ChecklistItem, finished: boolean) {
+		manualChanges += 1;
 		const saved = await (finished
 			? onboardingProgress.complete(item.id)
 			: onboardingProgress.reopen(item.id));

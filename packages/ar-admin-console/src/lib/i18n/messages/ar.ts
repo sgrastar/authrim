@@ -71,7 +71,7 @@ export const ar = {
 	'nav.cluster.configure': 'الإعداد',
 	'nav.cluster.operate': 'التشغيل',
 	'nav.cluster.platform': 'المنصة',
-	'nav.overview': 'نظرة عامة',
+	'nav.overview': 'الرئيسية',
 	'nav.wip': 'Under construction',
 	'nav.users': 'المستخدمون',
 	'nav.access': 'التحكم في الوصول',

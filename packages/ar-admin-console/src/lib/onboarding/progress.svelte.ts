@@ -109,6 +109,14 @@ export const onboardingProgress = {
 	has(itemId: string): boolean {
 		return completed.includes(itemId);
 	},
+	/**
+	 * The tenant what is held belongs to. It changes when the next read or change is made for
+	 * another tenant, so until then it can differ from the selected one: what is held (`ready`
+	 * or not) is the old tenant's.
+	 */
+	get stateTenant(): string | null {
+		return tenant;
+	},
 	/** Storybook and tests: an in-memory API instead of the Admin API. */
 	use(next: OnboardingClient, tenantSource: () => string | null = selectedTenant): void {
 		client = next;

@@ -3,7 +3,8 @@
  * the person moved, and what a signal or the Next button leads to.
  */
 import type { ChecklistItem, GuideStep } from './checklist';
-import type { GuideSignal } from './signals';
+import type { MessageKey } from '#lib/i18n/i18n.svelte.js';
+import type { GuideFact, GuideSignal } from './signals';
 
 const segments = (path: string) => path.split('/').filter(Boolean);
 
@@ -64,6 +65,18 @@ export function moveOnSignal(item: ChecklistItem, index: number, signal: GuideSi
 /** Whether Back can be offered: the step before is on the same page. */
 export function canGoBack(steps: readonly GuideStep[], index: number, pathname: string): boolean {
 	return index > 0 && matchesPath(steps[index - 1].path, pathname);
+}
+
+/**
+ * What a step says in this environment: its own body and action, or the first variant whose fact
+ * holds in their place (a variant without an action keeps the step's).
+ */
+export function wordingOf(
+	step: GuideStep,
+	holds: (fact: GuideFact) => boolean
+): { body: MessageKey; action?: MessageKey } {
+	const variant = step.variants?.find((candidate) => holds(candidate.when));
+	return { body: variant?.body ?? step.body, action: variant?.action ?? step.action };
 }
 
 /** Whether the step waits for the person instead of offering Next. */
