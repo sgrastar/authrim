@@ -175,7 +175,8 @@ export async function handleBackchannelLogout(c: Context<{ Bindings: Env }>): Pr
             has_sub: Boolean(claims.sub),
             has_sid: Boolean(claims.sid),
             has_jti: Boolean(claims.jti),
-            nonce_absent: claims.nonce === undefined,
+            // a token with a nonce was refused above
+            nonce_absent: true,
           },
         })
       );
@@ -733,34 +734,25 @@ async function invalidateUserSessions(
         throw error;
       }
     }
-    const identities = accountContext
-      ? await findLinkedIdentitiesByProviderSub(
-          env,
-          tenantId,
-          providerId,
-          claims.sub,
-          accountContext.piiDb
-        )
-      : [];
-
-    for (const identity of identities) {
-      identitiesAffected++;
-
-      // Mark the linked identity as requiring re-authentication
-      // We do this by clearing the tokens
-      const updates = {
-        clearTokens: true,
-      };
-      if (accountContext) {
+    // Without a routed account there is no linked identity to look at.
+    if (accountContext) {
+      const identities = await findLinkedIdentitiesByProviderSub(
+        env,
+        tenantId,
+        providerId,
+        claims.sub,
+        accountContext.piiDb
+      );
+      for (const identity of identities) {
+        identitiesAffected++;
+        // Mark the linked identity as requiring re-authentication by clearing its tokens.
         await updateLinkedIdentity(
           env,
           identity.tenantId,
           identity.id,
-          updates,
+          { clearTokens: true },
           accountContext.piiDb
         );
-      } else {
-        throw new Error('external_idp_logout_account_route_missing');
       }
     }
   }

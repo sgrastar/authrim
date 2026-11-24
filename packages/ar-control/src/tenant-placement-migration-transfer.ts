@@ -262,10 +262,13 @@ export async function applyTenantMigrationBackfillPage(input: {
         tenantId: input.tenantId,
       });
     }
-    const query = upsertQuery(input.table, row);
+    const query = upsertQuery(input.table, row, input.tenantId, input.tenantKey);
     const result = await input.executor.queryD1(input.targetDatabaseId, query.sql, query.params);
     if (result.length !== 1 || result[0]?.success !== true) {
       throw new Error('tenant_migration_backfill_target_apply_failed');
+    }
+    if (query.guarded && result[0].meta?.changes === 0) {
+      throw new Error('tenant_migration_backfill_owner_mismatch');
     }
   }
   return input.rows.length;
@@ -444,21 +447,46 @@ async function assertParentOwner(input: {
   }
 }
 
-function upsertQuery(table: TenantMigrationTableInventory, row: Record<string, unknown>) {
+function blobLiteral(value: Uint8Array): string {
+  // The D1 REST API only accepts strings, numbers and null as parameters, so a BLOB travels as
+  // a hexadecimal literal built from bytes (never from caller text).
+  return `X'${Array.from(value, (byte) => byte.toString(16).padStart(2, '0')).join('')}'`;
+}
+
+function upsertQuery(
+  table: TenantMigrationTableInventory,
+  row: Record<string, unknown>,
+  tenantId: string,
+  tenantKey: string
+) {
   const columns = table.columns.map((column) => column.name);
   const nonPrimary = columns.filter((column) => !table.primaryKey.includes(column));
   const conflict = table.primaryKey.map(sqlIdentifier).join(', ');
+  const params: unknown[] = [];
+  const placeholders = columns.map((column) => {
+    const value = row[column];
+    if (value instanceof Uint8Array) return blobLiteral(value);
+    params.push(value);
+    return '?';
+  });
+  // An existing row of another owner must never be overwritten by a replayed or forged row.
+  const guard =
+    nonPrimary.length === 0
+      ? null
+      : `WHERE ${rowOwnershipPredicate(table.ownership, sqlIdentifier(table.table))}`;
+  if (guard !== null) params.push(...ownerParams(table.ownership, tenantId, tenantKey));
   return {
+    guarded: guard !== null,
     sql: `INSERT INTO ${sqlIdentifier(table.table)} (${columns.map(sqlIdentifier).join(', ')})
-      VALUES (${columns.map(() => '?').join(', ')})
+      VALUES (${placeholders.join(', ')})
       ON CONFLICT (${conflict}) ${
-        nonPrimary.length === 0
+        guard === null
           ? 'DO NOTHING'
           : `DO UPDATE SET ${nonPrimary
               .map((column) => `${sqlIdentifier(column)} = excluded.${sqlIdentifier(column)}`)
-              .join(', ')}`
+              .join(', ')} ${guard}`
       }`,
-    params: columns.map((column) => row[column]),
+    params,
   };
 }
 
@@ -520,13 +548,13 @@ export async function applyTenantMigrationOutboxBatch(input: {
           tenantId: input.tenantId,
         });
       }
-      const result = await input.executor.queryD1(
-        input.targetDatabaseId,
-        upsertQuery(table, row).sql,
-        upsertQuery(table, row).params
-      );
+      const query = upsertQuery(table, row, input.tenantId, input.tenantKey);
+      const result = await input.executor.queryD1(input.targetDatabaseId, query.sql, query.params);
       if (result.length !== 1 || result[0]?.success !== true) {
         throw new Error('tenant_migration_outbox_target_apply_failed');
+      }
+      if (query.guarded && result[0].meta?.changes === 0) {
+        throw new Error('tenant_migration_outbox_owner_mismatch');
       }
     } else {
       await assertDeleteOwner({

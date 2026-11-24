@@ -23,11 +23,6 @@
       "count": 2
     }
   },
-  "src/__tests__/callback.test.ts": {
-    "@typescript-eslint/no-unsafe-argument": {
-      "count": 1
-    }
-  },
   "src/__tests__/crypto.property.test.ts": {
     "@typescript-eslint/no-unsafe-return": {
       "count": 1
@@ -76,13 +71,10 @@
   },
   "src/__tests__/handoff.test.ts": {
     "@typescript-eslint/no-explicit-any": {
-      "count": 3
+      "count": 2
     },
     "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 10
-    },
-    "@typescript-eslint/no-unsafe-argument": {
-      "count": 20
+      "count": 1
     },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 4
@@ -94,7 +86,7 @@
       "count": 4
     },
     "@typescript-eslint/no-unsafe-return": {
-      "count": 2
+      "count": 1
     }
   },
   "src/__tests__/identity-stitching.test.ts": {
@@ -182,16 +174,8 @@
     }
   },
   "src/__tests__/rp-initiated-logout.test.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 6
-    },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 4
-    }
-  },
-  "src/__tests__/start.test.ts": {
-    "@typescript-eslint/no-unused-vars": {
-      "count": 1
     }
   },
   "src/__tests__/state.test.ts": {
@@ -239,7 +223,7 @@
       "count": 1
     },
     "@typescript-eslint/no-unsafe-assignment": {
-      "count": 2
+      "count": 1
     },
     "@typescript-eslint/no-unsafe-call": {
       "count": 1
@@ -298,7 +282,7 @@
   },
   "src/services/provider-store.ts": {
     "@typescript-eslint/no-unsafe-assignment": {
-      "count": 3
+      "count": 2
     }
   },
   "src/services/token-refresh.ts": {

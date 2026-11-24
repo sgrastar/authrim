@@ -204,13 +204,10 @@ async function relayCallbackToCanonicalOrigin(
     if (!handle) {
       return redirectWithError(c, 'invalid_state', 'The provider response was already received');
     }
-    return new Response(null, {
-      status: 303,
-      headers: {
-        Location: relayedCallbackUrl(providerIdOrSlug, canonicalOrigin, handle),
-        'Cache-Control': 'no-store',
-        'Referrer-Policy': 'no-referrer',
-      },
+    return c.newResponse(null, 303, {
+      Location: relayedCallbackUrl(providerIdOrSlug, canonicalOrigin, handle),
+      'Cache-Control': 'no-store',
+      'Referrer-Policy': 'no-referrer',
     });
   } catch (error) {
     log.warn('Failed to relay the provider response to the custom domain', {
@@ -562,13 +559,10 @@ async function completeExternalAuthentication(
     const redirectUrl = new URL(authState.redirectUri);
     redirectUrl.searchParams.set('handoff_token', handoffToken);
     redirectUrl.searchParams.set('state', authState.state);
-    return new Response(null, {
-      status: 302,
-      headers: {
-        Location: redirectUrl.toString(),
-        'Referrer-Policy': 'no-referrer',
-        'Cache-Control': 'no-store',
-      },
+    return c.newResponse(null, 302, {
+      Location: redirectUrl.toString(),
+      'Referrer-Policy': 'no-referrer',
+      'Cache-Control': 'no-store',
     });
   }
 
@@ -594,13 +588,10 @@ async function completeExternalAuthentication(
   });
   const redirectUrl = new URL(authState.redirectUri);
   redirectUrl.searchParams.set('code', authCode);
-  return new Response(null, {
-    status: 302,
-    headers: {
-      Location: redirectUrl.toString(),
-      'Referrer-Policy': 'no-referrer',
-      'Cache-Control': 'no-store',
-    },
+  return c.newResponse(null, 302, {
+    Location: redirectUrl.toString(),
+    'Referrer-Policy': 'no-referrer',
+    'Cache-Control': 'no-store',
   });
 }
 
@@ -679,13 +670,10 @@ async function beginExternalIdpProvisioningContinuation(
   redirect.searchParams.set('provisioning_token', token);
   redirect.searchParams.set('provisioning_tenant', continuation.authState.tenantId);
   redirect.searchParams.set('state', continuation.authState.state);
-  return new Response(null, {
-    status: 302,
-    headers: {
-      Location: redirect.toString(),
-      'Cache-Control': 'no-store',
-      'Referrer-Policy': 'no-referrer',
-    },
+  return c.newResponse(null, 302, {
+    Location: redirect.toString(),
+    'Cache-Control': 'no-store',
+    'Referrer-Policy': 'no-referrer',
   });
 }
 
@@ -956,9 +944,6 @@ export async function handleExternalProvisioningResume(
       throw new Error('external_idp_provisioning_consume_mismatch');
     }
     deleteCookie(c, continuationCookieName(loaded.digest), { path: '/' });
-    if (!completed.linkedIdentityId) {
-      throw new Error('external_idp_provisioning_provider_mismatch');
-    }
     return await completeExternalAuthentication(c, {
       authState: loaded.continuation.authState,
       provider,
@@ -1522,6 +1507,26 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
           diagnosticSessionId,
         }
       : undefined;
+    // An OpenID Connect provider is believed through its ID Token (validated against the nonce
+    // this sign-in sent): its UserInfo alone never names the person. A FAPI plain OAuth profile
+    // has no ID Token by design and reads its resource instead.
+    if (
+      provider.providerType === 'oidc' &&
+      !(fapi2Enabled && fapi2Config?.profile === 'plain_oauth')
+    ) {
+      if (!tokens.id_token) {
+        throw new ExternalIdPError(
+          ExternalIdPErrorCode.CALLBACK_FAILED,
+          'Missing ID token from OpenID Connect provider'
+        );
+      }
+      if (!authState.nonce) {
+        throw new ExternalIdPError(
+          ExternalIdPErrorCode.CALLBACK_FAILED,
+          'Missing nonce for ID token validation'
+        );
+      }
+    }
     if (provider.providerType === 'oidc' && tokens.id_token && authState.nonce) {
       if (fapi2Enabled) fapi2Stage = 'id-token';
       // Use the new options-based signature for comprehensive OIDC validation
@@ -1570,7 +1575,10 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
           resourceUrl: fapi2Config.resourceUrl,
           accessToken: tokens.access_token,
         });
-        if (idTokenSub && typeof resourceData.sub === 'string') {
+        // The resource names no other person than the validated ID Token: a subject of another
+        // type is as much a mismatch as another value.
+        if (idTokenSub && resourceData.sub !== undefined) {
+          if (typeof resourceData.sub !== 'string') throw new UserInfoSubjectMismatchError();
           assertUserInfoSubjectMatches(idTokenSub, resourceData.sub);
         }
         await recordCallbackDiagnostic(log, () =>
@@ -1583,13 +1591,11 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
             details: {
               dpop_authorization_scheme_accepted: true,
               subject_consistent:
-                !idTokenSub ||
-                typeof resourceData.sub !== 'string' ||
-                resourceData.sub === idTokenSub,
+                !idTokenSub || resourceData.sub === undefined || resourceData.sub === idTokenSub,
             },
           })
         );
-        userInfo = { ...userInfo, ...resourceData };
+        userInfo = { ...userInfo, ...resourceData, sub: userInfo.sub };
       } else if (provider.alwaysFetchUserinfo && !fapi2Client) {
         try {
           const {
@@ -1753,7 +1759,11 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
     if (isTwitterProvider(provider) && provider.providerType === 'oauth2') {
       const quirks = provider.providerQuirks as TwitterProviderQuirks | undefined;
       if (quirks?.userFields) {
-        const twitterUserInfo = await fetchTwitterUserInfo(tokens.access_token, quirks);
+        const twitterUserInfo = await fetchTwitterUserInfo(
+          tokens.access_token,
+          quirks.userFields,
+          quirks.expansions
+        );
         if (twitterUserInfo) {
           userInfo = { ...userInfo, ...twitterUserInfo };
         }
@@ -1766,8 +1776,13 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
     const inbound = await mapOIDCInboundUserInfo(c.env, authState.tenantId, provider, userInfo);
     userInfo = inbound?.userInfo ?? normalizeUserInfo(userInfo, provider.attributeMapping);
 
-    // Ensure sub is present (required for identity linking)
-    if (!userInfo.sub) {
+    // The subject must be a non-empty string (a number is taken as its text): an object or
+    // another type names no account.
+    const mappedSub: unknown = userInfo.sub;
+    if (typeof mappedSub === 'number' && Number.isFinite(mappedSub)) {
+      userInfo = { ...userInfo, sub: String(mappedSub) };
+    }
+    if (typeof userInfo.sub !== 'string' || userInfo.sub.trim() === '') {
       if (link) return redirectToLinkResult(c, link.tenantId, { linked: false, reason: 'failed' });
       return recordFailure(
         redirectWithError(
@@ -2199,13 +2214,10 @@ async function redirectToLinkResult(
   tenantId: string,
   outcome: Parameters<typeof accountPageLinkResultUrl>[2]
 ): Promise<Response> {
-  return new Response(null, {
-    status: 302,
-    headers: {
-      Location: await accountPageLinkResultUrl(c.env, tenantId, outcome),
-      'Referrer-Policy': 'no-referrer',
-      'Cache-Control': 'no-store',
-    },
+  return c.newResponse(null, 302, {
+    Location: await accountPageLinkResultUrl(c.env, tenantId, outcome),
+    'Referrer-Policy': 'no-referrer',
+    'Cache-Control': 'no-store',
   });
 }
 
@@ -2225,13 +2237,10 @@ async function redirectWithError(
   if (liteReturn) {
     const url = new URL(liteReturn);
     url.searchParams.set('error', error);
-    return new Response(null, {
-      status: 302,
-      headers: {
-        Location: url.toString(),
-        'Referrer-Policy': 'no-referrer',
-        'Cache-Control': 'no-store',
-      },
+    return c.newResponse(null, 302, {
+      Location: url.toString(),
+      'Referrer-Policy': 'no-referrer',
+      'Cache-Control': 'no-store',
     });
   }
   const tenantId = getTenantIdFromContext(c);
@@ -2256,13 +2265,10 @@ async function redirectWithError(
     redirectUrl.searchParams.set('tenant_hint', tenantId);
   }
 
-  return new Response(null, {
-    status: 302,
-    headers: {
-      Location: redirectUrl.toString(),
-      'Referrer-Policy': 'no-referrer',
-      'Cache-Control': 'no-store',
-    },
+  return c.newResponse(null, 302, {
+    Location: redirectUrl.toString(),
+    'Referrer-Policy': 'no-referrer',
+    'Cache-Control': 'no-store',
   });
 }
 
@@ -2347,7 +2353,7 @@ function normalizeUserInfo(userInfo: UserInfo, attributeMapping: Record<string, 
     const value = getNestedValue(userInfo, sourcePath);
     if (value !== undefined) {
       // Convert numbers to strings for sub (required for OIDC compatibility)
-      if (targetClaim === 'sub' && typeof value === 'number') {
+      if (targetClaim === 'sub' && typeof value === 'number' && Number.isFinite(value)) {
         (normalized as Record<string, unknown>)[targetClaim] = String(value);
       } else {
         (normalized as Record<string, unknown>)[targetClaim] = value;
@@ -2516,21 +2522,18 @@ function isFacebookProvider(provider: UpstreamProvider): boolean {
 async function fetchFacebookUserInfo(
   accessToken: string,
   appSecret: string,
-  quirks?: FacebookProviderQuirks
+  quirks: FacebookProviderQuirks
 ): Promise<Record<string, unknown> | null> {
   try {
-    const apiVersion = quirks?.apiVersion || 'v20.0';
-    const fields = quirks?.fields?.join(',') || 'id,name,email,picture.type(large)';
+    const apiVersion = quirks.apiVersion || 'v20.0';
+    const fields = quirks.fields?.join(',') || 'id,name,email,picture.type(large)';
 
     const url = new URL(`https://graph.facebook.com/${apiVersion}/me`);
     url.searchParams.set('fields', fields);
     url.searchParams.set('access_token', accessToken);
 
-    // Add app_secret_proof if enabled
-    if (quirks?.useAppSecretProof) {
-      const proof = await generateAppSecretProof(accessToken, appSecret);
-      url.searchParams.set('appsecret_proof', proof);
-    }
+    // The caller re-fetches only for a provider that asks for the app secret proof.
+    url.searchParams.set('appsecret_proof', await generateAppSecretProof(accessToken, appSecret));
 
     const data = await safeFetchJson<Record<string, unknown>>(url.toString(), {
       timeoutMs: 5000,
@@ -2572,23 +2575,20 @@ function isTwitterProvider(provider: UpstreamProvider): boolean {
  * Fetch user info from Twitter API v2 with user.fields
  *
  * @param accessToken - Twitter access token
- * @param quirks - Twitter provider quirks
+ * @param userFields - The `user.fields` the provider is configured to ask for
+ * @param expansions - The `expansions` to ask for, if any
  * @returns User info or null if failed
  */
 async function fetchTwitterUserInfo(
   accessToken: string,
-  quirks?: TwitterProviderQuirks
+  userFields: string,
+  expansions?: string
 ): Promise<Record<string, unknown> | null> {
   try {
     const url = new URL('https://api.twitter.com/2/users/me');
-
-    // Add user.fields
-    const userFields = quirks?.userFields || 'id,name,username,profile_image_url';
     url.searchParams.set('user.fields', userFields);
-
-    // Add expansions if specified
-    if (quirks?.expansions) {
-      url.searchParams.set('expansions', quirks.expansions);
+    if (expansions) {
+      url.searchParams.set('expansions', expansions);
     }
 
     const data = await safeFetchJson<Record<string, unknown>>(url.toString(), {

@@ -64,7 +64,7 @@ export async function handleListLinkedIdentities(c: Context<{ Bindings: Env }>):
   try {
     const tenantId = getTenantIdFromContext(c);
     const account = await resolveLinkedIdentityAccountContext(c.env, tenantId, session.userId);
-    const identities = await listLinkedIdentities(c.env, tenantId, session.userId, account?.piiDb);
+    const identities = await listLinkedIdentities(c.env, tenantId, session.userId, account.piiDb);
 
     // Enrich with provider names
     const enrichedIdentities = await Promise.all(
@@ -134,7 +134,7 @@ export async function handleLinkIdentity(c: Context<{ Bindings: Env }>): Promise
       tenantId,
       session.userId,
       provider.id,
-      account?.piiDb
+      account.piiDb
     );
     if (existing) {
       return c.json(
@@ -179,15 +179,13 @@ export async function handleUnlinkIdentity(c: Context<{ Bindings: Env }>): Promi
   try {
     const tenantId = getTenantIdFromContext(c);
     const account = await resolveLinkedIdentityAccountContext(c.env, tenantId, session.userId);
-    const removalDigest = account
-      ? await sha256Hex(`${tenantId}\u0000${account.accountId}\u0000${linkedIdentityId}`)
-      : undefined;
-    const removalOperationId = removalDigest
-      ? `external-idp-route-remove-${removalDigest.slice(0, 32)}`
-      : undefined;
+    const removalDigest = await sha256Hex(
+      `${tenantId}\u0000${account.accountId}\u0000${linkedIdentityId}`
+    );
+    const removalOperationId = `external-idp-route-remove-${removalDigest.slice(0, 32)}`;
     // Verify ownership
-    const identity = await getLinkedIdentityById(c.env, tenantId, linkedIdentityId, account?.piiDb);
-    if (!identity && account && removalOperationId) {
+    const identity = await getLinkedIdentityById(c.env, tenantId, linkedIdentityId, account.piiDb);
+    if (!identity) {
       const provisioner = c.env.EXTERNAL_IDP_ACCOUNT_PROVISIONER;
       if (!provisioner) throw new Error('external_idp_account_provisioner_unavailable');
       try {
@@ -225,15 +223,12 @@ export async function handleUnlinkIdentity(c: Context<{ Bindings: Env }>): Promi
         throw error;
       }
     }
-    if (!identity || identity.userId !== session.userId) {
+    if (identity.userId !== session.userId) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
     const provisioner = c.env.EXTERNAL_IDP_ACCOUNT_PROVISIONER;
     if (!provisioner) throw new Error('external_idp_account_provisioner_unavailable');
-    if (!removalDigest || !removalOperationId) {
-      throw new Error('external_idp_route_removal_operation_invalid');
-    }
 
     // Only the check and the removal run under the account's removal lease; the provider's token
     // revocation (a call to another service) waits until after. Once the removal was asked for,
@@ -297,6 +292,8 @@ export async function handleUnlinkIdentity(c: Context<{ Bindings: Env }>): Promi
       removal.accountId !== account.accountId ||
       (removal.status !== 201 && removal.status !== 202)
     ) {
+      // The removal was asked for and may have taken effect: the tokens are revoked all the same.
+      await revokeTokens();
       throw new Error('external_idp_route_removal_response_invalid');
     }
 

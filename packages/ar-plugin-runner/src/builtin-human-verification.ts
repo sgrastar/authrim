@@ -82,7 +82,7 @@ async function loadConfig(
     .first<ConfigRow>();
   if (
     !row ||
-    !(row.plugin_id in PROVIDERS) ||
+    !Object.hasOwn(PROVIDERS, row.plugin_id) ||
     PROVIDERS[row.plugin_id as ProviderId].provider !== row.provider ||
     typeof row.site_key !== 'string' ||
     row.site_key.length < 1 ||
@@ -164,6 +164,11 @@ function handler(env: PluginRunnerEnv, providerId: ProviderId): InProcessSyncHoo
     if (response.status === 429 || response.status >= 500) {
       await response.body?.cancel();
       throw new Error('plugin_sync_transient_failure');
+    }
+    if (response.status < 200 || response.status > 299) {
+      // A verdict is only trusted from a successful HTTP answer.
+      await response.body?.cancel();
+      return { decision: 'deny', reasonCode: 'verification_failed' };
     }
     let result: SiteverifyResponse;
     try {

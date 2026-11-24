@@ -17,6 +17,7 @@ import { setCookie } from 'hono/cookie';
 import type { AccountSession, Env, Session } from '@authrim/ar-lib-core';
 import {
   getSessionStoreBySessionId,
+  isShardedSessionId,
   isAccountReauthFresh,
   readAccountSession,
   resolveAccountReauthTtlSeconds,
@@ -455,7 +456,7 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
       );
     }
     const userId = link?.userId;
-    const sessionId = link?.sessionId;
+    const linkSessionId = link?.sessionId;
 
     // 3. Validate PKCE parameters from client (sign-in only)
     if (!link && !clientId) {
@@ -614,7 +615,7 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
       flowId,
       redirectUri,
       userId,
-      sessionId,
+      sessionId: linkSessionId,
       maxAge,
       acrValues,
       prompt,
@@ -639,6 +640,10 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
     const isSilentAuth = promptValues.includes('none');
 
     if (isSilentAuth) {
+      // The client's own state is what a silent answer returns, as received (RFC 6749 4.1.2);
+      // the state of this Authrim-to-provider request stays internal. A client that sent none
+      // is given the internal one, which the handoff exchange asks it to present again.
+      const returnedState = stateParam ?? state;
       // OIDC spec: prompt=none cannot be combined with other prompt values
       // example: "none login" conflicts (no user interaction vs forced login)
       if (promptValues.length > 1) {
@@ -649,35 +654,18 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
           'error_description',
           'prompt=none cannot be combined with other values'
         );
-        errorRedirectUrl.searchParams.set('state', state);
+        if (stateParam) errorRedirectUrl.searchParams.set('state', stateParam);
 
-        return new Response(null, {
-          status: 302,
-          headers: {
-            Location: errorRedirectUrl.toString(),
-            'Cache-Control': 'no-store',
-          },
+        return c.newResponse(null, 302, {
+          Location: errorRedirectUrl.toString(),
+          'Cache-Control': 'no-store',
         });
       }
 
+      // The browser's own session (its cookie) is what a silent sign-in asks about. The state
+      // keeps no session of its own: only a link names one.
+      const sessionId = readStartSessionId(c);
       log.info('Silent Auth: prompt=none detected', { sessionId });
-
-      // PKCE requirement check (Authrim requires PKCE for all codes)
-      if (!codeChallenge) {
-        log.error('Silent Auth: Missing code_challenge', { clientId });
-        const errorRedirectUrl = new URL(redirectUri);
-        errorRedirectUrl.searchParams.set('error', 'invalid_request');
-        errorRedirectUrl.searchParams.set('error_description', 'code_challenge is required');
-        errorRedirectUrl.searchParams.set('state', state);
-
-        return new Response(null, {
-          status: 302,
-          headers: {
-            Location: errorRedirectUrl.toString(),
-            'Cache-Control': 'no-store',
-          },
-        });
-      }
 
       // Check SSO settings
       // Priority: Client KV > Tenant KV > Client ENV > Tenant ENV > Default (provider.enableSso)
@@ -781,16 +769,11 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
         const errorRedirectUrl = new URL(redirectUri);
         errorRedirectUrl.searchParams.set('error', 'login_required');
         errorRedirectUrl.searchParams.set('error_description', 'SSO is disabled for this client');
-        if (stateParam) {
-          errorRedirectUrl.searchParams.set('state', stateParam);
-        }
+        if (stateParam) errorRedirectUrl.searchParams.set('state', stateParam);
 
-        return new Response(null, {
-          status: 302,
-          headers: {
-            Location: errorRedirectUrl.toString(),
-            'Cache-Control': 'no-store',
-          },
+        return c.newResponse(null, 302, {
+          Location: errorRedirectUrl.toString(),
+          'Cache-Control': 'no-store',
         });
       }
 
@@ -801,20 +784,17 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
         const errorRedirectUrl = new URL(redirectUri);
         errorRedirectUrl.searchParams.set('error', 'login_required');
         errorRedirectUrl.searchParams.set('error_description', 'Authentication required');
-        errorRedirectUrl.searchParams.set('state', state);
+        if (stateParam) errorRedirectUrl.searchParams.set('state', stateParam);
 
-        return new Response(null, {
-          status: 302,
-          headers: {
-            Location: errorRedirectUrl.toString(),
-            'Cache-Control': 'no-store',
-          },
+        return c.newResponse(null, 302, {
+          Location: errorRedirectUrl.toString(),
+          'Cache-Control': 'no-store',
         });
       }
 
       // Check session validity
       const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId, tenantIdResolved);
-      const session: Session | null = await sessionStore.getSessionRpc(sessionId);
+      const session = (await sessionStore.getSessionRpc(sessionId)) as Session | null;
 
       if (!session) {
         // Invalid session → error=login_required
@@ -822,14 +802,35 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
         const errorRedirectUrl = new URL(redirectUri);
         errorRedirectUrl.searchParams.set('error', 'login_required');
         errorRedirectUrl.searchParams.set('error_description', 'Authentication required');
-        errorRedirectUrl.searchParams.set('state', state);
+        if (stateParam) errorRedirectUrl.searchParams.set('state', stateParam);
 
-        return new Response(null, {
-          status: 302,
-          headers: {
-            Location: errorRedirectUrl.toString(),
-            'Cache-Control': 'no-store',
-          },
+        return c.newResponse(null, 302, {
+          Location: errorRedirectUrl.toString(),
+          'Cache-Control': 'no-store',
+        });
+      }
+
+      // Only a full, current session answers silently, and one no older than max_age (OIDC Core
+      // 3.1.2.1; as the authorize endpoint decides it): anything else needs the user's attention.
+      const nowSeconds = Math.floor(Date.now() / 1000);
+      const sessionAuthTime =
+        typeof session.data?.authTime === 'number'
+          ? session.data.authTime
+          : Math.floor(session.createdAt / 1000);
+      if (
+        session.expiresAt <= Date.now() ||
+        session.data?.is_guest_session === true ||
+        (maxAge !== undefined && (maxAge === 0 || nowSeconds - sessionAuthTime > maxAge))
+      ) {
+        log.info('Silent Auth: session not usable for a silent sign-in', { sessionId });
+        const errorRedirectUrl = new URL(redirectUri);
+        errorRedirectUrl.searchParams.set('error', 'login_required');
+        errorRedirectUrl.searchParams.set('error_description', 'Authentication required');
+        if (stateParam) errorRedirectUrl.searchParams.set('state', stateParam);
+
+        return c.newResponse(null, 302, {
+          Location: errorRedirectUrl.toString(),
+          'Cache-Control': 'no-store',
         });
       }
 
@@ -846,14 +847,11 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
         const errorRedirectUrl = new URL(redirectUri);
         errorRedirectUrl.searchParams.set('error', 'invalid_request');
         errorRedirectUrl.searchParams.set('error_description', 'Authentication request expired');
-        errorRedirectUrl.searchParams.set('state', state);
+        if (stateParam) errorRedirectUrl.searchParams.set('state', stateParam);
 
-        return new Response(null, {
-          status: 302,
-          headers: {
-            Location: errorRedirectUrl.toString(),
-            'Cache-Control': 'no-store',
-          },
+        return c.newResponse(null, 302, {
+          Location: errorRedirectUrl.toString(),
+          'Cache-Control': 'no-store',
         });
       }
 
@@ -883,7 +881,7 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
           ttl: 30, // 30 seconds
           metadata: {
             client_id: clientId,
-            state,
+            state: returnedState,
             aud: 'handoff',
             created_at: Date.now(),
           },
@@ -892,15 +890,12 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
         // Redirect to the RP (with handoff token)
         const successRedirectUrl = new URL(redirectUri);
         successRedirectUrl.searchParams.set('handoff_token', handoffToken);
-        successRedirectUrl.searchParams.set('state', state);
+        successRedirectUrl.searchParams.set('state', returnedState);
 
-        return new Response(null, {
-          status: 302,
-          headers: {
-            Location: successRedirectUrl.toString(),
-            'Referrer-Policy': 'no-referrer',
-            'Cache-Control': 'no-store',
-          },
+        return c.newResponse(null, 302, {
+          Location: successRedirectUrl.toString(),
+          'Referrer-Policy': 'no-referrer',
+          'Cache-Control': 'no-store',
         });
       } else {
         // When SSO is disabled: issue an authorization code
@@ -909,7 +904,8 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
           c.env,
           tenantId,
           validSession.userId,
-          codeChallenge,
+          // The sign-in guard above refuses a start without one (a silent start is never a link).
+          codeChallenge as string,
           {
             method: 'silent_auth',
             provider: provider.id,
@@ -923,14 +919,11 @@ export async function handleExternalStart(c: Context<{ Bindings: Env }>): Promis
 
         const successRedirectUrl = new URL(redirectUri);
         successRedirectUrl.searchParams.set('code', authCode);
-        successRedirectUrl.searchParams.set('state', state);
+        successRedirectUrl.searchParams.set('state', returnedState);
 
-        return new Response(null, {
-          status: 302,
-          headers: {
-            Location: successRedirectUrl.toString(),
-            'Cache-Control': 'no-store',
-          },
+        return c.newResponse(null, 302, {
+          Location: successRedirectUrl.toString(),
+          'Cache-Control': 'no-store',
         });
       }
     }
@@ -1283,6 +1276,19 @@ function getClientIp(c: Context<{ Bindings: Env }>): string {
 /**
  * The browser's account session (cookie only), or null when there is none or it cannot be read.
  */
+/** The session id in the browser's `authrim_session` cookie, when it is a sharded session id. */
+function readStartSessionId(c: Context<{ Bindings: Env }>): string | undefined {
+  const raw = c.req.header('Cookie')?.match(/(?:^|;\s*)authrim_session=([^;]+)/)?.[1];
+  if (!raw) return undefined;
+  let sessionId: string;
+  try {
+    sessionId = decodeURIComponent(raw);
+  } catch {
+    return undefined;
+  }
+  return isShardedSessionId(sessionId) ? sessionId : undefined;
+}
+
 async function readStartSession(
   c: Context<{ Bindings: Env }>,
   tenantId: string

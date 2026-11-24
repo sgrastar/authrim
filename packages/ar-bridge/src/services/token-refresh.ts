@@ -258,10 +258,6 @@ async function refreshExpiringTokensForTenantWithConfig(
     config.piiShardPageSize
   );
 
-  if (expiringIdentities.length === 0) {
-    return 0;
-  }
-
   let refreshedCount = 0;
 
   for (const candidate of expiringIdentities) {
@@ -310,13 +306,49 @@ export async function refreshExpiringTokensForScheduledTenants(
     };
   }
 
-  const cursorBefore = await getTokenRefreshCursor(env);
+  // A missing cursor starts from the first tenant; a cursor that cannot be read ends the run as
+  // failed with the stored cursor kept (starting over would rewind the progress, and the next
+  // write would overwrite the cursor).
+  const cursorRead = await readTokenRefreshCursor(env);
+  const cursorBefore = cursorRead.ok ? cursorRead.cursor : null;
   const runId = await startTokenRefreshRun(env, {
     triggerType: 'scheduled',
     config,
     cursorBefore,
   });
-  const tenantIds = await listNextTokenRefreshTenantIds(env, config.scheduledTenantBatchSize);
+  if (!cursorRead.ok) {
+    log.error('Scheduled token refresh skipped: the tenant cursor could not be read', {
+      errorName: cursorRead.error instanceof Error ? cursorRead.error.name : 'UnknownError',
+    });
+    if (runId) {
+      await finishTokenRefreshRun(env, {
+        runId,
+        triggerType: 'scheduled',
+        config,
+        selectedTenants: [],
+        tenantResults: [],
+        tokensRefreshed: 0,
+        cursorBefore: null,
+        cursorAfter: null,
+        errorMessage: 'token_refresh_cursor_unavailable',
+      });
+    }
+    return {
+      runId,
+      selectedTenants: [],
+      processedTenants: 0,
+      failedTenants: 0,
+      tokensRefreshed: 0,
+      cursorBefore: null,
+      cursor: null,
+      tenantResults: [],
+    };
+  }
+  const tenantIds = await listNextTokenRefreshTenantIds(
+    env,
+    cursorBefore,
+    config.scheduledTenantBatchSize
+  );
   let tokensRefreshed = 0;
   let processedTenants = 0;
   let failedTenants = 0;
@@ -383,8 +415,12 @@ export async function refreshExpiringTokensForScheduledTenants(
   };
 }
 
-async function listNextTokenRefreshTenantIds(env: Env, batchSize: number): Promise<string[]> {
-  const cursor = (await env.SETTINGS?.get(TOKEN_REFRESH_TENANT_CURSOR_KEY)) ?? null;
+/** The cursor is the one read (failure-tolerantly) before the run was recorded: one read, one value. */
+async function listNextTokenRefreshTenantIds(
+  env: Env,
+  cursor: string | null,
+  batchSize: number
+): Promise<string[]> {
   const page = await listEnvironmentTenantDefaultStores(env, {
     limit: batchSize,
     afterTenantId: cursor ?? undefined,
@@ -687,11 +723,13 @@ function normalizePositiveInteger(value: unknown, fallback: number, max?: number
   return typeof max === 'number' ? Math.min(normalized, max) : normalized;
 }
 
-async function getTokenRefreshCursor(env: Env): Promise<string | null> {
+async function readTokenRefreshCursor(
+  env: Env
+): Promise<{ ok: true; cursor: string | null } | { ok: false; error: unknown }> {
   try {
-    return (await env.SETTINGS?.get(TOKEN_REFRESH_TENANT_CURSOR_KEY)) ?? null;
-  } catch {
-    return null;
+    return { ok: true, cursor: (await env.SETTINGS?.get(TOKEN_REFRESH_TENANT_CURSOR_KEY)) ?? null };
+  } catch (error) {
+    return { ok: false, error };
   }
 }
 

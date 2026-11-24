@@ -215,7 +215,7 @@ async function fixture(
     tenantId: TENANT,
     slug: 'corp',
     name: 'Fixture IdP',
-    providerType: 'oidc',
+    providerType: 'oauth2',
     enabled: true,
     priority: 0,
     issuer: 'https://idp.example.com',

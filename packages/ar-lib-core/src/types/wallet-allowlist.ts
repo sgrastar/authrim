@@ -19,6 +19,12 @@ export interface WalletAllowlistEntry {
   enabled: boolean;
   /** Roots a client attestation's chain may end at. */
   attestationRoots: WalletAttestationAnchor[];
+  /**
+   * Lower-case hex SHA-256 of leaf certificates a client attestation may be signed with. When
+   * set, the attestation's leaf must be one of them as well as chain to a root, so a root that
+   * issues certificates to other parties does not vouch for all of them. Empty: roots only.
+   */
+  attestationLeafSha256: string[];
   /** Roots a key attestation's chain may end at (used by the credential endpoint, S3). */
   keyAttestationRoots: WalletAttestationAnchor[];
   /** Redirect URIs the wallet may use (https app links or a registered custom scheme). */
