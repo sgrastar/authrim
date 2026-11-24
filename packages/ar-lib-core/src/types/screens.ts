@@ -279,6 +279,11 @@ export interface AccountPageScreenPlacement {
   enabled: boolean;
   condition: AccountPageVisibilityCondition;
   show_for_guests: boolean;
+  /**
+   * For a screen with the launcher widget: the launchers the slot shows, by id. Absent, the slot
+   * shows every launcher the user may see; present, only those (an empty list shows none).
+   */
+  launcher_ids?: string[];
 }
 
 export interface AccountPageLocalization {

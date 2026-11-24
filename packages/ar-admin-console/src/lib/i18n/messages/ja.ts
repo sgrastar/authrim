@@ -19,6 +19,7 @@ import { jaAdminAudit } from './admin-audit/ja';
 import { jaUserAudit } from './user-audit/ja';
 import { jaTeam } from './team/ja';
 import { jaIpAllowlist } from './ip-allowlist/ja';
+import { jaAccountPages } from './account-pages/ja';
 import { jaMachineAccess } from './machine-access/ja';
 import { jaTenants } from './tenants/ja';
 import { jaAuthMethods } from './auth-methods/ja';
@@ -55,6 +56,7 @@ export const ja = {
 	...jaUserAudit,
 	...jaTeam,
 	...jaIpAllowlist,
+	...jaAccountPages,
 	...jaMachineAccess,
 	...jaTenants,
 	...jaAuthMethods,
@@ -72,7 +74,7 @@ export const ja = {
 	'nav.cluster.configure': '設定',
 	'nav.cluster.operate': '運用',
 	'nav.cluster.platform': 'プラットフォーム',
-	'nav.overview': '概要',
+	'nav.overview': 'トップ',
 	'nav.wip': '工事中',
 	'nav.users': 'ユーザー',
 	'nav.access': 'アクセス制御',
@@ -346,6 +348,15 @@ export const ja = {
 	'login.error.unsupported': 'この端末ではパスキーを使えません。',
 	'login.error.security': '安全な接続（HTTPS）で開いているか確認してください。',
 	'login.error.generic': '予期しないエラーが発生しました。',
+	'login.wallet.divider': 'または',
+	'login.wallet.sameDevice': 'このデバイスのウォレットを開く',
+	'login.wallet.completing': 'ログインを完了しています…',
+	'login.wallet.back': 'ログイン画面へ戻る',
+	'login.error.walletFailed': 'ウォレットでのログインに失敗しました。もう一度お試しください。',
+	'login.error.walletExpired':
+		'ウォレットでのログインの有効期限が切れました。最初からやり直してください。',
+	'login.error.walletNotAllowed': 'この管理者はウォレットでログインできません。',
+	'login.error.walletUnavailable': 'このテナントではウォレットでのログインを利用できません。',
 	'join.title': '管理者として参加',
 	'join.subtitle': '招待メールに書かれたメールアドレスと招待コードを入力してください。',
 	'join.email': 'メールアドレス',

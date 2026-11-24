@@ -1,10 +1,11 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import type { IpAllowlistAccess } from '#lib/access/access.js';
-	import type {
-		IpAllowlist,
-		IpAllowlistClient,
-		IpAllowlistEntry
+	import {
+		isLockoutRefusal,
+		type IpAllowlist,
+		type IpAllowlistClient,
+		type IpAllowlistEntry
 	} from '#lib/api/admin-ip-allowlist.js';
 	import { ApiError } from '#lib/api/api-error.js';
 	import { i18n, t, type MessageKey } from '#lib/i18n/i18n.svelte.js';
@@ -107,23 +108,40 @@
 		editing = { entry: target };
 	}
 
+	/**
+	 * Holds a change for the administrator to accept being locked out. `run` is the change again
+	 * with the override, so the API lets it through.
+	 */
+	function holdLockout(run: () => Promise<void>) {
+		held = {
+			title: t('ip.lock.title'),
+			body: lockBody(),
+			confirmLabel: t('ip.lock.confirm'),
+			tone: 'danger',
+			run
+		};
+	}
+
 	async function save(value: { ip_range: string; description: string }) {
 		if (busy) return;
 		const target = editing?.entry ?? null;
 		const after = target
 			? withChange(entries, { kind: 'edit', id: target.id, ip_range: value.ip_range })
 			: withChange(entries, { kind: 'add', entry: { ip_range: value.ip_range, enabled: true } });
-		const run = async () => {
+		const attempt = async (allowLockout: boolean) => {
 			saving = true;
 			saveError = '';
 			try {
-				if (target) await client.update(target.id, value);
-				else await client.create(value);
+				if (target) await client.update(target.id, value, { allowLockout });
+				else await client.create(value, { allowLockout });
 				editing = null;
 				toast.success(t(target ? 'ip.toast.saved' : 'ip.toast.added'));
 				await load(true);
 			} catch (failure) {
-				if (failure instanceof ApiError && failure.status === 404) {
+				if (isLockoutRefusal(failure)) {
+					// The API judged it would lock the administrator out (this page did not).
+					holdLockout(() => attempt(true));
+				} else if (failure instanceof ApiError && failure.status === 404) {
 					// Someone else deleted it: nothing is left to edit. Hold every change until the
 					// list is read again, so no one is judged against the old one.
 					editing = null;
@@ -136,17 +154,8 @@
 				saving = false;
 			}
 		};
-		if (locksOut(entries, after, currentIp)) {
-			held = {
-				title: t('ip.lock.title'),
-				body: lockBody(),
-				confirmLabel: t('ip.lock.confirm'),
-				tone: 'danger',
-				run
-			};
-			return;
-		}
-		await run();
+		if (locksOut(entries, after, currentIp)) holdLockout(() => attempt(true));
+		else await attempt(false);
 	}
 
 	// ---- Switch on and off, delete ----
@@ -154,14 +163,19 @@
 	/** A change, or the reload after one, is still running: nothing else is changed meanwhile. */
 	const busy = $derived(saving || working);
 
-	async function act(run: () => Promise<void>, done: MessageKey) {
+	async function act(
+		run: (allowLockout: boolean) => Promise<void>,
+		done: MessageKey,
+		allowLockout = false
+	) {
 		if (working) return;
 		working = true;
 		try {
-			await run();
+			await run(allowLockout);
 			toast.success(t(done));
 		} catch (failure) {
-			toast.error(t(failureKey(failure)));
+			if (isLockoutRefusal(failure)) holdLockout(() => act(run, done, true));
+			else toast.error(t(failureKey(failure)));
 		} finally {
 			await load(true);
 			working = false;
@@ -171,24 +185,19 @@
 	function toggle(entry: IpAllowlistEntry) {
 		if (busy) return;
 		const enabled = !entry.enabled;
-		const run = () =>
+		const lock = locksOut(
+			entries,
+			withChange(entries, { kind: 'enabled', id: entry.id, enabled }),
+			currentIp
+		);
+		const run = (allowLockout: boolean) =>
 			act(
-				() => client.setEnabled(entry.id, enabled),
-				enabled ? 'ip.toast.enabled' : 'ip.toast.disabled'
+				(allow) => client.setEnabled(entry.id, enabled, { allowLockout: allow }),
+				enabled ? 'ip.toast.enabled' : 'ip.toast.disabled',
+				allowLockout
 			);
-		if (
-			locksOut(entries, withChange(entries, { kind: 'enabled', id: entry.id, enabled }), currentIp)
-		) {
-			held = {
-				title: t('ip.lock.title'),
-				body: lockBody(),
-				confirmLabel: t('ip.lock.confirm'),
-				tone: 'danger',
-				run
-			};
-		} else {
-			void run();
-		}
+		if (lock) holdLockout(() => run(true));
+		else void run(false);
 	}
 
 	function remove(entry: IpAllowlistEntry) {
@@ -203,7 +212,8 @@
 				.join(' '),
 			confirmLabel: lock ? t('ip.lock.confirm') : t('ip.delete.confirm'),
 			tone: 'danger',
-			run: () => act(() => client.remove(entry.id), 'ip.toast.deleted')
+			run: () =>
+				act((allow) => client.remove(entry.id, { allowLockout: allow }), 'ip.toast.deleted', lock)
 		};
 	}
 

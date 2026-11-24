@@ -327,7 +327,9 @@
 		{/snippet}
 	</KeyringCredentials>
 
-	<SecurityKeys client={httpSecondFactors} />
+	<div data-guide="second-factors">
+		<SecurityKeys client={httpSecondFactors} />
+	</div>
 
 	<RecoveryRequests
 		client={httpSecondFactors}

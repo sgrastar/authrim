@@ -1,11 +1,11 @@
 import type { jaOnboarding } from './ja';
 
 export const enOnboarding: Record<keyof typeof jaOnboarding, string> = {
-	'ob.title': 'First steps',
+	'ob.title': 'Authrim 101',
 	'ob.lead':
-		'A few things to try in a new environment. Start a guide to go to its page and be shown, step by step, where to work.',
+		'Introductory lessons for getting started with Authrim. Start a guide to go to its page and be shown, step by step, where to work.',
 	'ob.progress': '{done} of {total} done',
-	'ob.progressLabel': 'First steps progress',
+	'ob.progressLabel': 'Authrim 101 progress',
 	'ob.allDone': 'All done. You can watch any guide again.',
 	'ob.loadFailed': 'Could not load your progress.',
 	'ob.saveFailed': 'Could not save your progress.',
@@ -114,5 +114,51 @@ export const enOnboarding: Record<keyof typeof jaOnboarding, string> = {
 		'The settings of the part you added. Under where it is saved, choose any attribute you like to keep the entered value in.',
 	'ob.screens.s5.title': 'Save',
 	'ob.screens.s5.body': 'Arrange and set the parts however you like.',
-	'ob.screens.s5.action': 'Press Save when you are done. The guide ends there.'
+	'ob.screens.s5.action': 'Press Save when you are done. The guide ends there.',
+
+	'ob.secondFactor.title': 'Register a second factor',
+	'ob.secondFactor.desc':
+		'Register the second way to prove who you are that important operations ask for.',
+	'ob.secondFactor.menu.title': 'The account menu',
+	'ob.secondFactor.menu.body':
+		'Your own sign-in methods and your second factors are managed in Personal settings, which you open from the account menu at the top right.',
+	'ob.secondFactor.menu.action': 'Press the account icon.',
+	'ob.secondFactor.settings.title': 'Personal settings',
+	'ob.secondFactor.settings.body': 'From here you can go to the page of your own settings.',
+	'ob.secondFactor.settings.action': 'Press “Personal settings”.',
+	'ob.secondFactor.settings.fallback': 'The menu closed. Press the account icon again.',
+	'ob.secondFactor.keys.title': 'Your second factor',
+	'ob.secondFactor.keys.body':
+		'Besides signing in with a passkey, important operations such as rotating a key or changing an administrator’s role ask for one more way to prove who you are. You register it in this box. You can register a security key.',
+	'ob.secondFactor.keys.bodyTotp':
+		'Besides signing in with a passkey, important operations such as rotating a key or changing an administrator’s role ask for one more way to prove who you are. You register it in this box. You can register a security key or, in this environment, an authenticator app on your phone (TOTP).',
+	'ob.secondFactor.add.title': 'Register one',
+	'ob.secondFactor.add.body': 'Use these buttons to register a second factor.',
+	'ob.secondFactor.add.bodyTotp':
+		'Use these buttons to register either a security key or an authenticator app (TOTP). For an authenticator app you scan the QR code shown and type the 6-digit number the app displays.',
+	'ob.secondFactor.add.action':
+		'Go through the registration to the end. The guide finishes when it succeeds.',
+	'ob.secondFactor.keys.bodyBlocked':
+		'Besides signing in with a passkey, important operations such as rotating a key or changing an administrator’s role ask for one more way to prove who you are. You manage it in this box. Right now nothing new can be registered from it (the period for registering has passed, or a recovery is pending).',
+	'ob.secondFactor.add.bodyBlocked':
+		'This box shows no registration button right now, so you cannot practise registering a second factor here.',
+	'ob.secondFactor.add.actionBlocked':
+		'Close the guide. You can mark this item as done by hand from the list.',
+
+	'ob.steps.label': 'Steps of {name}',
+	'ob.steps.progress': 'Progress of {name}',
+
+	'ob.signIn.s1.label': 'Finding Tenant',
+	'ob.theme.nav.label': 'Finding Customization',
+	'ob.schema.nav.label': 'Finding Access Control',
+	'ob.screens.nav.label': 'Finding Customization',
+	'ob.theme.sub.label': 'Finding Themes',
+	'ob.theme.s2.label': 'Finding Layout',
+	'ob.theme.s3.label': 'Finding Look',
+	'ob.theme.s4.label': 'Finding Background images',
+	'ob.theme.s6.label': 'Saving the theme you made',
+	'ob.schema.sub.label': 'Finding Attribute schema',
+	'ob.screens.sub.label': 'Finding Screens',
+	'ob.screens.s5.label': 'Saving the screen you made',
+	'ob.secondFactor.settings.label': 'Finding Personal settings'
 };

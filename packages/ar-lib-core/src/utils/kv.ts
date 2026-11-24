@@ -23,6 +23,7 @@ import { KV_MIN_TTL_SECONDS } from './kv-ttl';
 import { createCompatibilityError } from './errors';
 import { readResponseTextWithLimit } from './url-security';
 import { CanonicalRuntimeUserStore } from '../repositories/identity';
+import { resolveWalletClient } from '../vc/wallet-allowlist-read';
 
 /** User cache lifetime unless USER_CACHE_TTL sets one (it includes PII). */
 const DEFAULT_USER_CACHE_TTL_SECONDS = 3600;
@@ -1067,9 +1068,10 @@ export async function getClient(
 
   if (!result) {
     // A wallet type on the tenant's allowlist is a client that is never stored (design D, S2).
-    // Loaded on demand: the allowlist module depends on pieces that depend on this one.
+    // The read side of the allowlist is a module of its own so this import can be static: a dynamic
+    // import here made the bundler wrap hundreds of modules in lazy initialisers, and workers that
+    // bundle zod then failed at start-up (Cloudflare 10021).
     if (options.storedOnly || !(env.SETTINGS ?? env.AUTHRIM_CONFIG)) return null;
-    const { resolveWalletClient } = await import('../vc/wallet-allowlist');
     return resolveWalletClient(env, tenantId, clientId, options);
   }
   if (!options.includeDisabled && result.enabled === 0) {

@@ -55,6 +55,18 @@ export const VC_RATE_LIMITS: ReadonlyArray<{
     endpointClass: 'vp_admin_request',
   },
   {
+    path: '/vp/login/response',
+    endpoint: '/vp/login/response',
+    profile: 'moderate',
+    endpointClass: 'vp_login_response',
+  },
+  {
+    path: '/vp/login/request/*',
+    endpoint: '/vp/login/request/',
+    profile: 'moderate',
+    endpointClass: 'vp_login_request',
+  },
+  {
     path: '/vp/response',
     endpoint: '/vp/response',
     profile: 'lenient',

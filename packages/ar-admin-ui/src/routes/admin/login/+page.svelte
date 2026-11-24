@@ -8,6 +8,7 @@
 		resolveAdminAgentLoginHandoffId,
 		resolveAdminLoginReturnTo
 	} from '#lib/admin/admin-login-return.js';
+	import AdminWalletLogin from '#lib/components/admin/AdminWalletLogin.svelte';
 	import { adminAuth } from '#lib/stores/admin-auth.svelte.js';
 	import { adminBrandStore } from '#lib/stores/admin-brand.svelte.js';
 	import { themeStore, type ThemeMode } from '#lib/stores/theme.svelte.js';
@@ -99,6 +100,11 @@
 		}
 	});
 
+	async function handleWalletSignedIn(): Promise<void> {
+		await withAdminLoginTimeout(adminAuth.checkAuth(), ADMIN_API_TIMEOUT_MS);
+		await resumeAfterLogin();
+	}
+
 	async function handlePasskeyLogin() {
 		error = '';
 		loading = true;
@@ -177,6 +183,8 @@
 					<span>{$LL.admin_login_with_passkey()}</span>
 				{/if}
 			</button>
+
+			<AdminWalletLogin onSignedIn={handleWalletSignedIn} disabled={loading} />
 
 			<p class="login-hint">{$LL.admin_login_hint()}</p>
 

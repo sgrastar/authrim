@@ -133,6 +133,30 @@ describe('devMockOnly', () => {
 	});
 });
 
+describe('buildProxyHeaders wallet login cookie', () => {
+	function build(pathname: string) {
+		const event = {
+			url: new URL(`https://mt-ar-admin-ui.pages.dev${pathname}`),
+			request: new Request(`https://mt-ar-admin-ui.pages.dev${pathname}`, {
+				headers: {
+					Host: 'mt-ar-admin-ui.pages.dev',
+					Cookie:
+						'theme=dark; authrim_admin_wallet_login=binding-1; authrim_admin_session=session-123'
+				}
+			}),
+			getClientAddress: () => '203.0.113.10'
+		} as unknown as Parameters<typeof buildProxyHeaders>[0];
+		return buildProxyHeaders(event, 'multi-tenant.authrim.com', 'https://api.authrim.example');
+	}
+
+	it('forwards the wallet login binding cookie to the wallet login routes only', () => {
+		expect(build('/api/admin/auth/wallet-login/status').get('Cookie')).toBe(
+			'authrim_admin_wallet_login=binding-1; authrim_admin_session=session-123'
+		);
+		expect(build('/api/admin/stats').get('Cookie')).toBe('authrim_admin_session=session-123');
+	});
+});
+
 describe('securityHeaders', () => {
 	it('marks HTML shell responses as non-cacheable', async () => {
 		const resolve = vi.fn(

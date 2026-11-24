@@ -245,6 +245,31 @@
 </Story>
 
 <Story
+	name="The API holds a change this page did not"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const body = within(canvasElement.ownerDocument.body);
+		toast.dismissAll();
+		await canvas.findByText(t('ip.status.active.title'));
+		// Switching off a range that is not the one holding the administrator: the page lets it
+		// through, the API refuses it, and the same confirmation opens.
+		await userEvent.click(
+			canvas.getByRole('button', { name: t('ip.col.actionsFor', { range: '198.51.100.17' }) })
+		);
+		await userEvent.click(await body.findByRole('menuitem', { name: t('ip.action.disable') }));
+		await body.findByText(t('ip.lock.title'));
+		await userEvent.click(body.getByRole('button', { name: t('ip.lock.confirm') }));
+		await body.findByText(t('ip.toast.disabled'));
+		await waitForSettledToasts();
+	}}
+>
+	{#snippet template()}
+		<Toaster />
+		<IpAllowlistPage client={fakeIpAllowlist({ lockout: ['setEnabled'] })} access={everything} />
+	{/snippet}
+</Story>
+
+<Story
 	name="Check an address"
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);

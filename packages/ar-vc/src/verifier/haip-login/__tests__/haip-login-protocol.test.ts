@@ -10,7 +10,7 @@ import {
   SignJWT,
   type JWK,
 } from 'jose';
-import { buildCertificate, bytesToBase64 } from '@authrim/ar-lib-core';
+import { buildCertificate, bytesToBase64, haipLoginRequestShape } from '@authrim/ar-lib-core';
 import {
   buildHaipLoginRequestPayload,
   decryptHaipLoginResponse,
@@ -297,6 +297,10 @@ describe('the signed request object', () => {
         },
       ],
     });
+    // What this builds is exactly what KeyManager is willing to sign (with a real-length nonce).
+    expect(
+      haipLoginRequestShape({ ...payload, nonce: 'n'.repeat(43), state: 's'.repeat(43) }, NOW)
+    ).toMatchObject({ clientHash: clientId.slice('x509_hash:'.length) });
     const jwt = await signHaipLoginRequestObject(payload, fx.verifierChain, fx.verifier.privateKey);
     expect(decodeProtectedHeader(jwt)).toMatchObject({
       alg: 'ES256',

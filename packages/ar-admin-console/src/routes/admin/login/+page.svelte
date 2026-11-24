@@ -7,6 +7,7 @@
 		resolveAdminAgentLoginHandoffId,
 		resolveAdminLoginReturnTo
 	} from '#lib/auth/admin-login-return.js';
+	import WalletLogin from '#lib/auth/WalletLogin.svelte';
 	import { AdminLoginTimeoutError, withAdminLoginTimeout } from '#lib/auth/admin-login-timeout.js';
 	import {
 		leaveForNoticeIfTenantDeleted,
@@ -95,6 +96,7 @@
 	<Button variant="primary" icon="fingerprint" block {loading} onclick={signIn}>
 		{loading ? t('login.authenticating') : t('login.passkey')}
 	</Button>
+	<WalletLogin disabled={loading} />
 	<Callout>{t('login.hint')}</Callout>
 	{#snippet footer()}
 		<LanguageSwitch />

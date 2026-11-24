@@ -20,6 +20,7 @@ import { arAdminAudit } from './admin-audit/ar';
 import { arUserAudit } from './user-audit/ar';
 import { arTeam } from './team/ar';
 import { arIpAllowlist } from './ip-allowlist/ar';
+import { arAccountPages } from './account-pages/ar';
 import { arMachineAccess } from './machine-access/ar';
 import { arTenants } from './tenants/ar';
 import { arAuthMethods } from './auth-methods/ar';
@@ -52,6 +53,7 @@ export const ar = {
 	...arUserAudit,
 	...arTeam,
 	...arIpAllowlist,
+	...arAccountPages,
 	...arMachineAccess,
 	...arTenants,
 	...arAuthMethods,
@@ -69,7 +71,7 @@ export const ar = {
 	'nav.cluster.configure': 'الإعداد',
 	'nav.cluster.operate': 'التشغيل',
 	'nav.cluster.platform': 'المنصة',
-	'nav.overview': 'نظرة عامة',
+	'nav.overview': 'الرئيسية',
 	'nav.wip': 'Under construction',
 	'nav.users': 'المستخدمون',
 	'nav.access': 'التحكم في الوصول',
@@ -343,6 +345,14 @@ export const ar = {
 	'login.error.unsupported': 'مفاتيح المرور غير مدعومة على هذا الجهاز.',
 	'login.error.security': 'تأكد من فتح الصفحة عبر اتصال آمن (HTTPS).',
 	'login.error.generic': 'حدث خطأ غير متوقع.',
+	'login.wallet.divider': 'أو',
+	'login.wallet.sameDevice': 'افتح المحفظة على هذا الجهاز',
+	'login.wallet.completing': 'جارٍ إكمال تسجيل الدخول…',
+	'login.wallet.back': 'العودة إلى تسجيل الدخول',
+	'login.error.walletFailed': 'لم ينجح تسجيل الدخول بالمحفظة. حاول مرة أخرى.',
+	'login.error.walletExpired': 'انتهت صلاحية تسجيل الدخول بالمحفظة. ابدأ من جديد.',
+	'login.error.walletNotAllowed': 'لا يُسمح لهذا المسؤول بتسجيل الدخول بالمحفظة.',
+	'login.error.walletUnavailable': 'تسجيل الدخول بالمحفظة غير متاح لهذا المستأجر.',
 	'join.title': 'الانضمام كمسؤول',
 	'join.subtitle': 'أدخل عنوان البريد الإلكتروني ورمز الدعوة من دعوتك.',
 	'join.email': 'البريد الإلكتروني',

@@ -18,6 +18,10 @@
  */
 
 import { adminVPRequestObjectRoute, adminVPResponseRoute } from './verifier/admin/admin-vp-routes';
+import {
+  haipLoginRequestObjectRoute,
+  haipLoginResponseRoute,
+} from './verifier/haip-login/haip-login-routes';
 import { VC_RATE_LIMITS } from './rate-limits';
 import { runSamlDrCoveredFetch } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import { Hono } from 'hono';
@@ -150,6 +154,10 @@ app.get('/vp/requests/:id', vpRequestStatusRoute);
 // Administrator presentation (second factor of an admin step-up; fixed acceptance rules)
 app.get('/vp/admin/request/:id', adminVPRequestObjectRoute);
 app.post('/vp/admin/response', adminVPResponseRoute);
+
+// Login by a HAIP presentation (x509_hash request object, direct_post.jwt response)
+app.get('/vp/login/request/:id', haipLoginRequestObjectRoute);
+app.post('/vp/login/response', haipLoginResponseRoute);
 
 // Authenticated attribute elevation. All three routes use the shared token
 // introspector; the response rechecks the active subject before persistence.

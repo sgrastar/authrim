@@ -17,6 +17,13 @@ import {
   type AdminVPStatus,
   type ReserveAdminVPResult,
 } from '../admin/admin-vp-request-store';
+import {
+  HaipLoginRequestTable,
+  type HaipLoginRequestInput,
+  type HaipLoginResult,
+  type HaipLoginStatus,
+  type ReserveHaipLoginResult,
+} from '../haip-login/haip-login-request-store';
 
 const log = createLogger().module('VC-VP-COORDINATOR');
 const DEFAULT_LEASE_MS = 60_000;
@@ -140,10 +147,12 @@ function minimizeVerifiedClaimNames(
 
 export class VPRequestStoreV2 extends DurableObject<Env> {
   private readonly admin: AdminVPRequestTable;
+  private readonly haipLogin: HaipLoginRequestTable;
 
   constructor(ctx: DurableObjectState, env?: Env) {
     super(ctx, env ?? ({} as Env));
     this.admin = new AdminVPRequestTable(ctx.storage.sql);
+    this.haipLogin = new HaipLoginRequestTable(ctx.storage.sql);
     void ctx.blockConcurrencyWhile(async () => {
       this.initializeSchema();
     });
@@ -154,6 +163,7 @@ export class VPRequestStoreV2 extends DurableObject<Env> {
       'vp_requests',
     ]);
     this.admin.initialize();
+    this.haipLogin.initialize();
   }
 
   // ---- Administrator presentations (second factor of an admin step-up) ----
@@ -246,6 +256,102 @@ export class VPRequestStoreV2 extends DurableObject<Env> {
       input.tenantId,
       input.adminUserId,
       input.sessionId,
+      input.now
+    );
+  }
+
+  // ---- Login by a HAIP presentation (administrator sign-in) ----
+
+  createHaipLoginRequestRpc(input: HaipLoginRequestInput): void {
+    this.haipLogin.create(input);
+    this.scheduleAlarm(input.expiresAt);
+  }
+
+  getHaipLoginRequestObjectRpc(input: {
+    id: string;
+    tenantId: string;
+    now: number;
+  }): string | null {
+    return this.haipLogin.requestObject(input.id, input.tenantId, input.now);
+  }
+
+  reserveHaipLoginResponseRpc(input: {
+    id: string;
+    tenantId: string;
+    responseFingerprint: string;
+    now: number;
+  }): ReserveHaipLoginResult {
+    return this.haipLogin.reserve(input.id, input.tenantId, input.responseFingerprint, input.now);
+  }
+
+  completeHaipLoginResponseRpc(input: {
+    id: string;
+    tenantId: string;
+    reservationId: string;
+    adminUserId: string;
+    holderJkt: string;
+    credentialId: string;
+    responseCodeHash?: string;
+    now: number;
+  }): boolean {
+    return this.haipLogin.complete(
+      input.id,
+      input.tenantId,
+      input.reservationId,
+      {
+        adminUserId: input.adminUserId,
+        holderJkt: input.holderJkt,
+        credentialId: input.credentialId,
+        ...(input.responseCodeHash ? { responseCodeHash: input.responseCodeHash } : {}),
+      },
+      input.now
+    );
+  }
+
+  failHaipLoginResponseRpc(input: {
+    id: string;
+    tenantId: string;
+    reservationId: string;
+    errorCode: string;
+  }): boolean {
+    return this.haipLogin.fail(input.id, input.tenantId, input.reservationId, input.errorCode);
+  }
+
+  releaseHaipLoginResponseRpc(input: {
+    id: string;
+    tenantId: string;
+    reservationId: string;
+    now: number;
+  }): boolean {
+    return this.haipLogin.release(input.id, input.tenantId, input.reservationId, input.now);
+  }
+
+  getHaipLoginStatusRpc(input: {
+    id: string;
+    tenantId: string;
+    bindingHash: string;
+    now: number;
+  }): {
+    status: HaipLoginStatus;
+    flow: 'cross_device' | 'same_device';
+    expiresAt: number;
+    errorCode?: string;
+  } | null {
+    return this.haipLogin.status(input.id, input.tenantId, input.bindingHash, input.now);
+  }
+
+  consumeHaipLoginResultRpc(input: {
+    id: string;
+    tenantId: string;
+    bindingHash: string;
+    responseCodeHash?: string;
+    now: number;
+  }): HaipLoginResult | null {
+    return this.haipLogin.consume(
+      input.id,
+      input.tenantId,
+      input.bindingHash,
+      input.responseCodeHash,
       input.now
     );
   }
@@ -495,7 +601,8 @@ export class VPRequestStoreV2 extends DurableObject<Env> {
       )
       .one().next_at;
     const nextAdmin = this.admin.sweep(now);
-    const candidates = [nextRelyingParty, nextAdmin].filter(
+    const nextLogin = this.haipLogin.sweep(now);
+    const candidates = [nextRelyingParty, nextAdmin, nextLogin].filter(
       (value): value is number => value !== null
     );
     if (candidates.length > 0) {

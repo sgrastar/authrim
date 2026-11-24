@@ -33,7 +33,7 @@ import type { Env } from '../types/env';
 import type { KeyStatus } from '../types/admin';
 import { readRequestJsonWithLimit } from '../utils/body-limits';
 import { createLogger } from '../utils/logger';
-import { validateVcSigningChain } from '../vc/x509-certificate';
+import { base64ToBytes, parseCertificate, validateVcSigningChain } from '../vc/x509-certificate';
 import {
   keyManagerTenantBackupSnapshotIsEmpty,
   keyManagerTenantBackupSnapshotsEqual,
@@ -334,6 +334,130 @@ export interface SignVCIAccessTokenResult {
 export interface SignSDJWTIssuerResult {
   token: string;
   kid: string;
+}
+
+export const HAIP_LOGIN_CLIENT_ID_PREFIX = 'x509_hash:';
+const X509_HASH_VALUE = /^[A-Za-z0-9_-]{43}$/u;
+
+function base64UrlOf(bytes: Uint8Array): string {
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/gu, '-').replace(/\//gu, '_').replace(/=+$/u, '');
+}
+
+/** `x509_hash:` and the base64url SHA-256 of the DER of the chain's leaf certificate. */
+async function x509HashClientIdOf(chain: string[]): Promise<string> {
+  const leaf = base64ToBytes(chain[0]);
+  return `${HAIP_LOGIN_CLIENT_ID_PREFIX}${base64UrlOf(new Uint8Array(await crypto.subtle.digest('SHA-256', leaf)))}`;
+}
+
+const HAIP_LOGIN_RESPONSE_PATH = '/vp/login/response';
+const HAIP_LOGIN_PAYLOAD_KEYS = new Set([
+  'aud',
+  'client_id',
+  'response_type',
+  'response_mode',
+  'response_uri',
+  'nonce',
+  'state',
+  'iat',
+  'exp',
+  'client_metadata',
+  'dcql_query',
+]);
+const HAIP_LOGIN_METADATA_KEYS = new Set([
+  'jwks',
+  'encrypted_response_enc_values_supported',
+  'vp_formats_supported',
+]);
+
+/** One `dc+sd-jwt` credential query for one VCT, optionally limited to authority key identifiers. */
+function isHaipLoginDcqlQuery(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null) return false;
+  const query = value as { credentials?: unknown };
+  if (Object.keys(value).length !== 1 || !Array.isArray(query.credentials)) return false;
+  if (query.credentials.length !== 1) return false;
+  const credential = query.credentials[0] as Record<string, unknown> | null;
+  if (typeof credential !== 'object' || credential === null) return false;
+  const allowed = new Set(['id', 'format', 'meta', 'claims', 'trusted_authorities']);
+  if (!Object.keys(credential).every((key) => allowed.has(key))) return false;
+  const meta = credential.meta as { vct_values?: unknown } | undefined;
+  const authorities = credential.trusted_authorities;
+  return (
+    typeof credential.id === 'string' &&
+    credential.format === 'dc+sd-jwt' &&
+    Array.isArray(meta?.vct_values) &&
+    meta.vct_values.length === 1 &&
+    typeof meta.vct_values[0] === 'string' &&
+    (authorities === undefined ||
+      (Array.isArray(authorities) &&
+        authorities.length === 1 &&
+        (authorities[0] as { type?: unknown }).type === 'aki'))
+  );
+}
+
+/**
+ * Whether `payload` is the one shape of a HAIP login request object KeyManager signs: a fresh,
+ * short-lived OpenID4VP request for a `vp_token` answered encrypted (`direct_post.jwt`) to an
+ * https `response_uri`, naming the verifier by `x509_hash`, with one ephemeral P-256 encryption
+ * key that carries a `kid`. Returns the response host and the hash named as the client id.
+ */
+export function haipLoginRequestShape(
+  payload: JWTPayload,
+  now: number
+): { clientHash: string; responseHost: string } | null {
+  const clientId = typeof payload.client_id === 'string' ? payload.client_id : '';
+  if (!clientId.startsWith(HAIP_LOGIN_CLIENT_ID_PREFIX)) return null;
+  const clientHash = clientId.slice(HAIP_LOGIN_CLIENT_ID_PREFIX.length);
+  if (!X509_HASH_VALUE.test(clientHash)) return null;
+  const iat = payload.iat;
+  const exp = payload.exp;
+  let responseUri: URL;
+  try {
+    responseUri = new URL(String(payload.response_uri));
+  } catch {
+    return null;
+  }
+  const metadata = payload.client_metadata as
+    | { jwks?: { keys?: Array<Record<string, unknown>> } }
+    | undefined;
+  const keys = metadata?.jwks?.keys;
+  const valid =
+    payload.aud === 'https://self-issued.me/v2' &&
+    payload.response_type === 'vp_token' &&
+    payload.response_mode === 'direct_post.jwt' &&
+    responseUri.protocol === 'https:' &&
+    responseUri.port === '' &&
+    typeof payload.nonce === 'string' &&
+    payload.nonce.length >= 16 &&
+    payload.nonce.length <= 128 &&
+    typeof payload.state === 'string' &&
+    payload.state.length >= 16 &&
+    payload.state.length <= 128 &&
+    typeof iat === 'number' &&
+    Math.abs(iat - now) <= 300 &&
+    typeof exp === 'number' &&
+    exp > iat &&
+    exp - iat <= 600 &&
+    responseUri.pathname === HAIP_LOGIN_RESPONSE_PATH &&
+    responseUri.search === '' &&
+    responseUri.hash === '' &&
+    responseUri.username === '' &&
+    responseUri.password === '' &&
+    Object.keys(payload).every((key) => HAIP_LOGIN_PAYLOAD_KEYS.has(key)) &&
+    Object.keys(metadata ?? {}).every((key) => HAIP_LOGIN_METADATA_KEYS.has(key)) &&
+    isHaipLoginDcqlQuery(payload.dcql_query) &&
+    Array.isArray(keys) &&
+    keys.length === 1 &&
+    keys[0].kty === 'EC' &&
+    keys[0].crv === 'P-256' &&
+    typeof keys[0].x === 'string' &&
+    typeof keys[0].y === 'string' &&
+    typeof keys[0].kid === 'string' &&
+    keys[0].kid.length > 0 &&
+    !('d' in keys[0]) &&
+    JSON.stringify(payload).length <= 16 * 1024;
+  return valid ? { clientHash, responseHost: responseUri.hostname } : null;
 }
 
 const ADMIN_VP_CLIENT_ID_PREFIX = 'decentralized_identifier:';
@@ -723,6 +847,8 @@ export const SAML_DR_KEY_MANAGER_SURFACE = {
     'signSDJWTIssuerRpc',
     'signStatusListCredentialRpc',
     'signAdminVPRequestRpc',
+    'signHaipLoginRequestRpc',
+    'getHaipLoginVerifierRpc',
     'getAllECPublicKeysRpc',
     'getVcIssuerJwksRpc',
     'revokeVcIssuerKeyRpc',
@@ -1543,6 +1669,106 @@ export class KeyManager extends DurableObject<Env> {
         .sign(privateKey);
       return { token, kid: activeKey.kid };
     });
+  }
+
+  /**
+   * Sign the request object of a HAIP login (OpenID4VP 1.0, `x509_hash` Client Identifier
+   * Prefix, answered by `direct_post.jwt`). Only that one shape is accepted; the client id must be
+   * the hash of the leaf certificate of the key's own `x5c` chain, which travels in the header (the
+   * trust anchor excluded), and the response goes to the host the chain was issued for. Without a
+   * usable chain nothing is signed.
+   */
+  async signHaipLoginRequestRpc(payload: JWTPayload): Promise<SignSDJWTIssuerResult> {
+    const outcome = await runSamlDrCoveredOperation(
+      this.env,
+      undefined,
+      async (): Promise<SignSDJWTIssuerResult | Refusal> => {
+        await this.#initializeState();
+        await this.#initializeECState();
+        const now = Date.now();
+        const shape = isSignablePayload(payload)
+          ? haipLoginRequestShape(payload, Math.floor(now / 1000))
+          : null;
+        if (!shape) return { refused: 'invalid_haip_login_request_signing_input' };
+        const key = await ensureVcKeyOrRefusal(() => this.#ensureActiveVcES256Key());
+        if (!key) return { refused: 'vc_issuer_key_retention_cap_reached' };
+        const chain = key.certificateChain;
+        if (
+          !chain ||
+          chain.length === 0 ||
+          typeof key.certificateNotAfter !== 'number' ||
+          key.certificateNotAfter <= now ||
+          (payload.exp as number) * 1000 > key.certificateNotAfter ||
+          !key.certificateCaSha256 ||
+          !trustedIssuingCaFingerprints(this.env.VC_X5C_ISSUING_CA_SHA256).includes(
+            key.certificateCaSha256
+          ) ||
+          key.certificateIssuerHost !== shape.responseHost ||
+          (await x509HashClientIdOf(chain)) !== `${HAIP_LOGIN_CLIENT_ID_PREFIX}${shape.clientHash}`
+        ) {
+          return { refused: 'x5c_required' };
+        }
+        const privateKey = await importPKCS8(key.privatePEM, 'ES256');
+        const token = await new SignJWT(payload)
+          .setProtectedHeader({ alg: 'ES256', typ: 'oauth-authz-req+jwt', x5c: chain })
+          .sign(privateKey);
+        return { token, kid: key.kid };
+      }
+    );
+    if ('refused' in outcome) throw new Error(outcome.refused);
+    return outcome;
+  }
+
+  /**
+   * What a HAIP login request names the verifier by: the `x509_hash` client identifier of the
+   * key's usable chain, the subject key identifier of its issuing CA (for the wallet's DCQL
+   * `trusted_authorities`) and the host the chain was issued for. Null when the key has no
+   * usable chain, so the login is not offered.
+   */
+  async getHaipLoginVerifierRpc(): Promise<{
+    clientId: string;
+    issuingCaAki: string;
+    issuerHost: string;
+    chainNotAfter: number;
+  } | null> {
+    const outcome = await runSamlDrCoveredOperation(
+      this.env,
+      undefined,
+      async (): Promise<
+        | { clientId: string; issuingCaAki: string; issuerHost: string; chainNotAfter: number }
+        | null
+        | Refusal
+      > => {
+        await this.#initializeState();
+        await this.#initializeECState();
+        const key = await ensureVcKeyOrRefusal(() => this.#ensureActiveVcES256Key());
+        if (!key) return { refused: 'vc_issuer_key_retention_cap_reached' };
+        const chain = key.certificateChain;
+        if (
+          !chain ||
+          chain.length !== 2 ||
+          typeof key.certificateNotAfter !== 'number' ||
+          key.certificateNotAfter <= Date.now() ||
+          !key.certificateIssuerHost ||
+          !key.certificateCaSha256 ||
+          !trustedIssuingCaFingerprints(this.env.VC_X5C_ISSUING_CA_SHA256).includes(
+            key.certificateCaSha256
+          )
+        ) {
+          return null;
+        }
+        const aki = parseCertificate(base64ToBytes(chain[1])).subjectKeyIdentifier;
+        if (!aki) return null;
+        return {
+          clientId: await x509HashClientIdOf(chain),
+          issuingCaAki: base64UrlOf(aki),
+          issuerHost: key.certificateIssuerHost,
+          chainNotAfter: key.certificateNotAfter,
+        };
+      }
+    );
+    if (outcome !== null && 'refused' in outcome) throw new Error(outcome.refused);
+    return outcome;
   }
 
   /**

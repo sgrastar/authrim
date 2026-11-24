@@ -148,7 +148,12 @@ export function stepPart(
 	rows: readonly LayoutRow[],
 	id: string,
 	direction: 'up' | 'down' | 'left' | 'right',
-	newRowId: () => string
+	newRowId: () => string,
+	/**
+	 * Most parts a column holds (default: any number). A page that keeps a column to one part
+	 * moves a part past the whole row above or below when that row's column is already taken.
+	 */
+	capacity = Number.POSITIVE_INFINITY
 ): LayoutRow[] {
 	const place = findPart(rows, id);
 	if (!place) return copy(rows);
@@ -164,6 +169,15 @@ export function stepPart(
 	if (direction === 'left' || direction === 'right') {
 		const to = place.column + (direction === 'left' ? -1 : 1);
 		if (to < 0 || to >= row.columns.length) return copy(rows);
+		if (row.columns[to].length >= capacity) {
+			// The column beside it is taken: the two exchange places.
+			const next = copy(rows);
+			const target = next[place.row].columns[to];
+			const at = Math.min(place.index, target.length - 1);
+			const own = next[place.row].columns[place.column];
+			[own[place.index], target[at]] = [target[at], own[place.index]];
+			return next;
+		}
 		return movePart(
 			rows,
 			id,
@@ -185,6 +199,15 @@ export function stepPart(
 		}
 		const above = rows[place.row - 1];
 		const to = Math.min(place.column, above.columns.length - 1);
+		if (above.columns[to].length >= capacity) {
+			// The column above is taken: step past the row above (or out of this one).
+			return movePart(
+				rows,
+				id,
+				{ kind: 'row', index: alone ? place.row - 1 : place.row },
+				newRowId
+			);
+		}
 		const target: DropTarget = {
 			kind: 'column',
 			rowId: above.id,
@@ -198,5 +221,13 @@ export function stepPart(
 	}
 	const below = rows[place.row + 1];
 	const to = Math.min(place.column, below.columns.length - 1);
+	if (below.columns[to].length >= capacity) {
+		return movePart(
+			rows,
+			id,
+			{ kind: 'row', index: alone ? place.row + 2 : place.row + 1 },
+			newRowId
+		);
+	}
 	return movePart(rows, id, { kind: 'column', rowId: below.id, column: to, index: 0 }, newRowId);
 }

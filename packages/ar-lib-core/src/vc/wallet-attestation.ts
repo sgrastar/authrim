@@ -22,6 +22,7 @@ import {
   verifyCertificateSignature,
   type ParsedCertificate,
 } from './x509-certificate';
+import type { WalletAttestationAnchor } from '../types/wallet-allowlist';
 
 type Bytes = Uint8Array;
 
@@ -38,14 +39,7 @@ const POP_MAX_FUTURE_SECONDS = 30;
 const CLOCK_SKEW_SECONDS = 30;
 
 /** A wallet-provider trust anchor: a CA certificate (base64 DER), pinned by its SHA-256. */
-export interface WalletAttestationAnchor {
-  /** Base64 DER of the root (or other trust anchor) certificate. */
-  certificate: string;
-  /** Lower-case hex SHA-256 of that DER, checked against the certificate when loading. */
-  sha256: string;
-  /** Human label for the audit log and the allowlist UI. */
-  label?: string;
-}
+export type { WalletAttestationAnchor };
 
 export type AttestationFailure =
   | 'attestation_malformed'

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { httpIpAllowlist, ipAllowlistEntryFromRow } from './admin-ip-allowlist';
+import { httpIpAllowlist, ipAllowlistEntryFromRow, isLockoutRefusal } from './admin-ip-allowlist';
 import { ApiError } from './api-error';
 import { fakeIpAllowlist } from './fake/admin-ip-allowlist-fake';
 
@@ -105,6 +105,49 @@ describe('requests', () => {
 		await expect(
 			httpIpAllowlist('acme').create({ ip_range: '1.2.3.4', description: '' })
 		).rejects.toBeInstanceOf(ApiError);
+	});
+});
+
+describe('going on with a change that would lock the caller out', () => {
+	it('asks for it on every kind of change, and only when told to', async () => {
+		const fetchMock = vi.fn(async () => json({ id: 'a', ip_range: '1.2.3.4', enabled: true }));
+		vi.stubGlobal('fetch', fetchMock);
+		const client = httpIpAllowlist('acme');
+		await client.create({ ip_range: '1.2.3.4', description: '' }, { allowLockout: true });
+		await client.update('a', { ip_range: '1.2.3.5' }, { allowLockout: true });
+		await client.setEnabled('a', false, { allowLockout: true });
+		await client.remove('a', { allowLockout: true });
+		await client.remove('a', { allowLockout: false });
+		await client.remove('a');
+		const urls = fetchMock.mock.calls.map((entry) => (entry as unknown as [string])[0]);
+		expect(urls).toEqual([
+			'/api/admin/ip-allowlist?allow_lockout=true',
+			'/api/admin/ip-allowlist/a?allow_lockout=true',
+			'/api/admin/ip-allowlist/a/disable?allow_lockout=true',
+			'/api/admin/ip-allowlist/a?allow_lockout=true',
+			'/api/admin/ip-allowlist/a',
+			'/api/admin/ip-allowlist/a'
+		]);
+	});
+
+	it('tells a lock-out refusal from another conflict', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async () => json({ error: 'would_lock_out', current_ip: '203.0.113.5' }, 409))
+		);
+		const failure = await httpIpAllowlist('acme')
+			.remove('a')
+			.catch((error: unknown) => error);
+		expect(isLockoutRefusal(failure)).toBe(true);
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async () => json({ error_code: 'conflict' }, 409))
+		);
+		const other = await httpIpAllowlist('acme')
+			.remove('a')
+			.catch((error: unknown) => error);
+		expect(isLockoutRefusal(other)).toBe(false);
+		expect(isLockoutRefusal(new Error('x'))).toBe(false);
 	});
 });
 

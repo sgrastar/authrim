@@ -17,6 +17,8 @@
 		variant?: 'icon' | 'plain';
 		/** Panel width when the content needs more than the default. */
 		width?: string;
+		/** The first-steps guide's mark (`data-guide`) for the trigger button itself. */
+		guide?: string;
 		trigger: Snippet;
 		children: Snippet<[{ close: () => void }]>;
 	}
@@ -27,6 +29,7 @@
 		disabled = false,
 		variant = 'plain',
 		width,
+		guide,
 		trigger,
 		children
 	}: Props = $props();
@@ -75,6 +78,7 @@
 		title={label}
 		aria-expanded={open}
 		aria-controls="{uid}-panel"
+		data-guide={guide}
 		disabled={disabled || busy()}
 		onclick={() => (open = !open)}
 	>

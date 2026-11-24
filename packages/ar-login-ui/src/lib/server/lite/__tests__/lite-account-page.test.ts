@@ -24,6 +24,23 @@ const conditions = (over: Partial<LiteAccountConditions> = {}): LiteAccountCondi
 });
 
 describe('the lite account page composition', () => {
+	it('reads a launcher slot’s launchers, safe ids only, and none for something that is not a list', () => {
+		const read = (value: unknown) =>
+			readLiteAccountPage({
+				account_page: {
+					definition: { screens: [{ id: 'a', screen_key: 'k', launcher_ids: value }] },
+					screens: []
+				}
+			})?.placements[0].launcherIds;
+		expect(read(['mail', 'bad id', 7, 'plc_00000000-0000-0000-0000-000000000000'])).toEqual([
+			'mail',
+			'plc_00000000-0000-0000-0000-000000000000'
+		]);
+		expect(read([])).toEqual([]);
+		expect(read('mail')).toBeNull();
+		expect(read(undefined)).toBeNull();
+	});
+
 	it('reads the placements in their order, with defaults for what they leave out', () => {
 		const page = readLiteAccountPage({
 			account_page: {
@@ -46,7 +63,8 @@ describe('the lite account page composition', () => {
 				width: 'half',
 				enabled: true,
 				condition: 'always',
-				showForGuests: true
+				showForGuests: true,
+				launcherIds: null
 			},
 			{
 				id: 'a',
@@ -54,7 +72,8 @@ describe('the lite account page composition', () => {
 				width: 'full',
 				enabled: false,
 				condition: 'always',
-				showForGuests: false
+				showForGuests: false,
+				launcherIds: null
 			}
 		]);
 		expect(readLiteAccountPage({})).toBeNull();

@@ -956,6 +956,58 @@ type RootTranslation = {
 	 */
 	admin_login_with_passkey: string;
 	/**
+	 * o​r
+	 */
+	admin_login_wallet_divider: string;
+	/**
+	 * O​p​e​n​ ​w​a​l​l​e​t​ ​o​n​ ​t​h​i​s​ ​d​e​v​i​c​e
+	 */
+	admin_login_wallet_same_device: string;
+	/**
+	 * S​c​a​n​ ​w​i​t​h​ ​a​ ​w​a​l​l​e​t​ ​o​n​ ​a​n​o​t​h​e​r​ ​d​e​v​i​c​e
+	 */
+	admin_login_wallet_cross_device: string;
+	/**
+	 * S​c​a​n​ ​t​h​i​s​ ​c​o​d​e​ ​w​i​t​h​ ​a​ ​w​a​l​l​e​t​ ​t​h​a​t​ ​h​o​l​d​s​ ​y​o​u​r​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​ ​c​r​e​d​e​n​t​i​a​l​.
+	 */
+	admin_login_wallet_scan_hint: string;
+	/**
+	 * W​a​i​t​i​n​g​ ​f​o​r​ ​t​h​e​ ​w​a​l​l​e​t​.​.​.
+	 */
+	admin_login_wallet_waiting: string;
+	/**
+	 * C​h​e​c​k​i​n​g​ ​y​o​u​r​ ​c​r​e​d​e​n​t​i​a​l​.​.​.
+	 */
+	admin_login_wallet_processing: string;
+	/**
+	 * C​a​n​c​e​l
+	 */
+	admin_login_wallet_cancel: string;
+	/**
+	 * T​h​e​ ​w​a​l​l​e​t​ ​s​i​g​n​-​i​n​ ​d​i​d​ ​n​o​t​ ​s​u​c​c​e​e​d​.​ ​P​l​e​a​s​e​ ​t​r​y​ ​a​g​a​i​n​.
+	 */
+	admin_login_wallet_failed: string;
+	/**
+	 * T​h​e​ ​w​a​l​l​e​t​ ​s​i​g​n​-​i​n​ ​e​x​p​i​r​e​d​.​ ​P​l​e​a​s​e​ ​s​t​a​r​t​ ​a​g​a​i​n​.
+	 */
+	admin_login_wallet_expired: string;
+	/**
+	 * T​h​i​s​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​ ​i​s​ ​n​o​t​ ​a​l​l​o​w​e​d​ ​t​o​ ​s​i​g​n​ ​i​n​ ​w​i​t​h​ ​a​ ​w​a​l​l​e​t​.
+	 */
+	admin_login_wallet_not_allowed: string;
+	/**
+	 * W​a​l​l​e​t​ ​s​i​g​n​-​i​n​ ​i​s​ ​n​o​t​ ​a​v​a​i​l​a​b​l​e​ ​f​o​r​ ​t​h​i​s​ ​t​e​n​a​n​t​.
+	 */
+	admin_login_wallet_unavailable: string;
+	/**
+	 * C​o​m​p​l​e​t​i​n​g​ ​s​i​g​n​-​i​n​.​.​.
+	 */
+	admin_login_wallet_completing: string;
+	/**
+	 * Q​R​ ​c​o​d​e​ ​t​o​ ​o​p​e​n​ ​y​o​u​r​ ​w​a​l​l​e​t
+	 */
+	admin_login_wallet_qr_alt: string;
+	/**
 	 * O​n​l​y​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​s​ ​w​i​t​h​ ​r​e​g​i​s​t​e​r​e​d​ ​P​a​s​s​k​e​y​s​ ​c​a​n​ ​a​c​c​e​s​s​ ​t​h​i​s​ ​a​r​e​a​.
 	 */
 	admin_login_hint: string;
@@ -33633,6 +33685,58 @@ export type TranslationFunctions = {
 	 * Login with Passkey
 	 */
 	admin_login_with_passkey: () => LocalizedString;
+	/**
+	 * or
+	 */
+	admin_login_wallet_divider: () => LocalizedString;
+	/**
+	 * Open wallet on this device
+	 */
+	admin_login_wallet_same_device: () => LocalizedString;
+	/**
+	 * Scan with a wallet on another device
+	 */
+	admin_login_wallet_cross_device: () => LocalizedString;
+	/**
+	 * Scan this code with a wallet that holds your administrator credential.
+	 */
+	admin_login_wallet_scan_hint: () => LocalizedString;
+	/**
+	 * Waiting for the wallet...
+	 */
+	admin_login_wallet_waiting: () => LocalizedString;
+	/**
+	 * Checking your credential...
+	 */
+	admin_login_wallet_processing: () => LocalizedString;
+	/**
+	 * Cancel
+	 */
+	admin_login_wallet_cancel: () => LocalizedString;
+	/**
+	 * The wallet sign-in did not succeed. Please try again.
+	 */
+	admin_login_wallet_failed: () => LocalizedString;
+	/**
+	 * The wallet sign-in expired. Please start again.
+	 */
+	admin_login_wallet_expired: () => LocalizedString;
+	/**
+	 * This administrator is not allowed to sign in with a wallet.
+	 */
+	admin_login_wallet_not_allowed: () => LocalizedString;
+	/**
+	 * Wallet sign-in is not available for this tenant.
+	 */
+	admin_login_wallet_unavailable: () => LocalizedString;
+	/**
+	 * Completing sign-in...
+	 */
+	admin_login_wallet_completing: () => LocalizedString;
+	/**
+	 * QR code to open your wallet
+	 */
+	admin_login_wallet_qr_alt: () => LocalizedString;
 	/**
 	 * Only administrators with registered Passkeys can access this area.
 	 */

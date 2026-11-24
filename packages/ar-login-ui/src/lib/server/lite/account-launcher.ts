@@ -64,10 +64,12 @@ function matches(
 export function liteAccountLaunchers(
 	json: Record<string, unknown>,
 	url: URL,
-	locale: string
+	locale: string,
+	/** The launchers the page's launcher slot shows, by id; null: every one the account may open. */
+	allowedIds: readonly string[] | null = null
 ): LiteAccountLauncherView {
 	const rows = Array.isArray(json.launchers) ? json.launchers : [];
-	const all = rows.flatMap((raw) => {
+	const every = rows.flatMap((raw) => {
 		const row = record(raw);
 		const id = liteAccountItemId(row.id);
 		const name = text(row.name, 1024);
@@ -87,6 +89,7 @@ export function liteAccountLaunchers(
 			}
 		];
 	});
+	const all = allowedIds ? every.filter((launcher) => allowedIds.includes(launcher.id)) : every;
 	const compare = (left: string, right: string) => {
 		try {
 			return left.localeCompare(right, locale);
