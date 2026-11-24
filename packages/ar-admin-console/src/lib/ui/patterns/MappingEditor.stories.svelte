@@ -216,3 +216,54 @@
 		/>
 	{/snippet}
 </Story>
+
+<Story
+	name="Values that cannot break stay inside their column"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(await canvas.findByRole('button', { name: /eduPersonTargetedID/ }));
+		const edit = await waitFor(() => {
+			const found = canvasElement.querySelector<HTMLElement>('.mrow__target-edit');
+			if (!found) throw new Error('not open');
+			return found;
+		});
+		const list = canvasElement.querySelector<HTMLElement>('.mapping__list') as HTMLElement;
+		// Nothing a long identifier, URL or hash is in goes past the right edge of the table, and
+		// no box is wider than its own content area (it would be clipped, or scroll sideways).
+		const edge = list.getBoundingClientRect().right;
+		for (const element of edit.querySelectorAll<HTMLElement>(
+			'.mrow__tnote2, .mrow__tkey, .sample, .sample__values, .sample__v'
+		)) {
+			await expect(element.getBoundingClientRect().right, element.className).toBeLessThanOrEqual(
+				edge + 0.5
+			);
+			await expect(element.scrollWidth, element.className).toBeLessThanOrEqual(
+				element.clientWidth + 1
+			);
+		}
+	}}
+>
+	{#snippet template()}
+		<div style="width: 950px">
+			<MappingEditor
+				label="Mapping"
+				direction="outbound"
+				sources={[]}
+				targets={[
+					{
+						key: 'urn:oid:1.3.6.1.4.1.5923.1.1.1.10',
+						label: 'eduPersonTargetedID',
+						type: 'string',
+						samples: [
+							'https://idp.example.edu/idp/shibboleth!https://sp.example.org/shibboleth!OM6haQh1JdjZSicvGWnQCXZHWaSRNSSbIs2GAvAbCdEfGhIjKlMn'
+						]
+					}
+				]}
+				mappings={structuredClone(targeted).map((mapping) => ({
+					...mapping,
+					target: 'urn:oid:1.3.6.1.4.1.5923.1.1.1.10'
+				}))}
+			/>
+		</div>
+	{/snippet}
+</Story>

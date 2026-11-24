@@ -174,6 +174,51 @@ function createEnv(client: OAuthClient | null, bucket: MockR2Bucket, settings?: 
 }
 
 describe('diagnostic logging ingest', () => {
+  it('does not authenticate a wallet attestation client by the secret recorded for it', async () => {
+    const bucket = new MockR2Bucket();
+    const client = createClient({
+      client_secret_hash: await hashClientSecret('correct-secret'),
+      // The method is not in the registration type, but a stored row can carry it.
+      token_endpoint_auth_method:
+        'attest_jwt_client_auth' as unknown as OAuthClient['token_endpoint_auth_method'],
+    });
+    const env = createEnv(client, bucket);
+
+    const response = await ingestApp.request(
+      '/',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          tenant_id: 'tenant-1',
+          client_id: 'diag-client',
+          // The right secret: only the registered method can refuse the client.
+          client_secret: 'correct-secret',
+          logs: [
+            {
+              id: 'log-1',
+              tenantId: 'tenant-1',
+              clientId: 'diag-client',
+              category: 'auth-decision',
+              level: 'info',
+              timestamp: Date.now(),
+              decision: 'allow',
+              reason: 'test',
+            },
+          ],
+        }),
+      },
+      env
+    );
+
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'invalid_client',
+      error_description: 'client_authentication_unsupported',
+    });
+    expect(bucket.store.size).toBe(0);
+  });
+
   it('rejects confidential clients when client_secret does not match stored hash', async () => {
     const bucket = new MockR2Bucket();
     const client = createClient({

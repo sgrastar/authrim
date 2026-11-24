@@ -85,6 +85,12 @@ async function validateClient(
       return { valid: false, error: 'client_not_found' };
     }
 
+    // A wallet client is authenticated by its attestation, which is not verified here: the secret
+    // recorded for it does not stand in for that.
+    if ((client.token_endpoint_auth_method as string) === 'attest_jwt_client_auth') {
+      return { valid: false, error: 'client_authentication_unsupported' };
+    }
+
     const requiresSecret = client.token_endpoint_auth_method !== 'none';
 
     if (!requiresSecret) {

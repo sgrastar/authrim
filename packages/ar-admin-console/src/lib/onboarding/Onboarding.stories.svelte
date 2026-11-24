@@ -326,7 +326,9 @@
 		await expect(steps).toHaveLength(CHECKLIST[1].steps.length);
 		await expect(steps[2]).toHaveAttribute('aria-current', 'step');
 		await expect(steps.filter((step) => step.classList.contains('step--done'))).toHaveLength(2);
-		await expect(steps[0]).toHaveTextContent(t(CHECKLIST[1].steps[0].title));
+		// Named by its short label, not by the sentence its popover is titled with.
+		await expect(steps[0]).toHaveTextContent(t('ob.theme.nav.label'));
+		await expect(steps[0]).not.toHaveTextContent(t('ob.theme.nav.title'));
 		await expect(steps[3]).not.toHaveAttribute('aria-current');
 		// Closing it ends the guide.
 		await expect(

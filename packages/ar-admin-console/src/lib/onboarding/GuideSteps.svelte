@@ -49,7 +49,7 @@
 				<span class="step__mark" aria-hidden="true">
 					{#if state === 'done'}<Icon name="check" />{/if}
 				</span>
-				<span class="step__title">{t(step.title)}</span>
+				<span class="step__title">{t(step.label ?? step.title)}</span>
 				{#if state !== 'next'}
 					<span class="sr-only"
 						>({t(state === 'done' ? 'ob.status.done' : 'ob.status.active')})</span
