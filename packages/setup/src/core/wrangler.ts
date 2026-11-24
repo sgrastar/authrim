@@ -1247,7 +1247,11 @@ export function generateWranglerConfig(
         },
       });
     }
-    if (component === 'ar-management' && config.components.vc === true) {
+    // ar-auth uses it for the administrator sign-in by a HAIP presentation (D-L, S4).
+    if (
+      (component === 'ar-management' || component === 'ar-auth') &&
+      config.components.vc === true
+    ) {
       wranglerConfig.services.push({
         binding: 'VC_ISSUER',
         service: `${env}-ar-vc`,
@@ -1719,6 +1723,11 @@ export function generateEnvVars(
       );
     }
     vars['ADMIN_COOKIE_SAME_SITE'] = 'Lax';
+  }
+
+  // ar-vc checks the console origin a wallet login may return the browser to (same-device flow).
+  if (component === 'ar-vc' && hasAdminUiOrigins) {
+    vars['ADMIN_UI_URL'] = adminUiUrl;
   }
 
   // ar-management also needs cookie configuration for admin sessions

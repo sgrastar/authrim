@@ -10,7 +10,12 @@ import {
   type JWK,
 } from 'jose';
 import { KeyManager } from '../KeyManager.ts';
-import { base64ToBytes, buildCertificate, bytesToBase64 } from '../../vc/x509-certificate';
+import {
+  base64ToBytes,
+  buildCertificate,
+  bytesToBase64,
+  parseCertificate,
+} from '../../vc/x509-certificate';
 import type { Env } from '../../types/env';
 import type { KeyManagerTenantBackupSnapshot } from '../../services/tenant-portability/key-manager-portability';
 
@@ -1763,6 +1768,144 @@ describe('KeyManager Durable Object', () => {
 
     afterEach(() => {
       vi.useRealTimers();
+    });
+
+    describe('HAIP login request objects', () => {
+      const b64url = (bytes: Uint8Array) =>
+        btoa(String.fromCharCode(...bytes))
+          .replace(/\+/gu, '-')
+          .replace(/\//gu, '_')
+          .replace(/=+$/u, '');
+      const clientIdOf = async (chain: string[]) =>
+        `x509_hash:${b64url(new Uint8Array(await crypto.subtle.digest('SHA-256', base64ToBytes(chain[0]))))}`;
+      const loginPayload = async (chain: string[], extra: Record<string, unknown> = {}) => {
+        const now = Math.floor(Date.now() / 1000);
+        const ephemeral = await newCaKey();
+        return {
+          aud: 'https://self-issued.me/v2',
+          client_id: await clientIdOf(chain),
+          response_type: 'vp_token',
+          response_mode: 'direct_post.jwt',
+          response_uri: `https://${HOST}/vp/login/response`,
+          nonce: 'n'.repeat(24),
+          state: 's'.repeat(24),
+          iat: now,
+          exp: now + 300,
+          client_metadata: { jwks: { keys: [{ ...ephemeral.publicJwk, kid: 'req-1' }] } },
+          dcql_query: {
+            credentials: [
+              {
+                id: 'admin',
+                format: 'dc+sd-jwt',
+                meta: { vct_values: ['https://example.com/vct/admin'] },
+                claims: [{ path: ['sub'] }],
+                trusted_authorities: [{ type: 'aki', values: ['AAAA'] }],
+              },
+            ],
+          },
+          ...extra,
+        };
+      };
+
+      it('names the verifier by the leaf of the key chain and its CA, only for a key with a usable chain', async () => {
+        const key = await keyManager.rotateECKeysRpc('ES256');
+        expect(await keyManager.getHaipLoginVerifierRpc()).toBeNull();
+        const chain = await issueChain(key.publicJWK);
+        await register(key.kid, chain);
+        const verifier = await keyManager.getHaipLoginVerifierRpc();
+        expect(verifier).toMatchObject({
+          clientId: await clientIdOf(chain),
+          issuerHost: HOST,
+        });
+        expect(verifier?.issuingCaAki).toBe(
+          b64url(parseCertificate(base64ToBytes(chain[1])).subjectKeyIdentifier as Uint8Array)
+        );
+        // A CA that is no longer trusted ends it.
+        env.VC_X5C_ISSUING_CA_SHA256 = '0'.repeat(64);
+        expect(await keyManager.getHaipLoginVerifierRpc()).toBeNull();
+      });
+
+      it('signs the one login request shape with typ and the x5c chain, verifiable with the leaf key', async () => {
+        const key = await keyManager.rotateECKeysRpc('ES256');
+        const chain = await issueChain(key.publicJWK);
+        await register(key.kid, chain);
+        const payload = await loginPayload(chain);
+        const signed = await keyManager.signHaipLoginRequestRpc(payload);
+        expect(signed.kid).toBe(key.kid);
+        expect(decodeProtectedHeader(signed.token)).toEqual({
+          alg: 'ES256',
+          typ: 'oauth-authz-req+jwt',
+          x5c: chain,
+        });
+        await expect(
+          jwtVerify(signed.token, await importJWK(key.publicJWK, 'ES256'))
+        ).resolves.toBeDefined();
+      });
+
+      it('refuses a client id that is not the hash of its own leaf, another response host and no chain', async () => {
+        const key = await keyManager.rotateECKeysRpc('ES256');
+        // No chain yet.
+        const unchained = await issueChain(key.publicJWK, { trust: false });
+        await expect(
+          keyManager.signHaipLoginRequestRpc(await loginPayload(unchained))
+        ).rejects.toThrow('x5c_required');
+        const chain = await issueChain(key.publicJWK);
+        await register(key.kid, chain);
+        const other = await issueChain((await newCaKey()).publicJwk);
+        await register(key.kid, chain).catch(() => undefined);
+        for (const extra of [
+          { client_id: await clientIdOf(other) },
+          { client_id: 'x509_hash:AAAA' },
+          { response_uri: 'https://evil.example.com/vp/login/response' },
+          // The same host, another path, query or an extra claim is not a login request either.
+          { response_uri: `https://${HOST}/vp/other` },
+          { response_uri: `https://${HOST}/vp/login/response?x=1` },
+          { extra_claim: 'x' },
+          { dcql_query: { credentials: [] } },
+          {
+            dcql_query: {
+              credentials: [{ id: 'a', format: 'dc+sd-jwt', meta: { vct_values: ['a', 'b'] } }],
+            },
+          },
+        ]) {
+          await expect(
+            keyManager.signHaipLoginRequestRpc(await loginPayload(chain, extra))
+          ).rejects.toThrow(/x5c_required|invalid_haip_login_request_signing_input/u);
+        }
+      });
+
+      it('refuses payloads that are not the fixed shape', async () => {
+        const key = await keyManager.rotateECKeysRpc('ES256');
+        const chain = await issueChain(key.publicJWK);
+        await register(key.kid, chain);
+        const now = Math.floor(Date.now() / 1000);
+        for (const extra of [
+          { response_mode: 'direct_post' },
+          { response_type: 'code' },
+          { aud: 'https://other.example.com' },
+          { state: 'short' },
+          { nonce: 'short' },
+          { iat: now - 3600, exp: now - 3000 },
+          { exp: now + 3600 },
+          { client_metadata: { jwks: { keys: [] } } },
+          { client_metadata: { jwks: { keys: [{ kty: 'RSA', kid: 'x' }] } } },
+          { response_uri: 'http://' + HOST + '/vp/login/response' },
+        ]) {
+          await expect(
+            keyManager.signHaipLoginRequestRpc(await loginPayload(chain, extra))
+          ).rejects.toThrow('invalid_haip_login_request_signing_input');
+        }
+        // An expiry past the chain's life is refused as well.
+        const long = await loginPayload(chain);
+        vi.useFakeTimers({ now: Date.now() + 100 * 60 * 60 * 1000 });
+        await expect(
+          keyManager.signHaipLoginRequestRpc({
+            ...long,
+            iat: Math.floor(Date.now() / 1000),
+            exp: Math.floor(Date.now() / 1000) + 300,
+          })
+        ).rejects.toThrow();
+      });
     });
 
     it('adds x5c to SD-JWT VCs and status list tokens once a chain is stored', async () => {

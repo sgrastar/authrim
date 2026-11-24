@@ -23,6 +23,7 @@ describe('Admin UI route structure', () => {
 	it('keeps Admin pages on the shared page shell or an approved shell wrapper', () => {
 		const approvedStandalonePages = new Set([
 			'routes/admin/login/+page.svelte',
+			'routes/admin/login/wallet/+page.svelte',
 			'routes/admin/join/+page.svelte'
 		]);
 		const approvedShellWrappers = ['AdminPageShell', 'IdentityMappingPageShell'];
