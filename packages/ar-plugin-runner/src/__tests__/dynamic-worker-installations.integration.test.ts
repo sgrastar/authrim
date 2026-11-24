@@ -254,8 +254,9 @@ describe('D1DynamicPluginInstallationStore', () => {
         },
       ],
     });
+    // The tenant had disabled the installation to enter credentials; a rollout only moves the pin.
     await expect(store.rollout({ ...input, enabled: true })).resolves.toMatchObject({
-      state: 'enabled',
+      state: 'disabled',
       pinnedVersionDigest: VERSION_B,
     });
   });

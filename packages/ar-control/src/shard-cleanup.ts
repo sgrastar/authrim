@@ -31,6 +31,51 @@ import type { ControlEnv } from './types';
 const SAFE_ID = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$/u;
 const STANDARD_RETRY_BUDGET_SECONDS = 2 * 60 * 60;
 const RETRY_SECONDS = 15;
+const RETRYABLE_ERROR_CODES: ReadonlySet<string> = new Set([
+  'control_destructive_operations_disabled',
+  'control_shard_cleanup_active_references_present',
+  'control_shard_cleanup_binding_state_stale',
+  'control_shard_cleanup_database_still_present',
+  'control_shard_cleanup_quarantine_required',
+  'control_shard_cleanup_reflection_failed',
+  'control_shard_cleanup_retry_not_allowed',
+  'control_shard_cleanup_snapshot_drain_incomplete',
+  'control_shard_quarantine_registry_generation_invalid',
+  'control_shard_quarantine_registry_snapshot_invalid',
+  'control_shard_quarantine_reflection_failed',
+  'control_shard_quarantine_retry_not_allowed',
+  'control_worker_binding_cleanup_propagating',
+  'control_worker_deployment_lease_busy',
+  'control_worker_deployment_lease_lost',
+  'control_worker_source_version_changed',
+]);
+const PERMANENT_ERROR_CODES: ReadonlySet<string> = new Set([
+  'control_runtime_registry_signing_key_invalid',
+  'control_runtime_registry_verification_keys_invalid',
+  'control_shard_cleanup_approval_conflict',
+  'control_shard_cleanup_binding_identity_mismatch',
+  'control_shard_cleanup_binding_state_invalid',
+  'control_shard_cleanup_completion_conflict',
+  'control_shard_cleanup_database_identity_mismatch',
+  'control_shard_cleanup_delete_required',
+  'control_shard_cleanup_export_evidence_invalid',
+  'control_shard_cleanup_idempotency_conflict',
+  'control_shard_cleanup_limit_invalid',
+  'control_shard_cleanup_previous_settings_invalid',
+  'control_shard_cleanup_previous_settings_missing',
+  'control_shard_cleanup_reference_count_invalid',
+  'control_shard_quarantine_conflict',
+  'control_shard_quarantine_idempotency_conflict',
+  'control_shard_quarantine_ready_conflict',
+  'control_shard_quarantine_registry_generation_stale',
+  'control_shard_quarantine_registry_readback_mismatch',
+  'control_shard_quarantine_registry_route_missing',
+  'control_shard_quarantine_registry_verifier_missing',
+  'control_worker_active_deployment_ambiguous',
+  'control_worker_active_deployment_missing',
+  'control_worker_binding_cleanup_reflection_mismatch',
+  'control_worker_concurrent_deployment_detected',
+]);
 const MAX_SNAPSHOT_BYTES = 512 * 1024;
 
 interface ActiveDeployment {
@@ -211,29 +256,16 @@ function classifyError(error: unknown): { code: string; permanent: boolean } {
     }
     return { code: 'control_cleanup_provider_request_failed', permanent: false };
   }
-  const code = error instanceof Error ? error.message : '';
-  if (
-    code === 'control_shard_quarantine_registry_snapshot_invalid' ||
-    code === 'control_shard_quarantine_registry_generation_invalid' ||
-    code === 'control_worker_binding_cleanup_propagating' ||
-    code === 'control_shard_cleanup_database_still_present'
-  ) {
-    return { code, permanent: false };
+  // Only codes this service (or its collaborators) is known to raise reach durable state; any
+  // other exception, whatever its message, is a fixed retryable failure.
+  const message = error instanceof Error ? error.message : '';
+  if (RETRYABLE_ERROR_CODES.has(message)) return { code: message, permanent: false };
+  if (PERMANENT_ERROR_CODES.has(message)) return { code: message, permanent: true };
+  // The worker settings helpers append the binding name or an index to their codes.
+  if (message.startsWith('worker_settings_')) {
+    return { code: 'control_shard_cleanup_worker_settings_invalid', permanent: true };
   }
-  if (
-    code.endsWith('_invalid') ||
-    code.endsWith('_mismatch') ||
-    code.endsWith('_ambiguous') ||
-    code.endsWith('_missing') ||
-    code.endsWith('_conflict') ||
-    code.endsWith('_detected') ||
-    code.includes('identity') ||
-    code.includes('generation_stale') ||
-    code.includes('signature')
-  ) {
-    return { code: code || 'control_shard_cleanup_invalid', permanent: true };
-  }
-  return { code: code || 'control_shard_cleanup_failed', permanent: false };
+  return { code: 'control_shard_cleanup_failed', permanent: false };
 }
 
 function isNotFound(error: unknown): boolean {
@@ -490,6 +522,16 @@ export class ShardCleanupService {
         generationValue,
         'control_shard_quarantine_registry_generation_invalid'
       );
+      if (
+        !snapshot ||
+        typeof snapshot !== 'object' ||
+        !generation ||
+        typeof generation !== 'object' ||
+        !snapshot.metadata ||
+        typeof snapshot.metadata !== 'object'
+      ) {
+        throw new Error('control_shard_quarantine_registry_readback_mismatch');
+      }
       const publishedAt = Date.parse(snapshot.publishedAt);
       const expiresAt = Date.parse(snapshot.expiresAt);
       const nowMs = this.dependencies.now() * 1000;

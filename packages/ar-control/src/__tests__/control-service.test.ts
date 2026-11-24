@@ -1474,13 +1474,18 @@ describe('ControlService tenant shard provisioning', () => {
     const readFinalization = vi.spyOn(repository, 'getTenantDeletionFinalization');
     const service = new ControlService({ repository, env: env(), now: () => NOW });
 
-    for (const request of [
-      [],
-      { tenantId: 'tenant-test', operationId: 'delete-1', unexpected: 'tenant-other' },
-      { tenantId: 'tenant/other', operationId: 'delete-1' },
-      { tenantId: 'tenant-test', operationId: 'delete/other' },
-    ]) {
-      await expect(service.getTenantDeletionInventory(request, 'env-test')).rejects.toThrow();
+    for (const [request, code] of [
+      [[], 'invalid_tenant_deletion_request'],
+      [
+        { tenantId: 'tenant-test', operationId: 'delete-1', unexpected: 'tenant-other' },
+        'invalid_tenant_deletion_request',
+      ],
+      [{ tenantId: 'tenant/other', operationId: 'delete-1' }, 'invalid_tenant_id'],
+      [{ tenantId: 'tenant-test', operationId: 'delete/other' }, 'invalid_operation_id'],
+    ] as const) {
+      await expect(service.getTenantDeletionInventory(request, 'env-test')).rejects.toThrow(
+        new RegExp(`^${code}$`, 'u')
+      );
     }
     expect(readFinalization).not.toHaveBeenCalled();
   });
