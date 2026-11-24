@@ -90,6 +90,7 @@ export * from './types/did';
 export * from './types/openid4vp';
 export * from './types/openid4vci';
 export * from './types/vc-service';
+export * from './types/vc-runtime-ports';
 export * from './types/credential-profile';
 
 // Phase A-6: Logout Types
@@ -185,6 +186,7 @@ export * from './utils/token-revocation-sharding';
 export * from './utils/region-sharding';
 export * from './utils/dpop-jti-sharding';
 export * from './utils/jti-replay-guard';
+export * from './utils/vc-runtime-ports';
 export * from './utils/par-sharding';
 export * from './utils/saml-request-store';
 export * from './utils/device-code-sharding';
