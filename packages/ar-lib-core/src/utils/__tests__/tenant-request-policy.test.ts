@@ -41,6 +41,11 @@ describe('tenant request path classification', () => {
     '/api/admin/me/keyring/enroll/g1:apac:0:vp_x',
     '/api/admin/me/keyring/step-up/g1:apac:0:vp_x/response',
     '/api/admin/me/keyring/enroll/g1:apac:0:vp_x/response',
+    '/api/admin/me/wallet-credentials',
+    '/api/admin/me/wallet-credentials/offers',
+    '/api/admin/me/wallet-credentials/offers/off-1',
+    '/api/admin/me/wallet-credentials/haip-offer',
+    '/api/admin/me/wallet-credentials/c-1/revoke',
   ])('keeps Admin identity operations platform-owned: %s', (path) => {
     expect(classifyTenantRequestPath(path)).toBe('platform_admin');
   });
