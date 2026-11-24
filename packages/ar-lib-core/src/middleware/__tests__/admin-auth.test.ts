@@ -253,6 +253,23 @@ function createTestApp(
     });
   }
 
+  for (const path of [
+    '/api/admin/me/keyring/enroll',
+    '/api/admin/me/keyring/step-up',
+    '/api/admin/me/keyring/enroll/g1:apac:0:vp_x/response',
+    '/api/admin/me/wallet-credentials/haip-offer',
+  ]) {
+    app.post(path, (c) => {
+      const adminAuth = (c as unknown as { get(key: string): unknown }).get('adminAuth');
+      return c.json({ success: true, adminAuth });
+    });
+  }
+
+  app.get('/api/admin/me/passkeys', (c) => {
+    const adminAuth = (c as unknown as { get(key: string): unknown }).get('adminAuth');
+    return c.json({ success: true, adminAuth });
+  });
+
   app.post('/api/admin/me/second-factor-recovery/complete', (c) => {
     const adminAuth = (c as unknown as { get(key: string): unknown }).get('adminAuth');
     return c.json({ success: true, adminAuth });
@@ -2338,6 +2355,14 @@ describe('adminAuthMiddleware', () => {
       const totpConfirm = await call('POST', '/api/admin/me/second-factors/totp/enroll/verify');
       const totpVerify = await call('POST', '/api/admin/me/second-factors/totp/verify');
       const recovery = await call('POST', '/api/admin/me/second-factor-recovery/complete');
+      const keyringEnroll = await call('POST', '/api/admin/me/keyring/enroll');
+      const keyringStepUp = await call('POST', '/api/admin/me/keyring/step-up');
+      const keyringResponse = await call(
+        'POST',
+        '/api/admin/me/keyring/enroll/g1:apac:0:vp_x/response'
+      );
+      const passkeys = await call('GET', '/api/admin/me/passkeys');
+      const walletOffer = await call('POST', '/api/admin/me/wallet-credentials/haip-offer');
       const preferences = await call('GET', '/api/admin/me/notice-preferences');
 
       expect(tenantOperation.status).toBe(200);
@@ -2364,6 +2389,17 @@ describe('adminAuthMiddleware', () => {
       }
       expect(recovery.status).toBe(200);
       expect((await recovery.json<Body>()).adminAuth.tenantId).toBe('default');
+      // Keyring enrolment and step-up are the admin's own routes too: no 401 on a tenant host.
+      for (const response of [
+        keyringEnroll,
+        keyringStepUp,
+        keyringResponse,
+        walletOffer,
+        passkeys,
+      ]) {
+        expect(response.status).toBe(200);
+        expect((await response.json<Body>()).adminAuth.tenantId).toBe('default');
+      }
       // Notice email choices belong to the admin, kept under the session's own tenant.
       expect(preferences.status).toBe(200);
       expect((await preferences.json<Body>()).adminAuth.tenantId).toBe('default');

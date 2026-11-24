@@ -1,3 +1,4 @@
+import { adminWalletLoginApp } from './admin-wallet-login';
 import { AUTH_CORS_ALLOW_HEADERS } from './cors-headers';
 import { runSamlDrCoveredFetch } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import { Hono, type Context, type Next } from 'hono';
@@ -923,6 +924,7 @@ app.route('/', setupApp);
 // Endpoints: /api/admin/setup-token/*
 app.route('/', adminSetupApiApp);
 app.route('/', adminInvitationEnrollmentApp);
+app.route('/', adminWalletLoginApp);
 
 // Logout error page - displayed when logout validation fails
 // Per OIDC RP-Initiated Logout spec, OP SHOULD display an error page when:

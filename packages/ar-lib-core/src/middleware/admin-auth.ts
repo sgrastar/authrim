@@ -807,6 +807,13 @@ function isPlatformAdminSessionPath(path: string): boolean {
       path
     ) ||
     /^\/api\/admin\/me\/second-factor-recovery(?:\/(?:complete|cancel))?\/?$/u.test(path) ||
+    // Keyring as a second factor or for recovery: the same admin-own routes, under the session's tenant.
+    /^\/api\/admin\/me\/keyring\/(?:step-up|enroll)(?:\/[^/]+(?:\/response)?)?\/?$/u.test(path) ||
+    // The admin's own passkeys and administrator credentials (wallet): kept under the session's tenant.
+    /^\/api\/admin\/me\/passkeys(?:\/[^/]+)?\/?$/u.test(path) ||
+    /^\/api\/admin\/me\/wallet-credentials(?:\/(?:offers(?:\/[^/]+)?|haip-offer|[^/]+\/revoke))?\/?$/u.test(
+      path
+    ) ||
     // Each admin's notice email choices, under the session's own tenant.
     /^\/api\/admin\/me\/notice-preferences\/?$/u.test(path) ||
     /^\/api\/admin\/agent-login-handoffs\/alh_[A-Za-z0-9_-]{32}\/approve\/?$/u.test(path)

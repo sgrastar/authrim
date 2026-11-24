@@ -183,6 +183,11 @@
       "capability": "plugin_hooks.invoke"
     },
     {
+      "name": "VC_ISSUER",
+      "kind": "service",
+      "required": false
+    },
+    {
       "name": "TENANT_DATABASE_HYPERDRIVE",
       "kind": "hyperdrive",
       "required": false,
