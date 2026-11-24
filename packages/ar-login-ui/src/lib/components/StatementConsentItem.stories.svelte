@@ -131,7 +131,6 @@
 	name="Text in a dialog"
 	args={{ display: 'modal' }}
 	play={async ({ args, canvasElement }) => {
-		const canvas = within(canvasElement);
 		// The buttons' words follow the story's language: found by what they are.
 		await userEvent.click(canvasElement.querySelector('.statement-consent-open') as HTMLElement);
 		await userEvent.click(canvasElement.querySelector('.statement-consent-agree') as HTMLElement);
