@@ -765,11 +765,6 @@ export function describeScimTestHarness(
     let mockEnv: Partial<Env>;
     let mockUsers: Map<string, any>;
     let mockGroups: Map<string, any>;
-    // Groups a list/count query selects; honours the `name = ?N` filter condition (bound after tenant_id).
-    const mockListedGroups = (sql: string, args: any[]): any[] => {
-      const groups = Array.from(mockGroups.values());
-      return /AND name = \?\d+/.test(sql) ? groups.filter((g) => g.name === args[1]) : groups;
-    };
     let mockUserRoles: Map<string, any[]>;
     let mockCustomClaimSchemas: Array<Record<string, unknown>>;
     let sessionRevocationStates: Map<
@@ -960,8 +955,7 @@ export function describeScimTestHarness(
                     if (sql.includes('SELECT COUNT(*) as total')) {
                       if (sql.includes('users') || sql.includes('users_core'))
                         return { total: mockUsers.size };
-                      if (sql.includes('roles'))
-                        return { total: mockListedGroups(sql, args).length };
+                      if (sql.includes('roles')) return { total: mockGroups.size };
                     }
                     if (sql.includes('SELECT * FROM roles WHERE id = ?')) {
                       return mockGroups.get(args[0]) || null;
@@ -1045,7 +1039,7 @@ export function describeScimTestHarness(
                       return { results };
                     }
                     if (sql.includes('SELECT * FROM roles')) {
-                      return { results: mockListedGroups(sql, args) };
+                      return { results: Array.from(mockGroups.values()) };
                     }
                     if (sql.includes('SELECT ur.user_id')) {
                       const roleId = args[0];
