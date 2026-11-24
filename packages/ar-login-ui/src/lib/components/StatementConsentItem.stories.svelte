@@ -111,7 +111,8 @@
 		const canvas = within(canvasElement);
 		// The checkbox waits for the end of the text (here the box scrolls, so it starts locked).
 		await expect(canvas.getByRole('checkbox')).toBeDisabled();
-		await expect(canvas.getByText('Scroll to the end to agree.')).toBeInTheDocument();
+		// The hint is in the language the story is drawn in: found by what it is, not its words.
+		await expect(canvasElement.querySelector('.statement-consent-hint')).not.toBeNull();
 	}}
 >
 	{#snippet template(args)}
@@ -131,9 +132,9 @@
 	args={{ display: 'modal' }}
 	play={async ({ args, canvasElement }) => {
 		const canvas = within(canvasElement);
-		await userEvent.click(canvas.getByRole('button', { name: 'Open Terms of Service' }));
-		const dialog = within(canvasElement.querySelector('dialog') as HTMLElement);
-		await userEvent.click(dialog.getByRole('button', { name: 'I agree' }));
+		// The buttons' words follow the story's language: found by what they are.
+		await userEvent.click(canvasElement.querySelector('.statement-consent-open') as HTMLElement);
+		await userEvent.click(canvasElement.querySelector('.statement-consent-agree') as HTMLElement);
 		await expect(args.onchange).toHaveBeenCalledWith(true);
 	}}
 >
