@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { hasMessage } from '#lib/i18n/i18n.svelte.js';
+import { hasMessage, t } from '#lib/i18n/i18n.svelte.js';
 import { CHECKLIST, type ChecklistItem, type GuideStep } from './checklist';
 import {
 	canGoBack,
@@ -9,7 +9,8 @@ import {
 	matchesPath,
 	moveOn,
 	moveOnSignal,
-	waitsForPerson
+	waitsForPerson,
+	wordingOf
 } from './guide-model';
 
 const step = (path: string, extra: Partial<GuideStep> = {}): GuideStep => ({
@@ -121,7 +122,8 @@ describe('the console’s checklist', () => {
 			schema: 'nav-access',
 			screens: 'nav-customization'
 		};
-		for (const entry of CHECKLIST) {
+		// The second-factor guide leads through the account menu, not the navigation (below).
+		for (const entry of CHECKLIST.filter((candidate) => candidate.id in category)) {
 			const [first, second] = entry.steps;
 			expect(first.path).toBe('/admin');
 			expect(first.target).toBe(`[data-guide="${category[entry.id]}"]`);
@@ -178,6 +180,62 @@ describe('the console’s checklist', () => {
 		expect(canGoBack(steps, 1, '/admin/settings/general')).toBe(false);
 	});
 
+	it('lists the second-factor guide fifth, through the account menu to the security keys', () => {
+		expect(CHECKLIST.map((entry) => entry.id)).toEqual([
+			'sign-in',
+			'theme',
+			'schema',
+			'screens',
+			'second-factor'
+		]);
+		const secondFactor = CHECKLIST[4];
+		const steps = secondFactor.steps;
+		// On the overview, so starting it moves nowhere: open the menu, then personal settings.
+		expect(steps.slice(0, 2).map((entry) => entry.path)).toEqual(['/admin', '/admin']);
+		expect(steps[0]).toMatchObject({
+			target: '[data-guide="account-menu"]',
+			advance: 'click'
+		});
+		expect(steps[1]).toMatchObject({
+			target: '[data-guide="account-settings"]',
+			advance: 'navigate',
+			// The menu closing again points back at what opens it.
+			fallback: { target: '[data-guide="account-menu"]' }
+		});
+		expect(steps.slice(2).map((entry) => entry.path)).toEqual(['/admin/me', '/admin/me']);
+		// Only a second factor that was registered finishes it.
+		expect(steps[3]).toMatchObject({ advance: { signal: 'second-factor.added' } });
+		expect(moveOnSignal(secondFactor, 0, 'second-factor.added')).toEqual({ kind: 'finish' });
+		expect(moveOnSignal(secondFactor, 3, 'second-factor.added')).toEqual({ kind: 'finish' });
+		expect(steps.some((entry) => entry.completes)).toBe(false);
+	});
+
+	it('mentions an authenticator app only where one can be registered', () => {
+		const steps = CHECKLIST[4].steps;
+		const wording = (index: number, totp: boolean) =>
+			wordingOf(steps[index], (fact) => fact === 'second-factor.totp' && totp);
+		for (const index of [2, 3]) {
+			expect(steps[index].variants).toEqual([
+				expect.objectContaining({ when: 'second-factor.blocked' }),
+				{ when: 'second-factor.totp', body: expect.stringMatching(/Totp$/) }
+			]);
+			expect(wording(index, false).body).toBe(steps[index].body);
+			expect(wording(index, true).body).not.toBe(steps[index].body);
+		}
+		// Where nothing can be registered, that wins over an app being on offer, and names neither.
+		const both = (index: number) => wordingOf(steps[index], () => true);
+		expect(both(2).body).toBe(steps[2].variants?.[0].body);
+		expect(t(both(2).body)).not.toMatch(/TOTP/);
+		expect(both(3).action).toBe(steps[3].variants?.[0].action);
+		expect(both(3).action).not.toBe(steps[3].action);
+		expect(t(both(3).body)).not.toMatch(/TOTP/);
+		// The words themselves: the variant names TOTP, the plain text does not.
+		expect(t(wording(2, true).body)).toMatch(/TOTP/);
+		expect(t(wording(2, false).body)).not.toMatch(/TOTP/);
+		expect(t(wording(3, true).body)).toMatch(/TOTP/);
+		expect(t(wording(3, false).body)).not.toMatch(/TOTP/);
+	});
+
 	it('has ids the server accepts, each once', () => {
 		const ids = CHECKLIST.map((entry) => entry.id);
 		expect(new Set(ids).size).toBe(ids.length);
@@ -200,7 +258,8 @@ describe('the console’s checklist', () => {
 					entryStep.title,
 					entryStep.body,
 					entryStep.action,
-					entryStep.fallback?.action
+					entryStep.fallback?.action,
+					...(entryStep.variants ?? []).flatMap((variant) => [variant.body, variant.action])
 				]) {
 					if (key) expect(hasMessage(key)).toBe(true);
 				}
@@ -217,5 +276,33 @@ describe('the console’s checklist', () => {
 				if (entryStep.advance === 'click') expect(entryStep.target).toBeTruthy();
 			});
 		}
+	});
+});
+
+describe('wordingOf', () => {
+	const worded = step('/admin/a', {
+		body: 'ob.lead',
+		action: 'ob.stop',
+		variants: [
+			{ when: 'second-factor.totp', body: 'ob.title' },
+			{ when: 'second-factor.totp', body: 'ob.next', action: 'ob.back' }
+		]
+	});
+
+	it('is the step as written while no fact holds', () => {
+		expect(wordingOf(worded, () => false)).toEqual({ body: 'ob.lead', action: 'ob.stop' });
+		expect(wordingOf(step('/admin/a'), () => true)).toEqual({
+			body: 'ob.lead',
+			action: undefined
+		});
+	});
+
+	it('takes the first variant whose fact holds, keeping the action it does not replace', () => {
+		expect(wordingOf(worded, (fact) => fact === 'second-factor.totp')).toEqual({
+			body: 'ob.title',
+			action: 'ob.stop'
+		});
+		const second = { ...worded, variants: worded.variants?.slice(1) };
+		expect(wordingOf(second, () => true)).toEqual({ body: 'ob.next', action: 'ob.back' });
 	});
 });

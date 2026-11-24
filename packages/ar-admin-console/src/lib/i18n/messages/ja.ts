@@ -74,7 +74,7 @@ export const ja = {
 	'nav.cluster.configure': '設定',
 	'nav.cluster.operate': '運用',
 	'nav.cluster.platform': 'プラットフォーム',
-	'nav.overview': '概要',
+	'nav.overview': 'トップ',
 	'nav.wip': '工事中',
 	'nav.users': 'ユーザー',
 	'nav.access': 'アクセス制御',

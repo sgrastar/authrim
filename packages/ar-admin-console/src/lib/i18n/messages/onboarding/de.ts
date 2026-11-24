@@ -1,11 +1,11 @@
 import type { jaOnboarding } from './ja';
 
 export const deOnboarding: Record<keyof typeof jaOnboarding, string> = {
-	'ob.title': 'Erste Schritte',
+	'ob.title': 'Authrim 101',
 	'ob.lead':
-		'Ein paar Dinge zum Ausprobieren in einer neuen Umgebung. Eine Anleitung führt zur passenden Seite und zeigt Schritt für Schritt, wo etwas zu tun ist.',
+		'Einführungslektionen für den Einstieg in Authrim. Eine Anleitung führt zur passenden Seite und zeigt Schritt für Schritt, wo etwas zu tun ist.',
 	'ob.progress': '{done} von {total} erledigt',
-	'ob.progressLabel': 'Fortschritt der ersten Schritte',
+	'ob.progressLabel': 'Fortschritt in Authrim 101',
 	'ob.allDone': 'Alles erledigt. Jede Anleitung lässt sich erneut ansehen.',
 	'ob.loadFailed': 'Der Fortschritt konnte nicht geladen werden.',
 	'ob.saveFailed': 'Der Fortschritt konnte nicht gespeichert werden.',
@@ -120,5 +120,38 @@ export const deOnboarding: Record<keyof typeof jaOnboarding, string> = {
 		'Die Einstellungen des hinzugefügten Elements. Wähle beim Speicherziel ein beliebiges Attribut, in dem der eingegebene Wert gespeichert wird.',
 	'ob.screens.s5.title': 'Speichern',
 	'ob.screens.s5.body': 'Anordnung und Einstellungen der Elemente nach Belieben ändern.',
-	'ob.screens.s5.action': 'Zum Abschluss auf Speichern drücken. Die Anleitung endet dort.'
+	'ob.screens.s5.action': 'Zum Abschluss auf Speichern drücken. Die Anleitung endet dort.',
+
+	'ob.secondFactor.title': 'Einen zweiten Faktor registrieren',
+	'ob.secondFactor.desc': 'Registrieren Sie den zweiten Nachweis, den wichtige Vorgänge verlangen.',
+	'ob.secondFactor.menu.title': 'Das Kontomenü',
+	'ob.secondFactor.menu.body':
+		'Ihre eigenen Anmeldemethoden und Ihre zweiten Faktoren verwalten Sie unter „Persönliche Einstellungen“, die Sie über das Kontomenü oben rechts öffnen.',
+	'ob.secondFactor.menu.action': 'Klicken Sie auf das Konto-Symbol.',
+	'ob.secondFactor.settings.title': 'Persönliche Einstellungen',
+	'ob.secondFactor.settings.body':
+		'Von hier gelangen Sie auf die Seite mit Ihren eigenen Einstellungen.',
+	'ob.secondFactor.settings.action': 'Klicken Sie auf „Persönliche Einstellungen“.',
+	'ob.secondFactor.settings.fallback':
+		'Das Menü hat sich geschlossen. Klicken Sie erneut auf das Konto-Symbol.',
+	'ob.secondFactor.keys.title': 'Ihr zweiter Faktor',
+	'ob.secondFactor.keys.body':
+		'Neben der Anmeldung mit einem Passkey verlangen wichtige Vorgänge, etwa das Wechseln eines Schlüssels oder das Ändern der Rolle eines Administrators, einen weiteren Nachweis. Diesen registrieren Sie in diesem Feld. Sie können einen Sicherheitsschlüssel registrieren.',
+	'ob.secondFactor.keys.bodyTotp':
+		'Neben der Anmeldung mit einem Passkey verlangen wichtige Vorgänge, etwa das Wechseln eines Schlüssels oder das Ändern der Rolle eines Administrators, einen weiteren Nachweis. Diesen registrieren Sie in diesem Feld. Sie können einen Sicherheitsschlüssel registrieren oder, in dieser Umgebung, eine Authenticator-App auf Ihrem Smartphone (TOTP).',
+	'ob.secondFactor.add.title': 'Registrieren',
+	'ob.secondFactor.add.body': 'Mit diesen Schaltflächen registrieren Sie einen zweiten Faktor.',
+	'ob.secondFactor.add.bodyTotp':
+		'Mit diesen Schaltflächen registrieren Sie entweder einen Sicherheitsschlüssel oder eine Authenticator-App (TOTP). Bei der Authenticator-App scannen Sie den angezeigten QR-Code und geben die 6-stellige Zahl ein, die die App anzeigt.',
+	'ob.secondFactor.add.action':
+		'Führen Sie die Registrierung bis zum Ende durch. Die Anleitung endet, sobald sie gelingt.',
+	'ob.secondFactor.keys.bodyBlocked':
+		'Neben der Anmeldung mit einem Passkey verlangen wichtige Vorgänge, etwa das Wechseln eines Schlüssels oder das Ändern der Rolle eines Administrators, einen weiteren Nachweis. Diesen verwalten Sie in diesem Feld. Im Moment lässt sich hier nichts Neues registrieren (die Frist zur Registrierung ist abgelaufen oder eine Wiederherstellung steht aus).',
+	'ob.secondFactor.add.bodyBlocked':
+		'In diesem Feld wird im Moment keine Schaltfläche zum Registrieren angezeigt, daher können Sie hier das Registrieren eines zweiten Faktors nicht üben.',
+	'ob.secondFactor.add.actionBlocked':
+		'Schließen Sie die Anleitung. Diesen Punkt können Sie in der Liste von Hand als erledigt markieren.',
+
+	'ob.steps.label': 'Schritte: {name}',
+	'ob.steps.progress': 'Fortschritt: {name}'
 };

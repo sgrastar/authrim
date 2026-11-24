@@ -14,7 +14,8 @@
 	let { name, email, initials, onsignout }: Props = $props();
 </script>
 
-<Popover label={t('account.menu')} align="end">
+<!-- The mark is on the trigger button, so a keyboard press (which clicks the button) counts too. -->
+<Popover label={t('account.menu')} align="end" guide="account-menu">
 	{#snippet trigger()}<span class="avatar">{initials}</span>{/snippet}
 	<div class="who">
 		<span class="who__label">{t('account.signedInAs')}</span>
@@ -22,7 +23,10 @@
 		{#if email && email !== name}<span class="who__email">{email}</span>{/if}
 	</div>
 	<div class="actions">
-		<Button variant="ghost" icon="gear" block href="/admin/me">{t('account.settings')}</Button>
+		<!-- A link-styled button cannot carry the hook itself (it passes no attributes on). -->
+		<span class="guide-anchor" data-guide="account-settings">
+			<Button variant="ghost" icon="gear" block href="/admin/me">{t('account.settings')}</Button>
+		</span>
 		<Button variant="ghost" icon="logout" block onclick={onsignout}>{t('account.signOut')}</Button>
 	</div>
 </Popover>

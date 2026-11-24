@@ -20,6 +20,7 @@
 		TotpEnrollment
 	} from '#lib/api/second-factors.js';
 	import { i18n, t, type MessageKey } from '#lib/i18n/i18n.svelte.js';
+	import { guideSignal, setGuideFact } from '#lib/onboarding/signals.js';
 	import Callout from '#lib/ui/patterns/Callout.svelte';
 	import Card from '#lib/ui/patterns/Card.svelte';
 	import ConfirmDialog from '#lib/ui/patterns/ConfirmDialog.svelte';
@@ -155,6 +156,21 @@
 		isKeyring(key) ? 'kp.kind.keyring' : isTotp(key) ? 'sk.totp.badge' : 'kp.kind.securityKey';
 	// Offered where the tenant allows it, and while the admin has none (at most one is kept).
 	const canAddTotp = $derived(keyState?.totp?.allowed === true && !activeKeys.some(isTotp));
+	// The add buttons are shown unless a recovery is in the way (the first-enrollment window is
+	// over, or a recovery is pending), and only once the state has loaded.
+	const enrollmentBlocked = $derived(
+		loadState === 'ready' && (keyState?.enrollment.mode === 'recovery_required' || !!recovery)
+	);
+	// The first-steps guide words its steps for this environment: where nothing can be registered
+	// it says so, and an authenticator app is named only where one is offered with the buttons.
+	$effect(() => {
+		setGuideFact('second-factor.blocked', enrollmentBlocked);
+		setGuideFact('second-factor.totp', canAddTotp && !enrollmentBlocked);
+	});
+	$effect(() => () => {
+		setGuideFact('second-factor.blocked', false);
+		setGuideFact('second-factor.totp', false);
+	});
 
 	// Registering an authenticator app: the step-up (or the first-enrollment rule) is met when the
 	// secret is created; the app's code then confirms it, and a wrong code can be retyped.
@@ -187,6 +203,7 @@
 			await client.confirmTotp({ challengeId: target.challengeId, code: code.replace(/\s+/g, '') });
 			totpEnrollment = null;
 			toast.success(t('sk.totp.added'));
+			guideSignal('second-factor.added');
 			await load();
 		} catch (error) {
 			totpError = errorText(error);
@@ -233,6 +250,8 @@
 			onverified: () => {
 				closeKeyring();
 				toast.success(t(recovering ? 'sk.recoveryFiled' : 'kp.enroll.added'));
+				// A recovery is a request, not a second factor added.
+				if (!recovering) guideSignal('second-factor.added');
 				void load();
 			}
 		});
@@ -263,6 +282,7 @@
 			});
 			adding = null;
 			toast.success(t('recovery' in result ? 'sk.recoveryFiled' : 'sk.added'));
+			if (!('recovery' in result)) guideSignal('second-factor.added');
 			await load();
 		} catch (error) {
 			// The first-enrollment window closed while the page was open: offer recovery instead.
@@ -317,13 +337,15 @@
 <Card title={t('sk.title')} info={t('sk.info')}>
 	{#snippet actions()}
 		{#if loadState === 'ready' && keyState?.enrollment.mode !== 'recovery_required' && !recovery}
-			<InlineGroup>
-				<Button icon="plus" size="sm" onclick={() => openKeyring()}>{t('kp.enroll.add')}</Button>
-				<Button icon="plus" size="sm" onclick={() => openAdd('key')}>{t('sk.add')}</Button>
-				{#if canAddTotp}
-					<Button icon="plus" size="sm" onclick={startTotp}>{t('sk.addTotp')}</Button>
-				{/if}
-			</InlineGroup>
+			<span class="guide-anchor" data-guide="second-factor-add">
+				<InlineGroup>
+					<Button icon="plus" size="sm" onclick={() => openKeyring()}>{t('kp.enroll.add')}</Button>
+					<Button icon="plus" size="sm" onclick={() => openAdd('key')}>{t('sk.add')}</Button>
+					{#if canAddTotp}
+						<Button icon="plus" size="sm" onclick={startTotp}>{t('sk.addTotp')}</Button>
+					{/if}
+				</InlineGroup>
+			</span>
 		{/if}
 	{/snippet}
 
