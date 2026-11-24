@@ -167,6 +167,21 @@
 	{/snippet}
 </Story>
 
+<!-- The widget's default presentation; the privacy notice's step entry overrides it (in place). -->
+<Story
+	name="Consent widget: texts in a dialog, scrolled to the end"
+	args={{
+		screen: only(blocks.consent({ consent_display: 'modal', consent_require_scroll: true })),
+		withConsent: true,
+		consentWithText: true,
+		mode: 'signup'
+	}}
+>
+	{#snippet template(args)}
+		<LoginUIFrame><RuntimeScreenHarness {...args} /></LoginUIFrame>
+	{/snippet}
+</Story>
+
 <Story
 	name="Consent widget: shared fields"
 	args={{

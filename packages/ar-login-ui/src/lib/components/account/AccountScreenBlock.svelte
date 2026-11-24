@@ -44,7 +44,9 @@
 {:else if field.block_type === 'link' && href}
 	<a class="account-screen__link" {href}>{field.label}</a>
 {:else if field.block_type === 'divider'}
-	<div class="account-screen__divider"><span>{field.text ?? ''}</span></div>
+	<div class="account-screen__divider" class:has-label={Boolean(field.text)}>
+		{#if field.text}<span>{field.text}</span>{/if}
+	</div>
 {/if}
 
 <style>
@@ -69,9 +71,12 @@
 	.account-screen__divider {
 		display: flex;
 		align-items: center;
-		gap: 10px;
 		color: var(--text-muted);
 		font-size: 0.75rem;
+	}
+
+	.account-screen__divider.has-label {
+		gap: 10px;
 	}
 
 	.account-screen__divider::before,

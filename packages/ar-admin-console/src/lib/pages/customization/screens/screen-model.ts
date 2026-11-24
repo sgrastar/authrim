@@ -137,6 +137,13 @@ export interface PartSettings {
 	linkStyle: 'text' | 'button';
 	/** human_verification_timing */
 	timing: 'initial' | 'submit';
+	/**
+	 * consent_display: how a consent part shows a text kept in Authrim, unless the service flow's
+	 * entry for the statement says otherwise (in place, or opened in a dialog).
+	 */
+	consentDisplay: 'inline' | 'modal';
+	/** consent_require_scroll: the box can be agreed to only once the text is scrolled to its end. */
+	consentRequireScroll: boolean;
 }
 
 /** What a link part does (link_action). */
@@ -167,6 +174,8 @@ export const defaultSettings = (overrides: Partial<PartSettings> = {}): PartSett
 	linkExit: '',
 	linkStyle: 'text',
 	timing: 'initial',
+	consentDisplay: 'inline',
+	consentRequireScroll: false,
 	...overrides
 });
 

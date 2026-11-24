@@ -3998,6 +3998,47 @@ describe('LoginUI runtime Flow handlers', () => {
     });
   });
 
+  it("carries a statement's presentation override to the shown item, beside what it asks", async () => {
+    const withOverride: FlowRuntimeContract = {
+      ...consentRuntime,
+      ui: {
+        steps: [
+          {
+            ...consentRuntime.ui.steps[0],
+            config: {
+              statements: [
+                {
+                  statement_id: 'statement_terms',
+                  required: true,
+                  display: 'modal',
+                  require_scroll: true,
+                },
+              ],
+            },
+          },
+          consentRuntime.ui.steps[1],
+        ],
+      },
+    };
+    mocks.statementFake.seed({ id: 'statement_terms', slug: 'terms_of_service' });
+    const overridden = await startInteraction(
+      { flow_kind: 'registration', client_id: 'client_1', requested_scope: 'openid profile' },
+      withOverride
+    );
+    const itemOf = (data: Record<string, unknown>) =>
+      (
+        (data.contract as FlowRuntimeContract).ui.steps[0]?.content?.consent_policy as {
+          items: Array<Record<string, unknown>>;
+        }
+      ).items[0];
+    expect(itemOf(overridden.data)).toMatchObject({
+      statement_id: 'statement_terms',
+      is_required: true,
+      text_display: 'modal',
+      require_scroll: true,
+    });
+  });
+
   it('records the answer in the account when a consent step is submitted', async () => {
     const { data: startData } = await startInteraction(
       {
@@ -7993,6 +8034,8 @@ describe('consent held from before sign-in, recorded later', () => {
         attribute_value_display: null,
         checkbox_mode: 'optional' as const,
         checkbox_default_checked: false,
+        text_display: null,
+        require_scroll: null,
         binding_type: null,
         binding_value: null,
         evidence_profile: null,

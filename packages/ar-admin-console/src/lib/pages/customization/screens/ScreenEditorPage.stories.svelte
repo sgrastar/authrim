@@ -49,6 +49,26 @@
 				}
 			: screen
 	);
+	/** The survey with a consent part that shows its texts in a dialog, scrolled to the end first. */
+	const withConsent = MOCK_SCREENS.map((screen) =>
+		screen.id === 'screen_survey'
+			? {
+					...screen,
+					fields: [
+						...screen.fields,
+						{
+							field: 'consent.terms',
+							label: 'Consent',
+							required: true,
+							block_type: 'consent_widget' as const,
+							block_id: 'terms',
+							consent_display: 'modal' as const,
+							consent_require_scroll: true
+						}
+					]
+				}
+			: screen
+	);
 	const common = {
 		canWrite: true,
 		canReadResponses: true,
@@ -77,6 +97,32 @@
 		<ScreenEditorPage
 			{...common}
 			client={createFakeScreens({ screens: MOCK_SCREENS })}
+			id="screen_survey"
+			schemaFields={demoSchemaFields()}
+		/>
+	{/snippet}
+</Story>
+
+<!-- A consent part sets how its texts are shown by default; the service flow can override each. -->
+<Story
+	name="A consent part's default presentation"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(await canvas.findByRole('button', { name: /Select Consent/ }));
+		await expect(canvas.getByRole('radio', { name: t('sc.set.consentModal') })).toBeChecked();
+		await expect(
+			canvas.getByRole('checkbox', { name: t('sc.set.consentRequireScroll') })
+		).toBeChecked();
+		// Which statements are asked is the service flow's: the part points there.
+		await expect(canvas.getByText(new RegExp(t('sc.set.consentWhereLink')))).toBeVisible();
+		await userEvent.click(canvas.getByRole('radio', { name: t('sc.set.consentInline') }));
+		await expect(canvas.getByRole('radio', { name: t('sc.set.consentInline') })).toBeChecked();
+	}}
+>
+	{#snippet template()}
+		<ScreenEditorPage
+			{...common}
+			client={createFakeScreens({ screens: withConsent })}
 			id="screen_survey"
 			schemaFields={demoSchemaFields()}
 		/>

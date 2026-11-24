@@ -8,6 +8,11 @@
  * { "statements": [{ "statement_id": "tos", "required": true }, { "statement_id": "news", "required": false }] }
  * ```
  *
+ * An entry may also say how its text is drawn (`display`: `inline` or `modal`, `require_scroll`:
+ * true to make the text be scrolled to its end before it can be agreed to). These only override
+ * the screen's consent widget; what is asked, required and recorded is the entry's id and
+ * `required` alone, and the scroll requirement is kept by the Login UI, not checked by the server.
+ *
  * The current version of each statement is asked. A required statement must be agreed to before
  * the Flow goes on; an optional one may be declined (recorded as declined).
  *
@@ -27,11 +32,22 @@ import {
   type FlowRuntimeContract,
   type FlowRuntimeStep,
 } from '../schemas/flow-runtime';
+import { SCREEN_CONSENT_DISPLAYS, type ScreenConsentDisplay } from '../types/screens';
 
 /** A statement a step asks for. */
 export interface FlowConsentStatement {
   statement_id: string;
   required: boolean;
+  /**
+   * How its text is shown (a text of its own, not a link): in place or in a dialog. Absent: as
+   * the screen's consent widget says. Presentation only; what is asked and recorded is unchanged.
+   */
+  display?: ScreenConsentDisplay;
+  /**
+   * The box can be ticked only once the text has been scrolled to its end. Absent: as the
+   * widget says. Kept by the Login UI only; the server does not check it.
+   */
+  require_scroll?: boolean;
 }
 
 /** The most statements one step may ask for. */
@@ -58,8 +74,21 @@ export function readFlowConsentStatements(config: unknown): FlowConsentStatement
     const id = entry.statement_id;
     if (typeof id !== 'string' || !STATEMENT_ID.test(id) || seen.has(id)) return null;
     if (entry.required !== undefined && typeof entry.required !== 'boolean') return null;
+    if (
+      entry.display !== undefined &&
+      !(SCREEN_CONSENT_DISPLAYS as readonly unknown[]).includes(entry.display)
+    ) {
+      return null;
+    }
+    if (entry.require_scroll !== undefined && typeof entry.require_scroll !== 'boolean')
+      return null;
     seen.add(id);
-    statements.push({ statement_id: id, required: entry.required === true });
+    statements.push({
+      statement_id: id,
+      required: entry.required === true,
+      ...(entry.display !== undefined ? { display: entry.display as ScreenConsentDisplay } : {}),
+      ...(entry.require_scroll !== undefined ? { require_scroll: entry.require_scroll } : {}),
+    });
   }
   return statements;
 }

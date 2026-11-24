@@ -208,6 +208,15 @@ export const deScreens: Record<keyof typeof jaScreens, string> = {
 	'sc.set.captchaSubmit': 'Beim Absenden',
 	'sc.set.dividerLabel': 'Beschriftung (optional)',
 	'sc.set.dividerHint': 'Zum Beispiel „oder“. Leer: Nur die Linie wird angezeigt.',
+	'sc.set.consentDisplay': 'Darstellung des Texts (Standard)',
+	'sc.set.consentInline': 'Direkt auf der Seite',
+	'sc.set.consentModal': 'In einem Dialog',
+	'sc.set.consentRequireScroll': 'Erst nach dem Scrollen bis zum Ende zustimmen (Standard)',
+	'sc.set.consentScrollNote':
+		'Das Scrollen bis zum Ende wird nur auf dieser Seite geprüft; der Server speichert die Antwort, nicht ob der Text gelesen wurde. Die schlanke Anmeldeoberfläche hat kein Skript dafür, daher kann ein Mandant, der sie nutzt, nicht darauf umgestellt werden.',
+	'sc.set.consentWhere':
+		'Welche Texte abgefragt werden, in welcher Reihenfolge und ob sie Pflicht sind, legen Sie im Einwilligungsschritt des Dienstablaufs fest. Dort kann ein Text auch abweichend von diesen Standards dargestellt werden.',
+	'sc.set.consentWhereLink': 'Dienste öffnen',
 	'sc.set.widgetNote':
 		'Dieses Widget übernimmt Eingaben, Aktionen, Prüfungen, Laden, Erfolg und Fehler selbst.',
 	'sc.set.rowSettings': 'Zeilen-Einstellungen',

@@ -2,6 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { newPartLabel, partName } from './screen-copy';
 
 describe('newPartLabel', () => {
+	it('adds a divider with no words on its line', () => {
+		expect(newPartLabel('divider', 'login')).toBe('');
+		expect(newPartLabel('divider', 'account')).toBe('');
+	});
+
 	it('is the part’s name, except for the sign-in / sign-up link', () => {
 		expect(newPartLabel('heading', 'login')).toBe(partName('heading'));
 	});

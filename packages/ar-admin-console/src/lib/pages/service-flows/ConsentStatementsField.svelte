@@ -178,6 +178,53 @@
 								onclick={() => set(entries.filter((_, i) => i !== index))}
 							/>
 						</div>
+						{#if phase === 'ready' && !known}
+							<!-- Nothing to say of how a statement that is not there is shown. -->
+						{:else if current?.content_type !== 'url'}
+							<!-- A text kept in Authrim: how it is shown, over the screen's own default. -->
+							<div class="consent__present">
+								<Select
+									label={t('af.consent.display')}
+									options={[
+										{ value: '', label: t('af.consent.byScreen') },
+										{ value: 'inline', label: t('af.consent.displayInline') },
+										{ value: 'modal', label: t('af.consent.displayModal') }
+									]}
+									value={entry.display ?? ''}
+									onchange={(next) =>
+										set(
+											entries.map((other, i) => {
+												if (i !== index) return other;
+												const { display: _dropped, ...rest } = other;
+												return next === 'inline' || next === 'modal'
+													? { ...rest, display: next }
+													: rest;
+											})
+										)}
+								/>
+								<Select
+									label={t('af.consent.scroll')}
+									options={[
+										{ value: '', label: t('af.consent.byScreen') },
+										{ value: 'scroll', label: t('af.consent.scrollYes') },
+										{ value: 'noscroll', label: t('af.consent.scrollNo') }
+									]}
+									value={entry.requireScroll === undefined
+										? ''
+										: entry.requireScroll
+											? 'scroll'
+											: 'noscroll'}
+									onchange={(next) =>
+										set(
+											entries.map((other, i) => {
+												if (i !== index) return other;
+												const { requireScroll: _dropped, ...rest } = other;
+												return next === '' ? rest : { ...rest, requireScroll: next === 'scroll' };
+											})
+										)}
+								/>
+							</div>
+						{/if}
 						{#if phase === 'ready' && current}
 							<div>
 								<Button
@@ -301,6 +348,12 @@
 
 	.consent__name.is-id {
 		font-family: var(--font-mono);
+	}
+
+	.consent__present {
+		display: flex;
+		flex-wrap: wrap;
+		gap: var(--space-related);
 	}
 
 	.consent__add {
