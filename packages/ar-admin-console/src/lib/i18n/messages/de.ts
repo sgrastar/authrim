@@ -71,7 +71,7 @@ export const de = {
 	'nav.cluster.configure': 'Konfigurieren',
 	'nav.cluster.operate': 'Betrieb',
 	'nav.cluster.platform': 'Plattform',
-	'nav.overview': 'Übersicht',
+	'nav.overview': 'Start',
 	'nav.wip': 'In Arbeit',
 	'nav.users': 'Benutzer',
 	'nav.access': 'Zugriffssteuerung',

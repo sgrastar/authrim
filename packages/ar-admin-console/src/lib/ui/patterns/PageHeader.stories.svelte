@@ -5,6 +5,7 @@
 	import BackLink from '../primitives/BackLink.svelte';
 	import Button from '../primitives/Button.svelte';
 	import { sample } from '../stories/sample';
+	import Card from './Card.svelte';
 	import PageHeader from './PageHeader.svelte';
 
 	const { Story } = defineMeta({
@@ -87,6 +88,24 @@
 			<PageHeader title={sample('flowLogin')} description={sample('flowsDesc')}>
 				{#snippet badges()}<Badge>{sample('flowsTitle')}</Badge>{/snippet}
 			</PageHeader>
+		</div>
+	{/snippet}
+</Story>
+
+<Story
+	name="Heading not drawn"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		// The page keeps its heading for screen readers and focus, but draws nothing of the header.
+		const title = canvas.getByRole('heading', { level: 1, name: sample('flowsTitle') });
+		await expect(title.getBoundingClientRect().width).toBeLessThanOrEqual(1);
+		await expect(canvasElement.querySelector('.page-head')).toBeNull();
+	}}
+>
+	{#snippet template()}
+		<div style="max-width: 900px">
+			<PageHeader title={sample('flowsTitle')} hidden />
+			<Card title={sample('accountInfo')}><p>{sample('flowsDesc')}</p></Card>
 		</div>
 	{/snippet}
 </Story>

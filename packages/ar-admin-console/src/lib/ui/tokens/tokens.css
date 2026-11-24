@@ -93,6 +93,7 @@
 	--z-menu: 60; /* dropdown panels anchored in the page (Popover) */
 	--z-toast: 70; /* notifications */
 	--z-skip-link: 100; /* "skip to content", above everything when focused */
+	--z-guide: 10001; /* the first-steps guide's list of steps: above the guide's own dimming (10000) */
 
 	/* --- Control heights (Design rules › Controls) ---
 	   Controls on one line share a tier, so their edges line up. */
