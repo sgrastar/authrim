@@ -262,7 +262,7 @@ describe('complete', () => {
   });
 
   it('refuses a completion without the response code of the wallet redirect', async () => {
-    const response = await complete({ request_id: 'g1:apac:0:vp_1' } as never);
+    const response = await complete({ request_id: 'g1:apac:0:vp_1' });
     expect(response.status).toBe(400);
     expect(mocks.consume).not.toHaveBeenCalled();
   });
