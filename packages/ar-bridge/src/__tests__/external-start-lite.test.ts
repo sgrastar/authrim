@@ -351,6 +351,10 @@ describe('external start for a tenant in lite mode', () => {
     mocks.challengeKind.mockResolvedValue('reauth');
     const response = await start('provider-a', 'lite_txn=txn-1&lite_grant=grant-1');
     expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({
+      error: 'lite_mode_endpoint_unavailable',
+      error_description: 'This tenant starts external sign-in from the lite Login UI',
+    });
     expect(mocks.challengeKind).toHaveBeenCalledWith(env, 'default', 'challenge-1');
     expect(mocks.storeAuthState).not.toHaveBeenCalled();
   });
@@ -359,6 +363,10 @@ describe('external start for a tenant in lite mode', () => {
     mocks.getProvider.mockResolvedValue({ ...provider, enableSso: false });
     const response = await start('provider-a', 'lite_txn=txn-1&lite_grant=grant-1');
     expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({
+      error: 'access_denied',
+      error_description: 'This provider cannot be used to sign in here',
+    });
     expect(mocks.storeAuthState).not.toHaveBeenCalled();
   });
 

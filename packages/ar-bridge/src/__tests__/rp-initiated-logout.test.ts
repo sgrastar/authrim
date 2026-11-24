@@ -86,7 +86,8 @@ describe('RP-initiated upstream logout', () => {
       },
     });
     mocks.findByClientId.mockResolvedValue({
-      redirect_uris: JSON.stringify(['https://rp.example/callback']),
+      redirect_uris: JSON.stringify(['https://rp.example/signin']),
+      post_logout_redirect_uris: JSON.stringify(['https://rp.example/callback']),
     });
     mocks.decrypt.mockResolvedValue('upstream.id.token');
     mocks.discover.mockResolvedValue({
@@ -120,7 +121,7 @@ describe('RP-initiated upstream logout', () => {
     const response = await app().request(
       'https://tenant.example/auth/external/suite/logout?post_logout_redirect_uri=https%3A%2F%2Frp.example%2Fcallback&state=app-state',
       { headers: { Cookie: 'authrim_session=0_session-1' } },
-      {} as Env
+      {}
     );
 
     expect(response.status).toBe(302);
@@ -156,7 +157,7 @@ describe('RP-initiated upstream logout', () => {
     const response = await app().request(
       'https://tenant.example/auth/external/suite/logout?post_logout_redirect_uri=https%3A%2F%2Fevil.example%2F',
       { headers: { Cookie: 'authrim_session=0_session-1' } },
-      {} as Env
+      {}
     );
 
     expect(response.status).toBe(400);
@@ -186,7 +187,7 @@ describe('RP-initiated upstream logout', () => {
     const response = await app().request(
       'https://tenant.example/auth/external/suite/logout/callback?state=different-state',
       { headers: { Cookie: 'authrim_upstream_logout=logout-1' } },
-      {} as Env
+      {}
     );
 
     expect(response.status).toBe(302);
@@ -220,7 +221,7 @@ describe('RP-initiated upstream logout', () => {
     const response = await app().request(
       'https://tenant.example/auth/external/suite/logout/callback',
       { headers: { Cookie: 'authrim_upstream_logout=logout-1' } },
-      {} as Env
+      {}
     );
 
     expect(response.status).toBe(302);
@@ -237,7 +238,7 @@ describe('RP-initiated upstream logout', () => {
     const response = await app().request(
       'https://tenant.example/auth/external/suite/logout',
       { headers: { Cookie: 'authrim_session=0_session-1' } },
-      {} as Env
+      {}
     );
 
     expect(response.status).toBe(502);
@@ -258,7 +259,7 @@ describe('RP-initiated upstream logout', () => {
     const response = await app().request(
       'https://tenant.example/auth/external/suite/logout/callback',
       { headers: { Cookie: 'authrim_upstream_logout=logout-1' } },
-      {} as Env
+      {}
     );
 
     expect(response.status).toBe(400);

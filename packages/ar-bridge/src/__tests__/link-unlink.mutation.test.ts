@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => ({
   removalStatus: vi.fn(),
   warn: vi.fn(),
   error: vi.fn(),
+  moduleNames: [] as string[],
 }));
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => ({
@@ -35,7 +36,10 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => ({
   ensureDatabaseAdapter: mocks.ensure,
   getTenantIdFromContext: () => 'tenant-a',
   getLogger: () => ({
-    module: () => ({ info: vi.fn(), debug: vi.fn(), warn: mocks.warn, error: mocks.error }),
+    module: (name: string) => {
+      mocks.moduleNames.push(name);
+      return { info: vi.fn(), debug: vi.fn(), warn: mocks.warn, error: mocks.error };
+    },
   }),
 }));
 vi.mock('../services/linked-identity-store', () => ({
@@ -407,5 +411,65 @@ describe('a link that is already gone', () => {
     expect((await unlink()).status).toBe(500);
     mocks.removalStatus.mockRejectedValue('text');
     expect((await unlink()).status).toBe(500);
+  });
+});
+
+describe('the reasons of a failure, as logged', () => {
+  const logged = () => rec(mocks.error.mock.calls.at(-1)?.[2]).message;
+
+  it('logs under the EXTERNAL-IDP module', async () => {
+    mocks.moduleNames.length = 0;
+    await unlink();
+    expect(new Set(mocks.moduleNames)).toEqual(new Set(['EXTERNAL-IDP']));
+  });
+
+  it('names a missing provisioner, for a removed link and for a present one', async () => {
+    mocks.getIdentityById.mockResolvedValue(null);
+    mocks.error.mockClear();
+    expect((await unlink('/links/link-1', {})).status).toBe(500);
+    expect(mocks.error).toHaveBeenCalledTimes(1);
+    expect(logged()).toBe('external_idp_account_provisioner_unavailable');
+    mocks.getIdentityById.mockResolvedValue(identity());
+    mocks.error.mockClear();
+    expect((await unlink('/links/link-1', {})).status).toBe(500);
+    expect(mocks.error).toHaveBeenCalledTimes(1);
+    expect(logged()).toBe('external_idp_account_provisioner_unavailable');
+  });
+
+  it('names an invalid answer to a removal and to a status question', async () => {
+    mocks.removeRoute.mockResolvedValue({ status: 200, operationId: 'x', accountId: 'y' });
+    mocks.error.mockClear();
+    expect((await unlink()).status).toBe(500);
+    expect(mocks.error).toHaveBeenCalledTimes(1);
+    expect(logged()).toBe('external_idp_route_removal_response_invalid');
+    mocks.getIdentityById.mockResolvedValue(null);
+    mocks.removalStatus.mockResolvedValue({
+      status: 500,
+      operationId: OPERATION,
+      accountId: 'account:user-a',
+    });
+    mocks.error.mockClear();
+    expect((await unlink()).status).toBe(500);
+    expect(mocks.error).toHaveBeenCalledTimes(1);
+    expect(logged()).toBe('external_idp_route_removal_response_invalid');
+  });
+
+  it('reports a revocation that throws as a warning and in the answer', async () => {
+    mocks.revoke.mockRejectedValue(new Error('provider down'));
+    const response = await unlink();
+    const body = rec(await response.json());
+    expect(rec(body.token_revocation)).toMatchObject({
+      attempted: true,
+      access_token_revoked: false,
+      refresh_token_revoked: false,
+      warnings: ['provider down'],
+    });
+    expect(mocks.warn).toHaveBeenCalledWith('Token revocation failed for identity', {
+      errorCount: 1,
+    });
+    mocks.warn.mockClear();
+    mocks.revoke.mockRejectedValue('text');
+    const again = rec(rec(await (await unlink()).json()).token_revocation);
+    expect(again.warnings).toEqual(['revocation_failed']);
   });
 });

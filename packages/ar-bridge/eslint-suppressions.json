@@ -174,9 +174,6 @@
     }
   },
   "src/__tests__/rp-initiated-logout.test.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 6
-    },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 4
     }
@@ -226,7 +223,7 @@
       "count": 1
     },
     "@typescript-eslint/no-unsafe-assignment": {
-      "count": 2
+      "count": 1
     },
     "@typescript-eslint/no-unsafe-call": {
       "count": 1

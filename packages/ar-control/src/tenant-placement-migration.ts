@@ -945,8 +945,53 @@ export class TenantPlacementMigrationService {
     }
     const now = this.now();
     const session = primary(this.database);
-    const eventId = await migrationOperationId(environmentId, operationId, idempotencyKey);
+    // The audit id is namespaced by event type so another operation reusing the key cannot collide.
+    const eventId = `${await migrationOperationId(environmentId, operationId, idempotencyKey)}:source_purge_approved`;
+    // Evaluated before the parent transition inside the same transaction: only the request whose
+    // compare-and-set will win sees it hold, so a losing concurrent request changes nothing.
+    const eligible = `EXISTS (
+      SELECT 1 FROM control_tenant_placement_migrations migration
+       WHERE migration.environment_id = ? AND migration.operation_id = ?
+         AND migration.migration_state = 'source_quarantined'
+         AND migration.source_retention_expires_at <= ?
+         AND (SELECT COUNT(*) FROM control_tenant_placement_migration_shards
+               WHERE operation_id = migration.operation_id AND shard_state = 'quarantined') = ?
+         AND (SELECT COUNT(*) FROM control_tenant_placement_migration_shards
+               WHERE operation_id = migration.operation_id) = ?
+    )`;
+    const eligibleParams = [
+      environmentId,
+      operationId,
+      now,
+      current.shards.length,
+      current.shards.length,
+    ];
     const statements = [
+      session
+        .prepare(
+          `UPDATE control_tenant_placement_migration_shards
+              SET table_cursor_json = '{"purgeTableIndex":0}', updated_at = ?
+            WHERE operation_id = ? AND shard_state = 'quarantined' AND ${eligible}`
+        )
+        .bind(now, operationId, ...eligibleParams),
+      session
+        .prepare(
+          `INSERT INTO control_audit_events (
+             event_id, environment_id, operation_id, event_type, actor_type, actor_id,
+             resource_kind, resource_id, outcome, redacted_payload_json, created_at
+           ) SELECT ?, ?, ?, 'tenant_placement_migration.source_purge_approved', 'admin', ?,
+                    'tenant_placement_migration', ?, 'succeeded', '{}', ?
+              WHERE ${eligible}`
+        )
+        .bind(
+          eventId,
+          environmentId,
+          operationId,
+          requestedById,
+          operationId,
+          now,
+          ...eligibleParams
+        ),
       session
         .prepare(
           `UPDATE control_tenant_placement_migrations
@@ -954,36 +999,38 @@ export class TenantPlacementMigrationService {
                   purge_approved_at = ?, updated_at = ?
             WHERE environment_id = ? AND operation_id = ?
               AND migration_state = 'source_quarantined'
-              AND source_retention_expires_at <= ?`
+              AND source_retention_expires_at <= ?
+              AND (SELECT COUNT(*) FROM control_tenant_placement_migration_shards
+                    WHERE operation_id = ? AND shard_state = 'quarantined') = ?
+              AND (SELECT COUNT(*) FROM control_tenant_placement_migration_shards
+                    WHERE operation_id = ?) = ?`
         )
-        .bind(requestedById, now, now, environmentId, operationId, now),
-      session
-        .prepare(
-          `UPDATE control_tenant_placement_migration_shards
-              SET table_cursor_json = '{"purgeTableIndex":0}', updated_at = ?
-            WHERE operation_id = ? AND shard_state = 'quarantined'`
-        )
-        .bind(now, operationId),
-      session
-        .prepare(
-          `INSERT OR IGNORE INTO control_audit_events (
-             event_id, environment_id, operation_id, event_type, actor_type, actor_id,
-             resource_kind, resource_id, outcome, redacted_payload_json, created_at
-           ) VALUES (?, ?, ?, 'tenant_placement_migration.source_purge_approved', 'admin', ?,
-                     'tenant_placement_migration', ?, 'succeeded', '{}', ?)`
-        )
-        .bind(eventId, environmentId, operationId, requestedById, operationId, now),
+        .bind(
+          requestedById,
+          now,
+          now,
+          environmentId,
+          operationId,
+          now,
+          operationId,
+          current.shards.length,
+          operationId,
+          current.shards.length
+        ),
     ];
     const results = await this.database.batch(statements);
-    if (
-      results.length !== statements.length ||
-      results.some((result) => result.success !== true) ||
-      Number(results[0]?.meta?.changes ?? 0) !== 1 ||
-      Number(results[1]?.meta?.changes ?? 0) !== current.shards.length
-    ) {
+    const approved =
+      results.length === statements.length &&
+      results.every((result) => result.success === true) &&
+      Number(results[0]?.meta?.changes ?? 0) === current.shards.length &&
+      Number(results[1]?.meta?.changes ?? 0) === 1 &&
+      Number(results[2]?.meta?.changes ?? 0) === 1;
+    const result = await this.get(environmentId, operationId);
+    if (!approved) {
+      // A concurrent request may have approved first; that outcome is the idempotent answer.
+      if (result && ['purge_pending', 'complete'].includes(result.state)) return result;
       throw new Error('control_tenant_placement_migration_purge_not_allowed');
     }
-    const result = await this.get(environmentId, operationId);
     if (!result || result.state !== 'purge_pending') {
       throw new Error('control_tenant_placement_migration_purge_not_allowed');
     }

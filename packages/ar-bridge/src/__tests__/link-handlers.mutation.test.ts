@@ -16,19 +16,35 @@ const mocks = vi.hoisted(() => ({
   getProviderByIdOrSlug: vi.fn(),
   createIntent: vi.fn(),
   error: vi.fn(),
+  moduleNames: [] as string[],
 }));
 
-vi.mock('@authrim/ar-lib-core', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('@authrim/ar-lib-core')>()),
-  readAccountSession: mocks.readSession,
-  resolveAccountDataContext: mocks.resolveAccount,
-  resolveAccountReauthTtlSeconds: mocks.reauthTtl,
-  getTenantIdFromContext: () => 'tenant-a',
-  buildIssuerUrl: () => 'https://tenant-a.example.com',
-  getLogger: () => ({
-    module: () => ({ info: vi.fn(), warn: vi.fn(), debug: vi.fn(), error: mocks.error }),
-  }),
-}));
+vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
+  return {
+    ...actual,
+    // a missing field is answered with the field it names, so that the answer can be checked
+    createErrorResponse: (
+      c: Parameters<typeof actual.createErrorResponse>[0],
+      code: Parameters<typeof actual.createErrorResponse>[1],
+      options?: Parameters<typeof actual.createErrorResponse>[2]
+    ) =>
+      code === actual.AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD
+        ? c.json({ error: 'required_field', variables: options?.variables }, 400)
+        : actual.createErrorResponse(c, code, options),
+    readAccountSession: mocks.readSession,
+    resolveAccountDataContext: mocks.resolveAccount,
+    resolveAccountReauthTtlSeconds: mocks.reauthTtl,
+    getTenantIdFromContext: () => 'tenant-a',
+    buildIssuerUrl: () => 'https://tenant-a.example.com',
+    getLogger: () => ({
+      module: (name: string) => {
+        mocks.moduleNames.push(name);
+        return { info: vi.fn(), warn: vi.fn(), debug: vi.fn(), error: mocks.error };
+      },
+    }),
+  };
+});
 vi.mock('../services/linked-identity-store', () => ({
   getLinkedIdentityById: vi.fn(),
   listLinkedIdentities: mocks.listIdentities,
@@ -102,6 +118,30 @@ beforeEach(() => {
   mocks.getIdentityForProvider.mockResolvedValue(null);
   mocks.getProviderByIdOrSlug.mockResolvedValue({ id: 'prov-1', slug: 'corp', enabled: true });
   mocks.createIntent.mockResolvedValue('intent-token');
+});
+
+describe('details of the answers', () => {
+  it('names the field a link request lacks', async () => {
+    for (const body of [{}, { provider_id: '' }, { provider_id: 5 }, 'not json']) {
+      const response = await post(body);
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({
+        error: 'required_field',
+        variables: { field: 'provider_id' },
+      });
+    }
+  });
+
+  it('logs under the EXTERNAL-IDP module and accepts a cookie list without spaces', async () => {
+    mocks.moduleNames.length = 0;
+    expect((await get({ Cookie: 'a=b;authrim_session=sess-1' })).status).toBe(200);
+    expect(mocks.readSession).toHaveBeenLastCalledWith(ENV, 'tenant-a', 'sess-1');
+    await post({ provider_id: 'corp' });
+    mocks.readSession.mockRejectedValue(new Error('down'));
+    await get();
+    expect(mocks.moduleNames.length).toBeGreaterThanOrEqual(3);
+    expect(new Set(mocks.moduleNames)).toEqual(new Set(['EXTERNAL-IDP']));
+  });
 });
 
 describe('the session cookie', () => {
