@@ -94,6 +94,7 @@ import {
 } from '@authrim/ar-lib-core';
 import { runRetentionMaintenance } from './retention-maintenance';
 import { processScheduledAdminNoticeRetention } from './admin-notice-retention';
+import { processScheduledSamlCertificateNotices } from './admin-notice-saml-certificates';
 import { processScheduledAdminNoticeDelivery } from './admin-notice-delivery';
 import { runObjectArtifactCleanup } from './artifact-cleanup';
 import { processLoggingStorageMaintenanceJobs } from './logging-storage-maintenance-jobs';
@@ -4758,6 +4759,12 @@ async function handleCoveredScheduled(
     await runRetentionMaintenance(env, maintenanceTargets, log.module('RETENTION-MAINTENANCE'));
     // Handled admin console notices past the platform's retention (every tenant at once).
     await processScheduledAdminNoticeRetention(env, log.module('ADMIN-NOTICE-RETENTION'));
+    // Notices for SAML provider certificates that expire soon (the tenants of this run).
+    await processScheduledSamlCertificateNotices(
+      env,
+      maintenanceTargets,
+      log.module('SAML-CERTIFICATE-NOTICES')
+    );
 
     log.info('Scheduled maintenance cleanup completed', {
       passwordTokensDeleted,

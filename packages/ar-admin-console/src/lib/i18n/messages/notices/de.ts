@@ -92,6 +92,10 @@ export const deNotices: Record<keyof typeof jaNotices, string> = {
 		'{email} hat die Wiederherstellung eines Sicherheitsschlüssels beantragt',
 	'notice.msg.second_factor_policy_widened':
 		'{email} hat die erlaubten zweiten Faktoren erweitert ({kinds}), nur mit einem Passkey bestätigt',
+	'notice.msg.saml_certificate_expiring':
+		'Das Zertifikat des SAML-Anbieters {provider} läuft am {date} ab',
+	'notice.msg.saml_certificate_expired':
+		'Das Zertifikat des SAML-Anbieters {provider} ist abgelaufen ({date})',
 	'notice.msg.storage_registry_security':
 		'In der Speicherregistrierung wurde ein Sicherheitsproblem gefunden',
 	'notice.msg.storage_registry_health': 'Die Speicherregistrierung hat ein Zustandsproblem',
