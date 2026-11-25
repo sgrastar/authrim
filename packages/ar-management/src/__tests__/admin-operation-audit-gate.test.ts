@@ -26,7 +26,6 @@ const DIRECT_END_USER_WRITERS: Readonly<Record<string, string>> = {
   'account-directory-producer.ts': 'an end user’s own account creation',
   'account-identifier-erasure.ts': 'an end user’s identifier erasure',
   'account-operation-log.ts': 'an end user’s own account operations',
-  'account-webhook-outbox.ts': 'account events delivered from the outbox',
   'admin-operation-audit.ts': 'the end user’s history of an admin operation on them',
   'admin-shared.ts': 'the admin audit repository’s own createAuditLog method',
   'client-config.ts': 'a client managing its own registration (RFC 7592)',
