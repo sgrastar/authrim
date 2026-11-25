@@ -134,7 +134,6 @@ export const de = {
 	'nav.plat.backup': 'Sicherung / Notfall',
 	'nav.plat.jobs': 'Aufträge',
 	'nav.plat.approvals': 'Genehmigungen',
-	'nav.users.resolution': 'Klärungszentrum',
 	'nav.access.roleRules': 'Zuweisungsregeln',
 	'nav.apps.machine': 'Maschinenzugriff',
 	'nav.auth.tokenRefresh': 'Externe Tokenerneuerung',

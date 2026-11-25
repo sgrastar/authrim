@@ -134,7 +134,6 @@ export const en = {
 	'nav.plat.backup': 'Backup / DR',
 	'nav.plat.jobs': 'Jobs',
 	'nav.plat.approvals': 'Approvals',
-	'nav.users.resolution': 'Resolution center',
 	'nav.access.roleRules': 'Assignment rules',
 	'nav.apps.machine': 'Machine access',
 	'nav.auth.tokenRefresh': 'External token refresh',

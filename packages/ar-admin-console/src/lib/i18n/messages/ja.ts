@@ -137,7 +137,6 @@ export const ja = {
 	'nav.plat.backup': 'バックアップ / DR',
 	'nav.plat.jobs': 'ジョブ',
 	'nav.plat.approvals': '承認待ち',
-	'nav.users.resolution': '解決センター',
 	'nav.access.roleRules': '割り当てルール',
 	'nav.apps.machine': 'マシン間アクセス',
 	'nav.auth.tokenRefresh': '外部トークン更新',
