@@ -257,6 +257,11 @@ export function createLogReadAdapter(input: {
   onCoverage?: (coverage: LogReadCoverage) => void;
   /** Self-service subjects may see their view's latency, never the tenant's delivery volume. */
   includePendingDeliveries?: boolean;
+  /**
+   * Rows this view leaves out. They are dropped before the query runs, so counts, pages and
+   * cursors see the same rows, and the check costs nothing from the query budget.
+   */
+  excludeRow?: (row: Readonly<LogIcebergSqlRow>) => boolean;
 }): {
   adapter: DatabaseAdapter;
   hasArchive: () => boolean;
@@ -371,7 +376,8 @@ export function createLogReadAdapter(input: {
         complete: result.consistency === 'snapshot',
       };
       const names = new Set(input.columns ?? COLUMNS[input.dataset]?.split(' ') ?? []);
-      const prepared = result.rows.map((original) => {
+      const excludeRow = input.excludeRow;
+      const prepared = result.rows.flatMap((original) => {
         if (original.tenant_id !== input.tenantId || typeof original.id !== 'string')
           fail('row_tenant_or_id');
         const row: LogIcebergSqlRow = { ...original };
@@ -396,8 +402,10 @@ export function createLogReadAdapter(input: {
             row[column] = typeof value === 'string' ? value : null;
           }
         }
+        // Every row passes the checks above first; only then may the view leave it out.
+        if (excludeRow?.(original)) return [];
         for (const name of Object.keys(row)) names.add(name);
-        return row;
+        return [row];
       });
       if (!names.size) fail('no_columns');
       const columns = [...names];
