@@ -45,6 +45,11 @@ export const arAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 	'af.group.general': 'Flow-wide settings',
 	'af.group.complete': 'Finishing sign-up',
 	'af.group.identity': 'Sign-in methods',
+	'af.screenConsent.title': 'بيانات الموافقة',
+	'af.screenConsent.lead':
+		'This screen has a consent box. The statements chosen here are asked on this screen together with its button and recorded in the same submit. They are shown to whoever sees this screen.',
+	'af.screenConsent.twice':
+		"The flow's consent at sign-up step asks for one of these statements too, so a person would be asked twice. Remove it from one of them.",
 	'af.group.regConsent': 'Consent at sign-up',
 	'af.group.authenticate': 'Authenticating the person',
 	'af.group.finish': 'Finishing sign-in',

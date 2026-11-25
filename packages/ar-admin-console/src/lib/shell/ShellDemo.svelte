@@ -44,8 +44,20 @@
 
 	const allScopes: ScopeOption[] = [
 		{ id: 'platform', kind: 'platform', name: 'プラットフォーム全体', mark: '◆' },
-		{ id: 'acme', kind: 'tenant', name: 'Acme Corporation', mark: 'A' },
-		{ id: 'globex', kind: 'tenant', name: 'Globex Inc.', mark: 'G' }
+		{
+			id: 'acme',
+			kind: 'tenant',
+			name: 'Acme Corporation',
+			mark: 'A',
+			status: { label: 'Active', tone: 'success' }
+		},
+		{
+			id: 'globex',
+			kind: 'tenant',
+			name: 'Globex Inc.',
+			mark: 'G',
+			status: { label: 'Suspended', tone: 'warning' }
+		}
 	];
 	const manyTenantScopes: ScopeOption[] = [
 		...allScopes,
@@ -53,7 +65,15 @@
 			id: `demo-${index + 1}`,
 			kind: 'tenant' as const,
 			name: `Demo tenant ${String(index + 1).padStart(2, '0')}`,
-			mark: 'D'
+			mark: 'D',
+			// The first two are on their way out: listed with their state, but not to be chosen.
+			status:
+				index === 0
+					? { label: 'Deleting', tone: 'danger' as const }
+					: index === 1
+						? { label: 'Deleted', tone: 'danger' as const }
+						: { label: 'Active', tone: 'success' as const },
+			disabled: index < 2
 		}))
 	];
 	const scopes = $derived(

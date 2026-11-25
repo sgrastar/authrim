@@ -33,7 +33,6 @@ import {
   createErrorResponse,
   AR_ERROR_CODES,
   validateAllowedOrigins,
-  createAuditLogFromContext,
   getLogger,
   // Crypto utilities
   hashClientSecret,
@@ -77,7 +76,6 @@ import {
   parseClientStringArray,
   isCharArrayLike,
   getErrorDetailsForResponse,
-  scheduleAdminAuditLog,
   toMilliseconds,
   toSeconds,
 } from './admin-shared';
@@ -89,6 +87,7 @@ import {
   getAuditTimeRange,
   type AuditHotQueryContext,
 } from './audit-hot-query';
+import { isAdminOperationCoreEventRow } from './admin-operation-core-events';
 import { getAuditJsonTextExpr } from './audit-sql-dialect';
 import {
   attemptImmediateAccountDirectoryRemovals,
@@ -104,6 +103,7 @@ import { prepareAccountTombstone, writeAccountTombstone } from './account-tombst
 import { usesRoutedAccountStorage } from './tenant-routed-storage';
 import { isInactiveAccountRouteError } from './account-route-errors';
 import { CrossShardAccountExactSearchService } from './cross-shard-account-list';
+import { recordAdminOperationAudit } from './admin-operation-audit';
 
 const TOKEN_REGISTRATION_ERROR_BODY_MAX_BYTES = 64 * 1024;
 
@@ -491,13 +491,19 @@ export async function adminUserSuspendHandler(c: Context<{ Bindings: Env }>) {
     const revokedTokens = body.revoke_tokens !== false ? -1 : 0; // -1 indicates implicit revocation via status
     const revokedSessions = body.revoke_sessions !== false ? -1 : 0;
 
-    // Write audit log (reason_code only, not reason_detail for privacy)
-    await createAuditLogFromContext(c, 'user.suspend', 'user', userId, {
-      reason_code: body.reason_code,
-      previous_status: previousStatus,
-      duration_hours: body.duration_hours,
-      revoked_tokens: revokedTokens,
-      revoked_sessions: revokedSessions,
+    // Audit: the admin record, and the user's history (reason_code only, not reason_detail).
+    await recordAdminOperationAudit(c, {
+      action: 'user.suspended',
+      resourceType: 'user',
+      resourceId: userId,
+      metadata: {
+        reason_code: body.reason_code,
+        previous_status: previousStatus,
+        duration_hours: body.duration_hours,
+        revoked_tokens: revokedTokens,
+        revoked_sessions: revokedSessions,
+      },
+      endUser: { userId: userId, action: 'user.suspend' },
     });
 
     // Store reason_detail to operational_logs if provided (encrypted, short retention)
@@ -538,13 +544,6 @@ export async function adminUserSuspendHandler(c: Context<{ Bindings: Env }>) {
       previousStatus,
       revokedTokens,
       revokedSessions,
-    });
-
-    // Admin Audit Log (non-blocking)
-    scheduleAdminAuditLog(c, 'user.suspended', userId, 'success', {
-      reason_code: body.reason_code,
-      previous_status: previousStatus,
-      duration_hours: body.duration_hours,
     });
 
     return c.json({
@@ -684,13 +683,19 @@ export async function adminUserLockHandler(c: Context<{ Bindings: Env }>) {
     const revokedTokens = body.revoke_tokens !== false ? -1 : 0; // -1 indicates implicit revocation via status
     const revokedSessions = body.revoke_sessions !== false ? -1 : 0;
 
-    // Write audit log (reason_code only, not reason_detail for privacy)
-    await createAuditLogFromContext(c, 'user.lock', 'user', userId, {
-      reason_code: body.reason_code,
-      previous_status: previousStatus,
-      unlock_at: body.unlock_at,
-      revoked_tokens: revokedTokens,
-      revoked_sessions: revokedSessions,
+    // Audit: the admin record, and the user's history (reason_code only, not reason_detail).
+    await recordAdminOperationAudit(c, {
+      action: 'user.locked',
+      resourceType: 'user',
+      resourceId: userId,
+      metadata: {
+        reason_code: body.reason_code,
+        previous_status: previousStatus,
+        unlock_at: body.unlock_at,
+        revoked_tokens: revokedTokens,
+        revoked_sessions: revokedSessions,
+      },
+      endUser: { userId: userId, action: 'user.lock' },
     });
 
     // Store reason_detail to operational_logs if provided (encrypted, short retention)
@@ -731,12 +736,6 @@ export async function adminUserLockHandler(c: Context<{ Bindings: Env }>) {
       previousStatus,
       revokedTokens,
       revokedSessions,
-    });
-
-    // Admin Audit Log (non-blocking)
-    scheduleAdminAuditLog(c, 'user.locked', userId, 'success', {
-      reason_code: body.reason_code,
-      previous_status: previousStatus,
     });
 
     return c.json({
@@ -899,10 +898,16 @@ export async function adminUserActivateHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    // Write audit log (reason_code only, not reason_detail for privacy)
-    await createAuditLogFromContext(c, 'user.activate', 'user', userId, {
-      reason_code: body.reason_code,
-      previous_status: previousStatus,
+    // Audit: the admin record, and the user's history (reason_code only, not reason_detail).
+    await recordAdminOperationAudit(c, {
+      action: 'user.activated',
+      resourceType: 'user',
+      resourceId: userId,
+      metadata: {
+        reason_code: body.reason_code,
+        previous_status: previousStatus,
+      },
+      endUser: { userId: userId, action: 'user.activate' },
     });
 
     // Store reason_detail to operational_logs if provided (encrypted, short retention)
@@ -941,12 +946,6 @@ export async function adminUserActivateHandler(c: Context<{ Bindings: Env }>) {
       userId,
       reasonCode: body.reason_code,
       previousStatus,
-    });
-
-    // Admin Audit Log (non-blocking)
-    scheduleAdminAuditLog(c, 'user.activated', userId, 'success', {
-      reason_code: body.reason_code,
-      previous_status: previousStatus,
     });
 
     return c.json({
@@ -1279,11 +1278,16 @@ export async function adminUserAnonymizeHandler(c: Context<{ Bindings: Env }>) {
     // The tombstone is keyed by the user id: the audits and the log name it by the same hash.
     const tombstoneIdHash = tombstoneId === null ? null : await anonymizedRef(tombstoneId);
 
-    // Step 6: Write audit log (user_id_hash only, no original ID)
-    await createAuditLogFromContext(c, 'user.anonymized', 'user', userIdHash, {
-      reason_code: body.reason_code,
-      tombstone_id: tombstoneIdHash,
-      retention_until: new Date(retentionUntil).toISOString(),
+    // Step 6: Admin audit record only, by user_id_hash: no user is named any more.
+    await recordAdminOperationAudit(c, {
+      action: 'user.anonymized',
+      resourceType: 'user',
+      resourceId: userIdHash,
+      metadata: {
+        reason_code: body.reason_code,
+        tombstone_id: tombstoneIdHash,
+        retention_until: new Date(retentionUntil).toISOString(),
+      },
     });
 
     log.info('User anonymized', {
@@ -1291,12 +1295,6 @@ export async function adminUserAnonymizeHandler(c: Context<{ Bindings: Env }>) {
       userIdHash,
       reasonCode: body.reason_code,
       tombstoneIdHash,
-    });
-
-    // Admin Audit Log (use user_id_hash to preserve anonymization)
-    scheduleAdminAuditLog(c, 'user.anonymized', userIdHash, 'success', {
-      reason_code: body.reason_code,
-      tombstone_id: tombstoneIdHash,
     });
 
     return c.json({
@@ -1341,6 +1339,8 @@ export async function adminAuditLogListHandler(c: Context<{ Bindings: Env }>) {
     const hotQuery = await getAuditHotQuerySupport(c.env, tenantId, {
       onCoverage: logCoverageHeaders(c),
       page: logPageRequest(c, tenantId, limit),
+      // Admin configuration changes that older releases wrote here belong to the admin audit log.
+      excludeRow: isAdminOperationCoreEventRow,
     });
 
     // Filters
@@ -2630,13 +2630,15 @@ export async function adminUserConsentRevokeHandler(c: Context<{ Bindings: Env }
       refreshTokenFamilies: familyCount,
     });
 
-    await createAuditLogFromContext(c, 'consent.revoked', 'user', userId, {
-      client_id: clientId,
-      scopes: previousScopes,
-    });
-    scheduleAdminAuditLog(c, 'user.consent_revoked', userId, 'success', {
-      client_id: clientId,
-      scopes: previousScopes,
+    await recordAdminOperationAudit(c, {
+      action: 'user.consent_revoked',
+      resourceType: 'user',
+      resourceId: userId,
+      metadata: {
+        client_id: clientId,
+        scopes: previousScopes,
+      },
+      endUser: { userId: userId, action: 'consent.revoked' },
     });
 
     return c.json({
@@ -2858,6 +2860,8 @@ export async function adminUserActivityLogHandler(c: Context<{ Bindings: Env }>)
       onCoverage: logCoverageHeaders(c),
       page: { limit: limit + 1, scope: JSON.stringify([tenantId, c.req.path, userId]) },
       storedCursorTime: activityCursor?.created_at,
+      // An admin who is also a user of this tenant would otherwise see their own console changes.
+      excludeRow: isAdminOperationCoreEventRow,
     });
     if (!hotQuery.supported || !hotQuery.context) {
       return createAuditHotQueryUnsupportedResponse(c, hotQuery);
@@ -3141,10 +3145,16 @@ export async function adminUserSendEmailHandler(c: Context<{ Bindings: Env }>) {
     });
 
     if (delivery.delivery === 'permanent_failure') {
-      await createAuditLogFromContext(c, 'email.delivery_failed', 'user', userId, {
-        template: body.template,
-        email_job_id: emailJobId,
-        delivery_intent_id: delivery.reference.intentId,
+      await recordAdminOperationAudit(c, {
+        action: 'email.delivery_failed',
+        resourceType: 'user',
+        resourceId: userId,
+        metadata: {
+          template: body.template,
+          email_job_id: emailJobId,
+          delivery_intent_id: delivery.reference.intentId,
+        },
+        endUser: { userId: userId },
       });
       return c.json(
         {
@@ -3159,11 +3169,17 @@ export async function adminUserSendEmailHandler(c: Context<{ Bindings: Env }>) {
     const deliveryStatus = delivery.delivery === 'delivered' ? 'provider_accepted' : 'queued';
 
     // Write audit log
-    await createAuditLogFromContext(c, 'email.queued', 'user', userId, {
-      template: body.template,
-      email_job_id: emailJobId,
-      delivery_intent_id: delivery.reference.intentId,
-      delivery_status: deliveryStatus,
+    await recordAdminOperationAudit(c, {
+      action: 'email.queued',
+      resourceType: 'user',
+      resourceId: userId,
+      metadata: {
+        template: body.template,
+        email_job_id: emailJobId,
+        delivery_intent_id: delivery.reference.intentId,
+        delivery_status: deliveryStatus,
+      },
+      endUser: { userId: userId },
     });
 
     return c.json({

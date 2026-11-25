@@ -219,7 +219,7 @@ async function getAuditConfig(env: Env): Promise<{
 async function getCheckService(
   c: Context<{ Bindings: Env }>,
   debugMode: boolean
-): Promise<{ checkService: UnifiedCheckService; auditService?: CheckAuditService } | null> {
+): Promise<{ checkService: UnifiedCheckService; auditService?: CheckAuditService }> {
   const env = c.env;
   const coreAdapter = getPolicyCoreAdapter(c);
 
@@ -360,9 +360,6 @@ checkRoutes.post('/', async (c) => {
   // Get check service
   const debugMode = isDebugModeEnabled(c.env);
   const services = await getCheckService(c, debugMode);
-  if (!services) {
-    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
-  }
 
   try {
     // Parse request body
@@ -537,9 +534,6 @@ checkRoutes.post('/batch', async (c) => {
   // Get check service
   const debugMode = isDebugModeEnabled(c.env);
   const services = await getCheckService(c, debugMode);
-  if (!services) {
-    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
-  }
 
   try {
     const body = await c.req.json<{

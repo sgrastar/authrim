@@ -7,7 +7,6 @@ import {
   AR_ERROR_CODES,
   cleanupExpiredDirectoryAuthMaintenance,
   createAuthContextFromHono,
-  createAuditLogFromContext,
   createErrorResponse,
   createDirectoryAuthId,
   ensureDirectoryAuthDefaults,
@@ -58,6 +57,7 @@ import {
 } from '@authrim/ar-lib-core/services/directory-connector-fleet';
 import { getAdminAuth, requireTenantResourceAccess } from '../admin-tenant-access';
 import { materializeEncryptedObjectArtifact } from '../object-artifact-materialization';
+import { recordAdminOperationAudit } from '../admin-operation-audit';
 
 const MAX_LIST_LIMIT = 100;
 const MIN_AUTHRIM_RETENTION_DAYS = 30;
@@ -460,16 +460,15 @@ async function auditDirectoryAuthAction(
   tenantId: string,
   details: Record<string, unknown>
 ): Promise<void> {
-  await createAuditLogFromContext(
-    c as unknown as Parameters<typeof createAuditLogFromContext>[0],
-    action,
-    resourceType,
-    resourceId,
-    {
+  await recordAdminOperationAudit(c as unknown as Parameters<typeof recordAdminOperationAudit>[0], {
+    action: action,
+    resourceType: resourceType,
+    resourceId: resourceId,
+    metadata: {
       tenant_id: tenantId,
       ...details,
-    }
-  ).catch(() => undefined);
+    },
+  }).catch(() => undefined);
 }
 
 async function buildDirectoryAuthEvidenceArtifact(

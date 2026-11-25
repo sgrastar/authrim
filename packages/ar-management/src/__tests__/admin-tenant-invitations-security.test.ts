@@ -78,6 +78,9 @@ import {
   listTenantInvitationsHandler,
 } from '../admin-tenant-invitations';
 
+// Admin operations are recorded through the forwarding shim (see the helper).
+vi.mock('../admin-operation-audit', () => import('./helpers/legacy-admin-audit-shim'));
+
 function app(hierarchyLevel = 80) {
   const instance = new Hono<{
     Bindings: { EMAIL_FROM?: string };

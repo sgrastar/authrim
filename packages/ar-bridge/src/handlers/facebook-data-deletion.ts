@@ -290,7 +290,7 @@ async function handleSignedCallback(
     providerId: provider.id,
     outcome: result.outcome,
   });
-  if (!confirmationCode) return new Response(null, { status: 200 });
+  if (!confirmationCode) return c.body(null, 200);
   return c.json({
     url: dataDeletionStatusUrl(c.env, tenantId, provider, confirmationCode),
     confirmation_code: confirmationCode,

@@ -369,7 +369,7 @@ export const deSettings: Record<keyof typeof jaSettings, string> = {
 
 	'set.k.tenant_capabilities.webhooks': 'Tenants dürfen Webhooks nutzen',
 	'set.k.tenant_capabilities.webhooks.desc':
-		'Aus: Tenants können Webhooks nicht über die Admin-API verwalten, und für Tenants wird kein Webhook zugestellt. Ereignisse, die in dieser Zeit auftreten, werden verworfen und nicht nachgeliefert. Fällige Konto-Webhook-Ereignisse in der Warteschlange werden bei der Verarbeitung verworfen und im Audit-Log festgehalten (webhook.outbox.dropped); Ereignisse, die beim Wiedereinschalten noch warten, werden zugestellt. Plattformadministratoren sind an der Admin-API ausgenommen. Eine Änderung wirkt nach etwa einer Minute. Standardmäßig an.',
+		'Aus: Tenants können Webhooks nicht über die Admin-API verwalten, und für Tenants wird kein Webhook zugestellt. Ereignisse, die in dieser Zeit auftreten, werden verworfen und nicht nachgeliefert. Fällige Konto-Webhook-Ereignisse in der Warteschlange werden bei der Verarbeitung verworfen und im Systemprotokoll festgehalten (webhook.outbox.dropped); Ereignisse, die beim Wiedereinschalten noch warten, werden zugestellt. Plattformadministratoren sind an der Admin-API ausgenommen. Eine Änderung wirkt nach etwa einer Minute. Standardmäßig an.',
 
 	'set.k.tenant_capabilities.dynamic_client_registration':
 		'Tenants dürfen die dynamische Client-Registrierung nutzen',

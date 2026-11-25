@@ -134,6 +134,7 @@ export const deOnboarding: Record<keyof typeof jaOnboarding, string> = {
 	'ob.secondFactor.settings.action': 'Klicken Sie auf „Persönliche Einstellungen“.',
 	'ob.secondFactor.settings.fallback':
 		'Das Menü hat sich geschlossen. Klicken Sie erneut auf das Konto-Symbol.',
+	'ob.menu.action': 'Öffnen Sie auf dem Smartphone das Menü oben links und wählen Sie es dort aus.',
 	'ob.secondFactor.keys.title': 'Ihr zweiter Faktor',
 	'ob.secondFactor.keys.body':
 		'Neben der Anmeldung mit einem Passkey verlangen wichtige Vorgänge, etwa das Wechseln eines Schlüssels oder das Ändern der Rolle eines Administrators, einen weiteren Nachweis. Diesen registrieren Sie in diesem Feld. Sie können einen Sicherheitsschlüssel registrieren.',

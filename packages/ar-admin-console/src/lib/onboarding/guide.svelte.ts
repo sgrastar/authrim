@@ -297,8 +297,11 @@ async function render(): Promise<void> {
 	const target = step.target ? await findTarget(step.target, mine) : null;
 	if (mine !== generation) return;
 	// The target is behind something to open first: point at that, and say so.
-	const detour = !target && step.fallback ? document.querySelector(step.fallback.target) : null;
-	const element = target ?? detour;
+	// A target that is on the page but takes no room (the navigation on a phone) is the same: the
+	// step points at what is there instead.
+	const unreachable = !target || !hasBox(target);
+	const detour = unreachable && step.fallback ? document.querySelector(step.fallback.target) : null;
+	const element = unreachable && detour ? detour : (target ?? detour);
 	// Asked to open a tab that is open already (it was opened another way, from the "More" menu
 	// of a narrow tab row): there is nothing to wait for. Not when the person pressed Back.
 	if (

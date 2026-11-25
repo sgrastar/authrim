@@ -59,6 +59,9 @@ import { insertOAuthClient, insertTenant, openCoreDatabase } from './helpers/cor
 import { d1OverSqlite } from './helpers/d1-over-sqlite';
 import { seedDestinationProfile, seedMapping } from './helpers/identity-mapping-seed';
 
+// Admin operations are recorded through the forwarding shim (see the helper).
+vi.mock('../admin-operation-audit', () => import('./helpers/legacy-admin-audit-shim'));
+
 /**
  * The bulk apply of settings (POST /api/admin/settings/bulk-apply) on the real Admin schema, the
  * real admin authentication and route access, and the real Settings API: who may use it, that a

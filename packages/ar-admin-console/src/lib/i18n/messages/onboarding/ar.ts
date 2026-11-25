@@ -121,6 +121,7 @@ export const arOnboarding: Record<keyof typeof jaOnboarding, string> = {
 	'ob.secondFactor.settings.body': 'من هنا تنتقل إلى صفحة إعداداتك الخاصة.',
 	'ob.secondFactor.settings.action': 'اضغط على «الإعدادات الشخصية».',
 	'ob.secondFactor.settings.fallback': 'أُغلقت القائمة. اضغط على أيقونة الحساب مرة أخرى.',
+	'ob.menu.action': 'على الهاتف، افتح القائمة في أعلى الشاشة واختر منها.',
 	'ob.secondFactor.keys.title': 'عامل التحقق الثاني',
 	'ob.secondFactor.keys.body':
 		'إضافة إلى تسجيل الدخول بمفتاح المرور، تطلب العمليات المهمة، مثل تبديل مفتاح أو تغيير دور أحد المشرفين، وسيلة تحقق أخرى. تسجّلها في هذا المربع. يمكنك تسجيل مفتاح أمان.',

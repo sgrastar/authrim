@@ -124,11 +124,7 @@ function handoffOAuthError(
 }
 
 function getIncludeParam(c: Context<{ Bindings: Env }>): string | null {
-  const fromHono = c.req.query('include');
-  if (fromHono !== undefined) {
-    return fromHono;
-  }
-  return new URL(c.req.url).searchParams.get('include');
+  return c.req.query('include') ?? null;
 }
 
 function parseHandoffInclude(c: Context<{ Bindings: Env }>): HandoffInclude | Response {
@@ -247,10 +243,8 @@ async function createHandoffSession(
     } else if (typeof client.redirect_uris === 'string') {
       // Try to parse as JSON array first
       if (client.redirect_uris.trim().startsWith('[')) {
-        redirectUris = JSON.parse(client.redirect_uris);
-        if (!Array.isArray(redirectUris)) {
-          throw new Error('redirect_uris is not an array after parsing');
-        }
+        // Text that opens with '[' parses to an array, or not at all.
+        redirectUris = JSON.parse(client.redirect_uris) as string[];
       } else {
         // Treat as single URL string (legacy format or misconfigured client)
         redirectUris = [client.redirect_uris];
@@ -357,7 +351,7 @@ async function createHandoffSession(
     return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
   }
 
-  const createdAt = handoffData.metadata?.created_at;
+  const createdAt = handoffData.metadata.created_at;
   const artifactTtlSeconds = resolveHandoffArtifactTtlSeconds(
     c,
     client as unknown as Record<string, unknown>
@@ -377,9 +371,9 @@ async function createHandoffSession(
   }
 
   // 4. State validation (CSRF mitigation)
-  if (handoffData.metadata?.state !== state) {
+  if (handoffData.metadata.state !== state) {
     log.error('State mismatch - POTENTIAL CSRF ATTACK', {
-      expected: handoffData.metadata?.state,
+      expected: handoffData.metadata.state,
       received: state,
       client_id,
       ip: clientIp,
@@ -388,9 +382,9 @@ async function createHandoffSession(
   }
 
   // 5. client_id validation
-  if (handoffData.metadata?.client_id && handoffData.metadata.client_id !== client_id) {
+  if (handoffData.metadata.client_id && handoffData.metadata.client_id !== client_id) {
     log.error('Client ID mismatch - POTENTIAL ATTACK', {
-      expected: handoffData.metadata?.client_id,
+      expected: handoffData.metadata.client_id,
       received: client_id,
       ip: clientIp,
     });
@@ -401,7 +395,7 @@ async function createHandoffSession(
   // lets that provider sign people in (it may have been turned off since the sign-in), before any
   // session is made. One from a sign-in that created the account (a sign-up: the artifact says so,
   // as the server wrote it) is honoured while the tenant lets the provider sign people up or in.
-  const usageKey = parseExternalProviderUsageKey(handoffData.metadata?.external_provider_usage_key);
+  const usageKey = parseExternalProviderUsageKey(handoffData.metadata.external_provider_usage_key);
   if (usageKey === 'invalid') {
     return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
   }
@@ -411,7 +405,7 @@ async function createHandoffSession(
       const policy = await readExternalProviderUsagePolicy(c.env, tenantId, usageKey);
       loginEnabled =
         policy.loginEnabled ||
-        (handoffData.metadata?.external_provider_usage === 'signup' && policy.signupEnabled);
+        (handoffData.metadata.external_provider_usage === 'signup' && policy.signupEnabled);
     } catch (error) {
       log.error('External provider usage settings are unavailable', {}, error as Error);
       c.header('Retry-After', '1');

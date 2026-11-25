@@ -615,7 +615,7 @@ export class PluginResourceCleanupService {
         return true;
       }
       await this.deleteResources(row);
-      await this.complete(row);
+      await this.complete(row, Number(claimed.fencing_token));
       return true;
     } catch (error) {
       const code = errorCode(error);
@@ -879,7 +879,7 @@ export class PluginResourceCleanupService {
       .run();
   }
 
-  private async complete(row: CleanupRow): Promise<void> {
+  private async complete(row: CleanupRow, fencingToken: number): Promise<void> {
     const incomplete = await this.database
       .prepare(
         `SELECT COUNT(*) AS count FROM control_plugin_resource_cleanup_items
@@ -891,45 +891,57 @@ export class PluginResourceCleanupService {
       throw new Error('control_plugin_cleanup_items_incomplete');
     }
     const now = this.now();
+    // Every write below holds only when this claim is current and the desired state of this
+    // generation is exactly "deleting" rows (so the delete removes all of it).
+    const guard = `EXISTS (
+        SELECT 1 FROM control_plugin_desired_resources
+         WHERE environment_id = ? AND plugin_installation_id = ?
+           AND lifecycle_generation = ? AND status = 'deleting'
+      ) AND NOT EXISTS (
+        SELECT 1 FROM control_plugin_desired_resources
+         WHERE environment_id = ? AND plugin_installation_id = ?
+           AND lifecycle_generation = ? AND status NOT IN ('deleting', 'deleted')
+      ) AND EXISTS (
+        SELECT 1 FROM control_operations
+         WHERE operation_id = ? AND environment_id = ? AND status = 'running'
+           AND fencing_token = ?
+      )`;
+    const guardParams = [
+      row.environment_id,
+      row.plugin_installation_id,
+      row.lifecycle_generation,
+      row.environment_id,
+      row.plugin_installation_id,
+      row.lifecycle_generation,
+      row.operation_id,
+      row.environment_id,
+      fencingToken,
+    ];
     const statements: D1PreparedStatement[] = [
-      this.database
-        .prepare(
-          `DELETE FROM control_plugin_desired_resources
-            WHERE environment_id = ? AND plugin_installation_id = ?
-              AND lifecycle_generation = ? AND status = 'deleting'`
-        )
-        .bind(row.environment_id, row.plugin_installation_id, row.lifecycle_generation),
       this.database
         .prepare(
           `UPDATE control_plugin_resource_cleanup_operations
               SET state = 'succeeded', last_error_code = NULL, completed_at = ?, updated_at = ?
-            WHERE operation_id = ? AND state IN ('deleting_resources', 'verifying_absence')`
+            WHERE operation_id = ? AND state IN ('deleting_resources', 'verifying_absence')
+              AND ${guard}`
         )
-        .bind(now, now, row.operation_id),
+        .bind(now, now, row.operation_id, ...guardParams),
       this.database
         .prepare(
           `UPDATE control_operation_steps
               SET status = 'succeeded', completed_at = ?, updated_at = ?
             WHERE operation_id = ? AND step_key = 'delete_managed_plugin_resources'
-              AND status IN ('queued', 'running', 'waiting_retry')`
+              AND status IN ('queued', 'running', 'waiting_retry') AND ${guard}`
         )
-        .bind(now, now, row.operation_id),
-      this.database
-        .prepare(
-          `UPDATE control_operations
-              SET status = 'succeeded', completed_at = ?, lock_owner = NULL,
-                  lock_expires_at = NULL, next_attempt_at = NULL, last_error_code = NULL,
-                  last_error_redacted = NULL, updated_at = ?
-            WHERE operation_id = ? AND status = 'running'`
-        )
-        .bind(now, now, row.operation_id),
+        .bind(now, now, row.operation_id, ...guardParams),
       this.database
         .prepare(
           `INSERT OR IGNORE INTO control_audit_events (
              event_id, environment_id, operation_id, event_type, actor_type, actor_id,
              resource_kind, resource_id, outcome, redacted_payload_json, created_at
-           ) VALUES (?, ?, ?, 'plugin.resources.cleanup.completed', 'worker', 'ar-control',
-             'plugin_installation', ?, 'succeeded', ?, ?)`
+           ) SELECT ?, ?, ?, 'plugin.resources.cleanup.completed', 'worker', 'ar-control',
+                    'plugin_installation', ?, 'succeeded', ?, ?
+              WHERE ${guard}`
         )
         .bind(
           `audit_plugin_cleanup_complete_${row.operation_id.slice(-48)}`,
@@ -940,11 +952,40 @@ export class PluginResourceCleanupService {
             reason: row.reason,
             lifecycleGeneration: row.lifecycle_generation,
           }),
-          now
+          now,
+          ...guardParams
+        ),
+      this.database
+        .prepare(
+          `UPDATE control_operations
+              SET status = 'succeeded', completed_at = ?, lock_owner = NULL,
+                  lock_expires_at = NULL, next_attempt_at = NULL, last_error_code = NULL,
+                  last_error_redacted = NULL, updated_at = ?
+            WHERE operation_id = ? AND status = 'running' AND ${guard}`
+        )
+        .bind(now, now, row.operation_id, ...guardParams),
+      this.database
+        .prepare(
+          `DELETE FROM control_plugin_desired_resources
+            WHERE environment_id = ? AND plugin_installation_id = ?
+              AND lifecycle_generation = ? AND status = 'deleting'
+              AND ${guard.replace("status = 'running'", "status IN ('running', 'succeeded')")}`
+        )
+        .bind(
+          row.environment_id,
+          row.plugin_installation_id,
+          row.lifecycle_generation,
+          ...guardParams
         ),
     ];
-    const results = await this.database.batch(statements);
-    if (Number(results[0]?.meta?.changes ?? 0) < 1) {
+    await this.database.batch(statements);
+    const reflected = await this.database
+      .prepare(
+        `SELECT state FROM control_plugin_resource_cleanup_operations WHERE operation_id = ?`
+      )
+      .bind(row.operation_id)
+      .first<{ state: string }>();
+    if (reflected?.state !== 'succeeded') {
       throw new Error('control_plugin_cleanup_desired_state_not_removed');
     }
   }

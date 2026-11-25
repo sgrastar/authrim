@@ -13,6 +13,9 @@ import {
   updateDirectoryAuthMigrationCampaignHandler,
 } from '../routes/directory-auth';
 
+// Admin operations are recorded through the forwarding shim (see the helper).
+vi.mock('../admin-operation-audit', () => import('./helpers/legacy-admin-audit-shim'));
+
 const mocks = vi.hoisted(() => ({
   cleanupExpiredDirectoryAuthMaintenance: vi.fn(),
   createAuditLogFromContext: vi.fn(),

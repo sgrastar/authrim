@@ -45,6 +45,11 @@ export const deAccountFlows: Record<keyof typeof jaAccountFlows, string> = {
 	'af.group.general': 'Übergreifende Einstellungen',
 	'af.group.complete': 'Abschluss der Registrierung',
 	'af.group.identity': 'Anmeldeverfahren',
+	'af.screenConsent.title': 'Einwilligungserklärungen',
+	'af.screenConsent.lead':
+		'Dieser Bildschirm hat ein Einwilligungsfeld. Die hier gewählten Erklärungen werden zusammen mit der Schaltfläche dieses Bildschirms verlangt und gemeinsam erfasst. Sie werden allen gezeigt, die diesen Bildschirm sehen.',
+	'af.screenConsent.twice':
+		'Eine dieser Erklärungen wird auch im Schritt „Einwilligung bei der Registrierung“ verlangt, die Person würde sie also zweimal sehen. Entfernen Sie sie aus einem von beiden.',
 	'af.group.regConsent': 'Einwilligung bei der Registrierung',
 	'af.group.authenticate': 'Person authentifizieren',
 	'af.group.finish': 'Anmeldung abschließen',

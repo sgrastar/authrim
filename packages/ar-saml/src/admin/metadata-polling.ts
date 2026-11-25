@@ -11,6 +11,7 @@ import type {
 import {
   bumpAuthenticationMethodsCacheRevision,
   createAuditLog,
+  logSystemEvent,
   createLogger,
   getDefaultTenantId,
   listEnvironmentTenantDefaultStores,
@@ -267,31 +268,32 @@ function sourceStateForFailure(
   return 'error';
 }
 
+/**
+ * The scheduler's refresh of one provider's metadata is the platform's own doing: it is recorded
+ * in the system log (not in a user's history), without the metadata URL.
+ */
 async function recordAutomaticProviderRefreshAudit(
   env: Env,
   tenantId: string,
   providerId: string,
-  metadataUrl: string,
   input: { changed?: boolean; errorCode?: string; expired?: boolean }
 ): Promise<void> {
   try {
-    await createAuditLog(env, {
+    await logSystemEvent(env, {
       tenantId,
-      userId: 'saml-metadata-scheduler',
+      source: 'authrim/saml_metadata_scheduler',
       action: input.errorCode
         ? 'saml.provider.metadata_refresh_failed'
         : 'saml.provider.metadata_refreshed',
-      resource: 'saml_provider',
-      resourceId: providerId,
-      ipAddress: 'automatic',
-      userAgent: 'authrim-saml-metadata-polling',
+      targetType: 'saml_provider',
+      targetId: providerId,
       severity: input.errorCode || input.expired ? 'warning' : 'info',
-      metadata: JSON.stringify({
-        changed: input.changed,
-        expired: input.expired,
-        error_code: input.errorCode,
-        source_url: metadataUrl,
-      }),
+      details: {
+        trigger: 'automatic',
+        changed: input.changed ?? null,
+        expired: input.expired ?? null,
+        error_code: input.errorCode ?? null,
+      },
     });
   } catch (error) {
     log.warn('Individual SAML metadata polling audit failed', {
@@ -1396,24 +1398,41 @@ export async function refreshFederationMetadataSource(
       now
     );
     try {
-      await createAuditLog(env, {
-        tenantId,
-        userId: trigger === 'automatic' ? 'saml-metadata-scheduler' : 'saml-admin',
-        action: 'saml.federation.metadata_refreshed',
-        resource: 'federation_trust_source',
-        resourceId: source.id,
-        ipAddress: trigger,
-        userAgent: 'authrim-saml-metadata-polling',
-        severity: providers.missing > 0 || providers.failed > 0 ? 'warning' : 'info',
-        metadata: JSON.stringify({
-          changed: document.changed,
-          entity_count: aggregate.entities.length,
-          providers_updated: providers.updated,
-          providers_missing: providers.missing,
-          providers_failed: providers.failed,
-          verification_status: verification.status,
-        }),
-      });
+      const severity = providers.missing > 0 || providers.failed > 0 ? 'warning' : 'info';
+      const details = {
+        changed: document.changed,
+        entity_count: aggregate.entities.length,
+        providers_updated: providers.updated,
+        providers_missing: providers.missing,
+        providers_failed: providers.failed,
+        verification_status: verification.status,
+      };
+      if (trigger === 'automatic') {
+        // The scheduler's doing: the system log, not a user's history.
+        await logSystemEvent(env, {
+          tenantId,
+          source: 'authrim/saml_metadata_scheduler',
+          action: 'saml.federation.metadata_refreshed',
+          targetType: 'federation_trust_source',
+          targetId: source.id,
+          severity,
+          details: { trigger, ...details },
+        });
+      } else {
+        // An administrator asked for it: recorded as before (moving it to the admin audit log is
+        // a separate change).
+        await createAuditLog(env, {
+          tenantId,
+          userId: 'saml-admin',
+          action: 'saml.federation.metadata_refreshed',
+          resource: 'federation_trust_source',
+          resourceId: source.id,
+          ipAddress: trigger,
+          userAgent: 'authrim-saml-metadata-polling',
+          severity,
+          metadata: JSON.stringify(details),
+        });
+      }
     } catch (auditError) {
       log.warn('Federation metadata polling audit failed', {
         sourceId: source.id,
@@ -1637,7 +1656,7 @@ async function pollIndividualProvidersForTenant(
       'federation_source_missing',
       now
     );
-    await recordAutomaticProviderRefreshAudit(env, tenantId, row.id, metadataUrl, {
+    await recordAutomaticProviderRefreshAudit(env, tenantId, row.id, {
       errorCode: 'federation_source_missing',
     });
     failed += 1;
@@ -1692,7 +1711,7 @@ async function pollIndividualProvidersForTenant(
             expiryFailureCode,
             now
           );
-          await recordAutomaticProviderRefreshAudit(env, tenantId, row.id, metadataUrl, {
+          await recordAutomaticProviderRefreshAudit(env, tenantId, row.id, {
             errorCode: expiryFailureCode,
             expired: true,
           });
@@ -1784,7 +1803,7 @@ async function pollIndividualProvidersForTenant(
       if (applied.accepted) processed += 1;
       else failed += 1;
       if (applied.changed || applied.expired) {
-        await recordAutomaticProviderRefreshAudit(env, tenantId, row.id, metadataUrl, {
+        await recordAutomaticProviderRefreshAudit(env, tenantId, row.id, {
           changed: applied.changed,
           errorCode: applied.expired ? 'metadata_expired' : undefined,
           expired: applied.expired,
@@ -1804,7 +1823,7 @@ async function pollIndividualProvidersForTenant(
           });
         }
       }
-      await recordAutomaticProviderRefreshAudit(env, tenantId, row.id, metadataUrl, {
+      await recordAutomaticProviderRefreshAudit(env, tenantId, row.id, {
         errorCode: code,
       });
       log.warn('Individual SAML metadata polling failed', {

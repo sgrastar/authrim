@@ -97,3 +97,34 @@ describe('consent field choices', () => {
 		});
 	});
 });
+
+describe('screen consent settings', () => {
+	it('recognises a screen that draws a consent box', async () => {
+		const { screenHasConsentWidget } = await import('./consent-field-model');
+		expect(screenHasConsentWidget([{ block_type: 'identity_field' }])).toBe(false);
+		expect(
+			screenHasConsentWidget([{ block_type: 'heading' }, { block_type: 'consent_widget' }])
+		).toBe(true);
+		// A box that is never shown cannot be agreed to.
+		expect(
+			screenHasConsentWidget([
+				{ block_type: 'consent_widget', display_condition: { mode: 'hidden' } as never }
+			])
+		).toBe(false);
+	});
+
+	it('keeps a screen step’s statements under a key of its own', async () => {
+		const { screenStatementsKey } = await import('./consent-field-model');
+		expect(screenStatementsKey('reg-screen')).toBe('reg.screenStatements');
+		expect(screenStatementsKey('reg-extra-screen:3')).toBe('reg.extraScreenStatements:3');
+		expect(screenStatementsKey('reg-statements:1')).toBeNull();
+	});
+
+	it('finds the statements two lists both ask', async () => {
+		const { sharedStatementIds } = await import('./consent-field-model');
+		expect(sharedStatementIds(['a:required', 'b:optional'], ['b:required', 'c:optional'])).toEqual([
+			'b'
+		]);
+		expect(sharedStatementIds(undefined, ['a:required'])).toEqual([]);
+	});
+});

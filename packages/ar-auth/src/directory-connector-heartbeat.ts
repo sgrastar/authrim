@@ -1,8 +1,9 @@
 import type { Context } from 'hono';
 import {
-  createAuditLog,
   createAuthContextFromHono,
   createLogger,
+  isSystemEventDetailValue,
+  logSystemEvent,
   recordDirectoryConnectorHeartbeat,
   type Env,
 } from '@authrim/ar-lib-core';
@@ -316,6 +317,19 @@ function isAllowedConnectorSecretEnvName(key: string): boolean {
   );
 }
 
+/**
+ * A detail value the system log takes: a code or an ID. Anything else (free text, an address, an
+ * IP, which an unauthenticated caller may put in a header) is replaced by a marker.
+ */
+function detailValue(value: unknown): string {
+  return typeof value === 'string' && isSystemEventDetailValue(value) ? value : 'invalid';
+}
+
+/**
+ * A refused heartbeat is the connector's doing, not a user's: it is recorded in the system log,
+ * with the connector, the instance and the key it named and why it was refused. The caller's
+ * address and user agent are not kept.
+ */
 async function auditHeartbeatFailure(
   c: Context<{ Bindings: Env }>,
   tenantId: string,
@@ -323,24 +337,24 @@ async function auditHeartbeatFailure(
   reason: string,
   extra: Record<string, unknown> = {}
 ): Promise<void> {
-  const metadata = JSON.stringify({
+  const details: Record<string, string> = {
     connector_id: connectorId,
-    reason,
-    ...extra,
-  });
-  const auditPromise = createAuditLog(c.env, {
+    reason: detailValue(reason),
+  };
+  for (const key of ['instance_id', 'key_id'] as const) {
+    if (extra[key] !== undefined) details[key] = detailValue(extra[key]);
+  }
+  const auditPromise = logSystemEvent(c.env, {
     tenantId,
-    userId: 'system',
+    source: 'authrim/directory_connector_heartbeat',
     action: 'directory_connector_heartbeat.failed',
-    resource: 'directory_connector_instance',
-    resourceId: typeof extra.instance_id === 'string' ? extra.instance_id : connectorId,
-    ipAddress: requestIpAddress(c),
-    userAgent: c.req.header('User-Agent') || 'unknown',
-    metadata,
+    targetType: 'directory_connector_instance',
+    targetId: typeof extra.instance_id === 'string' ? detailValue(extra.instance_id) : connectorId,
     severity: 'warning',
+    details,
   }).catch((error) => {
-    log.error('Failed to create audit log for directory connector heartbeat failure', {
-      action: 'audit_log',
+    log.error('Failed to record the directory connector heartbeat failure', {
+      action: 'system_log',
       reason,
       errorType: error instanceof Error ? error.name : 'Unknown',
     });
@@ -443,12 +457,4 @@ function hexToBytes(value: string): Uint8Array {
 
 function bytesToHex(bytes: Uint8Array): string {
   return [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('');
-}
-
-function requestIpAddress(c: Context<{ Bindings: Env }>): string {
-  return (
-    c.req.header('CF-Connecting-IP') ||
-    c.req.header('X-Forwarded-For')?.split(',')[0]?.trim() ||
-    'unknown'
-  );
 }

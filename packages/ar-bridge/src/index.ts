@@ -348,11 +348,16 @@ async function scheduled(
   const log = createLogger().module('EXTERNAL-IDP');
   log.info('Running scheduled maintenance tasks...');
 
+  // 1. Clean up expired and consumed auth states. A failure here is logged and does not stop the
+  // refresh: the tokens would otherwise expire unseen while the cleanup keeps failing.
   try {
-    // 1. Clean up expired and consumed auth states
     const statesDeleted = await cleanupExpiredStates(env);
     log.info('Cleaned up expired/consumed auth states', { statesDeleted });
+  } catch (error) {
+    log.error('Auth state cleanup failed', {}, error as Error);
+  }
 
+  try {
     // 2. Refresh tokens for a bounded batch of active tenants.
     const tokenRefresh = await refreshExpiringTokensForScheduledTenants(env);
     log.info('Refreshed expiring tokens for scheduled tenant batch', {

@@ -31,6 +31,7 @@ export const deAdminAudit: Record<keyof typeof jaAdminAudit, string> = {
 		'Die nächsten Einträge konnten nicht geladen werden. Bitte versuchen Sie es erneut.',
 	'aud.actor.machine': 'Maschine',
 	'aud.actor.agent': 'Agent',
+	'aud.actor.unrecorded': 'Art nicht erfasst',
 	'aud.actor.unknown': 'Unbekannt',
 	'aud.stepUp.badge': 'Step-up',
 	'aud.stepUp.summary': '{level}: {operation}',

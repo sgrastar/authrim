@@ -21,8 +21,6 @@ import {
   type DatabaseAdapter,
   createErrorResponse,
   AR_ERROR_CODES,
-  createAuditLog,
-  createAuditLogFromContext,
   getDefaultTenantId,
   getLogger,
   getPrimaryTenantId,
@@ -118,6 +116,8 @@ import {
   requireTenantProvisioningAuthority,
   requireTenantReadAuthority,
 } from './admin-tenant-access';
+import { recordAdminOperationAudit } from './admin-operation-audit';
+import { recordAdminOperationAuditFromEnv } from './admin-operation-audit';
 
 // =============================================================================
 // Constants
@@ -1072,19 +1072,17 @@ function tenantProvisioningDependencies(
       });
       await syncTenantExistsCache(env.AUTHRIM_CONFIG, operation.tenantId, 'active');
       if (operation.operationKind === 'clone') {
-        await createAuditLog(env, {
+        await recordAdminOperationAuditFromEnv(env, {
           tenantId: operation.tenantId,
-          userId: operation.createdBy,
+          actorId: operation.createdBy,
           action: 'tenant.cloned',
-          resource: 'tenant',
+          resourceType: 'tenant',
           resourceId: operation.tenantId,
-          ipAddress: 'internal',
-          userAgent: 'tenant-provisioning-saga',
-          metadata: JSON.stringify({
+          metadata: {
             operation_id: operation.operationId,
             source_tenant_id: operation.sourceTenantId,
             ...(operation.preparationResult ?? {}),
-          }),
+          },
           severity: 'info',
         });
       }
@@ -1558,11 +1556,16 @@ export async function adminTenantCreateHandler(c: Context<{ Bindings: Env }>) {
       isolationPolicy: isolation_policy,
     });
     if (started instanceof Response) return started;
-    await createAuditLogFromContext(c, 'tenant.provisioning_requested', 'tenant', id, {
-      operation_id: started.operation.operationId,
-      tenant_code: tenantCode,
-      isolation_policy,
-      ...adminActorAuditMetadata(c),
+    await recordAdminOperationAudit(c, {
+      action: 'tenant.provisioning_requested',
+      resourceType: 'tenant',
+      resourceId: id,
+      metadata: {
+        operation_id: started.operation.operationId,
+        tenant_code: tenantCode,
+        isolation_policy,
+        ...adminActorAuditMetadata(c),
+      },
     });
     return c.json(
       {
@@ -1734,8 +1737,13 @@ export async function adminTenantUpdateHandler(c: Context<{ Bindings: Env }>) {
       [id]
     );
 
-    await createAuditLogFromContext(c, 'tenant.updated', 'tenant', id, {
-      changes: updates,
+    await recordAdminOperationAudit(c, {
+      action: 'tenant.updated',
+      resourceType: 'tenant',
+      resourceId: id,
+      metadata: {
+        changes: updates,
+      },
     });
 
     if (!updated) throw new Error('tenant_update_reflection_failed');
@@ -2065,29 +2073,39 @@ async function executeTenantLifecycleCommand(
           ? syncTenantExistsCache(c.env.AUTHRIM_CONFIG, id, nextState)
           : deleteTenantExistsCache(c.env.AUTHRIM_CONFIG, id)
       ).catch(() => undefined);
-      await createAuditLogFromContext(c, `tenant.lifecycle.${command}`, 'tenant', id, {
-        job_id: null,
-        job_kept: false,
-        move_stands: moveStands,
-        source_state: tenant.lifecycle_state,
-        target_state: nextState,
-        observed_state: current?.lifecycle_state ?? null,
-        reason: parsed.data.reason,
-        break_glass: parsed.data.break_glass,
-        idempotency_key: idempotencyKey,
+      await recordAdminOperationAudit(c, {
+        action: `tenant.lifecycle.${command}`,
+        resourceType: 'tenant',
+        resourceId: id,
+        metadata: {
+          job_id: null,
+          job_kept: false,
+          move_stands: moveStands,
+          source_state: tenant.lifecycle_state,
+          target_state: nextState,
+          observed_state: current?.lifecycle_state ?? null,
+          reason: parsed.data.reason,
+          break_glass: parsed.data.break_glass,
+          idempotency_key: idempotencyKey,
+        },
       }).catch(() => undefined);
     }
     throw error;
   }
 
   await syncTenantExistsCache(c.env.AUTHRIM_CONFIG, id, nextState);
-  await createAuditLogFromContext(c, `tenant.lifecycle.${command}`, 'tenant', id, {
-    job_id: jobId,
-    source_state: tenant.lifecycle_state,
-    target_state: nextState,
-    reason: parsed.data.reason,
-    break_glass: parsed.data.break_glass,
-    idempotency_key: idempotencyKey,
+  await recordAdminOperationAudit(c, {
+    action: `tenant.lifecycle.${command}`,
+    resourceType: 'tenant',
+    resourceId: id,
+    metadata: {
+      job_id: jobId,
+      source_state: tenant.lifecycle_state,
+      target_state: nextState,
+      reason: parsed.data.reason,
+      break_glass: parsed.data.break_glass,
+      idempotency_key: idempotencyKey,
+    },
   });
 
   return c.json(
@@ -2220,10 +2238,15 @@ export async function adminTenantLifecycleJobRetryHandler(c: Context<{ Bindings:
       [retryProgress, nowTs, nowTs, jobId, id]
     );
   }
-  await createAuditLogFromContext(c, 'tenant.lifecycle.validation_retry_requested', 'tenant', id, {
-    job_id: jobId,
-    prior_status: job.status,
-    config: job.config ? JSON.parse(job.config) : null,
+  await recordAdminOperationAudit(c, {
+    action: 'tenant.lifecycle.validation_retry_requested',
+    resourceType: 'tenant',
+    resourceId: id,
+    metadata: {
+      job_id: jobId,
+      prior_status: job.status,
+      config: job.config ? JSON.parse(job.config) : null,
+    },
   });
   const config = job.config
     ? (JSON.parse(job.config) as { source_state?: TenantLifecycleState })
@@ -2288,9 +2311,14 @@ export async function adminTenantProvisioningRetryHandler(c: Context<{ Bindings:
           processNextTenantProvisioning(c.env)
         )
       );
-      await createAuditLogFromContext(c, 'tenant.provisioning_retry.requested', 'tenant', id, {
-        operation_id: retried.operationId,
-        ...adminActorAuditMetadata(c),
+      await recordAdminOperationAudit(c, {
+        action: 'tenant.provisioning_retry.requested',
+        resourceType: 'tenant',
+        resourceId: id,
+        metadata: {
+          operation_id: retried.operationId,
+          ...adminActorAuditMetadata(c),
+        },
       });
       return c.json(formatTenantProvisioningOperation(retried), 202);
     }
@@ -2439,9 +2467,14 @@ export async function adminTenantProvisioningCleanupHandler(c: Context<{ Binding
         }
         await c.env.CONTROL.releaseTenantDefaultRoute({ allocationId: route.allocationId });
       }
-      await createAuditLogFromContext(c, 'tenant.provisioning_cleanup.succeeded', 'tenant', id, {
-        operation_id: controlOperation.operationId,
-        ...adminActorAuditMetadata(c),
+      await recordAdminOperationAudit(c, {
+        action: 'tenant.provisioning_cleanup.succeeded',
+        resourceType: 'tenant',
+        resourceId: id,
+        metadata: {
+          operation_id: controlOperation.operationId,
+          ...adminActorAuditMetadata(c),
+        },
       });
       return c.json({
         status: 'cleaned',
@@ -2651,10 +2684,15 @@ export async function adminTenantDeleteHandler(c: Context<{ Bindings: Env }>) {
     // Invalidate cache so subsequent requests to this tenant return 404 immediately.
     await syncTenantExistsCache(c.env.AUTHRIM_CONFIG, id, 'deleting');
 
-    await createAuditLogFromContext(c, 'tenant.delete_queued', 'tenant', id, {
-      tenant_id: id,
-      job_id: jobId,
-      ...adminActorAuditMetadata(c),
+    await recordAdminOperationAudit(c, {
+      action: 'tenant.delete_queued',
+      resourceType: 'tenant',
+      resourceId: id,
+      metadata: {
+        tenant_id: id,
+        job_id: jobId,
+        ...adminActorAuditMetadata(c),
+      },
     });
 
     return c.json(
@@ -2767,7 +2805,12 @@ export async function adminTenantSetDefaultHandler(c: Context<{ Bindings: Env }>
       [id]
     );
 
-    await createAuditLogFromContext(c, 'tenant.set_default', 'tenant', id, { tenant_id: id });
+    await recordAdminOperationAudit(c, {
+      action: 'tenant.set_default',
+      resourceType: 'tenant',
+      resourceId: id,
+      metadata: { tenant_id: id },
+    });
 
     if (!updated) throw new Error('tenant_default_reflection_failed');
     return c.json(formatTenant(updated));

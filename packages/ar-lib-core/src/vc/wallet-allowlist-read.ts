@@ -22,6 +22,7 @@ export const WALLET_ONLY_SCOPE = 'authrim_admin_credential';
 export const MAX_ENTRIES = 16;
 export const MAX_ROOTS_PER_ENTRY = 8;
 export const MAX_REDIRECT_URIS = 8;
+export const MAX_LEAF_PINS_PER_ENTRY = 16;
 
 export type { WalletAllowlist, WalletAllowlistEntry };
 
@@ -49,6 +50,18 @@ function parseRoots(value: unknown): WalletAttestationAnchor[] | null {
     roots.push({ certificate, sha256, ...(label ? { label: label.slice(0, 100) } : {}) });
   }
   return roots;
+}
+
+/** Absent means no pin; anything else must be a short list of distinct SHA-256 hex digests. */
+function parseLeafPins(value: unknown): string[] | null {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > MAX_LEAF_PINS_PER_ENTRY) return null;
+  const pins = new Set<string>();
+  for (const item of value) {
+    if (typeof item !== 'string' || !HEX64.test(item) || pins.has(item)) return null;
+    pins.add(item);
+  }
+  return [...pins];
 }
 
 function validRedirectUri(value: unknown): value is string {
@@ -87,6 +100,8 @@ export async function parseWalletAllowlist(value: unknown): Promise<WalletAllowl
     seen.add(clientId);
     const attestationRoots = parseRoots(raw.attestationRoots);
     const keyAttestationRoots = parseRoots(raw.keyAttestationRoots);
+    const attestationLeafSha256 = parseLeafPins(raw.attestationLeafSha256);
+    if (!attestationLeafSha256) throw new Error('wallet_allowlist_leaf_pin_invalid');
     if (
       typeof label !== 'string' ||
       typeof enabled !== 'boolean' ||
@@ -112,6 +127,7 @@ export async function parseWalletAllowlist(value: unknown): Promise<WalletAllowl
       label: label.slice(0, 100),
       enabled,
       attestationRoots,
+      attestationLeafSha256,
       keyAttestationRoots,
       redirectUris: [...redirectUris] as string[],
     });

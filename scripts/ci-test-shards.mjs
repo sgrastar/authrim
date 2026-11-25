@@ -58,7 +58,14 @@ export const SHARDS = {
     'ar-bridge',
     'ar-async',
   ]),
-  'services-a': scoped(['setup', 'ar-vc', 'ar-agent-access', 'ar-plugin-runner', 'ar-demo']),
+  'services-a': scoped([
+    'setup',
+    'ar-vc',
+    'ar-agent-access',
+    'ar-plugin-runner',
+    'ar-demo',
+    'ar-wallet-provider',
+  ]),
   'services-b': scoped(['ar-saml', 'ar-runtime-aws', 'ar-control']),
 };
 

@@ -95,7 +95,7 @@ export class AuditLogDeliveryError extends Error {
   }
 }
 
-function requireAuditTenantId(tenantId: string | undefined, action: string): string | null {
+export function requireAuditTenantId(tenantId: string | undefined, action: string): string | null {
   const normalized = tenantId?.trim();
   if (!normalized) {
     log.error('Cannot create audit log: tenantId is required', { action });
@@ -127,7 +127,7 @@ export interface LegacyAuditLogWriteInput {
   createdAt: number;
 }
 
-function getUnifiedAuditService(env: Env): IAuditService {
+export function getUnifiedAuditService(env: Env): IAuditService {
   return createAuditService({
     env,
     configKv: env.AUTHRIM_CONFIG,
@@ -137,7 +137,7 @@ function getUnifiedAuditService(env: Env): IAuditService {
   });
 }
 
-function mapLegacySeverity(severity: AuditLogEntry['severity']): EventSeverity {
+export function mapLegacySeverity(severity: AuditLogEntry['severity']): EventSeverity {
   if (severity === 'warning') {
     return 'warn';
   }
@@ -147,7 +147,7 @@ function mapLegacySeverity(severity: AuditLogEntry['severity']): EventSeverity {
 // Legacy audit actions are loosely structured, so use a heuristic based on
 // action prefix first and resource second to keep event_category stable enough
 // for filtering without forcing a breaking rename of all existing actions.
-function mapLegacyAuditCategory(action: string, resource: string): EventCategory {
+export function mapLegacyAuditCategory(action: string, resource: string): EventCategory {
   const prefix = action.split(/[._]/)[0];
 
   if (prefix === 'auth' || prefix === 'login' || prefix === 'logout' || prefix === 'passkey') {
@@ -203,7 +203,10 @@ const AUDIT_ERROR_CODE_PATTERN = /^[A-Za-z0-9_.:-]{1,128}$/u;
  * The outcome of a legacy audit entry: a `result` its data states, else a failure for a failed
  * action (`auth.passkey.failed`, `auth.email_code.send_failed`), else a success.
  */
-function mapLegacyAuditResult(action: string, metadata: Record<string, unknown>): EventResult {
+export function mapLegacyAuditResult(
+  action: string,
+  metadata: Record<string, unknown>
+): EventResult {
   if (typeof metadata.result === 'string' && EVENT_RESULTS.has(metadata.result)) {
     return metadata.result as EventResult;
   }
@@ -214,7 +217,7 @@ function mapLegacyAuditResult(action: string, metadata: Record<string, unknown>)
 }
 
 /** The error code an unsuccessful entry carries (`errorCode`, or `error_code` in snake_case data). */
-function mapLegacyAuditErrorCode(
+export function mapLegacyAuditErrorCode(
   result: EventResult,
   metadata: Record<string, unknown>
 ): string | undefined {
@@ -234,6 +237,22 @@ async function resolveAuditBackpressure(
   } catch {
     return 'event_class';
   }
+}
+
+/**
+ * Whether a failed write of this action must fail the operation, under the tenant's audit
+ * profile: its backpressure mode can make every action fail closed. A profile that cannot be
+ * read leaves the action's own class in force, as the core audit write does.
+ */
+export async function isTenantAuditActionFailClosed(
+  env: Env,
+  tenantId: string,
+  action: string
+): Promise<boolean> {
+  return (
+    resolveAuditEventFailureBehavior(action, await resolveAuditBackpressure(env, tenantId))
+      .behavior === 'fail_closed_or_strong_retry'
+  );
 }
 
 async function resolveFinalAnonymizedUserId(
@@ -1239,6 +1258,11 @@ export async function createAuditLog(
 /**
  * Helper function to create audit log from Hono context
  *
+ * @deprecated Writes to the end-user (core) audit log under the admin's context. Admin
+ * operations belong in the admin audit log: ar-management records them with
+ * recordAdminOperationAudit. Kept for the calls that retry with a stable audit ID until they
+ * move; the ar-management audit gate lists them.
+ *
  * Automatically extracts tenantId, IP address, and user agent from the request.
  * Requires adminAuth context to be set by adminAuthMiddleware.
  * tenantId is obtained from requestContextMiddleware if available.
@@ -1354,6 +1378,8 @@ export function scheduleAuditLog(
 
 /**
  * Helper to create and schedule audit log from Hono context
+ *
+ * @deprecated See createAuditLogFromContext; nothing calls this any more.
  *
  * Combines createAuditLogFromContext with waitUntil scheduling.
  * This is the recommended way to create audit logs in admin handlers

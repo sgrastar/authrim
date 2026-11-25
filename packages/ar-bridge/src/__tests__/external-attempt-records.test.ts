@@ -124,7 +124,7 @@ const provider: UpstreamProvider = {
   slug: 'corp',
   tenantId: 'default',
   name: 'Corp IdP',
-  providerType: 'oidc',
+  providerType: 'oauth2',
   enabled: true,
   priority: 0,
   issuer: 'https://idp.example.com',

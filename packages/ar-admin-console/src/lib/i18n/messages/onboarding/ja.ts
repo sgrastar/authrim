@@ -124,6 +124,7 @@ export const jaOnboarding = {
 	'ob.secondFactor.settings.action': '「個人設定」を押してください。',
 	'ob.secondFactor.settings.fallback':
 		'メニューが閉じました。もう一度、アカウントのアイコンを押してください。',
+	'ob.menu.action': 'スマホでは、左上のメニューを開いて、そこから選んでください。',
 	'ob.secondFactor.keys.title': '2 つ目の認証手段',
 	'ob.secondFactor.keys.body':
 		'Passkey でのログインに加えて、鍵の交換や管理者の権限の変更のような重要な操作では、もう 1 つの認証手段を求められます。それを、この枠で登録します。セキュリティキー（物理キー）を登録できます。',

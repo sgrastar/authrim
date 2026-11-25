@@ -669,40 +669,61 @@ export class D1DynamicPluginInstallationStore {
     ) {
       throw new Error('plugin_dynamic_rollout_unavailable');
     }
+    // A rollout moves the pin only; it never changes whether the tenant has the plugin enabled.
+    const keptState = installation.state === 'enabled' ? 'enabled' : 'disabled';
     if (active.version_digest === manifest.active_version_digest) {
-      return this.reflectedResult(session, input, installationId, 'enabled');
+      return this.reflectedResult(session, input, installationId, keptState);
     }
     await this.assertRolloutCredentials(session, installation, manifest.active_version_digest);
     const now = this.timestamp();
     const artifactId = `plugin-artifact-v1-${await sha256(
       JSON.stringify([installationId, manifest.active_version_digest])
     )}`;
+    // The pin moves only while the installation still has the state this rollout read: a tenant
+    // that disabled (or otherwise changed) it in the meantime must keep its old pin. The same
+    // guard sits on every statement because a D1 batch commits even when one statement matches
+    // no row.
+    const stillInState = `EXISTS (
+              SELECT 1 FROM plugin_runner_installations
+               WHERE installation_id = ? AND tenant_id = ? AND plugin_id = ? AND state = ?
+            )`;
+    const guard = [installationId, input.tenantId, input.pluginId, keptState];
     const statements = [
       session
         .prepare(
           `UPDATE plugin_runner_dynamic_worker_artifacts
               SET state = 'retired', activated_at = NULL, updated_at = ?
-            WHERE artifact_id = ? AND installation_id = ? AND state = 'active'`
+            WHERE artifact_id = ? AND installation_id = ? AND state = 'active'
+              AND ${stillInState}`
         )
-        .bind(now, active.artifact_id, installationId),
+        .bind(now, active.artifact_id, installationId, ...guard),
       session
         .prepare(
           `INSERT INTO plugin_runner_dynamic_worker_artifacts (
              artifact_id, installation_id, plugin_id, version_digest,
              state, activated_at, updated_at
-           ) VALUES (?, ?, ?, ?, 'active', ?, ?)
+           ) SELECT ?, ?, ?, ?, 'active', ?, ?
+            WHERE ${stillInState}
            ON CONFLICT(artifact_id) DO UPDATE SET
              state = 'active', activated_at = excluded.activated_at,
              updated_at = excluded.updated_at`
         )
-        .bind(artifactId, installationId, input.pluginId, manifest.active_version_digest, now, now),
+        .bind(
+          artifactId,
+          installationId,
+          input.pluginId,
+          manifest.active_version_digest,
+          now,
+          now,
+          ...guard
+        ),
       session
         .prepare(
-          `UPDATE plugin_runner_installations SET state = 'enabled', updated_at = ?
+          `UPDATE plugin_runner_installations SET updated_at = ?
             WHERE installation_id = ? AND tenant_id = ? AND plugin_id = ?
-              AND state IN ('enabled', 'disabled')`
+              AND state = ?`
         )
-        .bind(now, installationId, input.tenantId, input.pluginId),
+        .bind(now, installationId, input.tenantId, input.pluginId, keptState),
     ];
     let batchError: unknown;
     try {
@@ -711,7 +732,7 @@ export class D1DynamicPluginInstallationStore {
       batchError = error;
     }
     try {
-      const reflected = await this.reflectedResult(session, input, installationId, 'enabled');
+      const reflected = await this.reflectedResult(session, input, installationId, keptState);
       if (reflected.pinnedVersionDigest !== manifest.active_version_digest) {
         throw new Error('plugin_dynamic_rollout_reflection_invalid');
       }

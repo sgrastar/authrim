@@ -239,6 +239,9 @@
 		.item__actions {
 			grid-column: 2;
 			justify-content: flex-start;
+			gap: 8px;
+			/* A finger needs more room than a pointer: the small buttons here get the large height. */
+			--control-h-sm: var(--control-h-lg);
 		}
 	}
 </style>

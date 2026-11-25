@@ -2,6 +2,7 @@ import {
   waitForLogArchiveReadiness,
   prepareLogArchiveReadinessAttempt,
 } from '../../core/log-archive-readiness.js';
+import { repairLogArchiveCatalogCredential } from '../../core/log-archive-catalog-credential.js';
 /**
  * Deploy Command
  *
@@ -4305,6 +4306,13 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
       const signing = currentLock.controlKeyState?.smokeRpc;
       if (!owned || !signing || !deploymentApiBaseUrl)
         throw new Error('log_archive_readiness_identity_required');
+      owned = await repairLogArchiveCatalogCredential({
+        baseDir,
+        environment: env,
+        keysDir: getResolvedKeysDir(),
+        owned,
+        onProgress: (message) => console.log(chalk.gray(message)),
+      });
       const attempt = prepareLogArchiveReadinessAttempt(
         config.logging.archive,
         owned,

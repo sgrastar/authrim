@@ -138,6 +138,18 @@ export const SEVERITY_LABEL: Record<string, MessageKey> = {
 };
 
 /** A metadata object as indented JSON, or null when there is nothing to show. */
+/**
+ * Whether an event was an administrator's action on the user (a suspension, a revoked consent):
+ * the server marks those `actor_type: admin`, without naming the administrator.
+ */
+export function isAdminAction(details: unknown): boolean {
+	return (
+		!!details &&
+		typeof details === 'object' &&
+		(details as Record<string, unknown>).actor_type === 'admin'
+	);
+}
+
 export function metadataJson(metadata: UserAuditEntry['metadata']): string | null {
 	return metadata && typeof metadata === 'object' && Object.keys(metadata).length > 0
 		? JSON.stringify(metadata, null, 2)

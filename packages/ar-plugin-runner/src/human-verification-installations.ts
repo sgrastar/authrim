@@ -125,7 +125,7 @@ function validate(input: unknown): asserts input is ConfigureHumanVerificationIn
     typeof value.tenantId !== 'string' ||
     !SAFE_ID.test(value.tenantId) ||
     typeof value.pluginId !== 'string' ||
-    !(value.pluginId in PROVIDERS) ||
+    !Object.hasOwn(PROVIDERS, value.pluginId) ||
     typeof value.enabled !== 'boolean' ||
     (value.enabled && value.config === undefined)
   ) {

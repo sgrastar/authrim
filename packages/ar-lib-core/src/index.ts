@@ -91,6 +91,7 @@ export * from './types/openid4vp';
 export * from './types/openid4vci';
 export * from './types/vc-service';
 export * from './types/vc-runtime-ports';
+export * from './types/wallet-provider-ports';
 export * from './types/credential-profile';
 
 // Phase A-6: Logout Types
@@ -126,6 +127,7 @@ export * from './db';
 export * from './utils/request-path';
 export * from './utils/admin-ip-match';
 export * from './utils/audit-log';
+export * from './utils/system-event-log';
 export * from './utils/client-authentication';
 export * from './utils/client-scopes';
 export * from './utils/crypto';

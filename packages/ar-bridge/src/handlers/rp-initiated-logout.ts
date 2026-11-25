@@ -62,12 +62,8 @@ async function resolveTargetUri(
   if (!clientId) throw new Error('session_missing_client');
   const auth = createAuthContextFromHono(c, tenantId);
   const client = await auth.repositories.client.findByClientId(clientId);
-  if (
-    !client ||
-    !parseRedirectUris(
-      client.enabled === false ? (client.post_logout_redirect_uris ?? '[]') : client.redirect_uris
-    ).includes(requested)
-  ) {
+  // OIDC RP-Initiated Logout 1.0 (and ar-auth): only the registered post_logout_redirect_uris.
+  if (!client || !parseRedirectUris(client.post_logout_redirect_uris).includes(requested)) {
     throw new Error('unregistered_post_logout_redirect_uri');
   }
   return requested;

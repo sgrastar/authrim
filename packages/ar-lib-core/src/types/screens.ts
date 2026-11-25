@@ -87,6 +87,37 @@ export const SCREEN_LINK_EXIT_PATTERN = /^[a-z][a-z0-9_]{0,39}$/u;
 export const SCREEN_RESERVED_EXITS: readonly string[] = ['submitted', 'skipped', 'next'];
 
 /**
+ * Whether a screen draws a consent box: a `consent_widget` part that is shown (always shown: neither
+ * hidden or conditional itself nor in such a row; a row's condition holds for the parts after it, up to the next row,
+ * as the Login UI draws them). A step asking for consent on its screen needs one, or the person
+ * cannot agree and a required statement stops them.
+ */
+/** A part with no condition, or one that always shows it (a feature or hidden condition may not). */
+function alwaysShown(condition: ScreenField['display_condition']): boolean {
+  return (condition?.mode ?? 'always') === 'always';
+}
+
+export function screenShowsConsentWidget(
+  fields: readonly Pick<ScreenField, 'block_type' | 'display_condition'>[]
+): boolean {
+  let rowHidden = false;
+  for (const field of fields) {
+    if (field.block_type === 'layout_row') {
+      rowHidden = !alwaysShown(field.display_condition);
+      continue;
+    }
+    if (
+      field.block_type === 'consent_widget' &&
+      !rowHidden &&
+      alwaysShown(field.display_condition)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
  * The exits a screen's link parts add to the screen node's own (`submitted`, and `skipped` when a
  * part skips), in the order they first appear. Read from saved fields, so only well-formed names.
  */

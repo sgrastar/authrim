@@ -25,7 +25,6 @@ import {
   validateAccountRegistrationStates,
   type AccountWebhookField,
   validateEventPattern,
-  createAuditLogFromContext,
   createAuthContextFromHono,
   getTenantIdFromContext,
   encryptValue,
@@ -57,6 +56,7 @@ import {
 import { requireAdminStepUp } from '../../admin-step-up-gate';
 import { sha256Hex } from '../../admin-step-up-digest';
 import { createLoggingTenantKeyResolver } from '../../logging-tenant-key';
+import { recordAdminOperationAudit } from '../../admin-operation-audit';
 
 /**
  * Webhook retry policy configuration (matching types/events/webhook.ts)
@@ -631,13 +631,18 @@ export async function createWebhook(c: Context<{ Bindings: Env }>) {
     const webhookId = await registry.register(tenantId, input);
 
     // Audit log
-    await createAuditLogFromContext(c, 'webhook.created', 'webhook', webhookId, {
-      name: body.name,
-      url: body.url,
-      events: body.events,
-      payloadFields: body.payloadFields,
-      registrationStates: body.registrationStates,
-      scope: body.clientId ? 'client' : 'tenant',
+    await recordAdminOperationAudit(c, {
+      action: 'webhook.created',
+      resourceType: 'webhook',
+      resourceId: webhookId,
+      metadata: {
+        name: body.name,
+        url: body.url,
+        events: body.events,
+        payloadFields: body.payloadFields,
+        registrationStates: body.registrationStates,
+        scope: body.clientId ? 'client' : 'tenant',
+      },
     });
 
     // Fetch created webhook for response
@@ -840,8 +845,13 @@ export async function updateWebhook(c: Context<{ Bindings: Env }>) {
     await registry.update(tenantId, webhookId, input);
 
     // Audit log
-    await createAuditLogFromContext(c, 'webhook.updated', 'webhook', webhookId, {
-      updated_fields: Object.keys(body),
+    await recordAdminOperationAudit(c, {
+      action: 'webhook.updated',
+      resourceType: 'webhook',
+      resourceId: webhookId,
+      metadata: {
+        updated_fields: Object.keys(body),
+      },
     });
 
     // Fetch updated webhook
@@ -879,17 +889,16 @@ export async function deleteWebhook(c: Context<{ Bindings: Env }>) {
     await registry.remove(tenantId, webhookId);
 
     // Audit log (warning level for deletion)
-    await createAuditLogFromContext(
-      c,
-      'webhook.deleted',
-      'webhook',
-      webhookId,
-      {
+    await recordAdminOperationAudit(c, {
+      action: 'webhook.deleted',
+      resourceType: 'webhook',
+      resourceId: webhookId,
+      metadata: {
         name: existing.name,
         url: existing.url,
       },
-      'warning'
-    );
+      severity: 'warning',
+    });
 
     return c.json({ success: true, deleted: webhookId });
   } catch (error) {
@@ -1021,9 +1030,14 @@ export async function testWebhook(c: Context<{ Bindings: Env }>) {
       error = err instanceof Error ? err.message : 'Unknown error';
 
       // Audit log for failed test
-      await createAuditLogFromContext(c, 'webhook.test_failed', 'webhook', webhookId, {
-        error,
-        duration_ms: endTime - startTime,
+      await recordAdminOperationAudit(c, {
+        action: 'webhook.test_failed',
+        resourceType: 'webhook',
+        resourceId: webhookId,
+        metadata: {
+          error,
+          duration_ms: endTime - startTime,
+        },
       });
 
       return c.json({
@@ -1041,10 +1055,15 @@ export async function testWebhook(c: Context<{ Bindings: Env }>) {
     const isSuccess = response.status >= 200 && response.status < 300;
 
     // Audit log
-    await createAuditLogFromContext(c, 'webhook.test', 'webhook', webhookId, {
-      status_code: response.status,
-      duration_ms: durationMs,
-      success: isSuccess,
+    await recordAdminOperationAudit(c, {
+      action: 'webhook.test',
+      resourceType: 'webhook',
+      resourceId: webhookId,
+      metadata: {
+        status_code: response.status,
+        duration_ms: durationMs,
+        success: isSuccess,
+      },
     });
 
     return c.json({
@@ -1725,11 +1744,16 @@ export async function replayWebhookDelivery(c: Context<{ Bindings: Env }>) {
       });
 
       // Audit log for failed replay
-      await createAuditLogFromContext(c, 'webhook.replay_failed', 'webhook', webhookId, {
-        original_delivery_id: deliveryId,
-        new_delivery_id: newDeliveryId,
-        error,
-        duration_ms: endTime - startTime,
+      await recordAdminOperationAudit(c, {
+        action: 'webhook.replay_failed',
+        resourceType: 'webhook',
+        resourceId: webhookId,
+        metadata: {
+          original_delivery_id: deliveryId,
+          new_delivery_id: newDeliveryId,
+          error,
+          duration_ms: endTime - startTime,
+        },
       });
 
       return c.json({
@@ -1819,12 +1843,17 @@ export async function replayWebhookDelivery(c: Context<{ Bindings: Env }>) {
     });
 
     // Audit log
-    await createAuditLogFromContext(c, 'webhook.replay', 'webhook', webhookId, {
-      original_delivery_id: deliveryId,
-      new_delivery_id: newDeliveryId,
-      status_code: response.status,
-      success: isSuccess,
-      duration_ms: durationMs,
+    await recordAdminOperationAudit(c, {
+      action: 'webhook.replay',
+      resourceType: 'webhook',
+      resourceId: webhookId,
+      metadata: {
+        original_delivery_id: deliveryId,
+        new_delivery_id: newDeliveryId,
+        status_code: response.status,
+        success: isSuccess,
+        duration_ms: durationMs,
+      },
     });
 
     return c.json({

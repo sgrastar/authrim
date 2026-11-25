@@ -21,6 +21,7 @@ import {
   generateKey,
   makePki,
   popJwt,
+  sha256Hex,
   type Pki,
   type TestKey,
 } from './wallet-test-pki';
@@ -52,6 +53,7 @@ function entryFor(pki: Pki, overrides: Partial<WalletAllowlistEntry> = {}) {
     label: 'Keyring',
     enabled: true,
     attestationRoots: [pki.anchor],
+    attestationLeafSha256: [] as string[],
     keyAttestationRoots: [],
     redirectUris: ['https://wallet.example.com/cb'],
     ...overrides,
@@ -235,6 +237,71 @@ describe('wallet allowlist', () => {
         )
       );
       expect(result).toEqual({ ok: false, error: 'attestation_chain_untrusted' });
+    });
+
+    describe('leaf pinning', () => {
+      const run = async (env: Env) =>
+        authenticateWalletClient({
+          env,
+          tenantId: 't1',
+          headers: await headers(),
+          issuer: ISSUER,
+          clientId: CLIENT_ID,
+          now: NOW,
+        });
+
+      it('accepts the pinned leaf and refuses a leaf that is not pinned', async () => {
+        const pinned = await sha256Hex(pki.leafCert);
+        expect(
+          (await run(await stored(entryFor(pki, { attestationLeafSha256: [pinned] })))).ok
+        ).toBe(true);
+        // The chain is still valid under the root; only the pin differs.
+        const otherPin = await sha256Hex(new Uint8Array([1, 2, 3]));
+        expect(
+          await run(await stored(entryFor(pki, { attestationLeafSha256: [otherPin] })))
+        ).toEqual({ ok: false, error: 'wallet_not_allowed' });
+      });
+
+      it('accepts any leaf under the root when nothing is pinned', async () => {
+        expect((await run(await stored(entryFor(pki)))).ok).toBe(true);
+        expect((await run(await stored(entryFor(pki, { attestationLeafSha256: [] })))).ok).toBe(
+          true
+        );
+      });
+
+      it('reads a list stored before pins existed as unpinned', async () => {
+        const { attestationLeafSha256: _omitted, ...legacy } = entryFor(pki);
+        const env = fakeEnv(
+          JSON.stringify({ version: 1, updatedAt: 0, revision: 3, entries: [legacy] })
+        ).env;
+        const loaded = await loadWalletAllowlist(env, 't1');
+        expect(loaded.entries[0].attestationLeafSha256).toEqual([]);
+        expect((await run(env)).ok).toBe(true);
+      });
+
+      it('validates the pins and binds them to the approved digest', async () => {
+        const pin = await sha256Hex(pki.leafCert);
+        const bad: unknown[] = [
+          'not-a-list',
+          ['XYZ'],
+          [pin.toUpperCase()],
+          [pin, pin],
+          Array.from({ length: 17 }, (_, i) => i.toString(16).padStart(64, '0')),
+        ];
+        for (const value of bad) {
+          await expect(
+            parseWalletAllowlist(list({ ...entryFor(pki), attestationLeafSha256: value }))
+          ).rejects.toThrow('wallet_allowlist_leaf_pin_invalid');
+        }
+        const plain = (await parseWalletAllowlist(list(entryFor(pki)))).entries;
+        const pinnedEntries = (
+          await parseWalletAllowlist(list(entryFor(pki, { attestationLeafSha256: [pin] })))
+        ).entries;
+        expect(plain[0].attestationLeafSha256).toEqual([]);
+        expect(await walletAllowlistDigest(pinnedEntries)).not.toBe(
+          await walletAllowlistDigest(plain)
+        );
+      });
     });
 
     it('refuses a replayed proof, a failing replay store and a corrupt list', async () => {

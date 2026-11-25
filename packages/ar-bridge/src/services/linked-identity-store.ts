@@ -378,9 +378,13 @@ export async function updateLinkedIdentity(
       const refreshToken = await encrypt(updates.tokens.refresh_token, encryptionKey);
       params.push(refreshToken);
     }
+    // A new access token has its own lifetime: one the provider did not state is unknown (NULL,
+    // so not scheduled for refresh), never the previous token's expiry.
     if (tokenExpiresAt) {
       setClauses.push('token_expires_at = ?');
       params.push(tokenExpiresAt);
+    } else {
+      setClauses.push('token_expires_at = NULL');
     }
   }
 

@@ -1720,7 +1720,7 @@ describe('OIDCRPClient', () => {
           ).rejects.toThrow('ID token azp does not match expected client_id');
         });
 
-        it('should accept multiple audiences with valid azp', async () => {
+        it('should accept multiple audiences with valid azp when the extra one is trusted', async () => {
           mockFetch.mockResolvedValueOnce({
             ok: true,
             json: async () => mockJwks,
@@ -1739,7 +1739,7 @@ describe('OIDCRPClient', () => {
           });
           mockCreateLocalJWKSet.mockReturnValueOnce(() => {});
 
-          const client = new OIDCRPClient(mockConfig);
+          const client = new OIDCRPClient({ ...mockConfig, trustedAudiences: ['other-audience'] });
           const userInfo = await client.validateIdToken('mock-id-token', { nonce: 'test-nonce' });
           expect(userInfo.sub).toBe('user-123');
         });

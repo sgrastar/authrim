@@ -2,7 +2,6 @@ import { Context } from 'hono';
 import { readLogProtectedDetail } from './log-read-adapter';
 import { LogQueryIncompleteError } from './log-archive-query';
 import {
-  type DatabaseAdapter,
   getTenantIdFromContext,
   getLogger,
   createLogger,
@@ -11,6 +10,7 @@ import {
   type AdminAuthContext,
   requireAdminDatabaseAdapter,
   runTenantBackupCoveredEffect,
+  type AdminAuditLogCreateInput,
 } from '@authrim/ar-lib-core';
 import type { Env } from '@authrim/ar-lib-core';
 
@@ -122,10 +122,6 @@ export function detectImageType(data: Uint8Array): ImageTypeInfo | null {
   }
 
   return null;
-}
-
-function getAdminAdapter(c: Context<any, any, any>): DatabaseAdapter {
-  return requireAdminDatabaseAdapter(c.env, 'admin-shared');
 }
 
 interface AdminAuditDetailPayload {
@@ -258,73 +254,100 @@ export async function loadAdminAuditDetail(
   };
 }
 
+export interface AdminAuditRowInput {
+  action: string;
+  resourceType: string;
+  resourceId: string | null;
+  result: 'success' | 'failure';
+  severity?: 'debug' | 'info' | 'warn' | 'error' | 'critical';
+  metadata?: Record<string, unknown>;
+  before?: Record<string, unknown>;
+  after?: Record<string, unknown>;
+  /** A caller-chosen event ID; a fresh one when omitted. */
+  id?: string;
+  /** The event time in epoch milliseconds; now when omitted. */
+  createdAt?: number;
+}
+
+/** A finished admin audit row: everything taken from the request is already in it. */
+export type AdminAuditRow = AdminAuditLogCreateInput & { id: string; created_at: number };
+
+/**
+ * Builds an admin audit row from the request: the actor, client address, request and session
+ * correlation, and proxy metadata. The tenant is the given one; without it, the request's.
+ */
+export async function buildAdminAuditRow(
+  c: Context<any, any, any>,
+  input: AdminAuditRowInput,
+  options: { tenantId?: string } = {}
+): Promise<AdminAuditRow> {
+  const tenantId = options.tenantId ?? getTenantIdFromContext(c);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const adminAuth = (c as any).get?.('adminAuth') as AdminAuthContext | undefined;
+
+  const ipAddress =
+    c.req.header('CF-Connecting-IP') ||
+    c.req.header('X-Forwarded-For')?.split(',')[0]?.trim() ||
+    'unknown';
+  const userAgent = c.req.header('User-Agent') || 'unknown';
+  const requestId = getRequestIdForAdminAudit(c);
+  const actorMetadata = getAdminActorAuditMetadata(adminAuth);
+  const inlineAuditMetadata = {
+    ...getAdminProxyAuditMetadata(c),
+    ...actorMetadata,
+  };
+  const metadata = {
+    ...(input.metadata ?? {}),
+    ...inlineAuditMetadata,
+  };
+  return {
+    id: input.id ?? crypto.randomUUID(),
+    tenant_id: tenantId,
+    admin_user_id:
+      adminAuth?.authMethod === 'machine_access_token' ? undefined : adminAuth?.userId || 'system',
+    admin_email:
+      adminAuth?.authMethod === 'machine_access_token'
+        ? undefined
+        : (adminAuth?.email ?? undefined),
+    action: input.action,
+    resource_type: input.resourceType,
+    resource_id: input.resourceId ?? undefined,
+    result: input.result,
+    severity: input.severity ?? (input.result === 'failure' ? 'warn' : 'info'),
+    ip_address: ipAddress,
+    user_agent: userAgent,
+    request_id: requestId,
+    session_id: adminAuth?.sessionId
+      ? await adminSessionAuditDigest(adminAuth.sessionId)
+      : undefined,
+    before: input.before,
+    after: input.after,
+    metadata,
+    inline_metadata: inlineAuditMetadata,
+    created_at: input.createdAt ?? Date.now(),
+  };
+}
+
+/** Stores a finished admin audit row. A failure is thrown, never swallowed. */
+export async function writeAdminAuditRowOrThrow(env: Env, row: AdminAuditRow): Promise<string> {
+  const auditRepo = new AdminAuditLogRepository(
+    requireAdminDatabaseAdapter(env, 'admin-shared'),
+    env
+  );
+  await auditRepo.createAuditLog(row);
+  return row.id;
+}
+
+/**
+ * Records an admin audit row and answers its ID, or null when it could not be stored. Callers
+ * that must not proceed without the record check for null.
+ */
 export async function writeAdminAuditLog(
   c: Context<any, any, any>,
-  input: {
-    action: string;
-    resourceType: string;
-    resourceId: string | null;
-    result: 'success' | 'failure';
-    severity?: 'debug' | 'info' | 'warn' | 'error' | 'critical';
-    metadata?: Record<string, unknown>;
-    before?: Record<string, unknown>;
-    after?: Record<string, unknown>;
-  }
+  input: AdminAuditRowInput
 ): Promise<string | null> {
   try {
-    const adminAdapter = getAdminAdapter(c);
-    const auditRepo = new AdminAuditLogRepository(adminAdapter, c.env as Env);
-    const tenantId = getTenantIdFromContext(c);
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const adminAuth = (c as any).get?.('adminAuth') as AdminAuthContext | undefined;
-
-    const ipAddress =
-      c.req.header('CF-Connecting-IP') ||
-      c.req.header('X-Forwarded-For')?.split(',')[0]?.trim() ||
-      'unknown';
-    const userAgent = c.req.header('User-Agent') || 'unknown';
-    const createdAt = Date.now();
-    const auditLogId = crypto.randomUUID();
-    const requestId = getRequestIdForAdminAudit(c);
-    const actorMetadata = getAdminActorAuditMetadata(adminAuth);
-    const inlineAuditMetadata = {
-      ...getAdminProxyAuditMetadata(c),
-      ...actorMetadata,
-    };
-    const metadata = {
-      ...(input.metadata ?? {}),
-      ...inlineAuditMetadata,
-    };
-    await auditRepo.createAuditLog({
-      id: auditLogId,
-      tenant_id: tenantId,
-      admin_user_id:
-        adminAuth?.authMethod === 'machine_access_token'
-          ? undefined
-          : adminAuth?.userId || 'system',
-      admin_email:
-        adminAuth?.authMethod === 'machine_access_token'
-          ? undefined
-          : (adminAuth?.email ?? undefined),
-      action: input.action,
-      resource_type: input.resourceType,
-      resource_id: input.resourceId ?? undefined,
-      result: input.result,
-      severity: input.severity ?? (input.result === 'failure' ? 'warn' : 'info'),
-      ip_address: ipAddress,
-      user_agent: userAgent,
-      request_id: requestId,
-      session_id: adminAuth?.sessionId
-        ? await adminSessionAuditDigest(adminAuth.sessionId)
-        : undefined,
-      before: input.before,
-      after: input.after,
-      metadata,
-      inline_metadata: inlineAuditMetadata,
-      created_at: createdAt,
-    });
-    return auditLogId;
+    return await writeAdminAuditRowOrThrow(c.env as Env, await buildAdminAuditRow(c, input));
   } catch (error) {
     const log = getLogger(c).module('ADMIN');
     log.error('Failed to create admin audit log', { action: input.action }, error as Error);

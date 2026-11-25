@@ -38,7 +38,7 @@
 
 <header class="topbar">
 	<span class="topbar__menu">
-		<IconButton icon="list" label={t('app.menu')} onclick={onmenu} />
+		<IconButton icon="list" label={t('app.menu')} data-guide="nav-menu" onclick={onmenu} />
 	</span>
 	<a class="brand" href="/admin">
 		<span class="brand__mark"><Icon name="sparkle" /></span>

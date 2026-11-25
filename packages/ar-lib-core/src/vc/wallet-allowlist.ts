@@ -42,6 +42,7 @@ export async function walletAllowlistDigest(
       label: entry.label,
       enabled: entry.enabled,
       attestationRoots: entry.attestationRoots.map((root) => root.sha256).sort(),
+      attestationLeafSha256: [...entry.attestationLeafSha256].sort(),
       keyAttestationRoots: entry.keyAttestationRoots.map((root) => root.sha256).sort(),
       redirectUris: [...entry.redirectUris].sort(),
     }))
@@ -94,6 +95,7 @@ export async function saveWalletAllowlist(
       label: entry.label,
       enabled: entry.enabled,
       attestationRoots: entry.attestationRoots.map((root) => root.sha256),
+      attestationLeafSha256: entry.attestationLeafSha256,
       keyAttestationRoots: entry.keyAttestationRoots.map((root) => root.sha256),
       redirectUris: entry.redirectUris,
     }));
@@ -225,6 +227,14 @@ export async function authenticateWalletClient(
     (candidate) => candidate.enabled && candidate.clientId === result.clientId
   );
   if (!entry || !entry.attestationRoots.some((root) => root.sha256 === result.anchorSha256)) {
+    return { ok: false, error: 'wallet_not_allowed' };
+  }
+  // A pinned wallet type accepts only the listed leaf certificates, not every certificate its
+  // root has issued.
+  if (
+    entry.attestationLeafSha256.length > 0 &&
+    !entry.attestationLeafSha256.includes(result.leafSha256)
+  ) {
     return { ok: false, error: 'wallet_not_allowed' };
   }
   return {

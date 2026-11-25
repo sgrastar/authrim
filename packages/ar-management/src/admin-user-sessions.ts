@@ -16,12 +16,11 @@ import {
   isShardedSessionId,
   createErrorResponse,
   AR_ERROR_CODES,
-  createAuditLogFromContext,
   getLogger,
   recordUserSessionRevocationEndingSessions,
 } from '@authrim/ar-lib-core';
 import { getCanonicalTenantBaseUrl } from './request-issuer';
-import { detectImageType, logSanitizedError, scheduleAdminAuditLog } from './admin-shared';
+import { detectImageType, logSanitizedError } from './admin-shared';
 import { requireAdminStepUp } from './admin-step-up-gate';
 import { adminActorIdFromContext, startAdminSessionEndLogout } from './admin-session-end';
 import { endedSessionsOf } from './session-end-logout';
@@ -31,6 +30,7 @@ import {
   adminAccountContacts,
   adminAccountCoreAdapter,
 } from './admin-account-storage';
+import { recordAdminOperationAudit } from './admin-operation-audit';
 
 const AVATAR_CONTENT_TYPES: Record<string, string> = {
   gif: 'image/gif',
@@ -772,15 +772,16 @@ export async function adminUserRevokeAllSessionsHandler(c: Context<{ Bindings: E
       storeRevokedCount,
     });
 
-    await createAuditLogFromContext(c, 'user.sessions_revoked', 'user', userId, {
-      revoked_count: dbRevokedCount,
-      store_revoked_count: storeRevokedCount,
-      revoked_after_ms: revokedAfterMs,
-    });
-    scheduleAdminAuditLog(c, 'user.sessions_revoked', userId, 'success', {
-      revoked_count: dbRevokedCount,
-      store_revoked_count: storeRevokedCount,
-      revoked_after_ms: revokedAfterMs,
+    await recordAdminOperationAudit(c, {
+      action: 'user.sessions_revoked',
+      resourceType: 'user',
+      resourceId: userId,
+      metadata: {
+        revoked_count: dbRevokedCount,
+        store_revoked_count: storeRevokedCount,
+        revoked_after_ms: revokedAfterMs,
+      },
+      endUser: { userId: userId },
     });
 
     return c.json({

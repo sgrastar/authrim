@@ -10,6 +10,8 @@
  * - Both linked via anonymized_user_id (random UUID + mapping table)
  */
 
+import type { SystemEventLogParams } from './audit-service';
+
 // =============================================================================
 // Log Levels and Categories
 // =============================================================================
@@ -508,6 +510,12 @@ export interface IAuditService {
    * Uses Queue for async processing with D1 fallback.
    */
   logEvent(tenantId: string, params: EventLogParams): Promise<void>;
+
+  /**
+   * Log a system event (`runtime.system_events`): the platform's own doing, with no
+   * administrator and no end user behind it. Same delivery plan, retention and sinks as events.
+   */
+  logSystemEvent(tenantId: string, params: SystemEventLogParams): Promise<void>;
 
   /**
    * Log a PII change.

@@ -104,6 +104,26 @@
 </Story>
 
 <Story
+	name="Guide: on a phone the navigation step points at the menu button"
+	play={async ({ canvasElement }) => {
+		const pop = await popover(canvasElement);
+		await expect(pop).toHaveTextContent(t('ob.theme.nav.body'));
+		// The category is not drawn on a phone; the step says where it is, and points at the
+		// button that opens it.
+		await expect(pop).toHaveTextContent(t('ob.menu.action'));
+		await waitFor(() => {
+			const lit = canvasElement.ownerDocument.querySelector('.driver-active-element');
+			expect(lit?.getAttribute('data-guide')).toBe('nav-menu');
+		});
+		await within(pop).findByRole('button', { name: t('ob.next') });
+	}}
+>
+	{#snippet template()}
+		<GuideHarness startAt={0} phone />
+	{/snippet}
+</Story>
+
+<Story
 	name="Guide: a step with Next"
 	play={async ({ canvasElement }) => {
 		const pop = await popover(canvasElement);

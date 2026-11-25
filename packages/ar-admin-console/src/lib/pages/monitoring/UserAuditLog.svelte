@@ -37,6 +37,7 @@
 		eventLabel,
 		eventLabelKey,
 		eventOptions,
+		isAdminAction,
 		resultOf
 	} from './user-audit-labels';
 
@@ -281,6 +282,9 @@
 							{:else}
 								<code>{row.action || t('uaud.event.unknown')}</code>
 							{/if}
+							{#if isAdminAction(row.metadata)}
+								<span class="by-admin"><Badge tone="info">{t('uaud.byAdmin')}</Badge></span>
+							{/if}
 						{:else if column.key === 'user'}
 							{#if !row.userId}
 								—
@@ -330,6 +334,11 @@
 		color: var(--text-muted);
 		font-size: var(--fs-caption);
 		line-height: var(--lh-body);
+	}
+
+	.by-admin {
+		display: block;
+		margin-block-start: var(--space-related);
 	}
 
 	.more {

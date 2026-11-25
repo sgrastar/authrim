@@ -440,6 +440,9 @@ function slug(value: string): string {
     if (result.length >= 24) break;
   }
   while (result.endsWith('-')) result = result.slice(0, -1);
+  // Do not strip again after truncating: persisted database names and idempotency keys are
+  // re-derived from this slug when a request is replayed, so changing the output would break
+  // resuming operations created by earlier versions (a truncation can end in '-', cosmetic only).
   return result.slice(0, 24);
 }
 

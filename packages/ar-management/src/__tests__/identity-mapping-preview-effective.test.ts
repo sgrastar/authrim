@@ -49,6 +49,9 @@ import { insertOAuthClient, insertTenant, openCoreDatabase } from './helpers/cor
 import { seedDestinationProfile, seedMapping } from './helpers/identity-mapping-seed';
 import { adminOpenApiSchemas, shapeErrors } from './helpers/openapi-shape';
 
+// Admin operations are recorded through the forwarding shim (see the helper).
+vi.mock('../admin-operation-audit', () => import('./helpers/legacy-admin-audit-shim'));
+
 /**
  * A trial of a choice that is not saved: the answer is the effective endpoint's, before and after,
  * from the same selection. The real admin authentication and route access, the real effective

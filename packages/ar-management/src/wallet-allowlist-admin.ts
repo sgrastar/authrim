@@ -28,6 +28,7 @@ function view(list: WalletAllowlist) {
       enabled: entry.enabled,
       redirect_uris: entry.redirectUris,
       attestation_roots: entry.attestationRoots.map(({ sha256, label }) => ({ sha256, label })),
+      attestation_leaf_sha256: entry.attestationLeafSha256,
       key_attestation_roots: entry.keyAttestationRoots.map(({ sha256, label }) => ({
         sha256,
         label,

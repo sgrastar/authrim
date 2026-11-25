@@ -184,6 +184,30 @@ function decodeClaim(row: PluginHookOutboxRow): ClaimedPluginHook {
   };
 }
 
+/**
+ * Restricts a notification-intent update to the caller that still holds the outbox claim, so a
+ * stale worker cannot touch the intent even though the batch it runs in does not roll back when
+ * the fenced outbox statement matches nothing. Bind order matches `claimFence`.
+ */
+const INTENT_CLAIM_FENCE = `AND EXISTS (
+                SELECT 1 FROM plugin_hook_outbox claimed
+                 WHERE claimed.outbox_id = ? AND claimed.tenant_id = ?
+                   AND claimed.plugin_installation_id = ? AND claimed.status = 'locked'
+                   AND claimed.claim_owner = ? AND claimed.claim_token = ?
+                   AND claimed.attempt_no = ?
+              )`;
+
+function claimFence(claim: ClaimedPluginHook): [string, string, string, string, string, number] {
+  return [
+    claim.outboxId,
+    claim.invocation.tenantId,
+    claim.invocation.pluginInstallationId,
+    claim.claimOwner,
+    claim.claimToken,
+    claim.attemptNo,
+  ];
+}
+
 function primary(db: D1Database): D1DatabaseSession {
   if (typeof db.withSession !== 'function') throw new Error('plugin_outbox_d1_session_required');
   return db.withSession('first-primary');
@@ -528,7 +552,8 @@ export class D1PluginHookOutboxStore implements PluginHookOutboxStore {
               AND json_extract(
                     provider_installation_ids_json,
                     '$[' || active_provider_index || ']'
-                  ) = ?`
+                  ) = ?
+              ${INTENT_CLAIM_FENCE}`
         )
         .bind(
           nextIndex,
@@ -538,7 +563,8 @@ export class D1PluginHookOutboxStore implements PluginHookOutboxStore {
           intentId,
           claim.invocation.tenantId,
           activeIndex,
-          claim.invocation.pluginInstallationId
+          claim.invocation.pluginInstallationId,
+          ...claimFence(claim)
         ),
       session
         .prepare(
@@ -717,7 +743,8 @@ export class D1PluginHookOutboxStore implements PluginHookOutboxStore {
                       provider_installation_ids_json,
                       '$[' || active_provider_index || ']'
                     ) = ?
-                AND state = 'pending'`
+                AND state = 'pending'
+                ${INTENT_CLAIM_FENCE}`
           )
           .bind(
             input.now,
@@ -727,7 +754,8 @@ export class D1PluginHookOutboxStore implements PluginHookOutboxStore {
             input.now,
             claim.invocation.payload.intentId,
             claim.invocation.tenantId,
-            claim.invocation.pluginInstallationId
+            claim.invocation.pluginInstallationId,
+            ...claimFence(claim)
           ),
         notificationOutboxStatement,
       ]);
@@ -746,14 +774,16 @@ export class D1PluginHookOutboxStore implements PluginHookOutboxStore {
             `UPDATE notification_delivery_intents
                 SET attempt_count = attempt_count + CASE WHEN ? = 'succeeded' THEN 0 ELSE 1 END,
                     last_error_code = ?, updated_at = ?
-              WHERE intent_id = ? AND tenant_id = ?`
+              WHERE intent_id = ? AND tenant_id = ?
+                ${INTENT_CLAIM_FENCE}`
           )
           .bind(
             input.status,
             input.errorCode,
             input.now,
             claim.invocation.payload.intentId,
-            claim.invocation.tenantId
+            claim.invocation.tenantId,
+            ...claimFence(claim)
           ),
         outboxStatement,
       ]);

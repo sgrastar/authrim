@@ -21,7 +21,6 @@ import type { Context } from 'hono';
 import {
   buildTenantSystemSettingsKey,
   ConflictError,
-  createAuditLogFromContext,
   generateVersion,
   requireDedicatedAdminDatabaseAdapter,
   getLogger,
@@ -46,6 +45,7 @@ import { DatabaseSettingsCanonicalStore } from '@authrim/ar-lib-core/services/se
 import { runTenantBackupCoveredMutation } from '../tenant-backup-writer';
 import { validateCategoryPatch } from './settings-v2/patch-validation';
 import { canAccessTenant, getSettingsManager } from './settings-v2';
+import { recordAdminOperationAudit } from '../admin-operation-audit';
 
 type AdminContext = Context<{ Bindings: Env }>;
 
@@ -338,13 +338,12 @@ export async function applyCertificationProfileHandler(c: AdminContext) {
           // those values from the platform afterwards). When it cannot be recorded, nothing is
           // removed, so applying the profile again records and removes it.
           try {
-            await createAuditLogFromContext(
-              c,
-              'settings.certification_profile_sections_removed',
-              'settings',
-              `tenant:${tenantId}:certification-profile`,
-              { scope: 'tenant', scope_id: tenantId, profile: profileId, actor, removed }
-            );
+            await recordAdminOperationAudit(c, {
+              action: 'settings.certification_profile_sections_removed',
+              resourceType: 'settings',
+              resourceId: `tenant:${tenantId}:certification-profile`,
+              metadata: { scope: 'tenant', scope_id: tenantId, profile: profileId, actor, removed },
+            });
           } catch (error) {
             log.error(
               'Older certification profile change could not be recorded',

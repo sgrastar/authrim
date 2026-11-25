@@ -18,6 +18,7 @@ import { enStatements } from './statements/en';
 import { enStepUp } from './step-up/en';
 import { enAdminAudit } from './admin-audit/en';
 import { enUserAudit } from './user-audit/en';
+import { enSystemLog } from './system-log/en';
 import { enTeam } from './team/en';
 import { enIpAllowlist } from './ip-allowlist/en';
 import { enAccountPages } from './account-pages/en';
@@ -51,6 +52,7 @@ export const en = {
 	...enStepUp,
 	...enAdminAudit,
 	...enUserAudit,
+	...enSystemLog,
 	...enTeam,
 	...enIpAllowlist,
 	...enAccountPages,
@@ -134,7 +136,6 @@ export const en = {
 	'nav.plat.backup': 'Backup / DR',
 	'nav.plat.jobs': 'Jobs',
 	'nav.plat.approvals': 'Approvals',
-	'nav.users.resolution': 'Resolution center',
 	'nav.access.roleRules': 'Assignment rules',
 	'nav.apps.machine': 'Machine access',
 	'nav.auth.tokenRefresh': 'External token refresh',

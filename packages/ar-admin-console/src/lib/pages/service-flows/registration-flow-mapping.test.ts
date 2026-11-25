@@ -91,6 +91,32 @@ describe('the sign-up flow saved as a Flow', () => {
 		]);
 	});
 
+	it('saves the statements a screen asks on itself on that screen, and reads them back', () => {
+		const state = aboutState('registration', 'Sign-up', 'default-ui');
+		state.values['reg.screen'] = 'registration_custom';
+		state.values['reg.screenStatements'] = ['stmt_terms:required|modal'];
+		state.added.push('extra-screen:1');
+		state.values['reg.extraScreen:1'] = 'welcome_survey';
+		state.values['reg.extraScreenStatements:1'] = ['stmt_news:optional'];
+		// Not a screen of the flow (taken away): nothing is asked for it.
+		state.values['reg.extraScreenStatements:2'] = ['stmt_gone:required'];
+		const spec = registrationSpecOf(state);
+		expect(spec.statements).toEqual([
+			{ statement_id: 'stmt_terms', required: true, display: 'modal' }
+		]);
+		expect(spec.screens[0].statements).toEqual([{ statement_id: 'stmt_news', required: false }]);
+		expect(spec.consents).toEqual([]);
+		const editor = buildRegistrationFlowEditor(spec);
+		expect(isConsoleShaped(editor)).toBe(true);
+		const back = registrationStateOf(readRegistrationFlowEditor(editor)!, {
+			name: 'Sign-up',
+			scope: 'default-ui'
+		});
+		expect(back.values['reg.screenStatements']).toEqual(['stmt_terms:required|modal']);
+		expect(back.values['reg.extraScreenStatements:1']).toEqual(['stmt_news:optional']);
+		expect(back.added).not.toContain('consent:1');
+	});
+
 	it('reads the domains as typed, however separated', () => {
 		expect(domainsOf(' a.example,b.example  @C.example ')).toEqual([
 			'a.example',

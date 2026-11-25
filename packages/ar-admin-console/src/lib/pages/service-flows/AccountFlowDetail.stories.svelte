@@ -191,6 +191,44 @@
 	}}
 ></Story>
 
+<!-- A screen with a consent box (a consent widget) also asks the consent statements chosen here on the screen itself, with its own button, and keeps them on its own step. The flow's consent step is separate: nothing is added to it. A screen without the box shows nothing of this. -->
+<Story
+	name="Sign-up screen with a consent box asks consent itself"
+	args={{ flow: 'registration', filled: 'none' }}
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(inFlow(canvasElement, /^Screen(?! \d)/));
+		const screen = await canvas.findByRole('combobox', { name: /^Screen/ });
+		await waitFor(() => expect(screen).toHaveValue('registration'));
+		// The built-in sign-up screen has no consent box: no consent settings here.
+		await expect(canvas.queryByRole('heading', { name: t('af.screenConsent.title') })).toBeNull();
+		await userEvent.selectOptions(screen, 'registration_custom');
+		await expect(
+			await canvas.findByRole('heading', { name: t('af.screenConsent.title') })
+		).toBeInTheDocument();
+		await userEvent.selectOptions(
+			await canvas.findByRole('combobox', { name: t('af.consent.add') }),
+			'stmt_terms'
+		);
+		await userEvent.click(canvas.getByRole('button', { name: t('af.consent.add') }));
+		await expect((await canvas.findAllByRole('button', { name: /Terms/i })).length).toBeGreaterThan(
+			0
+		);
+		// Kept on the screen: the flow gets no consent step of its own.
+		await expect(
+			flowButtonsOf(canvasElement).queryByRole('button', { name: /^Consent statements/ })
+		).toBeNull();
+		// Another screen without the box drops what was chosen.
+		await userEvent.selectOptions(screen, 'registration');
+		await waitFor(() =>
+			expect(canvas.queryByRole('heading', { name: t('af.screenConsent.title') })).toBeNull()
+		);
+		await userEvent.selectOptions(screen, 'registration_custom');
+		await canvas.findByRole('heading', { name: t('af.screenConsent.title') });
+		await expect(canvas.queryAllByRole('button', { name: /Terms/i })).toHaveLength(0);
+	}}
+></Story>
+
 <!-- A screen step's title is its own: the pencil beside it edits it in place, as a sign-in method profile's name is edited. -->
 <Story
 	name="Sign-up renames a screen step"

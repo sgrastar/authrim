@@ -1,7 +1,6 @@
 import type { Context } from 'hono';
 import {
   assertControlPlaneRecordIsSecretFree,
-  createAuditLog,
   DEFAULT_TENANT_ID,
   ensureDatabaseAdapter,
   requireAdminDatabaseAdapter,
@@ -16,6 +15,7 @@ import {
   type TenantPlacementMigrationJobView,
 } from './tenant-placement-migration-job';
 import { processNextTenantPlacementMigration } from './tenant-placement-migration-scheduled';
+import { recordAdminOperationAudit } from './admin-operation-audit';
 
 type AdminContext = Context<{
   Bindings: Env;
@@ -181,7 +181,6 @@ export async function adminTenantPlacementMigrationStartHandler(
     if (!c.env.CONTROL?.startTenantPlacementMigration) {
       return error(c, 503, 'TENANT_PLACEMENT_MIGRATION_CONTROL_UNAVAILABLE');
     }
-    const requestedBy = auditActor(c);
     const controlRequestedBy = await controlActorId(c);
     const control = await c.env.CONTROL.startTenantPlacementMigration({
       tenantId,
@@ -222,17 +221,17 @@ export async function adminTenantPlacementMigrationStartHandler(
         processNextTenantPlacementMigration(c.env)
       )
     );
-    await createAuditLog(c.env, {
-      tenantId,
-      userId: requestedBy,
-      action: 'tenant.placement_migration_requested',
-      resource: 'tenant',
-      resourceId: tenantId,
-      ipAddress: c.req.header('CF-Connecting-IP') ?? 'unknown',
-      userAgent: c.req.header('User-Agent') ?? 'unknown',
-      metadata: JSON.stringify({ operation_id: job.operationId, target: 'tenant_exclusive' }),
-      severity: 'warning',
-    });
+    await recordAdminOperationAudit(
+      c as unknown as Parameters<typeof recordAdminOperationAudit>[0],
+      {
+        tenantId: tenantId,
+        action: 'tenant.placement_migration_requested',
+        resourceType: 'tenant',
+        resourceId: tenantId,
+        metadata: { operation_id: job.operationId, target: 'tenant_exclusive' },
+        severity: 'warning',
+      }
+    );
     return response(c, job, 202);
   } catch (caught) {
     const code = caught instanceof Error ? caught.message : '';
@@ -301,7 +300,6 @@ async function mutate(c: AdminContext, action: 'cancel' | 'approve_purge'): Prom
     }
     const control = await controlView(c, job);
     if (!control) return error(c, 503, 'TENANT_PLACEMENT_MIGRATION_CONTROL_UNAVAILABLE');
-    const requestedBy = auditActor(c);
     const controlRequestedBy = await controlActorId(c);
     if (action === 'cancel') {
       if (control.state === 'canceled' && job.status === 'canceled') {
@@ -334,20 +332,20 @@ async function mutate(c: AdminContext, action: 'cancel' | 'approve_purge'): Prom
       });
       if (approved.state !== 'purge_pending') throw new Error('control_response_invalid');
     }
-    await createAuditLog(c.env, {
-      tenantId,
-      userId: requestedBy,
-      action:
-        action === 'cancel'
-          ? 'tenant.placement_migration_canceled'
-          : 'tenant.placement_migration_purge_approved',
-      resource: 'tenant',
-      resourceId: tenantId,
-      ipAddress: c.req.header('CF-Connecting-IP') ?? 'unknown',
-      userAgent: c.req.header('User-Agent') ?? 'unknown',
-      metadata: JSON.stringify({ operation_id: operationId }),
-      severity: 'warning',
-    });
+    await recordAdminOperationAudit(
+      c as unknown as Parameters<typeof recordAdminOperationAudit>[0],
+      {
+        tenantId: tenantId,
+        action:
+          action === 'cancel'
+            ? 'tenant.placement_migration_canceled'
+            : 'tenant.placement_migration_purge_approved',
+        resourceType: 'tenant',
+        resourceId: tenantId,
+        metadata: { operation_id: operationId },
+        severity: 'warning',
+      }
+    );
     return response(c, job);
   } catch (caught) {
     const code = caught instanceof Error ? caught.message : '';

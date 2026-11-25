@@ -52,6 +52,8 @@ export interface OIDCRPClientConfig {
   providerQuirks?: Record<string, unknown>;
   discoveryUrl?: string;
   discoveryDocumentType?: 'oidc' | 'oauth2';
+  /** Audiences, besides the client itself, an ID Token may name (OIDC Core 3.1.3.7 step 3). */
+  trustedAudiences?: string[];
   // Request Object (JAR - RFC 9101) settings
   /** Whether to use request objects */
   useRequestObject?: boolean;
@@ -180,6 +182,11 @@ export class OIDCRPClient {
       privateKeyJwk,
       keyId: privateKeyJwk?.kid,
       userinfoSignedResponseAlg,
+      trustedAudiences: Array.isArray(provider.providerQuirks?.trustedAudiences)
+        ? provider.providerQuirks.trustedAudiences.filter(
+            (audience): audience is string => typeof audience === 'string' && audience.length > 0
+          )
+        : undefined,
     });
   }
 
@@ -780,6 +787,17 @@ export class OIDCRPClient {
         : payload.aud === this.config.clientId;
       if (!audienceContainsOnlyClient) {
         throw new Error('ID token audience must contain only the expected client_id');
+      }
+    }
+
+    // Another audience is trusted only when the provider is configured to (3.1.3.7 step 3).
+    if (Array.isArray(payload.aud)) {
+      const trusted = this.config.trustedAudiences ?? [];
+      const untrusted = payload.aud.some(
+        (audience) => audience !== this.config.clientId && !trusted.includes(audience)
+      );
+      if (untrusted) {
+        throw new Error('ID token audience contains an audience that is not trusted');
       }
     }
 

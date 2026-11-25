@@ -31,7 +31,6 @@ import {
   createTenantPlacementWriteFenceResponse,
   AR_ERROR_CODES,
   escapeLikePattern,
-  createAuditLogFromContext,
   getLogger,
   publishEvent,
   USER_EVENTS,
@@ -59,7 +58,6 @@ import {
   ADMIN_USER_UPDATE_RESERVED_FIELDS,
   VALID_USER_LIFECYCLE_STATES,
   extractCustomClaimInput,
-  scheduleAdminAuditLog,
   logSanitizedError,
   getErrorDetailsForResponse,
   toMilliseconds,
@@ -108,6 +106,7 @@ import {
 import { usesRoutedAccountStorage } from './tenant-routed-storage';
 import { adminActorIdFromContext, withAdminSessionEndLogout } from './admin-session-end';
 import { transitionEndingSessions } from './session-end-logout';
+import { recordAdminOperationAudit } from './admin-operation-audit';
 
 type AdminRuntimeUserCore = {
   email_verified: boolean | number;
@@ -1271,14 +1270,14 @@ export async function adminUserTotpResetHandler(c: Context<{ Bindings: Env }>) {
     }
 
     const deleted = await authCtx.repositories.totp.deleteByUserId(userId);
-    await createAuditLogFromContext(
-      c,
-      'admin.user.totp.reset',
-      'user',
-      userId,
-      { deleted },
-      'warning'
-    );
+    await recordAdminOperationAudit(c, {
+      action: 'admin.user.totp.reset',
+      resourceType: 'user',
+      resourceId: userId,
+      metadata: { deleted },
+      severity: 'warning',
+      endUser: { userId: userId },
+    });
 
     return c.json({ ok: true, deleted });
   } catch (error) {
@@ -1537,8 +1536,14 @@ export async function adminUserCreateHandler(c: Context<{ Bindings: Env }>) {
     );
 
     if (result.delivery.status === 202) {
-      await createAuditLogFromContext(c, 'user.creation.pending', 'user', result.operation.userId, {
-        operation_id: result.operation.operationId,
+      await recordAdminOperationAudit(c, {
+        action: 'user.creation.pending',
+        resourceType: 'user',
+        resourceId: result.operation.userId,
+        metadata: {
+          operation_id: result.operation.operationId,
+        },
+        endUser: { userId: result.operation.userId },
       });
       return c.json(
         {
@@ -1572,12 +1577,15 @@ export async function adminUserCreateHandler(c: Context<{ Bindings: Env }>) {
       : null;
     if (!createdUser) throw new Error('account_creation_active_projection_missing');
 
-    await createAuditLogFromContext(c, 'user.created', 'user', result.operation.userId, {
-      user_type,
-      ...(initialAssurance ? { initial_ial: initialAssurance.level } : {}),
-    });
-    scheduleAdminAuditLog(c, 'user.created', result.operation.userId, 'success', {
-      user_type,
+    await recordAdminOperationAudit(c, {
+      action: 'user.created',
+      resourceType: 'user',
+      resourceId: result.operation.userId,
+      metadata: {
+        user_type,
+        ...(initialAssurance ? { initial_ial: initialAssurance.level } : {}),
+      },
+      endUser: { userId: result.operation.userId },
     });
 
     return c.json(
@@ -1906,15 +1914,16 @@ export async function adminUserUpdateHandler(c: Context<{ Bindings: Env }>) {
       log.error('Failed to publish user.updated event', { action: 'publish_event' }, err as Error);
     });
 
-    await createAuditLogFromContext(c, 'user.updated', 'user', userId, {
-      user_type: updatedUser?.user_type,
-      registration_state: existingProjection.registration_state,
-      changed_fields: changedFields,
-    });
-    scheduleAdminAuditLog(c, 'user.updated', userId, 'success', {
-      user_type: updatedUser?.user_type,
-      registration_state: existingProjection.registration_state,
-      changed_fields: changedFields,
+    await recordAdminOperationAudit(c, {
+      action: 'user.updated',
+      resourceType: 'user',
+      resourceId: userId,
+      metadata: {
+        user_type: updatedUser?.user_type,
+        registration_state: existingProjection.registration_state,
+        changed_fields: changedFields,
+      },
+      endUser: { userId: userId },
     });
 
     return c.json({
@@ -2016,10 +2025,15 @@ export async function adminUserDeleteHandler(c: Context<{ Bindings: Env }>) {
         );
       }
       await invalidateUserCache(c.env, tenantId, userId);
-      await createAuditLogFromContext(c, 'user.deleted', 'user', userId, {
-        registration_state: projection?.registration_state,
+      await recordAdminOperationAudit(c, {
+        action: 'user.deleted',
+        resourceType: 'user',
+        resourceId: userId,
+        metadata: {
+          registration_state: projection?.registration_state,
+        },
+        endUser: { userId: userId },
       });
-      scheduleAdminAuditLog(c, 'user.deleted', userId, 'success');
       return c.json({
         success: true,
         message: 'User deleted successfully',
@@ -2141,10 +2155,15 @@ export async function adminUserDeleteHandler(c: Context<{ Bindings: Env }>) {
       log.error('Failed to publish user.deleted event', { action: 'publish_event' }, err as Error);
     });
 
-    await createAuditLogFromContext(c, 'user.deleted', 'user', userId, {
-      registration_state: projection?.registration_state,
+    await recordAdminOperationAudit(c, {
+      action: 'user.deleted',
+      resourceType: 'user',
+      resourceId: userId,
+      metadata: {
+        registration_state: projection?.registration_state,
+      },
+      endUser: { userId: userId },
     });
-    scheduleAdminAuditLog(c, 'user.deleted', userId, 'success');
 
     return c.json({
       success: true,
@@ -2550,15 +2569,14 @@ export async function adminUserDeletePiiHandler(c: Context<{ Bindings: Env }>) {
     const revocationSettled =
       upstreamTokenRevocation.status === 'no_tokens' ||
       upstreamTokenRevocation.status === 'completed';
-    await createAuditLogFromContext(
-      c,
-      'user.pii_deleted',
-      'user',
-      userId,
-      auditDetails,
-      revocationSettled ? 'info' : 'warning'
-    );
-    scheduleAdminAuditLog(c, 'user.pii_deleted', userId, 'success', auditDetails);
+    await recordAdminOperationAudit(c, {
+      action: 'user.pii_deleted',
+      resourceType: 'user',
+      resourceId: userId,
+      metadata: auditDetails,
+      severity: revocationSettled ? 'info' : 'warning',
+      endUser: { userId: userId },
+    });
 
     if (startedSince) {
       return c.json(

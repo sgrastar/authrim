@@ -83,6 +83,9 @@ import { deleteTenantAdminJobs, processPendingTenantDeletionJobs } from '../tena
 import { processPendingSupportOpsSnapshotJobs } from '../support-ops';
 import { createAuditLogFromContext, ensureDatabaseAdapter } from '@authrim/ar-lib-core';
 
+// Admin operations are recorded through the forwarding shim (see the helper).
+vi.mock('../admin-operation-audit', () => import('./helpers/legacy-admin-audit-shim'));
+
 const REPO_ROOT = resolve(__dirname, '../../../..');
 const logger = { info: vi.fn(), error: vi.fn(), warn: vi.fn() };
 

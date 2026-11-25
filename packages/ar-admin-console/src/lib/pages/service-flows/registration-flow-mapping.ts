@@ -17,7 +17,13 @@ import {
 } from '@authrim/ar-lib-core/types/registration-policy';
 import { initialState, titleKey } from './account-flow-model';
 import { completionOf, setCompletion } from './completion-mapping';
-import { consentStepsOf, setConsentSteps } from './consent-field-model';
+import {
+	consentSpecOf,
+	consentStepsOf,
+	consentValueOf,
+	FIRST_SCREEN_STATEMENTS_KEY,
+	setConsentSteps
+} from './consent-field-model';
 import { valueOfWhen, whenOf } from './step-condition-model';
 import { exitKey } from './screen-exits';
 import type { AccountFlowState, AccountValue } from './flow-spec';
@@ -105,22 +111,26 @@ export function registrationSpecOf(state: AccountFlowState): RegistrationFlowSpe
 		}
 		const title = text(values[titleKey(`reg-extra-screen:${n}`)]);
 		const when = whenOf(values[`reg.extraScreenWhen:${n}`]);
+		const statements = consentSpecOf(values[`reg.extraScreenStatements:${n}`]);
 		return [
 			{
 				n,
 				screenKey: text(values[fieldKey]),
 				...(title ? { title } : {}),
 				exits,
-				...(when.length > 0 ? { when } : {})
+				...(when.length > 0 ? { when } : {}),
+				...(statements.length > 0 ? { statements } : {})
 			}
 		];
 	});
 	const screenTitle = text(values[titleKey('reg-screen')]);
+	const firstStatements = consentSpecOf(values[FIRST_SCREEN_STATEMENTS_KEY]);
 	return {
 		profileRef: text(values['reg.methodProfile']) || 'default',
 		sessionProfileRef: text(values['reg.sessionProfile']) || 'default',
 		screenKey: text(values['reg.screen']),
 		...(screenTitle ? { screenTitle } : {}),
+		...(firstStatements.length > 0 ? { statements: firstStatements } : {}),
 		screens,
 		policy,
 		// A step is added once someone wants consent; taken away, it asks nothing.
@@ -154,6 +164,9 @@ export function registrationStateOf(
 	values['reg.sessionProfile'] = spec.sessionProfileRef;
 	values['reg.screen'] = spec.screenKey;
 	if (spec.screenTitle) values[titleKey('reg-screen')] = spec.screenTitle;
+	if (spec.statements?.length) {
+		values[FIRST_SCREEN_STATEMENTS_KEY] = consentValueOf(spec.statements);
+	}
 	const policy = spec.policy;
 	values['reg.duplicate'] = policy.duplicate;
 	values['reg.policy'] = policy.eligibility;
@@ -177,6 +190,9 @@ export function registrationStateOf(
 		}
 		const when = valueOfWhen(screen.when);
 		if (when && when.length > 0) values[`reg.extraScreenWhen:${screen.n}`] = when;
+		if (screen.statements?.length) {
+			values[`reg.extraScreenStatements:${screen.n}`] = consentValueOf(screen.statements);
+		}
 	}
 	setConsentSteps(state, 'reg', spec.consents);
 	return state;

@@ -82,9 +82,10 @@ function remoteIp(value: unknown): string {
   ) {
     throw new Error('plugin_sync_input_invalid');
   }
-  const ipv4 = value.split('.');
-  if (ipv4.length === 4) {
+  if (!value.includes(':')) {
+    const ipv4 = value.split('.');
     if (
+      ipv4.length !== 4 ||
       ipv4.some(
         (part) =>
           !/^(?:0|[1-9][0-9]{0,2})$/u.test(part) ||
@@ -96,7 +97,7 @@ function remoteIp(value: unknown): string {
     }
     return value;
   }
-  if (!value.includes(':')) throw new Error('plugin_sync_input_invalid');
+  // Anything with a colon is an IPv6 literal, including IPv4-mapped forms such as ::ffff:1.2.3.4.
   try {
     new URL(`http://[${value}]/`);
   } catch {
@@ -114,7 +115,8 @@ function humanVerificationInput(input: unknown) {
   if (raw.remoteIp !== undefined) keys.push('remoteIp');
   const value = exactRecord(raw, keys);
   if (
-    !['login', 'signup', 'reauth'].includes(String(value.action)) ||
+    typeof value.action !== 'string' ||
+    !['login', 'signup', 'reauth'].includes(value.action) ||
     typeof value.responseToken !== 'string' ||
     value.responseToken.length < 1 ||
     value.responseToken.length > 4_096
@@ -231,7 +233,7 @@ function notificationDeliveryInput(input: unknown): ImmediateNotificationDeliver
 
 function notificationProviderOrderQuery(input: unknown) {
   const value = exactRecord(input, ['tenantId', 'channel']);
-  if (!['email', 'sms', 'push'].includes(String(value.channel))) {
+  if (typeof value.channel !== 'string' || !['email', 'sms', 'push'].includes(value.channel)) {
     throw new Error('plugin_notification_provider_order_input_invalid');
   }
   return {

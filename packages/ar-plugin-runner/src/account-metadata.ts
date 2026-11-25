@@ -195,8 +195,9 @@ async function readBoundedJson(request: Request): Promise<unknown> {
     'plugin_data_input_invalid'
   );
   try {
+    // ignoreBOM: true keeps a leading BOM in the text, so JSON.parse rejects it (strict JSON).
     return JSON.parse(
-      new TextDecoder('utf-8', { fatal: true, ignoreBOM: false }).decode(body)
+      new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(body)
     ) as unknown;
   } catch {
     throw new Error('plugin_data_input_invalid');
@@ -276,7 +277,10 @@ export class PluginAccountMetadataService {
     }
 
     const tenantSession = primary(tenantDatabase(this.env, context));
-    const fingerprintPayload = canonicalJson(
+    // The value was already canonicalised (and bounded) on its own above. Wrapping it in the
+    // envelope object would count the envelope against the value's depth and node limits, so the
+    // envelope is canonicalised separately and the value spliced in as its last (sorted) key.
+    const envelope = canonicalJson(
       {
         tenantId: context.tenantId,
         installationId: context.pluginInstallationId,
@@ -285,10 +289,10 @@ export class PluginAccountMetadataService {
         accountId: parsed.accountId,
         metadataKey: parsed.metadataKey,
         expectedVersion: parsed.expectedVersion,
-        value: parsed.value,
       },
       { nodes: 0, ancestors: new Set() }
     );
+    const fingerprintPayload = `${envelope.slice(0, -1)},"value":${valueJson}}`;
     const existing = await this.findMutation(tenantSession, context, parsed.operationId);
     if (existing) {
       return this.adoptExisting(

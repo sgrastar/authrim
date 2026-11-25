@@ -47,6 +47,9 @@ import {
 } from '../routes/settings-v2/settings-authorization';
 import { ADMIN_ROLES, CATEGORY_SCOPE_CONFIG, type CategoryName } from '@authrim/ar-lib-core';
 
+// Admin operations are recorded through the forwarding shim (see the helper).
+vi.mock('../admin-operation-audit', () => import('./helpers/legacy-admin-audit-shim'));
+
 // Response types
 type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
 type ApiResponse = Record<string, JsonValue>;

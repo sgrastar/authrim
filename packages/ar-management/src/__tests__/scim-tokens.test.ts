@@ -27,6 +27,9 @@ vi.mock('@authrim/ar-lib-scim', async (importOriginal) => {
 // Mock audit writes from ar-lib-core
 // Uses spyOn to avoid ESM import issues while preserving other exports
 import * as arLibCore from '@authrim/ar-lib-core';
+
+// Admin operations are recorded through the forwarding shim (see the helper).
+vi.mock('../admin-operation-audit', () => import('./helpers/legacy-admin-audit-shim'));
 vi.spyOn(arLibCore, 'scheduleAuditLogFromContext').mockImplementation(() => {});
 vi.spyOn(arLibCore, 'createAuditLogFromContext').mockResolvedValue(undefined);
 

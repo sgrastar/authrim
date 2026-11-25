@@ -262,8 +262,8 @@ export function validateFacebookConfig(provider: Partial<UpstreamProvider>): str
   }
 
   // Validate scopes
-  const scopes = provider.scopes?.split(/[\s,]+/) || [];
-  if (!scopes.includes('public_profile') && scopes.length === 0) {
+  const scopes = (provider.scopes?.split(/[\s,]+/) ?? []).filter((scope) => scope.length > 0);
+  if (scopes.length === 0) {
     errors.push('At least one scope is required (e.g., public_profile)');
   }
 

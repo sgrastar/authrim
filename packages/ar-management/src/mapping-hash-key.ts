@@ -1,11 +1,7 @@
 import type { Context } from 'hono';
-import {
-  createAuditLog,
-  getTenantIdFromContext,
-  type Env,
-  type AdminAuthContext,
-} from '@authrim/ar-lib-core';
+import { getTenantIdFromContext, type Env, type AdminAuthContext } from '@authrim/ar-lib-core';
 import { MAPPING_HASH_SECRET_REF } from '@authrim/ar-lib-core/services/mapping-hash';
+import { recordAdminOperationAudit } from './admin-operation-audit';
 
 type AdminContext = Context<{ Bindings: Env; Variables: { adminAuth?: AdminAuthContext } }>;
 
@@ -58,16 +54,13 @@ export async function adminMappingHashKeyRotateHandler(c: AdminContext): Promise
       return c.json({ error: 'conflict' }, 409);
     return c.json({ error: 'unavailable' }, 503);
   }
-  await createAuditLog(c.env, {
-    tenantId,
-    userId: c.get('adminAuth')?.userId ?? 'unknown',
+  await recordAdminOperationAudit(c as unknown as Parameters<typeof recordAdminOperationAudit>[0], {
+    tenantId: tenantId,
     action: 'field_mapping.hash_key.rotate',
-    resource: 'field_mapping_hash_key',
+    resourceType: 'field_mapping_hash_key',
     resourceId: result.kid,
+    metadata: { kid: result.kid },
     severity: 'warning',
-    ipAddress: c.req.header('CF-Connecting-IP') ?? 'unknown',
-    userAgent: c.req.header('User-Agent') ?? 'unknown',
-    metadata: JSON.stringify({ kid: result.kid }),
   });
   return c.json(result);
 }

@@ -13,7 +13,6 @@ import {
   CanonicalRuntimeUserStore,
   createAccountAuthContextFromHono,
   createAuthContextFromHono,
-  createAuditLogFromContext,
   createCustomClaimSchemaResolverFromSources,
   createPIIContextFromHono,
   getLogger,
@@ -53,6 +52,7 @@ import {
 } from './platform-launchers-store';
 import { recordAccountOperation } from './account-operation-log';
 import { getRequestAwareIssuerUrl } from './request-issuer';
+import { recordAdminOperationAudit } from './admin-operation-audit';
 
 type LauncherContext = Context<{ Bindings: Env }>;
 type LauncherRow = {
@@ -643,7 +643,12 @@ async function recordAdminAudit(
   metadata: Record<string, unknown>
 ): Promise<void> {
   try {
-    await createAuditLogFromContext(c, event, 'application_launcher', launcherId, metadata);
+    await recordAdminOperationAudit(c, {
+      action: event,
+      resourceType: 'application_launcher',
+      resourceId: launcherId,
+      metadata: metadata,
+    });
   } catch (error) {
     getLogger(c)
       .module('ADMIN_LAUNCHERS')

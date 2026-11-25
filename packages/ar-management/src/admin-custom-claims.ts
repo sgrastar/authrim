@@ -23,7 +23,6 @@ import {
   AR_ERROR_CODES,
   generateId,
   getLogger,
-  createAuditLogFromContext,
   SchemaLoader,
   CustomClaimSchemaHistoryManager,
   listCustomClaimSchemas,
@@ -53,6 +52,7 @@ import {
 } from '@authrim/ar-lib-core';
 import { CUSTOM_CLAIM_PRESETS, type CustomClaimPresetField } from './custom-claim-presets';
 import { ASSURANCE_IMPORT_COLUMNS } from './admin-shared';
+import { recordAdminOperationAudit } from './admin-operation-audit';
 
 /**
  * Hono context type with admin auth variable
@@ -1205,18 +1205,17 @@ export async function adminCustomClaimPresetApplyHandler(c: AdminContext) {
     await invalidateStatsCache(c, tenantId);
     await invalidateSchemaCache(c, tenantId);
 
-    await createAuditLogFromContext(
-      asBaseContext(c),
-      'custom_claim.preset_applied',
-      'custom_claim_schema',
-      preset.id,
-      {
+    await recordAdminOperationAudit(asBaseContext(c), {
+      action: 'custom_claim.preset_applied',
+      resourceType: 'custom_claim_schema',
+      resourceId: preset.id,
+      metadata: {
         preset_id: preset.id,
         requested_field_keys: selectedFields.map((field) => field.field_key),
         created_field_keys: createFields.map((field) => field.field_key),
         skipped_field_keys: skippedFieldKeys,
-      }
-    );
+      },
+    });
 
     return c.json({
       preset_id: preset.id,
@@ -1457,10 +1456,15 @@ export async function adminCustomClaimCreateHandler(c: AdminContext) {
     // Fetch created schema
     const created = await getCustomClaimSchemaById(adapter, tenantId, id);
 
-    await createAuditLogFromContext(asBaseContext(c), 'create', 'custom_claim_schema', id, {
-      field_key,
-      field_type,
-      is_pii: body.is_pii ? 1 : 0,
+    await recordAdminOperationAudit(asBaseContext(c), {
+      action: 'create',
+      resourceType: 'custom_claim_schema',
+      resourceId: id,
+      metadata: {
+        field_key,
+        field_type,
+        is_pii: body.is_pii ? 1 : 0,
+      },
     });
 
     // Record history
@@ -2202,8 +2206,13 @@ export async function adminCustomClaimUpdateHandler(c: AdminContext) {
     // Fetch updated schema
     const updated = await getCustomClaimSchemaById(adapter, tenantId, id);
 
-    await createAuditLogFromContext(asBaseContext(c), 'update', 'custom_claim_schema', id, {
-      changes: Object.keys(body).filter((k) => k !== 'is_pii' && k !== 'field_key'),
+    await recordAdminOperationAudit(asBaseContext(c), {
+      action: 'update',
+      resourceType: 'custom_claim_schema',
+      resourceId: id,
+      metadata: {
+        changes: Object.keys(body).filter((k) => k !== 'is_pii' && k !== 'field_key'),
+      },
     });
 
     // Record history
@@ -2380,9 +2389,14 @@ export async function adminCustomClaimDeleteHandler(c: AdminContext) {
       // Phase 3: Delete schema record (only reached on full success)
       await deleteCustomClaimSchemaById(adapter, tenantId, id);
 
-      await createAuditLogFromContext(asBaseContext(c), 'delete', 'custom_claim_schema', id, {
-        field_key: fieldKey,
-        is_pii: isPii,
+      await recordAdminOperationAudit(asBaseContext(c), {
+        action: 'delete',
+        resourceType: 'custom_claim_schema',
+        resourceId: id,
+        metadata: {
+          field_key: fieldKey,
+          is_pii: isPii,
+        },
       });
 
       // Record history
@@ -2615,11 +2629,16 @@ export async function adminCustomClaimRenameHandler(c: AdminContext) {
         incrementSchemaVersion: true,
       });
 
-      await createAuditLogFromContext(asBaseContext(c), 'update', 'custom_claim_schema', id, {
-        action: 'rename',
-        old_key: oldKey,
-        new_key: newKey,
-        affected_users: affectedUsers,
+      await recordAdminOperationAudit(asBaseContext(c), {
+        action: 'update',
+        resourceType: 'custom_claim_schema',
+        resourceId: id,
+        metadata: {
+          action: 'rename',
+          old_key: oldKey,
+          new_key: newKey,
+          affected_users: affectedUsers,
+        },
       });
 
       await invalidateStatsCache(c, tenantId);
@@ -2745,9 +2764,14 @@ export async function adminCustomClaimRetryHandler(c: AdminContext) {
         },
       });
 
-      await createAuditLogFromContext(asBaseContext(c), 'update', 'custom_claim_schema', id, {
-        action: 'retry_reset',
-        original_operation: 'delete',
+      await recordAdminOperationAudit(asBaseContext(c), {
+        action: 'update',
+        resourceType: 'custom_claim_schema',
+        resourceId: id,
+        metadata: {
+          action: 'retry_reset',
+          original_operation: 'delete',
+        },
       });
       await invalidateStatsCache(c, tenantId);
       await invalidateSchemaCache(c, tenantId);
@@ -2882,11 +2906,16 @@ export async function adminCustomClaimRetryHandler(c: AdminContext) {
           incrementSchemaVersion: true,
         });
 
-        await createAuditLogFromContext(asBaseContext(c), 'update', 'custom_claim_schema', id, {
-          action: 'retry_rename_success',
-          old_key: oldKey,
-          new_key: newKey,
-          affected_users: affectedUsers,
+        await recordAdminOperationAudit(asBaseContext(c), {
+          action: 'update',
+          resourceType: 'custom_claim_schema',
+          resourceId: id,
+          metadata: {
+            action: 'retry_rename_success',
+            old_key: oldKey,
+            new_key: newKey,
+            affected_users: affectedUsers,
+          },
         });
 
         await invalidateStatsCache(c, tenantId);
