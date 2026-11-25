@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": "..",
+    "paths": {
+      "@op-verifiers/*": ["../ar-lib-core/src/vc/*"],
+      "@authrim/ar-lib-core": ["../ar-lib-core/src/types/wallet-provider-ports.ts"]
+    },
+    "types": ["@cloudflare/workers-types", "node"]
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules", "dist"]
+}
