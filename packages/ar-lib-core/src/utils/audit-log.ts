@@ -203,7 +203,10 @@ const AUDIT_ERROR_CODE_PATTERN = /^[A-Za-z0-9_.:-]{1,128}$/u;
  * The outcome of a legacy audit entry: a `result` its data states, else a failure for a failed
  * action (`auth.passkey.failed`, `auth.email_code.send_failed`), else a success.
  */
-function mapLegacyAuditResult(action: string, metadata: Record<string, unknown>): EventResult {
+export function mapLegacyAuditResult(
+  action: string,
+  metadata: Record<string, unknown>
+): EventResult {
   if (typeof metadata.result === 'string' && EVENT_RESULTS.has(metadata.result)) {
     return metadata.result as EventResult;
   }
@@ -234,6 +237,22 @@ async function resolveAuditBackpressure(
   } catch {
     return 'event_class';
   }
+}
+
+/**
+ * Whether a failed write of this action must fail the operation, under the tenant's audit
+ * profile: its backpressure mode can make every action fail closed. A profile that cannot be
+ * read leaves the action's own class in force, as the core audit write does.
+ */
+export async function isTenantAuditActionFailClosed(
+  env: Env,
+  tenantId: string,
+  action: string
+): Promise<boolean> {
+  return (
+    resolveAuditEventFailureBehavior(action, await resolveAuditBackpressure(env, tenantId))
+      .behavior === 'fail_closed_or_strong_retry'
+  );
 }
 
 async function resolveFinalAnonymizedUserId(

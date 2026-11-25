@@ -1,0 +1,225 @@
+openapi: 3.2.0
+info:
+  title: Authrim Keyring wallet provider
+  version: 1.0.0
+  description: |
+    Verifies Apple App Attest for the Keyring iOS wallet and signs the OAuth wallet attestation
+    (`oauth-client-attestation+jwt`) and the OpenID4VCI key attestation (`key-attestation+jwt`).
+    Tenant-independent. Responses are `Cache-Control: no-store`. Errors are `{"error": "<code>"}`.
+servers:
+  - url: https://wallet-provider.authrim.com
+    description: Production
+  - url: https://wallet-provider-staging.authrim.com
+    description: Staging
+paths:
+  /challenge:
+    post:
+      summary: Issue a stateless challenge (valid 300 s)
+      operationId: createChallenge
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false }
+      responses:
+        '200':
+          description: A challenge (64 printable characters)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [challenge]
+                properties:
+                  challenge: { type: string, minLength: 16, maxLength: 512 }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /register:
+    post:
+      summary: Register an App Attest key (once per install)
+      operationId: register
+      description: |
+        Idempotent: the same `key_id` with the same attestation and challenge answers 200 again,
+        even after the challenge expired. A different attestation for a registered key is 409.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [key_id, challenge, attestation_object]
+              additionalProperties: false
+              properties:
+                key_id: { type: string, description: Base64 of the 32-byte App Attest key id }
+                challenge: { type: string, minLength: 1, maxLength: 512 }
+                attestation_object:
+                  type: string
+                  maxLength: 21848
+                  description: Base64 CBOR attestation object
+      responses:
+        '200':
+          description: Registered (or already registered with the same attestation)
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: false }
+        '400':
+          description: '`invalid_request`, `invalid_challenge` (new key and attestation needed) or `invalid_attestation` (drop the key)'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403': { $ref: '#/components/responses/Revoked' }
+        '409':
+          description: '`key_exists`: registered with a different attestation (drop the key)'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /wallet-attestation:
+    post:
+      summary: Wallet attestation for a DPoP key
+      operationId: walletAttestation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WalletAttestationRequest' }
+      responses:
+        '200': { $ref: '#/components/responses/Attestation' }
+        '400': { $ref: '#/components/responses/BadAssertionRequest' }
+        '401': { $ref: '#/components/responses/AssertionRefused' }
+        '403': { $ref: '#/components/responses/Revoked' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /key-attestation:
+    post:
+      summary: Key attestation for a holder key
+      operationId: keyAttestation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/KeyAttestationRequest' }
+      responses:
+        '200': { $ref: '#/components/responses/Attestation' }
+        '400': { $ref: '#/components/responses/BadAssertionRequest' }
+        '401': { $ref: '#/components/responses/AssertionRefused' }
+        '403': { $ref: '#/components/responses/Revoked' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /healthz:
+    get:
+      summary: Health and leaf validity (public data only)
+      operationId: healthz
+      responses:
+        '200':
+          description: Both signing chains are valid for more than one hour
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Health' }
+        '503':
+          description: A signing chain is missing, invalid or about to expire
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Health' }
+components:
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          enum:
+            - invalid_request
+            - invalid_challenge
+            - invalid_attestation
+            - key_exists
+            - unknown_key
+            - invalid_assertion
+            - counter_replayed
+            - revoked
+            - rate_limited
+            - provider_unavailable
+            - not_found
+    Jwk:
+      type: object
+      required: [kty, crv, x, y]
+      properties:
+        kty: { const: EC }
+        crv: { const: P-256 }
+        x: { type: string }
+        y: { type: string }
+      description: Public key only; private members are refused.
+    AssertionBase:
+      type: object
+      required: [key_id, challenge, purpose, assertion, jwk]
+      properties:
+        key_id: { type: string }
+        challenge: { type: string, minLength: 1, maxLength: 512 }
+        assertion: { type: string, maxLength: 5464, description: Base64 CBOR assertion }
+        jwk: { $ref: '#/components/schemas/Jwk' }
+    WalletAttestationRequest:
+      allOf:
+        - $ref: '#/components/schemas/AssertionBase'
+        - type: object
+          properties:
+            purpose: { const: wallet-attestation }
+          description: No `nonce` member is accepted.
+    KeyAttestationRequest:
+      allOf:
+        - $ref: '#/components/schemas/AssertionBase'
+        - type: object
+          required: [nonce]
+          properties:
+            purpose: { const: key-attestation }
+            nonce: { type: string, minLength: 1, maxLength: 512, description: The issuer c_nonce }
+    Health:
+      type: object
+      required: [status, environment, leafDaysRemaining]
+      properties:
+        status: { enum: [ok, unhealthy] }
+        environment: { enum: [staging, production] }
+        leafDaysRemaining:
+          type: object
+          properties:
+            wallet: { type: integer }
+            key: { type: integer }
+  responses:
+    Attestation:
+      description: The signed JWT (wallet attestation lifetime 1 h, key attestation 10 min, never beyond the signing chain)
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [attestation]
+            properties:
+              attestation: { type: string }
+    BadAssertionRequest:
+      description: '`invalid_request`, `invalid_challenge` (new challenge and assertion) or `invalid_attestation` (build policy refused: drop the key)'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    AssertionRefused:
+      description: |
+        `unknown_key` (register once), `invalid_assertion` (drop the key) or `counter_replayed`
+        (generate a new assertion and retry; drop the key after a second consecutive one).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Revoked:
+      description: '`revoked`: drop the key'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    RateLimited:
+      description: '`rate_limited`; wait for `Retry-After` seconds (never counts toward dropping the key)'
+      headers:
+        Retry-After: { schema: { type: integer } }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unavailable:
+      description: '`provider_unavailable`: the signer, store or chain is not usable; retry later'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }

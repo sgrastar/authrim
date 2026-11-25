@@ -1922,7 +1922,10 @@ paths:
         `admin:users:read`; the session cookie works as well as a bearer token. Retained
         whole-row archives are included in supported log queries. A bounded query that cannot read
         its required rows returns log_query_incomplete instead of partial statistics or an empty
-        success.
+        success. Admin configuration changes (screens, flows, clients, roles, tenants, settings
+        and the like) that older releases recorded in the end-user audit log are left out; they
+        belong in the admin audit log (`/api/admin/admin-audit-log`). Admin actions on this
+        user, such as a suspension, are kept.
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -2548,6 +2551,13 @@ paths:
 
 
         Requires `admin:audit:read`. There is no actor, severity, result or free-text filter.
+
+
+        This is the end-user audit log. Admin configuration changes (screens, flows, clients,
+        roles, tenants, settings and the like) that older releases recorded here are left out
+        of the list and its pages; they belong in the admin audit log
+        (`/api/admin/admin-audit-log`). Admin actions on an end user, such as a suspension, are
+        kept. Compliance reports still include the older rows.
 
 
         Cost: the whole requested period is read and decrypted, and the filters (`user_id`,
@@ -9461,8 +9471,9 @@ paths:
         generation is audited: generating until then): access_review (an access review's items,
         decisions and what applying them did; CSV), mfa_coverage (each admin and active user and
         their factors; CSV), compliance_status (the status API's answer at this moment; JSON),
-        audit_log (audit log entries of a period of up to 366 days from the queryable audit store;
-        CSV). Rows identify people by their IDs, never adding names or email addresses; the reasons
+        audit_log (audit log entries of a period of up to 366 days from the queryable audit store,
+        end-user and admin audit logs together, the `source` column telling them apart; CSV).
+        Rows identify people by their IDs, never adding names or email addresses; the reasons
         reviewers wrote are included as written. A report of more than 10,000 rows is not cut short:
         it is recorded as failed (too_large) and answered 422. Generating is audited.
       requestBody:
@@ -63456,6 +63467,8 @@ components:
             - pii_retention_days
             - total_entries
             - entries_last_30_days
+            - admin_total_entries
+            - admin_entries_last_30_days
             - hot_query_status
           properties:
             enabled:
@@ -63466,9 +63479,21 @@ components:
               type: [integer, 'null']
             total_entries:
               type: [integer, 'null']
-              description: Null when the audit log cannot be queried here (an archive-only profile).
+              description:
+                Entries of the end-user audit log. Null when the audit log cannot be queried here
+                (an archive-only profile).
             entries_last_30_days:
               type: [integer, 'null']
+            admin_total_entries:
+              type: [integer, 'null']
+              description:
+                Records of the admin audit log, where admin operations are recorded. Null when
+                the end-user audit log cannot be queried here.
+            admin_entries_last_30_days:
+              type: [integer, 'null']
+              description:
+                Admin audit records of the last 30 days. The audit_logging check counts these
+                with the end-user entries.
             hot_query_status:
               type: string
               enum: [supported, not_supported, pending_runtime_support]
