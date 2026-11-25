@@ -295,6 +295,7 @@ export const enCustomization: Record<keyof typeof jaCustomization, string> = {
 	'th.bg.loading': 'Loading…',
 	'th.bg.none': 'No preset images yet. They appear here once the setup tool has installed them.',
 	'th.bg.loadFailed': 'The image could not be loaded. Try again.',
+	'th.bg.retry': 'Try again',
 	'th.bg.cat.paper': 'Paper',
 	'th.bg.cat.fabric': 'Fabric',
 	'th.bg.cat.materials': 'Materials',

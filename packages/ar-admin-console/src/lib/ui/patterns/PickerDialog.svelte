@@ -19,6 +19,16 @@
 		empty?: string;
 		items: readonly PickerItem[];
 	}
+
+	/** What stands in for the browser while the groups are not there to browse. */
+	export interface PickerNotice {
+		text: string;
+		/** Still loading: a spinner, and no way to act. */
+		busy?: boolean;
+		/** With `onaction`: the way out of a failure ("Try again"). */
+		actionLabel?: string;
+		onaction?: () => void;
+	}
 </script>
 
 <script lang="ts">
@@ -28,6 +38,7 @@
 	import IconButton from '../primitives/IconButton.svelte';
 	import SearchField from '../primitives/SearchField.svelte';
 	import ColumnBrowser, { type BrowserItem } from './ColumnBrowser.svelte';
+	import LoadingState from './LoadingState.svelte';
 
 	/**
 	 * Choosing one from a catalogue too long for a dropdown (the steps of an attribute mapping),
@@ -54,6 +65,8 @@
 		currentLabel: string;
 		/** More for the preview under the description (a demo, the settings). */
 		preview?: Snippet<[PickerItem]>;
+		/** Loading, failed or nothing to choose from: said in place of the browser. */
+		notice?: PickerNotice;
 		onchoose: (value: string) => void;
 		oncancel: () => void;
 	}
@@ -67,6 +80,7 @@
 		chooseLabel,
 		currentLabel,
 		preview,
+		notice,
 		onchoose,
 		oncancel
 	}: Props = $props();
@@ -95,6 +109,27 @@
 			tick().then(() => dialog?.querySelector<HTMLInputElement>('input[type="search"]')?.focus());
 		}
 		if (!open && dialog.open) dialog.close();
+	});
+
+	// What the dialog shows changes under the person (a list arrives, a failure is retried): the
+	// focus goes to the search when there is one, else to the notice's button, else to the close
+	// button, so it is never left on something that was taken away.
+	$effect(() => {
+		void notice;
+		if (!open || !dialog) return;
+		const shown = dialog;
+		tick().then(() => {
+			if (!shown.open) return;
+			// In this order, not the page's: the close button comes first on the page.
+			for (const selector of [
+				'input[type="search"]',
+				'.picker__notice button',
+				'.picker__head button'
+			]) {
+				const target = shown.querySelector<HTMLElement>(selector);
+				if (target) return target.focus();
+			}
+		});
 	});
 
 	const words = (item: PickerItem) =>
@@ -135,6 +170,7 @@
 <dialog
 	bind:this={dialog}
 	class="picker"
+	class:picker--notice={Boolean(notice)}
 	aria-labelledby="{uid}-title"
 	oncancel={(event) => {
 		event.preventDefault();
@@ -145,11 +181,25 @@
 		<h2 id="{uid}-title">{title}</h2>
 		<IconButton icon="close" label={t('common.close')} onclick={oncancel} />
 	</header>
-	<div class="picker__search">
-		<SearchField label={t('picker.search')} placeholder={t('picker.search')} bind:value={query} />
-	</div>
+	<!-- Nothing to search while there is no list to search (loading, failed). -->
+	{#if !notice}
+		<div class="picker__search">
+			<SearchField label={t('picker.search')} placeholder={t('picker.search')} bind:value={query} />
+		</div>
+	{/if}
 	<div class="picker__body">
-		{#if shownGroups.length}
+		{#if notice}
+			<div class="picker__notice">
+				{#if notice.busy}
+					<LoadingState label={notice.text} text={notice.text} />
+				{:else}
+					<p role="status">{notice.text}</p>
+					{#if notice.actionLabel && notice.onaction}
+						<Button variant="secondary" onclick={notice.onaction}>{notice.actionLabel}</Button>
+					{/if}
+				{/if}
+			</div>
+		{:else if shownGroups.length}
 			<ColumnBrowser label={title} groups={shownGroups} items={rows} bind:groupId bind:itemId>
 				{#snippet detail(row)}
 					<div class="picker__preview">
@@ -189,6 +239,11 @@
 		display: grid;
 		grid-template-rows: auto auto minmax(0, 1fr);
 		animation: picker-in 160ms cubic-bezier(0.2, 0.9, 0.3, 1) both;
+	}
+
+	/* No search row while a notice stands in for the list. */
+	.picker--notice[open] {
+		grid-template-rows: auto minmax(0, 1fr);
 	}
 
 	.picker::backdrop {
@@ -247,6 +302,29 @@
 		display: flex;
 		justify-content: flex-end;
 		padding-top: 4px;
+	}
+
+	/* Said in the browser's place: as tall as the browser, so the dialog does not jump when the
+	   groups arrive. */
+	.picker__notice {
+		display: grid;
+		min-height: min(440px, 60vh);
+		align-content: center;
+		justify-items: center;
+		gap: 12px;
+		padding: 16px;
+		color: var(--text-secondary);
+		font-size: var(--fs-body);
+		text-align: center;
+	}
+
+	.picker__notice p {
+		margin: 0;
+		max-width: 40ch;
+	}
+
+	.picker__notice :global(.loading) {
+		min-height: 0;
 	}
 
 	.picker__none {

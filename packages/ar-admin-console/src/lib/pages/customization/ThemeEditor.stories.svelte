@@ -27,6 +27,35 @@
 				? [{ id: `${match[1]}/${match[2]}`, category: match[1], name: match[2], url }]
 				: [];
 		});
+	/** Lets the story answer the request the picker is waiting on. */
+	let releaseLate: () => void = () => undefined;
+	/** A list that arrives only when `releaseLate` is called, like a request to a cold worker. A
+	 * new source for each render: the picker keeps what a source answered. */
+	function latePresets() {
+		return () =>
+			new Promise<BgPreset[]>((resolve) => {
+				releaseLate = () => resolve(storyPresets());
+			});
+	}
+	/** A list that fails the first two times (the picker's early ask, and the ask when it is opened),
+	 * then answers. */
+	function flakyPresets() {
+		let asked = 0;
+		return async (): Promise<BgPreset[]> => {
+			asked += 1;
+			if (asked <= 2) throw new Error('offline');
+			return storyPresets();
+		};
+	}
+	/** No presets the first two times (the picker's early ask, and the ask when it is opened; the
+	 * setup tool has not installed them yet), then all of them. */
+	function emptyFirstPresets() {
+		let asked = 0;
+		return async (): Promise<BgPreset[]> => {
+			asked += 1;
+			return asked <= 2 ? [] : storyPresets();
+		};
+	}
 	const STORY_SCREENS = [
 		...MOCK_SCREENS,
 		{
@@ -400,6 +429,93 @@
 				presets={storyPresets}
 				draft={{ ...newThemeDraft(), backgroundImage: PAPER_PRESET }}
 			/>
+		</Page>
+	{/snippet}
+</Story>
+
+<Story
+	name="Background presets: a list that is still coming says so, then shows"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(canvas.getByRole('tab', { name: t('th.tab.images') }));
+		await userEvent.click(canvas.getAllByRole('button', { name: t('th.bg.browse') })[0]);
+		const dialog = within(canvasElement.ownerDocument.body).getByRole('dialog');
+		// Nothing to choose yet: the dialog says it is loading, and shows no stand-in row.
+		await within(dialog).findByText(t('th.bg.loading'));
+		await expect(
+			within(dialog).queryByRole('button', { name: new RegExp(`^${t('th.bg.title')}`) })
+		).toBeNull();
+		releaseLate();
+		await waitFor(() =>
+			expect(
+				within(dialog).getByRole('button', { name: new RegExp(`^${t('th.bg.cat.nature')}`) })
+			).toBeVisible()
+		);
+		await expect(within(dialog).queryByText(t('th.bg.loading'))).toBeNull();
+		// The search did not exist while it loaded; the focus goes to it once it does.
+		await waitFor(() => expect(within(dialog).getByRole('searchbox')).toHaveFocus());
+	}}
+>
+	{#snippet template()}
+		{@const source = latePresets()}
+		<Page>
+			<ThemeEditor presets={source} />
+		</Page>
+	{/snippet}
+</Story>
+
+<Story
+	name="Background presets: an empty list is asked for again when it is opened again"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(canvas.getByRole('tab', { name: t('th.tab.images') }));
+		await userEvent.click(canvas.getAllByRole('button', { name: t('th.bg.browse') })[0]);
+		const dialog = within(canvasElement.ownerDocument.body).getByRole('dialog');
+		await within(dialog).findByText(t('th.bg.none'));
+		await userEvent.click(within(dialog).getByRole('button', { name: t('common.close') }));
+		await waitFor(() =>
+			expect(canvasElement.ownerDocument.querySelector('dialog[open]')).toBeNull()
+		);
+		// Presets were installed meanwhile: opening it again finds them.
+		await userEvent.click(canvas.getAllByRole('button', { name: t('th.bg.browse') })[0]);
+		await waitFor(() =>
+			expect(
+				within(canvasElement.ownerDocument.body).getByRole('button', {
+					name: new RegExp(`^${t('th.bg.cat.nature')}`)
+				})
+			).toBeVisible()
+		);
+	}}
+>
+	{#snippet template()}
+		{@const source = emptyFirstPresets()}
+		<Page>
+			<ThemeEditor presets={source} />
+		</Page>
+	{/snippet}
+</Story>
+
+<Story
+	name="Background presets: a failed list offers to try again"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(canvas.getByRole('tab', { name: t('th.tab.images') }));
+		await userEvent.click(canvas.getAllByRole('button', { name: t('th.bg.browse') })[0]);
+		const dialog = within(canvasElement.ownerDocument.body).getByRole('dialog');
+		await within(dialog).findByText(t('th.bg.loadFailed'));
+		await userEvent.click(within(dialog).getByRole('button', { name: t('th.bg.retry') }));
+		await waitFor(() =>
+			expect(
+				within(dialog).getByRole('button', { name: new RegExp(`^${t('th.bg.cat.nature')}`) })
+			).toBeVisible()
+		);
+		await expect(within(dialog).queryByText(t('th.bg.loadFailed'))).toBeNull();
+	}}
+>
+	{#snippet template()}
+		{@const source = flakyPresets()}
+		<Page>
+			<ThemeEditor presets={source} />
 		</Page>
 	{/snippet}
 </Story>
