@@ -311,6 +311,54 @@ describe('Iceberg read adapter integration', () => {
     app.get('/', (c) => logQueryErrorResponse(c, new LogQueryIncompleteError())!);
     expect((await app.request('/')).status).toBe(503);
   });
+  it('keeps the failure reason as a code for the Worker log, never for the client', async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const loggedText = () => logged.mock.calls.map((call) => call.map(String).join(' ')).join('\n');
+    const read = () =>
+      createLogReadAdapter({ env, tenantId: 't', dataset: 'core.event_log' }).adapter;
+    // Core names its failure with a code; the code is the reason.
+    mocks.read.mockRejectedValueOnce(new Error('log_iceberg_read_watermark_lineage_incomplete'));
+    await expect(read().query('SELECT id FROM event_log')).rejects.toMatchObject({
+      reason: 'log_iceberg_read_watermark_lineage_incomplete',
+      message: 'Log results are incomplete. Narrow the time range or retry later.',
+    });
+    // Anything else is reported by its class only: a message could carry a URL or a secret.
+    mocks.read.mockRejectedValueOnce(new TypeError('fetch failed: https://catalog/secret-token'));
+    await expect(read().query('SELECT id FROM event_log')).rejects.toMatchObject({
+      reason: 'TypeError',
+    });
+    // Our own checks name theirs.
+    mocks.read.mockResolvedValueOnce({
+      rows: [{ id: 'x', tenant_id: 'other' }],
+      hasArchive: false,
+      consistency: 'snapshot',
+      pendingDeliveries: 0,
+    });
+    await expect(read().query('SELECT id FROM event_log')).rejects.toMatchObject({
+      reason: 'row_tenant_or_id',
+    });
+    expect(logged).not.toHaveBeenCalled();
+    // The response mapper logs the code with the path; the body stays generic.
+    const app = new Hono();
+    app.get(
+      '/api/admin/audit-logs',
+      (c) =>
+        logQueryErrorResponse(c, new LogQueryIncompleteError('log_iceberg_catalog_unavailable')) ??
+        c.text('unmapped', 500)
+    );
+    const response = await app.request('/api/admin/audit-logs?start_date=2026-01-01');
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({
+      error: 'log_query_incomplete',
+      error_description: 'Log results are incomplete. Narrow the time range or retry later.',
+      complete: false,
+    });
+    expect(logged).toHaveBeenCalledTimes(1);
+    expect(loggedText()).toContain('log_iceberg_catalog_unavailable');
+    expect(loggedText()).toContain('/api/admin/audit-logs');
+    expect(loggedText()).not.toContain('start_date');
+    logged.mockRestore();
+  });
   it('loads protected detail only through the explicit separate API and sanitizes failures', async () => {
     const read = createLogReadAdapter({ env, tenantId: 't', dataset: 'core.event_log' });
     await read.adapter.query('SELECT id FROM event_log');
