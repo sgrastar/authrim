@@ -6,7 +6,6 @@ import type { AdminAuthContext, Env } from '@authrim/ar-lib-core';
 import {
   ADMIN_PERMISSIONS,
   AR_ERROR_CODES,
-  createAuditLogFromContext,
   createLookupAliasIndex,
   createErrorResponse,
   ensureDatabaseAdapter,
@@ -32,6 +31,7 @@ import {
   resolveTenantDiscoveryAliasDirectoryInput,
   type TenantDiscoveryAliasDirectoryInput,
 } from './tenant-alias-directory';
+import { recordAdminOperationAudit } from './admin-operation-audit';
 
 const HOSTNAME_REGEX = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/;
 const MAX_HOSTNAME_LENGTH = 253;
@@ -485,10 +485,15 @@ async function createDomain(
     row = await setPrimary(adapter, c.env, id, tenantId);
   }
 
-  await createAuditLogFromContext(c, 'tenant_vanity_domain.created', 'tenant_vanity_domain', id, {
-    tenant_id: tenantId,
-    hostname,
-    status,
+  await recordAdminOperationAudit(c, {
+    action: 'tenant_vanity_domain.created',
+    resourceType: 'tenant_vanity_domain',
+    resourceId: id,
+    metadata: {
+      tenant_id: tenantId,
+      hostname,
+      status,
+    },
   });
 
   return c.json(

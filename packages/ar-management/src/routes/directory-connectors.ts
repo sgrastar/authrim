@@ -7,7 +7,6 @@ import {
   acknowledgeDirectoryConnectorEpisode,
   applyDirectoryConnectorFleetPolicy,
   createAuthContextFromHono,
-  createAuditLogFromContext,
   createErrorResponse,
   listDirectoryConnectorEpisodes,
   listDirectoryConnectorInstances,
@@ -28,6 +27,7 @@ import {
 import { requireTenantResourceAccess } from '../admin-tenant-access';
 import { capabilityRefusal } from '../capability-authorization';
 import { publishAccountExternalSubjectAddition } from '../account-identifier-addition';
+import { recordAdminOperationAudit } from '../admin-operation-audit';
 
 const CATEGORY = 'directory-connectors';
 const CONNECTOR_KEY_PATTERN = /^[a-zA-Z0-9_-]{1,64}$/;
@@ -628,16 +628,15 @@ async function updateDirectoryConnectorsUnguarded(c: Context<{ Bindings: Env }>)
   }
 
   try {
-    await createAuditLogFromContext(
-      c,
-      'directory_connector.updated',
-      'directory_connector',
-      tenantId,
-      {
+    await recordAdminOperationAudit(c, {
+      action: 'directory_connector.updated',
+      resourceType: 'directory_connector',
+      resourceId: tenantId,
+      metadata: {
         tenant_id: tenantId,
         config: redactForAudit(config),
-      }
-    );
+      },
+    });
   } catch {
     // Settings were saved successfully. Audit mirroring is best effort here.
   }
@@ -747,14 +746,16 @@ export async function updateDirectoryPendingUserHandler(c: Context<{ Bindings: E
         409
       );
     }
-    await createAuditLogFromContext(
-      c as unknown as Parameters<typeof createAuditLogFromContext>[0],
-      'directory_jit_pending_user.rejected',
-      'directory_jit_pending_user',
-      pendingId,
+    await recordAdminOperationAudit(
+      c as unknown as Parameters<typeof recordAdminOperationAudit>[0],
       {
-        tenant_id: tenantId,
-        connector_id: pending.connector_id,
+        action: 'directory_jit_pending_user.rejected',
+        resourceType: 'directory_jit_pending_user',
+        resourceId: pendingId,
+        metadata: {
+          tenant_id: tenantId,
+          connector_id: pending.connector_id,
+        },
       }
     ).catch(() => undefined);
     return c.json({ ok: true, id: pendingId, status: 'rejected' });
@@ -780,14 +781,16 @@ export async function updateDirectoryPendingUserHandler(c: Context<{ Bindings: E
         409
       );
     }
-    await createAuditLogFromContext(
-      c as unknown as Parameters<typeof createAuditLogFromContext>[0],
-      'directory_jit_pending_user.approved',
-      'directory_jit_pending_user',
-      pendingId,
+    await recordAdminOperationAudit(
+      c as unknown as Parameters<typeof recordAdminOperationAudit>[0],
       {
-        tenant_id: tenantId,
-        connector_id: pending.connector_id,
+        action: 'directory_jit_pending_user.approved',
+        resourceType: 'directory_jit_pending_user',
+        resourceId: pendingId,
+        metadata: {
+          tenant_id: tenantId,
+          connector_id: pending.connector_id,
+        },
       }
     ).catch(() => undefined);
     return c.json({ ok: true, id: pendingId, status: 'approved' });
@@ -912,17 +915,17 @@ export async function updateDirectoryPendingUserHandler(c: Context<{ Bindings: E
     throw error;
   }
 
-  await createAuditLogFromContext(
-    c as unknown as Parameters<typeof createAuditLogFromContext>[0],
-    'directory_jit_pending_user.linked',
-    'directory_jit_pending_user',
-    pendingId,
-    {
+  await recordAdminOperationAudit(c as unknown as Parameters<typeof recordAdminOperationAudit>[0], {
+    action: 'directory_jit_pending_user.linked',
+    resourceType: 'directory_jit_pending_user',
+    resourceId: pendingId,
+    metadata: {
       tenant_id: tenantId,
       connector_id: pending.connector_id,
       user_id: userId,
-    }
-  ).catch(() => undefined);
+    },
+    endUser: { userId: userId },
+  }).catch(() => undefined);
 
   return c.json({ ok: true, id: pendingId, status: 'linked', linked_user_id: userId });
 }
@@ -1059,16 +1062,15 @@ export async function updateDirectoryConnectorFleetInstanceHandler(c: Context<{ 
     return c.json({ error: 'directory_connector_instance_not_found' }, 404);
   }
 
-  await createAuditLogFromContext(
-    c as unknown as Parameters<typeof createAuditLogFromContext>[0],
-    `directory_connector_instance.${parsed.data.action}`,
-    'directory_connector_instance',
-    instanceId,
-    {
+  await recordAdminOperationAudit(c as unknown as Parameters<typeof recordAdminOperationAudit>[0], {
+    action: `directory_connector_instance.${parsed.data.action}`,
+    resourceType: 'directory_connector_instance',
+    resourceId: instanceId,
+    metadata: {
       tenant_id: tenantId,
       connector_id: parsed.data.connector_id,
-    }
-  ).catch(() => undefined);
+    },
+  }).catch(() => undefined);
 
   return c.json({
     ok: true,
@@ -1123,17 +1125,16 @@ export async function issueDirectoryConnectorSecretHandler(c: Context<{ Bindings
   }
 
   try {
-    await createAuditLogFromContext(
-      c,
-      'directory_connector.secret.issued',
-      'directory_connector',
-      connector.id,
-      {
+    await recordAdminOperationAudit(c, {
+      action: 'directory_connector.secret.issued',
+      resourceType: 'directory_connector',
+      resourceId: connector.id,
+      metadata: {
         tenant_id: tenantId,
         connector_id: connector.id,
         key_id: keyId,
-      }
-    );
+      },
+    });
   } catch {
     // Secret was issued successfully. Audit mirroring is best effort here.
   }
@@ -1204,18 +1205,17 @@ export async function rotateDirectoryConnectorSecretHandler(c: Context<{ Binding
   }
 
   try {
-    await createAuditLogFromContext(
-      c,
-      'directory_connector.secret.rotated',
-      'directory_connector',
-      connector.id,
-      {
+    await recordAdminOperationAudit(c, {
+      action: 'directory_connector.secret.rotated',
+      resourceType: 'directory_connector',
+      resourceId: connector.id,
+      metadata: {
         tenant_id: tenantId,
         connector_id: connector.id,
         key_id: keyId,
         previous_retire_after: current?.active ? retireAfter : null,
-      }
-    );
+      },
+    });
   } catch {
     // Secret was rotated successfully. Audit mirroring is best effort here.
   }

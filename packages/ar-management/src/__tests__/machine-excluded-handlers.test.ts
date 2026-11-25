@@ -42,6 +42,9 @@ import {
 import { setupApp, sqliteAdapter } from './helpers/admin-authority-fixture';
 import { insertTenant, openCoreDatabase } from './helpers/core-database';
 
+// Admin operations are recorded through the forwarding shim (see the helper).
+vi.mock('../admin-operation-audit', () => import('./helpers/legacy-admin-audit-shim'));
+
 /**
  * Handlers that take their target tenant from somewhere other than the request tenant and the
  * path (a query value, a body field, a stored row, a cross-tenant list) call the shared helper

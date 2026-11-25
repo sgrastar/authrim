@@ -25,7 +25,6 @@ import {
   createErrorResponse,
   AR_ERROR_CODES,
   getTenantIdFromContext,
-  createAuditLogFromContext,
   getLogger,
 } from '@authrim/ar-lib-core';
 import { z } from './zod';
@@ -35,6 +34,7 @@ import {
   getAuditHotQuerySupport,
   getAuditTimeRange,
 } from './audit-hot-query';
+import { recordAdminOperationAudit } from './admin-operation-audit';
 
 // =============================================================================
 // Constants
@@ -591,12 +591,17 @@ export async function adminSecurityAlertAcknowledgeHandler(c: Context<{ Bindings
     );
 
     // Write audit log
-    await createAuditLogFromContext(c, 'security_alert.acknowledge', 'security_alert', alertId, {
-      alert_type: alert.type,
-      alert_severity: alert.severity,
-      previous_status: alert.status,
-      has_notes: !!notes,
-      has_resolution: !!resolution,
+    await recordAdminOperationAudit(c, {
+      action: 'security_alert.acknowledge',
+      resourceType: 'security_alert',
+      resourceId: alertId,
+      metadata: {
+        alert_type: alert.type,
+        alert_severity: alert.severity,
+        previous_status: alert.status,
+        has_notes: !!notes,
+        has_resolution: !!resolution,
+      },
     });
 
     return c.json({
@@ -1145,10 +1150,16 @@ export async function adminSecurityIpReputationHandler(c: Context<{ Bindings: En
     );
 
     // Write audit log
-    await createAuditLogFromContext(c, 'security.ip_reputation_check', 'security', tenantId, {
-      ip_count: ip_addresses.length,
-      high_risk_count: results.filter((r) => r.risk_level === 'high' || r.risk_level === 'critical')
-        .length,
+    await recordAdminOperationAudit(c, {
+      action: 'security.ip_reputation_check',
+      resourceType: 'security',
+      resourceId: tenantId,
+      metadata: {
+        ip_count: ip_addresses.length,
+        high_risk_count: results.filter(
+          (r) => r.risk_level === 'high' || r.risk_level === 'critical'
+        ).length,
+      },
     });
 
     return c.json({

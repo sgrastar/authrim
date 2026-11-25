@@ -22,9 +22,9 @@ import {
   createErrorResponse,
   AR_ERROR_CODES,
   getLogger,
-  createAuditLogFromContext,
   getTenantIdFromContext,
 } from '@authrim/ar-lib-core';
+import { recordAdminOperationAudit } from '../admin-operation-audit';
 
 // Input validation constants
 const MAX_REASON_LENGTH = 500;
@@ -288,9 +288,15 @@ export async function revokeDeviceSecret(c: Context<{ Bindings: Env }>): Promise
       return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
     }
 
-    await createAuditLogFromContext(c, 'device_secret.revoke', 'device_secret', id, {
-      user_id: existing.user_id,
-      reason,
+    await recordAdminOperationAudit(c, {
+      action: 'device_secret.revoke',
+      resourceType: 'device_secret',
+      resourceId: id,
+      metadata: {
+        user_id: existing.user_id,
+        reason,
+      },
+      endUser: { userId: existing.user_id },
     });
 
     log.info('Revoked device secret', { id, userId: existing.user_id, reason });
@@ -339,9 +345,15 @@ export async function revokeAllUserDeviceSecrets(c: Context<{ Bindings: Env }>):
       await samlDrAll(repos.map((repo) => repo.revokeByUserId(userId, tenantId, reason)))
     ).reduce((total, count) => total + count, 0);
 
-    await createAuditLogFromContext(c, 'device_secret.revoke_all', 'user', userId, {
-      revoked_count: revokedCount,
-      reason,
+    await recordAdminOperationAudit(c, {
+      action: 'device_secret.revoke_all',
+      resourceType: 'user',
+      resourceId: userId,
+      metadata: {
+        revoked_count: revokedCount,
+        reason,
+      },
+      endUser: { userId },
     });
 
     log.info('Revoked user device secrets', { userId, revokedCount, reason });
@@ -377,8 +389,13 @@ export async function cleanupExpiredDeviceSecrets(
       0
     );
 
-    await createAuditLogFromContext(c, 'device_secret.cleanup', 'device_secret', 'expired', {
-      cleaned_count: cleanedCount,
+    await recordAdminOperationAudit(c, {
+      action: 'device_secret.cleanup',
+      resourceType: 'device_secret',
+      resourceId: 'expired',
+      metadata: {
+        cleaned_count: cleanedCount,
+      },
     });
 
     log.info('Cleaned up expired device secrets', { cleanedCount });

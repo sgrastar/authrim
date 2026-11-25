@@ -62,6 +62,7 @@ import {
   type TenantRBACStores,
 } from './rbac-account-stores';
 import { isInactiveAccountRouteError } from './account-route-errors';
+import { recordAdminOperationAudit } from './admin-operation-audit';
 
 /**
  * Hono context type with admin auth variable
@@ -2460,10 +2461,15 @@ export async function adminRoleCreateHandler(c: Context<{ Bindings: Env }>) {
     );
 
     // Write audit log
-    await createAuditLogFromContext(c, 'role.created', 'role', roleId, {
-      name: body.name,
-      permission_count: body.permissions.length,
-      parent_role_id: parentRoleId,
+    await recordAdminOperationAudit(c, {
+      action: 'role.created',
+      resourceType: 'role',
+      resourceId: roleId,
+      metadata: {
+        name: body.name,
+        permission_count: body.permissions.length,
+        parent_role_id: parentRoleId,
+      },
     });
 
     log.info('Role created', { action: 'role_create', roleId, name: body.name });
@@ -2627,13 +2633,18 @@ export async function adminRoleUpdateHandler(c: Context<{ Bindings: Env }>) {
     );
 
     // Write audit log
-    await createAuditLogFromContext(c, 'role.updated', 'role', roleId, {
-      name: existingRole.name,
-      description_changed: body.description !== undefined,
-      permissions_changed: body.permissions !== undefined,
-      new_permission_count: body.permissions?.length,
-      hierarchy_changed: body.hierarchy_level !== undefined,
-      parent_role_changed: parentRoleId !== undefined,
+    await recordAdminOperationAudit(c, {
+      action: 'role.updated',
+      resourceType: 'role',
+      resourceId: roleId,
+      metadata: {
+        name: existingRole.name,
+        description_changed: body.description !== undefined,
+        permissions_changed: body.permissions !== undefined,
+        new_permission_count: body.permissions?.length,
+        hierarchy_changed: body.hierarchy_level !== undefined,
+        parent_role_changed: parentRoleId !== undefined,
+      },
     });
 
     log.info('Role updated', { action: 'role_update', roleId, name: existingRole.name });
@@ -2731,8 +2742,13 @@ export async function adminRoleDeleteHandler(c: Context<{ Bindings: Env }>) {
     await adapter.execute('DELETE FROM roles WHERE tenant_id = ? AND id = ?', [tenantId, roleId]);
 
     // Write audit log
-    await createAuditLogFromContext(c, 'role.deleted', 'role', roleId, {
-      name: existingRole.name,
+    await recordAdminOperationAudit(c, {
+      action: 'role.deleted',
+      resourceType: 'role',
+      resourceId: roleId,
+      metadata: {
+        name: existingRole.name,
+      },
     });
 
     log.info('Role deleted', { action: 'role_delete', roleId, name: existingRole.name });

@@ -25,7 +25,6 @@ import {
   loadDestinationProfileConsentDescriptor,
   PLATFORM_MAPPING_TENANT_ID,
   BodyLimitExceededError,
-  createAuditLogFromContext,
   createLogger,
   isUniqueConstraintError,
   readRequestBytesWithLimit,
@@ -75,6 +74,7 @@ import {
   mappingSetDestination,
   readableMappingSetDestination,
 } from './identity-mapping-set-destination';
+import { recordAdminOperationAudit } from './admin-operation-audit';
 
 const log = createLogger().module('IDENTITY_MAPPING_SET_FACADE');
 
@@ -729,12 +729,11 @@ async function recordSaveAudit(
   }
 ): Promise<void> {
   try {
-    await createAuditLogFromContext(
-      c,
-      'identity_mapping.set.saved',
-      'field_mapping_set',
-      fields.setId ?? 'none',
-      {
+    await recordAdminOperationAudit(c, {
+      action: 'identity_mapping.set.saved',
+      resourceType: 'field_mapping_set',
+      resourceId: fields.setId ?? 'none',
+      metadata: {
         set_id: fields.setId,
         owner: ownerLabel(fields.ownerTenantId),
         version_id: fields.versionId,
@@ -744,8 +743,8 @@ async function recordSaveAudit(
         ...(fields.stageFailed ? { stage_failed: fields.stageFailed } : {}),
         rule_count: fields.ruleCount,
       },
-      fields.result === 'saved' ? 'info' : 'warning'
-    );
+      severity: fields.result === 'saved' ? 'info' : 'warning',
+    });
   } catch {
     log.warn('The audit record of a Mapping Set save could not be written');
   }
@@ -975,17 +974,16 @@ export async function adminIdentityMappingSetDeleteHandler(c: AdminContext) {
       expectedActiveVersionId: state.active_version_id,
     });
     try {
-      await createAuditLogFromContext(
-        c,
-        'identity_mapping.set.deleted',
-        'field_mapping_set',
-        setId,
-        {
+      await recordAdminOperationAudit(c, {
+        action: 'identity_mapping.set.deleted',
+        resourceType: 'field_mapping_set',
+        resourceId: setId,
+        metadata: {
           set_id: setId,
           owner: ownerLabel(ownerTenantId),
           was_enabled: deleted.endedActiveVersionId !== null,
-        }
-      );
+        },
+      });
     } catch {
       log.warn('The audit record of a Mapping Set deletion could not be written');
     }

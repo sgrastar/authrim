@@ -35,6 +35,9 @@ import {
   updateDirectoryPendingUserHandler,
 } from '../../routes/directory-connectors';
 
+// Admin operations are recorded through the forwarding shim (see the helper).
+vi.mock('../../admin-operation-audit', () => import('../helpers/legacy-admin-audit-shim'));
+
 function createKV(initial: Record<string, unknown> = {}) {
   const values = new Map<string, string>();
   for (const [key, value] of Object.entries(initial)) values.set(key, JSON.stringify(value));

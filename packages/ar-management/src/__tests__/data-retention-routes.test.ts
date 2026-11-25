@@ -44,6 +44,9 @@ import {
   updateCategoryRetention,
 } from '../routes/settings/data-retention';
 
+// Admin operations are recorded through the forwarding shim (see the helper).
+vi.mock('../admin-operation-audit', () => import('./helpers/legacy-admin-audit-shim'));
+
 function context(
   options: {
     body?: unknown;

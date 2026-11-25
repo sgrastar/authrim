@@ -16,7 +16,6 @@
  */
 import type { Context } from 'hono';
 import {
-  createAuditLogFromContext,
   createLogger,
   ensureAdminDatabaseAdapter,
   getTenantIdFromContext,
@@ -26,6 +25,7 @@ import {
   type Env,
 } from '@authrim/ar-lib-core';
 import { ATTRIBUTE_KEY_PATTERN } from './identity-mapping-control-plane';
+import { recordAdminOperationAudit } from './admin-operation-audit';
 
 type TestUsersContext = Context<{ Bindings: Env; Variables: { adminAuth?: AdminAuthContext } }>;
 
@@ -381,16 +381,21 @@ export async function adminIdentityMappingTestUsersReplaceHandler(c: TestUsersCo
     );
   }
   try {
-    await createAuditLogFromContext(
-      c as unknown as Parameters<typeof createAuditLogFromContext>[0],
-      'identity_mapping.test_users.replaced',
-      'identity_mapping_test_users',
-      tenantId,
+    await recordAdminOperationAudit(
+      c as unknown as Parameters<typeof recordAdminOperationAudit>[0],
       {
-        test_user_count: saved.length,
-        attribute_count: saved.reduce((sum, user) => sum + Object.keys(user.attributes).length, 0),
-        removed_count: current.filter((user) => !saved.some((s) => s.userId === user.userId))
-          .length,
+        action: 'identity_mapping.test_users.replaced',
+        resourceType: 'identity_mapping_test_users',
+        resourceId: tenantId,
+        metadata: {
+          test_user_count: saved.length,
+          attribute_count: saved.reduce(
+            (sum, user) => sum + Object.keys(user.attributes).length,
+            0
+          ),
+          removed_count: current.filter((user) => !saved.some((s) => s.userId === user.userId))
+            .length,
+        },
       }
     );
   } catch {

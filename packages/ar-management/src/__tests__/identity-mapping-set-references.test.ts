@@ -60,6 +60,9 @@ import {
 } from './helpers/identity-mapping-seed';
 import type { SQLiteDatabase } from './test-sqlite';
 
+// Admin operations are recorded through the forwarding shim (see the helper).
+vi.mock('../admin-operation-audit', () => import('./helpers/legacy-admin-audit-shim'));
+
 /**
  * What stops a Mapping Set being deleted, switched off or swapped while something names it, and
  * the usage API that shows the same. Real Admin schema and Core `oauth_clients` /

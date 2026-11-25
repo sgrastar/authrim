@@ -90,6 +90,9 @@ import {
 } from '../launchers';
 import { createPlatformLaunchersRouter } from '../routes/platform-launchers';
 
+// Admin operations are recorded through the forwarding shim (see the helper).
+vi.mock('../admin-operation-audit', () => import('./helpers/legacy-admin-audit-shim'));
+
 const ADMIN_MIGRATIONS = new URL('../../../../migrations/admin/d1/', import.meta.url);
 const CORE_MIGRATIONS = new URL('../../../../migrations/core/d1/', import.meta.url);
 const ENV = { DB: {}, DB_ADMIN: {} };

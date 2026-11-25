@@ -87,6 +87,9 @@ import {
   readIdentityMappingClientHistoryReceipt,
 } from '@authrim/ar-lib-core/services/identity-mapping-client-history-receipt';
 
+// Admin operations are recorded through the forwarding shim (see the helper).
+vi.mock('../admin-operation-audit', () => import('./helpers/legacy-admin-audit-shim'));
+
 // Work the handlers hand to waitUntil (the admin audit log). It logs through the real logger, so
 // each test waits for it; a log that lands after the file's last test reaches Vitest while the
 // worker is closing and fails the run as an unhandled error.

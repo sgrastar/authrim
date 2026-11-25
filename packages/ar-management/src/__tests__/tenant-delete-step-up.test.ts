@@ -67,6 +67,9 @@ vi.mock('../admin-shared', async (importOriginal) => ({
 
 import { adminTenantDeleteHandler, adminTenantDeletionCancelHandler } from '../admin-tenants';
 
+// Admin operations are recorded through the forwarding shim (see the helper).
+vi.mock('../admin-operation-audit', () => import('./helpers/legacy-admin-audit-shim'));
+
 const DELETE = 'admin:tenants:delete';
 const EXEMPT = 'admin:step_up_exempt:tenant.delete';
 

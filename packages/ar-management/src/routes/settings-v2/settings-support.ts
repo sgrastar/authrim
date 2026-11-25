@@ -6,7 +6,6 @@ import type { Context } from 'hono';
 import {
   ALL_CATEGORY_META,
   bumpAuthenticationMethodsCacheRevision,
-  createAuditLogFromContext,
   createLogger,
   createSettingsManager,
   humanVerificationSelectionFromSettings,
@@ -23,6 +22,7 @@ import { DatabaseSettingsCanonicalStore } from '@authrim/ar-lib-core/services/se
 import type { IdentityMappingLevelHistoryVia } from '@authrim/ar-lib-core/services/identity-mapping-level-history';
 import { BUILTIN_HUMAN_VERIFICATION_PROVIDER_IDS } from '../../human-verification-provider-projection';
 import { markGlobalProviderDesiredRevision } from '../../provider-reprojection-jobs';
+import { recordAdminOperationAudit } from '../../admin-operation-audit';
 
 // Module-level logger for settings audit
 export const log = createLogger().module('SETTINGS_AUDIT');
@@ -152,20 +152,22 @@ export function getSettingsManager(
       });
       if (auditContext) {
         try {
-          await createAuditLogFromContext(
-            auditContext as unknown as Parameters<typeof createAuditLogFromContext>[0],
-            `settings.${event.event}`,
-            'settings',
-            `${event.scope}:${event.scopeId}:${event.category}`,
+          await recordAdminOperationAudit(
+            auditContext as unknown as Parameters<typeof recordAdminOperationAudit>[0],
             {
-              scope: event.scope,
-              scope_id: event.scopeId,
-              category: event.category,
-              actor: event.actor,
-              ...(options.omitAuditValues
-                ? { changed_keys: changedKeys, results }
-                : { diff: sanitizeObject(event.diff) }),
-              ...(auditMetadata ? sanitizeObject(auditMetadata) : {}),
+              action: `settings.${event.event}`,
+              resourceType: 'settings',
+              resourceId: `${event.scope}:${event.scopeId}:${event.category}`,
+              metadata: {
+                scope: event.scope,
+                scope_id: event.scopeId,
+                category: event.category,
+                actor: event.actor,
+                ...(options.omitAuditValues
+                  ? { changed_keys: changedKeys, results }
+                  : { diff: sanitizeObject(event.diff) }),
+                ...(auditMetadata ? sanitizeObject(auditMetadata) : {}),
+              },
             }
           );
         } catch {
@@ -199,20 +201,22 @@ export async function recordSettingsAuditFailure(
   const scopeId =
     'id' in input.scope && typeof input.scope.id === 'string' ? input.scope.id : 'platform';
   try {
-    await createAuditLogFromContext(
-      c as unknown as Parameters<typeof createAuditLogFromContext>[0],
-      'settings.patch.failure',
-      'settings',
-      `${input.scope.type}:${scopeId}:${input.category}`,
+    await recordAdminOperationAudit(
+      c as unknown as Parameters<typeof recordAdminOperationAudit>[0],
       {
-        scope: input.scope.type,
-        scope_id: scopeId,
-        category: input.category,
-        result: 'failure',
-        reason: input.reason,
-        ...(input.metadata ? sanitizeObject(input.metadata) : {}),
-      },
-      'warning'
+        action: 'settings.patch.failure',
+        resourceType: 'settings',
+        resourceId: `${input.scope.type}:${scopeId}:${input.category}`,
+        metadata: {
+          scope: input.scope.type,
+          scope_id: scopeId,
+          category: input.category,
+          result: 'failure',
+          reason: input.reason,
+          ...(input.metadata ? sanitizeObject(input.metadata) : {}),
+        },
+        severity: 'warning',
+      }
     );
   } catch {
     log.warn('Failed to mirror settings failure audit', {
@@ -237,20 +241,22 @@ export async function recordExternalPluginShutdownAudit(
   const scopeId =
     'id' in input.scope && typeof input.scope.id === 'string' ? input.scope.id : 'platform';
   try {
-    await createAuditLogFromContext(
-      c as unknown as Parameters<typeof createAuditLogFromContext>[0],
-      'settings.plugin.external_shutdown',
-      'settings',
-      `${input.scope.type}:${scopeId}:plugin`,
+    await recordAdminOperationAudit(
+      c as unknown as Parameters<typeof recordAdminOperationAudit>[0],
       {
-        scope: input.scope.type,
-        scope_id: scopeId,
-        category: 'plugin',
-        result: input.outcome,
-        stopped_plugin_ids: [...input.stopped],
-        ...(input.failedPluginId === null ? {} : { failed_plugin_id: input.failedPluginId }),
-      },
-      input.outcome === 'success' ? 'info' : 'warning'
+        action: 'settings.plugin.external_shutdown',
+        resourceType: 'settings',
+        resourceId: `${input.scope.type}:${scopeId}:plugin`,
+        metadata: {
+          scope: input.scope.type,
+          scope_id: scopeId,
+          category: 'plugin',
+          result: input.outcome,
+          stopped_plugin_ids: [...input.stopped],
+          ...(input.failedPluginId === null ? {} : { failed_plugin_id: input.failedPluginId }),
+        },
+        severity: input.outcome === 'success' ? 'info' : 'warning',
+      }
     );
   } catch {
     log.warn('Failed to mirror the external plugin shutdown audit', {

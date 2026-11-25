@@ -50,6 +50,9 @@ import {
   createTenantRow,
 } from './helpers/admin-tenants-mutation-harness';
 
+// Admin operations are recorded through the forwarding shim (see the helper).
+vi.mock('../admin-operation-audit', () => import('./helpers/legacy-admin-audit-shim'));
+
 type Handler = (c: never) => Promise<Response>;
 
 const TENANT_COLUMNS =

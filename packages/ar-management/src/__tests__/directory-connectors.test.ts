@@ -12,6 +12,9 @@ import {
   updateDirectoryPendingUserHandler,
 } from '../routes/directory-connectors';
 
+// Admin operations are recorded through the forwarding shim (see the helper).
+vi.mock('../admin-operation-audit', () => import('./helpers/legacy-admin-audit-shim'));
+
 const mocks = vi.hoisted(() => ({
   safeFetch: vi.fn(),
   readResponseTextWithLimit: vi.fn(),

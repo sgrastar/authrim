@@ -19,7 +19,6 @@
 import { samlDrAll } from '@authrim/ar-lib-core/services/tenant-portability/saml-dr-writer';
 import type { Context } from 'hono';
 import {
-  createAuditLogFromContext,
   createErrorResponse,
   AR_ERROR_CODES,
   ensureDatabaseAdapter,
@@ -31,6 +30,7 @@ import {
   type DatabaseSource,
   type Env,
 } from '@authrim/ar-lib-core';
+import { recordAdminOperationAudit } from '../../admin-operation-audit';
 
 /**
  * Tombstone entity from database
@@ -601,8 +601,13 @@ export async function checkTombstoneEmail(c: Context<{ Bindings: Env }>) {
 
   try {
     const tombstone = await findActiveEmailTombstone(c.env, { tenantId, email });
-    await createAuditLogFromContext(c, 'tombstone.email_checked', 'tombstone', 'email', {
-      deleted: tombstone !== null,
+    await recordAdminOperationAudit(c, {
+      action: 'tombstone.email_checked',
+      resourceType: 'tombstone',
+      resourceId: 'email',
+      metadata: {
+        deleted: tombstone !== null,
+      },
     });
     return c.json(
       tombstone

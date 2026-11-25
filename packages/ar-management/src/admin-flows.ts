@@ -25,7 +25,6 @@ import {
   FLOW_NODE_DEFINITIONS,
   FLOW_RUNTIME_CONTRACT_SCHEMA_VERSION,
   createAuthContextFromHono,
-  createAuditLogFromContext,
   generateId,
   getFlowNodeDefinition,
   getLogger,
@@ -50,6 +49,7 @@ import {
   screenShowsConsentWidget,
   type ScreenField,
 } from '@authrim/ar-lib-core';
+import { recordAdminOperationAudit } from './admin-operation-audit';
 
 type AdminContext = Context<{ Bindings: Env; Variables: { adminAuth?: AdminAuthContext } }>;
 type BaseContext = Context<{ Bindings: Env }>;
@@ -1056,9 +1056,14 @@ export async function adminFlowCreateHandler(c: AdminContext) {
       ]
     );
 
-    await createAuditLogFromContext(asBaseContext(c), 'flow_create', 'flow', flowId, {
-      slug,
-      kind,
+    await recordAdminOperationAudit(asBaseContext(c), {
+      action: 'flow_create',
+      resourceType: 'flow',
+      resourceId: flowId,
+      metadata: {
+        slug,
+        kind,
+      },
     });
 
     return c.json(
@@ -1208,8 +1213,13 @@ export async function adminFlowUpdateHandler(c: AdminContext) {
       params
     );
 
-    await createAuditLogFromContext(asBaseContext(c), 'flow_update', 'flow', flowId, {
-      fields: Object.keys(body),
+    await recordAdminOperationAudit(asBaseContext(c), {
+      action: 'flow_update',
+      resourceType: 'flow',
+      resourceId: flowId,
+      metadata: {
+        fields: Object.keys(body),
+      },
     });
 
     const updated = await getFlowRow(db, tenantId, flowId);
@@ -1256,8 +1266,13 @@ export async function adminFlowDeleteHandler(c: AdminContext) {
       'UPDATE flows SET deleted_at = ?, status = ?, is_active = 0, updated_at = ? WHERE tenant_id = ? AND id = ?',
       [now, 'disabled', now, tenantId, flowId]
     );
-    await createAuditLogFromContext(asBaseContext(c), 'flow_delete', 'flow', flowId, {
-      slug: existing.slug,
+    await recordAdminOperationAudit(asBaseContext(c), {
+      action: 'flow_delete',
+      resourceType: 'flow',
+      resourceId: flowId,
+      metadata: {
+        slug: existing.slug,
+      },
     });
     return c.json({ success: true });
   } catch (error) {
@@ -1387,9 +1402,14 @@ async function adminFlowPublishUnguarded(c: AdminContext) {
       );
     });
 
-    await createAuditLogFromContext(asBaseContext(c), 'flow_publish', 'flow', flowId, {
-      flow_version_id: versionId,
-      version_number: nextVersion,
+    await recordAdminOperationAudit(asBaseContext(c), {
+      action: 'flow_publish',
+      resourceType: 'flow',
+      resourceId: flowId,
+      metadata: {
+        flow_version_id: versionId,
+        version_number: nextVersion,
+      },
     });
 
     return c.json({
@@ -1542,9 +1562,14 @@ export async function adminFlowImportHandler(c: AdminContext) {
       ]
     );
 
-    await createAuditLogFromContext(asBaseContext(c), 'flow_import', 'flow', flowId, {
-      slug,
-      kind,
+    await recordAdminOperationAudit(asBaseContext(c), {
+      action: 'flow_import',
+      resourceType: 'flow',
+      resourceId: flowId,
+      metadata: {
+        slug,
+        kind,
+      },
     });
 
     return c.json(
@@ -1672,18 +1697,17 @@ async function adminFlowAssignmentUpsertUnguarded(c: AdminContext) {
       ]
     );
 
-    await createAuditLogFromContext(
-      asBaseContext(c),
-      'flow_assignment_upsert',
-      'flow',
-      body.flow_id,
-      {
+    await recordAdminOperationAudit(asBaseContext(c), {
+      action: 'flow_assignment_upsert',
+      resourceType: 'flow',
+      resourceId: body.flow_id,
+      metadata: {
         target_type: body.target_type,
         target_id: targetId,
         flow_kind: body.flow_kind,
         enabled: enabled === 1,
-      }
-    );
+      },
+    });
 
     return c.json({ success: true });
   } catch (error) {
@@ -1735,17 +1759,16 @@ export async function adminFlowAssignmentDeleteHandler(c: AdminContext) {
         : [tenantId, body.target_type, targetId, body.flow_kind]
     );
 
-    await createAuditLogFromContext(
-      asBaseContext(c),
-      'flow_assignment_delete',
-      'flow_assignment',
-      `${body.target_type}:${targetId ?? 'tenant'}:${body.flow_kind}`,
-      {
+    await recordAdminOperationAudit(asBaseContext(c), {
+      action: 'flow_assignment_delete',
+      resourceType: 'flow_assignment',
+      resourceId: `${body.target_type}:${targetId ?? 'tenant'}:${body.flow_kind}`,
+      metadata: {
         target_type: body.target_type,
         target_id: targetId,
         flow_kind: body.flow_kind,
-      }
-    );
+      },
+    });
 
     return c.json({ success: true });
   } catch (error) {
@@ -1838,10 +1861,15 @@ export async function adminFlowCopyHandler(c: AdminContext) {
       ]
     );
 
-    await createAuditLogFromContext(asBaseContext(c), 'flow_copy', 'flow', newFlowId, {
-      source_flow_id: flowId,
-      slug,
-      kind,
+    await recordAdminOperationAudit(asBaseContext(c), {
+      action: 'flow_copy',
+      resourceType: 'flow',
+      resourceId: newFlowId,
+      metadata: {
+        source_flow_id: flowId,
+        slug,
+        kind,
+      },
     });
 
     const copied = await getFlowRow(db, tenantId, newFlowId);

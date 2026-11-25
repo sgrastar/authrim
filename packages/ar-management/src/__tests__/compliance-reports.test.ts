@@ -71,6 +71,9 @@ import {
 } from '../compliance/report-routes';
 import { MAX_REPORT_ROWS } from '../compliance/reports';
 
+// Admin operations are recorded through the forwarding shim (see the helper).
+vi.mock('../admin-operation-audit', () => import('./helpers/legacy-admin-audit-shim'));
+
 const REPO_ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
 const SCHEMA = [
   readRenderedMigrationSql(resolve(REPO_ROOT, 'migrations/core/d1'), '001_0_5_0_core_baseline.sql'),
