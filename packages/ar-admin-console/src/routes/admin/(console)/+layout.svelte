@@ -2,7 +2,7 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { adminSession } from '#lib/auth/session.svelte.js';
-	import { tenantScope } from '#lib/auth/tenant-scope.svelte.js';
+	import { isWorkable, tenantScope } from '#lib/auth/tenant-scope.svelte.js';
 	import { identifierMaterialsClient } from '#lib/api/identifier-materials.js';
 	import { t } from '#lib/i18n/i18n.svelte.js';
 	import OnboardingGuide from '#lib/onboarding/OnboardingGuide.svelte';
@@ -14,6 +14,8 @@
 	import { isStandalonePath, resolveNavPath } from '#lib/shell/nav.js';
 	import { timePreference } from '#lib/ui/time/time-preference.svelte.js';
 	import type { ScopeOption } from '#lib/shell/ScopeSwitcher.svelte';
+	import { lifecycleTone } from '#lib/pages/tenants/tenant-model.js';
+	import { TENANT_LIFECYCLE_STATES, type TenantLifecycleState } from '#lib/api/tenants.js';
 	import Button from '#lib/ui/primitives/Button.svelte';
 	import EmptyState from '#lib/ui/patterns/EmptyState.svelte';
 	import { provideIdentifierMaterials } from '#lib/ui/patterns/identifier-materials-context.js';
@@ -71,6 +73,13 @@
 	const standalone = $derived(isStandalonePath(page.url.pathname));
 	const location = $derived(resolveNavPath(page.url.pathname) ?? resolveNavPath('/admin')!);
 
+	// The state the list gave, as a badge; a state this console does not know shows no badge.
+	function tenantStatus(state: string | undefined): Pick<ScopeOption, 'status'> {
+		if (!state || !(TENANT_LIFECYCLE_STATES as readonly string[]).includes(state)) return {};
+		const known = state as TenantLifecycleState;
+		return { status: { label: t(`tn.state.${known}`), tone: lifecycleTone(known) } };
+	}
+
 	const scopes = $derived<ScopeOption[]>([
 		...(adminSession.isPlatformAdmin
 			? [{ id: 'platform', kind: 'platform' as const, name: t('scope.platform.name'), mark: '◆' }]
@@ -79,7 +88,9 @@
 			id: tenant.id,
 			kind: 'tenant' as const,
 			name: tenant.name,
-			mark: tenant.name.trim().charAt(0).toUpperCase() || '?'
+			mark: tenant.name.trim().charAt(0).toUpperCase() || '?',
+			...tenantStatus(tenant.lifecycleState),
+			disabled: !isWorkable(tenant)
 		}))
 	]);
 

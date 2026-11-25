@@ -8,6 +8,13 @@ import { adminFetch, API_BASE_URL } from '#lib/api/admin-request.js';
 export interface TenantRef {
 	id: string;
 	name: string;
+	/** What the list said about it; absent for the session's own tenant when the list is unavailable. */
+	lifecycleState?: string;
+}
+
+/** A tenant being deleted (or gone) can no longer be worked on: shown, but not chosen. */
+export function isWorkable(tenant: { lifecycleState?: string }): boolean {
+	return tenant.lifecycleState !== 'deleting' && tenant.lifecycleState !== 'deleted';
 }
 
 const STORAGE_KEY = 'authrim-console-tenant';
@@ -40,6 +47,10 @@ export const tenantScope = {
 	get tenants(): readonly TenantRef[] {
 		return tenants;
 	},
+	/** The tenants that can be given something to do (a grant's reach): those not being deleted. */
+	get workableTenants(): readonly TenantRef[] {
+		return tenants.filter(isWorkable);
+	},
 	get current(): TenantRef | null {
 		return (
 			tenants.find((t) => t.id === tenantId) ?? (tenantId ? { id: tenantId, name: tenantId } : null)
@@ -62,21 +73,28 @@ export const tenantScope = {
 					const data = (await response.json()) as {
 						tenants?: Array<{ id: string; name?: string; lifecycle_state?: string }>;
 					};
-					// A tenant being deleted (or gone) can no longer be worked on.
-					list = (data.tenants ?? [])
-						.filter((t) => t.lifecycle_state !== 'deleting' && t.lifecycle_state !== 'deleted')
-						.map((t) => ({ id: t.id, name: t.name || t.id }));
+					list = (data.tenants ?? []).map((t) => ({
+						id: t.id,
+						name: t.name || t.id,
+						lifecycleState: t.lifecycle_state
+					}));
 				}
 			} catch {
 				list = [];
 			}
 		}
 		if (list.length === 0 && homeTenantId) list = [{ id: homeTenantId, name: homeTenantId }];
+		// Nothing left to choose: the session's own tenant is still what the calls act on, so the
+		// switcher must be able to show it.
+		if (homeTenantId && !list.some(isWorkable) && !list.some((t) => t.id === homeTenantId)) {
+			list = [...list, { id: homeTenantId, name: homeTenantId }];
+		}
 		tenants = list;
 		// The selection of this page first (storage may be blocked), then the stored one.
+		const workable = list.filter(isWorkable);
 		const next =
-			[tenantId, readStored()].find((id) => id && list.some((t) => t.id === id)) ??
-			list[0]?.id ??
+			[tenantId, readStored()].find((id) => id && workable.some((t) => t.id === id)) ??
+			workable[0]?.id ??
 			homeTenantId;
 		tenantId = next ?? null;
 		if (next) writeStored(next);
@@ -91,7 +109,7 @@ export const tenantScope = {
 	},
 
 	select(id: string): void {
-		if (!tenants.some((t) => t.id === id)) return;
+		if (!tenants.some((t) => t.id === id && isWorkable(t))) return;
 		tenantId = id;
 		writeStored(id);
 	}

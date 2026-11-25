@@ -23,7 +23,7 @@
 			client={httpMachineAccess(tenantScope.tenantId)}
 			principalId={id}
 			{access}
-			tenants={tenantScope.tenants}
+			tenants={tenantScope.workableTenants}
 			listHref={BASE}
 		/>
 	{/key}
