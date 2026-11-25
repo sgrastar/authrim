@@ -107,6 +107,45 @@ describe('a sign-up Flow’s consent', () => {
   });
 });
 
+describe('a sign-up Flow’s consent asked on a screen itself', () => {
+  const consent = [{ statement_id: 'tos', required: true, display: 'modal' as const }];
+
+  it('is kept in the config of the screen that asks it, and read back', () => {
+    const spec: RegistrationFlowSpec = {
+      ...defaultRegistrationFlowSpec(),
+      statements: consent,
+      screens: [
+        {
+          n: 1,
+          screenKey: 'profile',
+          exits: {},
+          statements: [{ statement_id: 'news', required: false }],
+        },
+        { n: 2, screenKey: 'plain', exits: {} },
+      ],
+    };
+    const editor = buildRegistrationFlowEditor(spec);
+    const config = (id: string) => editor.nodes.find((node) => node.id === id)?.config;
+    expect(config('registration')?.statements).toEqual(consent);
+    expect(config('screen-1')?.statements).toEqual([{ statement_id: 'news', required: false }]);
+    expect(config('screen-2')).not.toHaveProperty('statements');
+    // No step of its own: the account is made right after the last screen.
+    expect(editor.nodes.some((node) => node.type === 'consent')).toBe(false);
+    expect(errorsOf(editor)).toEqual([]);
+    expect(readRegistrationFlowEditor(JSON.parse(JSON.stringify(editor)))).toEqual(spec);
+  });
+
+  it('asks nothing for an empty list', () => {
+    const editor = buildRegistrationFlowEditor({
+      ...defaultRegistrationFlowSpec(),
+      statements: [],
+    });
+    expect(editor.nodes.find((node) => node.id === 'registration')?.config).not.toHaveProperty(
+      'statements'
+    );
+  });
+});
+
 describe('a sign-up Flow’s steps shown to some people', () => {
   const abroad = [
     {

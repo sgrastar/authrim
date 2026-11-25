@@ -25,7 +25,10 @@ import type {
   FlowEditorState,
   FlowRuntimeJsonObject,
 } from '../schemas/flow-runtime';
-import { readFlowConsentStatements } from '../services/flow-consent-statements';
+import {
+  readFlowConsentStatements,
+  type FlowConsentStatement,
+} from '../services/flow-consent-statements';
 import {
   assertConsentSteps,
   consentStep,
@@ -55,6 +58,11 @@ export interface RegistrationFlowScreen {
   exits: Record<string, string>;
   /** Shown only when these all hold (absent: to everyone). */
   when?: FlowStepWhen;
+  /**
+   * The consent asked on this screen itself, with its own submit (it has a consent box): kept in
+   * the screen node's config, so it is shown to whom the screen is shown. Absent: none.
+   */
+  statements?: FlowConsentStatement[];
 }
 
 export interface RegistrationFlowSpec {
@@ -65,6 +73,8 @@ export interface RegistrationFlowSpec {
   /** The first screen: the one the method is chosen on. */
   screenKey: string;
   screenTitle?: string;
+  /** The consent asked on the first screen itself (see `RegistrationFlowScreen.statements`). */
+  statements?: FlowConsentStatement[];
   screens: RegistrationFlowScreen[];
   policy: RegistrationPolicy;
   /**
@@ -104,6 +114,18 @@ function consentNodeId(k: number): string {
   return k === 1 ? REGISTRATION_CONSENT_NODE : `${REGISTRATION_CONSENT_NODE}-${k}`;
 }
 
+/**
+ * The config entry that makes a screen step ask for consent with its own submit (the runtime
+ * reads it as it reads a consent step's list); nothing for an empty list.
+ */
+function screenConsentConfig(
+  statements: readonly FlowConsentStatement[] | undefined
+): FlowRuntimeJsonObject {
+  if (!statements || statements.length === 0) return {};
+  const { statements: entries } = consentStepConfig(statements);
+  return { statements: entries };
+}
+
 /** The condition node before a step shown only to some people. */
 function whenNodeId(stepId: string): string {
   return `when-${stepId}`;
@@ -132,6 +154,7 @@ export function buildRegistrationFlowEditor(spec: RegistrationFlowSpec): FlowEdi
       authentication_profile_ref: spec.profileRef || 'default',
       session_profile_ref: spec.sessionProfileRef || 'default',
       screen_ref: spec.screenKey,
+      ...screenConsentConfig(spec.statements),
       // A plain JSON copy: the graph is stored as JSON.
       registration_policy: JSON.parse(JSON.stringify(spec.policy)) as FlowRuntimeJsonObject,
     },
@@ -166,7 +189,7 @@ export function buildRegistrationFlowEditor(spec: RegistrationFlowSpec): FlowEdi
         id: screenNodeId(screen.n),
         type: 'screen',
         title: screen.title ?? `Screen ${screen.n + 1}`,
-        config: { screen_ref: screen.screenKey },
+        config: { screen_ref: screen.screenKey, ...screenConsentConfig(screen.statements) },
       },
       screen.when
     );
@@ -290,6 +313,7 @@ export function readRegistrationFlowEditor(editor: unknown): RegistrationFlowSpe
   const config = registration.config;
   const screenKey = typeof config.screen_ref === 'string' ? config.screen_ref : '';
   if (!screenKey) return null;
+  const firstStatements = readFlowConsentStatements(config) ?? [];
   const policyRead = readRegistrationPolicy(config.registration_policy);
   const nextNodeOf = (id: unknown) => {
     const index = nodes.findIndex((node) => node.id === id);
@@ -328,6 +352,7 @@ export function readRegistrationFlowEditor(editor: unknown): RegistrationFlowSpe
       if (target) exits[edge.source_handle] = target;
     }
     const when = whenOf(match[0]);
+    const statements = readFlowConsentStatements(node.config) ?? [];
     screens.push({
       n,
       screenKey: key,
@@ -336,6 +361,7 @@ export function readRegistrationFlowEditor(editor: unknown): RegistrationFlowSpe
         : {}),
       exits,
       ...(when ? { when } : {}),
+      ...(statements.length > 0 ? { statements } : {}),
     });
   }
   const consents = nodes
@@ -368,6 +394,7 @@ export function readRegistrationFlowEditor(editor: unknown): RegistrationFlowSpe
     ...(typeof registration.title === 'string' && registration.title !== 'Registration Method'
       ? { screenTitle: registration.title }
       : {}),
+    ...(firstStatements.length > 0 ? { statements: firstStatements } : {}),
     screens: screens.sort((a, b) => a.n - b.n),
     policy: policyRead.ok ? policyRead.policy : structuredClone(DEFAULT_REGISTRATION_POLICY),
     consents: consents.map(({ step }) => step),

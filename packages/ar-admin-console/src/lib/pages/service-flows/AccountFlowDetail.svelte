@@ -48,6 +48,7 @@
 	import AccountFlowStatus from './AccountFlowStatus.svelte';
 	import AccountFlowStep from './AccountFlowStep.svelte';
 	import { isExitKeyOf } from './screen-exits';
+	import { screenStatementsKey } from './consent-field-model';
 	import IconButton from '#lib/ui/primitives/IconButton.svelte';
 	import TitleEditor from '#lib/ui/patterns/TitleEditor.svelte';
 
@@ -178,6 +179,9 @@
 		if (group?.repeatable) {
 			for (const part of group.parts) {
 				delete draft.value.values[titleKey(part)];
+				// The statements a screen asks on itself go with it.
+				const statements = screenStatementsKey(part);
+				if (statements) delete draft.value.values[statements];
 				for (const field of partDef(part).fields) {
 					delete draft.value.values[field.key];
 					// And where the ways out of the screen it chose led.
