@@ -836,6 +836,42 @@ async function validateRuntimeConsentStatements(
       );
     }
   }
+  issues.push(...duplicateScreenConsentIssues(runtime));
+  return issues;
+}
+
+/**
+ * A statement a screen asks for on its own submit and a standalone consent step asks for too
+ * would be asked twice (an answer given before sign-in is only recorded when the Flow completes,
+ * so the later step cannot tell it was answered): reported at publish.
+ */
+function duplicateScreenConsentIssues(runtime: FlowRuntimeContract): FlowValidationIssue[] {
+  const onScreens = new Map<string, string>();
+  for (const step of runtime.ui.steps) {
+    if (step.component !== 'screen' && step.component !== 'registration_method_selector') continue;
+    for (const entry of readFlowConsentStatements(step.config) ?? []) {
+      if (!onScreens.has(entry.statement_id))
+        onScreens.set(entry.statement_id, step.source_node_id);
+    }
+  }
+  const issues: FlowValidationIssue[] = [];
+  for (const [index, step] of runtime.ui.steps.entries()) {
+    if (step.component !== 'consent_policy') continue;
+    for (const entry of readFlowConsentStatements(step.config) ?? []) {
+      const screenNode = onScreens.get(entry.statement_id);
+      if (!screenNode) continue;
+      issues.push({
+        // A warning: the two steps may sit on branches that never meet (a condition between them),
+        // which only the Flow's author can tell.
+        level: 'warning',
+        code: 'duplicate_consent_statement',
+        message: `The statement ${entry.statement_id} is asked on the screen ${screenNode} and again in this consent step: ask it once.`,
+        path: `$.runtime.ui.steps[${index}].config.statements`,
+        node_id: step.source_node_id,
+        ref: { type: 'reference', id: entry.statement_id, key: 'statement_id' },
+      });
+    }
+  }
   return issues;
 }
 

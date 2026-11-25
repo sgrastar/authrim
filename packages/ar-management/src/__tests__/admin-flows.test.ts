@@ -1106,7 +1106,10 @@ describe('admin Flow management handlers', () => {
           },
         }),
       });
-      const base = mocks.db.queryOne.getMockImplementation()!;
+      const base = mocks.db.queryOne.getMockImplementation() as (
+        sql: string,
+        params: unknown[]
+      ) => Promise<unknown>;
       mocks.db.queryOne.mockImplementation(async (sql: string, params: unknown[] = []) =>
         sql.includes('FROM flows')
           ? base(sql, params)
@@ -1132,6 +1135,40 @@ describe('admin Flow management handlers', () => {
     expect(noBox?.find((issue) => issue.node_id === 'screen-1')?.code).toBe(
       'missing_consent_widget'
     );
+  });
+
+  it('warns of the same statement asked on a screen and in a consent step', async () => {
+    seedFlow({
+      draft_runtime_base_json: JSON.stringify({
+        flow_kind: 'login',
+        flow_id: 'flow-1',
+        ui: {
+          steps: [
+            { id: 'entry:step', source_node_id: 'entry', component: 'interaction_context' },
+            {
+              id: 'screen:step',
+              source_node_id: 'screen-1',
+              component: 'screen',
+              config: { statements: [{ statement_id: 'terms', required: true }] },
+            },
+            {
+              id: 'consent:step',
+              source_node_id: 'consent-1',
+              component: 'consent_policy',
+              config: { statements: [{ statement_id: 'terms', required: true }] },
+            },
+          ],
+        },
+      }),
+    });
+    const response = await adminFlowPublishHandler(createContext({ params: { id: 'flow-1' } }));
+    const body = await readJson(response);
+    const warnings = (body.validation as { warnings?: Array<Record<string, unknown>> }).warnings;
+    expect(
+      (warnings ?? []).find((issue) => issue.code === 'duplicate_consent_statement')
+    ).toMatchObject({
+      node_id: 'consent-1',
+    });
   });
 
   it('increments publish version numbers returned as strings by adapters', async () => {
