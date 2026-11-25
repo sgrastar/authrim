@@ -16,6 +16,7 @@ export const arUserAudit: Record<keyof typeof jaUserAudit, string> = {
 	'uaud.col.ip': 'عنوان IP',
 	'uaud.result.success': 'نجح',
 	'uaud.result.failure': 'فشل',
+	'uaud.byAdmin': 'بواسطة مسؤول',
 	'uaud.list.title': 'الأحداث',
 	'uaud.list.info': 'الأحدث أولاً. استخدم عوامل التصفية أعلاه لتضييق القائمة.',
 	'uaud.empty': 'لا توجد أحداث في هذه الفترة',

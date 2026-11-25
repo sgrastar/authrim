@@ -455,6 +455,8 @@
 		);
 		await userEvent.click(within(dialog).getByRole('button', { name: t('usr.action.lock') }));
 		await canvas.findByText(t('usr.status.locked'));
+		// The lock is in the user's recent activity, marked as an administrator's action.
+		await canvas.findByText(t('uaud.byAdmin'));
 		await waitForSettledToasts();
 	}}
 >

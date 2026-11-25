@@ -94,6 +94,9 @@
 					{:else}
 						<code>{row.action}</code>
 					{/if}
+					{#if row.byAdmin}
+						<span class="by-admin"><Badge tone="info">{t('uaud.byAdmin')}</Badge></span>
+					{/if}
 				{:else}
 					{@const result = resultOf(row)}
 					{#if result}
@@ -109,6 +112,11 @@
 	.muted {
 		margin: 0;
 		color: var(--text-muted);
+	}
+
+	.by-admin {
+		display: block;
+		margin-block-start: var(--space-related);
 	}
 
 	.failed {

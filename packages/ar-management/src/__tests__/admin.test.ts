@@ -652,6 +652,9 @@ import {
   adminUserConsentRevokeHandler,
 } from '../admin';
 
+// Admin operations are recorded through the forwarding shim (see the helper).
+vi.mock('../admin-operation-audit', () => import('./helpers/legacy-admin-audit-shim'));
+
 const groupBoundaryDatabases: Array<ReturnType<typeof installGroupBoundaryFixture>> = [];
 
 // Helper to create mock D1Database

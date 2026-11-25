@@ -211,7 +211,9 @@ export function createFakeAdminUsers(options: FakeAdminUsersOptions = {}): Admin
 			action,
 			result: 'success',
 			at: clock(),
-			ipAddress: null
+			ipAddress: null,
+			// Changes made from the console are an administrator's actions.
+			byAdmin: true
 		});
 	/** The refusals every change of state shares. */
 	const beforeChange = async (userId: string): Promise<AdminUser> => {
