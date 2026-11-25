@@ -1,7 +1,7 @@
 /**
  * The audit endpoints of the console dev mock (`AUTHRIM_ADMIN_UI_DEV_MOCK=true`): the end-user
- * event log (`GET /api/admin/audit-logs`) and the admin audit log (`/api/admin/admin-audit-log`,
- * its `actions/list` and one entry), answered from the same in-memory data as Storybook, in the
+ * event log (`GET /api/admin/audit-logs`), the admin audit log (`/api/admin/admin-audit-log`,
+ * its `actions/list` and one entry) and the system log (`GET /api/admin/system-logs`), answered from the same in-memory data as Storybook, in the
  * wire format, for the real query parameters. The sample times are moved so the newest event is
  * a few minutes old, whenever the page is read.
  */
@@ -15,6 +15,11 @@ import {
 	answerUserAuditList,
 	sampleUserAuditEntries
 } from '#lib/api/fake/user-audit-fake.js';
+import {
+	SYSTEM_LOG_NOW,
+	answerSystemLogList,
+	sampleSystemLogEntries
+} from '#lib/api/fake/system-log-fake.js';
 import { ApiError } from '#lib/api/api-error.js';
 import type { AuditResult } from '#lib/api/admin-audit.js';
 
@@ -39,6 +44,15 @@ export async function answerAuditMock(
 		return answerUserAuditList(params, entries);
 	}
 	if (segments[0] === 'admin-audit-log') return answerAdminAudit(segments.slice(1), params);
+	if (segments[0] === 'system-logs' && segments.length === 1) {
+		const shift = Date.now() - SYSTEM_LOG_NOW;
+		const entries = sampleSystemLogEntries().map((entry) => ({
+			...entry,
+			created_at: entry.created_at + shift,
+			retention_until: entry.retention_until === null ? null : entry.retention_until + shift
+		}));
+		return answerSystemLogList(params, entries);
+	}
 	return null;
 }
 
