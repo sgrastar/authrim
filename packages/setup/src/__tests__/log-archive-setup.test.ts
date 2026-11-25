@@ -45,6 +45,7 @@ const accountId = 'a'.repeat(32);
 const tokenRead = 'fake-read-token';
 const tokenWrite = 'fake-write-token';
 const tokenSink = 'fake-sink-token';
+const writeTokenId = 'f'.repeat(32);
 const directories: string[] = [];
 
 beforeEach(() => {
@@ -70,6 +71,7 @@ function fixture(mode: 'pipeline' | 'scheduled') {
     namespaces?: Array<{ name: string[]; createdAt: string }>;
     tables?: Record<string, Array<{ name: string; createdAt: string; updatedAt: string }>>;
   } = {};
+  const credential: { status: 'absent' | 'present'; token?: string } = { status: 'absent' };
   const permissionGroups = [
     { id: 'catalog-read', name: 'Workers R2 Data Catalog Read' },
     { id: 'sql-read', name: 'Workers R2 SQL Read' },
@@ -104,11 +106,15 @@ function fixture(mode: 'pipeline' | 'scheduled') {
           new Headers(init?.headers).get('authorization') === `Bearer ${tokenRead}`
             ? 'read-id'
             : new Headers(init?.headers).get('authorization') === `Bearer ${tokenWrite}`
-              ? 'write-id'
+              ? writeTokenId
               : 'sink-id',
         status: 'active',
       };
-    else if (path === 'tokens/read-id' || path === 'tokens/write-id' || path === 'tokens/sink-id')
+    else if (
+      path === 'tokens/read-id' ||
+      path === `tokens/${writeTokenId}` ||
+      path === 'tokens/sink-id'
+    )
       result = {
         policies: [
           {
@@ -122,7 +128,16 @@ function fixture(mode: 'pipeline' | 'scheduled') {
       };
     else if (path.startsWith('basin-catalog/')) {
       const catalogPath = `basin-catalog/${archive.bucketName}`;
-      if (path.endsWith('/maintenance-configs')) {
+      if (path === `${catalogPath}/credential` && method === 'POST') {
+        credential.status = 'present';
+        credential.token = String(body!.token);
+        result = {};
+      } else if (path === `${catalogPath}/maintenance-configs`) {
+        result = {
+          credential_status: credential.status,
+          compaction: { state: 'enabled', target_size_mb: '128' },
+        };
+      } else if (path.endsWith('/maintenance-configs')) {
         if (method === 'POST') {
           result = {
             compaction: body!.compaction,
@@ -298,6 +313,7 @@ function fixture(mode: 'pipeline' | 'scheduled') {
     calls,
     fetcher,
     checkpoints,
+    credential,
     options,
     checkpoint,
     prepareScheduledTable,
@@ -490,7 +506,10 @@ describe('log archive setup contract', () => {
     const checkpoints = structuredClone(f.checkpoints);
     expect(checkpoints['sink:LOG_ARCHIVE_SINK'].configurationDigest).toMatch(/^[a-f0-9]{64}$/u);
     const creates = f.calls.filter((call) => call.method === 'POST').length;
-    await expect(provisionLogArchive(f.options)).resolves.toMatchObject({
+    // A resume that knows the recorded Catalog credential neither re-registers nor re-creates.
+    await expect(
+      provisionLogArchive({ ...f.options, maintenanceCredential: result.maintenance.credential })
+    ).resolves.toMatchObject({
       ...result,
       activation: { ...result.activation, checkedAt: expect.any(String) },
     });
@@ -1471,6 +1490,53 @@ describe('log archive setup contract', () => {
       'snapshot_expiration_not_disabled'
     );
     expect(f.calls.some((call) => call.path.startsWith('pipelines/'))).toBe(false);
+  });
+
+  it('registers the Catalog maintenance credential before the table policy and records its id in the lock', async () => {
+    implemented.push('scheduled');
+    const f = fixture('scheduled');
+    const locked = await provisionLogArchive(f.options);
+    const credentialPost = f.calls.findIndex(
+      (call) =>
+        call.method === 'POST' && call.path === `basin-catalog/${f.archive.bucketName}/credential`
+    );
+    const tablePolicy = f.calls.findIndex(
+      (call) => call.method === 'POST' && call.path.includes('/tables/')
+    );
+    expect(credentialPost).toBeGreaterThanOrEqual(0);
+    expect(credentialPost).toBeLessThan(tablePolicy);
+    expect(f.credential).toEqual({ status: 'present', token: tokenWrite });
+    expect(locked.maintenance.credential).toMatchObject({
+      tokenId: writeTokenId,
+      source: 'catalog_write_token',
+      status: 'present',
+    });
+    expect(JSON.stringify(locked)).not.toContain(tokenWrite);
+  });
+
+  it('does not activate while the table still reports no maintenance credential after registration', async () => {
+    implemented.push('scheduled');
+    const f = fixture('scheduled');
+    f.overrides.set(
+      `basin-catalog/${f.archive.bucketName}/namespaces/${f.archive.namespace}/tables/${f.archive.tableName}/maintenance-configs`,
+      {
+        result: {
+          maintenance_config: {
+            compaction: {
+              state: 'enabled',
+              target_size_mb: '64',
+              next_eligible_at: null,
+              next_eligible_reason: 'no_credential',
+            },
+            snapshot_expiration: { state: 'disabled', next_eligible_at: null },
+          },
+        },
+      }
+    );
+    await expect(provisionLogArchive(f.options)).rejects.toThrow(
+      'log_archive_provider_compaction_credential_missing'
+    );
+    expect(f.credential.status).toBe('present');
   });
 
   it('does not activate when the provider ignores the owned table compaction policy', async () => {

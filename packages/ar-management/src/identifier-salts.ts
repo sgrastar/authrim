@@ -1,12 +1,11 @@
 import type { Context } from 'hono';
 import {
-  createAuditLog,
   getTenantIdFromContext,
   importedIdentifierSaltRef,
   IMPORTED_IDENTIFIER_SALT_PREFIX,
-  type AdminAuthContext,
   type Env,
 } from '@authrim/ar-lib-core';
+import { recordAdminOperationAudit } from './admin-operation-audit';
 
 /**
  * Salts brought from another identity provider (Shibboleth `idp.persistentId.salt`, Keycloak's
@@ -130,19 +129,13 @@ export async function adminIdentifierSaltPutHandler(c: AdminContext): Promise<Re
   }
 
   if (result.outcome !== 'unchanged') {
-    const admin = (c as unknown as { get(key: string): unknown }).get(
-      'adminAuth'
-    ) as AdminAuthContext | null;
-    await createAuditLog(c.env, {
-      tenantId,
-      userId: admin?.userId ?? 'unknown',
+    await recordAdminOperationAudit(c, {
+      tenantId: tenantId,
       action: `identifier_salt.${result.outcome}`,
-      resource: 'identifier_salt',
+      resourceType: 'identifier_salt',
       resourceId: name,
+      metadata: { fingerprint: result.fingerprint, encoding },
       severity: 'warning',
-      ipAddress: c.req.header('CF-Connecting-IP') ?? 'unknown',
-      userAgent: c.req.header('User-Agent') ?? 'unknown',
-      metadata: JSON.stringify({ fingerprint: result.fingerprint, encoding }),
     });
   }
   return c.json({ name, fingerprint: result.fingerprint, outcome: result.outcome });

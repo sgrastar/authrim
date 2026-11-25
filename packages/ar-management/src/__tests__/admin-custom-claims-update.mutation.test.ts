@@ -24,6 +24,9 @@ import {
 } from './helpers/custom-claims-mutation-harness';
 import { must } from './helpers/must';
 
+// Admin operations are recorded through the forwarding shim (see the helper).
+vi.mock('../admin-operation-audit', () => import('./helpers/legacy-admin-audit-shim'));
+
 const FORMAT = 'AR130002';
 
 type Db = ReturnType<typeof createClaimsDb>;

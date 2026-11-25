@@ -28,6 +28,9 @@ import { requireClientManagementPermission } from '../admin-resource-permissions
 import policyRouter from '../routes/policy';
 import { adminClientAdvancedSchema, clientKeySettingsProblem } from '../admin-client-advanced';
 
+// Admin operations are recorded through the forwarding shim (see the helper).
+vi.mock('../admin-operation-audit', () => import('./helpers/legacy-admin-audit-shim'));
+
 const seams = vi.hoisted(() => ({ context: vi.fn(), audit: vi.fn(async () => undefined) }));
 vi.mock('@authrim/ar-lib-core', async (original) => ({
   ...(await original<typeof import('@authrim/ar-lib-core')>()),

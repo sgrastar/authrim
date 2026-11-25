@@ -47,10 +47,14 @@ export function actorName(entry: AdminAuditEntry, t: Translate): string {
 	);
 }
 
-/** A badge for callers that are not people (a machine, an agent); null for an admin user. */
+/**
+ * A badge for callers that are not people (a machine, an agent) or whose kind was not kept (an
+ * operation finished later, recorded by the principal's ID only); null for an admin user.
+ */
 export function actorKindKey(entry: AdminAuditEntry): MessageKey | null {
 	if (entry.actor_type === 'machine') return 'aud.actor.machine';
 	if (entry.actor_type === 'agent') return 'aud.actor.agent';
+	if (entry.actor_type === 'unrecorded') return 'aud.actor.unrecorded';
 	return null;
 }
 

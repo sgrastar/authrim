@@ -46,6 +46,9 @@ import {
   adminIdentifierStoresListHandler,
 } from '../identifier-stores';
 
+// Admin operations are recorded through the forwarding shim (see the helper).
+vi.mock('../admin-operation-audit', () => import('./helpers/legacy-direct-audit-shim'));
+
 /** The table as the migrations make it, in SQLite. */
 const migrations = [
   '017_mapped_identifier_values.sql',

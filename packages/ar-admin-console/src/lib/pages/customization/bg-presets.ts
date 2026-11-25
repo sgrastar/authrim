@@ -15,6 +15,42 @@ export type BgPresetSource = () => Promise<readonly BgPreset[]>;
 
 export const apiBgPresets: BgPresetSource = fetchLoginUiPresets;
 
+/** How long the picker waits for the list before it says so and offers to try again. */
+export const BG_PRESETS_TIMEOUT_MS = 15_000;
+
+/**
+ * What each source last answered, so the picker opens with the list ready (it is asked for as
+ * soon as the Images tab is shown) and every field of a theme shares one request. A list that
+ * failed, timed out or came back empty is not kept: asking again must really ask again.
+ */
+const loaded = new WeakMap<BgPresetSource, Promise<readonly BgPreset[]>>();
+
+export function loadBgPresets(
+	source: BgPresetSource,
+	{ fresh = false, timeoutMs = BG_PRESETS_TIMEOUT_MS } = {}
+): Promise<readonly BgPreset[]> {
+	const kept = loaded.get(source);
+	if (kept && !fresh) return kept;
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const asked = new Promise<readonly BgPreset[]>((resolve, reject) => {
+		timer = setTimeout(() => reject(new Error('bg_presets_timeout')), timeoutMs);
+		source().then(resolve, reject);
+	}).then(
+		(presets) => {
+			clearTimeout(timer);
+			if (!presets.length && loaded.get(source) === asked) loaded.delete(source);
+			return presets;
+		},
+		(error: unknown) => {
+			clearTimeout(timer);
+			if (loaded.get(source) === asked) loaded.delete(source);
+			throw error;
+		}
+	);
+	loaded.set(source, asked);
+	return asked;
+}
+
 /** The categories offered first, in this order; any other category follows. */
 const CATEGORIES = ['nature', 'interiors', 'paper', 'fabric', 'materials'];
 

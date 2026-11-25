@@ -62,6 +62,9 @@ import { processPendingGenericAdminJobs } from '../admin-job-executor';
 import { buildUserImportUploadKey, processPendingUserImportJobs } from '../user-import-jobs';
 import { ensureDatabaseAdapter } from '@authrim/ar-lib-core';
 
+// Admin operations are recorded through the forwarding shim (see the helper).
+vi.mock('../admin-operation-audit', () => import('./helpers/legacy-admin-audit-shim'));
+
 const REPO_ROOT = resolve(__dirname, '../../../..');
 const USER_A = '11111111-1111-4111-8111-111111111111';
 const USER_B = '22222222-2222-4222-8222-222222222222';

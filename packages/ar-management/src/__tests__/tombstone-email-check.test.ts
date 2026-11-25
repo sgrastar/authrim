@@ -20,6 +20,9 @@ import { checkTombstoneEmail } from '../routes/settings/tombstones';
 import { findAdminRouteAccessRule } from '../admin-route-access';
 import { ADMIN_PERMISSIONS } from '@authrim/ar-lib-core';
 
+// Admin operations are recorded through the forwarding shim (see the helper).
+vi.mock('../admin-operation-audit', () => import('./helpers/legacy-admin-audit-shim'));
+
 function context(body: unknown) {
   const store = new Map<string, unknown>([['tenantId', 'acme']]);
   return {

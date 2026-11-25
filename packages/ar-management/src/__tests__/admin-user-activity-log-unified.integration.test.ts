@@ -513,3 +513,111 @@ describe('Account Page canonical operation history', () => {
     expect((await accountHistory('user-1')).operations).toEqual([]);
   });
 });
+
+describe('admin configuration changes in the end-user audit log', () => {
+  async function write(
+    env: Env,
+    entry: {
+      id: string;
+      userId: string;
+      action: string;
+      resource: string;
+      resourceId: string;
+      metadata?: Record<string, unknown>;
+    }
+  ) {
+    const pending: Promise<unknown>[] = [];
+    await createAuditLog(
+      env,
+      {
+        ...entry,
+        tenantId: 'default',
+        ipAddress: '192.0.2.1',
+        userAgent: 'test',
+        severity: 'info',
+        metadata: JSON.stringify(entry.metadata ?? {}),
+      },
+      { waitUntil: (promise) => pending.push(promise) }
+    );
+    await Promise.all(pending);
+  }
+
+  async function rows(env: Env) {
+    // user-1 is also an administrator: an older release wrote their screen change with them as
+    // the subject. user-2 was suspended by an administrator. A rate limit is a security event
+    // under the `security` resource, which admin routes also use.
+    await write(env, {
+      id: 'evt_screen_updated',
+      userId: 'user-1',
+      action: 'screen.updated',
+      resource: 'screen',
+      resourceId: 'screen-1',
+    });
+    await write(env, {
+      id: 'evt_user_suspended',
+      userId: 'user-1',
+      action: 'user.suspend',
+      resource: 'user',
+      resourceId: 'user-2',
+    });
+    await write(env, {
+      id: 'evt_rate_limited',
+      userId: 'system',
+      action: 'security.rate_limit.exceeded',
+      resource: 'security',
+      resourceId: 'event',
+      metadata: { userId: 'user-1', endpoint: '/token' },
+    });
+    // An action name an admin route uses, under a resource no admin route pairs it with.
+    await write(env, {
+      id: 'evt_generic_create',
+      userId: 'user-1',
+      action: 'create',
+      resource: 'account_profile',
+      resourceId: 'profile-1',
+    });
+  }
+
+  it('leaves listed admin operations out of the list and its total, and keeps the rest', async () => {
+    const { env } = await setup();
+    await rows(env);
+    const app = new Hono<{ Bindings: Env }>();
+    app.use('*', async (c, next) => {
+      c.set('tenantId' as never, 'default' as never);
+      await next();
+    });
+    app.get('/audit-log', adminAuditLogListHandler);
+    // One row per page: the cursor walks the visible rows only, and ends after the last one.
+    const seen: string[] = [];
+    let cursor: string | undefined;
+    let pages = 0;
+    for (let page = 0; page < 10; page += 1) {
+      pages += 1;
+      const query = `?limit=1${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
+      const response = await app.request(`/audit-log${query}`, {}, env);
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as {
+        entries: Array<{ id: string }>;
+        pagination: { has_more?: boolean; next_cursor?: string | null };
+      };
+      seen.push(...body.entries.map((entry) => entry.id));
+      if (!body.pagination.has_more) break;
+      cursor = body.pagination.next_cursor ?? undefined;
+    }
+    expect(seen.sort()).toEqual(['evt_generic_create', 'evt_rate_limited', 'evt_user_suspended']);
+    expect(pages).toBe(3);
+  });
+
+  it("keeps an administrator's console changes out of their own activity log", async () => {
+    const { activity, env } = await setup();
+    await rows(env);
+    const listed = await activity('user-1');
+    expect(listed.data.map((entry) => entry.id).sort()).toEqual([
+      'evt_generic_create',
+      'evt_rate_limited',
+    ]);
+    expect((await activity('user-2')).data.map((entry) => entry.id)).toEqual([
+      'evt_user_suspended',
+    ]);
+  });
+});

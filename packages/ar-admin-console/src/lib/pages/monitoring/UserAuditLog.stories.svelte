@@ -61,6 +61,21 @@
 	{/snippet}
 </Story>
 
+<Story
+	name="An administrator's action"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		// An administrator's change to a user is part of that user's history, marked as such
+		// (the administrator is named in the admin audit log, not here).
+		const marks = await canvas.findAllByText(t('uaud.byAdmin'));
+		expect(marks.length).toBeGreaterThan(0);
+	}}
+>
+	{#snippet template()}
+		<UserAuditLog client={createFakeUserAudit({ delay: 0 })} {now} onopenuser={fn()} />
+	{/snippet}
+</Story>
+
 <Story name="Loading">
 	{#snippet template()}
 		<UserAuditLog client={createFakeUserAudit({ hang: true })} {now} />

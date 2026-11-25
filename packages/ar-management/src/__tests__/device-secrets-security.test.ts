@@ -62,6 +62,9 @@ import {
   revokeDeviceSecret,
 } from '../routes/device-secrets';
 
+// Admin operations are recorded through the forwarding shim (see the helper).
+vi.mock('../admin-operation-audit', () => import('./helpers/legacy-admin-audit-shim'));
+
 function secret(overrides: Record<string, unknown> = {}) {
   return {
     id: 'device-a',

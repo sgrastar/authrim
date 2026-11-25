@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   verify: vi.fn(),
   refreshProvider: vi.fn(),
   audit: vi.fn(async () => undefined),
+  systemEvent: vi.fn(async () => undefined),
   bumpCache: vi.fn(async () => undefined),
   listTenants: vi.fn(),
 }));
@@ -23,6 +24,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     resolveAuthCorePersistenceAdapterFromEnv: vi.fn(async () => mocks.core),
     safeFetch: mocks.safeFetch,
     createAuditLog: mocks.audit,
+    logSystemEvent: mocks.systemEvent,
     bumpAuthenticationMethodsCacheRevision: mocks.bumpCache,
     listEnvironmentTenantDefaultStores: mocks.listTenants,
     createLogger: () => ({
@@ -378,6 +380,7 @@ describe('SAML federation metadata polling', () => {
     expect(mocks.core!.execute).not.toHaveBeenCalled();
     expect(mocks.bumpCache).not.toHaveBeenCalled();
     expect(mocks.audit).not.toHaveBeenCalled();
+    expect(mocks.systemEvent).not.toHaveBeenCalled();
   });
 
   it('revalidates the source lease before persisting linked provider changes', async () => {

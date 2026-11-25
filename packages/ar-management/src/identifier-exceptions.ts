@@ -1,9 +1,7 @@
 import {
-  createAuditLog,
   getTenantIdFromContext,
   readImportedIdentifierSalt,
   requireDedicatedAdminDatabaseAdapter,
-  type AdminAuthContext,
   type DatabaseAdapter,
 } from '@authrim/ar-lib-core';
 import {
@@ -18,6 +16,7 @@ import {
   type AdminImportContext as AdminContext,
   type ImportRowError,
 } from './identifier-import';
+import { recordAdminOperationAudit } from './admin-operation-audit';
 
 /**
  * Exceptions to a persistent_identifier step (Shibboleth's exceptionMap): per account and
@@ -226,26 +225,20 @@ export async function adminIdentifierExceptionsImportHandler(c: AdminContext): P
     );
   }
 
-  const admin = (c as unknown as { get(key: string): unknown }).get(
-    'adminAuth'
-  ) as AdminAuthContext | null;
   // Counts only: never an account or a salt. Written before the re-check below, which runs
   // whatever the audit does (a failure is raised after it).
   const auditFailure: { error?: unknown } = {};
-  await createAuditLog(c.env, {
-    tenantId,
-    userId: admin?.userId ?? 'unknown',
+  await recordAdminOperationAudit(c, {
+    tenantId: tenantId,
     action: 'identifier_exceptions.imported',
-    resource: 'identifier_exceptions',
+    resourceType: 'identifier_exceptions',
     resourceId: list,
-    severity: 'warning',
-    ipAddress: c.req.header('CF-Connecting-IP') ?? 'unknown',
-    userAgent: c.req.header('User-Agent') ?? 'unknown',
-    metadata: JSON.stringify({
+    metadata: {
       rows: rows.length,
       salts: rows.filter((row) => row.action === 'salt').length,
       blocks: rows.filter((row) => row.action === 'block').length,
-    }),
+    },
+    severity: 'warning',
   }).catch((error: unknown) => {
     auditFailure.error = error;
   });

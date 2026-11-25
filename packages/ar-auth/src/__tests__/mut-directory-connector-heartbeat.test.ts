@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { checkSystemEventDetails } from '@authrim/ar-lib-core';
 import {
   buildHeartbeatCanonicalRequest,
   directoryConnectorHeartbeatHandler,
@@ -7,7 +8,7 @@ import {
 
 const mocks = vi.hoisted(() => ({
   coreAdapter: {},
-  createAuditLog: vi.fn(),
+  logSystemEvent: vi.fn(),
   recordDirectoryConnectorHeartbeat: vi.fn(),
 }));
 
@@ -16,7 +17,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   return {
     ...actual,
     createAuthContextFromHono: vi.fn(() => ({ coreAdapter: mocks.coreAdapter })),
-    createAuditLog: mocks.createAuditLog,
+    logSystemEvent: mocks.logSystemEvent,
     recordDirectoryConnectorHeartbeat: mocks.recordDirectoryConnectorHeartbeat,
   };
 });
@@ -108,10 +109,9 @@ async function run(ctx: ReturnType<typeof createContext>) {
 }
 
 function lastAudit() {
-  const call = mocks.createAuditLog.mock.calls.at(-1);
+  const call = mocks.logSystemEvent.mock.calls.at(-1);
   if (!call) return undefined;
-  const entry = call[1] as Record<string, unknown>;
-  return { ...entry, metadata: JSON.parse(entry.metadata as string) as Record<string, unknown> };
+  return call[1] as Record<string, unknown> & { details: Record<string, unknown> };
 }
 
 async function signedRun(
@@ -125,7 +125,7 @@ async function signedRun(
 describe('directory connector heartbeat (mutation hardening)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.createAuditLog.mockResolvedValue(undefined);
+    mocks.logSystemEvent.mockResolvedValue(undefined);
     mocks.recordDirectoryConnectorHeartbeat.mockResolvedValue({
       accepted: true,
       status: 'connected',
@@ -145,7 +145,7 @@ describe('directory connector heartbeat (mutation hardening)', () => {
     } as RequestInit);
     const result = await run(createContext({ raw }));
     expect(result).toEqual({ status: 400, body: { error: 'invalid_heartbeat' } });
-    expect(lastAudit()?.metadata).toMatchObject({ reason: 'invalid_payload' });
+    expect(lastAudit()?.details).toMatchObject({ reason: 'invalid_payload' });
   });
 
   it('rejects a literal null JSON body as invalid_payload', async () => {
@@ -165,8 +165,8 @@ describe('directory connector heartbeat (mutation hardening)', () => {
     expect(result).toEqual({ status: 404, body: { error: 'invalid_heartbeat' } });
     expect(lastAudit()).toMatchObject({
       tenantId: 'tenant-a',
-      resourceId: CONNECTOR,
-      metadata: { connector_id: CONNECTOR, reason: 'connector_not_configured' },
+      targetId: CONNECTOR,
+      details: { connector_id: CONNECTOR, reason: 'connector_not_configured' },
     });
   });
 
@@ -192,11 +192,24 @@ describe('directory connector heartbeat (mutation hardening)', () => {
       })
     );
     expect(result).toEqual({ status: 401, body: { error: 'invalid_heartbeat' } });
+    // The caller's address is not kept: the system log has no subject to erase by.
     expect(lastAudit()).toMatchObject({
-      resourceId: INSTANCE,
-      ipAddress: '198.51.100.7',
-      metadata: { reason: 'invalid_signature_context', instance_id: INSTANCE, key_id: 'hb-active' },
+      targetId: INSTANCE,
+      details: { reason: 'invalid_signature_context', instance_id: INSTANCE, key_id: 'hb-active' },
     });
+    expect(JSON.stringify(lastAudit())).not.toContain('198.51.100.7');
+  });
+
+  it('records an IP-shaped or free-text key id as invalid, so the event is still recordable', async () => {
+    for (const keyId of ['192.0.2.1', '2001:db8::1', 'key id']) {
+      const bodyText = JSON.stringify(payload());
+      const headers = await signed(bodyText, { keyId });
+      const result = await run(createContext({ bodyText, headers }));
+      expect(result.status).toBe(401);
+      const details = lastAudit()?.details as Record<string, unknown>;
+      expect(details.key_id).toBe('invalid');
+      expect(() => checkSystemEventDetails(details)).not.toThrow();
+    }
   });
 
   it('audits an unknown key id', async () => {
@@ -204,7 +217,7 @@ describe('directory connector heartbeat (mutation hardening)', () => {
     const headers = await signed(bodyText, { keyId: 'hb-other' });
     const result = await run(createContext({ bodyText, headers }));
     expect(result).toEqual({ status: 401, body: { error: 'invalid_heartbeat' } });
-    expect(lastAudit()?.metadata).toEqual({
+    expect(lastAudit()?.details).toEqual({
       connector_id: CONNECTOR,
       reason: 'unknown_heartbeat_key',
       instance_id: INSTANCE,
@@ -225,7 +238,7 @@ describe('directory connector heartbeat (mutation hardening)', () => {
     const headers = await signed(bodyText, { keyId: 'hb-other', secret: 'old-secret' });
     const result = await run(createContext({ bodyText, headers, connectors: [connector] }));
     expect(result.status).toBe(401);
-    expect(lastAudit()?.metadata).toMatchObject({ reason: 'unknown_heartbeat_key' });
+    expect(lastAudit()?.details).toMatchObject({ reason: 'unknown_heartbeat_key' });
   });
 
   it('audits signature mismatch with instance and key id', async () => {
@@ -234,8 +247,8 @@ describe('directory connector heartbeat (mutation hardening)', () => {
     const result = await run(createContext({ bodyText, headers }));
     expect(result.status).toBe(401);
     expect(lastAudit()).toMatchObject({
-      resourceId: INSTANCE,
-      metadata: { reason: 'signature_mismatch', instance_id: INSTANCE, key_id: 'hb-active' },
+      targetId: INSTANCE,
+      details: { reason: 'signature_mismatch', instance_id: INSTANCE, key_id: 'hb-active' },
     });
   });
 
@@ -247,8 +260,8 @@ describe('directory connector heartbeat (mutation hardening)', () => {
     const result = await signedRun(payload());
     expect(result).toEqual({ status: 403, body: { error: 'invalid_heartbeat' } });
     expect(lastAudit()).toMatchObject({
-      resourceId: INSTANCE,
-      metadata: { reason: 'instance_revoked', instance_id: INSTANCE, key_id: 'hb-active' },
+      targetId: INSTANCE,
+      details: { reason: 'instance_revoked', instance_id: INSTANCE, key_id: 'hb-active' },
     });
   });
 

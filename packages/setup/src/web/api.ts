@@ -9,6 +9,7 @@ import {
   waitForLogArchiveReadiness,
   prepareLogArchiveReadinessAttempt,
 } from '../core/log-archive-readiness.js';
+import { repairLogArchiveCatalogCredential } from '../core/log-archive-catalog-credential.js';
 import {
   assertLogArchiveImplemented,
   createLogArchiveConfig,
@@ -6670,6 +6671,13 @@ export function createApiRoutes(): Hono {
           const signing = archiveLock?.controlKeyState?.smokeRpc;
           if (!archiveConfig || !archiveLock || !owned || !signing)
             throw new Error('log_archive_readiness_identity_required');
+          owned = await repairLogArchiveCatalogCredential({
+            baseDir: rootDir,
+            environment: env,
+            keysDir,
+            owned,
+            onProgress: addProgress,
+          });
           const attempt = prepareLogArchiveReadinessAttempt(
             archiveConfig,
             owned,

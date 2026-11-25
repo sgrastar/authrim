@@ -30,6 +30,7 @@ export const enAdminAudit: Record<keyof typeof jaAdminAudit, string> = {
 	'aud.moreFailed': 'The next entries could not be loaded. Please try again.',
 	'aud.actor.machine': 'Machine',
 	'aud.actor.agent': 'Agent',
+	'aud.actor.unrecorded': 'Kind not recorded',
 	'aud.actor.unknown': 'Unknown',
 	'aud.stepUp.badge': 'Step-up',
 	'aud.stepUp.summary': '{level}: {operation}',

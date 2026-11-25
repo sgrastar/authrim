@@ -126,6 +126,9 @@ import {
 } from '../admin-tenants';
 import { activeTenantDeleteJobGuard } from '../tenant-deletion-job-predicate';
 
+// Admin operations are recorded through the forwarding shim (see the helper).
+vi.mock('../admin-operation-audit', () => import('./helpers/legacy-admin-audit-shim'));
+
 function openDatabase(lifecycle = 'active'): SQLiteDatabase {
   const db = new DatabaseSync(':memory:');
   db.exec(`

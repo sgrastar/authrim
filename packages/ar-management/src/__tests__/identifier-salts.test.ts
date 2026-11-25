@@ -13,6 +13,9 @@ import {
   adminIdentifierSaltsListHandler,
 } from '../identifier-salts';
 
+// Admin operations are recorded through the forwarding shim (see the helper).
+vi.mock('../admin-operation-audit', () => import('./helpers/legacy-direct-audit-shim'));
+
 /** A key manager that keeps salts as KeyManager.importSecretRpc does. */
 function fakeKeyManager() {
   const kept = new Map<string, string>();

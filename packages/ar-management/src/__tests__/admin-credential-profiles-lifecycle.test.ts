@@ -25,6 +25,9 @@ import {
   adminCredentialProfileVersionCreateHandler,
 } from '../admin-credential-profiles';
 
+// Admin operations are recorded through the forwarding shim (see the helper).
+vi.mock('../admin-operation-audit', () => import('./helpers/legacy-admin-audit-shim'));
+
 const profile = {
   id: 'profile-1',
   tenant_id: 'tenant-1',

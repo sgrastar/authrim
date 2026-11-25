@@ -295,6 +295,7 @@ export const jaCustomization = {
 	'th.bg.none':
 		'プリセット画像はまだありません。セットアップツールでインストールすると、ここに並びます。',
 	'th.bg.loadFailed': '画像を読み込めませんでした。もう一度お試しください。',
+	'th.bg.retry': 'もう一度読み込む',
 	'th.bg.cat.paper': '和紙',
 	'th.bg.cat.fabric': '布地',
 	'th.bg.cat.materials': '素材',

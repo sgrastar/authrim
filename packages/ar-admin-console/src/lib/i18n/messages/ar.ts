@@ -18,6 +18,7 @@ import { arStatements } from './statements/ar';
 import { arStepUp } from './step-up/ar';
 import { arAdminAudit } from './admin-audit/ar';
 import { arUserAudit } from './user-audit/ar';
+import { arSystemLog } from './system-log/ar';
 import { arTeam } from './team/ar';
 import { arIpAllowlist } from './ip-allowlist/ar';
 import { arAccountPages } from './account-pages/ar';
@@ -51,6 +52,7 @@ export const ar = {
 	...arStepUp,
 	...arAdminAudit,
 	...arUserAudit,
+	...arSystemLog,
 	...arTeam,
 	...arIpAllowlist,
 	...arAccountPages,
@@ -134,7 +136,6 @@ export const ar = {
 	'nav.plat.backup': 'النسخ الاحتياطي / التعافي',
 	'nav.plat.jobs': 'المهام',
 	'nav.plat.approvals': 'الموافقات',
-	'nav.users.resolution': 'مركز المعالجة',
 	'nav.access.roleRules': 'قواعد الإسناد',
 	'nav.apps.machine': 'وصول الأنظمة',
 	'nav.auth.tokenRefresh': 'تجديد الرموز الخارجية',

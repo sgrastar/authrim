@@ -2082,6 +2082,20 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     'operational logs'
   ),
   ...byMethod(
+    '/api/admin/system-logs',
+    ADMIN_PERMISSIONS.SYSTEM_LOGS_READ,
+    ADMIN_PERMISSIONS.SYSTEM_LOGS_READ,
+    ADMIN_PERMISSIONS.SYSTEM_LOGS_READ,
+    'system logs'
+  ),
+  ...byMethod(
+    '/api/admin/system-logs/*',
+    ADMIN_PERMISSIONS.SYSTEM_LOGS_READ,
+    ADMIN_PERMISSIONS.SYSTEM_LOGS_READ,
+    ADMIN_PERMISSIONS.SYSTEM_LOGS_READ,
+    'system logs'
+  ),
+  ...byMethod(
     '/api/admin/storage-destinations',
     ADMIN_PERMISSIONS.STORAGE_DESTINATIONS_LIST,
     ADMIN_PERMISSIONS.STORAGE_DESTINATIONS_CREATE,

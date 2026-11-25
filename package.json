@@ -120,6 +120,7 @@
     "test:primary-key-integrity": "tsx --test scripts/primary-key-integrity/*.test.*",
     "primary-key:typecheck": "tsc --noEmit -p scripts/primary-key-integrity/tsconfig.json",
     "primary-key:lint": "eslint scripts/primary-key-integrity/*.ts scripts/primary-key-integrity/*.mjs",
+    "audit:core-writes": "tsx scripts/admin-audit/inventory.ts",
     "backup:inventory": "tsx scripts/tenant-backup/inventory.ts",
     "backup:inventory:writers": "tsx scripts/tenant-backup/writer-inventory-cli.ts",
     "backup:test:d1": "tsx scripts/tenant-backup/d1-snapshot-spike.ts",

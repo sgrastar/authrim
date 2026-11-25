@@ -63,6 +63,9 @@ import {
   updateTenantVanityDomainHandler,
 } from '../../admin-tenant-vanity-domains';
 
+// Admin operations are recorded through the forwarding shim (see the helper).
+vi.mock('../../admin-operation-audit', () => import('../helpers/legacy-admin-audit-shim'));
+
 const INVALID_VALUE_BODY = {
   error: 'invalid_request',
   error_description: 'The provided value is invalid.',

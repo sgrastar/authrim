@@ -132,7 +132,12 @@ const SCENARIOS: Scenario[] = [
 	},
 	{ action: 'token.access.revoked', result: 'success', session: true, client: true },
 	{ action: 'user.password_changed', result: 'success', severity: 'info' },
-	{ action: 'user.updated', result: 'success', metadata: { fields: ['display_name'] } },
+	// An administrator's change to the user, marked as such by the server.
+	{
+		action: 'user.updated',
+		result: 'success',
+		metadata: { fields: ['display_name'], actor_type: 'admin' }
+	},
 	{ action: 'consent.revoked', result: 'success', client: true },
 	{
 		action: 'security.rate_limit.exceeded',

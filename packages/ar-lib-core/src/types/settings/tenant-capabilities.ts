@@ -64,7 +64,7 @@ export const TENANT_CAPABILITIES_SETTINGS_META: Record<
     envKey: 'TENANT_CAPABILITIES_WEBHOOKS',
     label: 'Tenants may use webhooks',
     description:
-      'Off: tenants cannot manage webhooks through the Admin API, and no webhook is delivered for a tenant. Events that occur while it is off are discarded and not delivered later. Due account webhook events waiting in the queue are discarded as they are processed and recorded in the audit log (webhook.outbox.dropped); events still waiting at the moment it is turned back on are delivered. Platform administrators are exempt at the Admin API.',
+      'Off: tenants cannot manage webhooks through the Admin API, and no webhook is delivered for a tenant. Events that occur while it is off are discarded and not delivered later. Due account webhook events waiting in the queue are discarded as they are processed and recorded in the system log (webhook.outbox.dropped); events still waiting at the moment it is turned back on are delivered. Platform administrators are exempt at the Admin API.',
     scopes: ['platform'],
     visibility: 'admin',
   },

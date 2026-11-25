@@ -1922,7 +1922,10 @@ paths:
         `admin:users:read`; the session cookie works as well as a bearer token. Retained
         whole-row archives are included in supported log queries. A bounded query that cannot read
         its required rows returns log_query_incomplete instead of partial statistics or an empty
-        success.
+        success. Admin configuration changes (screens, flows, clients, roles, tenants, settings
+        and the like) that older releases recorded in the end-user audit log are left out; they
+        belong in the admin audit log (`/api/admin/admin-audit-log`). Admin actions on this
+        user, such as a suspension, are kept.
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -2548,6 +2551,13 @@ paths:
 
 
         Requires `admin:audit:read`. There is no actor, severity, result or free-text filter.
+
+
+        This is the end-user audit log. Admin configuration changes (screens, flows, clients,
+        roles, tenants, settings and the like) that older releases recorded here are left out
+        of the list and its pages; they belong in the admin audit log
+        (`/api/admin/admin-audit-log`). Admin actions on an end user, such as a suspension, are
+        kept. Compliance reports still include the older rows.
 
 
         Cost: the whole requested period is read and decrypted, and the filters (`user_id`,
@@ -9461,8 +9471,9 @@ paths:
         generation is audited: generating until then): access_review (an access review's items,
         decisions and what applying them did; CSV), mfa_coverage (each admin and active user and
         their factors; CSV), compliance_status (the status API's answer at this moment; JSON),
-        audit_log (audit log entries of a period of up to 366 days from the queryable audit store;
-        CSV). Rows identify people by their IDs, never adding names or email addresses; the reasons
+        audit_log (audit log entries of a period of up to 366 days from the queryable audit store,
+        end-user and admin audit logs together, the `source` column telling them apart; CSV).
+        Rows identify people by their IDs, never adding names or email addresses; the reasons
         reviewers wrote are included as written. A report of more than 10,000 rows is not cut short:
         it is recorded as failed (too_large) and answered 422. Generating is audited.
       requestBody:
@@ -18247,6 +18258,141 @@ paths:
           description:
             Optional event time in Unix milliseconds to narrow the lookup. Without this hint the
             current Iceberg snapshot is also searched. Additional detail permissions still apply.
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 9007199254740991
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  /api/admin/system-logs:
+    get:
+      tags:
+        - Admin Miscellaneous
+      operationId: getApiAdminSystemLogs
+      summary: List system log entries.
+      description:
+        Lists the system log of the current tenant, newest first. A system log entry is something
+        the platform itself did (a cron, an outbox, a delivery), with no administrator and no end
+        user behind it; it is stored apart from the end-user event log and the admin audit log.
+        Optional filters match source, event type, severity, result, target and request id, and a
+        period (start_date / end_date, ISO 8601; a day for end_date includes that whole day).
+        Pages by cursor; limit is clamped to 1..100. Retained whole-row archives are included in
+        supported log queries. A bounded query that cannot read its required rows returns
+        log_query_incomplete instead of partial results or an empty success.
+      parameters:
+        - name: source
+          in: query
+          description: Where it happened (`authrim/<surface>`).
+          schema:
+            type: string
+        - name: event_type
+          in: query
+          description: The event name (`webhook.outbox.dropped`).
+          schema:
+            type: string
+        - name: severity
+          in: query
+          schema:
+            type: string
+            enum: [debug, info, warn, error, critical]
+        - name: result
+          in: query
+          schema:
+            type: string
+            enum: [success, failure, partial]
+        - name: target_type
+          in: query
+          schema:
+            type: string
+        - name: target_id
+          in: query
+          schema:
+            type: string
+        - name: request_id
+          in: query
+          schema:
+            type: string
+        - name: start_date
+          in: query
+          description: Start of the period (ISO 8601 instant or day), inclusive.
+          schema:
+            type: string
+        - name: end_date
+          in: query
+          description: End of the period (ISO 8601 instant, or a day meaning its end), inclusive.
+          schema:
+            type: string
+        - name: limit
+          in: query
+          description: Maximum number of entries to return.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+        - name: cursor
+          in: query
+          required: false
+          description:
+            Cursor returned by a previous response for this tenant and these filters. Start with
+            page 1; log lists use cursors instead of page numbers.
+          schema:
+            type: string
+            maxLength: 4096
+      responses:
+        '200':
+          $ref: '#/components/responses/SystemLogList'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/LogQueryIncomplete'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  /api/admin/system-logs/{id}:
+    get:
+      tags:
+        - Admin Miscellaneous
+      operationId: getApiAdminSystemLogsById
+      summary: Get a system log entry.
+      description: Returns one system log entry with its details. Entries carry no personal data,
+        so the list permission covers the entry in full. Retained whole-row archives are included
+        in supported log queries. A bounded query that cannot read its required rows returns
+        log_query_incomplete instead of partial results or an empty success.
+      responses:
+        '200':
+          $ref: '#/components/responses/SystemLogEntry'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/LogQueryIncomplete'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: event_at
+          in: query
+          required: false
+          description:
+            Optional event time in Unix milliseconds to narrow the lookup. Without this hint the
+            current Iceberg snapshot is also searched.
           schema:
             type: integer
             minimum: 0
@@ -47917,6 +48063,32 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/OperationalLog'
+    SystemLogList:
+      headers:
+        X-Authrim-Log-Consistency:
+          $ref: '#/components/headers/LogConsistency'
+        X-Authrim-Log-Pending-Deliveries:
+          $ref: '#/components/headers/LogPendingDeliveries'
+        X-Authrim-Log-Complete:
+          $ref: '#/components/headers/LogComplete'
+      description: System log list response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/SystemLogListResponse'
+    SystemLogEntry:
+      headers:
+        X-Authrim-Log-Consistency:
+          $ref: '#/components/headers/LogConsistency'
+        X-Authrim-Log-Pending-Deliveries:
+          $ref: '#/components/headers/LogPendingDeliveries'
+        X-Authrim-Log-Complete:
+          $ref: '#/components/headers/LogComplete'
+      description: System log entry response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/SystemLogEntry'
     OrgDomainMappingList:
       description: Organization domain mapping list response.
       content:
@@ -60451,6 +60623,105 @@ components:
         updated_at:
           type: integer
           format: int64
+    SystemLogEntry:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - tenant_id
+        - source
+        - event_type
+        - event_category
+        - result
+        - severity
+        - error_code
+        - target_type
+        - target_id
+        - request_id
+        - details
+        - created_at
+        - retention_until
+      properties:
+        id:
+          type: string
+        tenant_id:
+          type: string
+        source:
+          type: string
+          description: Where it happened, `authrim/<surface>` (`authrim/account_webhook_outbox`).
+        event_type:
+          type: string
+          description: The event name, as the end-user log named it (`webhook.outbox.dropped`).
+        event_category:
+          type: string
+          enum: [auth, token, consent, user, client, admin, security, system, audit]
+        result:
+          type: string
+          enum: [success, failure, partial]
+        severity:
+          type: string
+          enum: [debug, info, warn, error, critical]
+        error_code:
+          type:
+            - string
+            - 'null'
+        target_type:
+          type:
+            - string
+            - 'null'
+          description: What it was about, when there is one (`account_webhook_outbox`). Never a user.
+        target_id:
+          type:
+            - string
+            - 'null'
+        request_id:
+          type:
+            - string
+            - 'null'
+        details:
+          type: object
+          additionalProperties: true
+          description: Counts, times, codes and IDs of the event. Never personal data.
+        created_at:
+          type: integer
+          format: int64
+          description: Unix milliseconds.
+        retention_until:
+          type:
+            - integer
+            - 'null'
+          format: int64
+          description: Unix milliseconds; null when kept without limit.
+        coverage:
+          $ref: '#/components/schemas/LogReadCoverage'
+    SystemLogListResponse:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required:
+            - items
+            - total
+          properties:
+            coverage:
+              $ref: '#/components/schemas/LogReadCoverage'
+            items: &systemLogItems
+              type: array
+              items:
+                $ref: '#/components/schemas/SystemLogEntry'
+            total:
+              type: integer
+              minimum: 0
+        - type: object
+          additionalProperties: false
+          required:
+            - items
+            - pagination
+          properties:
+            coverage:
+              $ref: '#/components/schemas/LogReadCoverage'
+            items: *systemLogItems
+            pagination:
+              $ref: '#/components/schemas/LogCursorPagination'
     OrgDomainMappingListResponse:
       type: object
       additionalProperties: false
@@ -63456,6 +63727,8 @@ components:
             - pii_retention_days
             - total_entries
             - entries_last_30_days
+            - admin_total_entries
+            - admin_entries_last_30_days
             - hot_query_status
           properties:
             enabled:
@@ -63466,9 +63739,21 @@ components:
               type: [integer, 'null']
             total_entries:
               type: [integer, 'null']
-              description: Null when the audit log cannot be queried here (an archive-only profile).
+              description:
+                Entries of the end-user audit log. Null when the audit log cannot be queried here
+                (an archive-only profile).
             entries_last_30_days:
               type: [integer, 'null']
+            admin_total_entries:
+              type: [integer, 'null']
+              description:
+                Records of the admin audit log, where admin operations are recorded. Null when
+                the end-user audit log cannot be queried here.
+            admin_entries_last_30_days:
+              type: [integer, 'null']
+              description:
+                Admin audit records of the last 30 days. The audit_logging check counts these
+                with the end-user entries.
             hot_query_status:
               type: string
               enum: [supported, not_supported, pending_runtime_support]

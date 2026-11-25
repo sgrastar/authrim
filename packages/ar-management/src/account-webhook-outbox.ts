@@ -5,8 +5,9 @@ import {
   resolveTenantDatabaseSourceFromRegistry,
   resolveTenantAssignedDatabaseSourcesFromRegistry,
   getSessionRevocationStore,
-  createAuditLog,
+  logSystemEvent,
   getTenantCapabilityState,
+  type SystemEventInput,
   type DatabaseAdapter,
   type Env,
   type EventPublishOptions,
@@ -39,36 +40,41 @@ interface DroppedRow {
   occurred_at: number | string;
 }
 
-/** What is recorded when the outbox drops events because webhooks are off: counts and times only. */
-export interface DroppedOutboxAuditEntry {
-  tenantId: string;
-  userId: string;
+/**
+ * What is recorded when the outbox drops events because webhooks are off: counts and times only.
+ * A system event (the platform's own doing, no user behind it): it goes to the system log, not to
+ * the end-user event log.
+ */
+export interface DroppedOutboxSystemEvent extends SystemEventInput {
   action: 'webhook.outbox.dropped';
-  resource: string;
-  resourceId: string;
-  ipAddress: string;
-  userAgent: string;
-  metadata: string;
   severity: 'warning';
+  details: {
+    capability: 'webhooks';
+    reason: 'capability_disabled';
+    dropped: number;
+    event_types: Record<string, number>;
+    oldest_occurred_at: number;
+    newest_occurred_at: number;
+    recorded_at: number;
+  };
 }
 
-function droppedAuditEntry(
+function droppedSystemEvent(
   tenantId: string,
   rows: DroppedRow[],
   nowMs: number
-): DroppedOutboxAuditEntry {
+): DroppedOutboxSystemEvent {
   const eventTypes: Record<string, number> = {};
   const times = rows.map((row) => Number(row.occurred_at));
   for (const row of rows) eventTypes[row.event_type] = (eventTypes[row.event_type] ?? 0) + 1;
   return {
     tenantId,
-    userId: 'system',
+    source: 'authrim/account_webhook_outbox',
     action: 'webhook.outbox.dropped',
-    resource: 'account_webhook_outbox',
-    resourceId: tenantId,
-    ipAddress: 'unknown',
-    userAgent: 'account-webhook-outbox',
-    metadata: JSON.stringify({
+    targetType: 'account_webhook_outbox',
+    targetId: tenantId,
+    severity: 'warning',
+    details: {
       capability: 'webhooks',
       reason: 'capability_disabled',
       dropped: rows.length,
@@ -76,8 +82,7 @@ function droppedAuditEntry(
       oldest_occurred_at: Math.min(...times),
       newest_occurred_at: Math.max(...times),
       recorded_at: nowMs,
-    }),
-    severity: 'warning',
+    },
   };
 }
 
@@ -93,8 +98,8 @@ export async function processAccountWebhookOutbox(
     snapshotAdapters?: (tenantId: string) => Promise<DatabaseAdapter[]>;
     publisher?: (tenantId: string) => Promise<Publish>;
     deletionReady?: (tenantId: string, userId: string) => Promise<boolean>;
-    /** Records events dropped while webhooks are off (default: the audit log). */
-    auditDropped?: (entry: DroppedOutboxAuditEntry) => Promise<void>;
+    /** Records events dropped while webhooks are off (default: the system log). */
+    auditDropped?: (entry: DroppedOutboxSystemEvent) => Promise<void>;
   } = {}
 ): Promise<{ delivered: number; deferred: number; dropped?: number }> {
   const now = options.now ?? Date.now;
@@ -142,7 +147,7 @@ export async function processAccountWebhookOutbox(
   let delivered = 0;
   let deferred = 0;
   if (webhooksOff) {
-    const audit = options.auditDropped ?? ((entry) => createAuditLog(env, entry));
+    const audit = options.auditDropped ?? ((entry) => logSystemEvent(env, entry));
     for (const target of targets) {
       // 1. Find what is due, on every shard of the tenant.
       const due: Array<{ adapter: DatabaseAdapter; rows: DroppedRow[] }> = [];
@@ -171,7 +176,7 @@ export async function processAccountWebhookOutbox(
         //    duplicate record, never a missing one. The stores are separate databases, so one
         //    transaction across the audit log and the outbox is not available.)
         try {
-          await audit(droppedAuditEntry(target.tenantId, rows, now()));
+          await audit(droppedSystemEvent(target.tenantId, rows, now()));
         } catch {
           log.warn('Account webhook outbox rows kept: the drop could not be recorded', {
             tenantId: target.tenantId,

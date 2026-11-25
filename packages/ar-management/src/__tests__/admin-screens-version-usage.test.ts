@@ -40,6 +40,9 @@ import {
 } from '@authrim/ar-lib-core/types/screens';
 import { flowUsages, screenRefsInFlowDocument } from '../admin-screen-usage';
 
+// Admin operations are recorded through the forwarding shim (see the helper).
+vi.mock('../admin-operation-audit', () => import('./helpers/legacy-admin-audit-shim'));
+
 const MIGRATION = new URL(
   '../../../../migrations/core/d1/004_screens_version.sql',
   import.meta.url

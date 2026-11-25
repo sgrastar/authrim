@@ -7,7 +7,6 @@ import {
   resolveGuestSettings,
   resolveTenantAssignedDatabaseSourcesFromRegistry,
   resolveTenantDatabaseSourceFromRegistry,
-  createAuditLog,
   type Env,
   type GuestLifecycleRow,
   type AdminAuthContext,
@@ -16,6 +15,7 @@ import {
 import { GUEST_READ_CURSOR_TTL_SECONDS } from './guest-read-pagination';
 
 import { canAccessTenant, hasTenantSettingsPermission } from './routes/settings-v2';
+import { recordAdminOperationAudit } from './admin-operation-audit';
 
 function authorized(c: C, action: 'view' | 'edit'): boolean {
   const admin = (c as unknown as { get(key: string): unknown }).get('adminAuth') as
@@ -287,24 +287,18 @@ export async function applyGuestRetentionHandler(c: C): Promise<Response> {
         applied += 1;
       else skipped += 1;
     }
-    const admin = (c as unknown as { get(key: string): unknown }).get(
-      'adminAuth'
-    ) as AdminAuthContext | null;
-    await createAuditLog(c.env, {
-      tenantId,
-      userId: admin?.userId ?? 'unknown',
+    await recordAdminOperationAudit(c, {
+      tenantId: tenantId,
       action: 'guest.retention.applied',
-      resource: 'account_lifecycle',
+      resourceType: 'account_lifecycle',
       resourceId: preview.id,
-      severity: 'info',
-      ipAddress: c.req.header('CF-Connecting-IP') ?? 'unknown',
-      userAgent: c.req.header('User-Agent') ?? 'unknown',
-      metadata: JSON.stringify({
+      metadata: {
         policyVersion: preview.policyVersion,
         applied,
         unchanged,
         skipped,
-      }),
+      },
+      severity: 'info',
     });
     return c.json({ applied, unchanged, skipped, total: preview.entries.length });
   } catch {

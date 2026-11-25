@@ -29,6 +29,7 @@ export const jaAdminAudit = {
 	'aud.moreFailed': '続きを読み込めませんでした。もう一度お試しください。',
 	'aud.actor.machine': 'マシン',
 	'aud.actor.agent': 'エージェント',
+	'aud.actor.unrecorded': '種別不明',
 	'aud.actor.unknown': '不明',
 	'aud.stepUp.badge': 'ステップアップ',
 	'aud.stepUp.summary': '{level}：{operation}',

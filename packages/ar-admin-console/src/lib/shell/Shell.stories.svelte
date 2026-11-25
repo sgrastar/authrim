@@ -109,6 +109,13 @@
 		const list = canvasElement.querySelector<HTMLUListElement>('.options');
 		if (!list) throw new Error('Scope options list is missing');
 		await expect(list.scrollHeight).toBeGreaterThan(list.clientHeight);
+		// Each tenant says what state it is in; one being deleted is listed but cannot be chosen.
+		await expect(within(list).getAllByText('Active').length).toBeGreaterThan(2);
+		await expect(within(list).getByText('Suspended')).toBeInTheDocument();
+		const deleting = within(list).getByRole('button', { name: /Demo tenant 01/ });
+		await expect(deleting).toBeDisabled();
+		await expect(within(deleting).getByText('Deleting')).toBeInTheDocument();
+		await expect(within(list).getByRole('button', { name: /Demo tenant 02/ })).toBeDisabled();
 		await expect(
 			canvas.queryByText(/Changes stay inside this tenant|このテナントの中だけ/)
 		).toBeNull();

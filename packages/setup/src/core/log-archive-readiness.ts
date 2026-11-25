@@ -101,6 +101,10 @@ async function runLogArchiveReadiness(
     attempt: { ...input.attempt },
   };
   assertLogArchiveLockMatches(input.archive, input.owned);
+  // Readiness means the archive is operable, and an archive whose provider compaction can never
+  // run is not: refuse until the Catalog maintenance credential has been registered and recorded.
+  if (input.owned.maintenance.credential?.status !== 'present')
+    throw new Error('log_archive_catalog_maintenance_credential_absent');
   const base = new URL(input.apiBaseUrl);
   if (base.protocol !== 'https:' || base.username || base.password || base.search || base.hash)
     throw new Error('log_archive_readiness_url_invalid');

@@ -63,11 +63,6 @@ export const TENANT_AREAS: readonly NavArea[] = [
 				id: 'support',
 				label: 'nav.users.support',
 				platform: 'lookup'
-			},
-			{
-				id: 'resolution',
-				label: 'nav.users.resolution',
-				platform: 'lookup'
 			}
 		]
 	},
@@ -267,7 +262,8 @@ export const TENANT_AREAS: readonly NavArea[] = [
 			},
 			{
 				id: 'system',
-				label: 'nav.mon.system'
+				label: 'nav.mon.system',
+				requires: { permission: 'admin:system_logs:read' }
 			},
 			{
 				id: 'diagnostics',

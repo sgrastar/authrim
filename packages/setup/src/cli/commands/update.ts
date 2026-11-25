@@ -3,6 +3,7 @@ import {
   startLogArchiveReadiness,
   waitForLogArchiveReadiness,
 } from '../../core/log-archive-readiness.js';
+import { repairLogArchiveCatalogCredential } from '../../core/log-archive-catalog-credential.js';
 /**
  * Update Command
  *
@@ -1700,11 +1701,20 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
     } | null = null;
     const logArchiveReadinessInput = async () => {
       const archive = lockedConfig.logging?.archive,
-        owned = workingLock.logArchive,
         signing = workingLock.controlKeyState?.smokeRpc;
+      let owned = workingLock.logArchive;
       const keys = findKeysDirectory({ env, sourceDir: baseDir, keysBaseDir: process.cwd() });
       if (!archive || !owned || !signing || !keys)
         throw new Error('log_archive_readiness_identity_required');
+      // Archives set up before the Catalog maintenance credential existed get it here, before
+      // readiness (which refuses a lock without it) is attempted.
+      owned = await repairLogArchiveCatalogCredential({
+        baseDir,
+        environment: env,
+        keysDir: keys.path,
+        owned,
+        onProgress: (message: string) => console.log(chalk.gray(message)),
+      });
       const attempt = prepareLogArchiveReadinessAttempt(archive, owned, workingLock.workers);
       const pending = {
         ...owned,

@@ -1,8 +1,6 @@
 import {
-  createAuditLog,
   getTenantIdFromContext,
   requireDedicatedAdminDatabaseAdapter,
-  type AdminAuthContext,
   type DatabaseAdapter,
 } from '@authrim/ar-lib-core';
 import {
@@ -26,6 +24,7 @@ import {
   type AdminImportContext as AdminContext,
   type ImportRowError,
 } from './identifier-import';
+import { recordAdminOperationAudit } from './admin-operation-audit';
 
 /**
  * Identifier sources: values an administrator imports for accounts (an employee number, a
@@ -369,20 +368,14 @@ export async function adminIdentifierSourceImportHandler(c: AdminContext): Promi
         503
       );
     }
-    const admin = (c as unknown as { get(key: string): unknown }).get(
-      'adminAuth'
-    ) as AdminAuthContext | null;
     // Counts only: never an account's value.
-    await createAuditLog(c.env, {
-      tenantId,
-      userId: admin?.userId ?? 'unknown',
+    await recordAdminOperationAudit(c, {
+      tenantId: tenantId,
       action: 'identifier_source.imported',
-      resource: 'identifier_source',
+      resourceType: 'identifier_source',
       resourceId: source,
+      metadata: { created, replaced, unchanged },
       severity: 'warning',
-      ipAddress: c.req.header('CF-Connecting-IP') ?? 'unknown',
-      userAgent: c.req.header('User-Agent') ?? 'unknown',
-      metadata: JSON.stringify({ created, replaced, unchanged }),
     });
     if (gone.size > 0) {
       return c.json(

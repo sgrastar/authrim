@@ -14,6 +14,7 @@ export const jaUserAudit = {
 	'uaud.col.ip': 'IP アドレス',
 	'uaud.result.success': '成功',
 	'uaud.result.failure': '失敗',
+	'uaud.byAdmin': '管理者による操作',
 	'uaud.list.title': 'イベントの記録',
 	'uaud.list.info': '新しい順に表示します。表示を絞り込むには上の条件を使います。',
 	'uaud.empty': 'この期間のイベントはありません',

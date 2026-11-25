@@ -126,6 +126,16 @@ function buildAuditActorView(
     };
   }
 
+  // A principal recorded by ID only (a deferred operation): its kind was not kept.
+  if (metadataActorType === 'unrecorded') {
+    const actorId = getMetadataString(metadata, 'admin_actor_id');
+    return {
+      actor_type: 'unrecorded',
+      actor_id: actorId,
+      actor_display_name: actorId || 'Unknown principal',
+    };
+  }
+
   if (metadataActorType === 'system' || log.admin_user_id === 'system') {
     return {
       actor_type: 'system',

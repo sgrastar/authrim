@@ -61,6 +61,7 @@ import {
   requireGuestDeletionAuditTask,
   writeGuestDeletionAudit,
 } from '../guest-deletion-audit-outbox';
+import { recordAdminOperationAudit } from '../admin-operation-audit';
 
 function parseIntegerQuery(
   value: string | undefined,
@@ -918,17 +919,17 @@ export async function cleanupExpiredGuestUsers(c: Context<{ Bindings: Env }>): P
         }
         throw new Error('guest_cleanup_deactivation_unknown');
       }
-      await createAuditLogFromContext(
-        c,
-        'guest.resume_credentials.deactivated',
-        'user',
-        owner.userId,
-        {
+      await recordAdminOperationAudit(c, {
+        action: 'guest.resume_credentials.deactivated',
+        resourceType: 'user',
+        resourceId: owner.userId,
+        metadata: {
           reason: 'manual_cleanup',
           source: 'guest_cleanup_api',
           expired_credential_count: ids.length,
-        }
-      );
+        },
+        endUser: { userId: owner.userId },
+      });
       deactivated += ids.length;
     }
     const remaining = await guestMapStores(

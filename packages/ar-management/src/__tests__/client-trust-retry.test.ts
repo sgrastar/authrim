@@ -39,6 +39,9 @@ vi.mock('../admin-shared', async (original) => ({
 import { adminClientRegenerateSecretHandler, adminClientUpdateHandler } from '../admin-clients';
 import { adminIdentityMappingHistoryRestoreHandler } from '../identity-mapping-history';
 
+// Admin operations are recorded through the forwarding shim (see the helper).
+vi.mock('../admin-operation-audit', () => import('./helpers/legacy-admin-audit-shim'));
+
 let store: ReturnType<typeof openCoreStore>;
 let repository: ClientRepository;
 let app: Hono<{ Bindings: Env; Variables: { tenantId: string; adminAuth: AdminAuthContext } }>;

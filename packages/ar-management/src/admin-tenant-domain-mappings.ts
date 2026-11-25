@@ -20,7 +20,6 @@ import type { AdminAuthContext, Env } from '@authrim/ar-lib-core';
 import {
   createErrorResponse,
   AR_ERROR_CODES,
-  createAuditLogFromContext,
   resolveOptionalCoreAdapterFromHono,
   getLogger,
   generateEmailDomainHashWithVersion,
@@ -36,6 +35,7 @@ import {
   isAllScopeNonPlatformMachine,
 } from '@authrim/ar-lib-core';
 import { z } from './zod';
+import { recordAdminOperationAudit } from './admin-operation-audit';
 
 // =============================================================================
 // Constants
@@ -346,16 +346,15 @@ export async function createTenantDomainMappingHandler(c: Context<{ Bindings: En
       [id]
     );
 
-    await createAuditLogFromContext(
-      c,
-      'tenant_domain_mapping.created',
-      'tenant_domain_mapping',
-      id,
-      {
+    await recordAdminOperationAudit(c, {
+      action: 'tenant_domain_mapping.created',
+      resourceType: 'tenant_domain_mapping',
+      resourceId: id,
+      metadata: {
         tenant_id,
         priority,
-      }
-    );
+      },
+    });
 
     return c.json(formatMapping(created!), 201);
   } catch (error) {
@@ -482,15 +481,14 @@ export async function updateTenantDomainMappingHandler(c: Context<{ Bindings: En
       [id]
     );
 
-    await createAuditLogFromContext(
-      c,
-      'tenant_domain_mapping.updated',
-      'tenant_domain_mapping',
-      id,
-      {
+    await recordAdminOperationAudit(c, {
+      action: 'tenant_domain_mapping.updated',
+      resourceType: 'tenant_domain_mapping',
+      resourceId: id,
+      metadata: {
         changes: updates,
-      }
-    );
+      },
+    });
 
     return c.json(formatMapping(updated!));
   } catch (error) {
@@ -527,13 +525,12 @@ export async function deleteTenantDomainMappingHandler(c: Context<{ Bindings: En
 
     await adapter.execute('DELETE FROM tenant_domain_mappings WHERE id = ?', [id]);
 
-    await createAuditLogFromContext(
-      c,
-      'tenant_domain_mapping.deleted',
-      'tenant_domain_mapping',
-      id,
-      {}
-    );
+    await recordAdminOperationAudit(c, {
+      action: 'tenant_domain_mapping.deleted',
+      resourceType: 'tenant_domain_mapping',
+      resourceId: id,
+      metadata: {},
+    });
 
     return c.json({ success: true });
   } catch (error) {
@@ -588,13 +585,12 @@ export async function initiateTenantDomainVerificationHandler(c: Context<{ Bindi
       [token, expiresAt, nowTs, body.id]
     );
 
-    await createAuditLogFromContext(
-      c,
-      'tenant_domain_mapping.verification_initiated',
-      'tenant_domain_mapping',
-      body.id,
-      { domain }
-    );
+    await recordAdminOperationAudit(c, {
+      action: 'tenant_domain_mapping.verification_initiated',
+      resourceType: 'tenant_domain_mapping',
+      resourceId: body.id,
+      metadata: { domain },
+    });
 
     return c.json({
       id: body.id,
@@ -691,13 +687,12 @@ export async function confirmTenantDomainVerificationHandler(c: Context<{ Bindin
       [body.id]
     );
 
-    await createAuditLogFromContext(
-      c,
-      'tenant_domain_mapping.verified',
-      'tenant_domain_mapping',
-      body.id,
-      { domain }
-    );
+    await recordAdminOperationAudit(c, {
+      action: 'tenant_domain_mapping.verified',
+      resourceType: 'tenant_domain_mapping',
+      resourceId: body.id,
+      metadata: { domain },
+    });
 
     return c.json(formatMapping(updated!));
   } catch (error) {

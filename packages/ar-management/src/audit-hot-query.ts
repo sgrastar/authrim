@@ -58,7 +58,7 @@ export async function getAuditHotQuerySupport(
   tenantId: string,
   readOptions?: Pick<
     Parameters<typeof createLogReadAdapter>[0],
-    'window' | 'page' | 'onCoverage'
+    'window' | 'page' | 'onCoverage' | 'excludeRow'
   > & {
     storedCursorTime?: number;
   }

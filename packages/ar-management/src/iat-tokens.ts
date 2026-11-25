@@ -14,9 +14,9 @@ import {
   createErrorResponse,
   AR_ERROR_CODES,
   getLogger,
-  createAuditLogFromContext,
   getTenantIdFromContext,
 } from '@authrim/ar-lib-core';
+import { recordAdminOperationAudit } from './admin-operation-audit';
 
 /**
  * Validation constraints for IAT creation
@@ -214,10 +214,15 @@ export async function adminIATCreateHandler(c: Context<{ Bindings: Env }>) {
       expirationTtl: expiresInDays * 24 * 60 * 60,
     });
 
-    await createAuditLogFromContext(c, 'iat.token.create', 'iat_token', tokenHash.slice(0, 8), {
-      description,
-      expiresInDays,
-      single_use,
+    await recordAdminOperationAudit(c, {
+      action: 'iat.token.create',
+      resourceType: 'iat_token',
+      resourceId: tokenHash.slice(0, 8),
+      metadata: {
+        description,
+        expiresInDays,
+        single_use,
+      },
     });
 
     return c.json(
@@ -268,14 +273,13 @@ export async function adminIATRevokeHandler(c: Context<{ Bindings: Env }>) {
 
     await c.env.INITIAL_ACCESS_TOKENS.delete(`iat:${tokenHash}`);
 
-    await createAuditLogFromContext(
-      c,
-      'iat.token.revoke',
-      'iat_token',
-      tokenHash.slice(0, 8),
-      {},
-      'warning'
-    );
+    await recordAdminOperationAudit(c, {
+      action: 'iat.token.revoke',
+      resourceType: 'iat_token',
+      resourceId: tokenHash.slice(0, 8),
+      metadata: {},
+      severity: 'warning',
+    });
 
     return c.json({
       message: 'Token revoked successfully',

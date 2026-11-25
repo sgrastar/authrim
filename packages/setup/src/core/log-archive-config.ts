@@ -41,6 +41,17 @@ const shared = {
   tableName: identifier,
 };
 
+/** Token identity only: the registered value itself is never persisted or printed. */
+export const LogArchiveMaintenanceCredentialSchema = z
+  .object({
+    tokenId: z.string().regex(/^[a-f0-9]{32}$/u),
+    source: z.literal('catalog_write_token'),
+    status: z.literal('present'),
+    registeredAt: z.iso.datetime(),
+  })
+  .strict();
+export type LogArchiveMaintenanceCredential = z.infer<typeof LogArchiveMaintenanceCredentialSchema>;
+
 export const LogArchiveProbeAttemptSchema = z
   .object({
     attemptId: z.guid(),
@@ -159,6 +170,12 @@ export const LogArchiveLockSchema = z
         compactionNextEligibleAt: z.iso.datetime().nullable().optional(),
         nextEligibleAt: z.null(),
         inFlightJobs: z.enum(['unverified', 'verified_idle']),
+        /**
+         * The Catalog-level maintenance service credential Setup registered. Provider compaction
+         * never runs without it (`next_eligible_reason: no_credential`). Locks written before this
+         * field existed are repaired on the next deploy before readiness is claimed.
+         */
+        credential: LogArchiveMaintenanceCredentialSchema.optional(),
       })
       .strict(),
     stream: LogArchiveResourceSchema.optional(),

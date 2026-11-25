@@ -59,7 +59,6 @@ import {
   validateExternalUrl,
   ADMIN_ROLES,
   bumpAuthenticationMethodsCacheRevision,
-  createAuditLogFromContext,
   getLogger,
   SAML_FEDERATION_MAX_ENTITY_ID_LENGTH,
   SAML_FEDERATION_MAX_EXCLUDED_ENTITY_IDS,
@@ -114,6 +113,7 @@ import {
   LifecycleSignalInputError,
   type AccountSuspensionSignalService,
 } from './identity-mapping-lifecycle-signal';
+import { recordAdminOperationAudit } from './admin-operation-audit';
 
 export type AdminContext = Context<{ Bindings: Env }>;
 
@@ -10267,26 +10267,24 @@ export async function adminIdentityMappingFederationTrustSourceUpdateHandler(c: 
     if (exceptionsChange.added.length > 0 || exceptionsChange.removed.length > 0) {
       // An exception changes who may authenticate without a trust-context change, so it gets
       // its own, searchable audit entry.
-      await createAuditLogFromContext(
-        c,
-        'saml.federation.exceptions_updated',
-        'federation_trust_source',
-        trustSourceId,
-        {
+      await recordAdminOperationAudit(c, {
+        action: 'saml.federation.exceptions_updated',
+        resourceType: 'federation_trust_source',
+        resourceId: trustSourceId,
+        metadata: {
           added_entity_ids: exceptionsChange.added,
           removed_entity_ids: exceptionsChange.removed,
         },
-        'warning'
-      );
+        severity: 'warning',
+      });
     }
     if (idpSelectionChanged) {
-      await createAuditLogFromContext(
-        c,
-        'saml.federation.idp_selection_updated',
-        'federation_trust_source',
-        trustSourceId,
-        {}
-      );
+      await recordAdminOperationAudit(c, {
+        action: 'saml.federation.idp_selection_updated',
+        resourceType: 'federation_trust_source',
+        resourceId: trustSourceId,
+        metadata: {},
+      });
     }
     return response;
   });

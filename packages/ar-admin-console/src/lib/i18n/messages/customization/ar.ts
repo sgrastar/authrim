@@ -299,6 +299,7 @@ export const arCustomization: Record<keyof typeof jaCustomization, string> = {
 	'th.bg.loading': 'جارٍ التحميل…',
 	'th.bg.none': 'لا توجد صور جاهزة بعد. ستظهر هنا بعد أن تثبّتها أداة الإعداد.',
 	'th.bg.loadFailed': 'تعذّر تحميل الصورة. حاول مرة أخرى.',
+	'th.bg.retry': 'حاول مرة أخرى',
 	'th.bg.cat.paper': 'ورق',
 	'th.bg.cat.fabric': 'قماش',
 	'th.bg.cat.materials': 'خامات',
