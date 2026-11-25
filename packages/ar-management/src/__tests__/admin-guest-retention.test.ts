@@ -31,6 +31,9 @@ import {
   listGuestLifecycleHandler,
 } from '../admin-guest-retention';
 
+// Admin operations are recorded through the forwarding shim (see the helper).
+vi.mock('../admin-operation-audit', () => import('./helpers/legacy-direct-audit-shim'));
+
 describe('existing guest retention preview and apply', () => {
   let db: SQLiteDatabase;
   let adapter: DatabaseAdapter;

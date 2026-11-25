@@ -21,6 +21,9 @@ import {
 import settingsV2 from '../routes/settings-v2';
 import { createSettingsCanonicalD1 } from './helpers/settings-canonical-d1';
 
+// Admin operations are recorded through the forwarding shim (see the helper).
+vi.mock('../admin-operation-audit', () => import('./helpers/legacy-direct-audit-shim'));
+
 function kv(data: Record<string, unknown> = {}, failing: string[] = []) {
   const store = new Map<string, string>(
     Object.entries(data).map(([key, value]) => [

@@ -30,6 +30,7 @@ const fakes = vi.hoisted(() => ({
   clonePrepare: vi.fn(),
   consent: vi.fn(),
   auditLog: vi.fn(),
+  adminAudit: vi.fn(async (_env: unknown, _input: Record<string, unknown>) => 'audit-id'),
   d1: new Map<string, unknown>(),
   backupCovered: vi.fn(),
 }));
@@ -117,6 +118,12 @@ import {
   createKeyManager,
 } from './helpers/admin-tenants-mutation-harness';
 import { must } from './helpers/must';
+
+// A finished clone is recorded in the admin audit log, for the administrator who asked for it.
+vi.mock('../admin-operation-audit', () => ({
+  recordAdminOperationAudit: vi.fn(),
+  recordAdminOperationAuditFromEnv: fakes.adminAudit,
+}));
 
 type Dependencies = {
   validatePlatformDraft(operation: unknown): Promise<void>;
@@ -213,6 +220,7 @@ beforeEach(() => {
   fakes.signer.mockReset();
   fakes.clonePrepare.mockReset();
   fakes.auditLog.mockReset();
+  fakes.adminAudit.mockClear();
   vi.mocked(usesNakedDomainIssuer).mockReturnValue(false);
   vi.useFakeTimers();
   vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
@@ -340,24 +348,24 @@ describe('prepareTenant, activateLookup and activateTenant', () => {
         createdBy: 'creator',
       })
     );
-    expect(fakes.auditLog).toHaveBeenCalledWith(expect.anything(), {
+    expect(fakes.adminAudit).toHaveBeenCalledWith(expect.anything(), {
       tenantId: 'second',
-      userId: 'creator',
+      actorId: 'creator',
       action: 'tenant.cloned',
-      resource: 'tenant',
+      resourceType: 'tenant',
       resourceId: 'second',
-      ipAddress: 'internal',
-      userAgent: 'tenant-provisioning-saga',
-      metadata: JSON.stringify({ operation_id: 'op-1', source_tenant_id: 'source', copied: 3 }),
+      metadata: { operation_id: 'op-1', source_tenant_id: 'source', copied: 3 },
       severity: 'info',
     });
-    fakes.auditLog.mockClear();
+    // Nothing goes to the end-user audit log.
+    expect(fakes.auditLog).not.toHaveBeenCalled();
+    fakes.adminAudit.mockClear();
     await activate(
       operation({ operationKind: 'clone', sourceTenantId: 'source', preparationResult: null })
     );
-    expect(fakes.auditLog.mock.calls[0][1].metadata).toBe(
-      JSON.stringify({ operation_id: 'op-1', source_tenant_id: 'source' })
-    );
+    expect(fakes.adminAudit.mock.calls[0]?.[1]).toMatchObject({
+      metadata: { operation_id: 'op-1', source_tenant_id: 'source' },
+    });
   });
 });
 

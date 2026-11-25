@@ -15,6 +15,7 @@ import type { Context } from 'hono';
 import {
   AuditLogDeliveryError,
   createAuditLog,
+  createLogger,
   getLogger,
   isTenantAuditActionFailClosed,
   mapLegacyAuditResult,
@@ -36,6 +37,11 @@ export interface AdminOperationAuditInput {
   result?: 'success' | 'failure';
   before?: Record<string, unknown>;
   after?: Record<string, unknown>;
+  /**
+   * The tenant the operation acted on, when the route names it (a platform route acting on a
+   * tenant). Without it, the tenant the request was routed to. Never read from a header here.
+   */
+  tenantId?: string;
   /**
    * The end user the operation acted on. Their core audit history gets an entry; it is linked
    * to this user only, never to the administrator.
@@ -112,10 +118,10 @@ export async function recordAdminOperationAudit(
     resolveAuditEventFailureBehavior(input.action).behavior === 'fail_closed_or_strong_retry';
 
   // The tenant the request was routed to, never a header or the default tenant.
-  const routedTenant = contextValue(c, 'tenantId');
+  const routedTenant = input.tenantId ?? contextValue(c, 'tenantId');
   const tenantId = typeof routedTenant === 'string' ? routedTenant.trim() : '';
   if (!tenantId) {
-    log.error('Admin operation not recorded: no routed tenant', { action: input.action });
+    log.error('Admin operation not recorded: no tenant', { action: input.action });
     if (actionFailsClosed) {
       throw new AuditLogDeliveryError('admin_audit_tenant_required', input.action, 'unknown');
     }
@@ -188,4 +194,78 @@ export async function recordAdminOperationAudit(
     });
   }
   return recordId;
+}
+
+export interface AdminOperationAuditFromEnvInput {
+  tenantId: string;
+  /**
+   * Who asked for the operation, as recorded when it was asked for: `system` (or `system:…`)
+   * for a scheduler, otherwise the principal's ID. Only the ID was kept, not whether it was an
+   * administrator, an agent or a machine, so it is recorded as such ("unrecorded" kind), never
+   * as an administrator's own record.
+   */
+  actorId: string;
+  action: string;
+  resourceType: string;
+  resourceId: string | null;
+  metadata?: Record<string, unknown>;
+  severity?: AdminOperationAuditSeverity;
+  result?: 'success' | 'failure';
+}
+
+/**
+ * Records an admin operation that finishes outside the request that asked for it (a background
+ * step of a tenant clone or provisioning, a settings import), with the administrator recorded
+ * when it was asked for. Delivery follows the action's audit class, as recordAdminOperationAudit.
+ */
+export async function recordAdminOperationAuditFromEnv(
+  env: Env,
+  input: AdminOperationAuditFromEnvInput
+): Promise<string | null> {
+  const tenantId = input.tenantId.trim();
+  const actorId = input.actorId.trim();
+  if (!tenantId || !actorId) {
+    if (resolveAuditEventFailureBehavior(input.action).behavior === 'fail_closed_or_strong_retry') {
+      throw new AuditLogDeliveryError(
+        tenantId ? 'admin_audit_actor_required' : 'admin_audit_tenant_required',
+        input.action,
+        tenantId || 'unknown'
+      );
+    }
+    return null;
+  }
+  const metadata = input.metadata ?? {};
+  const failsClosed = await isTenantAuditActionFailClosed(env, tenantId, input.action);
+  const system = actorId === 'system' || actorId.startsWith('system:');
+  const actorMetadata = {
+    admin_actor_type: system ? 'system' : 'unrecorded',
+    admin_actor_id: actorId,
+    admin_auth_method: 'deferred',
+  };
+  try {
+    return await writeAdminAuditRowOrThrow(env, {
+      id: crypto.randomUUID(),
+      tenant_id: tenantId,
+      // The admin user column names an administrator; the kind of this principal was not kept.
+      admin_user_id: system ? 'system' : undefined,
+      action: input.action,
+      resource_type: input.resourceType,
+      resource_id: input.resourceId ?? undefined,
+      result: input.result ?? inferResult(input.action, metadata),
+      severity: ADMIN_SEVERITY[input.severity ?? 'info'],
+      ip_address: 'internal',
+      user_agent: 'internal',
+      metadata: { ...metadata, ...actorMetadata },
+      inline_metadata: actorMetadata,
+      created_at: Date.now(),
+    });
+  } catch (error) {
+    createLogger()
+      .module('ADMIN_AUDIT')
+      .error('Admin operation not recorded', { action: input.action }, error as Error);
+    if (failsClosed) {
+      throw new AuditLogDeliveryError('admin_audit_write_failed', input.action, tenantId);
+    }
+    return null;
+  }
 }

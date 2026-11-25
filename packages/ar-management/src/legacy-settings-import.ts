@@ -25,7 +25,6 @@
 
 import {
   ALL_CATEGORY_META,
-  createAuditLog,
   createLogger,
   createSettingsManager,
   DEFAULT_TENANT_ID,
@@ -49,6 +48,7 @@ import {
 } from '@authrim/ar-lib-core';
 import { DatabaseSettingsCanonicalStore } from '@authrim/ar-lib-core/services/settings-canonical-store';
 import { validateSettingValue } from './routes/settings-v2/patch-validation';
+import { recordAdminOperationAuditFromEnv } from './admin-operation-audit';
 
 const log = createLogger().module('LEGACY_SETTINGS_IMPORT');
 
@@ -219,20 +219,18 @@ function managerFor(env: Env, actor: string, dryRun: boolean): SettingsManager {
     cacheTTL: 0,
     auditCallback: async (event) => {
       try {
-        await createAuditLog(env, {
+        await recordAdminOperationAuditFromEnv(env, {
           tenantId: event.scope === 'tenant' ? event.scopeId : DEFAULT_TENANT_ID,
-          userId: actor,
+          actorId: actor,
           action: 'settings.legacy_import',
-          resource: 'settings',
+          resourceType: 'settings',
           resourceId: `${event.scope}:${event.scopeId}:${event.category}`,
-          ipAddress: '',
-          userAgent: '',
-          metadata: JSON.stringify({
+          metadata: {
             scope: event.scope,
             scope_id: event.scopeId,
             category: event.category,
             diff: sanitizeObject(event.diff),
-          }),
+          },
           severity: 'info',
         });
       } catch {
@@ -504,20 +502,18 @@ async function acceptRejections(env: Env, actor: string): Promise<LegacyImportRe
   const { state, revision } = stored;
   // Recorded before the state changes: when the record cannot be written, nothing is accepted.
   // (A conflicting change after it leaves a record of the request, and nothing accepted.)
-  await createAuditLog(env, {
+  await recordAdminOperationAuditFromEnv(env, {
     tenantId: DEFAULT_TENANT_ID,
-    userId: actor,
+    actorId: actor,
     action: 'settings.legacy_import.rejections_accepted',
-    resource: 'settings',
+    resourceType: 'settings',
     resourceId: `legacy-import:${revision}`,
-    ipAddress: '',
-    userAgent: '',
-    metadata: JSON.stringify({
+    metadata: {
       revision,
       started_at: state.startedAt,
       rejected_count: state.rejectedCount,
       rejected: sanitizeObject({ items: state.rejected }).items,
-    }),
+    },
     severity: 'warning',
   });
   state.status = 'completed';

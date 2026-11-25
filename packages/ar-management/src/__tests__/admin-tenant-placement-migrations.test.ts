@@ -19,6 +19,9 @@ import {
 } from '../admin-tenant-placement-migrations';
 import { TenantPlacementMigrationJobRepository } from '../tenant-placement-migration-job';
 
+// Admin operations are recorded through the forwarding shim (see the helper).
+vi.mock('../admin-operation-audit', () => import('./helpers/legacy-direct-audit-shim'));
+
 const REPO_ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {

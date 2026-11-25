@@ -19,9 +19,12 @@
  *   vi.mock('../admin-operation-audit', () => import('./helpers/legacy-admin-audit-shim'));
  */
 import { vi } from 'vitest';
-import { createAuditLogFromContext } from '@authrim/ar-lib-core';
+import { createAuditLog, createAuditLogFromContext, type Env } from '@authrim/ar-lib-core';
 import { scheduleAdminAuditLog, writeAdminAuditLog } from '../../admin-shared';
-import type { AdminOperationAuditInput } from '../../admin-operation-audit';
+import type {
+  AdminOperationAuditFromEnvInput,
+  AdminOperationAuditInput,
+} from '../../admin-operation-audit';
 
 export async function recordAdminOperationAudit(
   c: unknown,
@@ -59,5 +62,24 @@ export async function recordAdminOperationAudit(
       }).catch(() => null);
     }
   }
+  return `audit-${input.action}`;
+}
+
+/** A deferred admin operation, forwarded to createAuditLog as the older code wrote it. */
+export async function recordAdminOperationAuditFromEnv(
+  env: Env,
+  input: AdminOperationAuditFromEnvInput
+): Promise<string> {
+  await createAuditLog(env, {
+    tenantId: input.tenantId,
+    userId: input.actorId,
+    action: input.action,
+    resource: input.resourceType,
+    resourceId: input.resourceId ?? '',
+    ipAddress: 'internal',
+    userAgent: 'internal',
+    metadata: JSON.stringify(input.metadata ?? {}),
+    severity: input.severity ?? 'info',
+  });
   return `audit-${input.action}`;
 }
