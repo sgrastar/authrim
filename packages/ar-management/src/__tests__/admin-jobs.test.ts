@@ -85,6 +85,9 @@ import { ADMIN_JOB_TYPE_REGISTRY } from '../admin-job-types';
 import { buildUserImportResultKey, buildUserImportUploadKey } from '../user-import-jobs';
 import { encryptObjectArtifact } from '@authrim/ar-lib-core';
 
+// Admin operations are recorded through the forwarding shim (see the helper).
+vi.mock('../admin-operation-audit', () => import('./helpers/legacy-admin-audit-shim'));
+
 const OBJECT_ROOT_KEY = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
 
 interface StoredR2Object {

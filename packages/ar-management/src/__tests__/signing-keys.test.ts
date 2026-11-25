@@ -23,6 +23,9 @@ import {
   adminVcIssuerKeyRevokeHandler,
 } from '../signing-keys';
 
+// Admin operations are recorded through the forwarding shim (see the helper).
+vi.mock('../admin-operation-audit', () => import('./helpers/legacy-admin-audit-shim'));
+
 const audit = vi.hoisted(() => ({ write: vi.fn(async () => {}) }));
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@authrim/ar-lib-core')>()),

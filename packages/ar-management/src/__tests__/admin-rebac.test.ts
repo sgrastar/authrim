@@ -48,6 +48,9 @@ import {
   adminRelationshipTuplesListHandler,
 } from '../admin-rebac';
 
+// Admin operations are recorded through the forwarding shim (see the helper).
+vi.mock('../admin-operation-audit', () => import('./helpers/legacy-admin-audit-shim'));
+
 function context(options: { query?: Record<string, string>; id?: string; body?: unknown } = {}) {
   return {
     req: {

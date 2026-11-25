@@ -16,7 +16,6 @@ import {
   createAuthContextFromHono,
   createErrorResponse,
   AR_ERROR_CODES,
-  createAuditLogFromContext,
   getLogger,
   produceNotificationDelivery,
 } from '@authrim/ar-lib-core';
@@ -32,6 +31,7 @@ import {
   prepareTenantDiscoveryAliasDirectory,
   resolveTenantDiscoveryAliasDirectoryInput,
 } from './tenant-alias-directory';
+import { recordAdminOperationAudit } from './admin-operation-audit';
 
 // =============================================================================
 // Constants
@@ -260,13 +260,12 @@ export async function createTenantInvitationHandler(c: Context<{ Bindings: Env }
       }
     }
 
-    await createAuditLogFromContext(
-      c,
-      'tenant_invitation.create',
-      'tenant_invitation',
-      invitationId,
-      { tenant_id: tenantId, invited_email, role_id, org_id, email_sent: emailSent }
-    );
+    await recordAdminOperationAudit(c, {
+      action: 'tenant_invitation.create',
+      resourceType: 'tenant_invitation',
+      resourceId: invitationId,
+      metadata: { tenant_id: tenantId, invited_email, role_id, org_id, email_sent: emailSent },
+    });
 
     return c.json(
       {
@@ -382,8 +381,13 @@ export async function cancelTenantInvitationHandler(c: Context<{ Bindings: Env }
       tenantId,
     ]);
 
-    await createAuditLogFromContext(c, 'tenant_invitation.cancel', 'tenant_invitation', invId, {
-      tenant_id: tenantId,
+    await recordAdminOperationAudit(c, {
+      action: 'tenant_invitation.cancel',
+      resourceType: 'tenant_invitation',
+      resourceId: invId,
+      metadata: {
+        tenant_id: tenantId,
+      },
     });
 
     return c.json({ success: true });

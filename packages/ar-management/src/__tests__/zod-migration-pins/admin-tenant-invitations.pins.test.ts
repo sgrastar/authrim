@@ -56,6 +56,9 @@ vi.mock('../../tenant-alias-directory', () => ({
 
 import { createTenantInvitationHandler } from '../../admin-tenant-invitations';
 
+// Admin operations are recorded through the forwarding shim (see the helper).
+vi.mock('../../admin-operation-audit', () => import('../helpers/legacy-admin-audit-shim'));
+
 const NOW_MS = Date.UTC(2026, 6, 1, 0, 0, 0);
 const NOW = NOW_MS / 1000;
 

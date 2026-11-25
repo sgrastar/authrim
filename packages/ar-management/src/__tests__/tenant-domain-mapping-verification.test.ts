@@ -55,6 +55,9 @@ import {
   initiateTenantDomainVerificationHandler,
 } from '../admin-tenant-domain-mappings';
 
+// Admin operations are recorded through the forwarding shim (see the helper).
+vi.mock('../admin-operation-audit', () => import('./helpers/legacy-admin-audit-shim'));
+
 const AUTH: AdminAuthContext = {
   userId: 'human-1',
   authMethod: 'bearer',

@@ -10,7 +10,6 @@ import {
   AR_ERROR_CODES,
   buildContractKey,
   createAuditLog,
-  createAuditLogFromContext,
   createAuthContextFromHono,
   createErrorResponse,
   getLogger,
@@ -33,6 +32,7 @@ import {
   ensureActiveTenantDiscoveryAliasDirectory,
   resolveTenantDiscoveryAliasDirectoryInput,
 } from './tenant-alias-directory';
+import { recordAdminOperationAudit } from './admin-operation-audit';
 
 const TENANT_ID_REGEX = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
 // Keep synchronous clone work below the lowest Workers/D1 invocation budgets. Larger copies must
@@ -1929,10 +1929,15 @@ async function executeTenantCloneHandler(
         preparationPayload: { copy: options, source_snapshot: sourceSnapshot },
       });
       if (started instanceof Response) return started;
-      await createAuditLogFromContext(c, 'tenant.clone.requested', 'tenant', targetTenantId, {
-        source_tenant_id: sourceTenantId,
-        operation_id: started.operation.operationId,
-        options,
+      await recordAdminOperationAudit(c, {
+        action: 'tenant.clone.requested',
+        resourceType: 'tenant',
+        resourceId: targetTenantId,
+        metadata: {
+          source_tenant_id: sourceTenantId,
+          operation_id: started.operation.operationId,
+          options,
+        },
       });
       return c.json(
         {

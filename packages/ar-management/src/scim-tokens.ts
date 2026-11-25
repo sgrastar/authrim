@@ -10,12 +10,12 @@ import { generateScimToken, revokeScimToken, listScimTokens } from '@authrim/ar-
 import {
   createErrorResponse,
   AR_ERROR_CODES,
-  createAuditLogFromContext,
   getLogger,
   getTenantIdFromContext,
   resolveScimTokenExpiryDays,
   type ScimTokenExpiryDays,
 } from '@authrim/ar-lib-core';
+import { recordAdminOperationAudit } from './admin-operation-audit';
 
 /**
  * Validation constraints for SCIM token creation. The lifetime's default and maximum are the
@@ -153,10 +153,15 @@ export async function adminScimTokenCreateHandler(c: Context<{ Bindings: Env }>)
       enabled: true,
     });
 
-    await createAuditLogFromContext(c, 'scim.token.create', 'scim_token', tokenHash.slice(0, 8), {
-      tenantId,
-      description,
-      expiresInDays,
+    await recordAdminOperationAudit(c, {
+      action: 'scim.token.create',
+      resourceType: 'scim_token',
+      resourceId: tokenHash.slice(0, 8),
+      metadata: {
+        tenantId,
+        description,
+        expiresInDays,
+      },
     });
 
     // Return the token only once (it won't be shown again)
@@ -199,14 +204,13 @@ export async function adminScimTokenRevokeHandler(c: Context<{ Bindings: Env }>)
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
-    await createAuditLogFromContext(
-      c,
-      'scim.token.revoke',
-      'scim_token',
-      tokenHash.slice(0, 8),
-      { tenantId },
-      'warning'
-    );
+    await recordAdminOperationAudit(c, {
+      action: 'scim.token.revoke',
+      resourceType: 'scim_token',
+      resourceId: tokenHash.slice(0, 8),
+      metadata: { tenantId },
+      severity: 'warning',
+    });
 
     return c.json({
       message: 'Token revoked successfully',

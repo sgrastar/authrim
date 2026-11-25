@@ -50,6 +50,9 @@ import { insertOAuthClient, insertTenant, openCoreDatabase } from './helpers/cor
 import { d1OverSqlite } from './helpers/d1-over-sqlite';
 import { adminOpenApiSchemas, shapeErrors } from './helpers/openapi-shape';
 
+// Admin operations are recorded through the forwarding shim (see the helper).
+vi.mock('../admin-operation-audit', () => import('./helpers/legacy-admin-audit-shim'));
+
 /**
  * What a change of a Mapping Set's content would do, on the real Admin and Core schemas, the real
  * admin authentication and route access, sets made and saved through the real facade.

@@ -17,7 +17,6 @@
 import type { Context } from 'hono';
 import { z } from '../../zod';
 import {
-  createAuditLogFromContext,
   createAuthContextFromHono,
   createErrorResponse,
   ensureDatabaseAdapter,
@@ -37,6 +36,7 @@ import {
   type RetentionCategoryId,
 } from '../../compliance/retention-inventory';
 import { settingsUnavailableResponse } from './settings-unavailable';
+import { recordAdminOperationAudit } from '../../admin-operation-audit';
 
 const LOOKUP_RETENTION_MIN_DAYS = 30;
 const LOOKUP_RETENTION_MAX_DAYS = 3650;
@@ -455,19 +455,18 @@ export async function updateCategoryRetention(c: Context<{ Bindings: Env }>) {
     }
     await attemptLookupRetentionPolicyProjection(c, adapter, projectionOperationId);
 
-    await createAuditLogFromContext(
-      c,
-      'data_retention.category_updated',
-      'data_retention',
-      category,
-      {
+    await recordAdminOperationAudit(c, {
+      action: 'data_retention.category_updated',
+      resourceType: 'data_retention',
+      resourceId: category,
+      metadata: {
         category,
         retention_days,
         previous_retention_days: currentRetentionDays,
         shortened: retention_days < currentRetentionDays,
         tenant_id: tenantId,
-      }
-    );
+      },
+    });
 
     return c.json({
       category,

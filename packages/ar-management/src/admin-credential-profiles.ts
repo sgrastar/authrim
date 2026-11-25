@@ -12,7 +12,6 @@ import {
   CanonicalRuntimeUserProjectionRepository,
   CanonicalSensitiveValueResolver,
   canonicalProjectionToOIDCClaimsUser,
-  createAuditLogFromContext,
   createAuthContextFromHono,
   createPIIContextFromHono,
   getLogger,
@@ -24,6 +23,7 @@ import {
 } from '@authrim/ar-lib-core';
 import type { SourceValueEnvelope } from '@authrim/ar-lib-field-mapping/contract';
 import { getCanonicalTenantBaseUrlAsync } from './request-issuer';
+import { recordAdminOperationAudit } from './admin-operation-audit';
 
 type AdminContext = Context<{ Bindings: Env }>;
 type AdminVariableContext = Context<{
@@ -200,8 +200,13 @@ export async function adminCredentialProfileCreateHandler(c: AdminContext) {
         now,
       ]
     );
-    await createAuditLogFromContext(c, 'credential_profile.created', 'credential_profile', id, {
-      profile_key: profileKey,
+    await recordAdminOperationAudit(c, {
+      action: 'credential_profile.created',
+      resourceType: 'credential_profile',
+      resourceId: id,
+      metadata: {
+        profile_key: profileKey,
+      },
     });
     return c.json({ credential_profile: await loadProfile(c, id) }, 201);
   } catch (error) {
@@ -254,15 +259,14 @@ export async function adminCredentialProfileUpdateHandler(c: AdminContext) {
         profile.id,
       ]
     );
-    await createAuditLogFromContext(
-      c,
-      'credential_profile.updated',
-      'credential_profile',
-      profile.id,
-      {
+    await recordAdminOperationAudit(c, {
+      action: 'credential_profile.updated',
+      resourceType: 'credential_profile',
+      resourceId: profile.id,
+      metadata: {
         lifecycle_state: body.lifecycle_state ?? profile.lifecycle_state,
-      }
-    );
+      },
+    });
     return c.json({ credential_profile: await loadProfile(c, profile.id) });
   } catch (error) {
     getLogger(c)
@@ -334,13 +338,12 @@ export async function adminCredentialProfileVersionCreateHandler(c: AdminContext
         now,
       ]
     );
-    await createAuditLogFromContext(
-      c,
-      'credential_profile.version_created',
-      'credential_profile',
-      profile.id,
-      { version_id: id }
-    );
+    await recordAdminOperationAudit(c, {
+      action: 'credential_profile.version_created',
+      resourceType: 'credential_profile',
+      resourceId: profile.id,
+      metadata: { version_id: id },
+    });
     return c.json({ version: await loadVersion(c, profile.id, id) }, 201);
   } catch (error) {
     getLogger(c)
@@ -548,13 +551,12 @@ export async function adminCredentialProfilePublishHandler(c: AdminContext) {
         [version.id, actorId(c), now, profile.tenant_id, profile.id]
       );
     });
-    await createAuditLogFromContext(
-      c,
-      'credential_profile.published',
-      'credential_profile',
-      profile.id,
-      { version_id: version.id, snapshot_hash: snapshotHash }
-    );
+    await recordAdminOperationAudit(c, {
+      action: 'credential_profile.published',
+      resourceType: 'credential_profile',
+      resourceId: profile.id,
+      metadata: { version_id: version.id, snapshot_hash: snapshotHash },
+    });
     return c.json({ version_id: version.id, snapshot_hash: snapshotHash });
   } catch (error) {
     getLogger(c)
@@ -741,13 +743,17 @@ export async function adminCredentialOfferCreateHandler(c: AdminContext) {
       expiresInSeconds: version.offer_ttl_seconds,
       transactionCodeRequired: version.transaction_code_required === 1,
     });
-    await createAuditLogFromContext(
-      c,
-      'credential_offer.created',
-      'credential_profile',
-      profile.id,
-      { offer_id: offer.offerId, user_id: userId, profile_snapshot_hash: version.snapshot_hash }
-    );
+    await recordAdminOperationAudit(c, {
+      action: 'credential_offer.created',
+      resourceType: 'credential_profile',
+      resourceId: profile.id,
+      metadata: {
+        offer_id: offer.offerId,
+        user_id: userId,
+        profile_snapshot_hash: version.snapshot_hash,
+      },
+      endUser: { userId: userId },
+    });
     return c.json(offer, 201);
   } catch (error) {
     getLogger(c)

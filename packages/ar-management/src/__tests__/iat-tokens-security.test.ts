@@ -30,6 +30,9 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
 import { AR_ERROR_CODES } from '@authrim/ar-lib-core';
 import { adminIATCreateHandler, adminIATListHandler, adminIATRevokeHandler } from '../iat-tokens';
 
+// Admin operations are recorded through the forwarding shim (see the helper).
+vi.mock('../admin-operation-audit', () => import('./helpers/legacy-admin-audit-shim'));
+
 type Kv = {
   list: ReturnType<typeof vi.fn>;
   get: ReturnType<typeof vi.fn>;

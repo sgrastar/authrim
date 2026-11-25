@@ -4,7 +4,6 @@ import {
   requireDedicatedAdminDatabaseAdapter,
   resolveAuthCorePersistenceAdapterFromEnv,
   readRequestTextWithLimit,
-  createAuditLogFromContext,
   bumpAuthenticationMethodsCacheRevision,
   type DatabaseAdapter,
 } from '@authrim/ar-lib-core';
@@ -51,6 +50,7 @@ import {
 } from './identity-mapping-set-facade-content';
 import { createReplayIdempotency } from './admin-replay-idempotency';
 import { requireExternalProviderStepUp } from './external-providers';
+import { recordAdminOperationAudit } from './admin-operation-audit';
 
 declare module 'hono' {
   interface ContextVariableMap {
@@ -485,10 +485,15 @@ export async function putConnectionInboundMapping(c: AdminContext) {
     });
     bound = true;
     await bumpAuthenticationMethodsCacheRevision(c.env, input.tenantId);
-    await createAuditLogFromContext(c, 'identity_mapping.inbound.saved', 'connection', input.id, {
-      kind: input.kind,
-      set_id: set.id,
-      version_id: version.id,
+    await recordAdminOperationAudit(c, {
+      action: 'identity_mapping.inbound.saved',
+      resourceType: 'connection',
+      resourceId: input.id,
+      metadata: {
+        kind: input.kind,
+        set_id: set.id,
+        version_id: version.id,
+      },
     });
     return c.json(await document(c, await connection(c)));
   } catch (error) {

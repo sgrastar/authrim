@@ -104,6 +104,9 @@ import {
 } from '../admin-attributes';
 import { adminAccountCoreAdapter } from '../admin-account-storage';
 
+// Admin operations are recorded through the forwarding shim (see the helper).
+vi.mock('../admin-operation-audit', () => import('./helpers/legacy-admin-audit-shim'));
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

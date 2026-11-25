@@ -57,6 +57,9 @@ import {
 import { insertOAuthClient, insertTenant, openCoreDatabase } from './helpers/core-database';
 import { seedDestinationProfile } from './helpers/identity-mapping-seed';
 
+// Admin operations are recorded through the forwarding shim (see the helper).
+vi.mock('../admin-operation-audit', () => import('./helpers/legacy-admin-audit-shim'));
+
 /**
  * The Mapping Set facade (`/api/admin/identity-mapping/sets`) on the real Admin schema, the real
  * admin authentication and route access, and the real control plane underneath: a save is one

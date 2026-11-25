@@ -10,48 +10,17 @@ import { describe, expect, it } from 'vitest';
  * are listed here until they move; a module that moved must leave the list.
  */
 const STILL_ON_THE_END_USER_LOG = new Set([
-  'admin-attributes.ts',
-  'admin-clients.ts',
-  'admin-credential-profiles.ts',
-  'admin-custom-claims.ts',
-  'admin-flows.ts',
+  // Admin actions on end users, which move with the admin records they already write beside.
   'admin-identifier-replacements.ts',
-  'admin-jobs.ts',
-  'admin-policies.ts',
+  // Retries that reuse a stable audit ID: the admin log refuses one ID with another payload.
   'admin-rbac.ts',
-  'admin-rebac.ts',
-  'admin-screens.ts',
-  'admin-security.ts',
-  'admin-tenant-clone.ts',
-  'admin-tenant-domain-mappings.ts',
-  'admin-tenant-invitations.ts',
-  'admin-tenant-vanity-domains.ts',
-  'admin-tenants.ts',
   'admin-user-assurance.ts',
   'admin-user-sessions.ts',
   'admin-users.ts',
   'admin.ts',
+  // Retries that reuse a stable audit ID, as above.
   'compliance/access-reviews.ts',
-  'compliance/report-routes.ts',
-  'connection-inbound-mapping.ts',
-  'iat-tokens.ts',
-  'identity-mapping-control-plane.ts',
-  'identity-mapping-set-facade.ts',
-  'identity-mapping-test-users.ts',
-  'launchers.ts',
-  'routes/certification-profiles.ts',
-  'routes/device-secrets.ts',
-  'routes/directory-auth.ts',
-  'routes/directory-connectors.ts',
   'routes/guest-users.ts',
-  'routes/settings-v2/bulk-apply.ts',
-  'routes/settings-v2/settings-support.ts',
-  'routes/settings/data-retention.ts',
-  'routes/settings/tombstones.ts',
-  'routes/settings/webhooks.ts',
-  'scim-settings.ts',
-  'scim-tokens.ts',
-  'signing-keys.ts',
 ]);
 
 const sourceRoot = fileURLToPath(new URL('..', import.meta.url));

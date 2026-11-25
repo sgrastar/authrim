@@ -19,6 +19,10 @@ import { setupApp, signIn, TENANT, TENANT_SUPER_ADMIN } from './helpers/admin-au
 import { openCoreStore } from './helpers/core-schema-sqlite';
 import { insertSamlProvider } from './helpers/core-database';
 
+// Admin operations are recorded through the forwarding shim (see the helper): this suite tests
+// the inbound protocols, and its environment has no log store for the admin audit log.
+vi.mock('../admin-operation-audit', () => import('./helpers/legacy-admin-audit-shim'));
+
 // The protocols, mapping persistence/compiler/resolver/evaluator and identity handling are real.
 // Only OP HTTP, request/replay stores and account/session delivery leave this local fixture.
 const seams = vi.hoisted(() => ({

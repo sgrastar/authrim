@@ -182,6 +182,9 @@ import {
 } from '../routes/settings/webhooks';
 import { encryptObjectArtifact } from '@authrim/ar-lib-core/services/object-artifact-crypto';
 
+// Admin operations are recorded through the forwarding shim (see the helper).
+vi.mock('../admin-operation-audit', () => import('./helpers/legacy-admin-audit-shim'));
+
 // =============================================================================
 // Test Fixtures
 // =============================================================================

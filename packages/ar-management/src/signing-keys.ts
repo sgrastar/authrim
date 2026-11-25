@@ -13,7 +13,6 @@ import { samlDrAll } from '@authrim/ar-lib-core/services/tenant-portability/saml
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import {
-  createAuditLogFromContext,
   createErrorResponse,
   AR_ERROR_CODES,
   getLogger,
@@ -24,6 +23,7 @@ import type {
   KeyRotationResponse,
   EmergencyRotationRequest,
 } from '@authrim/ar-lib-core';
+import { recordAdminOperationAudit } from './admin-operation-audit';
 
 /**
  * Update the cross-worker cache-bust signal for signing keys.
@@ -61,14 +61,13 @@ export async function adminSigningKeysStatusHandler(c: Context<{ Bindings: Env }
     const data = (await keyManager.getStatusRpc()) as SigningKeysStatusResponse;
 
     // Record audit log (info severity for read operations)
-    await createAuditLogFromContext(
-      c,
-      'signing_keys.status.read',
-      'signing_keys',
-      data.activeKeyId || 'none',
-      { keyCount: data.keys.length },
-      'info'
-    );
+    await recordAdminOperationAudit(c, {
+      action: 'signing_keys.status.read',
+      resourceType: 'signing_keys',
+      resourceId: data.activeKeyId || 'none',
+      metadata: { keyCount: data.keys.length },
+      severity: 'info',
+    });
 
     return c.json(data);
   } catch (error) {
@@ -117,14 +116,13 @@ export async function adminSigningKeysRotateHandler(c: Context<{ Bindings: Env }
     ]);
 
     // Record audit log (warning severity for key rotation)
-    await createAuditLogFromContext(
-      c,
-      'signing_keys.rotate.normal',
-      'signing_keys',
-      data.key.kid,
-      { oldKeyId, newKeyId: data.key.kid, overlapPeriod: '24h' },
-      'warning'
-    );
+    await recordAdminOperationAudit(c, {
+      action: 'signing_keys.rotate.normal',
+      resourceType: 'signing_keys',
+      resourceId: data.key.kid,
+      metadata: { oldKeyId, newKeyId: data.key.kid, overlapPeriod: '24h' },
+      severity: 'warning',
+    });
 
     const result: KeyRotationResponse = {
       success: true,
@@ -197,14 +195,13 @@ export async function adminSigningKeysEmergencyRotateHandler(c: Context<{ Bindin
     }
 
     // Record CRITICAL audit log
-    await createAuditLogFromContext(
-      c,
-      'signing_keys.rotate.emergency',
-      'signing_keys',
-      result.newKid,
-      { reason: body.reason, oldKid: result.oldKid, newKid: result.newKid },
-      'critical'
-    );
+    await recordAdminOperationAudit(c, {
+      action: 'signing_keys.rotate.emergency',
+      resourceType: 'signing_keys',
+      resourceId: result.newKid,
+      metadata: { reason: body.reason, oldKid: result.oldKid, newKid: result.newKid },
+      severity: 'critical',
+    });
 
     const response_data: KeyRotationResponse = {
       success: true,
@@ -263,14 +260,13 @@ export async function adminVcIssuerKeyRevokeHandler(c: Context<{ Bindings: Env }
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
-    await createAuditLogFromContext(
-      c,
-      'signing_keys.vc_issuer.revoke',
-      'signing_keys',
-      kid,
-      { reason, ...(result.replacedBy ? { replacedBy: result.replacedBy } : {}) },
-      'critical'
-    );
+    await recordAdminOperationAudit(c, {
+      action: 'signing_keys.vc_issuer.revoke',
+      resourceType: 'signing_keys',
+      resourceId: kid,
+      metadata: { reason, ...(result.replacedBy ? { replacedBy: result.replacedBy } : {}) },
+      severity: 'critical',
+    });
 
     return c.json({
       success: true,

@@ -1,11 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import {
-  inventoryCoreAuditWrites,
-  siteActionMatches,
-  type AuditWriteSite,
-} from './helpers/core-audit-inventory';
+import { inventoryCoreAuditWrites, type AuditWriteSite } from './helpers/core-audit-inventory';
 import {
   ADMIN_OPERATION_CORE_EVENTS,
   isAdminOperationCoreEventPair,
@@ -32,14 +28,6 @@ const ADMIN_WRITERS = new Set([
   'packages/ar-management/src/identifier-stores.ts',
   'packages/ar-management/src/legacy-settings-import.ts',
   'packages/ar-management/src/mapping-hash-key.ts',
-]);
-
-/** Listed actions that admin routes choose at run time, so no site writes them literally. */
-const CHOSEN_AT_RUN_TIME = new Set([
-  'client.enabled|client',
-  'client.disabled|client',
-  'tenant.placement_migration_canceled|tenant',
-  'tenant.placement_migration_purge_approved|tenant',
 ]);
 
 function listedPairs(): Array<[action: string, resource: string]> {
@@ -106,16 +94,8 @@ describe('ADMIN_OPERATION_CORE_EVENTS', () => {
     expect(uncovered.map((site) => `${site.file}:${site.line} ${site.action}`)).toEqual([]);
   });
 
-  it('lists only pairs that some admin-route write can produce', () => {
-    const stale = listedPairs().filter(
-      ([action, resource]) =>
-        !CHOSEN_AT_RUN_TIME.has(`${action}|${resource}`) &&
-        !sites.some(
-          (site) => adminSite(site) && site.resource === resource && siteActionMatches(site, action)
-        )
-    );
-    expect(stale.map(([action, resource]) => `${action}|${resource}`)).toEqual([]);
-  });
+  // Pairs stay listed after their writes move to the admin audit log: the older rows remain in
+  // the end-user log until its retention removes them.
 
   it('holds only names that are safe to compare', () => {
     for (const [action, resource] of listedPairs()) {

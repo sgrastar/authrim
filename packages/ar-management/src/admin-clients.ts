@@ -28,7 +28,6 @@ import {
   createCompatibilityErrorResponse,
   AR_ERROR_CODES,
   validateAllowedOrigins,
-  createAuditLogFromContext,
   getLogger,
   hashClientSecret,
   publishEvent,
@@ -94,6 +93,7 @@ import {
 import { runTenantBackupCoveredMutation } from './tenant-backup-writer';
 import { requireAdminStepUp } from './admin-step-up-gate';
 import { isSystemManagedClient } from './system-managed-clients';
+import { recordAdminOperationAudit } from './admin-operation-audit';
 
 type AdminClientApplicationType = 'web' | 'native' | 'spa' | 'service';
 type AdminBrowserPublicClientMode = 'strict' | 'cookie_fallback';
@@ -1794,12 +1794,14 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
       );
     });
 
-    await createAuditLogFromContext(c, 'client.created', 'client', client.client_id, {
-      client_name: client.client_name,
-      grant_types: client.grant_types,
-    });
-    scheduleAdminAuditLog(c, 'client.created', client.client_id, 'success', {
-      client_name: client.client_name,
+    await recordAdminOperationAudit(c, {
+      action: 'client.created',
+      resourceType: 'client',
+      resourceId: client.client_id,
+      metadata: {
+        client_name: client.client_name,
+        grant_types: client.grant_types,
+      },
     });
 
     const tokenExchangeWarnings = await tokenExchangeCeilingWarnings(c, tenantId, client);
@@ -3273,8 +3275,12 @@ async function executeAdminClientUpdate(
     if (hasRegistryUpdate) await invalidateWebOriginRegistryCache(c.env, tenantId, clientId);
     if (updatedClient && existingClient.enabled !== updatedClient.enabled) {
       const action = updatedClient.enabled ? 'client.enabled' : 'client.disabled';
-      await createAuditLogFromContext(c, action, 'client', clientId, {});
-      scheduleAdminAuditLog(c, action, clientId, 'success');
+      await recordAdminOperationAudit(c, {
+        action: action,
+        resourceType: 'client',
+        resourceId: clientId,
+        metadata: {},
+      });
     }
 
     const log = getLogger(c).module('ADMIN-CLIENT');
@@ -3303,31 +3309,23 @@ async function executeAdminClientUpdate(
       minimumIalValidation.value !== undefined
         ? { minimum_ial: updatedClient?.minimum_ial ?? null }
         : {};
-    await createAuditLogFromContext(c, 'client.updated', 'client', clientId, {
-      client_name: updatedClient?.client_name,
-      ...minimumIalChange,
-      ...(Object.keys(advanced).length ? { advanced_fields: Object.keys(advanced) } : {}),
-      ...(internal.restoreAudit
-        ? {
-            restored_from: internal.restoreAudit.restoredFrom,
-            ...(internal.restoreAudit.reason
-              ? { restore_reason: internal.restoreAudit.reason }
-              : {}),
-          }
-        : {}),
-    });
-    scheduleAdminAuditLog(c, 'client.updated', clientId, 'success', {
-      client_name: updatedClient?.client_name,
-      ...minimumIalChange,
-      ...(Object.keys(advanced).length ? { advanced_fields: Object.keys(advanced) } : {}),
-      ...(internal.restoreAudit
-        ? {
-            restored_from: internal.restoreAudit.restoredFrom,
-            ...(internal.restoreAudit.reason
-              ? { restore_reason: internal.restoreAudit.reason }
-              : {}),
-          }
-        : {}),
+    await recordAdminOperationAudit(c, {
+      action: 'client.updated',
+      resourceType: 'client',
+      resourceId: clientId,
+      metadata: {
+        client_name: updatedClient?.client_name,
+        ...minimumIalChange,
+        ...(Object.keys(advanced).length ? { advanced_fields: Object.keys(advanced) } : {}),
+        ...(internal.restoreAudit
+          ? {
+              restored_from: internal.restoreAudit.restoredFrom,
+              ...(internal.restoreAudit.reason
+                ? { restore_reason: internal.restoreAudit.reason }
+                : {}),
+            }
+          : {}),
+      },
     });
 
     // Only an update that touches token exchange is told what the tenant's ceilings mean for it.
@@ -3461,8 +3459,12 @@ export async function adminClientDeleteHandler(c: Context<{ Bindings: Env }>) {
       );
     });
 
-    await createAuditLogFromContext(c, 'client.deleted', 'client', clientId, {});
-    scheduleAdminAuditLog(c, 'client.deleted', clientId, 'success');
+    await recordAdminOperationAudit(c, {
+      action: 'client.deleted',
+      resourceType: 'client',
+      resourceId: clientId,
+      metadata: {},
+    });
 
     return c.json({
       success: true,
@@ -3731,13 +3733,14 @@ export async function adminClientRegenerateSecretHandler(c: Context<{ Bindings: 
       });
     }
 
-    await createAuditLogFromContext(c, 'client.secret_regenerate', 'client', clientId, {
-      grace_period_hours: gracePeriodHours,
-      revoked_tokens: revokedTokens,
-    });
-    scheduleAdminAuditLog(c, 'client.secret_regenerated', clientId, 'success', {
-      grace_period_hours: gracePeriodHours,
-      revoked_tokens: revokedTokens,
+    await recordAdminOperationAudit(c, {
+      action: 'client.secret_regenerated',
+      resourceType: 'client',
+      resourceId: clientId,
+      metadata: {
+        grace_period_hours: gracePeriodHours,
+        revoked_tokens: revokedTokens,
+      },
     });
 
     log.info('Client secret regenerated', {

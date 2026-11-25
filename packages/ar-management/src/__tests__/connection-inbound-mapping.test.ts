@@ -28,6 +28,9 @@ import { openCoreStore } from './helpers/core-schema-sqlite';
 import { insertSamlProvider, insertTenant } from './helpers/core-database';
 import type { SQLiteDatabase } from './test-sqlite';
 
+// Admin operations are recorded through the forwarding shim (see the helper).
+vi.mock('../admin-operation-audit', () => import('./helpers/legacy-admin-audit-shim'));
+
 const seams = vi.hoisted(() => ({ stepUp: vi.fn(async (): Promise<Response | null> => null) }));
 vi.mock('@authrim/ar-lib-core', async (original) => {
   const actual = await original<typeof import('@authrim/ar-lib-core')>();
