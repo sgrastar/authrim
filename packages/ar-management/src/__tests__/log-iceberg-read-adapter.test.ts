@@ -336,7 +336,7 @@ describe('Iceberg read adapter integration', () => {
     await expect(read().query('SELECT id FROM event_log')).rejects.toMatchObject({
       reason: 'TypeError(redacted)',
     });
-    mocks.read.mockRejectedValueOnce(new Error(`token ${'A'.repeat(40)} rejected`));
+    mocks.read.mockRejectedValueOnce(new Error(`token ${'A'.repeat(24)} rejected`));
     await expect(read().query('SELECT id FROM event_log')).rejects.toMatchObject({
       reason: 'Error(redacted)',
     });

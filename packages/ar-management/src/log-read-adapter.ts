@@ -44,7 +44,9 @@ export function logReadFailureReason(error: unknown): string {
 }
 function plainReason(error: Error): string {
   const message = error.message.trim();
-  const plain = /^[A-Za-z0-9_ .,:()-]{1,160}$/.test(message) && !/[A-Za-z0-9+/]{32,}/.test(message);
+  // Plain words only: no URL, quote, `=`, `@` or `/`, and no unbroken run of 24+ characters,
+  // which is what a token or a hash looks like (codes are `_`-separated and pass).
+  const plain = /^[A-Za-z0-9_ .,:()-]{1,160}$/.test(message) && !/[A-Za-z0-9]{24,}/.test(message);
   const name = error.name || 'Error';
   if (!message) return name;
   if (!plain) return `${name}(redacted)`;
