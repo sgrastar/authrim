@@ -215,7 +215,11 @@ export async function mfaCoverageReport(
   );
 }
 
-/** Audit log entries of a period (from inclusive, to exclusive), oldest first, including archives. */
+/**
+ * Audit log entries of a period (from inclusive, to exclusive), oldest first, including archives:
+ * the end-user audit log (`source` core) and the admin audit log (`source` admin), whose actor is
+ * the administrator who acted.
+ */
 export async function auditLogReport(
   env: Env,
   auditProfile: AuditProfile,
@@ -252,33 +256,158 @@ export async function auditLogReport(
       LIMIT ?`,
     [tenantId, toStored(period.fromMs), toStored(period.toMs), MAX_REPORT_ROWS + 1]
   );
+  // Admin operations are in the admin audit log, which names the administrator who acted.
+  const adminRead = createLogReadAdapter({
+    env,
+    tenantId,
+    dataset: 'admin.admin_audit_log',
+    window: { fromMs: period.fromMs, toMs: period.toMs - 1 },
+  });
+  const adminRows = await adminRead.adapter.query<{
+    id: string;
+    created_at: number;
+    action: string;
+    result: string | null;
+    severity: string | null;
+    admin_user_id: string | null;
+    metadata_json: string | null;
+    error_code: string | null;
+  }>(
+    `SELECT id, created_at, action, result, severity, admin_user_id, metadata_json, error_code
+       FROM admin_audit_log
+      WHERE tenant_id = ? AND created_at >= ? AND created_at < ?
+      ORDER BY created_at, id
+      LIMIT ?`,
+    [tenantId, period.fromMs, period.toMs, MAX_REPORT_ROWS + 1]
+  );
+  const entries = [
+    ...rows.map(({ created_at, ...row }): ReportEntry => {
+      const occurredAt = fromStoredAuditTimestamp(Number(created_at), context);
+      return {
+        at: Date.parse(occurredAt),
+        row: {
+          source: 'core',
+          id: row.id,
+          occurred_at: occurredAt,
+          action: row.action,
+          event_category: row.event_category,
+          result: row.result,
+          severity: row.severity,
+          actor_type: null,
+          actor: row.actor,
+          subject_user: row.subject_user,
+          client_id: row.client_id,
+          error_code: row.error_code,
+        },
+      };
+    }),
+    ...adminRows.map((row): ReportEntry => {
+      const actor = adminAuditActor(row.admin_user_id, row.metadata_json);
+      return {
+        at: Number(row.created_at),
+        row: {
+          source: 'admin',
+          id: row.id,
+          occurred_at: new Date(Number(row.created_at)).toISOString(),
+          action: row.action,
+          event_category: null,
+          result: row.result,
+          severity: row.severity,
+          actor_type: actor.type,
+          actor: actor.id,
+          subject_user: null,
+          client_id: null,
+          error_code: row.error_code,
+        },
+      };
+    }),
+  ].sort((a, b) => a.at - b.at || String(a.row.id).localeCompare(String(b.row.id)));
   const report = csvReport(
-    rows.map(({ created_at, ...row }) => ({
-      id: row.id,
-      occurred_at: fromStoredAuditTimestamp(Number(created_at), context),
-      action: row.action,
-      event_category: row.event_category,
-      result: row.result,
-      severity: row.severity,
-      actor: row.actor,
-      subject_user: row.subject_user,
-      client_id: row.client_id,
-      error_code: row.error_code,
-    })),
+    entries.map((entry) => entry.row),
     [
+      'source',
       'id',
       'occurred_at',
       'action',
       'event_category',
       'result',
       'severity',
+      'actor_type',
       'actor',
       'subject_user',
       'client_id',
       'error_code',
     ]
   );
-  return { ...report, logCoverage: logRead.coverage() };
+  return { ...report, logCoverage: mergeLogCoverage(logRead.coverage(), adminRead.coverage()) };
+}
+
+interface ReportEntry {
+  at: number;
+  row: Record<string, unknown>;
+}
+
+/**
+ * Who acted in an admin audit record, as the admin audit API names them: an agent or a machine
+ * principal by its own ID (the admin user column holds an agent's delegator and is empty for a
+ * machine), an administrator by their ID.
+ */
+function adminAuditActor(
+  adminUserId: string | null,
+  metadataJson: string | null
+): { type: string; id: string | null } {
+  let metadata: Record<string, unknown> = {};
+  try {
+    const parsed: unknown = metadataJson ? JSON.parse(metadataJson) : null;
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed))
+      metadata = parsed as Record<string, unknown>;
+  } catch {
+    // An unreadable body names no actor beyond the admin user column.
+  }
+  const text = (key: string) => {
+    const value = metadata[key];
+    return typeof value === 'string' && value.length > 0 ? value : null;
+  };
+  const type = text('admin_actor_type');
+  const machine = text('admin_machine_principal_id');
+  if (type === 'agent') return { type, id: text('admin_actor_id') };
+  if (type === 'machine' || machine) {
+    return { type: 'machine', id: text('admin_actor_id') ?? machine ?? adminUserId };
+  }
+  if (type === 'system' || adminUserId === 'system') {
+    return { type: 'system', id: text('admin_actor_id') ?? 'system' };
+  }
+  return { type: 'admin_user', id: text('admin_actor_id') ?? adminUserId };
+}
+
+const CONSISTENCY_STRENGTH: readonly LogReadCoverage['consistency'][] = [
+  'local_hot_only',
+  'eventual',
+  'snapshot',
+];
+
+/**
+ * Both logs' coverage: the weaker consistency, complete only when both are. Pending deliveries are
+ * counted for the tenant, not per log, so both reads report the same backlog: it is taken once.
+ */
+function mergeLogCoverage(
+  core: LogReadCoverage | undefined,
+  admin: LogReadCoverage | undefined
+): LogReadCoverage | undefined {
+  if (!core || !admin) return core ?? admin;
+  const consistency =
+    CONSISTENCY_STRENGTH.indexOf(core.consistency) <=
+    CONSISTENCY_STRENGTH.indexOf(admin.consistency)
+      ? core.consistency
+      : admin.consistency;
+  return {
+    consistency,
+    pending_deliveries:
+      core.pending_deliveries === null || admin.pending_deliveries === null
+        ? null
+        : Math.max(core.pending_deliveries, admin.pending_deliveries),
+    complete: core.complete && admin.complete,
+  };
 }
 
 /** The compliance status at this moment, as the status API answers it (JSON). */
