@@ -18,6 +18,7 @@ import { enStatements } from './statements/en';
 import { enStepUp } from './step-up/en';
 import { enAdminAudit } from './admin-audit/en';
 import { enUserAudit } from './user-audit/en';
+import { enSystemLog } from './system-log/en';
 import { enTeam } from './team/en';
 import { enIpAllowlist } from './ip-allowlist/en';
 import { enAccountPages } from './account-pages/en';
@@ -51,6 +52,7 @@ export const en = {
 	...enStepUp,
 	...enAdminAudit,
 	...enUserAudit,
+	...enSystemLog,
 	...enTeam,
 	...enIpAllowlist,
 	...enAccountPages,

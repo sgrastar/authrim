@@ -267,7 +267,8 @@ export const TENANT_AREAS: readonly NavArea[] = [
 			},
 			{
 				id: 'system',
-				label: 'nav.mon.system'
+				label: 'nav.mon.system',
+				requires: { permission: 'admin:system_logs:read' }
 			},
 			{
 				id: 'diagnostics',

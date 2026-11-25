@@ -363,7 +363,7 @@ export const enSettings: Record<keyof typeof jaSettings, string> = {
 
 	'set.k.tenant_capabilities.webhooks': 'Tenants may use webhooks',
 	'set.k.tenant_capabilities.webhooks.desc':
-		'Off: tenants cannot manage webhooks through the Admin API, and no webhook is delivered for a tenant. Events that occur while it is off are discarded and not delivered later. Due account webhook events waiting in the queue are discarded as they are processed and recorded in the audit log (webhook.outbox.dropped); events still waiting at the moment it is turned back on are delivered. Platform administrators are exempt at the Admin API. A change takes effect within about a minute. On by default.',
+		'Off: tenants cannot manage webhooks through the Admin API, and no webhook is delivered for a tenant. Events that occur while it is off are discarded and not delivered later. Due account webhook events waiting in the queue are discarded as they are processed and recorded in the system log (webhook.outbox.dropped); events still waiting at the moment it is turned back on are delivered. Platform administrators are exempt at the Admin API. A change takes effect within about a minute. On by default.',
 
 	'set.k.tenant_capabilities.dynamic_client_registration':
 		'Tenants may use dynamic client registration',
