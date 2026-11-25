@@ -127,6 +127,7 @@ export * from './db';
 export * from './utils/request-path';
 export * from './utils/admin-ip-match';
 export * from './utils/audit-log';
+export * from './utils/system-event-log';
 export * from './utils/client-authentication';
 export * from './utils/client-scopes';
 export * from './utils/crypto';

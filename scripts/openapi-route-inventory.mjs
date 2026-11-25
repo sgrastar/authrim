@@ -357,6 +357,12 @@ const packageSpecs = [
         },
       },
       {
+        file: 'packages/ar-management/src/routes/admin-management/system-logs.ts',
+        receiverPrefixes: {
+          systemLogsRouter: '/api/admin/system-logs',
+        },
+      },
+      {
         file: 'packages/ar-management/src/routes/admin-management/storage-destinations.ts',
         receiverPrefixes: {
           storageDestinationsRouter: '/api/admin/storage-destinations',

@@ -150,6 +150,7 @@ const TENANT_ADMIN_PERMISSIONS = [
   'admin:audit:*',
   'admin:admin_audit:*',
   'admin:operational_logs:*',
+  'admin:system_logs:*',
   'admin:logging:overview:read',
   'admin:logging:delivery_events:read',
   'admin:logging:exports:create',
@@ -192,6 +193,7 @@ const SUPPORT_PERMISSIONS = [
   'admin:clients:read',
   'admin:audit:read',
   'admin:operational_logs:read',
+  'admin:system_logs:read',
   // Support operations: can ask, cannot approve or run
   'admin:support_ops:registry:read',
   'admin:support_ops:aggregate:read',
@@ -230,6 +232,7 @@ const VIEWER_PERMISSIONS = [
   'admin:audit:read',
   'admin:admin_audit:read',
   'admin:operational_logs:read',
+  'admin:system_logs:read',
   'admin:logging:overview:read',
   'admin:logging:delivery_events:read',
   'admin:admin_logging:overview:read',

@@ -190,6 +190,10 @@
             {
               "path": "027_admin_totp_second_factor.sql",
               "checksum": "9dd293d43496d792c306317a6d5dcd83268885f449ce7019a2c350da5697d44e"
+            },
+            {
+              "path": "028_system_logs_permission.sql",
+              "checksum": "233f130db139c9e50523a052c0927370d6e6591be1f3681c21172118fd39bebd"
             }
           ]
         },
@@ -485,6 +489,10 @@
         {
           "path": "027_admin_totp_second_factor.sql",
           "checksum": "9dd293d43496d792c306317a6d5dcd83268885f449ce7019a2c350da5697d44e"
+        },
+        {
+          "path": "028_system_logs_permission.sql",
+          "checksum": "233f130db139c9e50523a052c0927370d6e6591be1f3681c21172118fd39bebd"
         }
       ]
     },

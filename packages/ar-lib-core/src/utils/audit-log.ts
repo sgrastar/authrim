@@ -95,7 +95,7 @@ export class AuditLogDeliveryError extends Error {
   }
 }
 
-function requireAuditTenantId(tenantId: string | undefined, action: string): string | null {
+export function requireAuditTenantId(tenantId: string | undefined, action: string): string | null {
   const normalized = tenantId?.trim();
   if (!normalized) {
     log.error('Cannot create audit log: tenantId is required', { action });
@@ -127,7 +127,7 @@ export interface LegacyAuditLogWriteInput {
   createdAt: number;
 }
 
-function getUnifiedAuditService(env: Env): IAuditService {
+export function getUnifiedAuditService(env: Env): IAuditService {
   return createAuditService({
     env,
     configKv: env.AUTHRIM_CONFIG,
@@ -137,7 +137,7 @@ function getUnifiedAuditService(env: Env): IAuditService {
   });
 }
 
-function mapLegacySeverity(severity: AuditLogEntry['severity']): EventSeverity {
+export function mapLegacySeverity(severity: AuditLogEntry['severity']): EventSeverity {
   if (severity === 'warning') {
     return 'warn';
   }
@@ -147,7 +147,7 @@ function mapLegacySeverity(severity: AuditLogEntry['severity']): EventSeverity {
 // Legacy audit actions are loosely structured, so use a heuristic based on
 // action prefix first and resource second to keep event_category stable enough
 // for filtering without forcing a breaking rename of all existing actions.
-function mapLegacyAuditCategory(action: string, resource: string): EventCategory {
+export function mapLegacyAuditCategory(action: string, resource: string): EventCategory {
   const prefix = action.split(/[._]/)[0];
 
   if (prefix === 'auth' || prefix === 'login' || prefix === 'logout' || prefix === 'passkey') {
@@ -217,7 +217,7 @@ export function mapLegacyAuditResult(
 }
 
 /** The error code an unsuccessful entry carries (`errorCode`, or `error_code` in snake_case data). */
-function mapLegacyAuditErrorCode(
+export function mapLegacyAuditErrorCode(
   result: EventResult,
   metadata: Record<string, unknown>
 ): string | undefined {
