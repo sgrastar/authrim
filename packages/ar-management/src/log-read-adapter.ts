@@ -25,13 +25,32 @@ const COLUMNS: Readonly<Record<string, string>> = {
   'admin.admin_audit_log':
     'id tenant_id admin_user_id admin_email action resource_type resource_id result error_code error_message severity ip_address user_agent request_id session_id before_json after_json metadata_json created_at detail_object_catalog_id actor_type actor_sub actor_mode actor_assurance token_binding act_client_id act_principal_id grant_id elevation_id mcp_tool',
 };
-/** The reason an archive read failed, as a code: our own checks name theirs, Core errors carry
- * a code as their message (`log_iceberg_*`), and anything else is reported by its class only. */
+/**
+ * The reason an archive read failed, for the Worker log. Our own checks name theirs; Core errors
+ * carry a code (`log_iceberg_*`) or a short sentence ("Iceberg catalog read failed"), and D1 or
+ * fetch errors a sentence too, so the message is kept when it is plain words: no URL, query
+ * string, quote or long token, which is where a secret or a row value could sit. The `cause`
+ * chain is followed the same way, so a wrapped HTTP or D1 failure still names itself.
+ */
 export function logReadFailureReason(error: unknown): string {
   if (error instanceof LogQueryIncompleteError) return error.reason;
-  if (error instanceof Error)
-    return /^[a-z0-9_]{1,80}$/.test(error.message) ? error.message : error.name || 'Error';
-  return 'non_error';
+  const parts: string[] = [];
+  let current: unknown = error;
+  for (let depth = 0; depth < 4 && current instanceof Error; depth++) {
+    parts.push(plainReason(current));
+    current = current.cause;
+  }
+  return parts.length ? parts.join(' <- ') : 'non_error';
+}
+function plainReason(error: Error): string {
+  const message = error.message.trim();
+  // Plain words only: no URL, quote, `=`, `@` or `/`, and no unbroken run of 24+ characters,
+  // which is what a token or a hash looks like (codes are `_`-separated and pass).
+  const plain = /^[A-Za-z0-9_ .,:()-]{1,160}$/.test(message) && !/[A-Za-z0-9]{24,}/.test(message);
+  const name = error.name || 'Error';
+  if (!message) return name;
+  if (!plain) return `${name}(redacted)`;
+  return name === 'Error' || message.startsWith(name) ? message : `${name}: ${message}`;
 }
 /** `reason` is a short internal code for the Worker log: never SQL, parameters or row data. */
 function fail(reason: string): never {

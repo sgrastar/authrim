@@ -322,10 +322,27 @@ describe('Iceberg read adapter integration', () => {
       reason: 'log_iceberg_read_watermark_lineage_incomplete',
       message: 'Log results are incomplete. Narrow the time range or retry later.',
     });
-    // Anything else is reported by its class only: a message could carry a URL or a secret.
+    // Plain words are kept, with the cause chain; a URL, a quote or a long token is not.
+    mocks.read.mockRejectedValueOnce(
+      new Error('Iceberg catalog read failed', {
+        cause: new Error('D1_ERROR: no such table: log_iceberg_outbox: SQLITE_ERROR'),
+      })
+    );
+    await expect(read().query('SELECT id FROM event_log')).rejects.toMatchObject({
+      reason:
+        'Iceberg catalog read failed <- D1_ERROR: no such table: log_iceberg_outbox: SQLITE_ERROR',
+    });
     mocks.read.mockRejectedValueOnce(new TypeError('fetch failed: https://catalog/secret-token'));
     await expect(read().query('SELECT id FROM event_log')).rejects.toMatchObject({
-      reason: 'TypeError',
+      reason: 'TypeError(redacted)',
+    });
+    mocks.read.mockRejectedValueOnce(new Error(`token ${'A'.repeat(24)} rejected`));
+    await expect(read().query('SELECT id FROM event_log')).rejects.toMatchObject({
+      reason: 'Error(redacted)',
+    });
+    mocks.read.mockRejectedValueOnce(new Error("value 'x' is unexpected"));
+    await expect(read().query('SELECT id FROM event_log')).rejects.toMatchObject({
+      reason: 'Error(redacted)',
     });
     // Our own checks name theirs.
     mocks.read.mockResolvedValueOnce({
