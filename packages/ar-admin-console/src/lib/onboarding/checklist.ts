@@ -87,6 +87,13 @@ const SCREEN_EDITOR = '/admin/customization/screens/*';
 const ACCOUNT_SETTINGS = '/admin/me';
 
 /** The left navigation's link to a page (its rows carry no name of their own). */
+/**
+ * On a phone the header's categories and the left navigation are not drawn: they are in the
+ * drawer, opened with the menu button. A step that points at one of them points at that button
+ * instead and says so.
+ */
+const VIA_MENU = { target: '[data-guide="nav-menu"]', action: 'ob.menu.action' } as const;
+
 const subNavLink = (href: string) => `.subnav a.subnav__item[href="${href}"]`;
 
 export const CHECKLIST: readonly ChecklistItem[] = [
@@ -101,6 +108,7 @@ export const CHECKLIST: readonly ChecklistItem[] = [
 			{
 				path: OVERVIEW,
 				target: '[data-guide="nav-settings"]',
+				fallback: VIA_MENU,
 				title: 'ob.signIn.s1.title',
 				label: 'ob.signIn.s1.label',
 				body: 'ob.signIn.s1.body'
@@ -108,6 +116,7 @@ export const CHECKLIST: readonly ChecklistItem[] = [
 			{
 				path: TENANT_BASICS,
 				target: subNavLink(TENANT_BASICS),
+				fallback: VIA_MENU,
 				title: 'ob.signIn.s2.title',
 				body: 'ob.signIn.s2.body'
 			},
@@ -131,6 +140,7 @@ export const CHECKLIST: readonly ChecklistItem[] = [
 			{
 				path: OVERVIEW,
 				target: '[data-guide="nav-customization"]',
+				fallback: VIA_MENU,
 				title: 'ob.theme.nav.title',
 				label: 'ob.theme.nav.label',
 				body: 'ob.theme.nav.body'
@@ -138,6 +148,7 @@ export const CHECKLIST: readonly ChecklistItem[] = [
 			{
 				path: THEME_LIST,
 				target: subNavLink(THEME_LIST),
+				fallback: VIA_MENU,
 				title: 'ob.theme.sub.title',
 				label: 'ob.theme.sub.label',
 				body: 'ob.theme.sub.body'
@@ -227,6 +238,7 @@ export const CHECKLIST: readonly ChecklistItem[] = [
 			{
 				path: OVERVIEW,
 				target: '[data-guide="nav-access"]',
+				fallback: VIA_MENU,
 				title: 'ob.schema.nav.title',
 				label: 'ob.schema.nav.label',
 				body: 'ob.schema.nav.body'
@@ -234,6 +246,7 @@ export const CHECKLIST: readonly ChecklistItem[] = [
 			{
 				path: SCHEMA_LIST,
 				target: subNavLink(SCHEMA_LIST),
+				fallback: VIA_MENU,
 				title: 'ob.schema.sub.title',
 				label: 'ob.schema.sub.label',
 				body: 'ob.schema.sub.body'
@@ -262,6 +275,7 @@ export const CHECKLIST: readonly ChecklistItem[] = [
 			{
 				path: OVERVIEW,
 				target: '[data-guide="nav-customization"]',
+				fallback: VIA_MENU,
 				title: 'ob.screens.nav.title',
 				label: 'ob.screens.nav.label',
 				body: 'ob.screens.nav.body'
@@ -269,6 +283,7 @@ export const CHECKLIST: readonly ChecklistItem[] = [
 			{
 				path: SCREEN_LIST,
 				target: subNavLink(SCREEN_LIST),
+				fallback: VIA_MENU,
 				title: 'ob.screens.sub.title',
 				label: 'ob.screens.sub.label',
 				body: 'ob.screens.sub.body'
