@@ -556,10 +556,17 @@ export const API_GROUPS: readonly ApiGroup[] = [
 		paths: [`${A}/admin-logging`]
 	},
 	{
-		id: 'operational-logs',
+		id: 'system-logs',
 		name: 'System logs',
 		kind: 'monitoring',
 		page: 'monitoring/system',
+		paths: [`${A}/system-logs`]
+	},
+	{
+		id: 'operational-logs',
+		name: 'Operational logs (reasons recorded with user status changes)',
+		kind: 'monitoring',
+		page: 'users/all',
 		paths: [`${A}/operational-logs`]
 	},
 	{

@@ -21,13 +21,13 @@ import {
   createErrorResponse,
   AR_ERROR_CODES,
   generateId,
-  createAuditLogFromContext,
 } from '@authrim/ar-lib-core';
 import {
   adminAccountContact,
   adminAccountContacts,
   adminAccountCoreAdapter,
 } from './admin-account-storage';
+import { recordAdminOperationAudit } from './admin-operation-audit';
 
 /**
  * Hono context type with admin auth variable
@@ -357,9 +357,15 @@ export async function adminAttributeCreateHandler(c: AdminContext) {
     }
 
     // Audit log
-    await createAuditLogFromContext(asBaseContext(c), 'create', 'user_attribute', id, {
-      user_id: body.user_id,
-      attribute_name: body.attribute_name,
+    await recordAdminOperationAudit(asBaseContext(c), {
+      action: 'create',
+      resourceType: 'user_attribute',
+      resourceId: id,
+      metadata: {
+        user_id: body.user_id,
+        attribute_name: body.attribute_name,
+      },
+      endUser: { userId: body.user_id },
     });
 
     return c.json(
@@ -441,8 +447,13 @@ export async function adminAttributeUpdateHandler(c: AdminContext) {
     );
 
     // Audit log
-    await createAuditLogFromContext(asBaseContext(c), 'update', 'user_attribute', id, {
-      changes: Object.keys(body),
+    await recordAdminOperationAudit(asBaseContext(c), {
+      action: 'update',
+      resourceType: 'user_attribute',
+      resourceId: id,
+      metadata: {
+        changes: Object.keys(body),
+      },
     });
 
     return c.json({ success: true });
@@ -482,9 +493,15 @@ export async function adminAttributeDeleteHandler(c: AdminContext) {
     ]);
 
     // Audit log
-    await createAuditLogFromContext(asBaseContext(c), 'delete', 'user_attribute', id, {
-      user_id: existing[0].user_id,
-      attribute_name: existing[0].attribute_name,
+    await recordAdminOperationAudit(asBaseContext(c), {
+      action: 'delete',
+      resourceType: 'user_attribute',
+      resourceId: id,
+      metadata: {
+        user_id: existing[0].user_id,
+        attribute_name: existing[0].attribute_name,
+      },
+      endUser: { userId: existing[0].user_id },
     });
 
     return c.json({ success: true });
@@ -698,13 +715,12 @@ export async function adminDeleteExpiredAttributesHandler(c: AdminContext) {
       );
 
       // Audit log
-      await createAuditLogFromContext(
-        asBaseContext(c),
-        'bulk_delete',
-        'user_attribute',
-        'expired',
-        { deleted_count: count }
-      );
+      await recordAdminOperationAudit(asBaseContext(c), {
+        action: 'bulk_delete',
+        resourceType: 'user_attribute',
+        resourceId: 'expired',
+        metadata: { deleted_count: count },
+      });
     }
 
     return c.json({

@@ -29,6 +29,9 @@ import {
   adminIdentityFieldMappingSetCreateHandler,
 } from './helpers/legacy-mapping-set-steps';
 
+// Admin operations are recorded through the forwarding shim (see the helper).
+vi.mock('../admin-operation-audit', () => import('./helpers/legacy-admin-audit-shim'));
+
 const logCalls = vi.hoisted(() => ({ emit: vi.fn(), prepare: vi.fn(), publication: vi.fn() }));
 const federationSideEffects = vi.hoisted(() => ({
   bump: vi.fn(async () => {}),

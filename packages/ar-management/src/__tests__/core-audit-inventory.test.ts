@@ -49,6 +49,28 @@ describe('core audit write inventory', () => {
     expect(siteActionMatches(sites[3], 'tenant.updated')).toBe(false);
   });
 
+  it('tells a platform actor from a person and from an unknown one', () => {
+    const sites = inventory(
+      HEADER +
+        `export async function a(c, env, id, who) {
+          await createAuditLog(env, { action: 'x.cron', resource: 'x', userId: 'system', metadata: '{}' });
+          await createAuditLog(env, { action: 'x.poll', resource: 'x', userId: 'saml-metadata-scheduler', metadata: '{}' });
+          await createAuditLog(env, { action: 'x.job', resource: 'x', userId: 'admin_job', metadata: '{}' });
+          await createAuditLog(env, { action: 'x.user', resource: 'x', userId: id, metadata: '{}' });
+          await createAuditLog(env, { action: 'x.admin', resource: 'x', userId: 'saml-admin', metadata: '{}' });
+          await createAuditLogFromContext(c, 'x.ctx', 'x', id, {});
+        }`
+    );
+    expect(sites.map((site) => [site.action, site.actorSystem])).toEqual([
+      ['x.cron', true],
+      ['x.poll', true],
+      ['x.job', true],
+      ['x.user', null],
+      ['x.admin', false],
+      ['x.ctx', false],
+    ]);
+  });
+
   it('tells a caller that carries on from one that fails the request', () => {
     const sites = inventory(
       HEADER +

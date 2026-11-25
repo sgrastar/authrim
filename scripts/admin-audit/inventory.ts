@@ -8,10 +8,12 @@ import { fileURLToPath } from 'node:url';
 import {
   findOtherOccurrences,
   inventoryCoreAuditWrites,
+  inventorySystemEventWrites,
 } from '../../packages/ar-management/src/__tests__/helpers/core-audit-inventory.js';
 
 const repositoryRoot = fileURLToPath(new URL('../../', import.meta.url));
 const sites = inventoryCoreAuditWrites(repositoryRoot);
+const systemSites = inventorySystemEventWrites(repositoryRoot);
 const ownFiles = new Set(sites.map((site) => site.file));
 const others = findOtherOccurrences(
   repositoryRoot,
@@ -22,7 +24,10 @@ const others = findOtherOccurrences(
 if (process.argv.includes('--json')) {
   process.stdout.write(
     `${JSON.stringify(
-      sites.map((site) => ({ ...site, otherFiles: others.get(site.action) ?? [] })),
+      {
+        core: sites.map((site) => ({ ...site, otherFiles: others.get(site.action) ?? [] })),
+        system: systemSites,
+      },
       null,
       2
     )}\n`
@@ -30,8 +35,8 @@ if (process.argv.includes('--json')) {
 } else {
   const mark = (value: boolean | null) => (value === null ? '?' : value ? '✓' : '–');
   const lines = [
-    '| file:line | helper | action | resource | fail-closed | caller swallows | fixed id | action also in |',
-    '|---|---|---|---|---|---|---|---|',
+    '| file:line | helper | action | resource | fail-closed | caller swallows | fixed id | system actor | action also in |',
+    '|---|---|---|---|---|---|---|---|---|',
     ...sites.map((site) =>
       [
         `${site.file}:${site.line}`,
@@ -41,9 +46,19 @@ if (process.argv.includes('--json')) {
         mark(site.failClosed),
         mark(site.callerSwallows),
         mark(site.fixedId),
+        mark(site.actorSystem),
         (others.get(site.action) ?? []).join('<br>') || '–',
       ].join(' | ')
     ),
   ].map((line) => (line.startsWith('|') ? line : `| ${line} |`));
-  process.stdout.write(`${lines.join('\n')}\n\n${sites.length} core audit write sites.\n`);
+  const systemLines = [
+    '| file:line | source | action |',
+    '|---|---|---|',
+    ...systemSites.map(
+      (site) => `| ${site.file}:${site.line} | \`${site.source}\` | \`${site.action}\` |`
+    ),
+  ];
+  process.stdout.write(
+    `${lines.join('\n')}\n\n${sites.length} core audit write sites.\n\n${systemLines.join('\n')}\n\n${systemSites.length} system log write sites.\n`
+  );
 }

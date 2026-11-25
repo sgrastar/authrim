@@ -115,6 +115,8 @@ const MATRIX: readonly Row[] = [
   ['GET', '/api/admin/security/alerts', [T, T, F, T]],
   ['POST', '/api/admin/security/alerts/alert-1/acknowledge', [T, T, F, F]],
   ['GET', '/api/admin/compliance/status', [T, T, T, T]],
+  ['GET', '/api/admin/system-logs', [T, T, T, T]],
+  ['GET', '/api/admin/system-logs/evt-1', [T, T, T, T]],
   ['GET', '/api/admin/compliance/access-reviews/review-1/items', [T, T, T, T]],
   ['POST', '/api/admin/compliance/access-reviews', [T, T, F, F]],
   ['GET', '/api/admin/effective-policy', [T, T, F, T]],

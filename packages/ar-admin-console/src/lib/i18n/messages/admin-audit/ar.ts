@@ -30,6 +30,7 @@ export const arAdminAudit: Record<keyof typeof jaAdminAudit, string> = {
 	'aud.moreFailed': 'تعذّر تحميل السجلات التالية. يُرجى المحاولة مرة أخرى.',
 	'aud.actor.machine': 'آلة',
 	'aud.actor.agent': 'وكيل',
+	'aud.actor.unrecorded': 'النوع غير مسجل',
 	'aud.actor.unknown': 'غير معروف',
 	'aud.stepUp.badge': 'تحقق إضافي',
 	'aud.stepUp.summary': '{level}: {operation}',

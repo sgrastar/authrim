@@ -32,6 +32,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { updateCategoryRetention } from '../routes/settings/data-retention';
 import { openCoreStore } from './helpers/core-schema-sqlite';
 
+// Admin operations are recorded through the forwarding shim (see the helper).
+vi.mock('../admin-operation-audit', () => import('./helpers/legacy-admin-audit-shim'));
+
 function context(body: Record<string, unknown>) {
   return {
     req: { param: vi.fn(() => 'lookup_directory'), json: vi.fn(async () => body) },

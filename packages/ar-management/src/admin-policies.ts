@@ -11,7 +11,6 @@ import {
   type DatabaseAdapter,
   generateId,
   getTenantIdFromContext,
-  createAuditLogFromContext,
   getLogger,
   readPolicyFlags,
 } from '@authrim/ar-lib-core';
@@ -27,6 +26,7 @@ import {
   type PolicyContext,
   type PolicyDecision,
 } from '@authrim/ar-lib-policy';
+import { recordAdminOperationAudit } from './admin-operation-audit';
 
 // =============================================================================
 // Types
@@ -357,9 +357,14 @@ export async function adminPolicyCreateHandler(c: AdminContext) {
       ]
     );
 
-    await createAuditLogFromContext(asBaseContext(c), 'policy_rule_create', 'policy_rule', ruleId, {
-      name: body.name,
-      effect: body.effect,
+    await recordAdminOperationAudit(asBaseContext(c), {
+      action: 'policy_rule_create',
+      resourceType: 'policy_rule',
+      resourceId: ruleId,
+      metadata: {
+        name: body.name,
+        effect: body.effect,
+      },
     });
 
     return c.json(
@@ -474,8 +479,13 @@ export async function adminPolicyUpdateHandler(c: AdminContext) {
       params
     );
 
-    await createAuditLogFromContext(asBaseContext(c), 'policy_rule_update', 'policy_rule', ruleId, {
-      updates: Object.keys(body),
+    await recordAdminOperationAudit(asBaseContext(c), {
+      action: 'policy_rule_update',
+      resourceType: 'policy_rule',
+      resourceId: ruleId,
+      metadata: {
+        updates: Object.keys(body),
+      },
     });
 
     return c.json({ success: true });
@@ -519,8 +529,13 @@ export async function adminPolicyDeleteHandler(c: AdminContext) {
 
     await db.execute('DELETE FROM policy_rules WHERE tenant_id = ? AND id = ?', [tenantId, ruleId]);
 
-    await createAuditLogFromContext(asBaseContext(c), 'policy_rule_delete', 'policy_rule', ruleId, {
-      name: existing.name,
+    await recordAdminOperationAudit(asBaseContext(c), {
+      action: 'policy_rule_delete',
+      resourceType: 'policy_rule',
+      resourceId: ruleId,
+      metadata: {
+        name: existing.name,
+      },
     });
 
     return c.json({ success: true });

@@ -47,6 +47,7 @@ import { canManageRoleHierarchy } from '../admin-rbac';
 import { tenantCoreStores } from './tenant-stores';
 import { CrossShardAccountExactSearchService } from '../cross-shard-account-list';
 import { usesRoutedAccountStorage } from '../tenant-routed-storage';
+import { recordAdminOperationAudit } from '../admin-operation-audit';
 
 /** The most items one review may have; narrow the scope for more. */
 export const MAX_REVIEW_ITEMS = 1000;
@@ -598,12 +599,17 @@ export async function createAccessReview(c: Context<{ Bindings: Env }>) {
     // The review and its items are written together.
     await adapter.batch(statements);
 
-    await createAuditLogFromContext(c, 'access_review.created', 'access_review', reviewId, {
-      name: input.name,
-      scope: input.scope,
-      scope_value: scopeValue,
-      inactive_days: inactiveDays,
-      total_items: items.length,
+    await recordAdminOperationAudit(c, {
+      action: 'access_review.created',
+      resourceType: 'access_review',
+      resourceId: reviewId,
+      metadata: {
+        name: input.name,
+        scope: input.scope,
+        scope_value: scopeValue,
+        inactive_days: inactiveDays,
+        total_items: items.length,
+      },
     });
 
     const created = await loadReview(adapter, tenantId, reviewId);
@@ -830,9 +836,14 @@ export async function decideAccessReviewItems(c: Context<{ Bindings: Env }>) {
     );
     await refreshCounts(adapter, tenantId, reviewId);
     const updated = results.filter((result) => (result.rowsAffected ?? 0) > 0).length;
-    await createAuditLogFromContext(c, 'access_review.decided', 'access_review', reviewId, {
-      decision: parsed.data.decision,
-      items: updated,
+    await recordAdminOperationAudit(c, {
+      action: 'access_review.decided',
+      resourceType: 'access_review',
+      resourceId: reviewId,
+      metadata: {
+        decision: parsed.data.decision,
+        items: updated,
+      },
     });
     return c.json({
       updated,
@@ -1153,9 +1164,14 @@ export async function completeAccessReview(c: Context<{ Bindings: Env }>) {
     );
     const completed = (completion.rowsAffected ?? 0) > 0;
     if (completed) {
-      await createAuditLogFromContext(c, 'access_review.completed', 'access_review', reviewId, {
-        revoked_items: review.revoked_items,
-        approved_items: review.approved_items,
+      await recordAdminOperationAudit(c, {
+        action: 'access_review.completed',
+        resourceType: 'access_review',
+        resourceId: reviewId,
+        metadata: {
+          revoked_items: review.revoked_items,
+          approved_items: review.approved_items,
+        },
       });
     }
     const remaining = await adapter.queryOne<{ count: number }>(
@@ -1204,7 +1220,12 @@ export async function cancelAccessReview(c: Context<{ Bindings: Env }>) {
         409
       );
     }
-    await createAuditLogFromContext(c, 'access_review.cancelled', 'access_review', reviewId, {});
+    await recordAdminOperationAudit(c, {
+      action: 'access_review.cancelled',
+      resourceType: 'access_review',
+      resourceId: reviewId,
+      metadata: {},
+    });
     return c.json(serializeReview((await loadReview(adapter, tenantId, reviewId))!));
   } catch (error) {
     getLogger(c)

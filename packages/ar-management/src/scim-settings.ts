@@ -1,12 +1,8 @@
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core/types/env';
-import {
-  createAuditLogFromContext,
-  ensureDatabaseAdapter,
-  getLogger,
-  getTenantIdFromContext,
-} from '@authrim/ar-lib-core';
+import { ensureDatabaseAdapter, getLogger, getTenantIdFromContext } from '@authrim/ar-lib-core';
 import { resolveRuntimeIdentityMappingBinding } from '@authrim/ar-lib-core/services/identity-mapping-runtime-resolver';
+import { recordAdminOperationAudit } from './admin-operation-audit';
 
 export const SCIM_SETTINGS_CATEGORY = 'scim';
 export const DEFAULT_SCIM_BULK_MAX_OPERATIONS = 100;
@@ -120,12 +116,17 @@ export async function adminScimSettingsUpdateHandler(c: Context<{ Bindings: Env 
       }
     }
     await c.env.SETTINGS.put(scimSettingsKey(tenantId), JSON.stringify(settings));
-    await createAuditLogFromContext(c, 'scim.settings.update', 'scim_settings', tenantId, {
-      enabled: settings.enabled,
-      usersEnabled: settings.usersEnabled,
-      groupsEnabled: settings.groupsEnabled,
-      bulkEnabled: settings.bulkEnabled,
-      mappingSetId: settings.mappingSetId,
+    await recordAdminOperationAudit(c, {
+      action: 'scim.settings.update',
+      resourceType: 'scim_settings',
+      resourceId: tenantId,
+      metadata: {
+        enabled: settings.enabled,
+        usersEnabled: settings.usersEnabled,
+        groupsEnabled: settings.groupsEnabled,
+        bulkEnabled: settings.bulkEnabled,
+        mappingSetId: settings.mappingSetId,
+      },
     });
     return c.json({ settings });
   } catch (error) {

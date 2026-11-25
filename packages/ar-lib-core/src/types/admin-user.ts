@@ -794,6 +794,10 @@ export const ADMIN_PERMISSIONS = {
   OPERATIONAL_LOGS_DETAIL_READ: 'admin:operational_logs:detail:read',
   OPERATIONAL_LOGS_ALL: 'admin:operational_logs:*',
 
+  // System logs (events of the platform itself: cron, outbox, delivery; no admin, no end user)
+  SYSTEM_LOGS_READ: 'admin:system_logs:read',
+  SYSTEM_LOGS_ALL: 'admin:system_logs:*',
+
   // Privacy-preserving support operations
   SUPPORT_OPS_REGISTRY_READ: 'admin:support_ops:registry:read',
   SUPPORT_OPS_AGGREGATE_READ: 'admin:support_ops:aggregate:read',

@@ -46,6 +46,9 @@ import {
   adminTenantUpdateHandler,
 } from '../../admin-tenants';
 
+// Admin operations are recorded through the forwarding shim (see the helper).
+vi.mock('../../admin-operation-audit', () => import('../helpers/legacy-admin-audit-shim'));
+
 type RecordedQuery = (sql: string, params: unknown[]) => Promise<unknown>;
 
 interface RecordingAdapter {

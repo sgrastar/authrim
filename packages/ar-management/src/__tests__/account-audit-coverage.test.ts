@@ -150,9 +150,11 @@ describe('Account Page audit coverage', () => {
 
   it('preserves guest registration context when the general Admin UI deletes an account', () => {
     const source = readRepositoryFile('packages/ar-management/src/admin-users.ts');
+    // Both deletion paths record the operation once: in the admin audit log, and in the user's
+    // history (endUser), with the registration state.
     const deleteAuditCalls = [
       ...source.matchAll(
-        /createAuditLogFromContext\(c, 'user\.deleted', 'user', userId, \{([^}]*)\}\)/gu
+        /recordAdminOperationAudit\(c, \{\s*action: 'user\.deleted',\s*resourceType: 'user',\s*resourceId: userId,\s*metadata: \{([^}]*)\},\s*endUser: \{ userId: userId \},\s*\}\)/gu
       ),
     ];
 

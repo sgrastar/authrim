@@ -27,7 +27,6 @@ import {
   AR_ERROR_CODES,
   getTenantIdFromContext,
   getTenantMetadataContextFromHono,
-  createAuditLogFromContext,
   getLogger,
   listObjectCatalogObjects,
   type ObjectCatalogListResult,
@@ -62,6 +61,7 @@ import {
   buildUserImportUploadKey,
   sanitizeUserImportFilename,
 } from './user-import-jobs';
+import { recordAdminOperationAudit } from './admin-operation-audit';
 
 const ADMIN_JOB_MANAGER_ROLES = [...ADMIN_ROLE_GROUPS.tenantAdmin];
 
@@ -1883,10 +1883,15 @@ export async function adminJobsUsersImportHandler(c: Context<{ Bindings: Env }>)
     );
 
     // Write audit log
-    await createAuditLogFromContext(c, 'job.created', 'job', jobId, {
-      job_type: 'users/import',
-      r2_key: inputKey,
-      options,
+    await recordAdminOperationAudit(c, {
+      action: 'job.created',
+      resourceType: 'job',
+      resourceId: jobId,
+      metadata: {
+        job_type: 'users/import',
+        r2_key: inputKey,
+        options,
+      },
     });
 
     return c.json(
@@ -1982,11 +1987,16 @@ export async function adminJobsUsersBulkUpdateHandler(c: Context<{ Bindings: Env
     );
 
     // Write audit log
-    await createAuditLogFromContext(c, 'job.created', 'job', jobId, {
-      job_type: 'users/bulk-update',
-      affected_users: affectedCount,
-      fields: options.fields,
-      dry_run: options.dry_run,
+    await recordAdminOperationAudit(c, {
+      action: 'job.created',
+      resourceType: 'job',
+      resourceId: jobId,
+      metadata: {
+        job_type: 'users/bulk-update',
+        affected_users: affectedCount,
+        fields: options.fields,
+        dry_run: options.dry_run,
+      },
     });
 
     return c.json(
@@ -2087,11 +2097,16 @@ export async function adminJobsReportsGenerateHandler(c: Context<{ Bindings: Env
     );
 
     // Write audit log
-    await createAuditLogFromContext(c, 'job.created', 'job', jobId, {
-      job_type: 'reports/generate',
-      report_type: options.type,
-      format: options.format,
-      date_range: { from: options.from_date, to: options.to_date },
+    await recordAdminOperationAudit(c, {
+      action: 'job.created',
+      resourceType: 'job',
+      resourceId: jobId,
+      metadata: {
+        job_type: 'reports/generate',
+        report_type: options.type,
+        format: options.format,
+        date_range: { from: options.from_date, to: options.to_date },
+      },
     });
 
     return c.json(
@@ -2242,12 +2257,17 @@ export async function adminJobsOrgBulkMembersHandler(c: Context<{ Bindings: Env 
     );
 
     // Write audit log
-    await createAuditLogFromContext(c, 'job.created', 'job', jobId, {
-      job_type: 'organizations/bulk-members',
-      organization_id: organizationId,
-      action: options.action,
-      user_count: options.user_ids.length,
-      role: options.role,
+    await recordAdminOperationAudit(c, {
+      action: 'job.created',
+      resourceType: 'job',
+      resourceId: jobId,
+      metadata: {
+        job_type: 'organizations/bulk-members',
+        organization_id: organizationId,
+        action: options.action,
+        user_count: options.user_ids.length,
+        role: options.role,
+      },
     });
 
     return c.json(

@@ -31,6 +31,9 @@ import {
 import { seedDestinationProfile, seedMapping } from './helpers/identity-mapping-seed';
 import { insertTenant, openCoreDatabase } from './helpers/core-database';
 
+// Admin operations are recorded through the forwarding shim (see the helper).
+vi.mock('../admin-operation-audit', () => import('./helpers/legacy-admin-audit-shim'));
+
 /**
  * The default Mapping Set of the platform and of a tenant (`identity_mapping.oidc_default_set_id`),
  * saved through the real Settings API routes on the real Admin schema: what may be named, what is

@@ -362,7 +362,7 @@ export const jaSettings = {
 
 	'set.k.tenant_capabilities.webhooks': 'テナントに Webhook を許可する',
 	'set.k.tenant_capabilities.webhooks.desc':
-		'オフにすると、テナントは Admin API で Webhook を管理できなくなり、テナントの Webhook は配信されません。オフの間に発生したイベントは破棄され、後から配信されません。送信待ちのアカウント Webhook イベントは、処理されるたびに期限が来たものから破棄され、監査ログ（webhook.outbox.dropped）に記録されます。オンに戻した時点でまだ送信待ちに残っているイベントは配信されます。プラットフォーム管理者は Admin API では対象外です。変更は最大で約 1 分で反映されます。既定はオンです。',
+		'オフにすると、テナントは Admin API で Webhook を管理できなくなり、テナントの Webhook は配信されません。オフの間に発生したイベントは破棄され、後から配信されません。送信待ちのアカウント Webhook イベントは、処理されるたびに期限が来たものから破棄され、システムログ（webhook.outbox.dropped）に記録されます。オンに戻した時点でまだ送信待ちに残っているイベントは配信されます。プラットフォーム管理者は Admin API では対象外です。変更は最大で約 1 分で反映されます。既定はオンです。',
 
 	'set.k.tenant_capabilities.dynamic_client_registration':
 		'テナントに動的クライアント登録を許可する',

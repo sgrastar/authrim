@@ -315,6 +315,60 @@ describe('adminAuditRouter detail permission', () => {
     expect(mockUserRepo.getAdminUser).not.toHaveBeenCalledWith('amp_mcp_admin');
   });
 
+  it('keeps a principal recorded by ID only apart from admin users', async () => {
+    mockAuditRepo.searchAuditLogs.mockResolvedValue({
+      items: [
+        {
+          id: 'audit-deferred-1',
+          tenant_id: 'tenant-a',
+          admin_user_id: null,
+          admin_email: null,
+          action: 'tenant.cloned',
+          resource_type: 'tenant',
+          resource_id: 'tenant-a',
+          result: 'success',
+          severity: 'info',
+          error_code: null,
+          error_message: null,
+          ip_address: 'internal',
+          user_agent: 'internal',
+          request_id: null,
+          session_id: null,
+          before: null,
+          after: null,
+          // As recordAdminOperationAuditFromEnv writes a deferred operation.
+          metadata: {
+            admin_actor_type: 'unrecorded',
+            admin_actor_id: 'amp_clone_bot',
+            admin_auth_method: 'deferred',
+          },
+          has_detail: false,
+          detail_artifact_id: null,
+          created_at: 1714550400000,
+        },
+      ],
+      total: 1,
+      page: 1,
+      limit: 50,
+      totalPages: 1,
+    });
+
+    const res = await createApp().request(
+      '/api/admin/admin-audit-log',
+      { method: 'GET', headers: { 'X-Admin-Permissions': 'admin:admin_audit:read' } },
+      mockEnv
+    );
+
+    expect(res.status).toBe(200);
+    const body = await res.json<{ items: Array<Record<string, unknown>> }>();
+    expect(body.items[0]).toMatchObject({
+      actor_type: 'unrecorded',
+      actor_id: 'amp_clone_bot',
+      actor_display_name: 'amp_clone_bot',
+    });
+    expect(mockUserRepo.getAdminUser).not.toHaveBeenCalledWith('amp_clone_bot');
+  });
+
   it('reads end_date as the whole day for a date and as the instant for a timestamp', async () => {
     mockAuditRepo.searchAuditLogs.mockResolvedValue({
       items: [],

@@ -21,6 +21,8 @@
 		showLabel?: boolean;
 		/** Milliseconds after the last keystroke before `onsearch`. */
 		delay?: number;
+		/** The query is always Latin (an identifier, a code): typed left to right, also in RTL pages. */
+		latinOnly?: boolean;
 		onsearch?: (query: string) => void;
 	}
 
@@ -31,6 +33,7 @@
 		size = 'md',
 		showLabel = false,
 		delay = 250,
+		latinOnly = false,
 		onsearch
 	}: Props = $props();
 
@@ -64,6 +67,7 @@
 			type="search"
 			bind:value
 			{placeholder}
+			dir={latinOnly ? 'ltr' : undefined}
 			autocomplete="off"
 			spellcheck="false"
 			readonly={busy()}

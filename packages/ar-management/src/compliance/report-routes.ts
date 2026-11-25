@@ -14,7 +14,6 @@ import { logCoverageHeaders, type LogReadCoverage } from '../log-read-adapter';
 import { legacyDatetimeString, z } from '../zod';
 import {
   AR_ERROR_CODES,
-  createAuditLogFromContext,
   createAuthContextFromHono,
   createErrorResponse,
   getLogger,
@@ -43,6 +42,7 @@ import {
   type ComplianceReportType,
   type GeneratedReport,
 } from './reports';
+import { recordAdminOperationAudit } from '../admin-operation-audit';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_LIMIT = 20;
@@ -432,9 +432,14 @@ export async function createComplianceReport(c: Context<{ Bindings: Env }>) {
     if (error instanceof ReportTooLargeError) {
       // Recorded as failed, so the attempt is part of the evidence trail too.
       await record('failed', { error: 'too_large' });
-      await createAuditLogFromContext(c, 'compliance_report.failed', 'compliance_report', id, {
-        type: input.type,
-        error: 'too_large',
+      await recordAdminOperationAudit(c, {
+        action: 'compliance_report.failed',
+        resourceType: 'compliance_report',
+        resourceId: id,
+        metadata: {
+          type: input.type,
+          error: 'too_large',
+        },
       });
       return c.json(
         {
@@ -535,10 +540,15 @@ export async function createComplianceReport(c: Context<{ Bindings: Env }>) {
       [catalogId, tenantId, id]
     );
     // Downloadable only once its generation is audited.
-    await createAuditLogFromContext(c, 'compliance_report.created', 'compliance_report', id, {
-      type: input.type,
-      format: report.format,
-      row_count: report.rowCount,
+    await recordAdminOperationAudit(c, {
+      action: 'compliance_report.created',
+      resourceType: 'compliance_report',
+      resourceId: id,
+      metadata: {
+        type: input.type,
+        format: report.format,
+        row_count: report.rowCount,
+      },
     });
     audited = true;
     const completed = await core
@@ -586,9 +596,14 @@ export async function createComplianceReport(c: Context<{ Bindings: Env }>) {
     }
     // Its generation was audited: the audit says it failed after all.
     if (audited && failed) {
-      await createAuditLogFromContext(c, 'compliance_report.failed', 'compliance_report', id, {
-        type: input.type,
-        error: 'storage_failed',
+      await recordAdminOperationAudit(c, {
+        action: 'compliance_report.failed',
+        resourceType: 'compliance_report',
+        resourceId: id,
+        metadata: {
+          type: input.type,
+          error: 'storage_failed',
+        },
       }).catch(() => undefined);
     }
     return c.json(
@@ -633,9 +648,14 @@ export async function downloadComplianceReport(c: Context<{ Bindings: Env }>) {
       .error('Compliance report content does not match its recorded hash', { reportId: id });
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
-  await createAuditLogFromContext(c, 'compliance_report.downloaded', 'compliance_report', id, {
-    type: row.type,
-    sha256: row.artifact_sha256,
+  await recordAdminOperationAudit(c, {
+    action: 'compliance_report.downloaded',
+    resourceType: 'compliance_report',
+    resourceId: id,
+    metadata: {
+      type: row.type,
+      sha256: row.artifact_sha256,
+    },
   });
   const extension = row.format === 'csv' ? 'csv' : 'json';
   let logCoverage: LogReadCoverage | undefined;

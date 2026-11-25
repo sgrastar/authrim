@@ -92,6 +92,9 @@ import {
   sanitizeCopiedSettingsValue,
 } from '../admin-tenant-clone';
 
+// Admin operations are recorded through the forwarding shim (see the helper).
+vi.mock('../admin-operation-audit', () => import('./helpers/legacy-admin-audit-shim'));
+
 function kvNamespace(initial: Record<string, string> = {}, pageSize = Number.POSITIVE_INFINITY) {
   const values = new Map(Object.entries(initial));
   const kv = {

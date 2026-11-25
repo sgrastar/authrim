@@ -20,8 +20,8 @@ import {
   createErrorResponse,
   AR_ERROR_CODES,
   generateId,
-  createAuditLogFromContext,
 } from '@authrim/ar-lib-core';
+import { recordAdminOperationAudit } from './admin-operation-audit';
 
 /**
  * Hono context type with admin auth variable
@@ -250,9 +250,14 @@ export async function adminRelationDefinitionCreateHandler(c: AdminContext) {
     );
 
     // Audit log
-    await createAuditLogFromContext(asBaseContext(c), 'create', 'relation_definition', id, {
-      object_type: body.object_type,
-      relation_name: body.relation_name,
+    await recordAdminOperationAudit(asBaseContext(c), {
+      action: 'create',
+      resourceType: 'relation_definition',
+      resourceId: id,
+      metadata: {
+        object_type: body.object_type,
+        relation_name: body.relation_name,
+      },
     });
 
     return c.json(
@@ -332,8 +337,13 @@ export async function adminRelationDefinitionUpdateHandler(c: AdminContext) {
     );
 
     // Audit log
-    await createAuditLogFromContext(asBaseContext(c), 'update', 'relation_definition', id, {
-      changes: Object.keys(body),
+    await recordAdminOperationAudit(asBaseContext(c), {
+      action: 'update',
+      resourceType: 'relation_definition',
+      resourceId: id,
+      metadata: {
+        changes: Object.keys(body),
+      },
     });
 
     return c.json({ success: true });
@@ -369,7 +379,12 @@ export async function adminRelationDefinitionDeleteHandler(c: AdminContext) {
     ]);
 
     // Audit log
-    await createAuditLogFromContext(asBaseContext(c), 'delete', 'relation_definition', id, {});
+    await recordAdminOperationAudit(asBaseContext(c), {
+      action: 'delete',
+      resourceType: 'relation_definition',
+      resourceId: id,
+      metadata: {},
+    });
 
     return c.json({ success: true });
   } catch (error) {
@@ -537,10 +552,15 @@ export async function adminRelationshipTupleCreateHandler(c: AdminContext) {
     );
 
     // Audit log
-    await createAuditLogFromContext(asBaseContext(c), 'create', 'relationship_tuple', id, {
-      relationship_type: body.relationship_type,
-      from: `${body.from_type ?? 'subject'}:${body.from_id}`,
-      to: `${body.to_type}:${body.to_id}`,
+    await recordAdminOperationAudit(asBaseContext(c), {
+      action: 'create',
+      resourceType: 'relationship_tuple',
+      resourceId: id,
+      metadata: {
+        relationship_type: body.relationship_type,
+        from: `${body.from_type ?? 'subject'}:${body.from_id}`,
+        to: `${body.to_type}:${body.to_id}`,
+      },
     });
 
     return c.json(
@@ -595,7 +615,12 @@ export async function adminRelationshipTupleDeleteHandler(c: AdminContext) {
     ]);
 
     // Audit log
-    await createAuditLogFromContext(asBaseContext(c), 'delete', 'relationship_tuple', id, {});
+    await recordAdminOperationAudit(asBaseContext(c), {
+      action: 'delete',
+      resourceType: 'relationship_tuple',
+      resourceId: id,
+      metadata: {},
+    });
 
     return c.json({ success: true });
   } catch (error) {

@@ -48,6 +48,9 @@ import {
 import { insertOAuthClient, insertTenant, openCoreDatabase } from './helpers/core-database';
 import { adminOpenApiSchemas, shapeErrors } from './helpers/openapi-shape';
 
+// Admin operations are recorded through the forwarding shim (see the helper).
+vi.mock('../admin-operation-audit', () => import('./helpers/legacy-admin-audit-shim'));
+
 /**
  * The explanation of the release for a test user, and the test users themselves, on the real
  * Admin and Core schemas, the real admin authentication and route access, sets made through the

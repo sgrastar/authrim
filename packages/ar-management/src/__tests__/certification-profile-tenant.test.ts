@@ -24,6 +24,9 @@ import {
 import { DatabaseSettingsCanonicalStore } from '@authrim/ar-lib-core/services/settings-canonical-store';
 import { createSettingsCanonicalD1 } from './helpers/settings-canonical-d1';
 
+// Admin operations are recorded through the forwarding shim (see the helper).
+vi.mock('../admin-operation-audit', () => import('./helpers/legacy-admin-audit-shim'));
+
 function environment(saved: Record<string, unknown>) {
   const store = new Map<string, string>(
     Object.entries(saved).map(([key, value]) => [

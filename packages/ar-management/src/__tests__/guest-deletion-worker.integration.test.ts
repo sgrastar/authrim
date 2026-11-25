@@ -53,6 +53,9 @@ import { requireCurrentGuestAccountProjection } from '../guest-account-lookup';
 import { InitialAccountIdentifierReservationService } from '../account-directory-reservation';
 import { releaseGuestReservationPage } from '../account-directory-removal-producer';
 
+// Admin operations are recorded through the forwarding shim (see the helper).
+vi.mock('../admin-operation-audit', () => import('./helpers/legacy-admin-audit-shim'));
+
 const stores: ReturnType<typeof openGuestStore>[] = [];
 afterEach(() => {
   stores.splice(0).forEach((s) => s.db.close());

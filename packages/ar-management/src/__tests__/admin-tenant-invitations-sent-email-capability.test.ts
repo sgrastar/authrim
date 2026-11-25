@@ -56,6 +56,9 @@ vi.mock('../tenant-alias-directory', () => ({
 
 import { createTenantInvitationHandler } from '../admin-tenant-invitations';
 
+// Admin operations are recorded through the forwarding shim (see the helper).
+vi.mock('../admin-operation-audit', () => import('./helpers/legacy-admin-audit-shim'));
+
 const TENANT_ADMIN = { adminId: 'admin-actor', hierarchyLevel: 80 };
 const PLATFORM_ADMIN = {
   adminId: 'platform-actor',

@@ -11,6 +11,9 @@ import {
   adminMappingHashKeyRotateHandler,
 } from '../mapping-hash-key';
 
+// Admin operations are recorded through the forwarding shim (see the helper).
+vi.mock('../admin-operation-audit', () => import('./helpers/legacy-direct-audit-shim'));
+
 const { audit } = vi.hoisted(() => ({ audit: vi.fn() }));
 vi.mock('@authrim/ar-lib-core', async (original) => ({
   ...(await original<typeof import('@authrim/ar-lib-core')>()),

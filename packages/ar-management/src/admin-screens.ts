@@ -37,13 +37,13 @@ import type {
 } from '@authrim/ar-lib-core';
 import {
   AR_ERROR_CODES,
-  createAuditLogFromContext,
   createAuthContextFromHono,
   createErrorResponse,
   getLogger,
   getTenantIdFromContext,
 } from '@authrim/ar-lib-core';
 import { collectScreenUsages, usageCounts } from './admin-screen-usage';
+import { recordAdminOperationAudit } from './admin-operation-audit';
 
 type AdminContext = Context<{ Bindings: Env }>;
 type Row = Record<string, unknown>;
@@ -55,7 +55,12 @@ async function recordScreenAudit(
   metadata: Record<string, unknown>
 ): Promise<void> {
   try {
-    await createAuditLogFromContext(c, event, 'screen', screenId, metadata);
+    await recordAdminOperationAudit(c, {
+      action: event,
+      resourceType: 'screen',
+      resourceId: screenId,
+      metadata: metadata,
+    });
   } catch (error) {
     getLogger(c)
       .module('ADMIN_SCREENS')

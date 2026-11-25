@@ -18,6 +18,7 @@ import { deStatements } from './statements/de';
 import { deStepUp } from './step-up/de';
 import { deAdminAudit } from './admin-audit/de';
 import { deUserAudit } from './user-audit/de';
+import { deSystemLog } from './system-log/de';
 import { deTeam } from './team/de';
 import { deIpAllowlist } from './ip-allowlist/de';
 import { deAccountPages } from './account-pages/de';
@@ -51,6 +52,7 @@ export const de = {
 	...deStepUp,
 	...deAdminAudit,
 	...deUserAudit,
+	...deSystemLog,
 	...deTeam,
 	...deIpAllowlist,
 	...deAccountPages,

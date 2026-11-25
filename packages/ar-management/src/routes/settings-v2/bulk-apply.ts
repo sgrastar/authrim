@@ -16,7 +16,6 @@ import {
   ADMIN_PERMISSIONS,
   bulkApplyCategoryVerdict,
   bulkApplyKeyVerdict,
-  createAuditLogFromContext,
   createLogger,
   ensureDatabaseAdapter,
   allScopeExcludesTenant,
@@ -50,6 +49,7 @@ import {
 } from './settings-authorization';
 import { getSettingsManager } from './settings-support';
 import { applyTenantSettingsChange, type ValidationRefusal } from './tenant-settings-apply';
+import { recordAdminOperationAudit } from '../../admin-operation-audit';
 
 const log = createLogger().module('SETTINGS_BULK_APPLY');
 
@@ -866,20 +866,25 @@ export async function bulkApplyHandler(c: BulkContext): Promise<Response> {
     // One record for the whole request: how many, with what result, which categories and keys.
     // Never a value: a setting can be sensitive. The per-tenant records carry the bulk ID.
     try {
-      await createAuditLogFromContext(
-        c as unknown as Parameters<typeof createAuditLogFromContext>[0],
-        'settings.bulk_apply',
-        'settings',
-        bulkId,
+      await recordAdminOperationAudit(
+        c as unknown as Parameters<typeof recordAdminOperationAudit>[0],
         {
-          bulk_id: bulkId,
-          mode: request.mode,
-          on_existing_override: request.onExistingOverride,
-          tenant_count: request.tenantIds.length,
-          tenant_results: tenantStatuses,
-          change_results: countBy(changeStatuses, (status) => status),
-          categories: request.changes.map((change) => change.category),
-          keys: request.changes.flatMap((change) => [...Object.keys(change.set), ...change.clear]),
+          action: 'settings.bulk_apply',
+          resourceType: 'settings',
+          resourceId: bulkId,
+          metadata: {
+            bulk_id: bulkId,
+            mode: request.mode,
+            on_existing_override: request.onExistingOverride,
+            tenant_count: request.tenantIds.length,
+            tenant_results: tenantStatuses,
+            change_results: countBy(changeStatuses, (status) => status),
+            categories: request.changes.map((change) => change.category),
+            keys: request.changes.flatMap((change) => [
+              ...Object.keys(change.set),
+              ...change.clear,
+            ]),
+          },
         }
       );
     } catch {

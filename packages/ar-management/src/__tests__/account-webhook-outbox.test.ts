@@ -9,9 +9,10 @@ import type {
   EventPublishPayload,
   EventPublishOptions,
 } from '@authrim/ar-lib-core';
+import { checkSystemEventDetails } from '@authrim/ar-lib-core';
 import {
   DROP_BATCH_PER_SHARD,
-  type DroppedOutboxAuditEntry,
+  type DroppedOutboxSystemEvent,
   processAccountWebhookOutbox,
   processScheduledAccountWebhookOutbox,
 } from '../account-webhook-outbox';
@@ -508,13 +509,13 @@ describe('the platform webhooks capability', () => {
       list: vi.fn(),
       getWithMetadata: vi.fn(),
     }) as unknown as KVNamespace;
-  const audited: DroppedOutboxAuditEntry[] = [];
-  const auditDropped = vi.fn(async (entry: DroppedOutboxAuditEntry) => {
+  const audited: DroppedOutboxSystemEvent[] = [];
+  const auditDropped = vi.fn(async (entry: DroppedOutboxSystemEvent) => {
     audited.push(entry);
   });
   const runWith = (
     state: boolean | 'down',
-    audit: (entry: DroppedOutboxAuditEntry) => Promise<void> = auditDropped
+    audit: (entry: DroppedOutboxSystemEvent) => Promise<void> = auditDropped
   ) =>
     processAccountWebhookOutbox({ SETTINGS: settingsWith(state) } as Env, targets(), log, {
       now: () => now,
@@ -562,9 +563,7 @@ describe('the platform webhooks capability', () => {
     expect(total).toBeGreaterThan(DROP_BATCH_PER_SHARD);
     const first = await runWith(false);
     expect(first.dropped).toBe(DROP_BATCH_PER_SHARD);
-    expect(
-      audited.map((entry) => (JSON.parse(entry.metadata) as { dropped: number }).dropped)
-    ).toEqual([DROP_BATCH_PER_SHARD]);
+    expect(audited.map((entry) => entry.details.dropped)).toEqual([DROP_BATCH_PER_SHARD]);
     const remaining = total - DROP_BATCH_PER_SHARD;
     expect(rows().length).toBe(remaining);
     // Turned back on before the next drop run: the rest is delivered, deliberately.
@@ -610,10 +609,10 @@ describe('dropped outbox events are recorded in the audit log', () => {
       list: async () => ({ keys: [] }),
       getWithMetadata: async () => ({ value: null, metadata: null }),
     }) as unknown as KVNamespace;
-  const audited: DroppedOutboxAuditEntry[] = [];
+  const audited: DroppedOutboxSystemEvent[] = [];
   const run = (
     state: boolean | 'down',
-    audit?: (entry: DroppedOutboxAuditEntry) => Promise<void>
+    audit?: (entry: DroppedOutboxSystemEvent) => Promise<void>
   ) =>
     processAccountWebhookOutbox({ SETTINGS: settings(state) } as Env, targets(), log, {
       now: () => now,
@@ -645,18 +644,37 @@ describe('dropped outbox events are recorded in the audit log', () => {
     const entry = audited[0];
     expect(entry).toMatchObject({
       tenantId: 't',
-      userId: 'system',
+      source: 'authrim/account_webhook_outbox',
       action: 'webhook.outbox.dropped',
+      targetType: 'account_webhook_outbox',
+      targetId: 't',
       severity: 'warning',
     });
-    const metadata = JSON.parse(entry.metadata) as Record<string, unknown>;
-    expect(metadata).toMatchObject({ capability: 'webhooks', dropped: total });
-    const eventTypes = metadata.event_types as Record<string, number>;
+    const details = entry.details;
+    expect(details).toMatchObject({ capability: 'webhooks', dropped: total });
+    const eventTypes = details.event_types;
     expect(Object.values(eventTypes).reduce((sum, n) => sum + n, 0)).toBe(total);
-    expect(typeof metadata.oldest_occurred_at).toBe('number');
-    expect(typeof metadata.newest_occurred_at).toBe('number');
-    expect(entry.metadata).not.toContain('secret@example.com');
-    expect(entry.metadata).not.toContain('one');
+    expect(typeof details.oldest_occurred_at).toBe('number');
+    expect(typeof details.newest_occurred_at).toBe('number');
+    const serialized = JSON.stringify(entry);
+    expect(serialized).not.toContain('secret@example.com');
+    expect(serialized).not.toContain('one');
+  });
+
+  it('writes an entry the system log accepts, event types with personal words included', async () => {
+    account('guest', 't', 'one');
+    db.prepare(
+      `INSERT INTO account_webhook_outbox
+        (id,tenant_id,user_id,event_type,registration_state,changed_field,occurred_at)
+        VALUES ('evt_mail','t','one','account.email.changed','guest','email',1)`
+    ).run();
+    const total = count();
+    expect(await run(false)).toMatchObject({ dropped: total });
+    expect(audited).toHaveLength(1);
+    // The real validator of `logSystemEvent`: an event type is a kind, not a personal field.
+    const details = checkSystemEventDetails(audited[0].details);
+    expect(details.event_types).toMatchObject({ 'account.email.changed': 1 });
+    expect(count()).toBe(0);
   });
 
   it('keeps the rows, and retries, when the record cannot be written', async () => {

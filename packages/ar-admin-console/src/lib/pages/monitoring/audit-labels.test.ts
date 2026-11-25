@@ -39,5 +39,7 @@ describe('audit labels', () => {
 		expect(actorName(base, t)).toBe('aud.actor.unknown');
 		expect(actorKindKey({ ...base, actor_type: 'machine' })).toBe('aud.actor.machine');
 		expect(actorKindKey({ ...base, actor_type: 'admin_user' })).toBeNull();
+		// A deferred operation recorded by the principal's ID only.
+		expect(actorKindKey({ ...base, actor_type: 'unrecorded' })).toBe('aud.actor.unrecorded');
 	});
 });

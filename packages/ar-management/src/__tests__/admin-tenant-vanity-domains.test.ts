@@ -81,6 +81,9 @@ import {
   verifyTenantVanityDomainHandler,
 } from '../admin-tenant-vanity-domains';
 
+// Admin operations are recorded through the forwarding shim (see the helper).
+vi.mock('../admin-operation-audit', () => import('./helpers/legacy-admin-audit-shim'));
+
 function domain(overrides: Record<string, unknown> = {}) {
   return {
     id: 'domain-1',
