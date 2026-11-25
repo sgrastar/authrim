@@ -173,6 +173,14 @@ export const MOCK_SCREENS: Screen[] = [
 				block_id: 'news'
 			},
 			{
+				// Asks for consent on this screen: the flow's statements are edited from its step too.
+				field: 'consent',
+				label: 'Consent confirmation',
+				required: true,
+				block_type: 'consent_widget',
+				block_id: 'consent'
+			},
+			{
 				// Leaves by an exit of its own: where it leads is the flow's to say.
 				field: 'link.social',
 				label: 'Use a social account instead',
