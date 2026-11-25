@@ -62,14 +62,6 @@
       "count": 1
     }
   },
-  "src/middleware/__tests__/rate-limit.test.ts": {
-    "@typescript-eslint/no-unsafe-argument": {
-      "count": 1
-    },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 8
-    }
-  },
   "src/routes/__tests__/check-config.test.ts": {
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 3
