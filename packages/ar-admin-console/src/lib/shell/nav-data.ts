@@ -63,11 +63,6 @@ export const TENANT_AREAS: readonly NavArea[] = [
 				id: 'support',
 				label: 'nav.users.support',
 				platform: 'lookup'
-			},
-			{
-				id: 'resolution',
-				label: 'nav.users.resolution',
-				platform: 'lookup'
 			}
 		]
 	},

@@ -154,8 +154,9 @@ export const API_GROUPS: readonly ApiGroup[] = [
 		id: 'review-tasks',
 		name: 'Review tasks (resolution center)',
 		kind: 'records',
-		page: 'users/resolution',
-		paths: [`${A}/identity-mapping/review-tasks`, `${A}/identity-mapping/review-task-groups`]
+		page: 'outside',
+		paths: [`${A}/identity-mapping/review-tasks`, `${A}/identity-mapping/review-task-groups`],
+		note: 'No console page: the Resolution center was removed from the navigation (nothing creates review tasks yet).'
 	},
 
 	// -------------------------------------------------------------------------------------------
