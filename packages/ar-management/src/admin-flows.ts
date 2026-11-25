@@ -805,6 +805,36 @@ async function validateRuntimeConsentStatements(
         'error'
       ))
     );
+    // A screen that asks for consent on its own submit must show a consent box, whether its
+    // contract came from the editor or was imported as it is.
+    if (
+      (step.component === 'screen' || step.component === 'registration_method_selector') &&
+      (readFlowConsentStatements(config)?.length ?? 0) > 0
+    ) {
+      const path = `$.runtime.ui.steps[${index}].config`;
+      const screenRef = readConfigString(config, 'screen_ref');
+      issues.push(
+        ...(screenRef
+          ? await validateConsentScreenReference(
+              db,
+              tenantId,
+              step.source_node_id,
+              path,
+              screenRef,
+              true
+            )
+          : [
+              {
+                level: 'error' as const,
+                code: 'missing_consent_screen',
+                message:
+                  'A step that asks for consent on its screen must name the screen (screen_ref).',
+                path: `${path}.screen_ref`,
+                node_id: step.source_node_id,
+              },
+            ])
+      );
+    }
   }
   return issues;
 }

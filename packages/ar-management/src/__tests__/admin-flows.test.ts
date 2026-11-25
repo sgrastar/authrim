@@ -1092,6 +1092,48 @@ describe('admin Flow management handlers', () => {
     expect(String(runtimeError?.path)).toContain('$.runtime.ui.steps[1]');
   });
 
+  it('checks an imported screen step that asks for consent for a shown consent box', async () => {
+    const publishWith = async (config: Record<string, unknown>) => {
+      seedFlow({
+        draft_runtime_base_json: JSON.stringify({
+          flow_kind: 'login',
+          flow_id: 'flow-1',
+          ui: {
+            steps: [
+              { id: 'entry:step', source_node_id: 'entry', component: 'interaction_context' },
+              { id: 'screen:step', source_node_id: 'screen-1', component: 'screen', config },
+            ],
+          },
+        }),
+      });
+      const base = mocks.db.queryOne.getMockImplementation()!;
+      mocks.db.queryOne.mockImplementation(async (sql: string, params: unknown[] = []) =>
+        sql.includes('FROM flows')
+          ? base(sql, params)
+          : sql.includes('FROM screens')
+            ? {
+                id: 'signup',
+                is_active: 1,
+                fields_json: JSON.stringify([
+                  { field: 'email', label: 'Email', block_type: 'field' },
+                ]),
+              }
+            : { is_active: 1, current_version_id: 'version-1' }
+      );
+      const response = await adminFlowPublishHandler(createContext({ params: { id: 'flow-1' } }));
+      const body = await readJson(response);
+      return (body.validation as { errors: Array<Record<string, unknown>> } | undefined)?.errors;
+    };
+
+    const noBox = await publishWith({
+      screen_ref: 'signup',
+      statements: [{ statement_id: 'terms', required: true }],
+    });
+    expect(noBox?.find((issue) => issue.node_id === 'screen-1')?.code).toBe(
+      'missing_consent_widget'
+    );
+  });
+
   it('increments publish version numbers returned as strings by adapters', async () => {
     seedFlow();
     versions.push({ flow_id: 'flow-1', version_number: '2' });
