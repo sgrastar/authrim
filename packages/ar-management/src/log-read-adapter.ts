@@ -25,8 +25,17 @@ const COLUMNS: Readonly<Record<string, string>> = {
   'admin.admin_audit_log':
     'id tenant_id admin_user_id admin_email action resource_type resource_id result error_code error_message severity ip_address user_agent request_id session_id before_json after_json metadata_json created_at detail_object_catalog_id actor_type actor_sub actor_mode actor_assurance token_binding act_client_id act_principal_id grant_id elevation_id mcp_tool',
 };
-function fail(): never {
-  throw new LogQueryIncompleteError();
+/** The reason an archive read failed, as a code: our own checks name theirs, Core errors carry
+ * a code as their message (`log_iceberg_*`), and anything else is reported by its class only. */
+export function logReadFailureReason(error: unknown): string {
+  if (error instanceof LogQueryIncompleteError) return error.reason;
+  if (error instanceof Error)
+    return /^[a-z0-9_]{1,80}$/.test(error.message) ? error.message : error.name || 'Error';
+  return 'non_error';
+}
+/** `reason` is a short internal code for the Worker log: never SQL, parameters or row data. */
+function fail(reason: string): never {
+  throw new LogQueryIncompleteError(reason);
 }
 interface Token {
   word: string;
@@ -56,7 +65,7 @@ function tokens(sql: string): Token[] {
       i = end < 0 ? sql.length : end;
     } else if (sql.startsWith('/*', i)) {
       const end = sql.indexOf('*/', i + 2);
-      if (end < 0) fail();
+      if (end < 0) fail('sql_unbalanced');
       i = end + 2;
     } else if (ch === '(') {
       depth++;
@@ -107,7 +116,7 @@ function selectSource(sql: string, table: string): SelectSource | null {
           )
         ? next.word
         : table;
-  if (!alias || !/^[a-z_][a-z_0-9]*$/i.test(alias)) fail();
+  if (!alias || !/^[a-z_][a-z_0-9]*$/i.test(alias)) fail('sql_source_alias');
   const binds = tokens(sql).filter((t) => t.word === '?');
   return {
     alias,
@@ -242,7 +251,8 @@ export function createLogReadAdapter(input: {
     columns: input.columns ? [...input.columns] : undefined,
     timestamp: input.timestamp ? { ...input.timestamp } : undefined,
   };
-  if (!input.tenantId || !/^[a-z][a-z0-9_-]*\.[a-z][a-z0-9_]*$/.test(input.dataset)) fail();
+  if (!input.tenantId || !/^[a-z][a-z0-9_-]*\.[a-z][a-z0-9_]*$/.test(input.dataset))
+    fail('scope_invalid');
   const table = input.dataset.split('.')[1];
   const timestamp = input.timestamp ?? {
     column: input.dataset === 'core.permission_check_audit' ? 'checked_at' : 'created_at',
@@ -285,13 +295,14 @@ export function createLogReadAdapter(input: {
         if (!comparison) continue;
         const at = source.whereAt + token.end + comparison[0].lastIndexOf('?');
         const index = binds.findIndex((t) => t.at === at);
-        if (index < 0) fail();
+        if (index < 0) fail('window_bind_missing');
         const value = params[index];
         if (token.word === 'id') {
           if (comparison[1] === '=' && typeof value === 'string') eventId = value;
           continue;
         }
-        if (typeof value !== 'number' || !Number.isSafeInteger(value * factor) || value < 0) fail();
+        if (typeof value !== 'number' || !Number.isSafeInteger(value * factor) || value < 0)
+          fail('window_bind_invalid');
         const ms = value * factor;
         if (['>', '>=', '='].includes(comparison[1]))
           scope.fromMs = Math.max(scope.fromMs ?? 0, ms);
@@ -307,7 +318,7 @@ export function createLogReadAdapter(input: {
     options?: QueryOptions
   ): Promise<T[]> {
     try {
-      if (failed) fail();
+      if (failed) fail('adapter_failed_earlier');
       const scope = queryScope(sql, params);
       if (scope.fromMs !== undefined && scope.toMs !== undefined && scope.fromMs > scope.toMs)
         throw new LogQueryInvalidRequestError('Invalid log time range.');
@@ -332,7 +343,7 @@ export function createLogReadAdapter(input: {
         !Number.isSafeInteger(result.pendingDeliveries) ||
         result.pendingDeliveries < 0
       )
-        fail();
+        fail('core_result_shape');
       archived ||= result.hasArchive;
       coverage = {
         consistency: result.consistency,
@@ -342,15 +353,16 @@ export function createLogReadAdapter(input: {
       };
       const names = new Set(input.columns ?? COLUMNS[input.dataset]?.split(' ') ?? []);
       const prepared = result.rows.map((original) => {
-        if (original.tenant_id !== input.tenantId || typeof original.id !== 'string') fail();
+        if (original.tenant_id !== input.tenantId || typeof original.id !== 'string')
+          fail('row_tenant_or_id');
         const row: LogIcebergSqlRow = { ...original };
         if (
           input.dataset === 'admin.admin_audit_log' &&
           (row.before_json != null || row.after_json != null)
         )
-          fail();
+          fail('row_protected_plaintext');
         if (input.dataset === 'core.operational_logs' && row.reason_detail_encrypted != null)
-          fail();
+          fail('row_protected_plaintext');
         if (input.dataset === 'core.event_log') {
           const json: unknown = row.details_json ? JSON.parse(String(row.details_json)) : null;
           const details =
@@ -368,7 +380,7 @@ export function createLogReadAdapter(input: {
         for (const name of Object.keys(row)) names.add(name);
         return row;
       });
-      if (!names.size) fail();
+      if (!names.size) fail('no_columns');
       const columns = [...names];
       for (const row of prepared) for (const name of columns) row[name] ??= null;
       const source = selectSource(sql, table);
@@ -400,7 +412,7 @@ export function createLogReadAdapter(input: {
           typeof value === 'number'
         )
           return value;
-        return fail();
+        return fail('param_type');
       });
       const rows = await executeLogQuery({
         sql,
@@ -419,9 +431,9 @@ export function createLogReadAdapter(input: {
         let next: string | null = null;
         if (more) {
           if (!last || typeof last.id !== 'string' || typeof last[timestamp.column] !== 'number')
-            fail();
+            fail('cursor_row_shape');
           const at = Number(last[timestamp.column]) * factor;
-          if (!Number.isSafeInteger(at) || at < 0) fail();
+          if (!Number.isSafeInteger(at) || at < 0) fail('cursor_timestamp');
           next = cursorText({ v: 1, scope: page.scope, at, id: last.id });
         }
         pagination = { mode: 'cursor', limit: page.limit, has_more: more, next_cursor: next };
@@ -432,7 +444,9 @@ export function createLogReadAdapter(input: {
       failed = true;
       if (error instanceof LogQueryInvalidRequestError) throw error;
       if (coverage) input.onCoverage?.({ ...coverage, complete: false });
-      return fail();
+      // The client only learns "incomplete"; the reason travels to the response mapper, which
+      // logs it so an operator can tell a Catalog, watermark, key or budget failure apart.
+      return fail(logReadFailureReason(error));
     }
   }
   let pending: Promise<void> = Promise.resolve();
@@ -460,13 +474,13 @@ export function createLogReadAdapter(input: {
       return (await query<T>(sql, params, options))[0] ?? null;
     },
     async execute() {
-      return fail();
+      return fail('write_refused');
     },
     async batch() {
-      return fail();
+      return fail('write_refused');
     },
     async transaction() {
-      return fail();
+      return fail('write_refused');
     },
     async isHealthy() {
       try {
@@ -495,6 +509,6 @@ export async function readLogProtectedDetail(
   try {
     return await loadLogIcebergProtectedDetail(env, input);
   } catch {
-    return fail();
+    return fail('detail_unavailable');
   }
 }
