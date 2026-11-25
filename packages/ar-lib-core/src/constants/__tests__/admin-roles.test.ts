@@ -152,7 +152,10 @@ describe('migration 054 (ar_ roles)', () => {
   const migration = 'migrations/admin/d1/054_admin_roles_ar_prefix.sql';
   // Later changes to the built-in roles' permissions, in order: the TypeScript module is what the
   // migrations add up to.
-  const later = ['migrations/admin/d1/025_tenant_admin_saml_dr_bundle.sql'];
+  const later = [
+    'migrations/admin/d1/025_tenant_admin_saml_dr_bundle.sql',
+    'migrations/admin/d1/028_system_logs_permission.sql',
+  ];
 
   function prepared(): DatabaseSync {
     const db = new DatabaseSync(':memory:');
@@ -233,7 +236,41 @@ describe('migration 054 (ar_ roles)', () => {
       'admin:saml_providers:signing:dr_bundle:export',
       'admin:saml_providers:signing:dr_bundle:import',
     ]);
-    expect(permissions).toEqual([...byName(ADMIN_ROLES.TENANT_ADMIN).permissions]);
+    // Everything the module has for the role except what the later migrations add.
+    expect(permissions).toEqual(
+      byName(ADMIN_ROLES.TENANT_ADMIN).permissions.filter(
+        (permission) => !permission.startsWith('admin:system_logs:')
+      )
+    );
+  });
+
+  it('028 gives the tenant admin, support and viewer the system log permission once and leaves the super admin alone', () => {
+    const db = prepared();
+    db.exec(sql(migration));
+    db.exec(sql(later[0]));
+    const before = seeded(db);
+    for (const row of before) expect(row.permissions_json).not.toContain('system_logs');
+
+    db.exec(sql(later[1]));
+    db.exec(sql(later[1]));
+
+    const after = seeded(db);
+    expect(after.find((row) => row.name === ADMIN_ROLES.SUPER_ADMIN)).toEqual(
+      before.find((row) => row.name === ADMIN_ROLES.SUPER_ADMIN)
+    );
+    const added = (name: string) => {
+      const was = JSON.parse(
+        before.find((row) => row.name === name)!.permissions_json as string
+      ) as string[];
+      const is = JSON.parse(
+        after.find((row) => row.name === name)!.permissions_json as string
+      ) as string[];
+      expect(is).toEqual([...byName(name).permissions]);
+      return is.filter((permission) => !was.includes(permission));
+    };
+    expect(added(ADMIN_ROLES.TENANT_ADMIN)).toEqual(['admin:system_logs:*']);
+    expect(added(ADMIN_ROLES.SUPPORT)).toEqual(['admin:system_logs:read']);
+    expect(added(ADMIN_ROLES.VIEWER)).toEqual(['admin:system_logs:read']);
   });
 
   it('removes the old standard roles and keeps the other built-in ones', () => {

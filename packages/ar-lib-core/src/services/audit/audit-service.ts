@@ -13,6 +13,8 @@ import { resolveLogIcebergConfig } from '../log-iceberg-config';
 import type {
   IAuditService,
   EventLogParams,
+  EventResult,
+  EventSeverity,
   PIILogParams,
   CombinedLogParams,
   PurgeContext,
@@ -113,6 +115,34 @@ export function resolveAuditRetention(
     source: 'pii_config',
   };
 }
+
+/**
+ * A system event: something a Worker, cron, outbox or delivery did, with no administrator and
+ * no end user behind it. Stored in its own dataset (`runtime.system_events`), delivered to the
+ * tenant's external sinks as an `event_log` entry, and kept for as long as the end-user event
+ * log is (the same delivery plan and retention resolution).
+ */
+export interface SystemEventLogParams {
+  id?: string;
+  createdAt?: number;
+  /** Where it happened: `authrim/<surface>` (`authrim/account_webhook_outbox`). */
+  source: string;
+  eventType: string;
+  /** The category the same action gets in the end-user log, so routing rules see no change. */
+  eventCategory: EventCategory;
+  result: EventResult;
+  severity?: EventSeverity;
+  errorCode?: string;
+  /** What it was about, when there is one (`account_webhook_outbox` / the tenant). */
+  targetType?: string | null;
+  targetId?: string | null;
+  requestId?: string;
+  /** Scalars only, checked by the caller: counts, times, codes, IDs. Never PII. */
+  details?: Record<string, unknown>;
+  requireDurableFanout?: boolean;
+}
+
+export const SYSTEM_EVENTS_DATASET = 'runtime.system_events';
 
 export class AuditService implements IAuditService {
   private readonly env: Env;
@@ -413,6 +443,99 @@ export class AuditService implements IAuditService {
         request_id: entry.requestId ?? null,
         subject_id: entry.anonymizedUserId ?? null,
         client_id: entry.clientId ?? null,
+      },
+    });
+    await this.deliverExternalSinks(
+      deliveryPlan,
+      { type: 'event_log', entries: [entry], tenantId, timestamp: createdAt },
+      params.requireDurableFanout === true
+    );
+  }
+
+  /**
+   * Log a system event (see `SystemEventLogParams`). Same delivery plan, retention and sink
+   * contract as `logEvent`; only the dataset differs. The external sink receives an
+   * `event_log` entry whose `detailsJson` names `source_dataset`.
+   */
+  async logSystemEvent(tenantId: string, params: SystemEventLogParams): Promise<void> {
+    const config = await this.getTenantPIIConfig(tenantId);
+    const auditProfile = await this.getTenantAuditProfile(tenantId);
+    const deliveryPlan = await this.getAuditDeliveryPlan({
+      tenantId,
+      logType: 'event',
+      eventCategory: params.eventCategory,
+      auditProfile,
+    });
+    const entryId = params.id ?? crypto.randomUUID();
+    const createdAt = params.createdAt ?? Date.now();
+    if (!Number.isSafeInteger(createdAt) || createdAt < 0) {
+      throw new Error('audit_event_created_at_invalid');
+    }
+    const retentionUntil = calculateRetentionUntil(
+      this.resolveRetentionDays(auditProfile, config, 'event', deliveryPlan.retentionDays),
+      new Date(createdAt)
+    );
+    const severity = params.severity ?? 'info';
+    const details = params.details ? sanitizeEventDetails(params.details, config) : {};
+    // The row keeps the event's own details; the sink entry adds what the row has as columns.
+    const detailsJson = logIcebergCanonicalJson(JSON.parse(JSON.stringify(details)));
+    const sinkDetailsJson = logIcebergCanonicalJson(
+      JSON.parse(
+        // The writer's own keys win over a caller's: no detail may name another dataset.
+        JSON.stringify({
+          ...details,
+          source: SYSTEM_EVENTS_DATASET,
+          source_dataset: SYSTEM_EVENTS_DATASET,
+          origin: params.source,
+          resourceType: params.targetType ?? null,
+          resourceId: params.targetId ?? null,
+        })
+      )
+    );
+    const entry: EventLogEntry = {
+      id: entryId,
+      tenantId,
+      eventType: params.eventType,
+      eventCategory: params.eventCategory,
+      result: params.result,
+      severity,
+      errorCode: params.errorCode,
+      requestId: params.requestId,
+      detailsJson: sinkDetailsJson,
+      retentionUntil,
+      createdAt,
+    };
+
+    await emitLogIcebergRow(this.env, {
+      tenantId,
+      sourceDataset: SYSTEM_EVENTS_DATASET,
+      logType: 'audit',
+      eventAt: createdAt,
+      expiresAt: retentionUntil,
+      row: {
+        id: entryId,
+        tenant_id: tenantId,
+        source: params.source,
+        event_type: params.eventType,
+        event_category: params.eventCategory,
+        result: params.result,
+        severity,
+        error_code: params.errorCode ?? null,
+        target_type: params.targetType ?? null,
+        target_id: params.targetId ?? null,
+        request_id: params.requestId ?? null,
+        details_json: detailsJson,
+        created_at: createdAt,
+        retention_until: retentionUntil,
+      },
+      overview: {
+        action: params.eventType,
+        result: params.result,
+        severity,
+        reason_code: params.errorCode ?? null,
+        request_id: params.requestId ?? null,
+        subject_id: null,
+        resource_id: params.targetId ?? null,
       },
     });
     await this.deliverExternalSinks(

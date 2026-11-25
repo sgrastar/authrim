@@ -81,6 +81,7 @@ export const ICEBERG_LOG_SOURCE_DATASETS = [
   'diagnostic.ingest_events',
   'runtime.admin_job_events',
   'runtime.webhook_delivery_events',
+  'runtime.system_events',
 ] as const;
 const SOURCES: ReadonlySet<string> = new Set(ICEBERG_LOG_SOURCE_DATASETS);
 const OVERVIEW = [

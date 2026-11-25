@@ -22,6 +22,8 @@ const COLUMNS: Readonly<Record<string, string>> = {
     'id tenant_id subject_type subject_id actor_id action reason_detail_encrypted encryption_key_version detail_object_catalog_id request_id created_at expires_at',
   'core.permission_check_audit':
     'id tenant_id subject_id permission permission_json allowed resolved_via_json final_decision reason api_key_id client_id checked_at',
+  'runtime.system_events':
+    'id tenant_id source event_type event_category result severity error_code target_type target_id request_id details_json created_at retention_until',
   'admin.admin_audit_log':
     'id tenant_id admin_user_id admin_email action resource_type resource_id result error_code error_message severity ip_address user_agent request_id session_id before_json after_json metadata_json created_at detail_object_catalog_id actor_type actor_sub actor_mode actor_assurance token_binding act_client_id act_principal_id grant_id elevation_id mcp_tool',
 };
