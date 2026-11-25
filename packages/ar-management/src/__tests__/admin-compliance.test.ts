@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   core: { query: vi.fn(), queryOne: vi.fn(), execute: vi.fn() },
   admin: { queryOne: vi.fn() },
   auditDb: { queryOne: vi.fn() },
+  adminAuditDb: { queryOne: vi.fn() },
   hotSupport: vi.fn(),
   audit: vi.fn(),
   logger: { error: vi.fn(), warn: vi.fn() },
@@ -18,8 +19,9 @@ vi.mock('../log-read-adapter', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../log-read-adapter')>();
   return {
     ...actual,
-    createLogReadAdapter: (input: { adapter: unknown }) => ({
-      adapter: input.adapter,
+    // The admin audit log is read on its own; the end-user log through the hot-query adapter.
+    createLogReadAdapter: (input: { adapter: unknown; dataset: string }) => ({
+      adapter: input.dataset === 'admin.admin_audit_log' ? mocks.adminAuditDb : input.adapter,
       coverage: () => undefined,
     }),
   };
@@ -100,6 +102,7 @@ describe('admin compliance APIs', () => {
     mocks.core.execute.mockResolvedValue({ success: true, rowsAffected: 1 });
     mocks.admin.queryOne.mockResolvedValue(null);
     mocks.auditDb.queryOne.mockResolvedValue(null);
+    mocks.adminAuditDb.queryOne.mockReset().mockResolvedValue({ total: 0, last_30_days: 0 });
     mocks.hotSupport.mockReturnValue({ supported: false, status: 'not_supported' });
     mocks.audit.mockResolvedValue(undefined);
     mocks.resolveStores.mockResolvedValue([{ source: {}, bindingRef: 'DB_PII' }]);
@@ -185,6 +188,8 @@ describe('admin compliance APIs', () => {
       pii_retention_days: 365,
       total_entries: null,
       entries_last_30_days: null,
+      admin_total_entries: null,
+      admin_entries_last_30_days: null,
       hot_query_status: 'not_supported',
     });
     expect(body.data_retention).toEqual({ expired_records: 2, attention: [] });
@@ -223,6 +228,8 @@ describe('admin compliance APIs', () => {
     expect(body.audit_log).toMatchObject({
       total_entries: 10,
       entries_last_30_days: 0,
+      admin_total_entries: 0,
+      admin_entries_last_30_days: 0,
       hot_query_status: 'supported',
     });
     expect(
@@ -230,6 +237,37 @@ describe('admin compliance APIs', () => {
         (check) => check.id === 'audit_logging'
       )?.status
     ).toBe('warning');
+  });
+
+  it('counts admin audit records, and a tenant with only admin activity is being audited', async () => {
+    mocks.hotSupport.mockReturnValueOnce({
+      supported: true,
+      context: { adapter: mocks.auditDb, createdAtUnit: 'seconds' },
+    });
+    mocks.auditDb.queryOne.mockResolvedValueOnce({ total: 10, last_30_days: 0 });
+    mocks.adminAuditDb.queryOne.mockResolvedValueOnce({ total: 4, last_30_days: 2 });
+    const before = Date.now();
+    const body = await (
+      await adminComplianceStatusHandler(context())
+    ).json<{
+      audit_log: Record<string, unknown>;
+      checks: Array<{ id: string; status: string }>;
+    }>();
+    expect(body.audit_log).toMatchObject({
+      total_entries: 10,
+      entries_last_30_days: 0,
+      admin_total_entries: 4,
+      admin_entries_last_30_days: 2,
+    });
+    const check = body.checks.find((candidate) => candidate.id === 'audit_logging');
+    expect(check?.status).toBe('compliant');
+    // The admin log keeps milliseconds: the 30-day boundary is passed in milliseconds.
+    const [sql, params] = mocks.adminAuditDb.queryOne.mock.calls[0] as [string, unknown[]];
+    expect(sql).toContain('FROM admin_audit_log');
+    const boundary = Number(params[0]);
+    expect(boundary).toBeGreaterThan(before - 31 * 24 * 60 * 60 * 1000);
+    expect(boundary).toBeLessThanOrEqual(before - 29 * 24 * 60 * 60 * 1000);
+    expect(params[1]).toBe('tenant-a');
   });
 
   it.each([

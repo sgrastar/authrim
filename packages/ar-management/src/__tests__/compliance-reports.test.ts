@@ -311,6 +311,44 @@ describe('compliance reports', () => {
     insert.run('e-1', 'tenant-a', Date.parse('2026-09-01T00:00:00Z'));
     insert.run('e-other', 'tenant-b', Date.parse('2026-09-01T00:00:00Z'));
     insert.run('e-end', 'tenant-a', Date.parse('2026-09-03T00:00:00Z'));
+    // The admin audit log of the same tenant and period, read beside it.
+    events.db.exec(`CREATE TABLE admin_audit_log (
+      id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, admin_user_id TEXT, action TEXT NOT NULL,
+      result TEXT, severity TEXT, error_code TEXT, metadata_json TEXT,
+      created_at INTEGER NOT NULL)`);
+    const adminInsert = events.db.prepare(
+      `INSERT INTO admin_audit_log (id, tenant_id, admin_user_id, action, result, severity,
+         metadata_json, created_at) VALUES (?, ?, ?, 'screen.updated', 'success', 'info', ?, ?)`
+    );
+    const actor = (metadata: Record<string, string>) => JSON.stringify(metadata);
+    adminInsert.run(
+      'a-1',
+      'tenant-a',
+      'admin-1',
+      actor({ admin_actor_type: 'admin_user', admin_actor_id: 'admin-1' }),
+      Date.parse('2026-09-01T12:00:00Z')
+    );
+    // An agent acts for its delegator; a machine principal leaves the admin user empty.
+    adminInsert.run(
+      'a-2',
+      'tenant-a',
+      'admin-1',
+      actor({
+        admin_actor_type: 'agent',
+        admin_actor_id: 'agent-7',
+        admin_delegator_id: 'admin-1',
+      }),
+      Date.parse('2026-09-01T13:00:00Z')
+    );
+    adminInsert.run(
+      'a-3',
+      'tenant-a',
+      null,
+      actor({ admin_actor_type: 'machine', admin_machine_principal_id: 'svc-9' }),
+      Date.parse('2026-09-01T14:00:00Z')
+    );
+    adminInsert.run('a-before', 'tenant-a', 'admin-1', null, Date.parse('2026-08-31T12:00:00Z'));
+    adminInsert.run('a-other', 'tenant-b', 'admin-1', null, Date.parse('2026-09-01T12:00:00Z'));
     mocks.hotSupport.mockReturnValue({
       supported: true,
       context: {
@@ -337,11 +375,30 @@ describe('compliance reports', () => {
     expect(response.status).toBe(201);
     const lines = (mocks.materialize.mock.calls[0][2].content as string).split('\n');
     expect(lines[0]).toBe(
-      'id,occurred_at,action,event_category,result,severity,actor,subject_user,client_id,error_code'
+      'source,id,occurred_at,action,event_category,result,severity,actor_type,actor,subject_user,client_id,error_code'
     );
-    expect(lines.slice(1).map((line) => line.split(',')[0])).toEqual(['e-1', 'e-2']);
+    expect(lines.slice(1).map((line) => line.split(',').slice(0, 2).join(':'))).toEqual([
+      'core:e-1',
+      'admin:a-1',
+      'admin:a-2',
+      'admin:a-3',
+      'core:e-2',
+    ]);
     // The event's user is not reported as who acted.
-    expect(lines[1].split(',').slice(6, 8)).toEqual(['', 'anon-1']);
+    expect(lines[1].split(',').slice(7, 10)).toEqual(['', '', 'anon-1']);
+    // An admin operation names who acted, and no subject.
+    expect(lines[2].split(',').slice(2, 10)).toEqual([
+      '2026-09-01T12:00:00.000Z',
+      'screen.updated',
+      '',
+      'success',
+      'info',
+      'admin_user',
+      'admin-1',
+      '',
+    ]);
+    expect(lines[3].split(',').slice(7, 9)).toEqual(['agent', 'agent-7']);
+    expect(lines[4].split(',').slice(7, 9)).toEqual(['machine', 'svc-9']);
     const report: unknown = await response.json();
     expect(report).toMatchObject({
       parameters: {
@@ -402,6 +459,7 @@ describe('compliance reports', () => {
     expect(response.status).toBe(201);
     expect(response.headers.get('X-Authrim-Log-Complete')).toBe('false');
     const body: unknown = await response.json();
+    // Both logs are read; the 5 pending deliveries are the tenant's, counted once.
     expect(body).toMatchObject({
       row_count: 0,
       parameters: {
@@ -431,7 +489,7 @@ describe('compliance reports', () => {
     expect(download.headers.get('X-Authrim-Log-Pending-Deliveries')).toBe('5');
     expect(download.headers.get('X-Authrim-Log-Complete')).toBe('false');
     expect(await download.text()).toBe(
-      'id,occurred_at,action,event_category,result,severity,actor,subject_user,client_id,error_code'
+      'source,id,occurred_at,action,event_category,result,severity,actor_type,actor,subject_user,client_id,error_code'
     );
     core.db.prepare('UPDATE compliance_reports SET parameters=? WHERE id=?').run(
       JSON.stringify({

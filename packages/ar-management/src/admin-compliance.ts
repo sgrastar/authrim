@@ -63,10 +63,32 @@ function createAdapter(c: Context<{ Bindings: Env }>, tenantId: string): Databas
 // Handlers
 // =============================================================================
 
+/** Admin audit records: all of them, and those of the last 30 days. */
+async function adminAuditLogStats(env: Env, tenantId: string, fromMs: number) {
+  const logRead = createLogReadAdapter({ env, tenantId, dataset: 'admin.admin_audit_log' });
+  const row = await logRead.adapter.queryOne<{
+    total: number | null;
+    last_30_days: number | null;
+  }>(
+    `SELECT COUNT(*) AS total,
+            SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END) AS last_30_days
+       FROM admin_audit_log
+      WHERE tenant_id = ?`,
+    [fromMs, tenantId]
+  );
+  return { total: Number(row?.total ?? 0), last30Days: Number(row?.last_30_days ?? 0) };
+}
+
 async function auditLogStats(env: Env, auditProfile: AuditProfile, tenantId: string) {
   const hotQuery = getAuditHotQuerySupportForProfile(env, auditProfile, tenantId);
   if (!hotQuery.supported || !hotQuery.context) {
-    return { hotQueryStatus: hotQuery.status, total: null, last30Days: null };
+    return {
+      hotQueryStatus: hotQuery.status,
+      total: null,
+      last30Days: null,
+      adminTotal: null,
+      adminLast30Days: null,
+    };
   }
   const nowTs = Math.floor(Date.now() / 1000);
   const context = hotQuery.context;
@@ -88,10 +110,14 @@ async function auditLogStats(env: Env, auditProfile: AuditProfile, tenantId: str
       WHERE tenant_id = ?`,
     [fromTs, tenantId]
   );
+  // Admin operations are recorded in the admin audit log, which keeps milliseconds.
+  const admin = await adminAuditLogStats(env, tenantId, (nowTs - 30 * 24 * 60 * 60) * 1000);
   return {
     hotQueryStatus: 'supported' as const,
     total: Number(row?.total ?? 0),
     last30Days: Number(row?.last_30_days ?? 0),
+    adminTotal: admin.total,
+    adminLast30Days: admin.last30Days,
   };
 }
 
@@ -217,7 +243,9 @@ export async function readComplianceStatus(c: Context<{ Bindings: Env }>) {
     retention: { attention, expired_records: expiredRecords },
     audit: {
       hot_query_status: audit.hotQueryStatus,
-      entries_last_30_days: audit.last30Days,
+      // Both logs count: a tenant whose only activity was admin work is still being audited.
+      entries_last_30_days:
+        audit.last30Days === null ? null : audit.last30Days + (audit.adminLast30Days ?? 0),
     },
     mfa: { enforcement, admins, users },
     rbac: access,
@@ -235,6 +263,8 @@ export async function readComplianceStatus(c: Context<{ Bindings: Env }>) {
       pii_retention_days: retentionDays('audit_pii'),
       total_entries: audit.total,
       entries_last_30_days: audit.last30Days,
+      admin_total_entries: audit.adminTotal,
+      admin_entries_last_30_days: audit.adminLast30Days,
       hot_query_status: audit.hotQueryStatus,
     },
     mfa: { enforcement, admins, users },
