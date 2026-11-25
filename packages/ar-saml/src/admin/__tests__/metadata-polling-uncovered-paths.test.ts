@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   refreshProvider: vi.fn(),
   listProfiles: vi.fn(),
   audit: vi.fn(),
+  systemEvent: vi.fn(),
   bumpCache: vi.fn(async () => undefined),
   listTenants: vi.fn(),
 }));
@@ -23,6 +24,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     resolveAuthCorePersistenceAdapterFromEnv: mocks.resolveCore,
     safeFetch: mocks.safeFetch,
     createAuditLog: mocks.audit,
+    logSystemEvent: mocks.systemEvent,
     bumpAuthenticationMethodsCacheRevision: mocks.bumpCache,
     listEnvironmentTenantDefaultStores: mocks.listTenants,
     createLogger: () => ({
@@ -151,8 +153,9 @@ function fetchHeaders(): Headers {
   return (mocks.safeFetch.mock.calls[0]?.[1] as { headers: Headers }).headers;
 }
 
+/** The details of the first system event the scheduler recorded. */
 function auditMeta(): Row {
-  return JSON.parse((mocks.audit.mock.calls[0]?.[1] as { metadata: string }).metadata) as Row;
+  return (mocks.systemEvent.mock.calls[0]?.[1] as { details: Row }).details;
 }
 
 function settings(initial: Record<string, string> = {}) {
@@ -170,6 +173,7 @@ beforeEach(() => {
   mocks.resolveCore.mockImplementation(async () => mocks.core);
   mocks.listTenants.mockResolvedValue([]);
   mocks.audit.mockResolvedValue(undefined);
+  mocks.systemEvent.mockResolvedValue(undefined);
   mocks.isAggregate.mockReturnValue(true);
   mocks.listProfiles.mockResolvedValue([{ id: 'source-a', policy: 'strict' }]);
   mocks.safeFetch.mockResolvedValue(new Response('<md:EntitiesDescriptor/>', { status: 200 }));
@@ -858,7 +862,7 @@ describe('pollSAMLMetadata individual provider failures', () => {
 
   it('counts an expired refresh as failed, disables the provider and tolerates audit failure', async () => {
     mocks.isAggregate.mockReturnValue(false);
-    mocks.audit.mockRejectedValue(new Error('audit down'));
+    mocks.systemEvent.mockRejectedValue(new Error('audit down'));
     mocks.core!.query.mockResolvedValue([providerRow('p-1', plain())]);
     mocks.refreshProvider.mockResolvedValue(refreshedProvider({ expired: true }));
     const result = await pollSAMLMetadata({} as never, 2_000);

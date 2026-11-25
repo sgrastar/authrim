@@ -7,7 +7,7 @@ import {
 
 const mocks = vi.hoisted(() => ({
   coreAdapter: {},
-  createAuditLog: vi.fn(),
+  logSystemEvent: vi.fn(),
   recordDirectoryConnectorHeartbeat: vi.fn(),
 }));
 
@@ -16,7 +16,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   return {
     ...actual,
     createAuthContextFromHono: vi.fn(() => ({ coreAdapter: mocks.coreAdapter })),
-    createAuditLog: mocks.createAuditLog,
+    logSystemEvent: mocks.logSystemEvent,
     recordDirectoryConnectorHeartbeat: mocks.recordDirectoryConnectorHeartbeat,
   };
 });
@@ -118,7 +118,7 @@ async function signedHeaders(bodyText: string, secret = 'heartbeat-secret') {
 describe('directory connector heartbeat handler', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.createAuditLog.mockResolvedValue(undefined);
+    mocks.logSystemEvent.mockResolvedValue(undefined);
     mocks.recordDirectoryConnectorHeartbeat.mockResolvedValue({
       accepted: true,
       status: 'connected',
@@ -173,15 +173,15 @@ describe('directory connector heartbeat handler', () => {
     expect(response.status).toBe(401);
     expect(body).toEqual({ error: 'invalid_heartbeat' });
     expect(mocks.recordDirectoryConnectorHeartbeat).not.toHaveBeenCalled();
-    expect(mocks.createAuditLog).toHaveBeenCalledWith(
+    expect(mocks.logSystemEvent).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
         action: 'directory_connector_heartbeat.failed',
-        metadata: expect.stringContaining('signature_mismatch'),
+        details: expect.objectContaining({ reason: 'signature_mismatch' }),
       })
     );
-    const auditEntry = mocks.createAuditLog.mock.calls[0]?.[1] as { metadata?: string };
-    expect(auditEntry.metadata).not.toContain('heartbeat-secret');
+    const auditEntry = mocks.logSystemEvent.mock.calls[0]?.[1] as Record<string, unknown>;
+    expect(JSON.stringify(auditEntry)).not.toContain('heartbeat-secret');
   });
 
   it('rejects oversized heartbeat payload before parsing JSON', async () => {
@@ -197,11 +197,11 @@ describe('directory connector heartbeat handler', () => {
     expect(response.status).toBe(413);
     expect(body).toEqual({ error: 'invalid_heartbeat' });
     expect(mocks.recordDirectoryConnectorHeartbeat).not.toHaveBeenCalled();
-    expect(mocks.createAuditLog).toHaveBeenCalledWith(
+    expect(mocks.logSystemEvent).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
         action: 'directory_connector_heartbeat.failed',
-        metadata: expect.stringContaining('payload_too_large'),
+        details: expect.objectContaining({ reason: 'payload_too_large' }),
       })
     );
   });
@@ -223,10 +223,10 @@ describe('directory connector heartbeat handler', () => {
 
     expect(response.status).toBe(403);
     expect(body).toEqual({ error: 'invalid_heartbeat' });
-    expect(mocks.createAuditLog).toHaveBeenCalledWith(
+    expect(mocks.logSystemEvent).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
-        metadata: expect.stringContaining('instance_deactivated'),
+        details: expect.objectContaining({ reason: 'instance_deactivated' }),
       })
     );
   });
@@ -253,9 +253,9 @@ describe('directory connector heartbeat handler', () => {
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toEqual({ error: 'invalid_heartbeat' });
     expect(mocks.recordDirectoryConnectorHeartbeat).not.toHaveBeenCalled();
-    expect(mocks.createAuditLog).toHaveBeenCalledWith(
+    expect(mocks.logSystemEvent).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ metadata: expect.stringContaining('invalid_payload') })
+      expect.objectContaining({ details: expect.objectContaining({ reason: 'invalid_payload' }) })
     );
   });
 
@@ -271,7 +271,7 @@ describe('directory connector heartbeat handler', () => {
 
       expect(response.status).toBe(400);
       await expect(response.json()).resolves.toEqual({ error: 'invalid_request' });
-      expect(mocks.createAuditLog).not.toHaveBeenCalled();
+      expect(mocks.logSystemEvent).not.toHaveBeenCalled();
     }
   );
 
@@ -519,9 +519,11 @@ describe('directory connector heartbeat handler', () => {
     const response = await directoryConnectorHeartbeatHandler(context);
 
     expect(response.status).toBe(403);
-    expect(mocks.createAuditLog).toHaveBeenCalledWith(
+    expect(mocks.logSystemEvent).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ metadata: expect.stringContaining('heartbeat_rejected') })
+      expect.objectContaining({
+        details: expect.objectContaining({ reason: 'heartbeat_rejected' }),
+      })
     );
   });
 
@@ -565,7 +567,7 @@ describe('directory connector heartbeat handler', () => {
   });
 
   it('does not let audit-log failures alter the authentication response', async () => {
-    mocks.createAuditLog.mockRejectedValueOnce('storage failure');
+    mocks.logSystemEvent.mockRejectedValueOnce('storage failure');
     const bodyText = JSON.stringify(heartbeatPayload());
     const context = createContext({ bodyText, headers: {} }) as never;
 

@@ -76,8 +76,8 @@ export const ADMIN_OPERATION_CORE_EVENTS: Readonly<Record<string, readonly strin
     'directory_connector.secret.issued',
     'directory_connector.secret.rotated',
   ],
-  // The heartbeat writes `directory_connector_heartbeat.failed` for this resource; it is not
-  // listed, so it stays visible.
+  // The connector heartbeat's `directory_connector_heartbeat.failed` for this resource is a
+  // system event (the system log), not an admin operation; it is not listed.
   directory_connector_instance: [
     'directory_connector_instance.acknowledge',
     'directory_connector_instance.deactivate',
