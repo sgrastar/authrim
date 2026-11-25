@@ -27,9 +27,11 @@
 		completed?: readonly string[];
 		/** Start the theme guide at this step (0-based) instead of waiting on the checklist. */
 		startAt?: number;
+		/** A phone: the navigation is not drawn (it is in the drawer) and the menu button is. */
+		phone?: boolean;
 	}
 
-	let { completed = [], startAt }: Props = $props();
+	let { completed = [], startAt, phone = false }: Props = $props();
 
 	const HOME = '/admin';
 	const LIST = '/admin/customization/branding';
@@ -75,7 +77,10 @@
 </script>
 
 <!-- Stand-ins for the console's header category and left navigation link. -->
-<nav class="subnav stand-in" aria-label="Navigation">
+{#if phone}
+	<IconButton icon="list" label={t('app.menu')} data-guide="nav-menu" onclick={() => {}} />
+{/if}
+<nav class="subnav stand-in" aria-label="Navigation" style:display={phone ? 'none' : undefined}>
 	<a
 		data-guide="nav-customization"
 		href={LIST}
