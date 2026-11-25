@@ -1922,7 +1922,10 @@ paths:
         `admin:users:read`; the session cookie works as well as a bearer token. Retained
         whole-row archives are included in supported log queries. A bounded query that cannot read
         its required rows returns log_query_incomplete instead of partial statistics or an empty
-        success.
+        success. Admin configuration changes (screens, flows, clients, roles, tenants, settings
+        and the like) that older releases recorded in the end-user audit log are left out; they
+        belong in the admin audit log (`/api/admin/admin-audit-log`). Admin actions on this
+        user, such as a suspension, are kept.
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -2548,6 +2551,13 @@ paths:
 
 
         Requires `admin:audit:read`. There is no actor, severity, result or free-text filter.
+
+
+        This is the end-user audit log. Admin configuration changes (screens, flows, clients,
+        roles, tenants, settings and the like) that older releases recorded here are left out
+        of the list and its pages; they belong in the admin audit log
+        (`/api/admin/admin-audit-log`). Admin actions on an end user, such as a suspension, are
+        kept. Compliance reports still include the older rows.
 
 
         Cost: the whole requested period is read and decrypted, and the filters (`user_id`,

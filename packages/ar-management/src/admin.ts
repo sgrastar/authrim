@@ -89,6 +89,7 @@ import {
   getAuditTimeRange,
   type AuditHotQueryContext,
 } from './audit-hot-query';
+import { isAdminOperationCoreEventRow } from './admin-operation-core-events';
 import { getAuditJsonTextExpr } from './audit-sql-dialect';
 import {
   attemptImmediateAccountDirectoryRemovals,
@@ -1341,6 +1342,8 @@ export async function adminAuditLogListHandler(c: Context<{ Bindings: Env }>) {
     const hotQuery = await getAuditHotQuerySupport(c.env, tenantId, {
       onCoverage: logCoverageHeaders(c),
       page: logPageRequest(c, tenantId, limit),
+      // Admin configuration changes that older releases wrote here belong to the admin audit log.
+      excludeRow: isAdminOperationCoreEventRow,
     });
 
     // Filters
@@ -2858,6 +2861,8 @@ export async function adminUserActivityLogHandler(c: Context<{ Bindings: Env }>)
       onCoverage: logCoverageHeaders(c),
       page: { limit: limit + 1, scope: JSON.stringify([tenantId, c.req.path, userId]) },
       storedCursorTime: activityCursor?.created_at,
+      // An admin who is also a user of this tenant would otherwise see their own console changes.
+      excludeRow: isAdminOperationCoreEventRow,
     });
     if (!hotQuery.supported || !hotQuery.context) {
       return createAuditHotQueryUnsupportedResponse(c, hotQuery);
