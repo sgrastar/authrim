@@ -1,10 +1,14 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { t } from '#lib/i18n/i18n.svelte.js';
 	import { apiAssetUrl } from '#lib/api/assets.js';
 	import IconButton from '#lib/ui/primitives/IconButton.svelte';
-	import PickerDialog, { type PickerGroup } from '#lib/ui/patterns/PickerDialog.svelte';
+	import PickerDialog, {
+		type PickerGroup,
+		type PickerNotice
+	} from '#lib/ui/patterns/PickerDialog.svelte';
 	import { guideSignal } from '#lib/onboarding/signals.js';
-	import { apiBgPresets, bgPresetGroups, type BgPresetSource } from './bg-presets';
+	import { apiBgPresets, bgPresetGroups, loadBgPresets, type BgPresetSource } from './bg-presets';
 
 	/**
 	 * A small folder button beside a background picture that opens the shared presets in a large
@@ -24,15 +28,19 @@
 	let open = $state(false);
 	let groups = $state<PickerGroup[]>([]);
 	let status = $state<'loading' | 'failed' | 'ready'>('loading');
-	// Each load gets a number; closing or opening again makes an older one's answer void.
+	// Each load gets a number; a later one makes an earlier one's answer void.
 	let request = 0;
 
-	async function show() {
-		open = true;
+	/**
+	 * Asks for the list. It is asked for as soon as the button is on the page, so the first
+	 * press finds it ready; a press while it is still on its way waits on the same request, and
+	 * after a failure asks again.
+	 */
+	async function load(fresh = false) {
 		status = 'loading';
 		const mine = ++request;
 		try {
-			const presets = await source();
+			const presets = await loadBgPresets(source, { fresh });
 			if (mine !== request) return;
 			groups = bgPresetGroups(presets);
 			status = 'ready';
@@ -41,20 +49,29 @@
 		}
 	}
 
-	// While loading, after a failure or with no presets, one column says so.
-	const shown = $derived.by((): PickerGroup[] => {
-		if (status === 'ready' && groups.length) return groups;
-		const empty =
-			status === 'loading'
-				? t('th.bg.loading')
-				: status === 'failed'
-					? t('th.bg.loadFailed')
-					: t('th.bg.none');
-		return [{ id: 'status', label: t('th.bg.title'), icon: 'image', empty, items: [] }];
+	onMount(() => void load());
+
+	function show() {
+		open = true;
+		// An empty list is asked for again too: presets may have been installed since.
+		if (status !== 'ready' || !groups.length) void load(status === 'failed');
+	}
+
+	// Loading, failed or with nothing to show, the dialog says so (and, after a failure, offers to
+	// try again) instead of showing a list that is not there.
+	const notice = $derived.by((): PickerNotice | undefined => {
+		if (status === 'loading') return { text: t('th.bg.loading'), busy: true };
+		if (status === 'failed') {
+			return {
+				text: t('th.bg.loadFailed'),
+				actionLabel: t('th.bg.retry'),
+				onaction: () => void load(true)
+			};
+		}
+		return groups.length ? undefined : { text: t('th.bg.none') };
 	});
 
 	function close() {
-		request++;
 		open = false;
 	}
 </script>
@@ -71,7 +88,8 @@
 <PickerDialog
 	{open}
 	title={t('th.bg.title')}
-	groups={shown}
+	groups={status === 'ready' ? groups : []}
+	{notice}
 	value={typeof value === 'string' ? value : null}
 	chooseLabel={t('th.bg.apply')}
 	currentLabel={t('th.bg.current')}

@@ -302,6 +302,7 @@ export const deCustomization: Record<keyof typeof jaCustomization, string> = {
 	'th.bg.none':
 		'Noch keine Vorlagenbilder. Sie erscheinen hier, sobald das Setup-Tool sie installiert hat.',
 	'th.bg.loadFailed': 'Das Bild konnte nicht geladen werden. Bitte erneut versuchen.',
+	'th.bg.retry': 'Erneut versuchen',
 	'th.bg.cat.paper': 'Papier',
 	'th.bg.cat.fabric': 'Stoff',
 	'th.bg.cat.materials': 'Materialien',

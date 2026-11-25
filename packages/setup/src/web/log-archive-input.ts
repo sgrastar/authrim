@@ -88,6 +88,14 @@ export function withLogArchiveCliErrors<T>(locale: string, action: () => T): T {
 
 const messages = [
   [
+    [
+      'log_archive_catalog_maintenance_credential_absent',
+      'log_archive_provider_compaction_credential_missing',
+    ],
+    'Catalog の保守用資格情報が登録されていないため、プロバイダ側の圧縮（compaction）が実行できません。書き込みトークンを確認して再実行してください。',
+    'The Catalog maintenance credential is not registered, so provider compaction cannot run. Check the write token and run setup again.',
+  ],
+  [
     ['log_archive_pending_recovery_required'],
     '前回の自動発行の復旧が必要です。手入力せず、自動発行で前回の一時トークン（失効確認ができない場合は新しい復旧用の一時トークン）を入力して再開してください。',
     'Recover the previous automatic issuance before entering tokens manually. Resume automatic issuance with the previous one-time token, or a new recovery token if revocation cannot be confirmed.',

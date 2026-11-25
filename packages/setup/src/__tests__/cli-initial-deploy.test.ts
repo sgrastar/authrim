@@ -19,6 +19,12 @@ vi.mock('../core/log-archive-readiness.js', async (importOriginal) => {
     ),
   };
 });
+vi.mock('../core/log-archive-catalog-credential.js', () => ({
+  // The fixture lock already records the Catalog maintenance credential; nothing to repair here.
+  repairLogArchiveCatalogCredential: vi.fn(
+    async (input: { owned: import('../core/log-archive-config.js').LogArchiveLock }) => input.owned
+  ),
+}));
 vi.mock('@authrim/ar-lib-logging/iceberg/capabilities', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@authrim/ar-lib-logging/iceberg/capabilities')>()),
   LOG_ARCHIVE_IMPLEMENTED_MODES: ['pipeline', 'scheduled'],

@@ -68,6 +68,12 @@ export function archiveLockFixture(
       compactionTargetSizeMb: 64,
       nextEligibleAt: null,
       inFlightJobs: 'unverified',
+      credential: {
+        tokenId: 'c'.repeat(32),
+        source: 'catalog_write_token',
+        status: 'present',
+        registeredAt: '2026-10-27T00:00:00.500Z',
+      },
     },
   };
 }

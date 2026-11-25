@@ -163,6 +163,25 @@ export async function loadLogArchiveSecrets(
   throw new Error('log_archive_catalog_credentials_required');
 }
 
+/**
+ * The write token as deployed: the explicit environment override, else the published key file.
+ * The staged pending file is deliberately not consulted, so a rotation of the key file (or of the
+ * environment variable) is what later deploys act on, not a copy staged before it.
+ */
+export async function loadPublishedLogArchiveWriteToken(keysDir: string): Promise<string> {
+  const fromEnvironment = process.env.LOG_ARCHIVE_CATALOG_WRITE_TOKEN?.trim();
+  if (fromEnvironment) return fromEnvironment;
+  const writeToken = (
+    await readPrivateFileSecurely(join(keysDir, FILES.writeToken), {
+      maxBytes: 16 * 1024,
+      invalidError: 'log_archive_secret_file_invalid',
+      permissionsError: 'log_archive_secret_file_permissions_invalid',
+    })
+  )?.trim();
+  if (!writeToken) throw new Error('log_archive_catalog_credentials_required');
+  return writeToken;
+}
+
 export async function publishLogArchiveSecrets(
   baseDir: string,
   environment: string,

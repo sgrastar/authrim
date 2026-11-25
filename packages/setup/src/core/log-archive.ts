@@ -15,6 +15,7 @@ import {
   LOG_ARCHIVE_MAINTENANCE_POLICY_DIGEST,
   type LogArchiveConfig,
   type LogArchiveLock,
+  type LogArchiveMaintenanceCredential,
 } from './log-archive-config.js';
 import type {
   ProvisioningResourceCheckpoint,
@@ -153,7 +154,10 @@ export function logArchiveStepLabel(path: string): string {
   if (bare.startsWith('basin-catalog/')) {
     if (bare.endsWith('/enable')) return 'catalog_enable';
     if (bare.endsWith('/disable')) return 'catalog_disable';
-    return bare.includes('/maintenance-configs') ? 'table_maintenance' : 'catalog_read';
+    // The credential upsert carries a token in its body: codes only, never Cloudflare's text.
+    if (bare.endsWith('/credential')) return 'catalog_credential';
+    if (!bare.includes('/maintenance-configs')) return 'catalog_read';
+    return bare.includes('/namespaces/') ? 'table_maintenance' : 'catalog_maintenance';
   }
   const pipeline = /^pipelines\/v1\/(streams|sinks|pipelines)(?:\/|$)/u.exec(bare);
   if (pipeline) return `pipeline_${pipeline[1].slice(0, -1)}`;
@@ -194,6 +198,7 @@ const STEPS_WITH_CLOUDFLARE_TEXT = new Set([
   'catalog_read',
   'catalog_enable',
   'catalog_disable',
+  'catalog_maintenance',
   'table_maintenance',
   'pipeline_stream',
   'pipeline_pipeline',
@@ -372,7 +377,8 @@ export class LogArchiveApi {
       (payload.result === undefined &&
         method !== 'DELETE' &&
         !path.split('?')[0].endsWith('/disable') &&
-        !path.split('?')[0].endsWith('/delete'))
+        !path.split('?')[0].endsWith('/delete') &&
+        !path.split('?')[0].endsWith('/credential'))
     ) {
       // The provider's text is never passed on as it is: Sink errors can contain credentials. Only
       // numeric codes and a redacted, short message of steps that carry no credential are kept.
@@ -488,6 +494,8 @@ export interface LogArchiveProvisionOptions {
   catalogSinkToken?: string;
   /** The tokens' exact policies were verified when Setup issued them; see `verifyCatalogCredentials`. */
   catalogPolicyVerified?: boolean;
+  /** The Catalog maintenance credential a previous run recorded; lets a re-run skip the upsert. */
+  maintenanceCredential?: LogArchiveMaintenanceCredential;
   checkpoints: Readonly<Record<string, ProvisioningResourceCheckpoint>>;
   checkpoint: (resource: ProvisioningResourceCheckpoint) => Promise<void>;
   /** R2 ownership must be verified with the existing marker + creation_date implementation. */
@@ -649,10 +657,91 @@ export async function preflightLogArchive(
   );
 }
 
+export interface LogArchiveCatalogCredentialOptions {
+  api: LogArchiveApi;
+  bucketName: string;
+  /** Registered as the Catalog's maintenance service credential (Catalog Write + Storage Write). */
+  catalogWriteToken: string;
+  recorded?: LogArchiveMaintenanceCredential;
+  onProgress?: (message: string) => void;
+}
+
+/**
+ * Provider compaction is a Catalog-level service that runs with a credential the account hands
+ * over; without one every table reports `next_eligible_reason: no_credential` and nothing is
+ * compacted, whatever the table policy says. Wrangler sets it through
+ * `POST basin-catalog/{bucket}/credential {token}` (an upsert), which is what this does.
+ * Setup reuses the issued Catalog write token: it carries exactly the required permission
+ * groups, it is the only write-capable token kept after bootstrap, and re-registering it after a
+ * rotation keeps the provider's copy current. Only the token's ID is recorded; the value never is.
+ */
+export async function ensureLogArchiveCatalogCredential(
+  options: LogArchiveCatalogCredentialOptions
+): Promise<LogArchiveMaintenanceCredential> {
+  if (!options.catalogWriteToken.trim())
+    throw new Error('log_archive_distinct_catalog_credentials_required');
+  const catalogPath = `basin-catalog/${encodeURIComponent(options.bucketName)}`;
+  const configsPath = `${catalogPath}/maintenance-configs`;
+  const status = async (): Promise<string | undefined> => {
+    const current = await options.api.request<Record<string, unknown>>(configsPath);
+    const value = object(current).credential_status;
+    return typeof value === 'string' ? value : undefined;
+  };
+  const verified = await options.api.request<{ id?: string; status?: string }>(
+    'tokens/verify',
+    'GET',
+    undefined,
+    options.catalogWriteToken
+  );
+  if (verified.status !== 'active' || !verified.id || !/^[a-f0-9]{32}$/u.test(verified.id))
+    throw new Error('log_archive_catalog_token_inactive');
+  const before = await status();
+  if (before === 'present' && options.recorded?.tokenId === verified.id) return options.recorded;
+  options.onProgress?.(
+    before === 'present'
+      ? 'Re-registering the Catalog maintenance credential with the current write token...'
+      : 'Registering the Catalog maintenance credential so provider compaction can run...'
+  );
+  await options.api.request(`${catalogPath}/credential`, 'POST', {
+    token: options.catalogWriteToken,
+  });
+  if ((await status()) !== 'present')
+    throw new Error('log_archive_catalog_maintenance_credential_absent');
+  return {
+    tokenId: verified.id,
+    source: 'catalog_write_token',
+    status: 'present',
+    registeredAt: new Date().toISOString(),
+  };
+}
+
+/**
+ * The table's view of the Catalog credential. A table that still says `no_credential` after the
+ * Catalog reported the credential present will never be compacted, so it is a failure, not a wait.
+ */
+export async function assertTableCompactionHasCredential(
+  api: LogArchiveApi,
+  table: { bucketName: string; namespace: string; tableName: string }
+): Promise<void> {
+  const path = `basin-catalog/${encodeURIComponent(table.bucketName)}/namespaces/${encodeURIComponent(table.namespace)}/tables/${encodeURIComponent(table.tableName)}/maintenance-configs`;
+  const current = await api.request<{ maintenance_config?: Record<string, unknown> }>(path);
+  const compaction = object(object(current.maintenance_config).compaction);
+  if (compaction.next_eligible_reason === 'no_credential')
+    throw new Error('log_archive_provider_compaction_credential_missing');
+}
+
 async function configureOwnedTableMaintenance(
   options: LogArchiveProvisionOptions
 ): Promise<LogArchiveLock['maintenance']> {
   const archive = options.archive;
+  // Catalog-level first: the table policy below is inert until the service has a credential.
+  const credential = await ensureLogArchiveCatalogCredential({
+    api: options.api,
+    bucketName: archive.bucketName,
+    catalogWriteToken: options.catalogWriteToken,
+    recorded: options.maintenanceCredential,
+    onProgress: options.onProgress,
+  });
   const path = `basin-catalog/${encodeURIComponent(archive.bucketName)}/namespaces/${encodeURIComponent(archive.namespace)}/tables/${encodeURIComponent(archive.tableName)}/maintenance-configs`;
   const deadline = Date.now() + (options.readinessTimeoutMs ?? 5 * 60_000);
   let lastProgressAt: number | undefined;
@@ -698,6 +787,9 @@ async function configureOwnedTableMaintenance(
   const compaction = object(after.maintenance_config.compaction);
   if (compaction.state !== 'enabled' || compaction.target_size_mb !== '64')
     throw new Error('log_archive_provider_compaction_not_enabled');
+  // The credential was just confirmed present at the Catalog level; the table must agree.
+  if (compaction.next_eligible_reason === 'no_credential')
+    throw new Error('log_archive_provider_compaction_credential_missing');
   if (
     compaction.next_eligible_at !== undefined &&
     compaction.next_eligible_at !== null &&
@@ -717,6 +809,7 @@ async function configureOwnedTableMaintenance(
       : {}),
     nextEligibleAt: null,
     inFlightJobs: 'unverified',
+    credential,
   };
 }
 
