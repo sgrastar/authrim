@@ -27,7 +27,8 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   };
 });
 
-const { recordAdminOperationAudit } = await import('../admin-operation-audit');
+const { recordAdminOperationAudit, recordAdminOperationAuditFromEnv } =
+  await import('../admin-operation-audit');
 
 type Input = Parameters<typeof recordAdminOperationAudit>[1];
 
@@ -337,5 +338,88 @@ describe('recordAdminOperationAudit', () => {
     expect(body.code).toBe('audit_log_write_failed');
     // The admin record was written first.
     expect(mocks.writeRow).toHaveBeenCalledTimes(1);
+  });
+  it('records against a tenant the route names', async () => {
+    await record(
+      {
+        action: 'tenant.updated',
+        resourceType: 'tenant',
+        resourceId: 'tenant-b',
+        tenantId: 'tenant-b',
+      },
+      { tenantId: 'platform' }
+    );
+    expect(mocks.writeRow.mock.calls[0]?.[1]).toMatchObject({ tenant_id: 'tenant-b' });
+  });
+});
+
+describe('recordAdminOperationAuditFromEnv', () => {
+  it('records the administrator who asked, outside the request', async () => {
+    const id = await recordAdminOperationAuditFromEnv({} as Env, {
+      tenantId: 'tenant-a',
+      actorId: 'admin-1',
+      action: 'tenant.cloned',
+      resourceType: 'tenant',
+      resourceId: 'tenant-a',
+      metadata: { operation_id: 'op-1' },
+    });
+    const row = mocks.writeRow.mock.calls[0]?.[1] as unknown as Record<string, unknown>;
+    // Only the principal's ID was kept: it is not recorded as an administrator's own record.
+    expect(row.admin_user_id).toBeUndefined();
+    expect(row).toMatchObject({
+      id,
+      tenant_id: 'tenant-a',
+      action: 'tenant.cloned',
+      resource_type: 'tenant',
+      resource_id: 'tenant-a',
+      result: 'success',
+      metadata: expect.objectContaining({
+        operation_id: 'op-1',
+        admin_actor_id: 'admin-1',
+        admin_actor_type: 'unrecorded',
+      }) as unknown,
+    });
+  });
+
+  it('records a scheduler as the system', async () => {
+    await recordAdminOperationAuditFromEnv({} as Env, {
+      tenantId: 'default',
+      actorId: 'system:legacy-settings-import',
+      action: 'settings.legacy_import',
+      resourceType: 'settings',
+      resourceId: 'platform:default:session',
+    });
+    expect(mocks.writeRow.mock.calls[0]?.[1]).toMatchObject({
+      admin_user_id: 'system',
+      metadata: expect.objectContaining({
+        admin_actor_type: 'system',
+        admin_actor_id: 'system:legacy-settings-import',
+      }) as unknown,
+    });
+  });
+
+  it('fails a fail-closed action without its tenant, administrator or record', async () => {
+    const input = {
+      tenantId: 'tenant-a',
+      actorId: 'admin-1',
+      action: 'tenant.cloned',
+      resourceType: 'tenant',
+      resourceId: 'tenant-a',
+    };
+    await expect(
+      recordAdminOperationAuditFromEnv({} as Env, { ...input, tenantId: ' ' })
+    ).rejects.toThrow('admin_audit_tenant_required');
+    await expect(
+      recordAdminOperationAuditFromEnv({} as Env, { ...input, actorId: '' })
+    ).rejects.toThrow('admin_audit_actor_required');
+    expect(mocks.writeRow).not.toHaveBeenCalled();
+    mocks.writeRow.mockRejectedValue(new Error('log writer down'));
+    await expect(recordAdminOperationAuditFromEnv({} as Env, input)).rejects.toThrow(
+      'admin_audit_write_failed'
+    );
+    // A fail-open action goes on.
+    await expect(
+      recordAdminOperationAuditFromEnv({} as Env, { ...input, action: 'token.introspected' })
+    ).resolves.toBeNull();
   });
 });

@@ -9,7 +9,6 @@ import {
   CATEGORY_SCOPE_CONFIG,
   AR_ERROR_CODES,
   buildContractKey,
-  createAuditLog,
   createAuthContextFromHono,
   createErrorResponse,
   getLogger,
@@ -32,7 +31,10 @@ import {
   ensureActiveTenantDiscoveryAliasDirectory,
   resolveTenantDiscoveryAliasDirectoryInput,
 } from './tenant-alias-directory';
-import { recordAdminOperationAudit } from './admin-operation-audit';
+import {
+  recordAdminOperationAudit,
+  recordAdminOperationAuditFromEnv,
+} from './admin-operation-audit';
 
 const TENANT_ID_REGEX = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
 // Keep synchronous clone work below the lowest Workers/D1 invocation budgets. Larger copies must
@@ -2295,21 +2297,20 @@ async function executeTenantCloneHandler(
 
     const keyManager = c.env.KEY_MANAGER.get(c.env.KEY_MANAGER.idFromName(`${targetTenantId}-v3`));
     await keyManager.rotateKeysRpc();
-    await createAuditLog(c.env, {
+    // An internal step of the clone: the administrator is the one who asked for it.
+    await recordAdminOperationAuditFromEnv(c.env, {
       tenantId: targetTenantId,
-      userId: internal.actorId,
+      actorId: internal.actorId,
       action: 'tenant.clone.prepared',
-      resource: 'tenant',
+      resourceType: 'tenant',
       resourceId: targetTenantId,
-      ipAddress: 'internal',
-      userAgent: 'tenant-provisioning-saga',
-      metadata: JSON.stringify({
+      metadata: {
         source_tenant_id: sourceTenantId,
         options,
         cloned_items: summary,
         signing_keys: 'generated',
         operation: 'control-plane-provisioning',
-      }),
+      },
       severity: 'info',
     });
     const activatedTenant: Record<string, unknown> = {

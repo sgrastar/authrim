@@ -21,7 +21,6 @@ import {
   type DatabaseAdapter,
   createErrorResponse,
   AR_ERROR_CODES,
-  createAuditLog,
   getDefaultTenantId,
   getLogger,
   getPrimaryTenantId,
@@ -118,6 +117,7 @@ import {
   requireTenantReadAuthority,
 } from './admin-tenant-access';
 import { recordAdminOperationAudit } from './admin-operation-audit';
+import { recordAdminOperationAuditFromEnv } from './admin-operation-audit';
 
 // =============================================================================
 // Constants
@@ -1072,19 +1072,17 @@ function tenantProvisioningDependencies(
       });
       await syncTenantExistsCache(env.AUTHRIM_CONFIG, operation.tenantId, 'active');
       if (operation.operationKind === 'clone') {
-        await createAuditLog(env, {
+        await recordAdminOperationAuditFromEnv(env, {
           tenantId: operation.tenantId,
-          userId: operation.createdBy,
+          actorId: operation.createdBy,
           action: 'tenant.cloned',
-          resource: 'tenant',
+          resourceType: 'tenant',
           resourceId: operation.tenantId,
-          ipAddress: 'internal',
-          userAgent: 'tenant-provisioning-saga',
-          metadata: JSON.stringify({
+          metadata: {
             operation_id: operation.operationId,
             source_tenant_id: operation.sourceTenantId,
             ...(operation.preparationResult ?? {}),
-          }),
+          },
           severity: 'info',
         });
       }

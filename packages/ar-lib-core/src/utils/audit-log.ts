@@ -1258,6 +1258,11 @@ export async function createAuditLog(
 /**
  * Helper function to create audit log from Hono context
  *
+ * @deprecated Writes to the end-user (core) audit log under the admin's context. Admin
+ * operations belong in the admin audit log: ar-management records them with
+ * recordAdminOperationAudit. Kept for the calls that retry with a stable audit ID until they
+ * move; the ar-management audit gate lists them.
+ *
  * Automatically extracts tenantId, IP address, and user agent from the request.
  * Requires adminAuth context to be set by adminAuthMiddleware.
  * tenantId is obtained from requestContextMiddleware if available.
@@ -1373,6 +1378,8 @@ export function scheduleAuditLog(
 
 /**
  * Helper to create and schedule audit log from Hono context
+ *
+ * @deprecated See createAuditLogFromContext; nothing calls this any more.
  *
  * Combines createAuditLogFromContext with waitUntil scheduling.
  * This is the recommended way to create audit logs in admin handlers

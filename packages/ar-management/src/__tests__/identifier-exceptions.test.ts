@@ -47,6 +47,9 @@ import {
 import { eraseAccountIdentifierValues } from '../account-identifier-erasure';
 import { createIdentifierExceptionReader } from '@authrim/ar-lib-core';
 
+// Admin operations are recorded through the forwarding shim (see the helper).
+vi.mock('../admin-operation-audit', () => import('./helpers/legacy-direct-audit-shim'));
+
 const migrations = [
   '017_mapped_identifier_values.sql',
   '019_mapped_identifier_values_account_binding.sql',
