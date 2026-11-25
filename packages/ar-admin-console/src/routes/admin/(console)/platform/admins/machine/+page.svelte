@@ -21,7 +21,7 @@
 		<MachineListPage
 			client={httpMachineAccess(tenantScope.tenantId)}
 			{access}
-			tenants={tenantScope.tenants}
+			tenants={tenantScope.workableTenants}
 			onopen={(id) => void goto(`${BASE}/${encodeURIComponent(id)}`)}
 		/>
 	{/key}

@@ -6,6 +6,10 @@
 		kind: ScopeKind;
 		name: string;
 		mark: string;
+		/** What state it is in, said at the row's end ("Active", "Deleted"). */
+		status?: { label: string; tone: 'success' | 'neutral' | 'warning' | 'danger' | 'info' };
+		/** Listed but not to be chosen (a tenant that is being deleted). */
+		disabled?: boolean;
 	}
 </script>
 
@@ -13,6 +17,7 @@
 	import { t } from '#lib/i18n/i18n.svelte.js';
 	import Icon from '#lib/ui/icons/Icon.svelte';
 	import Popover from '#lib/ui/patterns/Popover.svelte';
+	import Badge from '#lib/ui/primitives/Badge.svelte';
 
 	/**
 	 * "What am I operating on" — the only place the scope is chosen. Options come from the
@@ -65,6 +70,7 @@
 								class="option"
 								class:is-current={option.id === current.id}
 								aria-current={option.id === current.id ? 'true' : undefined}
+								disabled={option.disabled}
 								onclick={() => {
 									close();
 									if (option.id !== current.id) onselect(option);
@@ -79,6 +85,11 @@
 										<span class="option__hint">{t('scope.hint.platform')}</span>
 									{/if}
 								</span>
+								{#if option.status}
+									<span class="option__status">
+										<Badge tone={option.status.tone} dot size="sm">{option.status.label}</Badge>
+									</span>
+								{/if}
 								{#if option.id === current.id}
 									<span class="option__check"><Icon name="check" /></span>
 								{/if}
@@ -199,6 +210,25 @@
 		background: var(--bg-hover);
 	}
 
+	.option:disabled {
+		cursor: not-allowed;
+		opacity: 0.6;
+	}
+
+	.option:disabled:hover {
+		background: none;
+	}
+
+	.option__body {
+		flex: 1;
+	}
+
+	.option__status {
+		display: inline-flex;
+		flex-shrink: 0;
+		margin-inline-start: auto;
+	}
+
 	.option.is-current {
 		background: var(--bg-subtle);
 	}
@@ -214,6 +244,7 @@
 
 	.option__name {
 		display: block;
+		overflow-wrap: anywhere;
 		font-size: var(--fs-body);
 		font-weight: var(--fw-semibold);
 	}
