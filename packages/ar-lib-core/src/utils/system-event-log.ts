@@ -47,10 +47,11 @@ export interface SystemEventInput {
   severity?: SystemEventSeverity;
   requestId?: string;
   /**
-   * Scalars, or one level of scalar maps (counts by kind). `result` (`success` / `failure`) and
-   * `error_code` are read from here as the end-user log reads them.
+   * Scalars, or one level of counts by kind (a map from a kind's name, such as an event type,
+   * to a number). `result` (`success` / `failure`) and `error_code` are read from here as the
+   * end-user log reads them.
    */
-  details?: Record<string, SystemEventDetailValue | Record<string, SystemEventDetailValue>>;
+  details?: Record<string, SystemEventDetailValue | Record<string, number>>;
   /** A stable ID for a retried write; the same ID with other content is refused by the store. */
   id?: string;
   createdAt?: number;
@@ -77,6 +78,13 @@ const IP_PATTERN = /^(?:\d{1,3}(?:\.\d{1,3}){3}|(?=.*:)[0-9a-f:.]+)$/iu;
  */
 const REFUSED_DETAIL_KEYS =
   /(userid|accountid|subjectid|principalid|actorid|email|mail|phone|^ip$|^ip[a-z]|ipaddr|clientip|remoteip|sourceip|useragent|url|uri|href|password|secret|token|cookie|authorization|name$|address|^sub$|^dn$|^upn$)/u;
+/**
+ * A key of a counts-by-kind map is a kind's name (an event type, a reason code); it is refused
+ * only when it is, as a whole, the name of a personal field. `account.email.changed` is an
+ * event type; `email` or `user.id` is not.
+ */
+const REFUSED_KIND_KEYS =
+  /^(userid|accountid|subjectid|principalid|actorid|email|mail|phone|ip|ipaddress|useragent|url|uri|href|password|secret|token|cookie|authorization|name|address|sub|dn|upn)$/u;
 /** Keys the writer sets itself; a caller may not pretend to be another dataset or target. */
 const RESERVED_DETAIL_KEYS = new Set([
   'source',
@@ -96,12 +104,18 @@ function invalid(reason: string): never {
   throw new Error(`system_event_${reason}`);
 }
 
-function checkKey(key: string, path: string): void {
+function checkKey(key: string, path: string, kind = false): void {
   if (!NAME_PATTERN.test(key)) invalid(`detail_key_invalid:${path}`);
   if (IP_PATTERN.test(key)) invalid(`detail_key_refused:${path}`);
   const normalized = normalizeKey(key);
   if (RESERVED_DETAIL_KEYS.has(normalized)) invalid(`detail_key_reserved:${path}`);
-  if (REFUSED_DETAIL_KEYS.test(normalized)) invalid(`detail_key_refused:${path}`);
+  if ((kind ? REFUSED_KIND_KEYS : REFUSED_DETAIL_KEYS).test(normalized))
+    invalid(`detail_key_refused:${path}`);
+}
+
+/** Whether a string may be a detail value: a code or an ID, never an address or free text. */
+export function isSystemEventDetailValue(value: string): boolean {
+  return DETAIL_VALUE_PATTERN.test(value) && !IP_PATTERN.test(value);
 }
 
 function checkScalar(value: unknown, path: string): asserts value is SystemEventDetailValue {
@@ -111,8 +125,7 @@ function checkScalar(value: unknown, path: string): asserts value is SystemEvent
     return;
   }
   if (typeof value === 'string') {
-    if (!DETAIL_VALUE_PATTERN.test(value) || IP_PATTERN.test(value))
-      invalid(`detail_invalid:${path}`);
+    if (!isSystemEventDetailValue(value)) invalid(`detail_invalid:${path}`);
     return;
   }
   invalid(`detail_invalid:${path}`);
@@ -120,28 +133,30 @@ function checkScalar(value: unknown, path: string): asserts value is SystemEvent
 
 /**
  * The details a system event may carry, or a thrown `system_event_detail_*` error. Top-level keys
- * are snake_case names; a nested map (counts by kind) takes event names as keys. Values are
- * codes, IDs, kinds, numbers and booleans: nothing that reads as a name, an address or a
- * locator, because this log has no subject to erase by.
+ * are snake_case names. Values are codes, IDs, kinds, numbers and booleans: nothing that reads
+ * as a name, an address or a locator, because this log has no subject to erase by. A nested
+ * object is counts by kind: its keys are kinds' names (event types, reason codes), its values
+ * numbers, so it can never carry a value about a person.
  */
 export function checkSystemEventDetails(
   details: Record<string, unknown> | undefined
-): Record<string, SystemEventDetailValue | Record<string, SystemEventDetailValue>> {
+): Record<string, SystemEventDetailValue | Record<string, number>> {
   if (details === undefined) return {};
   if (!details || typeof details !== 'object' || Array.isArray(details)) invalid('details_invalid');
   const entries = Object.entries(details);
   if (entries.length > MAX_DETAIL_KEYS) invalid('details_too_many');
-  const out: Record<string, SystemEventDetailValue | Record<string, SystemEventDetailValue>> = {};
+  const out: Record<string, SystemEventDetailValue | Record<string, number>> = {};
   for (const [key, value] of entries) {
     if (!/^[a-z][a-z0-9_]{0,63}$/u.test(key)) invalid(`detail_key_invalid:${key}`);
     checkKey(key, key);
     if (value && typeof value === 'object' && !Array.isArray(value)) {
       const nested = Object.entries(value as Record<string, unknown>);
       if (nested.length > MAX_DETAIL_KEYS) invalid(`detail_too_many:${key}`);
-      const map: Record<string, SystemEventDetailValue> = {};
+      const map: Record<string, number> = {};
       for (const [innerKey, innerValue] of nested) {
-        checkKey(innerKey, `${key}.${innerKey}`);
-        checkScalar(innerValue, `${key}.${innerKey}`);
+        checkKey(innerKey, `${key}.${innerKey}`, true);
+        if (typeof innerValue !== 'number' || !Number.isFinite(innerValue))
+          invalid(`detail_invalid:${key}.${innerKey}`);
         map[innerKey] = innerValue;
       }
       out[key] = map;

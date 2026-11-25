@@ -12,7 +12,11 @@ vi.mock('../audit-log', async (importOriginal) => ({
 }));
 
 import { AuditLogDeliveryError } from '../audit-log';
-import { checkSystemEventDetails, logSystemEvent } from '../system-event-log';
+import {
+  checkSystemEventDetails,
+  isSystemEventDetailValue,
+  logSystemEvent,
+} from '../system-event-log';
 
 const env = {} as Env;
 const input = {
@@ -129,6 +133,22 @@ describe('logSystemEvent', () => {
 });
 
 describe('checkSystemEventDetails', () => {
+  it('keeps counts by kind whose kinds are event types, codes included', () => {
+    expect(
+      checkSystemEventDetails({
+        event_types: { 'account.email.changed': 1, 'account.created': 2, 'user.deleted': 1 },
+        by_reason: { signature_mismatch: 3, unknown_heartbeat_key: 1 },
+      })
+    ).toEqual({
+      event_types: { 'account.email.changed': 1, 'account.created': 2, 'user.deleted': 1 },
+      by_reason: { signature_mismatch: 3, unknown_heartbeat_key: 1 },
+    });
+    expect(isSystemEventDetailValue('hb-active')).toBe(true);
+    for (const value of ['192.0.2.1', '2001:db8::1', '::ffff:192.0.2.1', 'a b', 'x@y', '/p']) {
+      expect(isSystemEventDetailValue(value), value).toBe(false);
+    }
+  });
+
   it('keeps scalars and one level of scalar maps', () => {
     expect(
       checkSystemEventDetails({
@@ -162,6 +182,9 @@ describe('checkSystemEventDetails', () => {
     [{ count: Number.NaN }, 'detail_invalid:count'],
     [{ by: { user_id: 1 } }, 'detail_key_refused:by.user_id'],
     [{ by_kind: { 'user.id': 'usr-123' } }, 'detail_key_refused:by_kind.user.id'],
+    [{ by_kind: { 'account.created': 'usr-123' } }, 'detail_invalid:by_kind.account.created'],
+    [{ by_kind: { email: 1 } }, 'detail_key_refused:by_kind.email'],
+    [{ by_kind: { name: 1 } }, 'detail_key_refused:by_kind.name'],
     [{ full_name: 'Alice' }, 'detail_key_refused:full_name'],
     [{ ip: '192.0.2.1' }, 'detail_key_refused:ip'],
     [{ peer: '192.0.2.1' }, 'detail_invalid:peer'],
