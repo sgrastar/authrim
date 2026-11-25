@@ -250,6 +250,9 @@ import { SessionClientStore } from '@authrim/ar-lib-core/durable-objects/Session
 import { adminUserAnonymizeHandler } from '../admin';
 import { adminUserDeleteHandler } from '../admin-users';
 
+// Admin operations are recorded through the forwarding shim (see the helper).
+vi.mock('../admin-operation-audit', () => import('./helpers/legacy-admin-audit-shim'));
+
 // ---------------------------------------------------------------------------
 // Harness
 // ---------------------------------------------------------------------------
@@ -704,13 +707,14 @@ describe('deleting or anonymizing a user notifies downstream relying parties', (
     expect(adminAudits).toHaveLength(1);
     expect(JSON.stringify(adminAudits[0].slice(1))).not.toContain('user-1');
 
-    // The anonymization's own audits too: the tombstone (keyed by the user id) by the same hash.
-    expect(mocks.contextAudit).toHaveBeenCalledWith(
+    // The anonymization's own audit too: the tombstone (keyed by the user id) by the same hash.
+    // It names no user any more, so it is an admin record only, not part of a user's history.
+    expect(mocks.contextAudit).not.toHaveBeenCalledWith(
       expect.anything(),
       'user.anonymized',
-      'user',
-      hash,
-      expect.objectContaining({ tombstone_id: hash })
+      expect.anything(),
+      expect.anything(),
+      expect.anything()
     );
     expect(mocks.scheduleAdminAudit).toHaveBeenCalledWith(
       expect.anything(),

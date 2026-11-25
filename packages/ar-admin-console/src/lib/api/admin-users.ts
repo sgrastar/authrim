@@ -203,6 +203,8 @@ export interface AdminUserActivityEntry {
 	result: 'success' | 'failure' | null;
 	at: number | null;
 	ipAddress: string | null;
+	/** An administrator's action on this user (marked `actor_type: admin` by the server). */
+	byAdmin?: boolean;
 }
 
 export interface AdminUserActivity {
@@ -433,7 +435,8 @@ export function userActivityFrom(body: Record<string, unknown>): AdminUserActivi
 			action: String(row.action ?? ''),
 			result: result === 'success' || result === 'failure' ? result : null,
 			at: toEpochMs(row.timestamp),
-			ipAddress: text(row.ip_address)
+			ipAddress: text(row.ip_address),
+			byAdmin: record(row.details).actor_type === 'admin'
 		} satisfies AdminUserActivityEntry;
 	});
 	return { entries, more: record(body.pagination).has_more === true };

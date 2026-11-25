@@ -16,6 +16,7 @@ export const deUserAudit: Record<keyof typeof jaUserAudit, string> = {
 	'uaud.col.ip': 'IP-Adresse',
 	'uaud.result.success': 'Erfolgreich',
 	'uaud.result.failure': 'Fehlgeschlagen',
+	'uaud.byAdmin': 'Durch einen Administrator',
 	'uaud.list.title': 'Ereignisse',
 	'uaud.list.info': 'Neueste zuerst. Mit den Filtern oben grenzen Sie die Liste ein.',
 	'uaud.empty': 'Keine Ereignisse in diesem Zeitraum',

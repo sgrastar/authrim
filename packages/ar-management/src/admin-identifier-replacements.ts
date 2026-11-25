@@ -1,6 +1,5 @@
 import type { Context } from 'hono';
 import {
-  createAuditLogFromContext,
   createPIIContextFromHono,
   getTenantIdFromContext,
   resolveAccountDataContextFromHono,
@@ -8,6 +7,7 @@ import {
   type Env,
 } from '@authrim/ar-lib-core';
 import { resumeIdentifierReplacementOperation } from './account-identifier-replacement';
+import { recordAdminOperationAudit } from './admin-operation-audit';
 
 const SAFE_ID = /^[a-zA-Z0-9_-][a-zA-Z0-9._:-]{0,255}$/u;
 const OPERATION_ID = /^identifier-replacement:[a-f0-9-]{36}$/u;
@@ -194,13 +194,13 @@ export async function adminUserIdentifierReplacementResumeHandler(
     if (!before?.attentionRequired) {
       throw new Error('admin_identifier_replacement_not_resumable');
     }
-    await createAuditLogFromContext(
-      c,
-      'user.identifier_replacement.resume_requested',
-      'user',
-      accountId,
-      { operation_id: operationId }
-    );
+    await recordAdminOperationAudit(c, {
+      action: 'user.identifier_replacement.resume_requested',
+      resourceType: 'user',
+      resourceId: accountId,
+      metadata: { operation_id: operationId },
+      endUser: { userId: accountId },
+    });
     await prepareBlockedIdentifierReplacementResume(pii, {
       tenantId,
       accountId,

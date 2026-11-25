@@ -10,15 +10,9 @@ import { describe, expect, it } from 'vitest';
  * are listed here until they move; a module that moved must leave the list.
  */
 const STILL_ON_THE_END_USER_LOG = new Set([
-  // Admin actions on end users, which move with the admin records they already write beside.
-  'admin-identifier-replacements.ts',
   // Retries that reuse a stable audit ID: the admin log refuses one ID with another payload.
   'admin-rbac.ts',
   'admin-user-assurance.ts',
-  'admin-user-sessions.ts',
-  'admin-users.ts',
-  'admin.ts',
-  // Retries that reuse a stable audit ID, as above.
   'compliance/access-reviews.ts',
   'routes/guest-users.ts',
 ]);
