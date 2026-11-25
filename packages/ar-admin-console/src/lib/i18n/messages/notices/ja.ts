@@ -92,6 +92,10 @@ export const jaNotices = {
 	'notice.msg.second_factor_recovery_requested': '{email} がセキュリティキーの復旧を申請しました',
 	'notice.msg.second_factor_policy_widened':
 		'{email} が 2 つ目の要素として使える種類を広げました（{kinds}）。第 2 要素なしの確認で変更されています',
+	'notice.msg.saml_certificate_expiring':
+		'SAML プロバイダー {provider} の証明書が {date} に期限切れになります',
+	'notice.msg.saml_certificate_expired':
+		'SAML プロバイダー {provider} の証明書は期限切れです（{date}）',
 	'notice.msg.storage_registry_security': 'ストレージ登録簿にセキュリティ上の問題が見つかりました',
 	'notice.msg.storage_registry_health': 'ストレージ登録簿の状態に問題があります',
 	'notice.msg.tenant_database_stats': 'テナントのデータベースの統計に注意が必要です',

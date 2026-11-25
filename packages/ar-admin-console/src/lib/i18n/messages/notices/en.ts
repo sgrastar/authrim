@@ -89,6 +89,10 @@ export const enNotices: Record<keyof typeof jaNotices, string> = {
 	'notice.msg.second_factor_recovery_requested': '{email} asked to recover a security key',
 	'notice.msg.second_factor_policy_widened':
 		'{email} widened the allowed second-factor kinds ({kinds}) with a passkey only',
+	'notice.msg.saml_certificate_expiring':
+		'The certificate of the SAML provider {provider} expires on {date}',
+	'notice.msg.saml_certificate_expired':
+		'The certificate of the SAML provider {provider} has expired ({date})',
 	'notice.msg.storage_registry_security': 'A security problem was found in the storage registry',
 	'notice.msg.storage_registry_health': 'The storage registry has a health problem',
 	'notice.msg.tenant_database_stats': 'A tenant database’s statistics need attention',

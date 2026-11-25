@@ -237,6 +237,31 @@ describe('AdminNoticeRepository in the real admin schema', () => {
     expect(await notices.purgeHandledBefore(T0 + 100, { batchSize: 2, maxBatches: 5 })).toBe(3);
   });
 
+  it('lists every open key of a category, across pages, without resolved or other tenants', async () => {
+    const make = (tenant: string, category: string, key: string) =>
+      notices.create(
+        notice({
+          tenant_id: tenant,
+          category,
+          severity: 'high',
+          title: key,
+          deduplication_key: key,
+        }),
+        T0
+      );
+    for (let index = 0; index < 1203; index += 1) {
+      await make('tenant-a', 'saml_certificate', `k-${String(index).padStart(4, '0')}`);
+    }
+    await make('tenant-a', 'other', 'other-key');
+    await make('tenant-b', 'saml_certificate', 'b-key');
+    await notices.resolveByDeduplicationKey('k-0000', T0 + 1);
+    const keys = await notices.listOpenDeduplicationKeys('tenant-a', 'saml_certificate');
+    expect(keys).toHaveLength(1202);
+    expect(keys[0]).toBe('k-0001');
+    expect(keys).not.toContain('other-key');
+    expect(keys).not.toContain('b-key');
+  });
+
   it('refuses a notice whose audience does not match its scope', async () => {
     await expect(
       adapter.execute(

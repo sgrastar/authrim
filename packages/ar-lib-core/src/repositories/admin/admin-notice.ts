@@ -435,6 +435,26 @@ export class AdminNoticeRepository {
     return deleted;
   }
 
+  /** The deduplication keys of all open notices of one tenant and category (read in key order pages). */
+  async listOpenDeduplicationKeys(tenantId: string, category: string): Promise<string[]> {
+    const pageSize = 500;
+    const keys: string[] = [];
+    let after = '';
+    for (;;) {
+      const rows = await this.adapter.query<{ deduplication_key: string }>(
+        `SELECT deduplication_key FROM admin_notices
+          WHERE tenant_id = ? AND category = ? AND resolved_at IS NULL
+            AND deduplication_key IS NOT NULL AND deduplication_key > ?
+          ORDER BY deduplication_key
+          LIMIT ${pageSize}`,
+        [tenantId, category, after]
+      );
+      for (const row of rows) keys.push(row.deduplication_key);
+      if (rows.length < pageSize) return keys;
+      after = rows[rows.length - 1].deduplication_key;
+    }
+  }
+
   /** Resolve the open notice of a deduplication key, if any. */
   async resolveByDeduplicationKey(
     deduplicationKey: string,
