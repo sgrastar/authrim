@@ -127,6 +127,7 @@ export const enOnboarding: Record<keyof typeof jaOnboarding, string> = {
 	'ob.secondFactor.settings.body': 'From here you can go to the page of your own settings.',
 	'ob.secondFactor.settings.action': 'Press “Personal settings”.',
 	'ob.secondFactor.settings.fallback': 'The menu closed. Press the account icon again.',
+	'ob.menu.action': 'On a phone, open the menu at the top left and choose it there.',
 	'ob.secondFactor.keys.title': 'Your second factor',
 	'ob.secondFactor.keys.body':
 		'Besides signing in with a passkey, important operations such as rotating a key or changing an administrator’s role ask for one more way to prove who you are. You register it in this box. You can register a security key.',
