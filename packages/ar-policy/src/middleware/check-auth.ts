@@ -297,11 +297,7 @@ async function validateAccessToken(
   token: string
 ): Promise<AccessTokenValidationResult> {
   try {
-    // Parse JWT parts for validation
-    const parts = token.split('.');
-    if (parts.length !== 3) {
-      return { valid: false, error: 'invalid_jwt_format' };
-    }
+    // The caller has already checked the JWT shape (isJwtFormat: three base64url parts).
 
     // Access tokens are bearer credentials for authorization decisions. Never
     // accept JWT-looking input unless signature and issuer validation are wired.
@@ -361,18 +357,21 @@ async function validateAccessToken(
     };
   } catch (error) {
     if (error instanceof Error) {
-      // Handle specific jose library errors
-      if (error.message.includes('expired')) {
+      // jose errors carry a stable `code` (and, for claim checks, the `claim`); its messages
+      // ('"exp" claim timestamp check failed', 'unexpected "iss" claim value') do not name the
+      // failure in words.
+      const { code, claim } = error as Error & { code?: unknown; claim?: unknown };
+      if (code === 'ERR_JWT_EXPIRED') {
         return { valid: false, error: 'token_expired' };
       }
-      if (error.message.includes('signature')) {
+      if (code === 'ERR_JWS_SIGNATURE_VERIFICATION_FAILED') {
         log.error('JWT signature verification failed', {});
         return { valid: false, error: 'invalid_signature' };
       }
-      if (error.message.includes('issuer')) {
+      if (code === 'ERR_JWT_CLAIM_VALIDATION_FAILED' && claim === 'iss') {
         return { valid: false, error: 'invalid_issuer' };
       }
-      if (error.message.includes('audience')) {
+      if (code === 'ERR_JWT_CLAIM_VALIDATION_FAILED' && claim === 'aud') {
         return { valid: false, error: 'invalid_audience' };
       }
     }
@@ -493,11 +492,6 @@ export async function authenticateCheckApiRequest(
 
     if (!result.valid) {
       const errorMap: Record<string, { error: string; description: string; status: number }> = {
-        invalid_jwt_format: {
-          error: 'invalid_request',
-          description: 'Invalid JWT format',
-          status: 400,
-        },
         token_expired: {
           error: 'invalid_token',
           description: 'Access token has expired',
