@@ -19,6 +19,7 @@ import { deStepUp } from './step-up/de';
 import { deAdminAudit } from './admin-audit/de';
 import { deUserAudit } from './user-audit/de';
 import { deSystemLog } from './system-log/de';
+import { deEmailDeliveries } from './email-deliveries/de';
 import { deLogPlatform } from './log-platform/de';
 import { deTeam } from './team/de';
 import { deIpAllowlist } from './ip-allowlist/de';
@@ -54,6 +55,7 @@ export const de = {
 	...deAdminAudit,
 	...deUserAudit,
 	...deSystemLog,
+	...deEmailDeliveries,
 	...deLogPlatform,
 	...deTeam,
 	...deIpAllowlist,
@@ -120,8 +122,7 @@ export const de = {
 	'nav.mon.audit': 'Auditprotokolle',
 	'nav.mon.adminActivity': 'Administratoraktivität',
 	'nav.mon.system': 'Systemprotokolle',
-	'nav.mon.deliveries': 'Zustellungen',
-	'nav.mon.settings': 'Protokollierungsrichtlinien',
+	'nav.mon.deliveries': 'E-Mail-Zustellungen',
 	'nav.int.agents': 'KI-Agenten',
 	'nav.int.plugins': 'Plug-ins',
 	'nav.int.notifications': 'Benachrichtigungen',
@@ -152,8 +153,6 @@ export const de = {
 	'nav.data.mappingSets': 'Mappings',
 	'nav.data.readiness': 'Schemabereitschaft',
 	'nav.mon.logPlatform': 'Protokollplattform',
-	'nav.mon.diagnostics': 'Diagnoseprotokolle',
-	'nav.mon.destinations': 'Protokollziele',
 	'nav.int.agentGrants': 'Agentenberechtigungen',
 	'nav.int.agentPlans': 'Konfigurationspläne',
 	'nav.int.agentPolicies': 'Agentenrichtlinien',

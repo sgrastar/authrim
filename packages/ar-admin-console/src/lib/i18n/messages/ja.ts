@@ -18,6 +18,7 @@ import { jaStepUp } from './step-up/ja';
 import { jaAdminAudit } from './admin-audit/ja';
 import { jaUserAudit } from './user-audit/ja';
 import { jaSystemLog } from './system-log/ja';
+import { jaEmailDeliveries } from './email-deliveries/ja';
 import { jaLogPlatform } from './log-platform/ja';
 import { jaTeam } from './team/ja';
 import { jaIpAllowlist } from './ip-allowlist/ja';
@@ -57,6 +58,7 @@ export const ja = {
 	...jaAdminAudit,
 	...jaUserAudit,
 	...jaSystemLog,
+	...jaEmailDeliveries,
 	...jaLogPlatform,
 	...jaTeam,
 	...jaIpAllowlist,
@@ -124,7 +126,6 @@ export const ja = {
 	'nav.mon.adminActivity': '管理操作ログ',
 	'nav.mon.system': 'システムログ',
 	'nav.mon.deliveries': 'メール送信状況',
-	'nav.mon.settings': 'ログポリシー',
 	'nav.int.agents': 'AI エージェント',
 	'nav.int.plugins': 'プラグイン',
 	'nav.int.notifications': '通知',
@@ -155,8 +156,6 @@ export const ja = {
 	'nav.data.mappingSets': 'マッピング',
 	'nav.data.readiness': 'スキーマ準備状況',
 	'nav.mon.logPlatform': 'ログ基盤の状態',
-	'nav.mon.diagnostics': '診断ログ',
-	'nav.mon.destinations': 'ログ保存先',
 	'nav.int.agentGrants': 'Agent Grant',
 	'nav.int.agentPlans': '設定プラン',
 	'nav.int.agentPolicies': 'Agent ポリシー',
