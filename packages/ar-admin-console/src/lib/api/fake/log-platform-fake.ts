@@ -6,7 +6,12 @@
  * scheduled-mode archive, and the tenant view without the shared table statistics.
  */
 import { ApiError } from '../api-error';
-import type { LogPlatformClient, LogPlatformStatus, SafeRepairResult } from '../log-platform';
+import type {
+	LogPlatformClient,
+	LogPlatformStatus,
+	ReclaimIntentsResult,
+	SafeRepairResult
+} from '../log-platform';
 
 /** The "now" of the sample data. */
 export const LOG_PLATFORM_NOW = Date.UTC(2026, 10, 26, 9, 0, 0);
@@ -19,6 +24,7 @@ export type LogPlatformScenario =
 	| 'unconfigured'
 	| 'unreachable'
 	| 'scheduled'
+	| 'orphaned'
 	| 'tenant';
 
 export interface FakeLogPlatformOptions {
@@ -33,6 +39,10 @@ export interface FakeLogPlatformOptions {
 	repairFails?: boolean;
 	/** How many findings the safe repair reports as applied; defaults to the sampled count. */
 	repairApplied?: number;
+	/** The reclaim fails. */
+	reclaimFails?: boolean;
+	/** How many orphans the reclaim reports as failed (left for the next tick). */
+	reclaimFailed?: number;
 }
 
 const healthyTable = {
@@ -62,7 +72,7 @@ function base(): LogPlatformStatus {
 			export_interval_minutes: null,
 			reachable: true,
 			reachability_error: null,
-			table: healthyTable,
+			table: structuredClone(healthyTable),
 			table_size_hint: { max_files: 128, data_files_over_limit: false },
 			read_probe: {
 				ok: true,
@@ -79,6 +89,9 @@ function base(): LogPlatformStatus {
 				pending: 2,
 				queued: 0,
 				oldest_pending_at: LOG_PLATFORM_NOW - 90_000,
+				orphaned: 0,
+				oldest_orphaned_at: null,
+				abandoned: 0,
 				last_error_code: null
 			},
 			export: null
@@ -184,6 +197,9 @@ export function sampleLogPlatformStatus(
 				pending: 48,
 				queued: 6,
 				oldest_pending_at: LOG_PLATFORM_NOW - 3 * HOUR,
+				orphaned: 0,
+				oldest_orphaned_at: null,
+				abandoned: 0,
 				last_error_code: 'stream_timeout'
 			};
 			return status;
@@ -212,6 +228,21 @@ export function sampleLogPlatformStatus(
 				}
 			};
 			return status;
+		case 'orphaned': {
+			// The 2026-11-26 demo finding: four intents a dead writer left `preparing` with no
+			// publication, the oldest 93 hours ago; everything else healthy.
+			const status = base();
+			status.delivery.outbox = {
+				pending: 0,
+				queued: 0,
+				oldest_pending_at: null,
+				orphaned: 4,
+				oldest_orphaned_at: LOG_PLATFORM_NOW - 93 * HOUR,
+				abandoned: 0,
+				last_error_code: null
+			};
+			return status;
+		}
 		case 'tenant':
 			status.archive.table = null;
 			status.archive.table_size_hint = null;
@@ -222,6 +253,9 @@ export function sampleLogPlatformStatus(
 				pending: 0,
 				queued: 0,
 				oldest_pending_at: null,
+				orphaned: 0,
+				oldest_orphaned_at: null,
+				abandoned: 0,
 				last_error_code: null
 			};
 			status.chunk_catalog.sensitive_detail_index = [
@@ -252,6 +286,21 @@ export function createFakeLogPlatform(options: FakeLogPlatformOptions = {}): Log
 				);
 			}
 			return structuredClone(status);
+		},
+		async reclaimIntents(): Promise<ReclaimIntentsResult> {
+			if (options.delay) await wait(options.delay);
+			if (options.reclaimFails) throw new ApiError(500, 'server_error', 'Reclaim failed');
+			const orphaned = status.delivery.outbox?.orphaned ?? 0;
+			const failed = Math.min(options.reclaimFailed ?? 0, orphaned);
+			status = structuredClone(status);
+			if (status.delivery.outbox) {
+				status.delivery.outbox.orphaned = failed;
+				status.delivery.outbox.oldest_orphaned_at = failed
+					? status.delivery.outbox.oldest_orphaned_at
+					: null;
+				status.delivery.outbox.abandoned += orphaned - failed;
+			}
+			return { leased: true, abandoned: orphaned - failed, retired: 0, retained: 0, failed };
 		},
 		async applySafeRepairs(scanLimit): Promise<SafeRepairResult> {
 			if (options.delay) await wait(options.delay);

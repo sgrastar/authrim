@@ -1,7 +1,6 @@
 /** Monitoring → Log platform: is the log platform healthy. Spread into `../ja.ts`. */
 export const jaLogPlatform = {
-	'lplat.page.desc':
-		'ログが保存され、読めているかをひと目で確かめる画面です。配信（D1 からアーカイブへ）、ログアーカイブ（R2 Data Catalog 上の Iceberg テーブル）、ログ読み取り（通常のログ画面と同じ経路）の 3 段階に、それぞれ状態を示します。',
+	'lplat.page.desc': 'ログが保存され、読めているかを確認する画面です。',
 	'lplat.asOf': '取得時刻',
 	'lplat.period': '配信の数字は直近 24 時間、アーカイブは全体の現在値です。',
 	'lplat.refresh': '更新',
@@ -30,6 +29,8 @@ export const jaLogPlatform = {
 	'lplat.reason.export_stalled': '未完了のエクスポートが {hours} 時間以上残っています',
 	'lplat.reason.publication_stalled':
 		'確定できていないレコードが {hours} 時間以上あります（公開処理が止まっています）',
+	'lplat.reason.intent_orphaned':
+		'{count} レコードの書き込みが {hours} 時間以上前に中断されたままです（確定していないため配信されません）',
 
 	'lplat.stage.delivery': '配信',
 	'lplat.stage.delivery.desc': 'D1 に書かれたレコードがアーカイブに届くまで',
@@ -43,6 +44,16 @@ export const jaLogPlatform = {
 	'lplat.delivery.oldest': '最も古い待ち',
 	'lplat.delivery.lastError': '直近のエラー',
 	'lplat.delivery.unit': 'レコード',
+	'lplat.delivery.orphaned': '取り残し',
+	'lplat.delivery.oldestOrphaned': '最も古い取り残し',
+	'lplat.delivery.abandoned': '未確定として記録済み',
+	'lplat.delivery.reclaim': '未確定として記録',
+	'lplat.delivery.reclaim.done':
+		'{abandoned} レコードを未確定として記録しました（システムログに残り、保持期限後に消去されます）',
+	'lplat.delivery.reclaim.busy': '別の回収が実行中です。しばらくしてから再読み込みしてください',
+	'lplat.delivery.reclaim.partial':
+		'{abandoned} レコードを未確定として記録しました。{failed} レコードは処理できず、次回の定期実行で再試行します',
+	'lplat.delivery.reclaim.failed': '回収を実行できませんでした',
 	'lplat.delivery.export.state': '直近のエクスポート',
 	'lplat.delivery.export.updated': '更新',
 	'lplat.delivery.export.watermark': '読み取り基準点',
@@ -98,7 +109,6 @@ export const jaLogPlatform = {
 		'承認の詳細や webhook の機微部分を格納するチャンクの台帳です。不整合は安全な修復で自動的に直せます。',
 	'lplat.catalog.findings': '修復が必要な項目',
 	'lplat.catalog.sensitive': 'うち機微詳細',
-	'lplat.catalog.sample': '新しい {limit} 行を調べた結果です。',
 	'lplat.catalog.clean': '不整合はありません',
 	'lplat.catalog.index': '機微詳細の索引',
 	'lplat.catalog.index.count': '{count} 行',

@@ -6,6 +6,7 @@
 	import type {
 		LogPlatformClient,
 		LogPlatformStatus,
+		ReclaimIntentsResult,
 		SafeRepairResult
 	} from '#lib/api/log-platform.js';
 	import { i18n, t } from '#lib/i18n/i18n.svelte.js';
@@ -65,6 +66,9 @@
 	let repairing = $state(false);
 	let repairResult = $state<SafeRepairResult | null>(null);
 	let repairFailed = $state(false);
+	let reclaiming = $state(false);
+	let reclaimResult = $state<ReclaimIntentsResult | null>(null);
+	let reclaimFailed = $state(false);
 
 	const num = (value: number) => formatNumber(value, i18n.locale);
 
@@ -98,6 +102,20 @@
 			if (!(error instanceof StepUpCancelledError)) repairFailed = true;
 		} finally {
 			repairing = false;
+		}
+	}
+
+	async function reclaim(): Promise<void> {
+		reclaiming = true;
+		reclaimFailed = false;
+		reclaimResult = null;
+		try {
+			reclaimResult = await client.reclaimIntents();
+			await load();
+		} catch (error) {
+			if (!(error instanceof StepUpCancelledError)) reclaimFailed = true;
+		} finally {
+			reclaiming = false;
 		}
 	}
 
@@ -171,6 +189,13 @@
 				return t('lplat.reason.compaction_never');
 			case 'read_incomplete':
 				return t('lplat.reason.read_incomplete', { code: a.read_probe.reason ?? '' });
+			case 'intent_orphaned':
+				return t('lplat.reason.intent_orphaned', {
+					count: num(outbox?.orphaned ?? 0),
+					hours: Math.floor(
+						(status.generated_at - (outbox?.oldest_orphaned_at ?? status.generated_at)) / 3_600_000
+					)
+				});
 			case 'publication_stalled':
 				return t('lplat.reason.publication_stalled', {
 					hours: Math.floor(
@@ -298,6 +323,20 @@
 								{#snippet oldest()}{@render when(outbox?.oldest_pending_at)}{/snippet}
 								{@render fact(t('lplat.delivery.oldest'), oldest)}
 							{/if}
+							{#if outbox.orphaned > 0}
+								{#snippet orphaned()}
+									<span class="attention">{@render count(outbox?.orphaned ?? 0)}</span>
+								{/snippet}
+								{@render fact(t('lplat.delivery.orphaned'), orphaned)}
+								{#snippet oldestOrphaned()}{@render when(outbox?.oldest_orphaned_at)}{/snippet}
+								{@render fact(t('lplat.delivery.oldestOrphaned'), oldestOrphaned)}
+							{/if}
+							{#if outbox.abandoned > 0}
+								{#snippet abandoned()}
+									<span class="muted">{@render count(outbox?.abandoned ?? 0)}</span>
+								{/snippet}
+								{@render fact(t('lplat.delivery.abandoned'), abandoned)}
+							{/if}
 							{#if outbox.last_error_code}
 								{#snippet lastError()}<code>{outbox?.last_error_code}</code>{/snippet}
 								{@render fact(t('lplat.delivery.lastError'), lastError)}
@@ -319,6 +358,34 @@
 							{/if}
 						{/if}
 					</dl>
+					{#if outbox && canRepair && (outbox.orphaned > 0 || reclaimResult || reclaimFailed)}
+						<div class="stage__action">
+							{#if outbox.orphaned > 0}
+								<Button size="sm" variant="secondary" loading={reclaiming} onclick={reclaim}>
+									{t('lplat.delivery.reclaim')}
+								</Button>
+							{/if}
+							{#if reclaimResult}
+								{#if !reclaimResult.leased}
+									<Callout tone="warning" live>{t('lplat.delivery.reclaim.busy')}</Callout>
+								{:else if reclaimResult.failed > 0}
+									<Callout tone="warning" live>
+										{t('lplat.delivery.reclaim.partial', {
+											abandoned: num(reclaimResult.abandoned),
+											failed: num(reclaimResult.failed)
+										})}
+									</Callout>
+								{:else}
+									<Callout tone="info" live>
+										{t('lplat.delivery.reclaim.done', { abandoned: num(reclaimResult.abandoned) })}
+									</Callout>
+								{/if}
+							{/if}
+							{#if reclaimFailed}
+								<Callout tone="danger" live>{t('lplat.delivery.reclaim.failed')}</Callout>
+							{/if}
+						</div>
+					{/if}
 				{/if}
 			</article>
 
@@ -536,9 +603,6 @@
 							>{num(status?.chunk_catalog.sampled_repair_findings ?? 0)}</Badge
 						>
 					{/if}
-					<span class="muted sample">
-						{t('lplat.catalog.sample', { limit: num(status?.chunk_catalog.scan_limit ?? 0) })}
-					</span>
 				{/snippet}
 				{@render fact(t('lplat.catalog.findings'), findings)}
 				{#snippet sensitive()}
@@ -606,15 +670,17 @@
 		font-size: var(--fs-caption);
 		color: var(--text-muted);
 	}
+	.stage__action {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: var(--space-related);
+		margin-block-start: var(--space-field);
+	}
 	.attention {
 		color: var(--danger);
 		font-weight: var(--fw-semibold);
 	}
-	.sample {
-		display: block;
-		font-size: var(--fs-caption);
-	}
-
 	/* Compact fact rows: label at the start, value at the end, one thin rule between rows. */
 	.facts {
 		margin: 0;

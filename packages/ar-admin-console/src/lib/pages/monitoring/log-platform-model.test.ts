@@ -86,6 +86,13 @@ describe('readable point', () => {
 		expect(deliveryVerdict(status)).toEqual({ tone: 'ok', reasons: [] });
 	});
 
+	it('calls delivery failing on orphaned intents, apart from the waiting ones', () => {
+		const status = sampleLogPlatformStatus('orphaned');
+		expect(deliveryVerdict(status)).toEqual({ tone: 'danger', reasons: ['intent_orphaned'] });
+		expect(archiveVerdict(status).tone).toBe('ok');
+		expect(readVerdict(status).tone).toBe('ok');
+	});
+
 	it("does not read a done batch's completion marker as a failure", () => {
 		const status = sampleLogPlatformStatus('scheduled');
 		status.delivery.export!.last_error_code = 'log_iceberg_retention_closed';

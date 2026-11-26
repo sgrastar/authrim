@@ -69,11 +69,20 @@ export interface LogPlatformDelivery {
 	last_ingested_at: number | null;
 	/** When the oldest publication still being sealed was created (either mode). */
 	oldest_prepared_at: number | null;
-	/** `pending` includes intents still `preparing` (a stalled reconciliation waits there too). */
+	/**
+	 * `pending` includes intents still `preparing` that a publication or a write in flight owns;
+	 * `orphaned` are the `preparing` intents a dead writer (or a rolled-back batch) left with no
+	 * publication for over an hour: never delivered, alarming until the reclaim acknowledges
+	 * them; `abandoned` are the acknowledged ones (recorded as never committed, kept for their
+	 * producer, retired at retention).
+	 */
 	outbox: {
 		pending: number;
 		queued: number;
 		oldest_pending_at: number | null;
+		orphaned: number;
+		oldest_orphaned_at: number | null;
+		abandoned: number;
 		last_error_code: string | null;
 	} | null;
 	export: {
@@ -134,8 +143,26 @@ export interface SafeRepairResult {
 	skipped_count: number;
 }
 
+/** What the orphaned-intent reclaim did (`result` of the action envelope). */
+export interface ReclaimIntentsResult {
+	/** False when another run held the lease: nothing was changed. */
+	leased: boolean;
+	/** Acknowledged on this run. */
+	abandoned: number;
+	/** Acknowledged earlier and past retention: envelope retired. */
+	retired: number;
+	retained: number;
+	failed: number;
+}
+
 export interface LogPlatformClient {
 	status(signal?: AbortSignal): Promise<LogPlatformStatus>;
+	/**
+	 * Runs the orphaned-intent reclaim now instead of waiting for the next maintenance tick: the
+	 * orphans are acknowledged (recorded as never committed, reported, no longer counted as
+	 * waiting). A tenant administrator reclaims their tenant's intents only.
+	 */
+	reclaimIntents(): Promise<ReclaimIntentsResult>;
 	/**
 	 * Applies every finding the detector marks safe, scanning as many catalog rows as the status
 	 * did (`scan_limit`) so the action reaches what the page showed; the server may ask for a
@@ -152,6 +179,19 @@ export const httpLogPlatform: LogPlatformClient = {
 		if (!response.ok) throw await errorFromResponse(response);
 		const body = (await response.json()) as { item: LogPlatformStatus };
 		return body.item;
+	},
+	reclaimIntents() {
+		return withStepUp(async (receipt) => {
+			const response = await adminFetch(`${BASE}/delivery/reclaim-intents`, {
+				method: 'POST',
+				headers: stepUpHeaders(receipt),
+				body: JSON.stringify({}),
+				includeJsonContentType: true
+			});
+			if (!response.ok) throw await errorFromResponse(response);
+			const body = (await response.json()) as { result: ReclaimIntentsResult };
+			return body.result;
+		});
 	},
 	applySafeRepairs(scanLimit) {
 		return withStepUp(async (receipt) => {

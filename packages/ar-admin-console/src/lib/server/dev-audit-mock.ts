@@ -43,6 +43,14 @@ export async function answerAuditMock(
 		}
 		if (
 			method === 'POST' &&
+			segments[1] === 'delivery' &&
+			segments[2] === 'reclaim-intents' &&
+			segments.length === 3
+		) {
+			return { status: 200, body: { result: await devLogPlatform.reclaimIntents() } };
+		}
+		if (
+			method === 'POST' &&
 			segments[1] === 'catalog-repairs' &&
 			segments[2] === 'apply-safe' &&
 			segments.length === 3

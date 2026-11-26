@@ -2,8 +2,7 @@ import type { jaLogPlatform } from './ja';
 
 /** Monitoring → Log platform: is the log platform healthy. Spread into `../ar.ts`. */
 export const arLogPlatform: Record<keyof typeof jaLogPlatform, string> = {
-	'lplat.page.desc':
-		'نظرة واحدة على ما إذا كانت السجلات تُحفظ ويمكن قراءتها، على ثلاث مراحل: التسليم (من D1 إلى الأرشيف)، وأرشيف السجلات (جدول Iceberg في R2 Data Catalog)، وقراءة السجلات (المسار نفسه الذي تستخدمه صفحات السجلات)، ولكل مرحلة حالتها.',
+	'lplat.page.desc': 'هل تُحفظ السجلات ويمكن قراءتها.',
 	'lplat.asOf': 'حالة حتى',
 	'lplat.period': 'أرقام التسليم تغطي آخر 24 ساعة؛ ويعرض الأرشيف مجاميعه الحالية.',
 	'lplat.refresh': 'تحديث',
@@ -31,6 +30,8 @@ export const arLogPlatform: Record<keyof typeof jaLogPlatform, string> = {
 	'lplat.reason.export_error': 'فشل آخر تصدير ({code})',
 	'lplat.reason.export_stalled': 'ثمة تصدير غير مكتمل منذ أكثر من {hours} ساعة',
 	'lplat.reason.publication_stalled': 'ثمة سجل قيد الختم منذ أكثر من {hours} ساعة (النشر متوقف)',
+	'lplat.reason.intent_orphaned':
+		'بقي {count} سجلات في منتصف الكتابة منذ أكثر من {hours} ساعة (لم تُؤكَّد قط، فلن تُسلَّم)',
 
 	'lplat.stage.delivery': 'التسليم',
 	'lplat.stage.delivery.desc': 'السجلات المكتوبة في D1 في طريقها إلى الأرشيف',
@@ -44,6 +45,16 @@ export const arLogPlatform: Record<keyof typeof jaLogPlatform, string> = {
 	'lplat.delivery.oldest': 'أقدم منتظر',
 	'lplat.delivery.lastError': 'آخر خطأ',
 	'lplat.delivery.unit': 'سجلات',
+	'lplat.delivery.orphaned': 'متروكة',
+	'lplat.delivery.oldestOrphaned': 'أقدم المتروكة',
+	'lplat.delivery.abandoned': 'مسجَّلة كغير مؤكدة',
+	'lplat.delivery.reclaim': 'تسجيلها كغير مؤكدة',
+	'lplat.delivery.reclaim.done':
+		'سُجِّل {abandoned} سجلات كغير مؤكدة (في سجل النظام؛ تُمحى بعد انتهاء مدة الاحتفاظ)',
+	'lplat.delivery.reclaim.busy': 'استعادة أخرى قيد التشغيل؛ أعد التحميل بعد قليل',
+	'lplat.delivery.reclaim.partial':
+		'سُجِّل {abandoned} سجلات كغير مؤكدة؛ تعذرت معالجة {failed} وستُعاد المحاولة في الدورة التالية',
+	'lplat.delivery.reclaim.failed': 'تعذر تشغيل الاستعادة',
 	'lplat.delivery.export.state': 'آخر تصدير',
 	'lplat.delivery.export.updated': 'آخر تحديث',
 	'lplat.delivery.export.watermark': 'علامة القراءة',
@@ -100,7 +111,6 @@ export const arLogPlatform: Record<keyof typeof jaLogPlatform, string> = {
 		'دفتر الأجزاء التي تحمل تفاصيل الموافقات والأجزاء الحساسة من الويب هوك. يمكن إصلاح التعارضات بالإصلاح الآمن.',
 	'lplat.catalog.findings': 'نتائج تحتاج إلى إصلاح',
 	'lplat.catalog.sensitive': 'منها تفاصيل حساسة',
-	'lplat.catalog.sample': 'من أحدث {limit} صفًا.',
 	'lplat.catalog.clean': 'لا تعارضات',
 	'lplat.catalog.index': 'فهرس التفاصيل الحساسة',
 	'lplat.catalog.index.count': '{count} صفًا',

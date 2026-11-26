@@ -108,6 +108,39 @@
 	{/snippet}
 </Story>
 
+<Story
+	name="Intents left behind by a dead writer"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		// Only delivery fails: four intents no writer committed, the oldest 93 hours ago.
+		await waitFor(() => expect(statusBadges(canvas, t('lplat.status.danger'))).toBe(1));
+		await expect(statusBadges(canvas, t('lplat.status.ok'))).toBe(2);
+		await expect(
+			canvas.getByText(t('lplat.reason.intent_orphaned', { count: '4', hours: 93 }))
+		).toBeInTheDocument();
+		await expect(canvas.getByText(t('lplat.delivery.orphaned'))).toBeInTheDocument();
+		// The one action: record all four as never committed; they leave the alarm, stay listed.
+		await userEvent.click(canvas.getByRole('button', { name: t('lplat.delivery.reclaim') }));
+		await waitFor(() =>
+			expect(
+				canvas.getByText(t('lplat.delivery.reclaim.done', { abandoned: '4' }))
+			).toBeInTheDocument()
+		);
+		await waitFor(() => expect(statusBadges(canvas, t('lplat.status.ok'))).toBe(3));
+		await expect(canvas.getByText(t('lplat.delivery.abandoned'))).toBeInTheDocument();
+		await expect(
+			canvas.queryByRole('button', { name: t('lplat.delivery.reclaim') })
+		).not.toBeInTheDocument();
+	}}
+>
+	{#snippet template()}
+		<LogPlatformStatus
+			client={createFakeLogPlatform({ scenario: 'orphaned', delay: 0 })}
+			access={platform}
+		/>
+	{/snippet}
+</Story>
+
 <Story name="Archive not configured">
 	{#snippet template()}
 		<LogPlatformStatus
