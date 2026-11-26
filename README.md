@@ -9,7 +9,9 @@
   <strong><a href="https://authrim.com/">authrim.com</a></strong>
 </p>
 
-> An open-source, serverless **Identity Hub** that combines authentication, authorization, and identity federation on **Cloudflare's global edge network**.
+> **Identity, unbound.**
+
+An open-source, serverless **identity and trust platform**: authentication, authorization, and federation that scale from 10 users to 1 million on the same configuration, with no per-user cost.
 
 [![Open Source](https://img.shields.io/badge/Open%20Source-Apache%202.0-green.svg)](LICENSE)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.9-blue?logo=typescript)](https://www.typescriptlang.org/)
@@ -51,13 +53,19 @@ For details, see [Adoption Support and Consultation](./docs/adoption-support.md)
 
 ## Vision
 
+**Identity, unbound.** By scale. By cost. By protocol.
+
+Authrim aims to make the foundation of identity and trust unbound by:
+
+- **Scale** — From 10 users to 1 million, on the same configuration
+- **Cost** — Determined by actual usage, not by the number of users
+- **Protocol** — Combining protocols across domains, so trust established in one can be used in another
+
 **Authrim** is a unified Identity & Access Platform combining:
 
 - **Authentication** — OIDC Provider, Social Login, Passkey, SAML
 - **Authorization** — RBAC, ABAC, ReBAC policy engine built-in
 - **Identity Federation** — Multiple identity sources into one unified identity
-
-Designed for low-latency edge deployment on Cloudflare Workers.
 
 ```bash
 npx @authrim/setup
@@ -125,7 +133,9 @@ and test duration. These results are benchmark evidence, not an SLA.
 
 Authrim is currently pre-1.0. Core protocol and platform capabilities are implemented, but production hardening is still in progress.
 
-**Target release window:** December 2026
+**Target release window:** Early 2027
+
+**Path to 1.0:** 1.0 marks the point from which backward compatibility is maintained. It is targeted for early 2027, after the new Admin Console (December 2026), QA, and a published security self-assessment. See the [roadmap](./docs/ROADMAP.md#10).
 
 | Area                               | Implementation    | Operational maturity | Notes                                                                                                                                                                                                                                                                             |
 | ---------------------------------- | ----------------- | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

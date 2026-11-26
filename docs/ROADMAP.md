@@ -1,7 +1,7 @@
 ---
 project: Authrim
 lang: en
-date: 2026-08-25
+date: 2026-11-26
 description: "Authrim roadmap organized by product maturity workstreams."
 type: roadmap
 tags:
@@ -15,9 +15,43 @@ tags:
 Authrim is a pre-1.0 identity and access platform built around Cloudflare Workers.
 Core protocol capabilities are implemented, but production hardening is still in progress.
 
-**Target release window:** Summer/Fall 2026
+**Target release window:** Early 2027
 
 The exact release date depends on UI consolidation, SAML interoperability validation, storage/logging hardening, deployment documentation, and security validation.
+
+---
+
+## Direction
+
+For why Authrim exists, see the [Vision](./VISION.md). This section is a statement of direction, not a commitment: scope and timing may change.
+
+### Through the end of 2026
+
+| Focus | Description |
+| --- | --- |
+| **New Admin Console** | Release of the new Admin Console, targeted for December 2026 |
+| **OpenID Foundation certification (VC)** | Obtaining OpenID Foundation certification for the verifiable credential profiles |
+| **QA** | Quality assurance across the platform |
+
+### 1.0
+
+Authrim 1.0 marks the point from which backward compatibility is maintained. It is targeted for early 2027, and will be released once the following are complete:
+
+- Release of the new Admin Console
+- QA
+- Publication of a security self-assessment (threat model and scope of verification)
+
+1.0 does not imply a third-party security audit. The self-assessment states what has been verified and what has not.
+
+### 2027 (planned)
+
+| Focus | Description |
+| --- | --- |
+| **OpenID Federation** | Support for OpenID Federation |
+| **SAML Federation** | Support for building SAML federations |
+| **Verifiable credentials for end users** | Issuing verifiable credentials to end users |
+| **SDK expansion** | Broader SDK coverage |
+| **Multi-cloud support** | Support for AWS and other cloud platforms, in addition to Cloudflare |
 
 ---
 
@@ -251,9 +285,7 @@ Authrim should not be recommended for production migration until these baseline 
 
 | Item                                 | Reason / Alternative                                                                                                                                                                                                              |
 | --- | --- |
-| Full AWS/Azure runtime support       | Authrim currently depends on Cloudflare-native primitives such as D1, KV, R2, Durable Objects, Workers bindings, and service bindings. Hono portability helps at the HTTP layer, but it does not make the whole runtime portable. |
 | Multi-cloud active-active deployment | Requires a separate architecture for state, storage, keys, DNS, metadata, and operations.                                                                                                                                         |
-| Direct LDAP/AD integration           | Cloudflare Workers runtime does not provide general TCP socket support for LDAP/AD. Use SCIM or federate through an external IdP that supports OIDC/SAML.                                                                         |
 | Direct MTLS termination              | Cloudflare Workers terminates TLS at the edge, so application code cannot directly control the TLS handshake. Use private_key_jwt, DPoP, or Cloudflare-specific mTLS/API Shield features where appropriate.                       |
 | SFTP storage or delivery             | Cloudflare Workers does not provide a general SSH/SFTP runtime. Use R2, S3-compatible object storage, HTTPS sinks, Cloudflare Logpush, or another external collector instead.                                                     |
 | FAPI 1.0 Final and regional profiles | Deferred. Authrim prioritizes FAPI 2.0 and FAPI-CIBA. Supporting FAPI 1.0 would add a second long-term compatibility surface, including legacy message-signing and ecosystem-specific requirements. Revisit only when a concrete customer or regulatory requirement exists. |
@@ -284,6 +316,6 @@ This section is a compressed history of major completed work. It replaces the ol
 
 ---
 
-> **Last Update:** 2026-08-25
+> **Last Update:** 2026-11-26
 >
-> **Current Status:** Pre-1.0 | Target release window: Summer/Fall 2026 | Active workstreams: UI, OpenID4VC Final/HAIP interoperability, SAML interoperability, storage/logging portability, multi-tenant administration, security/QA
+> **Current Status:** Pre-1.0 | Target release window: Early 2027 | Active workstreams: UI, OpenID4VC Final/HAIP interoperability, SAML interoperability, storage/logging portability, multi-tenant administration, security/QA
