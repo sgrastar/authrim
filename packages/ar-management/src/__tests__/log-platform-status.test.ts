@@ -290,6 +290,15 @@ describe('buildLogPlatformStatus', () => {
       reachability_error: 'iceberg_catalog_http_503',
       table: null,
     });
+    // A message that is not one of our codes (an HTTP body, a driver text) never gets through.
+    const noisy = await buildLogPlatformStatus(
+      input({
+        loadTable: async () => {
+          throw new Error('503 Service Unavailable: <html>upstream connect error</html>');
+        },
+      })
+    );
+    expect(noisy.archive.reachability_error).toBe('unknown_error');
     const other = await buildLogPlatformStatus(
       input({ loadTable: async () => table([], null, 'another-table-uuid') })
     );
@@ -339,7 +348,7 @@ describe('buildLogPlatformStatus', () => {
     expect(status.delivery.outbox).toBeNull();
     expect(status.chunk_catalog.sensitive_detail_index).toEqual([
       { store: 'LOGGING_INDEX_DB', indexed_objects: 7, error: null },
-      { store: 'DB', indexed_objects: null, error: 'no such table: sensitive_detail_chunk_index' },
+      { store: 'DB', indexed_objects: null, error: 'index_table_missing' },
     ]);
     expect(status.delivery.export).toEqual({
       last_state: 'verified',

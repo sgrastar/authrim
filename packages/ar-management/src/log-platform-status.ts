@@ -112,12 +112,12 @@ export interface LogPlatformStatus {
     sampled_sensitive_detail_findings: number;
     /**
      * Live sensitive-detail chunk index rows, per index store (stores may alias one database).
-     * A store without the table reports null and the error code instead of failing the view.
+     * A store without the table reports null and a fixed code instead of failing the view.
      */
     sensitive_detail_index: {
       store: string;
       indexed_objects: number | null;
-      error: string | null;
+      error: 'index_table_missing' | 'index_unavailable' | null;
     }[];
   };
   delivery_lanes: { lane: string; status: string; total: number }[];
@@ -155,9 +155,16 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const REPAIR_PENDING_TTL_MS = 15 * 60 * 1000;
 const REPAIR_FINDINGS_LIMIT = 200;
 
+/** Internal codes only (`snake_case` words); a driver or HTTP message is never put in a response. */
 function errorCode(error: unknown): string {
-  if (error instanceof Error && error.message) return error.message.slice(0, 120);
-  return 'unknown_error';
+  const message = error instanceof Error ? error.message : '';
+  return /^[a-z][a-z0-9_]{2,79}$/.test(message) ? message : 'unknown_error';
+}
+
+/** Why one sensitive-detail index store could not be counted, as a fixed code. */
+function indexStoreErrorCode(error: unknown): 'index_table_missing' | 'index_unavailable' {
+  const message = error instanceof Error ? error.message : '';
+  return /no such table/i.test(message) ? 'index_table_missing' : 'index_unavailable';
 }
 
 function integer(value: unknown): number {
@@ -405,7 +412,11 @@ export async function buildLogPlatformStatus(
       sensitiveDetailIndex.push({ store, indexed_objects: integer(indexed?.total), error: null });
     } catch (error) {
       // A store that never held the table (or is down) must not take the whole view with it.
-      sensitiveDetailIndex.push({ store, indexed_objects: null, error: errorCode(error) });
+      sensitiveDetailIndex.push({
+        store,
+        indexed_objects: null,
+        error: indexStoreErrorCode(error),
+      });
     }
   }
   const findings = await repository.detectCatalogRepairFindings({
