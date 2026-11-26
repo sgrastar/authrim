@@ -81,6 +81,13 @@ describe('readable point', () => {
 		expect(deliveryVerdict(status)).toEqual({ tone: 'danger', reasons: ['delivery_stuck'] });
 	});
 
+	it('calls the exporter stalled when staged records were never selected into a batch', () => {
+		const status = sampleLogPlatformStatus('scheduled');
+		status.delivery.export!.oldest_unfinished_at = null;
+		status.delivery.export!.oldest_unselected_at = LOG_PLATFORM_NOW - 2 * 60 * 60_000;
+		expect(deliveryVerdict(status)).toEqual({ tone: 'danger', reasons: ['delivery_stuck'] });
+	});
+
 	it('is the verified watermark in scheduled mode', () => {
 		const status = sampleLogPlatformStatus('scheduled');
 		expect(readableUntil(status)).toBe(status.delivery.export!.watermark!.updated_at);

@@ -102,6 +102,11 @@ export interface LogPlatformDeliveryStatus {
     active_failure: { batch_id: string; error_code: string; updated_at: number } | null;
     /** When the oldest batch that is not done yet was created; a stalled exporter shows here. */
     oldest_unfinished_at: number | null;
+    /**
+     * When the oldest staged record that no batch has selected yet arrived. An exporter that
+     * stopped between batches leaves no unfinished batch, only these.
+     */
+    oldest_unselected_at: number | null;
     watermark: {
       snapshot_id: string;
       minimum_sequence_number: number;
@@ -400,6 +405,11 @@ async function describeDelivery(
        WHERE state != 'done'${scope.sql}${generationClause}`,
       [...scope.binds, ...generationBinds]
     );
+    const unselected = await adapter.queryOne<{ oldest: unknown }>(
+      `SELECT MIN(ingested_at) AS oldest FROM log_iceberg_records
+       WHERE batch_id IS NULL${scope.sql}${generationClause}`,
+      [...scope.binds, ...generationBinds]
+    );
     const watermark =
       config.localStagingOnly || !config.tableUuid
         ? null
@@ -424,6 +434,7 @@ async function describeDelivery(
           }
         : null,
       oldest_unfinished_at: optionalInteger(unfinished?.oldest),
+      oldest_unselected_at: optionalInteger(unselected?.oldest),
       watermark: watermark
         ? {
             snapshot_id: watermark.snapshot_id,

@@ -139,10 +139,15 @@
 			case 'archive_unreachable':
 				return t('lplat.reason.archive_unreachable', { code: a.reachability_error ?? '' });
 			case 'delivery_stuck':
-				if (exp?.oldest_unfinished_at && !outbox)
+				if (exp && !outbox) {
+					const oldest = Math.min(
+						exp.oldest_unfinished_at ?? Number.POSITIVE_INFINITY,
+						exp.oldest_unselected_at ?? Number.POSITIVE_INFINITY
+					);
 					return t('lplat.reason.export_stalled', {
-						hours: Math.floor((status.generated_at - exp.oldest_unfinished_at) / 3_600_000)
+						hours: Math.floor((status.generated_at - oldest) / 3_600_000)
 					});
+				}
 				return t('lplat.reason.delivery_stuck', {
 					count: num((outbox?.pending ?? 0) + (outbox?.queued ?? 0)),
 					hours: stuckHours(status)

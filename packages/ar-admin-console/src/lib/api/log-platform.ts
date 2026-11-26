@@ -81,6 +81,8 @@ export interface LogPlatformDelivery {
 		active_failure: { batch_id: string; error_code: string; updated_at: number } | null;
 		/** When the oldest batch that is not done yet was created. */
 		oldest_unfinished_at: number | null;
+		/** When the oldest staged record that no batch has selected yet arrived. */
+		oldest_unselected_at: number | null;
 		watermark: { snapshot_id: string; minimum_sequence_number: number; updated_at: number } | null;
 	} | null;
 }

@@ -50,14 +50,15 @@ export function deliveryVerdict(status: LogPlatformStatus): StageVerdict {
 	const exp = status.delivery.export;
 	if (exp) {
 		if (exp.active_failure || exp.last_error_code) reasons.push('export_error');
-		// A batch that sat unfinished for two export intervals (at least an hour) means the
-		// exporter stopped, with or without an error to show for it.
+		// Work that sat for two export intervals (at least an hour) means the exporter stopped,
+		// with or without an error to show for it: an unfinished batch, or staged records that no
+		// batch has selected because the exporter never ran again.
 		const interval = (status.archive.export_interval_minutes ?? 60) * 60_000;
-		if (
-			exp.oldest_unfinished_at !== null &&
-			status.generated_at - exp.oldest_unfinished_at >= Math.max(2 * interval, STUCK_AFTER_MS)
-		)
-			reasons.push('delivery_stuck');
+		const limit = Math.max(2 * interval, STUCK_AFTER_MS);
+		const oldest = [exp.oldest_unfinished_at, exp.oldest_unselected_at]
+			.filter((at): at is number => at !== null)
+			.reduce<number | null>((min, at) => (min === null || at < min ? at : min), null);
+		if (oldest !== null && status.generated_at - oldest >= limit) reasons.push('delivery_stuck');
 	}
 	return okOr(reasons, reasons.includes('delivery_stuck') ? 'danger' : 'warning');
 }
