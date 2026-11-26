@@ -260,6 +260,13 @@ export const LOGGING_ADMIN_AUDIT_COVERAGE_REGISTRY: readonly AdminAuditCoverageE
     critical: true,
   },
   {
+    action: 'admin_logging.delivery.reclaim_intents',
+    surface: 'admin_logging',
+    resourceType: 'log_iceberg_outbox',
+    status: 'covered',
+    critical: false,
+  },
+  {
     action: 'admin_logging.catalog_repair.apply_dangerous',
     surface: 'admin_logging',
     resourceType: 'log_object_catalog',

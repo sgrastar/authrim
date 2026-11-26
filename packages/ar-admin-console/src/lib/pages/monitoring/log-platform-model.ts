@@ -18,7 +18,8 @@ export type StageReason =
 	| 'compaction_never'
 	| 'read_incomplete'
 	| 'export_error'
-	| 'publication_stalled';
+	| 'publication_stalled'
+	| 'intent_orphaned';
 
 export interface StageVerdict {
 	tone: StageTone;
@@ -49,6 +50,9 @@ export function deliveryVerdict(status: LogPlatformStatus): StageVerdict {
 	if (status.archive.local_staging_only) return okOr(reasons, 'danger');
 	const outbox = status.delivery.outbox;
 	if (outbox) {
+		// Intents a dead writer left behind: already over an hour old by the server's rule, and
+		// nothing delivers them until they are reclaimed.
+		if (outbox.orphaned > 0) reasons.push('intent_orphaned');
 		if (
 			outbox.oldest_pending_at !== null &&
 			status.generated_at - outbox.oldest_pending_at >= STUCK_AFTER_MS
@@ -73,7 +77,9 @@ export function deliveryVerdict(status: LogPlatformStatus): StageVerdict {
 	}
 	return okOr(
 		reasons,
-		reasons.includes('delivery_stuck') || reasons.includes('publication_stalled')
+		reasons.includes('delivery_stuck') ||
+			reasons.includes('publication_stalled') ||
+			reasons.includes('intent_orphaned')
 			? 'danger'
 			: 'warning'
 	);

@@ -2,8 +2,7 @@ import type { jaLogPlatform } from './ja';
 
 /** Monitoring → Log platform: is the log platform healthy. Spread into `../en.ts`. */
 export const enLogPlatform: Record<keyof typeof jaLogPlatform, string> = {
-	'lplat.page.desc':
-		'One look at whether logs are being stored and can be read, in three stages: delivery (from D1 to the archive), the log archive (the Iceberg table in R2 Data Catalog) and log reading (the same path the log pages use), each with its own status.',
+	'lplat.page.desc': 'Whether logs are being stored and can be read.',
 	'lplat.asOf': 'Status as of',
 	'lplat.period': 'Delivery counts cover the last 24 hours; the archive shows its current totals.',
 	'lplat.refresh': 'Refresh',
@@ -32,6 +31,8 @@ export const enLogPlatform: Record<keyof typeof jaLogPlatform, string> = {
 	'lplat.reason.export_stalled': 'An export has been unfinished for more than {hours} hours',
 	'lplat.reason.publication_stalled':
 		'A record has been sealing for more than {hours} hours (publication is stuck)',
+	'lplat.reason.intent_orphaned':
+		'{count} records were left mid-write more than {hours} hours ago (never committed, so never delivered)',
 
 	'lplat.stage.delivery': 'Delivery',
 	'lplat.stage.delivery.desc': 'Records written to D1 on their way to the archive',
@@ -45,6 +46,16 @@ export const enLogPlatform: Record<keyof typeof jaLogPlatform, string> = {
 	'lplat.delivery.oldest': 'Oldest waiting',
 	'lplat.delivery.lastError': 'Last error',
 	'lplat.delivery.unit': 'records',
+	'lplat.delivery.orphaned': 'Left behind',
+	'lplat.delivery.oldestOrphaned': 'Oldest left behind',
+	'lplat.delivery.abandoned': 'Recorded as never committed',
+	'lplat.delivery.reclaim': 'Record as never committed',
+	'lplat.delivery.reclaim.done':
+		'{abandoned} records were recorded as never committed (in the system log; erased after their retention)',
+	'lplat.delivery.reclaim.busy': 'Another reclaim is running; reload in a moment',
+	'lplat.delivery.reclaim.partial':
+		'{abandoned} records were recorded as never committed; {failed} could not be processed and will be retried on the next tick',
+	'lplat.delivery.reclaim.failed': 'Could not run the reclaim',
 	'lplat.delivery.export.state': 'Last export',
 	'lplat.delivery.export.updated': 'Updated',
 	'lplat.delivery.export.watermark': 'Read watermark',
@@ -103,7 +114,6 @@ export const enLogPlatform: Record<keyof typeof jaLogPlatform, string> = {
 		'The ledger of chunks that hold approval details and the sensitive parts of webhooks. Inconsistencies can be fixed by the safe repair.',
 	'lplat.catalog.findings': 'Findings to repair',
 	'lplat.catalog.sensitive': 'Of which sensitive detail',
-	'lplat.catalog.sample': 'From the newest {limit} rows.',
 	'lplat.catalog.clean': 'No inconsistencies',
 	'lplat.catalog.index': 'Sensitive-detail index',
 	'lplat.catalog.index.count': '{count} rows',

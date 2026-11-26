@@ -29677,6 +29677,39 @@ paths:
         - adminBearer: []
         - adminSessionCookie: []
       parameters: []
+  /api/admin/admin-logging/delivery/reclaim-intents:
+    post:
+      tags:
+        - Logging - Administration
+      operationId: postApiAdminAdminLoggingDeliveryReclaimIntents
+      summary: Reclaim orphaned delivery intents
+      description: |-
+        Runs, on request, the reclaim the maintenance tick runs every minute in pipeline mode:
+        outbox intents a writer left `preparing` with no publication for over an hour (the writer
+        died, or the business batch that would have promoted the intent rolled back) are
+        acknowledged: marked as never committed, reported as a system event and no longer
+        counted as waiting. They are never resumed, since the promotion to pending is the
+        record's only commit witness; nor erased, since a durable producer may still return and
+        continue (its own write lifts the mark). Their envelopes are retired once the record's
+        retention has run out. A tenant caller reclaims its own tenant's intents; a platform
+        caller every tenant's. The result counts `abandoned` (acknowledged now), `retired`,
+        `retained` and `failed`; `leased: false` means another run holds the lease and nothing
+        was changed. 409 when the log archive is not activated or not in pipeline mode.
+      responses:
+        '200':
+          $ref: '#/components/responses/AdminLoggingAction'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+      parameters: []
   /api/admin/admin-logging/coverage:
     get:
       tags:

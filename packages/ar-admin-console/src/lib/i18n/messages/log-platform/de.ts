@@ -2,8 +2,7 @@ import type { jaLogPlatform } from './ja';
 
 /** Monitoring → Log platform: is the log platform healthy. Spread into `../de.ts`. */
 export const deLogPlatform: Record<keyof typeof jaLogPlatform, string> = {
-	'lplat.page.desc':
-		'Ein Blick darauf, ob Protokolle gespeichert und gelesen werden können, in drei Stufen: Zustellung (von D1 ins Archiv), Protokollarchiv (die Iceberg-Tabelle im R2 Data Catalog) und Protokolllesen (derselbe Weg wie auf den Protokollseiten), jede mit eigenem Status.',
+	'lplat.page.desc': 'Ob Protokolle gespeichert werden und lesbar sind.',
 	'lplat.asOf': 'Stand',
 	'lplat.period':
 		'Zustellzahlen gelten für die letzten 24 Stunden; das Archiv zeigt seine aktuellen Gesamtwerte.',
@@ -35,6 +34,8 @@ export const deLogPlatform: Record<keyof typeof jaLogPlatform, string> = {
 	'lplat.reason.export_stalled': 'Ein Export ist seit mehr als {hours} Stunden unvollendet',
 	'lplat.reason.publication_stalled':
 		'Ein Datensatz wird seit mehr als {hours} Stunden versiegelt (die Veröffentlichung hängt)',
+	'lplat.reason.intent_orphaned':
+		'{count} Datensätze blieben vor mehr als {hours} Stunden mitten im Schreiben zurück (nie bestätigt, daher nie zugestellt)',
 
 	'lplat.stage.delivery': 'Zustellung',
 	'lplat.stage.delivery.desc': 'In D1 geschriebene Datensätze auf dem Weg ins Archiv',
@@ -48,6 +49,16 @@ export const deLogPlatform: Record<keyof typeof jaLogPlatform, string> = {
 	'lplat.delivery.oldest': 'Älteste wartende',
 	'lplat.delivery.lastError': 'Letzter Fehler',
 	'lplat.delivery.unit': 'Datensätze',
+	'lplat.delivery.orphaned': 'Zurückgeblieben',
+	'lplat.delivery.oldestOrphaned': 'Ältester zurückgebliebener',
+	'lplat.delivery.abandoned': 'Als nie bestätigt vermerkt',
+	'lplat.delivery.reclaim': 'Als nie bestätigt vermerken',
+	'lplat.delivery.reclaim.done':
+		'{abandoned} Datensätze wurden als nie bestätigt vermerkt (im Systemprotokoll; nach Ablauf der Aufbewahrung gelöscht)',
+	'lplat.delivery.reclaim.busy': 'Eine andere Rückholung läuft; gleich neu laden',
+	'lplat.delivery.reclaim.partial':
+		'{abandoned} Datensätze wurden als nie bestätigt vermerkt; {failed} konnten nicht verarbeitet werden und werden beim nächsten Lauf erneut versucht',
+	'lplat.delivery.reclaim.failed': 'Die Rückholung konnte nicht ausgeführt werden',
 	'lplat.delivery.export.state': 'Letzter Export',
 	'lplat.delivery.export.updated': 'Aktualisiert',
 	'lplat.delivery.export.watermark': 'Lesemarke',
@@ -107,7 +118,6 @@ export const deLogPlatform: Record<keyof typeof jaLogPlatform, string> = {
 		'Das Verzeichnis der Chunks mit Genehmigungsdetails und den sensiblen Teilen von Webhooks. Inkonsistenzen behebt die sichere Reparatur.',
 	'lplat.catalog.findings': 'Zu reparierende Befunde',
 	'lplat.catalog.sensitive': 'Davon sensible Details',
-	'lplat.catalog.sample': 'Aus den neuesten {limit} Zeilen.',
 	'lplat.catalog.clean': 'Keine Inkonsistenzen',
 	'lplat.catalog.index': 'Index sensibler Details',
 	'lplat.catalog.index.count': '{count} Zeilen',

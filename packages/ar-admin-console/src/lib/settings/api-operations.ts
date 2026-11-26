@@ -64,6 +64,7 @@ const ROWS: readonly (readonly [ApiMethod, string, string, ApiOperation['spec']]
 	["POST","/api/admin/admin-logging/coverage/check","Check admin audit coverage","admin"],
 	["GET","/api/admin/admin-logging/critical-policy","Get critical logging policy","admin"],
 	["PATCH","/api/admin/admin-logging/critical-policy","Update critical logging policy","admin"],
+	["POST","/api/admin/admin-logging/delivery/reclaim-intents","Reclaim orphaned delivery intents","admin"],
 	["GET","/api/admin/admin-logging/platform-status","Get log platform status","admin"],
 	["GET","/api/admin/admin-logging/sensitive-detail-policy","Get sensitive detail logging policy","admin"],
 	["PATCH","/api/admin/admin-logging/sensitive-detail-policy","Update sensitive detail logging policy","admin"],

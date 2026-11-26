@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   delivery: vi.fn(),
   export: vi.fn(),
   retry: vi.fn(),
+  reclaim: vi.fn(),
   retention: vi.fn(),
   snapshots: vi.fn(),
   erasure: vi.fn(),
@@ -31,6 +32,9 @@ vi.mock('@authrim/ar-lib-core/services/log-iceberg-export', () => ({
 }));
 vi.mock('@authrim/ar-lib-core/services/log-iceberg-retry-cleanup', () => ({
   runLogIcebergRetryCleanup: mocks.retry,
+}));
+vi.mock('@authrim/ar-lib-core/services/log-iceberg-intent-reclaim', () => ({
+  runLogIcebergIntentReclaim: mocks.reclaim,
 }));
 vi.mock('@authrim/ar-lib-core/services/log-iceberg-retention', () => ({
   runLogIcebergRetention: mocks.retention,
@@ -63,6 +67,7 @@ describe('new-mode maintenance on the existing minute tick', () => {
     mocks.delivery.mockResolvedValue({ queued: 0 });
     mocks.export.mockResolvedValue({ moved: 0 });
     mocks.retry.mockResolvedValue({});
+    mocks.reclaim.mockResolvedValue({});
     mocks.retention.mockResolvedValue({ complete: false, progressed: false });
     mocks.snapshots.mockResolvedValue({ complete: false, progressed: false });
     mocks.erasure.mockResolvedValue({ complete: false });
@@ -78,6 +83,7 @@ describe('new-mode maintenance on the existing minute tick', () => {
     expect(mocks.reconcile).toHaveBeenCalledWith({ limit: 16 });
     expect(mocks.delivery).toHaveBeenCalledWith(env);
     expect(mocks.retry).toHaveBeenCalledWith(env);
+    expect(mocks.reclaim).toHaveBeenCalledWith(env);
     expect(mocks.export).not.toHaveBeenCalled();
     expect(
       mocks.query.mock.calls.every(([sql]) => !String(sql).includes('FROM log_iceberg_records'))
@@ -91,6 +97,7 @@ describe('new-mode maintenance on the existing minute tick', () => {
     expect(mocks.export).toHaveBeenCalledWith(env);
     expect(mocks.delivery).not.toHaveBeenCalled();
     expect(mocks.retry).not.toHaveBeenCalled();
+    expect(mocks.reclaim).not.toHaveBeenCalled();
   });
   it('does not run unrelated ticks or invalid configuration', async () => {
     expect(

@@ -5,6 +5,11 @@
  * code registry. No Basin Catalog maintenance API is called (Workers hold no account API token),
  * so compaction is inferred from the table's own snapshots.
  */
+import {
+  LOG_ICEBERG_INTENT_ORPHAN_AFTER_MS,
+  logIcebergAbandonedIntentSql,
+  logIcebergOrphanIntentSql,
+} from '@authrim/ar-lib-core/services/log-iceberg-intent-reclaim';
 import type { DatabaseAdapter } from '@authrim/ar-lib-core';
 import { AdminLoggingControlRepository } from '@authrim/ar-lib-core';
 import {
@@ -94,13 +99,20 @@ export interface LogPlatformDeliveryStatus {
    */
   oldest_prepared_at: number | null;
   /**
-   * Pipeline mode only. `pending` includes intents still `preparing`: a publication whose
-   * reconciliation stalled after the business commit sits there and must count as waiting.
+   * Pipeline mode only. `pending` includes intents still `preparing` that a publication or a
+   * write in flight still owns. `orphaned` are the `preparing` intents no publication backs
+   * and no writer has touched for an hour (the writer died, or its batch rolled back): never
+   * delivered, counted apart from the waiting until the reclaim acknowledges them.
+   * `abandoned` are the ones it acknowledged (recorded as never committed, kept for their
+   * producer, retired at retention); they are not waiting and not alarming.
    */
   outbox: {
     pending: number;
     queued: number;
     oldest_pending_at: number | null;
+    orphaned: number;
+    oldest_orphaned_at: number | null;
+    abandoned: number;
     last_error_code: string | null;
   } | null;
   /** Scheduled mode only. */
@@ -363,21 +375,30 @@ async function describeDelivery(
   let outbox: LogPlatformDeliveryStatus['outbox'] = null;
   let exportState: LogPlatformDeliveryStatus['export'] = null;
   if (config?.mode === 'pipeline') {
+    const orphan = logIcebergOrphanIntentSql('log_iceberg_outbox');
+    const abandoned = logIcebergAbandonedIntentSql('log_iceberg_outbox');
+    const orphanCutoff = input.now - LOG_ICEBERG_INTENT_ORPHAN_AFTER_MS;
     const counts = await adapter.queryOne<{
       pending: unknown;
       queued: unknown;
       oldest_pending_at: unknown;
+      orphaned: unknown;
+      oldest_orphaned_at: unknown;
+      abandoned: unknown;
     }>(
       `SELECT
-         SUM(CASE WHEN state IN ('preparing','pending') THEN 1 ELSE 0 END) AS pending,
+         SUM(CASE WHEN state IN ('preparing','pending') AND NOT ${orphan} AND NOT ${abandoned} THEN 1 ELSE 0 END) AS pending,
          SUM(CASE WHEN state = 'queued' THEN 1 ELSE 0 END) AS queued,
-         MIN(CASE WHEN state IN ('preparing','pending','queued') THEN created_at END) AS oldest_pending_at
+         MIN(CASE WHEN state IN ('preparing','pending','queued') AND NOT ${orphan} AND NOT ${abandoned} THEN created_at END) AS oldest_pending_at,
+         SUM(CASE WHEN ${orphan} THEN 1 ELSE 0 END) AS orphaned,
+         MIN(CASE WHEN ${orphan} THEN created_at END) AS oldest_orphaned_at,
+         SUM(CASE WHEN ${abandoned} THEN 1 ELSE 0 END) AS abandoned
        FROM log_iceberg_outbox WHERE 1 = 1${scope.sql}${generationClause}`,
-      [...scope.binds, ...generationBinds]
+      [orphanCutoff, orphanCutoff, orphanCutoff, orphanCutoff, ...scope.binds, ...generationBinds]
     );
     const lastError = await adapter.queryOne<{ last_error_code: string | null }>(
       `SELECT last_error_code FROM log_iceberg_outbox
-       WHERE last_error_code IS NOT NULL AND state IN ('preparing','pending','queued')${scope.sql}${generationClause}
+       WHERE last_error_code IS NOT NULL AND state IN ('preparing','pending','queued') AND NOT ${abandoned}${scope.sql}${generationClause}
        ORDER BY updated_at DESC LIMIT 1`,
       [...scope.binds, ...generationBinds]
     );
@@ -395,6 +416,9 @@ async function describeDelivery(
       pending: integer(counts?.pending),
       queued: integer(counts?.queued),
       oldest_pending_at: optionalInteger(counts?.oldest_pending_at),
+      orphaned: integer(counts?.orphaned),
+      oldest_orphaned_at: optionalInteger(counts?.oldest_orphaned_at),
+      abandoned: integer(counts?.abandoned),
       last_error_code: lastError?.last_error_code ?? null,
     };
   } else if (config?.mode === 'scheduled') {

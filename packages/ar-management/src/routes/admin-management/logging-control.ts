@@ -5,6 +5,7 @@ import {
 import { createLogReadAdapter, logCoverageHeaders } from '../../log-read-adapter';
 import { LogQueryIncompleteError, logQueryErrorResponse } from '../../log-archive-query';
 import { buildLogPlatformStatus, type LogPlatformReadProbe } from '../../log-platform-status';
+import { runLogIcebergIntentReclaim } from '@authrim/ar-lib-core/services/log-iceberg-intent-reclaim';
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import type { AdminAuthContext, Env } from '@authrim/ar-lib-core';
@@ -12954,6 +12955,49 @@ adminLoggingRouter.get('/platform-status', async (c) => {
     if (logError) return logError;
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
+});
+
+/**
+ * Runs the orphaned-intent reclaim the minute tick also runs: pipeline outbox intents a dead
+ * writer (or a rolled-back business batch) left `preparing` with no publication are
+ * acknowledged (recorded as never committed, kept for a producer that may still return,
+ * retired at retention), never resumed. A tenant caller reclaims its own intents only; a
+ * platform caller every tenant's. The same lease as the tick, so a concurrent run answers
+ * `leased: false` and changes nothing. 409 when the archive is not activated or not in pipeline
+ * mode.
+ */
+adminLoggingRouter.post('/delivery/reclaim-intents', async (c) => {
+  const authContext = getAuth(c);
+  if (!hasPermission(authContext, ADMIN_PERMISSIONS.ADMIN_LOGGING_REPAIR_RUN)) {
+    return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
+  }
+  const platform = hasPlatformAuthority(authContext);
+  const tenantId = getTenantIdFromContext(c);
+  let outcome: Awaited<ReturnType<typeof runLogIcebergIntentReclaim>>;
+  try {
+    outcome = await runLogIcebergIntentReclaim(c.env, platform ? {} : { tenantId });
+  } catch (error) {
+    // Not activated, not pipeline mode, bindings missing: the request is fine, the platform is not.
+    if (error instanceof Error && /^log_iceberg_[a-z_]+$/.test(error.message))
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+  }
+  const result = {
+    leased: outcome.leased,
+    abandoned: outcome.abandoned,
+    retired: outcome.retired,
+    retained: outcome.retained,
+    failed: outcome.failed,
+  };
+  const auditId = await writeAdminAuditLog(c, {
+    action: 'admin_logging.delivery.reclaim_intents',
+    resourceType: 'log_iceberg_outbox',
+    resourceId: platform ? 'platform' : tenantId,
+    result: 'success',
+    severity: result.abandoned > 0 || result.failed > 0 ? 'warn' : 'info',
+    metadata: { ...result, scope: platform ? 'platform' : 'tenant' },
+  });
+  return c.json(adminActionEnvelope(result, { auditId }));
 });
 
 adminLoggingRouter.get('/', async (c) => {
