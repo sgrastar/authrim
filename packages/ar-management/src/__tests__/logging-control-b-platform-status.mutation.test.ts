@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment -- admin API response bodies are untyped JSON in these route tests */
+/* eslint-disable @typescript-eslint/no-unsafe-member-access -- admin API response bodies are untyped JSON in these route tests */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../admin-shared', async (original) => ({
