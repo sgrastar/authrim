@@ -1092,6 +1092,195 @@ describe('admin Flow management handlers', () => {
     expect(String(runtimeError?.path)).toContain('$.runtime.ui.steps[1]');
   });
 
+  it('checks an imported screen step that asks for consent for a shown consent box', async () => {
+    const publishWith = async (config: Record<string, unknown>) => {
+      seedFlow({
+        draft_runtime_base_json: JSON.stringify({
+          flow_kind: 'login',
+          flow_id: 'flow-1',
+          ui: {
+            steps: [
+              { id: 'entry:step', source_node_id: 'entry', component: 'interaction_context' },
+              { id: 'screen:step', source_node_id: 'screen-1', component: 'screen', config },
+            ],
+          },
+        }),
+      });
+      const base = mocks.db.queryOne.getMockImplementation() as (
+        sql: string,
+        params: unknown[]
+      ) => Promise<unknown>;
+      mocks.db.queryOne.mockImplementation(async (sql: string, params: unknown[] = []) =>
+        sql.includes('FROM flows')
+          ? base(sql, params)
+          : sql.includes('FROM screens')
+            ? {
+                id: 'signup',
+                is_active: 1,
+                fields_json: JSON.stringify([
+                  { field: 'email', label: 'Email', block_type: 'field' },
+                ]),
+              }
+            : { is_active: 1, current_version_id: 'version-1' }
+      );
+      const response = await adminFlowPublishHandler(createContext({ params: { id: 'flow-1' } }));
+      const body = await readJson(response);
+      return (body.validation as { errors: Array<Record<string, unknown>> } | undefined)?.errors;
+    };
+
+    const noBox = await publishWith({
+      screen_ref: 'signup',
+      statements: [{ statement_id: 'terms', required: true }],
+    });
+    expect(noBox?.find((issue) => issue.node_id === 'screen-1')?.code).toBe(
+      'missing_consent_widget'
+    );
+  });
+
+  // What a publish of a runtime with these steps answers, the database knowing one screen whose
+  // fields are `fields` and statements that are all active.
+  const publishSteps = async (
+    steps: Array<Record<string, unknown>>,
+    fields: Array<Record<string, unknown>>,
+    // The one screen key the database knows; any other reference finds nothing (as in a tenant
+    // whose screens carry real keys, not the generic `basic_profile`).
+    knownKey?: string
+  ) => {
+    seedFlow({
+      draft_runtime_base_json: JSON.stringify({
+        flow_kind: 'login',
+        flow_id: 'flow-1',
+        ui: {
+          steps: [
+            {
+              id: 'entry:step',
+              source_node_id: 'entry',
+              component: 'interaction_context',
+              render: false,
+            },
+            ...steps,
+          ],
+        },
+      }),
+    });
+    const base = mocks.db.queryOne.getMockImplementation() as (
+      sql: string,
+      params: unknown[]
+    ) => Promise<unknown>;
+    mocks.db.queryOne.mockImplementation(async (sql: string, params: unknown[] = []) =>
+      sql.includes('FROM flows')
+        ? base(sql, params)
+        : sql.includes('FROM screens')
+          ? knownKey && !params.includes(knownKey)
+            ? null
+            : {
+                id: 'signup',
+                screen_key: 'signup',
+                is_active: 1,
+                fields_json: JSON.stringify(fields),
+              }
+          : { is_active: 1, current_version_id: 'version-1' }
+    );
+    const response = await adminFlowPublishHandler(createContext({ params: { id: 'flow-1' } }));
+    const body = await readJson(response);
+    return {
+      status: response.status,
+      errors: (body.validation as { errors?: Array<Record<string, unknown>> } | undefined)?.errors,
+      warnings: (body.validation as { warnings?: Array<Record<string, unknown>> } | undefined)
+        ?.warnings,
+    };
+  };
+  const consentBox = [{ field: 'consent', label: 'Consent', block_type: 'consent_widget' }];
+  const terms = { statements: [{ statement_id: 'terms', required: true }] };
+
+  it('warns of the same statement asked on a screen and in a consent step, and still publishes', async () => {
+    const result = await publishSteps(
+      [
+        {
+          id: 'screen:step',
+          source_node_id: 'screen-1',
+          component: 'screen',
+          render: true,
+          config: { screen_ref: 'signup', ...terms },
+        },
+        {
+          id: 'consent:step',
+          source_node_id: 'consent-1',
+          component: 'consent_policy',
+          render: true,
+          config: terms,
+        },
+      ],
+      consentBox
+    );
+    expect(result.status).toBe(200);
+    expect(result.errors ?? []).toEqual([]);
+    expect(
+      (result.warnings ?? []).find((issue) => issue.code === 'duplicate_consent_statement')
+    ).toMatchObject({ node_id: 'consent-1' });
+  });
+
+  it('judges the generic basic_profile screen by the screen the runtime would show', async () => {
+    const result = await publishSteps(
+      [
+        {
+          id: 'screen:step',
+          source_node_id: 'screen-1',
+          component: 'screen',
+          render: true,
+          config: { screen_ref: 'basic_profile', ...terms },
+        },
+      ],
+      consentBox,
+      'profile_completion'
+    );
+    expect(result.status).toBe(200);
+    expect(result.errors ?? []).toEqual([]);
+  });
+
+  it('checks a sign-in method selector that asks for consent like any other screen step', async () => {
+    const noBox = await publishSteps(
+      [
+        {
+          id: 'login:step',
+          source_node_id: 'login-1',
+          component: 'authentication_method_selector',
+          render: true,
+          config: { screen_ref: 'signup', ...terms },
+        },
+      ],
+      [{ field: 'email', label: 'Email', block_type: 'field' }]
+    );
+    expect(noBox.errors?.find((issue) => issue.node_id === 'login-1')?.code).toBe(
+      'missing_consent_widget'
+    );
+  });
+
+  it('warns of a statement a sign-in method selector and a consent step both ask', async () => {
+    const duplicated = await publishSteps(
+      [
+        {
+          id: 'login:step',
+          source_node_id: 'login-1',
+          component: 'authentication_method_selector',
+          render: true,
+          config: { screen_ref: 'signup', ...terms },
+        },
+        {
+          id: 'consent:step',
+          source_node_id: 'consent-1',
+          component: 'consent_policy',
+          render: true,
+          config: terms,
+        },
+      ],
+      consentBox
+    );
+    expect(
+      (duplicated.warnings ?? []).some((issue) => issue.code === 'duplicate_consent_statement')
+    ).toBe(true);
+  });
+
   it('increments publish version numbers returned as strings by adapters', async () => {
     seedFlow();
     versions.push({ flow_id: 'flow-1', version_number: '2' });
