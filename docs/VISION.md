@@ -1,8 +1,8 @@
 ---
 project: Authrim
 lang: en
-date: 2025-12-23
-description: "Identity at the edge of everywhere"
+date: 2026-11-26
+description: "Identity, unbound."
 type: vision
 tags:
   - authrim
@@ -11,23 +11,40 @@ tags:
 ---
 # Authrim Vision
 
-**Identity at the edge of everywhere**
+**Identity, unbound.**
+By scale. By cost. By protocol.
 
-Authrim was created to address the growing complexity of digital identity.
-Modern services must support multiple authentication methods, authorization models, and evolving identity standards. These requirements introduce operational cost and inconsistency across applications.
+Identity infrastructure tends to become a constraint as a service grows.
+More users force a redesign of the deployment. Fees rise in proportion to the number of users. Each new standard is bolted on as yet another separate system.
 
-Authrim aims to make identity more practical and predictable by providing a platform that is fast, consistent, and straightforward to integrate.
-
----
-
-## 1. Clear and consistent identity experiences
-
-Identity flows should be reliable and easy to follow.
-Authrim focuses on delivering predictable authentication and authorization behavior, reducing unnecessary complexity for end users.
+Authrim aims to make the foundation of identity and trust unbound by scale, by cost, and by protocol.
 
 ---
 
-## 2. A platform developers can work with
+## 1. From 10 users to 1 million, on the same configuration
+
+A first prototype and a large production deployment should not need different architectures.
+Authrim runs on serverless infrastructure and scales automatically as usage grows, removing the need to redesign identity infrastructure at every stage of growth.
+
+---
+
+## 2. Cost that does not grow per user
+
+Most identity services charge by the number of users.
+The cost of running Authrim is determined by actual usage, not by how many users are registered, and there are no always-on servers to pay for while idle. Growth in users should be welcome, not a cost concern.
+
+---
+
+## 3. Connecting trust across protocols and domains
+
+Identity and trust mechanisms have evolved separately in each domain.
+Trust holds within each of them, but it could not be carried outside.
+
+Authrim aims to be a foundation where protocols that have never intersected can be combined, so that trust established in one domain can be used in another. The goal is to enable uses that no single protocol could produce on its own.
+
+---
+
+## 4. A platform developers can work with
 
 Identity systems often become difficult to implement and maintain.
 Authrim emphasizes:
@@ -36,40 +53,18 @@ Authrim emphasizes:
 - simple operation
 - clear, extensible architecture
 
-New standards such as passkeys, ReBAC, VC/DID, and FAPI should be usable without burdening developers.
-
----
-
-## 3. Identity available everywhere
-
-Authrim runs on an edge architecture, enabling low-latency identity services regardless of where users or applications are located.
-The goal is to provide a consistent identity foundation for globally distributed systems.
-
----
-
-## 4. Early support for new standards
-
-Identity requirements change quickly.
-Authrim aims to support new standards early, so services can adopt them without major architectural changes.
-
----
-
-## 5. A lightweight alternative
-
-Authrim does not aim to replicate large monolithic identity platforms.
-Instead, it provides only the components that matter most, with an emphasis on clarity and practicality over complexity.
-
 ---
 
 # Direction
 
 Authrim will continue to focus on:
 
-- consistent identity flows
-- edge-powered performance
+- scaling without configuration changes
+- a cost structure that is not tied to user count
+- combining protocols across domains
+- early support for new identity standards
 - lightweight integration and maintenance
-- adaptability to new identity standards
 
-The goal is to make identity systems easier to understand, operate, and evolve.
+The goal is identity infrastructure that never constrains the growth of the services built on it.
 
 ---
