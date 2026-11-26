@@ -374,13 +374,14 @@ describe('Sensitive Data Masking', () => {
       expect(masked).toEqual({});
     });
 
-    it('should not mask numeric secret fields (current behavior)', () => {
+    // Updated: numeric values under a secret-named key used to be returned raw, leaking e.g. PINs.
+    // Secret-named fields are now masked whatever their (string/number/bigint) type.
+    it('should mask numeric secret fields', () => {
       const config = { apiKey: 12345 };
       const masked = maskSensitiveFieldsRecursive(config, {
         secretFields: ['apiKey'],
       });
-      // Current implementation only masks strings
-      expect(masked.apiKey).toBe(12345);
+      expect(masked.apiKey).toBe('****');
     });
 
     it('should not mask boolean secret fields', () => {
@@ -403,13 +404,10 @@ describe('Sensitive Data Masking', () => {
         maxDepth: 20,
       });
 
-      // Navigate to level 25 (beyond maxDepth)
-      let current: Record<string, unknown> = masked;
-      for (let i = 24; i >= 0; i--) {
-        current = current[`level${i}`] as Record<string, unknown>;
-      }
-      // Beyond maxDepth, password may not be masked
-      // This test documents the security limitation
+      // Updated: content beyond maxDepth used to be returned raw (an unmasked leak). It is now
+      // replaced with a placeholder, so the raw password is nowhere in the output.
+      expect(JSON.stringify(masked)).not.toContain('secretValue12');
+      expect(JSON.stringify(masked)).toContain('[MAX_DEPTH_EXCEEDED]');
     });
 
     it('should use custom mask options', () => {

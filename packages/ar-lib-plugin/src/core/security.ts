@@ -371,41 +371,69 @@ export function maskSensitiveFieldsRecursive(
   return maskObject(config, opts, 0);
 }
 
+/** Replaces content nested deeper than maxDepth: it is never returned unmasked. */
+const MAX_DEPTH_PLACEHOLDER = '[MAX_DEPTH_EXCEEDED]';
+
 function maskObject(
   obj: Record<string, unknown>,
   options: Required<MaskOptions>,
-  depth: number
+  depth: number,
+  inSecret = false
 ): Record<string, unknown> {
-  if (depth > options.maxDepth) {
-    return obj;
-  }
-
   const masked: Record<string, unknown> = {};
 
   for (const [key, value] of Object.entries(obj)) {
-    const shouldMask =
+    // Everything under a secret-named object or array is secret, whatever its own name is.
+    const secret =
+      inSecret ||
       options.secretFields.includes(key) ||
       (options.usePatternMatching && matchesSecretPattern(key));
 
-    if (shouldMask && typeof value === 'string') {
-      masked[key] = maskString(value, options);
+    if (secret && (typeof value === 'string' || typeof value === 'number')) {
+      masked[key] = maskString(String(value), options);
+    } else if (secret && typeof value === 'bigint') {
+      masked[key] = maskString(value.toString(), options);
     } else if (value !== null && typeof value === 'object') {
-      if (Array.isArray(value)) {
-        masked[key] = (value as unknown[]).map((item: unknown): unknown => {
-          if (item !== null && typeof item === 'object' && !Array.isArray(item)) {
-            return maskObject(item as Record<string, unknown>, options, depth + 1);
-          }
-          return item;
-        });
+      if (depth + 1 > options.maxDepth) {
+        masked[key] = MAX_DEPTH_PLACEHOLDER;
+      } else if (Array.isArray(value)) {
+        masked[key] = maskArray(value, options, depth + 1, secret);
       } else {
-        masked[key] = maskObject(value as Record<string, unknown>, options, depth + 1);
+        masked[key] = maskObject(value as Record<string, unknown>, options, depth + 1, secret);
       }
     } else {
+      // null, undefined, booleans (flags, not secret values) and non-secret primitives
       masked[key] = value;
     }
   }
 
   return masked;
+}
+
+function maskArray(
+  items: unknown[],
+  options: Required<MaskOptions>,
+  depth: number,
+  inSecret: boolean
+): unknown[] {
+  return items.map((item: unknown): unknown => {
+    if (inSecret && (typeof item === 'string' || typeof item === 'number')) {
+      return maskString(String(item), options);
+    }
+    if (inSecret && typeof item === 'bigint') {
+      return maskString(item.toString(), options);
+    }
+    if (item === null || typeof item !== 'object') {
+      return item;
+    }
+    if (Array.isArray(item)) {
+      // An array inside an array is one level deeper.
+      return depth + 1 > options.maxDepth
+        ? MAX_DEPTH_PLACEHOLDER
+        : maskArray(item, options, depth + 1, inSecret);
+    }
+    return maskObject(item as Record<string, unknown>, options, depth, inSecret);
+  });
 }
 
 function maskString(

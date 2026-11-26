@@ -32,11 +32,22 @@ function toPublicJwk(value: unknown): Record<string, unknown> {
   const publicJwk = Object.fromEntries(
     Object.entries(jwk).filter(([field]) => PUBLIC_JWK_FIELDS.has(field))
   );
-  if (
-    (jwk.kty === 'RSA' && (typeof publicJwk.n !== 'string' || typeof publicJwk.e !== 'string')) ||
-    ((jwk.kty === 'EC' || jwk.kty === 'OKP') &&
-      (typeof publicJwk.crv !== 'string' || typeof publicJwk.x !== 'string'))
-  ) {
+  const isString = (field: string): boolean => typeof publicJwk[field] === 'string';
+  let complete: boolean;
+  switch (jwk.kty) {
+    case 'RSA':
+      complete = isString('n') && isString('e');
+      break;
+    case 'EC':
+      complete = isString('crv') && isString('x') && isString('y');
+      break;
+    case 'OKP':
+      complete = isString('crv') && isString('x');
+      break;
+    default:
+      throw new Error('JWK has an unsupported key type');
+  }
+  if (!complete) {
     throw new Error('JWK is missing required public key parameters');
   }
 

@@ -101,6 +101,8 @@ export type CustomerProfileUpdateInput = {
   address_region?: string | null;
   address_postal_code?: string | null;
   address_country?: string | null;
+  /** Set by `address: null`: the whole stored address is removed, whatever members it holds. */
+  address_clear?: true;
 };
 
 export interface ProtectedCustomerProfileSummaryView {
@@ -249,6 +251,19 @@ function parseAddress(addressJson: string | null): ProtectedCustomerProfileResou
   }
 }
 
+/** The stored address as a plain object (empty when absent or unreadable), for merging an update. */
+function parseStoredAddressObject(addressJson: string | null | undefined): Record<string, unknown> {
+  if (!addressJson) {
+    return {};
+  }
+  try {
+    const parsed: unknown = JSON.parse(addressJson);
+    return isRecord(parsed) ? { ...parsed } : {};
+  } catch {
+    return {};
+  }
+}
+
 function mapCachedUserToProtectedCustomerProfile(
   user: CanonicalRuntimeUserProjection,
   tenantId: string
@@ -368,6 +383,7 @@ function normalizeAddressUpdate(value: unknown): Partial<CustomerProfileUpdateIn
   }
   if (value === null) {
     return {
+      address_clear: true,
       address_formatted: null,
       address_street_address: null,
       address_locality: null,
@@ -512,16 +528,18 @@ async function validateDelegatedWriteActorFromContext(input: {
   const introspection = await introspectTokenFromContext(input.c);
   if (!introspection.valid) {
     const error = introspection.error;
-    if (error?.wwwAuthenticate) {
-      input.c.header('WWW-Authenticate', error.wwwAuthenticate);
-    }
-    return noStoreJson(
+    const response = noStoreJson(
       {
         error: error?.error ?? 'invalid_token',
         error_description: error?.error_description ?? 'The access token is invalid',
       },
       error?.statusCode ?? 401
     );
+    // Set on the Response itself: a header put on the context is not merged into a raw Response.
+    if (error?.wwwAuthenticate) {
+      response.headers.set('WWW-Authenticate', error.wwwAuthenticate);
+    }
+    return response;
   }
 
   const claims = (introspection.claims ?? {}) as Record<string, unknown>;
@@ -642,34 +660,71 @@ async function updateProtectedCustomerProfileFromEnv(input: {
   ] as const;
   for (const field of sensitiveFieldNames) {
     if (Object.prototype.hasOwnProperty.call(updateRecord, field)) {
-      sensitiveValues[field] = updateRecord[field] ?? null;
+      const rawValue = updateRecord[field] ?? null;
+      // The runtime user store looks an email up by its trimmed, lower-cased form (the same
+      // normalization it applies on its own writes), so the persisted value is stored that way.
+      sensitiveValues[field] =
+        field === 'email' && typeof rawValue === 'string'
+          ? rawValue.trim().toLowerCase() || null
+          : rawValue;
       piiFields[field] = true;
     }
   }
 
-  const addressFields = {
-    formatted: input.update.address_formatted,
-    street_address: input.update.address_street_address,
-    locality: input.update.address_locality,
-    region: input.update.address_region,
-    postal_code: input.update.address_postal_code,
-    country: input.update.address_country,
+  // PATCH semantics: only the address members that were sent change; the others keep the stored
+  // value. A member sent as null is cleared (and `address: null` sends every member as null).
+  const addressMembers: Array<[string, string | null | undefined]> = [
+    ['formatted', input.update.address_formatted],
+    ['street_address', input.update.address_street_address],
+    ['locality', input.update.address_locality],
+    ['region', input.update.address_region],
+    ['postal_code', input.update.address_postal_code],
+    ['country', input.update.address_country],
+  ];
+  const clearsAddress = input.update.address_clear === true;
+  const hasAddressUpdate =
+    clearsAddress ||
+    addressMembers.some(([key]) =>
+      Object.prototype.hasOwnProperty.call(input.update, `address_${key}`)
+    );
+  const addressFields: Record<string, unknown> =
+    hasAddressUpdate && !clearsAddress ? parseStoredAddressObject(current.address_json) : {};
+  for (const [key, value] of addressMembers) {
+    if (Object.prototype.hasOwnProperty.call(input.update, `address_${key}`)) {
+      addressFields[key] = value ?? null;
+    }
+  }
+
+  const contactValueChanged = (field: 'email' | 'phone_number'): boolean => {
+    if (!Object.prototype.hasOwnProperty.call(sensitiveValues, field)) {
+      return false;
+    }
+    const next = sensitiveValues[field];
+    const previous = current[field];
+    if (typeof next !== 'string' || typeof previous !== 'string') {
+      return true;
+    }
+    return field === 'email' ? next !== previous.trim().toLowerCase() : next !== previous;
   };
-  const hasAddressUpdate = Object.entries(addressFields).some(([key]) =>
-    Object.prototype.hasOwnProperty.call(input.update, `address_${key}`)
-  );
 
   await runtimeUsers.syncUser({
     userId: input.subjectUserId,
     email: current.email,
     name: current.name,
     active: current.active === 1,
-    emailVerified: Boolean(current.email_verified),
-    phoneNumberVerified: Boolean(current.phone_number_verified),
+    // A verification belongs to the value it was proven for: a changed (or removed) contact value
+    // starts unverified. The update carries no proof of ownership of a new value.
+    emailVerified: Boolean(current.email_verified) && !contactValueChanged('email'),
+    phoneNumberVerified:
+      Boolean(current.phone_number_verified) && !contactValueChanged('phone_number'),
     userType: current.account_type === 'admin' ? 'admin' : 'end_user',
     piiFields,
     sensitiveValues,
-    addressJson: hasAddressUpdate ? JSON.stringify(addressFields) : undefined,
+    addressJson: clearsAddress
+      ? null
+      : hasAddressUpdate
+        ? JSON.stringify(addressFields)
+        : undefined,
   });
   return loadProtectedCustomerProfileFromEnv({
     c: input.c,

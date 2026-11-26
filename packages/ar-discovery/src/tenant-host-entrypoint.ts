@@ -23,9 +23,12 @@ export interface TenantHostResolution {
 
 export const TENANT_HOST_RPC_AUDIENCE = 'authrim-tenant-host-v1';
 
-/** A hostname with an optional port; anything else is not a Host header worth resolving. */
+/**
+ * A hostname (at most 253 characters, labels of at most 63, as DNS allows) with an optional port; anything else
+ * is not a Host header worth resolving.
+ */
 const HOST_PATTERN =
-  /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?)*(?::\d{1,5})?$/iu;
+  /^(?=[^:]{1,253}(?::|$))[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*(?::\d{1,5})?$/iu;
 
 export class TenantHostEntrypoint extends WorkerEntrypoint<Env, TenantHostRpcProps> {
   async resolveTenantForHost(host: string): Promise<TenantHostResolution> {
