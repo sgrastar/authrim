@@ -19,6 +19,7 @@ import { deStepUp } from './step-up/de';
 import { deAdminAudit } from './admin-audit/de';
 import { deUserAudit } from './user-audit/de';
 import { deSystemLog } from './system-log/de';
+import { deLogPlatform } from './log-platform/de';
 import { deTeam } from './team/de';
 import { deIpAllowlist } from './ip-allowlist/de';
 import { deAccountPages } from './account-pages/de';
@@ -53,6 +54,7 @@ export const de = {
 	...deAdminAudit,
 	...deUserAudit,
 	...deSystemLog,
+	...deLogPlatform,
 	...deTeam,
 	...deIpAllowlist,
 	...deAccountPages,
@@ -149,7 +151,7 @@ export const de = {
 	'nav.data.profiles': 'Quelle / Ziel',
 	'nav.data.mappingSets': 'Mappings',
 	'nav.data.readiness': 'Schemabereitschaft',
-	'nav.mon.adminLogging': 'Administratorprotokollierung',
+	'nav.mon.logPlatform': 'Protokollplattform',
 	'nav.mon.diagnostics': 'Diagnoseprotokolle',
 	'nav.mon.destinations': 'Protokollziele',
 	'nav.int.agentGrants': 'Agentenberechtigungen',

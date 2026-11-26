@@ -1,0 +1,115 @@
+import type { jaLogPlatform } from './ja';
+
+/** Monitoring → Log platform: is the log platform healthy. Spread into `../de.ts`. */
+export const deLogPlatform: Record<keyof typeof jaLogPlatform, string> = {
+	'lplat.page.desc':
+		'Ein Blick darauf, ob Protokolle gespeichert und gelesen werden können: Konfiguration und Erreichbarkeit des Protokollarchivs (Iceberg), ob ein echter Lesevorgang abschließt, Zustellrückstand, Audit-Abdeckung und der Chunk-Katalog sensibler Details.',
+	'lplat.asOf': 'Stand',
+	'lplat.refresh': 'Aktualisieren',
+	'lplat.noAccess': 'Sie haben keine Berechtigung, den Status der Protokollplattform zu sehen',
+	'lplat.loadFailed': 'Der Status der Protokollplattform konnte nicht geladen werden',
+	'lplat.links':
+		'Die Protokolle selbst stehen unter Systemprotokolle, Auditprotokolle und Administratoraktivität',
+
+	'lplat.archive.title': 'Protokollarchiv',
+	'lplat.archive.desc': 'Wo Protokolle liegen: die Iceberg-Tabelle im R2 Data Catalog.',
+	'lplat.archive.mode': 'Modus',
+	'lplat.archive.mode.pipeline': 'Pipeline (laufend)',
+	'lplat.archive.mode.scheduled': 'Geplant (periodischer Export)',
+	'lplat.archive.generation': 'Generation',
+	'lplat.archive.activated': 'Aktiviert',
+	'lplat.archive.reach': 'Erreichbarkeit',
+	'lplat.archive.reach.ok': 'Erreichbar',
+	'lplat.archive.reach.ng': 'Nicht erreichbar',
+	'lplat.archive.local': 'Nur lokale Zwischenspeicherung (Entwicklung)',
+	'lplat.archive.unconfigured.title': 'Das Protokollarchiv ist nicht konfiguriert',
+	'lplat.archive.unconfigured.body':
+		'Diese Umgebung kann keine Protokolle in einen Speicher schreiben. Aktivieren Sie das Protokollarchiv mit setup. ({code})',
+	'lplat.archive.unreachable.title': 'Das Protokollarchiv ist nicht erreichbar',
+	'lplat.archive.unreachable.body':
+		'Der Catalog hat die Tabelle nicht geliefert. Gespeicherte Protokolle können nicht gelesen werden, neue warten. ({code})',
+	'lplat.archive.table.files': 'Datendateien',
+	'lplat.archive.table.records': 'Datensätze',
+	'lplat.archive.table.snapshots': 'Snapshots',
+	'lplat.archive.table.lastCommit': 'Letzter Commit',
+	'lplat.archive.table.lastCompaction': 'Letzte Verdichtung',
+	'lplat.archive.table.never': 'Noch keine',
+	'lplat.archive.overLimit.title': 'Mehr Datendateien, als ein Lesevorgang öffnen kann',
+	'lplat.archive.overLimit.body':
+		'Die Tabelle hat {files} Datendateien, ein Lesevorgang öffnet höchstens {max}. Protokollansichten bleiben unvollständig. Läuft die Verdichtung nicht, fehlt womöglich das Wartungs-Credential des Catalogs (setup update registriert es).',
+	'lplat.archive.tenantNote': 'Tabellenweite Statistiken sehen nur Plattformadministratoren.',
+
+	'lplat.probe.title': 'Leseprüfung',
+	'lplat.probe.desc':
+		'Die letzten 24 Stunden der Administratoraktivität, gelesen wie auf den Protokollseiten.',
+	'lplat.probe.ok': 'Der Lesevorgang ist abgeschlossen',
+	'lplat.probe.ng': 'Der Lesevorgang ist nicht abgeschlossen',
+	'lplat.probe.reason': 'Grund',
+	'lplat.probe.consistency': 'Konsistenz',
+	'lplat.probe.consistency.eventual':
+		'Die neuesten Datensätze sind möglicherweise noch nicht sichtbar',
+	'lplat.probe.consistency.snapshot': 'Vollständig zum Snapshot',
+	'lplat.probe.consistency.local_hot_only': 'Nur aktuelle Datensätze wurden gelesen',
+	'lplat.probe.pending': 'Ausstehende Zustellungen',
+	'lplat.probe.noArchive': 'Keine archivierten Datensätze in diesem Zeitraum',
+
+	'lplat.delivery.title': 'Zustellung',
+	'lplat.delivery.desc': 'Wie Datensätze ins Archiv gelangen.',
+	'lplat.delivery.prepared': 'Vorbereitet',
+	'lplat.delivery.published': 'Veröffentlicht',
+	'lplat.delivery.aborted': 'Abgebrochen',
+	'lplat.outbox.pending': 'Ausstehend',
+	'lplat.outbox.queued': 'In der Warteschlange',
+	'lplat.outbox.oldest': 'Älteste wartende',
+	'lplat.outbox.lastError': 'Letzter Fehler',
+	'lplat.outbox.stuck.title': 'Die Zustellung staut sich',
+	'lplat.outbox.stuck.body': '{count} Datensätze warten seit mehr als {hours} Stunden.',
+	'lplat.export.state': 'Letzter Export',
+	'lplat.export.lastError': 'Letzter Fehler',
+	'lplat.export.updated': 'Aktualisiert',
+	'lplat.export.watermark': 'Lesemarke',
+	'lplat.none': 'Keine',
+
+	'lplat.coverage.title': 'Audit-Abdeckung',
+	'lplat.coverage.desc':
+		'Das Register der Administratoroperationen und ob sie das Auditprotokoll erreichen. Auch CI prüft es.',
+	'lplat.coverage.covered': 'Abgedeckt',
+	'lplat.coverage.gap': 'Lücken',
+	'lplat.coverage.acknowledged': 'Bestätigt',
+	'lplat.coverage.ignored': 'Außerhalb',
+	'lplat.coverage.lastChecked': 'Zuletzt geprüft',
+	'lplat.coverage.never': 'Nie',
+	'lplat.coverage.gap.title': 'Audit-Lücken',
+	'lplat.coverage.gap.body':
+		'{count} Administratoroperationen werden nicht im Auditprotokoll erfasst.',
+
+	'lplat.catalog.title': 'Chunk-Katalog sensibler Details',
+	'lplat.catalog.desc':
+		'Das Verzeichnis der Chunks mit Genehmigungsdetails und den sensiblen Teilen von Webhooks. Inkonsistenzen behebt die sichere Reparatur.',
+	'lplat.catalog.findings': 'Zu reparierende Befunde',
+	'lplat.catalog.sensitive': 'Davon sensible Details',
+	'lplat.catalog.sample': 'Aus den neuesten {limit} Zeilen.',
+	'lplat.catalog.clean': 'Keine Inkonsistenzen',
+	'lplat.catalog.index': 'Index sensibler Details',
+	'lplat.catalog.index.count': '{count} Zeilen',
+	'lplat.catalog.index.missing': 'Keine Indextabelle',
+	'lplat.catalog.index.unavailable': 'Nicht lesbar',
+	'lplat.catalog.repair': 'Sichere Reparaturen anwenden',
+	'lplat.catalog.repair.done': '{applied} repariert, {skipped} übersprungen',
+	'lplat.catalog.repair.failed': 'Die Reparaturen konnten nicht angewendet werden',
+
+	'lplat.lanes.title': 'Zustellspuren (24 Stunden)',
+	'lplat.lanes.desc': 'Zustellungen an Ziele, gezählt nach Spur und Ergebnis.',
+	'lplat.lanes.col.lane': 'Spur',
+	'lplat.lanes.col.status': 'Ergebnis',
+	'lplat.lanes.col.total': 'Stapel',
+	'lplat.lanes.empty': 'Keine Zustellungen in diesem Zeitraum',
+	'lplat.lane.critical': 'Kritisch',
+	'lplat.lane.default': 'Standard',
+	'lplat.lane.bulk': 'Massen',
+	'lplat.status.queued': 'In der Warteschlange',
+	'lplat.status.delivered': 'Zugestellt',
+	'lplat.status.retrying': 'Wird wiederholt',
+	'lplat.status.failed': 'Fehlgeschlagen',
+	'lplat.status.dlq': 'Dead Letter'
+};

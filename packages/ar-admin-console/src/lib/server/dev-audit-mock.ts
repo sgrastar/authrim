@@ -20,6 +20,7 @@ import {
 	answerSystemLogList,
 	sampleSystemLogEntries
 } from '#lib/api/fake/system-log-fake.js';
+import { createFakeLogPlatform } from '#lib/api/fake/log-platform-fake.js';
 import { ApiError } from '#lib/api/api-error.js';
 import type { AuditResult } from '#lib/api/admin-audit.js';
 
@@ -29,11 +30,27 @@ export interface MockAnswer {
 }
 
 /** The answer for an audit request, or null when the path is not an audit one. */
+const devLogPlatform = createFakeLogPlatform({ scenario: 'over-limit' });
+
 export async function answerAuditMock(
 	segments: readonly string[],
 	method: string,
 	params: URLSearchParams
 ): Promise<MockAnswer | null> {
+	if (segments[0] === 'admin-logging') {
+		if (method === 'GET' && segments[1] === 'platform-status' && segments.length === 2) {
+			return { status: 200, body: { item: await devLogPlatform.status() } };
+		}
+		if (
+			method === 'POST' &&
+			segments[1] === 'catalog-repairs' &&
+			segments[2] === 'apply-safe' &&
+			segments.length === 3
+		) {
+			return { status: 200, body: { item: await devLogPlatform.applySafeRepairs() } };
+		}
+		return null;
+	}
 	if (method !== 'GET') return null;
 	if (segments[0] === 'audit-logs' && segments.length === 1) {
 		const shift = Date.now() - USER_AUDIT_NOW;

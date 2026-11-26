@@ -257,8 +257,9 @@ export const TENANT_AREAS: readonly NavArea[] = [
 				requires: { permission: 'admin:admin_audit:read' }
 			},
 			{
-				id: 'admin-logging',
-				label: 'nav.mon.adminLogging'
+				id: 'log-platform',
+				label: 'nav.mon.logPlatform',
+				requires: { permission: 'admin:admin_logging:overview:read' }
 			},
 			{
 				id: 'system',

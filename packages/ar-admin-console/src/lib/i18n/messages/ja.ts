@@ -18,6 +18,7 @@ import { jaStepUp } from './step-up/ja';
 import { jaAdminAudit } from './admin-audit/ja';
 import { jaUserAudit } from './user-audit/ja';
 import { jaSystemLog } from './system-log/ja';
+import { jaLogPlatform } from './log-platform/ja';
 import { jaTeam } from './team/ja';
 import { jaIpAllowlist } from './ip-allowlist/ja';
 import { jaAccountPages } from './account-pages/ja';
@@ -56,6 +57,7 @@ export const ja = {
 	...jaAdminAudit,
 	...jaUserAudit,
 	...jaSystemLog,
+	...jaLogPlatform,
 	...jaTeam,
 	...jaIpAllowlist,
 	...jaAccountPages,
@@ -152,7 +154,7 @@ export const ja = {
 	'nav.data.profiles': 'Source / Destination',
 	'nav.data.mappingSets': 'マッピング',
 	'nav.data.readiness': 'スキーマ準備状況',
-	'nav.mon.adminLogging': '管理ログ運用',
+	'nav.mon.logPlatform': 'ログ基盤の状態',
 	'nav.mon.diagnostics': '診断ログ',
 	'nav.mon.destinations': 'ログ保存先',
 	'nav.int.agentGrants': 'Agent Grant',
