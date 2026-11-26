@@ -10,7 +10,7 @@ import {
   MAX_LEAF_DAYS,
   readPin,
   writeSecretFile,
-} from '../ca/provider-ca';
+} from '../../scripts/provider-ca-lib';
 import { createSecretSigner } from '../cloudflare/secret-signer';
 
 function hasOpenssl(): boolean {

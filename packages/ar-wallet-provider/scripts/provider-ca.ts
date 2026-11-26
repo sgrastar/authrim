@@ -20,7 +20,7 @@ import {
   readPin,
   writeSecretFile,
   type Purpose,
-} from '../src/ca/provider-ca';
+} from './provider-ca-lib';
 
 const out = (line: string): void => void process.stdout.write(`${line}\n`);
 
