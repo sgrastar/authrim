@@ -47,6 +47,7 @@ import { vpAuthorizeRoute } from './verifier/routes/authorize';
 import { vpResponseRoute } from './verifier/routes/response';
 import { vpRequestStatusRoute } from './verifier/routes/request-status';
 import { vpRequestObjectRoute } from './verifier/routes/request-object';
+import { vpPresentationDefinitionRoute } from './verifier/routes/presentation-definition';
 import {
   initiateAttributeVerification,
   attributeVerifyResponse,
@@ -147,6 +148,9 @@ app.post('/vp/response', vpResponseRoute);
 
 // Wallet-facing authorization request referenced by request_uri
 app.get('/vp/request/:id', vpRequestObjectRoute);
+
+// presentation_definition_uri target for requests whose definition is too large to inline
+app.get('/vp/pd/:id', vpPresentationDefinitionRoute);
 
 // Request status (for polling)
 app.get('/vp/requests/:id', vpRequestStatusRoute);

@@ -30,6 +30,7 @@ import {
   validateDPoPProof,
   verifyKeyAttestation,
 } from '@authrim/ar-lib-core';
+import { extractBearerToken } from '../../utils/bearer';
 import { sha256Base64url } from '../../utils/crypto';
 import { calculateJwkThumbprint } from '../../utils/jwk-thumbprint';
 import { createVCConfigManager } from '../../utils/vc-config';
@@ -76,39 +77,23 @@ interface CredentialRequest {
 }
 
 interface CredentialResponse {
-  credentials?: Array<{ credential: string }>;
-  transaction_id?: string;
+  credentials: Array<{ credential: string }>;
 }
 
 /**
- * Validate credential response format per OpenID4VCI spec
+ * Validate the credential response before it is returned (OpenID4VCI section 8.3.1): the one
+ * credential is a non-empty SD-JWT whose issuer-signed part is a compact JWS.
  *
  * @throws Error if response format is invalid
  */
 function validateCredentialResponse(response: CredentialResponse): void {
-  if (!response.credentials && !response.transaction_id) {
-    throw new Error('Response must contain either credentials or transaction_id');
-  }
-
-  if (response.credentials !== undefined) {
-    if (!Array.isArray(response.credentials) || response.credentials.length === 0) {
-      throw new Error('credentials must be a non-empty array');
+  for (const entry of response.credentials) {
+    const credential = entry?.credential;
+    if (typeof credential !== 'string' || credential.length === 0) {
+      throw new Error('credentials entries must carry a non-empty credential string');
     }
-    for (const entry of response.credentials) {
-      const credential = entry?.credential;
-      if (typeof credential !== 'string' || credential.length === 0) {
-        throw new Error('credentials entries must carry a non-empty credential string');
-      }
-      if (credential.split('~')[0].split('.').length !== 3) {
-        throw new Error('Invalid JWT format in credential');
-      }
-    }
-  }
-
-  // Validate transaction_id format if present
-  if (response.transaction_id !== undefined) {
-    if (typeof response.transaction_id !== 'string' || response.transaction_id.length === 0) {
-      throw new Error('transaction_id must be a non-empty string');
+    if (credential.split('~')[0].split('.').length !== 3) {
+      throw new Error('Invalid JWT format in credential');
     }
   }
 }
@@ -206,11 +191,12 @@ export async function credentialRoute(c: Context<{ Bindings: Env }>): Promise<Re
     // DPoP-bound token of the Authrim OP (HAIP). The two never satisfy each other's path.
     const authHeader = c.req.header('Authorization');
     const isOpPath = authHeader?.startsWith('DPoP ') === true;
-    if (!authHeader?.startsWith('Bearer ') && !isOpPath) {
+    const bearerToken = extractBearerToken(authHeader);
+    if (bearerToken === null && !isOpPath) {
       return invalidTokenError(c);
     }
 
-    const accessToken = authHeader.substring(isOpPath ? 5 : 7);
+    const accessToken = isOpPath ? authHeader!.substring(5) : bearerToken!;
 
     let opToken: Extract<OpTokenResult, { valid: true }> | undefined;
     let tokenResult: TokenValidationResult;

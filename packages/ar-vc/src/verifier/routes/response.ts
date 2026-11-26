@@ -75,8 +75,8 @@ export async function vpResponseRoute(c: Context<{ Bindings: Env }>): Promise<Re
     }
 
     // Validate vp_token
-    // SECURITY: Check for both null/undefined and empty string
-    if (!body.vp_token || (typeof body.vp_token === 'string' && body.vp_token.trim() === '')) {
+    // SECURITY: Only a non-blank string is a token (a number or an object is not one)
+    if (typeof body.vp_token !== 'string' || body.vp_token.trim() === '') {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
         variables: { field: 'vp_token' },
       });

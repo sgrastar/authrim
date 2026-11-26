@@ -108,6 +108,13 @@ export const VC_RATE_LIMITS: ReadonlyArray<{
     profile: 'lenient',
     endpointClass: 'vp_request_object',
   },
+  // Public, read-only, single-pending-request lookup like the request object it accompanies.
+  {
+    path: '/vp/pd/*',
+    endpoint: '/vp/pd/',
+    profile: 'lenient',
+    endpointClass: 'vp_presentation_definition',
+  },
   {
     path: '/.well-known/*',
     endpoint: '/.well-known/',

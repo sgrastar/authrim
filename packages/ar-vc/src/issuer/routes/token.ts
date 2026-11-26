@@ -161,13 +161,17 @@ async function handlePreAuthorizedCodeGrant(
   }
   const offerInfo = reservation.offer;
   const expiresIn = resolveAccessTokenTtlSeconds(offerInfo.expiresAt, Date.now());
-  let accessToken: string;
+  let response: VCITokenResponse;
   try {
-    accessToken = await generateVCIAccessToken(
+    const accessToken = await generateVCIAccessToken(
       c.env,
       { ...offerInfo, offerId: reservation.offerId },
       { credentialIssuer, expiresInSeconds: expiresIn }
     );
+    // No authorization_details: the wallet requests by credential_configuration_id (§6.2, §8.2).
+    response = { access_token: accessToken, token_type: 'Bearer', expires_in: expiresIn };
+    // An unusable signing result must not consume the offer: it is released below.
+    validateTokenResponse(response);
   } catch (error) {
     await releaseOfferReservation(c.env, reservation, log);
     throw error;
@@ -178,14 +182,6 @@ async function handlePreAuthorizedCodeGrant(
     throw new Error('Credential offer reservation completion failed');
   }
 
-  // No authorization_details: the wallet requests by credential_configuration_id (§6.2, §8.2).
-  const response: VCITokenResponse = {
-    access_token: accessToken,
-    token_type: 'Bearer',
-    expires_in: expiresIn,
-  };
-
-  validateTokenResponse(response);
   c.header('Cache-Control', 'no-store');
   c.header('Pragma', 'no-cache');
   return c.json(response);
@@ -303,7 +299,7 @@ async function releaseOfferReservation(
 ): Promise<void> {
   try {
     const { stub } = getCredentialOfferStoreById(env, reservation.offerId, reservation.tenantId);
-    await stub.fetch(
+    const response = await stub.fetch(
       new Request('https://internal/release', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -314,6 +310,13 @@ async function releaseOfferReservation(
         }),
       })
     );
+    const result = response.ok ? ((await response.json()) as { released?: boolean }) : null;
+    if (result?.released !== true) {
+      log.error('Credential offer reservation was not released', {
+        offerId: reservation.offerId,
+        status: response.status,
+      });
+    }
   } catch (error) {
     log.error('Failed to release credential offer reservation', {}, error as Error);
   }
@@ -359,49 +362,14 @@ export async function generateVCIAccessToken(
 }
 
 /**
- * Validate token response format per OpenID4VCI spec
+ * Validate the token response before it is returned. Only the access token can be wrong: the type,
+ * the lifetime (at least a minute) and the absence of the optional members are fixed by the code
+ * that builds the response.
  *
- * @throws Error if response format is invalid
+ * @throws Error if the access token is missing
  */
 function validateTokenResponse(response: VCITokenResponse): void {
-  // Required fields
   if (!response.access_token || typeof response.access_token !== 'string') {
     throw new Error('access_token must be a non-empty string');
-  }
-
-  if (!response.token_type || !['Bearer', 'DPoP'].includes(response.token_type)) {
-    throw new Error('token_type must be Bearer or DPoP');
-  }
-
-  // Optional fields validation
-  if (response.expires_in !== undefined) {
-    if (typeof response.expires_in !== 'number' || response.expires_in <= 0) {
-      throw new Error('expires_in must be a positive integer');
-    }
-  }
-
-  if (response.c_nonce !== undefined) {
-    if (typeof response.c_nonce !== 'string' || response.c_nonce.length === 0) {
-      throw new Error('c_nonce must be a non-empty string');
-    }
-  }
-
-  if (response.c_nonce_expires_in !== undefined) {
-    if (typeof response.c_nonce_expires_in !== 'number' || response.c_nonce_expires_in <= 0) {
-      throw new Error('c_nonce_expires_in must be a positive integer');
-    }
-  }
-
-  // Validate authorization_details if present
-  if (response.authorization_details) {
-    if (!Array.isArray(response.authorization_details)) {
-      throw new Error('authorization_details must be an array');
-    }
-
-    for (const detail of response.authorization_details) {
-      if (detail.type !== 'openid_credential') {
-        throw new Error('authorization_details[].type must be openid_credential');
-      }
-    }
   }
 }

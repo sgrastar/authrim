@@ -144,7 +144,6 @@ export async function validateOpAccessToken(
       return fail('Consent withdrawn');
     }
     if (typeof payload.jti !== 'string' || !payload.jti) return fail('Missing jti');
-    if (typeof payload.client_id !== 'string' || !payload.client_id) return fail('Missing client');
     if (typeof payload.exp !== 'number') return fail('Missing expiry');
     const scopes = typeof payload.scope === 'string' ? payload.scope.split(' ') : [];
     const cnf = payload.cnf as { jkt?: unknown } | undefined;
