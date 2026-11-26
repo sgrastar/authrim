@@ -82,7 +82,7 @@ describe('GET /platform-status', () => {
       coverage: { consistency: 'eventual', pending_deliveries: 2, complete: false },
     });
     expect(statusFakes.build).toHaveBeenCalledWith(
-      expect.objectContaining({ tenantId: 'tenant-a', now: NOW })
+      expect.objectContaining({ tenantId: 'tenant-a', platform: false, now: NOW })
     );
     expect(readAdapterFakes.createLogReadAdapter.mock.calls[0][0]).toMatchObject({
       tenantId: 'tenant-a',
@@ -111,7 +111,7 @@ describe('GET /platform-status', () => {
     expect(res.status).toBe(200);
     expect(res.body.item.scope).toBeNull();
     expect(statusFakes.build).toHaveBeenCalledWith(
-      expect.objectContaining({ tenantId: null, tenantKey: null })
+      expect.objectContaining({ tenantId: null, platform: true, tenantKey: null })
     );
   });
 

@@ -86,6 +86,7 @@ function input(overrides: Partial<BuildLogPlatformStatusInput>): BuildLogPlatfor
       readCoverageLastCheckedAt: vi.fn(async () => null),
     },
     tenantId: 'tenant-a',
+    platform: false,
     tenantKey: 'tk-a',
     now: NOW,
     readProbe: okProbe,
@@ -175,7 +176,7 @@ describe('buildLogPlatformStatus', () => {
       configuration_error: 'log_iceberg_configuration_required',
       reachable: false,
       table: null,
-      read_budget: { max_files: 128, over_budget: false },
+      table_size_hint: null,
     });
     expect(status.delivery).toEqual({
       publications: { prepared: 0, published: 0, aborted: 0 },
@@ -186,7 +187,7 @@ describe('buildLogPlatformStatus', () => {
     expect(status.audit_coverage.covered).toBeGreaterThan(0);
   });
 
-  it('flags a pipeline archive whose current snapshot exceeds the read budget', async () => {
+  it('flags, for a platform caller, a pipeline archive whose table outgrew the read limit', async () => {
     const adapter = fakeAdapter({
       'FROM log_iceberg_publications': [
         { state: 'published', total: '40' },
@@ -214,6 +215,7 @@ describe('buildLogPlatformStatus', () => {
       input({
         adapter,
         repository,
+        platform: true,
         loadTable: async () =>
           table([{ id: 1, at: NOW - 1000, operation: 'append', files: 603, records: 1700 }], 1),
       })
@@ -224,7 +226,7 @@ describe('buildLogPlatformStatus', () => {
       generation: 'gen-2026-11-01',
       reachable: true,
       reachability_error: null,
-      read_budget: { max_files: 128, over_budget: true },
+      table_size_hint: { max_files: 128, data_files_over_limit: true },
       read_probe: okProbe,
     });
     expect(status.archive.table?.current_snapshot?.total_data_files).toBe(603);
@@ -241,9 +243,10 @@ describe('buildLogPlatformStatus', () => {
     });
     expect(status.audit_coverage.last_checked_at).toBe(NOW - 1000);
     expect(status.chunk_catalog).toEqual({
-      pending_repair_findings: 2,
-      sensitive_detail_findings: 1,
-      sensitive_detail_index: [{ store: 'DB_ADMIN', indexed_objects: 5 }],
+      scan_limit: 200,
+      sampled_repair_findings: 2,
+      sampled_sensitive_detail_findings: 1,
+      sensitive_detail_index: [{ store: 'DB_ADMIN', indexed_objects: 5, error: null }],
     });
     expect(status.delivery_lanes).toEqual([{ lane: 'critical', status: 'delivered', total: 9 }]);
     // Tenant scoping: the tenant id goes to the Iceberg tables, the tenant key to the lanes.
@@ -257,6 +260,20 @@ describe('buildLogPlatformStatus', () => {
     expect(repository.detectCatalogRepairFindings).toHaveBeenCalledWith(
       expect.objectContaining({ tenantKey: 'tk-a', now: NOW })
     );
+  });
+
+  it('keeps the shared table statistics away from a tenant caller', async () => {
+    const status = await buildLogPlatformStatus(
+      input({
+        platform: false,
+        loadTable: async () =>
+          table([{ id: 1, at: NOW - 1000, operation: 'append', files: 603, records: 1700 }], 1),
+      })
+    );
+    expect(status.archive.reachable).toBe(true);
+    expect(status.archive.table).toBeNull();
+    expect(status.archive.table_size_hint).toBeNull();
+    expect(status.archive.read_probe).toEqual(okProbe);
   });
 
   it('keeps answering when the catalog is unreachable or belongs to another table', async () => {
@@ -298,13 +315,22 @@ describe('buildLogPlatformStatus', () => {
         env: scheduledEnv,
         adapter,
         tenantId: null,
+        platform: true,
         tenantKey: null,
         sensitiveDetailIndexStores: [
           {
             store: 'LOGGING_INDEX_DB',
             adapter: fakeAdapter({ 'FROM sensitive_detail_chunk_index': { total: '7' } }),
           },
-          { store: 'DB', adapter: fakeAdapter({}) },
+          {
+            store: 'DB',
+            adapter: {
+              query: vi.fn(async () => []),
+              queryOne: vi.fn(async () => {
+                throw new Error('no such table: sensitive_detail_chunk_index');
+              }),
+            } as unknown as DatabaseAdapter,
+          },
         ],
         loadTable: async () =>
           table([{ id: 42, at: NOW - 400, operation: 'replace', files: 3, records: 10 }], 42),
@@ -312,8 +338,8 @@ describe('buildLogPlatformStatus', () => {
     );
     expect(status.delivery.outbox).toBeNull();
     expect(status.chunk_catalog.sensitive_detail_index).toEqual([
-      { store: 'LOGGING_INDEX_DB', indexed_objects: 7 },
-      { store: 'DB', indexed_objects: 0 },
+      { store: 'LOGGING_INDEX_DB', indexed_objects: 7, error: null },
+      { store: 'DB', indexed_objects: null, error: 'no such table: sensitive_detail_chunk_index' },
     ]);
     expect(status.delivery.export).toEqual({
       last_state: 'verified',

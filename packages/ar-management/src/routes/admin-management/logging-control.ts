@@ -12939,6 +12939,7 @@ adminLoggingRouter.get('/platform-status', async (c) => {
       adapter: getAdminAdapter(c),
       repository: getAdminLoggingControlRepository(c),
       tenantId: platform ? null : tenantId,
+      platform,
       tenantKey: tenantKeyFilter.tenantKey,
       sensitiveDetailIndexStores: getSensitiveDetailProbeAdapters(c).map((entry) => ({
         store: entry.binding,

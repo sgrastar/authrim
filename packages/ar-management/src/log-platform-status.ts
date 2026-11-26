@@ -43,6 +43,10 @@ export interface LogPlatformArchiveStatus {
   /** `loadTable()` answered and the table is the configured one. */
   reachable: boolean;
   reachability_error: string | null;
+  /**
+   * The table's own statistics. Every tenant shares the table, so they are only handed to a
+   * platform caller; a tenant caller gets null here and keeps its own `read_probe`.
+   */
   table: {
     uuid: string;
     snapshot_count: number;
@@ -50,11 +54,15 @@ export interface LogPlatformArchiveStatus {
     /** Newest snapshot whose operation is `replace` (what Catalog compaction commits). */
     last_compaction_at: number | null;
   } | null;
-  read_budget: {
+  /**
+   * A size heuristic, platform callers only: the reader opens at most `max_files` files per
+   * read after pruning by tenant, dataset and time, so a table with more data files than that is
+   * at risk of incomplete views, not certain to give them. `read_probe` is the real answer.
+   */
+  table_size_hint: {
     max_files: number;
-    /** More data files than one read may open: log views come back incomplete. */
-    over_budget: boolean;
-  };
+    data_files_over_limit: boolean;
+  } | null;
   /** Outcome of the 24-hour admin audit read through the ordinary read path. */
   read_probe: {
     ok: boolean;
@@ -98,10 +106,19 @@ export interface LogPlatformStatus {
    * of them on that plane.
    */
   chunk_catalog: {
-    pending_repair_findings: number;
-    sensitive_detail_findings: number;
-    /** Live sensitive-detail chunk index rows, per index store (stores may alias one database). */
-    sensitive_detail_index: { store: string; indexed_objects: number }[];
+    /** The detector looks at the newest `scan_limit` catalog rows: a sample, not a backlog total. */
+    scan_limit: number;
+    sampled_repair_findings: number;
+    sampled_sensitive_detail_findings: number;
+    /**
+     * Live sensitive-detail chunk index rows, per index store (stores may alias one database).
+     * A store without the table reports null and the error code instead of failing the view.
+     */
+    sensitive_detail_index: {
+      store: string;
+      indexed_objects: number | null;
+      error: string | null;
+    }[];
   };
   delivery_lanes: { lane: string; status: string; total: number }[];
 }
@@ -122,6 +139,8 @@ export interface BuildLogPlatformStatusInput {
   >;
   /** Null for a platform caller: every tenant is counted. */
   tenantId: string | null;
+  /** Platform authority: table-wide statistics are shown only to it. */
+  platform: boolean;
   /** Where `sensitive_detail_chunk_index` may live; counted per store, never summed. */
   sensitiveDetailIndexStores?: { store: string; adapter: DatabaseAdapter }[];
   tenantKey: string | null;
@@ -223,7 +242,7 @@ async function describeArchive(
     reachable: false,
     reachability_error: null,
     table: null,
-    read_budget: { max_files: LOG_ARCHIVE_READ_LIMITS.maxFiles, over_budget: false },
+    table_size_hint: null,
     read_probe: input.readProbe,
   };
   let config: LogIcebergConfig;
@@ -250,10 +269,15 @@ async function describeArchive(
     const summary = summarizeLogArchiveTable(table);
     if (summary.uuid !== config.tableUuid) throw new Error('log_iceberg_table_identity_changed');
     archive.reachable = true;
-    archive.table = summary;
-    const files = summary.current_snapshot?.total_data_files;
-    archive.read_budget.over_budget =
-      typeof files === 'number' && files > LOG_ARCHIVE_READ_LIMITS.maxFiles;
+    if (input.platform) {
+      archive.table = summary;
+      const files = summary.current_snapshot?.total_data_files;
+      archive.table_size_hint = {
+        max_files: LOG_ARCHIVE_READ_LIMITS.maxFiles,
+        data_files_over_limit:
+          typeof files === 'number' && files > LOG_ARCHIVE_READ_LIMITS.maxFiles,
+      };
+    }
   } catch (error) {
     archive.reachability_error = errorCode(error);
   }
@@ -370,14 +394,19 @@ export async function buildLogPlatformStatus(
   const indexStores = input.sensitiveDetailIndexStores ?? [
     { store: 'DB_ADMIN', adapter: input.adapter },
   ];
-  const sensitiveDetailIndex: { store: string; indexed_objects: number }[] = [];
+  const sensitiveDetailIndex: LogPlatformStatus['chunk_catalog']['sensitive_detail_index'] = [];
   for (const { store, adapter } of indexStores) {
-    const indexed = await adapter.queryOne<{ total: unknown }>(
-      `SELECT COUNT(*) AS total FROM sensitive_detail_chunk_index
-       WHERE deleted_at IS NULL${indexScope.sql}`,
-      indexScope.binds
-    );
-    sensitiveDetailIndex.push({ store, indexed_objects: integer(indexed?.total) });
+    try {
+      const indexed = await adapter.queryOne<{ total: unknown }>(
+        `SELECT COUNT(*) AS total FROM sensitive_detail_chunk_index
+         WHERE deleted_at IS NULL${indexScope.sql}`,
+        indexScope.binds
+      );
+      sensitiveDetailIndex.push({ store, indexed_objects: integer(indexed?.total), error: null });
+    } catch (error) {
+      // A store that never held the table (or is down) must not take the whole view with it.
+      sensitiveDetailIndex.push({ store, indexed_objects: null, error: errorCode(error) });
+    }
   }
   const findings = await repository.detectCatalogRepairFindings({
     now: input.now,
@@ -405,8 +434,9 @@ export async function buildLogPlatformStatus(
     delivery,
     audit_coverage: auditCoverage,
     chunk_catalog: {
-      pending_repair_findings: findings.length,
-      sensitive_detail_findings: sensitiveDetailFindings,
+      scan_limit: REPAIR_FINDINGS_LIMIT,
+      sampled_repair_findings: findings.length,
+      sampled_sensitive_detail_findings: sensitiveDetailFindings,
       sensitive_detail_index: sensitiveDetailIndex,
     },
     delivery_lanes: lanes.map((row) => ({
