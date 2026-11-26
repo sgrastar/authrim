@@ -157,7 +157,7 @@ const TABLE_GROUPS: Partial<
       agent_management_executions agent_plan_confirmations approval_request_approvals approval_requests
       blind_index_rotation_jobs idempotency_records logging_catalog_repair_jobs logging_dlq_items
       logging_export_jobs logging_message_export_builds logging_message_idempotency_keys logging_message_jobs
-      logging_message_repair_findings logging_quota_evaluations logging_rewrap_jobs logging_usage_aggregates
+      logging_message_repair_findings logging_quota_evaluations logging_usage_aggregates
       operational_notification_states replay_jobs review_task_groups review_tasks
       rewrap_jobs
     `,
@@ -187,7 +187,7 @@ const TABLE_GROUPS: Partial<
       field_mapping_sets field_mapping_versions identity_mapping_test_users
       internal_notification_delivery_routes key_material_refs
       key_registries key_versions authentication_method_profiles session_profiles login_ui_themes logging_destination_overrides logging_fallback_policies
-      logging_key_material_bodies logging_key_registry logging_key_versions logging_policy_snapshots
+      logging_key_material_bodies logging_policy_snapshots
       logging_quota_policies mapping_conflict_rules mapping_release_rules mapping_rule_edges
       mapping_rules mapping_templates mapping_transform_steps mapping_transform_step_inputs mapping_validation_rules
       protocol_schema_catalogs source_authority_contracts source_profile_parse_drafts

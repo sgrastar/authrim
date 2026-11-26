@@ -53,10 +53,6 @@ import {
   type DestinationKind,
   type DestinationProvider,
 } from '@authrim/ar-lib-logging/destinations';
-import {
-  classifyLoggingRewrapPriority,
-  SqlLoggingRewrapJobQueue,
-} from '@authrim/ar-lib-logging/keys';
 import { createLoggingTenantKeyResolver } from './logging-tenant-key';
 import {
   readEncryptedLoggingMessagePayload,
@@ -129,30 +125,6 @@ interface ScheduledManifestChunkRow {
   byte_count: number | string;
   checksum_sha256: string;
   committed_at: number | string;
-}
-
-interface RewrapCandidateRow {
-  key_registry_id: string;
-  tenant_key: string;
-  surface: string | null;
-  log_type: LogType;
-  plane: LogPlane;
-  active_version: number | string;
-  from_version: number | string;
-  key_version_status: 'rewrap_required' | 'compromised';
-  object_catalog_id: string;
-  object_key: string;
-  record_count: number | string;
-  committed_at: number | string | null;
-}
-
-interface RewrapJobRow {
-  id: string;
-  key_registry_id: string;
-  from_version: number | string;
-  to_version: number | string;
-  status: 'queued' | 'running' | 'succeeded' | 'failed' | 'skipped';
-  metadata: string | null;
 }
 
 interface LoggingQuotaPolicyRow {
@@ -272,13 +244,6 @@ export interface LoggingStorageMaintenanceResult {
   catalogRepair: {
     findings: number;
     applied: number;
-    skipped: number;
-  };
-  rewrap: {
-    candidates: number;
-    jobsCreated: number;
-    dispatched: number;
-    queueUnavailable: number;
     skipped: number;
   };
   messageJobs: {
@@ -1463,269 +1428,6 @@ async function runScheduledCatalogSafeRepair(
     findings: findings.length,
     applied: result.applied.length,
     skipped: result.skipped.length,
-  };
-}
-
-function rewrapCandidateKey(input: {
-  keyRegistryId: string;
-  fromVersion: number;
-  toVersion: number;
-  objectCatalogId: string;
-}): string {
-  return [
-    input.keyRegistryId,
-    String(input.fromVersion),
-    String(input.toVersion),
-    input.objectCatalogId,
-  ].join(':');
-}
-
-async function loadExistingRewrapJobKeys(
-  adapter: DatabaseAdapter,
-  candidates: readonly RewrapCandidateRow[]
-): Promise<Map<string, RewrapJobRow>> {
-  if (candidates.length === 0) {
-    return new Map();
-  }
-
-  const rows = await adapter.query<RewrapJobRow>(
-    `SELECT id, key_registry_id, from_version, to_version, status, metadata
-     FROM logging_rewrap_jobs
-     WHERE status IN ('queued', 'running', 'succeeded', 'failed', 'skipped')
-     ORDER BY created_at DESC
-     LIMIT ?`,
-    [1000]
-  );
-  const candidateKeys = new Set(
-    candidates.map((candidate) =>
-      rewrapCandidateKey({
-        keyRegistryId: candidate.key_registry_id,
-        fromVersion: toInteger(candidate.from_version),
-        toVersion: toInteger(candidate.active_version),
-        objectCatalogId: candidate.object_catalog_id,
-      })
-    )
-  );
-  const existing = new Map<string, RewrapJobRow>();
-  for (const row of rows) {
-    const metadata = parseMetadata(row.metadata);
-    const objectCatalogId =
-      typeof metadata.object_catalog_id === 'string' ? metadata.object_catalog_id : null;
-    if (!objectCatalogId) {
-      continue;
-    }
-    const key = rewrapCandidateKey({
-      keyRegistryId: row.key_registry_id,
-      fromVersion: toInteger(row.from_version),
-      toVersion: toInteger(row.to_version),
-      objectCatalogId,
-    });
-    if (candidateKeys.has(key)) {
-      existing.set(key, row);
-    }
-  }
-  return existing;
-}
-
-async function recordRewrapDispatchEvent(input: {
-  adapter: DatabaseAdapter;
-  now: number;
-  candidate: RewrapCandidateRow;
-  jobId: string;
-  status: 'queued' | 'retrying';
-  errorClass?: string;
-  metadata: Record<string, unknown>;
-}): Promise<void> {
-  await input.adapter.execute(
-    `INSERT INTO logging_delivery_events (
-      id, tenant_key, destination_id, log_type, plane, lane, status, attempt_count,
-      error_class, object_catalog_id, created_at, updated_at, metadata
-    ) VALUES (?, ?, ?, ?, ?, 'bulk', ?, 0, ?, ?, ?, ?, ?)`,
-    [
-      createLoggingId('lde', input.now),
-      input.candidate.tenant_key,
-      `rewrap:${input.jobId}`,
-      input.candidate.log_type,
-      input.candidate.plane,
-      input.status,
-      input.errorClass ?? null,
-      input.candidate.object_catalog_id,
-      input.now,
-      input.now,
-      JSON.stringify(input.metadata),
-    ]
-  );
-}
-
-async function dispatchRewrapJob(input: {
-  env: Env;
-  adapter: DatabaseAdapter;
-  candidate: RewrapCandidateRow;
-  jobId: string;
-  now: number;
-}): Promise<boolean> {
-  const payload = {
-    payload_type: 'rewrap_chunk' as const,
-    schema_version: 1 as const,
-    payload_id: createLoggingId('qpl', input.now),
-    tenant_key: input.candidate.tenant_key,
-    lane: 'bulk' as const,
-    created_at: input.now,
-    rewrap_job_id: input.jobId,
-    object_catalog_id: input.candidate.object_catalog_id,
-  };
-  const result = await enqueueLoggingDeliveryPayload(
-    payload,
-    input.env as unknown as Record<string, unknown>
-  );
-  if (!result.queued) {
-    await recordRewrapDispatchEvent({
-      adapter: input.adapter,
-      now: input.now,
-      candidate: input.candidate,
-      jobId: input.jobId,
-      status: 'retrying',
-      errorClass: 'logging_rewrap_delivery_queue_unavailable',
-      metadata: {
-        payload_id: payload.payload_id,
-        attempted_binding_names: result.attemptedBindingNames,
-      },
-    });
-    return false;
-  }
-
-  await input.adapter.execute(
-    `UPDATE logging_rewrap_jobs
-     SET status = 'running', started_at = ?
-     WHERE id = ? AND status = 'queued'`,
-    [input.now, input.jobId]
-  );
-  await recordRewrapDispatchEvent({
-    adapter: input.adapter,
-    now: input.now,
-    candidate: input.candidate,
-    jobId: input.jobId,
-    status: 'queued',
-    metadata: {
-      payload_id: payload.payload_id,
-      binding_name: result.bindingName,
-      fallback_used: result.fallbackUsed,
-    },
-  });
-  return true;
-}
-
-async function runScheduledRewrapDispatch(
-  env: Env,
-  adapter: DatabaseAdapter,
-  log: LoggingStorageMaintenanceLogger,
-  now: number
-): Promise<LoggingStorageMaintenanceResult['rewrap']> {
-  const candidates = await adapter.query<RewrapCandidateRow>(
-    `SELECT kr.id AS key_registry_id, kr.tenant_key, kr.surface, kr.log_type, kr.plane,
-            kr.active_version, kv.version AS from_version, kv.status AS key_version_status,
-            loc.id AS object_catalog_id, loc.object_key, loc.record_count, loc.committed_at
-     FROM logging_key_registry kr
-     INNER JOIN logging_key_versions kv ON kv.key_registry_id = kr.id
-     INNER JOIN log_object_catalog loc
-       ON loc.tenant_key = kr.tenant_key
-      AND loc.log_type = kr.log_type
-      AND loc.plane = kr.plane
-      AND COALESCE(loc.surface, '') = COALESCE(kr.surface, '')
-      AND loc.key_version = kv.version
-     WHERE kr.status IN ('active', 'rotating', 'stale', 'compromised')
-       AND kv.status IN ('rewrap_required', 'compromised')
-       AND kv.version < kr.active_version
-       AND loc.status = 'committed'
-       AND loc.object_kind = 'chunk'
-       AND loc.encryption_scope IS NOT NULL
-       AND loc.compression IS NOT NULL
-     ORDER BY CASE kv.status WHEN 'compromised' THEN 0 ELSE 1 END,
-              loc.committed_at ASC,
-              loc.id ASC
-     LIMIT ?`,
-    [200]
-  );
-  const existingJobs = await loadExistingRewrapJobKeys(adapter, candidates);
-  const queue = new SqlLoggingRewrapJobQueue(adapter);
-
-  let jobsCreated = 0;
-  let dispatched = 0;
-  let queueUnavailable = 0;
-  let skipped = 0;
-
-  for (const candidate of candidates) {
-    const fromVersion = toInteger(candidate.from_version);
-    const toVersion = toInteger(candidate.active_version);
-    const candidateKey = rewrapCandidateKey({
-      keyRegistryId: candidate.key_registry_id,
-      fromVersion,
-      toVersion,
-      objectCatalogId: candidate.object_catalog_id,
-    });
-    const existing = existingJobs.get(candidateKey);
-    if (existing && existing.status !== 'queued') {
-      skipped += 1;
-      continue;
-    }
-
-    const priority = classifyLoggingRewrapPriority({
-      logType: candidate.log_type,
-      plane: candidate.plane,
-      compromised: candidate.key_version_status === 'compromised',
-      critical: candidate.log_type === 'admin_audit' || candidate.log_type === 'audit',
-    });
-    const job =
-      existing ??
-      (await queue.enqueue({
-        keyRegistryId: candidate.key_registry_id,
-        fromVersion,
-        toVersion,
-        priority: priority.priority,
-        metadata: {
-          object_catalog_id: candidate.object_catalog_id,
-          object_key: candidate.object_key,
-          tenant_key: candidate.tenant_key,
-          log_type: candidate.log_type,
-          plane: candidate.plane,
-          surface: candidate.surface,
-          reason: priority.reason,
-          record_count: toInteger(candidate.record_count),
-        },
-        now,
-      }));
-    if (!existing) {
-      jobsCreated += 1;
-    }
-
-    const queued = await dispatchRewrapJob({
-      env,
-      adapter,
-      candidate,
-      jobId: job.id,
-      now,
-    });
-    if (queued) {
-      dispatched += 1;
-    } else {
-      queueUnavailable += 1;
-    }
-  }
-
-  log.debug?.('Logging key rewrap dispatch completed', {
-    candidates: candidates.length,
-    jobsCreated,
-    dispatched,
-    queueUnavailable,
-    skipped,
-  });
-
-  return {
-    candidates: candidates.length,
-    jobsCreated,
-    dispatched,
-    queueUnavailable,
-    skipped,
   };
 }
 
@@ -4129,15 +3831,9 @@ export async function runScheduledRetiredR2GenerationCleanup(
       row.object_catalog_id,
       row.tenant_key,
     ]);
-    // A rewrapped generation is superseded once its replacement is served, or once the catalog
-    // row is deleted (an expired archive chunk is retired after a rewrap moved it): a deleted row
-    // serves no body.
+    // A deleted catalog row serves no body, so its retired object can be removed.
     const safelyRetired =
-      !current ||
-      (row.reason === 'rewrap' &&
-        (current.status === 'deleted' ||
-          (current.status === 'committed' && current.object_key === row.replacement_object_key))) ||
-      (row.reason === 'catalog_delete' && current.status === 'deleted');
+      !current || (row.reason === 'catalog_delete' && current.status === 'deleted');
     // A deleted catalog row keeps the key of the body it no longer serves; any other row that
     // still names the key is still served from it.
     if (
@@ -4176,7 +3872,6 @@ export async function processLoggingStorageMaintenanceJobs(
     healthChecks: { checked: 0, failed: 0 },
     manifests: { published: 0, skipped: 0 },
     catalogRepair: { findings: 0, applied: 0, skipped: 0 },
-    rewrap: { candidates: 0, jobsCreated: 0, dispatched: 0, queueUnavailable: 0, skipped: 0 },
     messageJobs: {
       repaired: 0,
       repairFindings: 0,
@@ -4216,12 +3911,6 @@ export async function processLoggingStorageMaintenanceJobs(
   }
 
   try {
-    result.rewrap = await runScheduledRewrapDispatch(env, adapter, log, now);
-  } catch (error) {
-    log.error('Logging key rewrap dispatch failed', {}, error as Error);
-  }
-
-  try {
     result.messageJobs = await runScheduledLoggingMessageJobs(env, adapter, log, now);
   } catch (error) {
     log.error('Logging message job scheduled processing failed', {}, error as Error);
@@ -4249,7 +3938,6 @@ export async function processLoggingStorageMaintenanceJobs(
     healthChecks: result.healthChecks,
     manifests: result.manifests,
     catalogRepair: result.catalogRepair,
-    rewrap: result.rewrap,
     messageJobs: result.messageJobs,
     usage: result.usage,
     retention: result.retention,

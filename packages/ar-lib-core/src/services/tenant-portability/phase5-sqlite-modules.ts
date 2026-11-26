@@ -81,8 +81,6 @@ export const PHASE5_SQLITE_TABLE_GROUPS: readonly Phase5TableGroup[] = [
       'logging_destination_overrides',
       'logging_fallback_policies',
       'logging_key_material_bodies',
-      'logging_key_registry',
-      'logging_key_versions',
       'logging_policy_snapshots',
       'logging_quota_policies',
       'storage_destination_assignments',

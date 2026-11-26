@@ -250,16 +250,16 @@ it('keeps scoped settings and children at the original tenant boundary through s
   }
 });
 
-it('pins tenantKey separately from tenant ID for logs and parent-owned key versions', async () => {
-  const sql = `CREATE TABLE logging_key_registry(id TEXT PRIMARY KEY NOT NULL,tenant_key TEXT NOT NULL);
-    CREATE TABLE logging_key_versions(id TEXT PRIMARY KEY NOT NULL,key_registry_id TEXT NOT NULL,value TEXT);`;
+it('pins tenantKey separately from tenant ID for logs', async () => {
+  const sql = `CREATE TABLE logging_key_material_bodies(id TEXT PRIMARY KEY NOT NULL,tenant_key TEXT NOT NULL);`;
   const plan = planSqliteTenantDatasets('admin', schemas(sql), selection);
   expect(plan.entries.every((entry) => entry.concerns.length === 0)).toBe(true);
   const db = new DatabaseSync(':memory:');
   try {
     db.exec(sql + SQLITE_SNAPSHOT_SCHEMA);
-    db.exec(`INSERT INTO logging_key_registry VALUES ('ours','key-a'),('collision','a'),('other','key-b');
-      INSERT INTO logging_key_versions VALUES ('our-key','ours','old'),('wrong-key','collision','hidden'),('other-key','other','hidden');`);
+    db.exec(
+      `INSERT INTO logging_key_material_bodies VALUES ('ours','key-a'),('collision','a'),('other','key-b');`
+    );
     for (const schema of plan.captureSchemas) db.exec(sqliteSnapshotTriggers(schema));
     expect(() => sqliteSnapshotStartStatement(plan.captureSchemas, 'snapshot', 'a')).toThrow(
       'snapshot_missing_tenant_key'
@@ -272,8 +272,7 @@ it('pins tenantKey separately from tenant ID for logs and parent-owned key versi
     expect(() => db.exec("UPDATE tenant_backup_snapshots SET tenant_id='b'")).toThrow(
       'snapshot_identity_immutable'
     );
-    db.exec(`UPDATE logging_key_registry SET tenant_key='key-b' WHERE id='ours';
-      UPDATE logging_key_versions SET value='changed';`);
+    db.exec("UPDATE logging_key_material_bodies SET tenant_key='key-b' WHERE id='ours'");
     for (const schema of plan.captureSchemas) {
       const rows = db.prepare(sqliteSnapshotPageQuery(schema)).all('snapshot', 'a', '', 100);
       expect(rows).toHaveLength(1);
@@ -285,9 +284,7 @@ it('pins tenantKey separately from tenant ID for logs and parent-owned key versi
       for await (const part of packedSqliteRowToJson(chunks(), schema.columns))
         json += new TextDecoder().decode(part);
       const record = JSON.parse(json);
-      if (schema.table === 'logging_key_versions')
-        expect(record).toMatchObject({ id: ['text', 'our-key'], value: ['text', 'old'] });
-      else expect(record).toMatchObject({ id: ['text', 'ours'], tenant_key: ['text', 'key-a'] });
+      expect(record).toMatchObject({ id: ['text', 'ours'], tenant_key: ['text', 'key-a'] });
       expect(
         db.prepare(sqliteSnapshotPageQuery(schema)).all('snapshot', 'b', '', 100)
       ).toHaveLength(0);

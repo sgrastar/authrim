@@ -159,7 +159,6 @@ export const PHASE8_RESTORE_HOLD_RULES: Readonly<Record<string, HoldRule>> = {
   'admin.logging_message_export_builds': { reason: 'source_logging_workflow', all: true },
   'admin.logging_message_jobs': { reason: 'source_logging_workflow', all: true },
   'admin.logging_message_repair_findings': { reason: 'source_logging_workflow', all: true },
-  'admin.logging_rewrap_jobs': { reason: 'source_logging_workflow', all: true },
   'admin.replay_jobs': { reason: 'source_admin_workflow', all: true },
   'admin.review_task_groups': { reason: 'source_approval_workflow', all: true },
   'admin.review_tasks': { reason: 'source_approval_workflow', all: true },
