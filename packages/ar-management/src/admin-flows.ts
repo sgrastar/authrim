@@ -46,6 +46,7 @@ import {
   requireDedicatedAdminDatabaseAdapter,
   readFlowConsentStatements,
   MAX_FLOW_CONSENT_STATEMENTS,
+  resolveRuntimeScreenRow,
   screenShowsConsentWidget,
   type ScreenField,
 } from '@authrim/ar-lib-core';
@@ -640,19 +641,28 @@ async function validateConsentScreenReference(
   path: string,
   screenRef: string,
   /** The consent box must also be shown (a screen that asks for consent on its own submit). */
-  shownOnly = false
+  shownOnly = false,
+  /** The step's component: what the generic `basic_profile` ref (and a missing screen) shows. */
+  component?: string
 ): Promise<FlowValidationIssue[]> {
-  const screen = await db.queryOne<{
-    id: string;
-    is_active: number;
-    fields_json: string;
-  }>(
-    `SELECT id, is_active, fields_json
+  // A step that asks for consent on its screen is judged by the screen a person would see: the
+  // runtime's own resolution (the generic ref, the system screen of a built-in key).
+  const resolved = shownOnly
+    ? await resolveRuntimeScreenRow(db, tenantId, screenRef, component)
+    : null;
+  const screen = resolved
+    ? { id: resolved.id, is_active: 1, fields_json: resolved.fields_json ?? '[]' }
+    : await db.queryOne<{
+        id: string;
+        is_active: number;
+        fields_json: string;
+      }>(
+        `SELECT id, is_active, fields_json
        FROM screens
       WHERE tenant_id = ? AND (id = ? OR screen_key = ?)
       LIMIT 1`,
-    [tenantId, screenRef, screenRef]
-  );
+        [tenantId, screenRef, screenRef]
+      );
   if (!screen) {
     return [
       {
@@ -779,6 +789,13 @@ async function validateConsentStatements(
   return issues;
 }
 
+/** The step components that show a screen: one with statements asks for consent on its own submit. */
+const SCREEN_CONSENT_COMPONENTS: ReadonlySet<string> = new Set([
+  'screen',
+  'registration_method_selector',
+  'authentication_method_selector',
+]);
+
 /**
  * The statements of every runtime step, as published (also for a Flow imported without an editor
  * that lists them): checked as the editor's nodes are, always as publish-blocking errors.
@@ -808,7 +825,7 @@ async function validateRuntimeConsentStatements(
     // A screen that asks for consent on its own submit must show a consent box, whether its
     // contract came from the editor or was imported as it is.
     if (
-      (step.component === 'screen' || step.component === 'registration_method_selector') &&
+      SCREEN_CONSENT_COMPONENTS.has(step.component) &&
       (readFlowConsentStatements(config)?.length ?? 0) > 0
     ) {
       const path = `$.runtime.ui.steps[${index}].config`;
@@ -821,7 +838,8 @@ async function validateRuntimeConsentStatements(
               step.source_node_id,
               path,
               screenRef,
-              true
+              true,
+              step.component
             )
           : [
               {
@@ -848,7 +866,7 @@ async function validateRuntimeConsentStatements(
 function duplicateScreenConsentIssues(runtime: FlowRuntimeContract): FlowValidationIssue[] {
   const onScreens = new Map<string, string>();
   for (const step of runtime.ui.steps) {
-    if (step.component !== 'screen' && step.component !== 'registration_method_selector') continue;
+    if (!SCREEN_CONSENT_COMPONENTS.has(step.component)) continue;
     for (const entry of readFlowConsentStatements(step.config) ?? []) {
       if (!onScreens.has(entry.statement_id))
         onScreens.set(entry.statement_id, step.source_node_id);
