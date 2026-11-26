@@ -57,12 +57,6 @@ const valid: Record<string, Record<string, unknown>> = {
     dlq_item_id: 'dlq_1',
     requested_by: 'admin_1',
   },
-  rewrap_chunk: {
-    ...envelope,
-    payload_type: 'rewrap_chunk',
-    rewrap_job_id: 'rw_1',
-    object_catalog_id: 'cat_1',
-  },
 };
 
 const required: Record<string, string[]> = {
@@ -92,7 +86,6 @@ const required: Record<string, string[]> = {
     'record_count',
   ],
   dlq_replay: ['dlq_item_id', 'requested_by'],
-  rewrap_chunk: ['rewrap_job_id', 'object_catalog_id'],
 };
 
 const base = (payload: Record<string, unknown>) => ({
@@ -112,7 +105,6 @@ describe('parseLoggingDeliveryQueuePayload', () => {
       log_chunk_delivery: [1],
       http_sink_batch: [1],
       dlq_replay: [1],
-      rewrap_chunk: [1],
     });
   });
 
@@ -197,8 +189,6 @@ describe('parseLoggingDeliveryQueuePayload', () => {
     expect(wrongKind('http_sink_batch', 'record_count', '3')).toBe(false);
     expect(wrongKind('dlq_replay', 'dlq_item_id', 5)).toBe(false);
     expect(wrongKind('dlq_replay', 'requested_by', 5)).toBe(false);
-    expect(wrongKind('rewrap_chunk', 'rewrap_job_id', 5)).toBe(false);
-    expect(wrongKind('rewrap_chunk', 'object_catalog_id', 5)).toBe(false);
   });
 
   it('accepts only known log types and planes', () => {
