@@ -50,7 +50,9 @@
 	{#if single}
 		<div class="switcher switcher--static">{@render face(current)}</div>
 	{:else}
-		<Popover label={t('scope.switch.title')}>
+		<!-- The panel is start-aligned under a trigger that sits ~90px in on phones (menu button + brand),
+		     so the width leaves that much room rather than the plain viewport margin. -->
+		<Popover label={t('scope.switch.title')} width="min(360px, calc(100vw - 110px))">
 			{#snippet trigger()}
 				<span class="switcher">
 					{@render face(current)}
@@ -80,19 +82,19 @@
 									>{option.mark}</span
 								>
 								<span class="option__body">
-									<span class="option__name">{option.name}</span>
+									<span class="option__name" title={option.name}>{option.name}</span>
 									{#if option.kind === 'platform'}
 										<span class="option__hint">{t('scope.hint.platform')}</span>
 									{/if}
 								</span>
-								{#if option.status}
-									<span class="option__status">
+								<span class="option__end">
+									{#if option.status}
 										<Badge tone={option.status.tone} dot size="sm">{option.status.label}</Badge>
+									{/if}
+									<span class="option__check">
+										{#if option.id === current.id}<Icon name="check" />{/if}
 									</span>
-								{/if}
-								{#if option.id === current.id}
-									<span class="option__check"><Icon name="check" /></span>
-								{/if}
+								</span>
 							</button>
 						</li>
 					{/each}
@@ -196,7 +198,7 @@
 
 	.option {
 		display: flex;
-		align-items: flex-start;
+		align-items: center;
 		gap: 9px;
 		width: 100%;
 		padding: 8px;
@@ -223,9 +225,13 @@
 		flex: 1;
 	}
 
-	.option__status {
+	/* Badge and check sit in one trailing group; the check slot is always there, so every badge
+	   ends at the same edge whether or not its row is the current one. */
+	.option__end {
 		display: inline-flex;
 		flex-shrink: 0;
+		align-items: center;
+		gap: 8px;
 		margin-inline-start: auto;
 	}
 
@@ -244,9 +250,11 @@
 
 	.option__name {
 		display: block;
-		overflow-wrap: anywhere;
+		overflow: hidden;
 		font-size: var(--fs-body);
 		font-weight: var(--fw-semibold);
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 
 	.option__hint {
@@ -259,7 +267,8 @@
 
 	.option__check {
 		display: inline-flex;
-		margin-inline-start: auto;
+		width: var(--icon-md);
+		justify-content: center;
 		color: var(--primary);
 		--icon-size: var(--icon-md);
 	}

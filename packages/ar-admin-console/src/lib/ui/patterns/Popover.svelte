@@ -85,7 +85,12 @@
 		{@render trigger()}
 	</button>
 	{#if open}
-		<div class="popover__panel popover__panel--{align}" id="{uid}-panel" style:width>
+		<div
+			class="popover__panel popover__panel--{align}"
+			id="{uid}-panel"
+			style:width
+			style:max-width={width ? 'calc(100vw - 24px)' : undefined}
+		>
 			{@render children({ close: () => close(true) })}
 		</div>
 	{/if}
@@ -130,6 +135,7 @@
 		top: calc(100% + 7px);
 		z-index: var(--z-menu);
 		min-width: 264px;
+		/* A caller's width wins over this cap (the inline max-width then only keeps it on screen). */
 		max-width: min(320px, calc(100vw - 24px));
 		padding: 6px;
 		border: 1px solid var(--border);
