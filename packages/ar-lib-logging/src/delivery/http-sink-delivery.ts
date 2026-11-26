@@ -44,20 +44,23 @@ function isBlockedHttpSinkHostname(hostname: string): boolean {
     if (octets.some((octet) => !Number.isInteger(octet) || octet < 0 || octet > 255)) {
       return true;
     }
-    const [a, b] = octets;
+    // Keep this table identical to isBlockedIPv4 in ar-lib-core/src/utils/url-security.ts.
+    // ar-lib-core depends on this package, so it cannot be imported here; parity is pinned by
+    // ar-lib-core's http-sink-ip-range-parity test. The documentation ranges are the /24s
+    // (192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24), not the enclosing /16s.
+    const [a, b, c] = octets;
     return (
       a === 0 ||
       a === 10 ||
       a === 127 ||
       (a === 100 && b >= 64 && b <= 127) ||
-      (a === 168 && b === 63 && octets[2] === 129 && octets[3] === 16) ||
+      (a === 168 && b === 63 && c === 129 && octets[3] === 16) ||
       (a === 169 && b === 254) ||
       (a === 172 && b >= 16 && b <= 31) ||
-      (a === 192 && b === 0) ||
+      (a === 192 && b === 0 && c === 2) ||
       (a === 192 && b === 168) ||
-      (a === 198 && b === 51) ||
-      (a === 198 && (b === 18 || b === 19)) ||
-      (a === 203 && b === 0) ||
+      (a === 198 && (b === 18 || b === 19 || (b === 51 && c === 100))) ||
+      (a === 203 && b === 0 && c === 113) ||
       a >= 224
     );
   }

@@ -210,7 +210,13 @@ function validateStorageDestinationConfig(
 ): { valid: true } | { valid: false; fields: ReturnType<typeof fieldError>[] } {
   const result = validateDestinationProviderConfig(provider, config);
   const fields = result.errors.map((error) =>
-    fieldError(`config.${error.field}`, error.message, `Config field ${error.field} is required.`)
+    fieldError(
+      `config.${error.field}`,
+      error.message,
+      error.message === 'invalid_value'
+        ? `Config field ${error.field} has an unsupported value.`
+        : `Config field ${error.field} is required.`
+    )
   );
   const forbiddenPath = findForbiddenStorageDestinationConfigPath(config);
   if (forbiddenPath) {
