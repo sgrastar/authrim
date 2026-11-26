@@ -36,7 +36,7 @@ export const deLogPlatform: Record<keyof typeof jaLogPlatform, string> = {
 	'lplat.archive.table.never': 'Noch keine',
 	'lplat.archive.overLimit.title': 'Mehr Datendateien, als ein Lesevorgang öffnen kann',
 	'lplat.archive.overLimit.body':
-		'Die Tabelle hat {files} Datendateien, ein Lesevorgang öffnet höchstens {max}. Protokollansichten bleiben unvollständig. Läuft die Verdichtung nicht, fehlt womöglich das Wartungs-Credential des Catalogs (setup update registriert es).',
+		'Die Tabelle hat {files} Datendateien, ein Lesevorgang öffnet höchstens {max}. Lesevorgänge werden zuvor nach Mandant und Zeitraum eingegrenzt und schlagen daher nicht zwangsläufig fehl, aber Protokollansichten könnten unvollständig bleiben (das tatsächliche Ergebnis zeigt die Leseprüfung). Läuft die Verdichtung nicht, fehlt womöglich das Wartungs-Credential des Catalogs (setup update registriert es).',
 	'lplat.archive.tenantNote': 'Tabellenweite Statistiken sehen nur Plattformadministratoren.',
 
 	'lplat.probe.title': 'Leseprüfung',

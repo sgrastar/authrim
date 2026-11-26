@@ -47,7 +47,7 @@ export async function answerAuditMock(
 			segments[2] === 'apply-safe' &&
 			segments.length === 3
 		) {
-			return { status: 200, body: { item: await devLogPlatform.applySafeRepairs() } };
+			return { status: 200, body: { item: await devLogPlatform.applySafeRepairs(200) } };
 		}
 		return null;
 	}

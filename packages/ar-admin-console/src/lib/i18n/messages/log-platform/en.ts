@@ -35,7 +35,7 @@ export const enLogPlatform: Record<keyof typeof jaLogPlatform, string> = {
 	'lplat.archive.table.never': 'None yet',
 	'lplat.archive.overLimit.title': 'More data files than one read can open',
 	'lplat.archive.overLimit.body':
-		'The table has {files} data files and one read opens at most {max}. Log views will come back incomplete. If compaction is not running, the Catalog maintenance credential may be missing (setup update registers it).',
+		'The table has {files} data files and one read opens at most {max}. Reads are narrowed by tenant and period first, so they do not necessarily fail, but log views are at risk of coming back incomplete (the read check shows the actual result). If compaction is not running, the Catalog maintenance credential may be missing (setup update registers it).',
 	'lplat.archive.tenantNote': 'Table-wide statistics are shown to platform administrators only.',
 
 	'lplat.probe.title': 'Read check',

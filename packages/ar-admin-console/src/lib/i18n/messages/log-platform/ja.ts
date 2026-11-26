@@ -33,7 +33,7 @@ export const jaLogPlatform = {
 	'lplat.archive.table.never': 'まだありません',
 	'lplat.archive.overLimit.title': 'データファイルが読み取り上限を超えています',
 	'lplat.archive.overLimit.body':
-		'テーブルには {files} 個のデータファイルがあり、1 回の読み取りで開けるのは {max} 個までです。ログの表示が不完全になります。コンパクションが動いていない場合、Catalog の保守資格情報が未登録の可能性があります（setup update で登録されます）。',
+		'テーブルには {files} 個のデータファイルがあり、1 回の読み取りで開けるのは {max} 個までです。読み取りはテナント・期間で絞ってから行うため必ず失敗するわけではありませんが、ログの表示が不完全になるおそれがあります（実際の結果は「読み取りの確認」を見てください）。コンパクションが動いていない場合、Catalog の保守資格情報が未登録の可能性があります（setup update で登録されます）。',
 	'lplat.archive.tenantNote': 'テーブル全体の統計は基盤管理者にだけ表示されます。',
 
 	'lplat.probe.title': '読み取りの確認',

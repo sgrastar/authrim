@@ -84,7 +84,7 @@
 		repairFailed = false;
 		repairResult = null;
 		try {
-			repairResult = await client.applySafeRepairs();
+			repairResult = await client.applySafeRepairs(status?.chunk_catalog.scan_limit ?? 200);
 			await load();
 		} catch (error) {
 			if (!(error instanceof StepUpCancelledError)) repairFailed = true;

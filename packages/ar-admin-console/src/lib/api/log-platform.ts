@@ -122,8 +122,12 @@ export interface SafeRepairResult {
 
 export interface LogPlatformClient {
 	status(signal?: AbortSignal): Promise<LogPlatformStatus>;
-	/** Applies every finding the detector marks safe; the server may ask for a step-up first. */
-	applySafeRepairs(): Promise<SafeRepairResult>;
+	/**
+	 * Applies every finding the detector marks safe, scanning as many catalog rows as the status
+	 * did (`scan_limit`) so the action reaches what the page showed; the server may ask for a
+	 * step-up first.
+	 */
+	applySafeRepairs(scanLimit: number): Promise<SafeRepairResult>;
 }
 
 const BASE = `${API_BASE_URL}/api/admin/admin-logging`;
@@ -135,12 +139,12 @@ export const httpLogPlatform: LogPlatformClient = {
 		const body = (await response.json()) as { item: LogPlatformStatus };
 		return body.item;
 	},
-	applySafeRepairs() {
+	applySafeRepairs(scanLimit) {
 		return withStepUp(async (receipt) => {
 			const response = await adminFetch(`${BASE}/catalog-repairs/apply-safe`, {
 				method: 'POST',
 				headers: stepUpHeaders(receipt),
-				body: JSON.stringify({}),
+				body: JSON.stringify({ limit: scanLimit }),
 				includeJsonContentType: true
 			});
 			if (!response.ok) throw await errorFromResponse(response);

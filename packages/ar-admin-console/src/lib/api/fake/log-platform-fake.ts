@@ -237,10 +237,11 @@ export function createFakeLogPlatform(options: FakeLogPlatformOptions = {}): Log
 			}
 			return structuredClone(status);
 		},
-		async applySafeRepairs(): Promise<SafeRepairResult> {
+		async applySafeRepairs(scanLimit): Promise<SafeRepairResult> {
 			if (options.delay) await wait(options.delay);
 			if (options.repairFails) throw new ApiError(500, 'server_error', 'Repair failed');
-			const findings = status.chunk_catalog.sampled_repair_findings;
+			// The real detector looks at `scanLimit` rows; the sample has fewer findings than that.
+			const findings = Math.min(status.chunk_catalog.sampled_repair_findings, scanLimit);
 			const applied = Math.min(options.repairApplied ?? findings, findings);
 			status = structuredClone(status);
 			status.chunk_catalog.sampled_repair_findings = findings - applied;
