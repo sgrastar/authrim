@@ -453,6 +453,8 @@ function isAdminWalletLoginPath(pathname: string): boolean {
 
 function isAdminBootstrapProxyPath(pathname: string): boolean {
 	return (
+		// Which methods the sign-in page offers: read before anyone is signed in.
+		pathname === '/api/admin/auth/methods' ||
 		pathname === '/api/admin/auth/passkey/options' ||
 		pathname === '/api/admin/auth/passkey/verify' ||
 		isAdminWalletLoginPath(pathname) ||

@@ -78,6 +78,17 @@ export const jaSettings = {
 	'set.kind.totp': '認証アプリ',
 	'set.kind.totp.desc':
 		'6 桁のコードを使います。フィッシングに弱いため、キーを持てない管理者のためにだけ許可してください。',
+	'set.section.adminSignInMethods': '管理者ログインで使用するログイン方式',
+	'set.section.adminSignInMethods.desc':
+		'管理コンソールのログイン画面に出す方式です。全テナントに適用されます。変更できるのはプラットフォーム管理者だけです。',
+	'set.k.security.admin_sign_in_methods': 'ログイン方式',
+	'set.k.security.admin_sign_in_methods.desc':
+		'パスキーは常に使えます。VC（ウォレット）をオンにすると、ログイン画面に「このデバイスのウォレットを開く」が現れ、管理者クレデンシャルの提示でログインできます。オフのあいだは、ボタンが出ないだけでなく API もウォレットでのログインを拒否します。',
+	'set.method.passkey': 'パスキー',
+	'set.method.passkey.desc': '登録済みのパスキーで本人確認します。常に使えます。',
+	'set.method.vc': 'VC（ウォレット）',
+	'set.method.vc.desc':
+		'ウォレットに入れた管理者クレデンシャルを提示してログインします。実装途中のため、初期値はオフです。',
 	'set.k.security.admin_step_up_enforced': '管理操作の追加確認を求める',
 	'set.k.security.admin_step_up_enforced.desc':
 		'オフにすると、重要な管理操作の前のパスキーと 2 要素目の確認を省きます。移行作業のあいだだけオフにしてください。オフにする操作にも L2 の確認が必要です。',

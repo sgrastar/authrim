@@ -27,6 +27,12 @@ const packageSpecs = [
           adminSetupApiApp: '',
         },
       },
+      {
+        file: 'packages/ar-auth/src/admin-sign-in-methods.ts',
+        receiverPrefixes: {
+          adminSignInMethodsApp: '',
+        },
+      },
     ],
     openapiFiles: ['packages/ar-auth/openapi/auth.openapi.yaml'],
   },

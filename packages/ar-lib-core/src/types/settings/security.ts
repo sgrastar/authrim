@@ -27,6 +27,7 @@ export interface SecuritySettings {
   'security.admin_step_up_overrides': Record<string, 'L1' | 'L2'>;
   'security.admin_second_factor_allowed_kinds': Array<'hardware' | 'totp'>;
   'security.admin_keyring_dc_api': boolean;
+  'security.admin_sign_in_methods': Array<'passkey' | 'vc'>;
   'security.admin_last_resort_reenroll_window_seconds': number;
 
   // OAuth Security Requirements
@@ -147,6 +148,18 @@ export const SECURITY_SETTINGS_META: Record<keyof SecuritySettings, SettingMeta>
     label: 'Keyring through the Digital Credentials API',
     description:
       'Let admins present their Keyring credential through the browser (Digital Credentials API, OpenID4VP) instead of a QR code, where the browser supports it. The browser binds the answer to the console origin. Off until the wallet supports it',
+    visibility: 'admin',
+  },
+  'security.admin_sign_in_methods': {
+    key: 'security.admin_sign_in_methods',
+    // One list for the whole deployment: the console's sign-in page is the same on every host.
+    scopes: ['platform'],
+    type: 'json',
+    default: ['passkey'],
+    envKey: 'ADMIN_SIGN_IN_METHODS',
+    label: 'Admin Sign-in Methods',
+    description:
+      'Which ways an administrator can sign in to the console: passkey is always there; vc adds signing in by presenting the admin credential from a wallet (the console shows the wallet button and the sign-in endpoints accept it). A value that is not a valid list reads as passkey only',
     visibility: 'admin',
   },
   'security.admin_last_resort_reenroll_window_seconds': {
@@ -409,6 +422,7 @@ export const SECURITY_DEFAULTS: SecuritySettings = {
   'security.admin_step_up_overrides': {},
   'security.admin_second_factor_allowed_kinds': ['hardware'],
   'security.admin_keyring_dc_api': false,
+  'security.admin_sign_in_methods': ['passkey'],
   'security.admin_last_resort_reenroll_window_seconds': 86400,
   // New settings
   'security.pkce_required': false,

@@ -9,6 +9,8 @@ import {
   ADMIN_STEP_UP_OVERRIDES_KEY,
   ADMIN_SECOND_FACTOR_ALLOWED_KINDS_KEY,
   adminSecondFactorAllowedKindsProblem,
+  adminSignInMethodsProblem,
+  ADMIN_SIGN_IN_METHODS_KEY,
   ialAssuranceValuesProblem,
   ialMapProblem,
   idaProfileProblem,
@@ -232,7 +234,12 @@ export function validateSecurityPatch(body: SettingsPatchRequest): string | null
   }
   const allowedKinds = body.set?.[ADMIN_SECOND_FACTOR_ALLOWED_KINDS_KEY];
   if (allowedKinds !== undefined) {
-    return adminSecondFactorAllowedKindsProblem(allowedKinds);
+    const problem = adminSecondFactorAllowedKindsProblem(allowedKinds);
+    if (problem) return problem;
+  }
+  const signInMethods = body.set?.[ADMIN_SIGN_IN_METHODS_KEY];
+  if (signInMethods !== undefined) {
+    return adminSignInMethodsProblem(signInMethods);
   }
   return null;
 }

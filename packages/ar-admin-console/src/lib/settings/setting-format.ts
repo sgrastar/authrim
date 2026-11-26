@@ -45,6 +45,12 @@ export function formatSetting(key: string, meta: SettingMeta, value: unknown): s
 			.map((kind) => (kind === 'totp' ? t('set.kind.totp') : t('set.kind.hardware')))
 			.join(', ');
 	}
+	// So do the ways an admin can sign in.
+	if (key === 'security.admin_sign_in_methods' && Array.isArray(value)) {
+		return value
+			.map((method) => (method === 'vc' ? t('set.method.vc') : t('set.method.passkey')))
+			.join(', ');
+	}
 	// An empty map (no operation raised, say) reads as nothing set, not as `{}`.
 	if (meta.type === 'json' && isEmptyObject(value)) return t('settings.value.empty');
 	switch (meta.type) {
