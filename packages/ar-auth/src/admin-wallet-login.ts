@@ -28,6 +28,7 @@ import {
   requireDedicatedAdminDatabaseAdapter,
   scheduleAdminAuthenticationAudit,
 } from '@authrim/ar-lib-core';
+import { readAdminSignInMethods } from './admin-sign-in-methods';
 import { getRequestIssuer } from './issuer';
 import { resolveSessionTtl } from './session-ttl';
 
@@ -63,6 +64,16 @@ function configuredConsoleOrigin(env: Env): string | null {
 function refuse(c: Context<{ Bindings: Env }>, status: 400 | 403 | 404 | 424 | 503, error: string) {
   c.header('Cache-Control', 'no-store');
   return c.json({ error }, status);
+}
+
+/**
+ * The response refusing a wallet sign-in the platform has not turned on
+ * (`security.admin_sign_in_methods` without `vc`), or null when it may go ahead. Checked at every
+ * step, so a login started before the switch was turned off cannot complete after it.
+ */
+async function refuseUnlessWalletSignInOn(c: Context<{ Bindings: Env }>): Promise<Response | null> {
+  const methods = await readAdminSignInMethods(c.env, getTenantIdFromContext(c));
+  return methods.has('vc') ? null : refuse(c, 403, 'wallet_login_disabled');
 }
 
 function bindingCookieOptions(c: Context<{ Bindings: Env }>) {
@@ -107,6 +118,8 @@ adminWalletLoginApp.use(`${BASE}/*`, limitRequests);
 
 adminWalletLoginApp.post(`${BASE}/start`, async (c) => {
   if (!c.env.VC_ISSUER) return refuse(c, 424, 'wallet_login_unavailable');
+  const refused = await refuseUnlessWalletSignInOn(c);
+  if (refused) return refused;
   const body = await jsonBody(c);
   const flow = body?.flow;
   // Admin sign-in is same-device only (HAIP 1.0 §5.1): a QR shown here could be answered by anyone
@@ -148,6 +161,8 @@ adminWalletLoginApp.post(`${BASE}/start`, async (c) => {
 
 adminWalletLoginApp.get(`${BASE}/status`, async (c) => {
   if (!c.env.VC_ISSUER) return refuse(c, 424, 'wallet_login_unavailable');
+  const refused = await refuseUnlessWalletSignInOn(c);
+  if (refused) return refused;
   const requestId = c.req.query('request_id') ?? '';
   const bindingSecret = getCookie(c, BINDING_COOKIE);
   if (!REQUEST_ID.test(requestId) || !bindingSecret) return refuse(c, 400, 'invalid_request');
@@ -175,6 +190,8 @@ adminWalletLoginApp.get(`${BASE}/status`, async (c) => {
 
 adminWalletLoginApp.post(`${BASE}/complete`, async (c) => {
   if (!c.env.VC_ISSUER) return refuse(c, 424, 'wallet_login_unavailable');
+  const refused = await refuseUnlessWalletSignInOn(c);
+  if (refused) return refused;
   const body = await jsonBody(c);
   const requestId = body?.request_id;
   const responseCode = body?.response_code;

@@ -78,6 +78,17 @@ export const deSettings: Record<keyof typeof jaSettings, string> = {
 	'set.kind.totp': 'Authenticator-App',
 	'set.kind.totp.desc':
 		'Ein 6-stelliger Code. Er ist anfällig für Phishing: Erlauben Sie ihn nur für Admins, die keinen Schlüssel haben können.',
+	'set.section.adminSignInMethods': 'Anmeldeverfahren für Administratoren',
+	'set.section.adminSignInMethods.desc':
+		'Die Verfahren, die die Anmeldeseite der Konsole anbietet. Gilt für alle Mandanten. Nur Plattform-Administratoren können es ändern.',
+	'set.k.security.admin_sign_in_methods': 'Anmeldeverfahren',
+	'set.k.security.admin_sign_in_methods.desc':
+		'Ein Passkey ist immer verfügbar. Mit VC (Wallet) erscheint auf der Anmeldeseite „Wallet auf diesem Gerät öffnen“, sodass sich Administratoren durch Vorlegen ihres Admin-Nachweises anmelden können. Solange es aus ist, bleibt die Schaltfläche verborgen und die API lehnt Wallet-Anmeldungen ebenfalls ab.',
+	'set.method.passkey': 'Passkey',
+	'set.method.passkey.desc': 'Prüft die Person mit einem registrierten Passkey. Immer verfügbar.',
+	'set.method.vc': 'VC (Wallet)',
+	'set.method.vc.desc':
+		'Anmeldung durch Vorlegen des Admin-Nachweises aus einer Wallet. Standardmäßig aus, solange die Funktion im Aufbau ist.',
 	'set.k.security.admin_step_up_enforced':
 		'Zusätzliche Prüfungen vor Verwaltungsvorgängen verlangen',
 	'set.k.security.admin_step_up_enforced.desc':

@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   create: vi.fn(),
   status: vi.fn(),
   consume: vi.fn(),
+  methods: vi.fn(),
 }));
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
@@ -32,6 +33,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   };
 });
 vi.mock('../issuer', () => ({ getRequestIssuer: () => 'https://idp.example.com' }));
+vi.mock('../admin-sign-in-methods', () => ({ readAdminSignInMethods: mocks.methods }));
 vi.mock('../session-ttl', () => ({ resolveSessionTtl: mocks.ttl }));
 
 import { adminWalletLoginApp, ADMIN_WALLET_LOGIN_CALLBACK_PATH } from '../admin-wallet-login';
@@ -78,6 +80,7 @@ const setCookies = (response: Response) => response.headers.getSetCookie();
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.methods.mockResolvedValue(new Set(['passkey', 'vc']));
   mocks.ttl.mockResolvedValue({ seconds: 600, milliseconds: 600_000 });
   mocks.eligibility.mockResolvedValue({ eligible: true, email: 'a@example.com', name: 'A' });
   mocks.createSession.mockResolvedValue({});
@@ -323,5 +326,33 @@ describe('complete', () => {
     expect(setCookies(failed).some((value) => value.startsWith('authrim_admin_session='))).toBe(
       false
     );
+  });
+});
+
+describe('the platform switch', () => {
+  it('refuses every step while the platform has not turned wallet sign-in on', async () => {
+    mocks.methods.mockResolvedValue(new Set(['passkey']));
+    const start = await request('/start', { method: 'POST', body: { flow: 'same_device' } });
+    expect(start.status).toBe(403);
+    expect(await start.json()).toEqual({ error: 'wallet_login_disabled' });
+    expect(setCookies(start)).toHaveLength(0);
+    expect(mocks.create).not.toHaveBeenCalled();
+    expect(
+      (
+        await request('/status?request_id=g1%3Aapac%3A0%3Avp_1', {
+          cookie: `authrim_admin_wallet_login=${SECRET}`,
+        })
+      ).status
+    ).toBe(403);
+    expect(mocks.status).not.toHaveBeenCalled();
+    // A login started before the switch was turned off cannot complete after it.
+    const complete = await request('/complete', {
+      method: 'POST',
+      body: { request_id: 'g1:apac:0:vp_1', response_code: CODE },
+      cookie: `authrim_admin_wallet_login=${SECRET}`,
+    });
+    expect(complete.status).toBe(403);
+    expect(mocks.consume).not.toHaveBeenCalled();
+    expect(mocks.createSession).not.toHaveBeenCalled();
   });
 });

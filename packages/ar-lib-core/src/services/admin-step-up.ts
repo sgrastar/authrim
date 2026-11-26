@@ -121,6 +121,61 @@ export const ADMIN_STEP_UP_ENFORCED_KEY = 'security.admin_step_up_enforced';
 export const ADMIN_KEYRING_DC_API_KEY = 'security.admin_keyring_dc_api';
 
 // =============================================================================
+// Admin sign-in methods
+// =============================================================================
+
+/** The platform setting that lists the ways an administrator can sign in to the console. */
+export const ADMIN_SIGN_IN_METHODS_KEY = 'security.admin_sign_in_methods';
+
+/**
+ * A way to sign in to the console:
+ * - `passkey`: the admin passkey (WebAuthn), always available.
+ * - `vc`: a presentation of the admin credential from a wallet (HAIP). Opt-in while it is being
+ *   built out; off, the console shows no wallet button and the wallet sign-in endpoints refuse.
+ */
+export type AdminSignInMethod = 'passkey' | 'vc';
+
+export const ADMIN_SIGN_IN_METHODS: readonly AdminSignInMethod[] = ['passkey', 'vc'];
+
+/** What the deployment allows until the platform says otherwise. */
+export const DEFAULT_ADMIN_SIGN_IN_METHODS: readonly AdminSignInMethod[] = ['passkey'];
+
+function isAdminSignInMethod(value: unknown): value is AdminSignInMethod {
+  return value === 'passkey' || value === 'vc';
+}
+
+/**
+ * The problem with a value for `security.admin_sign_in_methods`, or null: a list of known
+ * methods without duplicates that always includes `passkey`, so the platform can never turn the
+ * last way in off.
+ */
+export function adminSignInMethodsProblem(value: unknown): string | null {
+  const key = ADMIN_SIGN_IN_METHODS_KEY;
+  if (!Array.isArray(value)) return `${key} must be a list of sign-in methods`;
+  const seen = new Set<string>();
+  for (const entry of value) {
+    if (!isAdminSignInMethod(entry)) {
+      return `${key}: unknown method ${typeof entry === 'string' ? entry : typeof entry}`;
+    }
+    if (seen.has(entry)) return `${key}: ${entry} is listed twice`;
+    seen.add(entry);
+  }
+  if (!seen.has('passkey')) return `${key} must include passkey`;
+  return null;
+}
+
+/**
+ * The methods the platform allows. A value that is not a valid list is read as the default
+ * (passkey only): an unreadable list never opens a way in.
+ */
+export function resolveAdminSignInMethods(value: unknown): ReadonlySet<AdminSignInMethod> {
+  if (adminSignInMethodsProblem(value) !== null) {
+    return new Set(DEFAULT_ADMIN_SIGN_IN_METHODS);
+  }
+  return new Set(value as AdminSignInMethod[]);
+}
+
+// =============================================================================
 // Allowed second-factor kinds
 // =============================================================================
 

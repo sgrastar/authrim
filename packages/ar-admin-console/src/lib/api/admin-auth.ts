@@ -80,6 +80,12 @@ export interface LoginResult {
 	};
 }
 
+/** Which ways the sign-in page offers: the passkey always, a wallet when the platform turned it on. */
+export interface AdminSignInMethods {
+	passkey: boolean;
+	vc: boolean;
+}
+
 export interface WalletLoginStart {
 	requestId: string;
 	expiresAt: number;
@@ -272,6 +278,31 @@ export const adminAuthAPI = {
 	},
 
 	/**
+	 * The sign-in methods the platform allows (`security.admin_sign_in_methods`), read before anyone
+	 * is signed in. An answer that cannot be read means the passkey only: a failure never shows a
+	 * way in that the server would refuse.
+	 * GET /api/admin/auth/methods
+	 */
+	async getSignInMethods(): Promise<AdminSignInMethods> {
+		const fallback: AdminSignInMethods = { passkey: true, vc: false };
+		try {
+			const response = await adminFetch(`${API_BASE_URL}/api/admin/auth/methods`, {
+				skipTenantHeader: true,
+				credentials: 'include',
+				headers: buildHeaders()
+			});
+			if (!response.ok) return fallback;
+			const body: unknown = await response.json();
+			const methods =
+				body && typeof body === 'object' ? (body as { methods?: unknown }).methods : undefined;
+			if (!methods || typeof methods !== 'object') return fallback;
+			return { passkey: true, vc: (methods as { vc?: unknown }).vc === true };
+		} catch {
+			return fallback;
+		}
+	},
+
+	/**
 	 * Start a wallet (HAIP) login. The server binds the request to this browser with a cookie.
 	 * POST /api/admin/auth/wallet-login/start
 	 */
@@ -334,6 +365,7 @@ export function authErrorKey(error: unknown): MessageKey {
 			case 'wallet_login_not_allowed':
 				return 'login.error.walletNotAllowed';
 			case 'wallet_login_unavailable':
+			case 'wallet_login_disabled':
 				return 'login.error.walletUnavailable';
 			case 'wallet_login_failed':
 				return 'login.error.walletFailed';
