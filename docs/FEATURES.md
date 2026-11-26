@@ -170,11 +170,10 @@ Values: `Yes` means public/high-level support, `Helper` means exported lower-lev
 
 ## Not Supported
 
-| Item                       | Reason / Alternative                                                                                                                                                                                        |
-| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Direct MTLS termination    | Cloudflare Workers terminates TLS at the edge, so application code cannot directly control the TLS handshake. Use private_key_jwt, DPoP, or Cloudflare-specific mTLS/API Shield features where appropriate. |
-| Direct LDAP/AD integration | Cloudflare Workers runtime does not provide general TCP socket support for LDAP/AD. Use SCIM or federate through an external IdP that supports OIDC/SAML.                                                   |
-| SFTP storage or delivery   | Cloudflare Workers does not provide a general SSH/SFTP runtime. Use R2, S3-compatible object storage, HTTPS sinks, Cloudflare Logpush, or another external collector instead.                               |
+| Item                     | Reason / Alternative                                                                                                                                                                                        |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Direct MTLS termination  | Cloudflare Workers terminates TLS at the edge, so application code cannot directly control the TLS handshake. Use private_key_jwt, DPoP, or Cloudflare-specific mTLS/API Shield features where appropriate. |
+| SFTP storage or delivery | Cloudflare Workers does not provide a general SSH/SFTP runtime. Use R2, S3-compatible object storage, HTTPS sinks, Cloudflare Logpush, or another external collector instead.                               |
 
 ## Related Documents
 
