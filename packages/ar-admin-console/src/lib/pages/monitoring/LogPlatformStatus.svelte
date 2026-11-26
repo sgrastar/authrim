@@ -252,14 +252,16 @@
 		</EmptyState>
 	{:else}
 		<div class="meta">
+			<div class="meta__notes">
+				<p class="muted">{t('lplat.period')}</p>
+				{#if canSeeLogs}
+					<Link standalone href="/admin/monitoring/system">{t('lplat.links')}</Link>
+				{/if}
+			</div>
 			<p class="meta__as-of">
 				<span class="muted">{t('lplat.asOf')}:</span>
 				<DateTime value={status.generated_at} seconds showSecondary />
 			</p>
-			<p class="muted">{t('lplat.period')}</p>
-			{#if canSeeLogs}
-				<Link standalone href="/admin/monitoring/system">{t('lplat.links')}</Link>
-			{/if}
 		</div>
 
 		<section class="flow" aria-label={t('lplat.flow.label')}>
@@ -567,15 +569,27 @@
 </Page>
 
 <style>
+	/* Notes at the start; the status time at the end, just above the frame's top-right corner. */
 	.meta {
 		display: flex;
 		flex-wrap: wrap;
-		align-items: baseline;
+		align-items: flex-end;
+		justify-content: space-between;
 		gap: var(--space-related) var(--space-field);
+		margin-bottom: calc(-1 * var(--space-related));
+	}
+	.meta__notes {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
 	}
 	.meta p {
 		margin: 0;
 		font-size: var(--fs-small);
+	}
+	.meta__as-of {
+		margin-inline-start: auto;
+		white-space: nowrap;
 	}
 	.muted {
 		color: var(--text-muted);
