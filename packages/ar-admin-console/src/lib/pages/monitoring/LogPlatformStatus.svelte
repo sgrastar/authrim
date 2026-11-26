@@ -9,9 +9,10 @@
 	} from '#lib/api/log-platform.js';
 	import { i18n, t } from '#lib/i18n/i18n.svelte.js';
 	import { formatNumber } from '#lib/ui/format.js';
+	import Icon from '#lib/ui/icons/Icon.svelte';
+	import type { IconName } from '#lib/ui/icons/icons.js';
 	import Callout from '#lib/ui/patterns/Callout.svelte';
 	import Card from '#lib/ui/patterns/Card.svelte';
-	import DataTable from '#lib/ui/patterns/DataTable.svelte';
 	import DetailItem from '#lib/ui/patterns/DetailItem.svelte';
 	import DetailList from '#lib/ui/patterns/DetailList.svelte';
 	import EmptyState from '#lib/ui/patterns/EmptyState.svelte';
@@ -20,31 +21,39 @@
 	import Badge from '#lib/ui/primitives/Badge.svelte';
 	import Button from '#lib/ui/primitives/Button.svelte';
 	import Link from '#lib/ui/primitives/Link.svelte';
+	import ProgressBar from '#lib/ui/primitives/ProgressBar.svelte';
 	import Page from '#lib/ui/templates/Page.svelte';
 	import DateTime from '#lib/ui/time/DateTime.svelte';
+	import { consistencyLabel, modeLabel } from './log-platform-labels';
 	import {
-		consistencyLabel,
-		laneLabel,
-		laneStatusTone,
-		modeLabel,
-		statusLabel
-	} from './log-platform-labels';
+		archiveVerdict,
+		deliveryVerdict,
+		readBudgetPercent,
+		readVerdict,
+		readableLagMinutes,
+		readableUntil,
+		stuckHours,
+		type StageReason,
+		type StageVerdict
+	} from './log-platform-model';
 
 	/**
-	 * Monitoring → Log platform: is the log platform healthy. One read answers it: the log
-	 * archive's configuration and reachability (and, for a platform administrator, the table's own
-	 * size and last compaction), whether a real 24-hour read completes and why not, the delivery
-	 * backlog, the audit coverage registry and the sensitive-detail chunk catalog, with the one
-	 * safe action, the automatic catalog repair. The page itself never fails because the archive
-	 * is broken: that is what it is for.
+	 * Monitoring → Log platform: is the log platform healthy, shown as the flow a record takes.
+	 * Three stages, each with its own verdict: delivery (D1 → archive), the log archive (the
+	 * Iceberg table; a platform administrator also sees its size against the read limit and its
+	 * last compaction) and log reading (a real 24-hour read through the ordinary path). The
+	 * sensitive-detail chunk catalog follows with its one safe action. The page never fails
+	 * because the archive is broken: that is what it is for.
 	 */
 	interface Props {
 		client: LogPlatformClient;
 		/** Who is looking; the signed-in admin unless given (Storybook). */
 		access?: AdminAccess;
+		/** The audit coverage registry is kept but not shown; a story may turn it on. */
+		showCoverage?: boolean;
 	}
 
-	let { client, access }: Props = $props();
+	let { client, access, showCoverage = false }: Props = $props();
 
 	const who = $derived(access ?? adminAccess.current);
 	const canRead = $derived(hasPermission(who, 'admin:admin_logging:overview:read'));
@@ -58,7 +67,6 @@
 	let repairFailed = $state(false);
 
 	const num = (value: number) => formatNumber(value, i18n.locale);
-	const STUCK_AFTER_MS = 60 * 60 * 1000;
 
 	let generation = 0;
 	async function load(): Promise<void> {
@@ -100,19 +108,80 @@
 	const archive = $derived(status?.archive ?? null);
 	const table = $derived(archive?.table ?? null);
 	const outbox = $derived(status?.delivery.outbox ?? null);
-	const stuck = $derived(
-		outbox && outbox.oldest_pending_at !== null && status
-			? status.generated_at - outbox.oldest_pending_at >= STUCK_AFTER_MS
-			: false
+	const exp = $derived(status?.delivery.export ?? null);
+	const verdicts = $derived(
+		status
+			? {
+					delivery: deliveryVerdict(status),
+					archive: archiveVerdict(status),
+					read: readVerdict(status)
+				}
+			: null
 	);
-	const stuckHours = $derived(
-		outbox?.oldest_pending_at && status
-			? Math.floor((status.generated_at - outbox.oldest_pending_at) / STUCK_AFTER_MS)
-			: 0
-	);
-	const overLimit = $derived(archive?.table_size_hint?.data_files_over_limit ?? false);
-	const lanes = $derived(status?.delivery_lanes ?? []);
+	const until = $derived(status ? readableUntil(status) : null);
+	const lag = $derived(status ? readableLagMinutes(status) : null);
+	const budget = $derived(status ? readBudgetPercent(status) : null);
+
+	const TONE = {
+		ok: 'success',
+		warning: 'warning',
+		danger: 'danger',
+		none: 'neutral'
+	} as const;
+
+	/** The words for one reason, with the figures it names. */
+	function reasonText(reason: StageReason): string {
+		if (!status) return '';
+		const a = status.archive;
+		switch (reason) {
+			case 'archive_unconfigured':
+				return t('lplat.reason.archive_unconfigured', { code: a.configuration_error ?? '' });
+			case 'archive_unreachable':
+				return t('lplat.reason.archive_unreachable', { code: a.reachability_error ?? '' });
+			case 'delivery_stuck':
+				return t('lplat.reason.delivery_stuck', {
+					count: num((outbox?.pending ?? 0) + (outbox?.queued ?? 0)),
+					hours: stuckHours(status)
+				});
+			case 'delivery_error':
+				return t('lplat.reason.delivery_error', { code: outbox?.last_error_code ?? '' });
+			case 'files_over_limit':
+				return t('lplat.reason.files_over_limit', {
+					files: num(table?.current_snapshot?.total_data_files ?? 0),
+					max: num(a.table_size_hint?.max_files ?? 0)
+				});
+			case 'compaction_stale':
+				return t('lplat.reason.compaction_stale');
+			case 'compaction_never':
+				return t('lplat.reason.compaction_never');
+			case 'read_incomplete':
+				return t('lplat.reason.read_incomplete', { code: a.read_probe.reason ?? '' });
+			case 'export_error':
+				return t('lplat.reason.export_error', { code: exp?.last_error_code ?? '' });
+		}
+	}
 </script>
+
+{#snippet stageHead(icon: IconName, title: string, desc: string, verdict: StageVerdict)}
+	<header class="stage__head">
+		<span class="stage__icon" aria-hidden="true"><Icon name={icon} size={28} /></span>
+		<h2 class="stage__title">{title}</h2>
+		<p class="stage__desc">{desc}</p>
+	</header>
+	<div class="stage__status">
+		<span class="stage__status-label">{t('lplat.status')}</span>
+		<Badge tone={TONE[verdict.tone]} dot={verdict.tone !== 'none'} size="md">
+			{t(`lplat.status.${verdict.tone}`)}
+		</Badge>
+	</div>
+	{#if verdict.reasons.length > 0 && verdict.tone !== 'none'}
+		<ul class="stage__reasons" class:is-danger={verdict.tone === 'danger'}>
+			{#each verdict.reasons as reason (reason)}
+				<li>{reasonText(reason)}</li>
+			{/each}
+		</ul>
+	{/if}
+{/snippet}
 
 <Page>
 	<PageHeader title={t('nav.mon.logPlatform')} description={t('lplat.page.desc')}>
@@ -129,219 +198,260 @@
 		<EmptyState icon="lock" title={t('lplat.noAccess')} />
 	{:else if phase === 'loading'}
 		<LoadingState label={t('common.loading')} />
-	{:else if phase === 'failed' || !status || !archive}
+	{:else if phase === 'failed' || !status || !archive || !verdicts}
 		<EmptyState icon="warning" title={t('lplat.loadFailed')} description={t('load.error.body')}>
 			{#snippet action()}
 				<Button onclick={load}>{t('load.retry')}</Button>
 			{/snippet}
 		</EmptyState>
 	{:else}
-		{#if canSeeLogs}
-			<Link standalone href="/admin/monitoring/system">{t('lplat.links')}</Link>
-		{/if}
-		<p class="muted as-of" data-testid="generated-at">
-			{t('lplat.asOf')}: <DateTime value={status.generated_at} seconds />
-		</p>
+		<div class="meta">
+			<p class="meta__as-of">
+				<span class="muted">{t('lplat.asOf')}:</span>
+				<DateTime value={status.generated_at} seconds showSecondary />
+			</p>
+			<p class="muted meta__period">{t('lplat.period')}</p>
+			{#if canSeeLogs}
+				<Link standalone href="/admin/monitoring/system">{t('lplat.links')}</Link>
+			{/if}
+		</div>
 
-		{#if !archive.configured}
-			<Callout tone="danger" title={t('lplat.archive.unconfigured.title')} live>
-				{t('lplat.archive.unconfigured.body', { code: archive.configuration_error ?? '' })}
-			</Callout>
-		{:else if !archive.local_staging_only && !archive.reachable}
-			<Callout tone="danger" title={t('lplat.archive.unreachable.title')} live>
-				{t('lplat.archive.unreachable.body', { code: archive.reachability_error ?? '' })}
-			</Callout>
-		{:else if overLimit && table?.current_snapshot}
-			<Callout tone="warning" title={t('lplat.archive.overLimit.title')} live>
-				{t('lplat.archive.overLimit.body', {
-					files: num(table.current_snapshot.total_data_files ?? 0),
-					max: num(archive.table_size_hint?.max_files ?? 0)
-				})}
-			</Callout>
-		{/if}
-		{#if stuck && outbox}
-			<Callout tone="warning" title={t('lplat.outbox.stuck.title')} live>
-				{t('lplat.outbox.stuck.body', {
-					count: num(outbox.pending + outbox.queued),
-					hours: stuckHours
-				})}
-			</Callout>
-		{/if}
-		{#if status.audit_coverage.gap_detected > 0}
-			<Callout tone="warning" title={t('lplat.coverage.gap.title')}>
-				{t('lplat.coverage.gap.body', { count: num(status.audit_coverage.gap_detected) })}
-			</Callout>
-		{/if}
-
-		<div class="grid">
-			<Card title={t('lplat.archive.title')} description={t('lplat.archive.desc')}>
-				<DetailList columns={2} size="sm">
-					<DetailItem label={t('lplat.archive.mode')}>
-						{#if archive.local_staging_only}
-							{t('lplat.archive.local')}
-						{:else if archive.mode}
-							{modeLabel(archive.mode, t)}
-						{:else}
-							—
-						{/if}
-					</DetailItem>
-					<DetailItem label={t('lplat.archive.reach')}>
-						{#if !archive.configured}
-							—
-						{:else if archive.local_staging_only}
-							—
-						{:else}
-							<Badge tone={archive.reachable ? 'success' : 'danger'} dot>
-								{t(archive.reachable ? 'lplat.archive.reach.ok' : 'lplat.archive.reach.ng')}
-							</Badge>
-						{/if}
-					</DetailItem>
-					<DetailItem label={t('lplat.archive.generation')}>
-						{#if archive.generation}<code>{archive.generation}</code>{:else}—{/if}
-					</DetailItem>
-					<DetailItem label={t('lplat.archive.activated')}>
-						{#if archive.activated_at}<DateTime value={archive.activated_at} />{:else}—{/if}
-					</DetailItem>
-					{#if table}
-						<DetailItem label={t('lplat.archive.table.files')}>
-							{#if table.current_snapshot?.total_data_files !== null && table.current_snapshot}
-								<span class:over={overLimit}
-									>{num(table.current_snapshot.total_data_files ?? 0)}</span
-								>
-								{#if archive.table_size_hint}
-									<span class="muted"> / {num(archive.table_size_hint.max_files)}</span>
-								{/if}
+		<section class="flow" aria-label={t('lplat.flow.label')}>
+			<!-- 1. Delivery -->
+			<article class="stage" data-stage="delivery">
+				{@render stageHead(
+					'upload',
+					t('lplat.stage.delivery'),
+					t('lplat.stage.delivery.desc'),
+					verdicts.delivery
+				)}
+				{#if archive.configured}
+					<DetailList ruled size="sm">
+						<DetailItem label={t('lplat.delivery.lastIngested')}>
+							{#if status.delivery.last_ingested_at}
+								<DateTime value={status.delivery.last_ingested_at} seconds showSecondary />
 							{:else}
 								—
 							{/if}
 						</DetailItem>
-						<DetailItem label={t('lplat.archive.table.records')}>
-							{table.current_snapshot?.total_records === null ||
-							table.current_snapshot?.total_records === undefined
-								? '—'
-								: num(table.current_snapshot.total_records)}
+						<DetailItem label={t('lplat.delivery.published')}>
+							{num(status.delivery.recent.published)}
+							<span class="muted unit">{t('lplat.delivery.unit')}</span>
 						</DetailItem>
-						<DetailItem label={t('lplat.archive.table.snapshots')}>
-							{num(table.snapshot_count)}
+						<DetailItem label={t('lplat.delivery.prepared')}>
+							{num(status.delivery.recent.prepared)}
+							<span class="muted unit">{t('lplat.delivery.unit')}</span>
 						</DetailItem>
-						<DetailItem label={t('lplat.archive.table.lastCommit')}>
-							{#if table.current_snapshot}
-								<DateTime value={table.current_snapshot.committed_at} seconds />
-							{:else}
-								—
+						<DetailItem label={t('lplat.delivery.aborted')}>
+							{num(status.delivery.recent.aborted)}
+							<span class="muted unit">{t('lplat.delivery.unit')}</span>
+						</DetailItem>
+						{#if outbox}
+							<DetailItem label={t('lplat.delivery.pending')}>
+								<span class:attention={verdicts.delivery.reasons.includes('delivery_stuck')}>
+									{num(outbox.pending)}
+								</span>
+								<span class="muted unit">{t('lplat.delivery.unit')}</span>
+							</DetailItem>
+							<DetailItem label={t('lplat.delivery.queued')}>
+								{num(outbox.queued)}
+								<span class="muted unit">{t('lplat.delivery.unit')}</span>
+							</DetailItem>
+							<DetailItem label={t('lplat.delivery.ingested')}>
+								{num(status.delivery.recent.ingested)}
+								<span class="muted unit">{t('lplat.delivery.unit')}</span>
+							</DetailItem>
+							{#if outbox.oldest_pending_at}
+								<DetailItem label={t('lplat.delivery.oldest')}>
+									<DateTime value={outbox.oldest_pending_at} seconds showSecondary />
+								</DetailItem>
 							{/if}
-						</DetailItem>
-						<DetailItem label={t('lplat.archive.table.lastCompaction')}>
-							{#if table.last_compaction_at}
-								<DateTime value={table.last_compaction_at} />
-							{:else}
-								<Badge tone={overLimit ? 'warning' : 'neutral'}
-									>{t('lplat.archive.table.never')}</Badge
-								>
+							{#if outbox.last_error_code}
+								<DetailItem label={t('lplat.delivery.lastError')}>
+									<code>{outbox.last_error_code}</code>
+								</DetailItem>
 							{/if}
-						</DetailItem>
-					{/if}
-				</DetailList>
-				{#if archive.configured && !archive.local_staging_only && !table}
-					<p class="muted note">{t('lplat.archive.tenantNote')}</p>
+						{/if}
+						{#if exp}
+							<DetailItem label={t('lplat.delivery.export.state')}>
+								{#if exp.last_state}<code>{exp.last_state}</code>{:else}—{/if}
+							</DetailItem>
+							{#if exp.updated_at}
+								<DetailItem label={t('lplat.delivery.export.updated')}>
+									<DateTime value={exp.updated_at} seconds showSecondary />
+								</DetailItem>
+							{/if}
+							{#if exp.last_error_code}
+								<DetailItem label={t('lplat.delivery.lastError')}>
+									<code>{exp.last_error_code}</code>
+								</DetailItem>
+							{/if}
+							{#if exp.watermark}
+								<DetailItem label={t('lplat.delivery.export.watermark')}>
+									<DateTime value={exp.watermark.updated_at} seconds showSecondary />
+									<span class="second"><code>{exp.watermark.snapshot_id}</code></span>
+								</DetailItem>
+							{/if}
+						{/if}
+					</DetailList>
 				{/if}
-			</Card>
+			</article>
 
-			<Card title={t('lplat.probe.title')} description={t('lplat.probe.desc')}>
-				<DetailList size="sm">
-					<DetailItem label={t('lplat.probe.title')}>
-						<Badge tone={archive.read_probe.ok ? 'success' : 'danger'} dot>
-							{t(archive.read_probe.ok ? 'lplat.probe.ok' : 'lplat.probe.ng')}
-						</Badge>
-					</DetailItem>
-					{#if !archive.read_probe.ok}
-						<DetailItem label={t('lplat.probe.reason')}>
-							<code>{archive.read_probe.reason ?? '—'}</code>
+			<div class="flow__arrow" aria-hidden="true"></div>
+
+			<!-- 2. Archive -->
+			<article class="stage" data-stage="archive">
+				{@render stageHead(
+					'database',
+					t('lplat.stage.archive'),
+					t('lplat.stage.archive.desc'),
+					verdicts.archive
+				)}
+				{#if archive.configured}
+					<DetailList ruled size="sm">
+						<DetailItem label={t('lplat.archive.readableUntil')}>
+							{#if until !== null}
+								<DateTime value={until} seconds showSecondary />
+							{:else}
+								—
+							{/if}
 						</DetailItem>
+						<DetailItem label={t('lplat.archive.mode')}>
+							{#if archive.local_staging_only}
+								{t('lplat.archive.local')}
+							{:else if archive.mode}
+								{modeLabel(archive.mode, t)}
+							{:else}
+								—
+							{/if}
+						</DetailItem>
+						<DetailItem label={t('lplat.archive.generation')}>
+							{#if archive.generation}<code>{archive.generation}</code>{:else}—{/if}
+						</DetailItem>
+						<DetailItem label={t('lplat.archive.activated')}>
+							{#if archive.activated_at}
+								<DateTime value={archive.activated_at} showSecondary />
+							{:else}
+								—
+							{/if}
+						</DetailItem>
+					</DetailList>
+
+					{#if table}
+						<div class="platform" data-testid="platform-box">
+							<h3 class="platform__title">{t('lplat.archive.platform')}</h3>
+							{#if budget !== null && archive.table_size_hint}
+								<ProgressBar
+									label={t('lplat.archive.budget')}
+									value={Math.min(budget, 100)}
+									showLabel
+									showValue
+									size="sm"
+									tone={budget > 100 ? 'danger' : 'default'}
+								/>
+								<p class="muted platform__detail">
+									{t('lplat.archive.budget.detail', {
+										files: num(table.current_snapshot?.total_data_files ?? 0),
+										max: num(archive.table_size_hint.max_files)
+									})}
+									{#if budget > 100}<span class="attention"> ({budget}%)</span>{/if}
+								</p>
+							{/if}
+							<DetailList ruled size="sm">
+								<DetailItem label={t('lplat.archive.records')}>
+									{table.current_snapshot?.total_records === null ||
+									table.current_snapshot?.total_records === undefined
+										? '—'
+										: num(table.current_snapshot.total_records)}
+								</DetailItem>
+								<DetailItem label={t('lplat.archive.files')}>
+									{table.current_snapshot?.total_data_files === null ||
+									table.current_snapshot?.total_data_files === undefined
+										? '—'
+										: num(table.current_snapshot.total_data_files)}
+								</DetailItem>
+								<DetailItem label={t('lplat.archive.snapshots')}>
+									{num(table.snapshot_count)}
+								</DetailItem>
+								<DetailItem label={t('lplat.archive.lastCommit')}>
+									{#if table.current_snapshot}
+										<DateTime value={table.current_snapshot.committed_at} seconds showSecondary />
+									{:else}
+										—
+									{/if}
+								</DetailItem>
+								<DetailItem label={t('lplat.archive.lastCompaction')}>
+									{#if table.last_compaction_at}
+										<DateTime value={table.last_compaction_at} seconds showSecondary />
+									{:else}
+										<Badge tone={verdicts.archive.tone === 'ok' ? 'neutral' : 'warning'}>
+											{t('lplat.archive.never')}
+										</Badge>
+									{/if}
+								</DetailItem>
+							</DetailList>
+						</div>
+					{:else if !archive.local_staging_only}
+						<p class="muted note">{t('lplat.archive.tenantNote')}</p>
 					{/if}
-					{#if archive.read_probe.coverage}
-						<DetailItem label={t('lplat.probe.consistency')}>
-							{consistencyLabel(archive.read_probe.coverage.consistency, t)}
-						</DetailItem>
-						{#if archive.read_probe.coverage.pending_deliveries !== null}
-							<DetailItem label={t('lplat.probe.pending')}>
-								{num(archive.read_probe.coverage.pending_deliveries)}
+				{/if}
+			</article>
+
+			<div class="flow__arrow" aria-hidden="true"></div>
+
+			<!-- 3. Reading -->
+			<article class="stage" data-stage="read">
+				{@render stageHead(
+					'search',
+					t('lplat.stage.read'),
+					t('lplat.stage.read.desc'),
+					verdicts.read
+				)}
+				{#if archive.configured}
+					<p class="read__until">
+						{#if lag === null || !archive.read_probe.ok}
+							<span class="muted">{t('lplat.read.unknown')}</span>
+						{:else if lag === 0}
+							{t('lplat.read.untilNow')}
+						{:else}
+							{t('lplat.read.until', { minutes: num(lag) })}
+						{/if}
+					</p>
+					<DetailList ruled size="sm">
+						{#if !archive.read_probe.ok}
+							<DetailItem label={t('lplat.read.reason')}>
+								<code>{archive.read_probe.reason ?? '—'}</code>
 							</DetailItem>
 						{/if}
-					{/if}
-					{#if archive.read_probe.ok && !archive.read_probe.has_archive}
-						<DetailItem label={t('lplat.archive.title')}>
-							<span class="muted">{t('lplat.probe.noArchive')}</span>
-						</DetailItem>
-					{/if}
-				</DetailList>
-			</Card>
+						{#if archive.read_probe.coverage}
+							<DetailItem label={t('lplat.read.consistency')}>
+								{consistencyLabel(archive.read_probe.coverage.consistency, t)}
+							</DetailItem>
+							{#if archive.read_probe.coverage.pending_deliveries !== null}
+								<DetailItem label={t('lplat.read.pending')}>
+									{num(archive.read_probe.coverage.pending_deliveries)}
+									<span class="muted unit">{t('lplat.delivery.unit')}</span>
+								</DetailItem>
+							{/if}
+						{/if}
+						{#if archive.read_probe.ok && !archive.read_probe.has_archive}
+							<DetailItem label={t('lplat.stage.archive')}>
+								<span class="muted">{t('lplat.read.noArchive')}</span>
+							</DetailItem>
+						{/if}
+					</DetailList>
+				{/if}
+			</article>
+		</section>
 
-			<Card title={t('lplat.delivery.title')} description={t('lplat.delivery.desc')}>
-				<DetailList columns={2} size="sm">
-					<DetailItem label={t('lplat.delivery.published')}>
-						{num(status.delivery.publications.published)}
-					</DetailItem>
-					<DetailItem label={t('lplat.delivery.prepared')}>
-						{num(status.delivery.publications.prepared)}
-					</DetailItem>
-					<DetailItem label={t('lplat.delivery.aborted')}>
-						{num(status.delivery.publications.aborted)}
-					</DetailItem>
-					{#if outbox}
-						<DetailItem label={t('lplat.outbox.pending')}>
-							<span class:over={stuck}>{num(outbox.pending)}</span>
-						</DetailItem>
-						<DetailItem label={t('lplat.outbox.queued')}>{num(outbox.queued)}</DetailItem>
-						<DetailItem label={t('lplat.outbox.oldest')}>
-							{#if outbox.oldest_pending_at}
-								<DateTime value={outbox.oldest_pending_at} seconds />
-							{:else}
-								<span class="muted">{t('lplat.none')}</span>
-							{/if}
-						</DetailItem>
-						<DetailItem label={t('lplat.outbox.lastError')}>
-							{#if outbox.last_error_code}
-								<code>{outbox.last_error_code}</code>
-							{:else}
-								<span class="muted">{t('lplat.none')}</span>
-							{/if}
-						</DetailItem>
-					{/if}
-					{#if status.delivery.export}
-						{@const exp = status.delivery.export}
-						<DetailItem label={t('lplat.export.state')}>
-							{#if exp.last_state}<code>{exp.last_state}</code>{:else}—{/if}
-						</DetailItem>
-						<DetailItem label={t('lplat.export.updated')}>
-							{#if exp.updated_at}<DateTime value={exp.updated_at} seconds />{:else}—{/if}
-						</DetailItem>
-						<DetailItem label={t('lplat.export.lastError')}>
-							{#if exp.last_error_code}
-								<code>{exp.last_error_code}</code>
-							{:else}
-								<span class="muted">{t('lplat.none')}</span>
-							{/if}
-						</DetailItem>
-						<DetailItem label={t('lplat.export.watermark')}>
-							{#if exp.watermark}
-								<code>{exp.watermark.snapshot_id}</code>
-								<span class="muted"> · <DateTime value={exp.watermark.updated_at} /></span>
-							{:else}
-								<span class="muted">{t('lplat.none')}</span>
-							{/if}
-						</DetailItem>
-					{/if}
-				</DetailList>
-			</Card>
-
-			<Card title={t('lplat.coverage.title')} description={t('lplat.coverage.desc')}>
-				<DetailList columns={2} size="sm">
+		{#if showCoverage}
+			<Card title={t('lplat.coverage.title')} info={t('lplat.coverage.desc')}>
+				<DetailList columns={3} size="sm">
 					<DetailItem label={t('lplat.coverage.covered')}
 						>{num(status.audit_coverage.covered)}</DetailItem
 					>
 					<DetailItem label={t('lplat.coverage.gap')}>
-						<span class:over={status.audit_coverage.gap_detected > 0}>
+						<span class:attention={status.audit_coverage.gap_detected > 0}>
 							{num(status.audit_coverage.gap_detected)}
 						</span>
 					</DetailItem>
@@ -353,113 +463,235 @@
 					>
 					<DetailItem label={t('lplat.coverage.lastChecked')}>
 						{#if status.audit_coverage.last_checked_at}
-							<DateTime value={status.audit_coverage.last_checked_at} />
+							<DateTime value={status.audit_coverage.last_checked_at} showSecondary />
 						{:else}
 							<span class="muted">{t('lplat.coverage.never')}</span>
 						{/if}
 					</DetailItem>
 				</DetailList>
 			</Card>
+		{/if}
 
-			<Card title={t('lplat.catalog.title')} description={t('lplat.catalog.desc')}>
-				{#snippet actions()}
-					{#if canRepair && status && status.chunk_catalog.sampled_repair_findings > 0}
-						<Button size="sm" variant="secondary" loading={repairing} onclick={repair}>
-							{t('lplat.catalog.repair')}
-						</Button>
-					{/if}
-				{/snippet}
-				{#if repairResult}
-					<Callout tone="info" live>
-						{t('lplat.catalog.repair.done', {
-							applied: num(repairResult.applied_count),
-							skipped: num(repairResult.skipped_count)
-						})}
-					</Callout>
+		<Card title={t('lplat.catalog.title')} info={t('lplat.catalog.desc')}>
+			{#snippet actions()}
+				{#if canRepair && status && status.chunk_catalog.sampled_repair_findings > 0}
+					<Button size="sm" variant="secondary" loading={repairing} onclick={repair}>
+						{t('lplat.catalog.repair')}
+					</Button>
 				{/if}
-				{#if repairFailed}
-					<Callout tone="danger" live>{t('lplat.catalog.repair.failed')}</Callout>
-				{/if}
-				<DetailList columns={2} size="sm">
-					<DetailItem label={t('lplat.catalog.findings')}>
-						{#if status.chunk_catalog.sampled_repair_findings === 0}
-							<Badge tone="success" dot>{t('lplat.catalog.clean')}</Badge>
-						{:else}
-							<Badge tone="warning" dot>{num(status.chunk_catalog.sampled_repair_findings)}</Badge>
-						{/if}
-						<div class="muted">
-							{t('lplat.catalog.sample', { limit: num(status.chunk_catalog.scan_limit) })}
-						</div>
-					</DetailItem>
-					<DetailItem label={t('lplat.catalog.sensitive')}>
-						{num(status.chunk_catalog.sampled_sensitive_detail_findings)}
-					</DetailItem>
-					{#each status.chunk_catalog.sensitive_detail_index as entry (entry.store)}
-						<DetailItem label="{t('lplat.catalog.index')} · {entry.store}">
-							{#if entry.indexed_objects !== null}
-								{t('lplat.catalog.index.count', { count: num(entry.indexed_objects) })}
-							{:else}
-								<span class="muted">
-									{t(
-										entry.error === 'index_table_missing'
-											? 'lplat.catalog.index.missing'
-											: 'lplat.catalog.index.unavailable'
-									)}
-								</span>
-							{/if}
-						</DetailItem>
-					{/each}
-				</DetailList>
-			</Card>
-		</div>
-
-		<Card title={t('lplat.lanes.title')} info={t('lplat.lanes.desc')} flush>
-			<DataTable
-				caption={t('lplat.lanes.title')}
-				columns={[
-					{ key: 'lane', label: t('lplat.lanes.col.lane'), width: '30%' },
-					{ key: 'status', label: t('lplat.lanes.col.status'), width: '40%' },
-					{ key: 'total', label: t('lplat.lanes.col.total') }
-				]}
-				rows={lanes}
-				rowKey={(row) => `${row.lane}:${row.status}`}
-			>
-				{#snippet cell(row, column)}
-					{#if column.key === 'lane'}
-						{laneLabel(row.lane, t)}
-					{:else if column.key === 'status'}
-						<Badge tone={laneStatusTone(row.status)}>{statusLabel(row.status, t)}</Badge>
+			{/snippet}
+			{#if repairResult}
+				<Callout tone="info" live>
+					{t('lplat.catalog.repair.done', {
+						applied: num(repairResult.applied_count),
+						skipped: num(repairResult.skipped_count)
+					})}
+				</Callout>
+			{/if}
+			{#if repairFailed}
+				<Callout tone="danger" live>{t('lplat.catalog.repair.failed')}</Callout>
+			{/if}
+			<DetailList columns={3} size="sm">
+				<DetailItem label={t('lplat.catalog.findings')}>
+					{#if status.chunk_catalog.sampled_repair_findings === 0}
+						<Badge tone="success" dot>{t('lplat.catalog.clean')}</Badge>
 					{:else}
-						{num(row.total)}
+						<Badge tone="warning" dot>{num(status.chunk_catalog.sampled_repair_findings)}</Badge>
 					{/if}
-				{/snippet}
-				{#snippet empty()}
-					<EmptyState icon="file" title={t('lplat.lanes.empty')} />
-				{/snippet}
-			</DataTable>
+					<div class="muted">
+						{t('lplat.catalog.sample', { limit: num(status.chunk_catalog.scan_limit) })}
+					</div>
+				</DetailItem>
+				<DetailItem label={t('lplat.catalog.sensitive')}>
+					{num(status.chunk_catalog.sampled_sensitive_detail_findings)}
+				</DetailItem>
+				{#each status.chunk_catalog.sensitive_detail_index as entry (entry.store)}
+					<DetailItem label="{t('lplat.catalog.index')} · {entry.store}">
+						{#if entry.indexed_objects !== null}
+							{t('lplat.catalog.index.count', { count: num(entry.indexed_objects) })}
+						{:else}
+							<span class="muted">
+								{t(
+									entry.error === 'index_table_missing'
+										? 'lplat.catalog.index.missing'
+										: 'lplat.catalog.index.unavailable'
+								)}
+							</span>
+						{/if}
+					</DetailItem>
+				{/each}
+			</DetailList>
 		</Card>
 	{/if}
 </Page>
 
 <style>
-	.grid {
-		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-		gap: var(--space-columns);
+	.meta {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: baseline;
+		gap: var(--space-related) var(--space-field);
 	}
-	.as-of {
+	.meta p {
 		margin: 0;
 		font-size: var(--fs-small);
 	}
 	.muted {
 		color: var(--text-muted);
 	}
-	.note {
-		margin: var(--space-related) 0 0;
+	.unit {
+		margin-inline-start: 0.25em;
 		font-size: var(--fs-small);
 	}
-	.over {
+	.second {
+		display: block;
+		font-size: var(--fs-small);
+		color: var(--text-muted);
+	}
+	.attention {
 		color: var(--danger);
 		font-weight: var(--fw-semibold);
+	}
+
+	/* The flow: three stages with an arrow between them; stacked when the row cannot fit. */
+	.flow {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr);
+		gap: var(--space-related);
+		align-items: stretch;
+	}
+	.stage {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-field);
+		padding: var(--space-field);
+		border: 1px solid var(--border);
+		border-radius: var(--radius-lg);
+		background: var(--bg-card);
+	}
+	.stage__head {
+		display: grid;
+		grid-template-columns: auto 1fr;
+		grid-template-rows: auto auto;
+		column-gap: var(--space-related);
+		align-items: center;
+	}
+	.stage__icon {
+		grid-row: 1 / span 2;
+		display: grid;
+		place-items: center;
+		width: 44px;
+		height: 44px;
+		border-radius: var(--radius-md);
+		background: var(--bg-subtle);
+		color: var(--text-secondary);
+	}
+	.stage__title {
+		margin: 0;
+		font-size: var(--fs-title);
+		font-weight: var(--fw-semibold);
+		line-height: var(--lh-tight);
+	}
+	.stage__desc {
+		margin: 0;
+		font-size: var(--fs-small);
+		line-height: var(--lh-snug);
+		color: var(--text-muted);
+	}
+	.stage__status {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: var(--space-related);
+		padding-block: var(--space-related);
+		border-block: 1px solid var(--border-subtle);
+	}
+	.stage__status-label {
+		font-size: var(--fs-label);
+		font-weight: var(--fw-medium);
+		color: var(--text-secondary);
+	}
+	.stage__reasons {
+		margin: 0;
+		padding: var(--space-related) var(--space-field);
+		border-radius: var(--radius-md);
+		background: var(--warning-bg);
+		color: var(--warning-text);
+		font-size: var(--fs-small);
+		line-height: var(--lh-snug);
+		list-style: none;
+	}
+	.stage__reasons.is-danger {
+		background: var(--danger-bg);
+		color: var(--danger);
+	}
+	.stage__reasons li + li {
+		margin-top: var(--space-related);
+	}
+	.flow__arrow {
+		align-self: center;
+		width: 28px;
+		height: 2px;
+		margin-top: 22px;
+		background: var(--border);
+		position: relative;
+	}
+	.flow__arrow::after {
+		content: '';
+		position: absolute;
+		inset-inline-end: -1px;
+		top: -5px;
+		border: 6px solid transparent;
+		border-inline-start: 8px solid var(--border);
+		border-inline-end: 0;
+	}
+	.platform {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-related);
+		padding: var(--space-field);
+		border: 1px solid var(--border-subtle);
+		border-radius: var(--radius-md);
+		background: var(--bg-subtle);
+	}
+	.platform__title {
+		margin: 0;
+		font-size: var(--fs-label);
+		font-weight: var(--fw-semibold);
+		color: var(--text-secondary);
+	}
+	.platform__detail {
+		margin: 0;
+		font-size: var(--fs-small);
+	}
+	.note {
+		margin: 0;
+		font-size: var(--fs-small);
+	}
+	.read__until {
+		margin: 0;
+		font-size: var(--fs-body);
+		font-weight: var(--fw-medium);
+	}
+
+	@media (max-width: 1100px) {
+		.flow {
+			grid-template-columns: minmax(0, 1fr);
+		}
+		.flow__arrow {
+			justify-self: center;
+			width: 2px;
+			height: 24px;
+			margin: 0;
+		}
+		.flow__arrow::after {
+			inset-inline-end: auto;
+			left: -5px;
+			top: auto;
+			bottom: -1px;
+			border: 6px solid transparent;
+			border-top: 8px solid var(--border);
+			border-bottom: 0;
+		}
 	}
 </style>

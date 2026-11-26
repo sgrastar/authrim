@@ -15,7 +15,7 @@
 			docs: {
 				description: {
 					component:
-						'Monitoring → Log platform: is the log platform healthy, in one read (`/api/admin/admin-logging/platform-status`). The log archive (the Iceberg table in R2 Data Catalog): configured, reachable, and for a platform administrator its own size, last commit and last compaction against the 128-file read limit. Whether a real 24-hour read through the ordinary log read path completed, and the reason when it did not. The delivery backlog (pipeline outbox or scheduled export and watermark), the audit coverage registry, the sensitive-detail chunk catalog with its one safe action (apply the automatic repairs, step-up may be asked), and the delivery lanes of the day. The page never fails because the archive is broken: that is what it is for. A tenant administrator sees the same page without the shared table statistics. The stories use an in-memory API that answers the real wire format.'
+						'Monitoring → Log platform: is the log platform healthy, shown as the flow a record takes (`/api/admin/admin-logging/platform-status`). Three stages, each with its own verdict and the reasons when it is not healthy: delivery (records written to D1 on their way to the archive: sealed, waiting to send, queued, ingested, the oldest waiting, the last error), the log archive (the Iceberg table in R2 Data Catalog: readable up to, mode, generation; for a platform administrator also the whole-platform box with the read budget used by data files, records, snapshots, last commit and last compaction) and log reading (a real 24-hour read through the ordinary log read path: how many minutes back logs can be read, consistency, the reason when the read did not complete). Verdict rules: delivery is failing when a record has waited more than an hour, attention on a last error; the archive is failing when unreachable or when the data files exceed the 128-file read limit, attention when compaction has not run for a day or never; reading is failing when the read did not complete. Delivery counts are the last 24 hours; archive figures are current totals; table-wide figures are platform-only. Every time shows local and UTC. The sensitive-detail chunk catalog follows with its one safe action (apply the automatic repairs; step-up may be asked). The audit coverage registry is kept behind `showCoverage` but not shown. The page never fails because the archive is broken. The stories use an in-memory API that answers the real wire format.'
 				}
 			}
 		}
@@ -40,16 +40,18 @@
 		roles: ['custom_none'],
 		permissions: ['admin:users:read']
 	};
+	const statusBadges = (canvas: ReturnType<typeof within>, text: string) =>
+		canvas.queryAllByText(text).length;
 </script>
 
 <Story
 	name="Healthy"
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
-		await waitFor(() => expect(canvas.getByText(t('lplat.archive.reach.ok'))).toBeInTheDocument());
-		await expect(canvas.getByText(t('lplat.probe.ok'))).toBeInTheDocument();
+		await waitFor(() => expect(statusBadges(canvas, t('lplat.status.ok'))).toBe(3));
 		await expect(canvas.getByText(t('lplat.catalog.clean'))).toBeInTheDocument();
-		await expect(canvas.queryByText(t('lplat.archive.overLimit.title'))).toBeNull();
+		await expect(canvas.getByText(t('lplat.read.until', { minutes: '4' }))).toBeInTheDocument();
+		await expect(canvas.queryByText(t('lplat.coverage.title'))).toBeNull();
 	}}
 >
 	{#snippet template()}
@@ -61,12 +63,16 @@
 	name="Table outgrew the read limit"
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
-		await waitFor(() =>
-			expect(canvas.getByText(t('lplat.archive.overLimit.title'))).toBeInTheDocument()
-		);
-		await expect(canvas.getByText(t('lplat.probe.ng'))).toBeInTheDocument();
-		await expect(canvas.getByText('archive_file_read_budget_exceeded')).toBeInTheDocument();
-		await expect(canvas.getByText(t('lplat.archive.table.never'))).toBeInTheDocument();
+		// Delivery is fine; the archive and the read are failing, and the reasons say why.
+		await waitFor(() => expect(statusBadges(canvas, t('lplat.status.danger'))).toBe(2));
+		await expect(statusBadges(canvas, t('lplat.status.ok'))).toBe(1);
+		await expect(canvas.getByText(t('lplat.reason.compaction_never'))).toBeInTheDocument();
+		await expect(
+			canvas.getByText(
+				t('lplat.reason.read_incomplete', { code: 'archive_file_read_budget_exceeded' })
+			)
+		).toBeInTheDocument();
+		await expect(canvas.getByText(t('lplat.archive.never'))).toBeInTheDocument();
 		// The one action: the safe repair, which empties the findings.
 		await userEvent.click(canvas.getByRole('button', { name: t('lplat.catalog.repair') }));
 		await waitFor(() => expect(canvas.getByText(t('lplat.catalog.clean'))).toBeInTheDocument());
@@ -83,7 +89,16 @@
 	{/snippet}
 </Story>
 
-<Story name="Archive unreachable, delivery backed up">
+<Story
+	name="Archive unreachable, delivery backed up"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await waitFor(() => expect(statusBadges(canvas, t('lplat.status.danger'))).toBe(3));
+		await expect(
+			canvas.getByText(t('lplat.reason.delivery_stuck', { count: '54', hours: 3 }))
+		).toBeInTheDocument();
+	}}
+>
 	{#snippet template()}
 		<LogPlatformStatus
 			client={createFakeLogPlatform({ scenario: 'unreachable', delay: 0 })}
@@ -117,14 +132,26 @@
 		await waitFor(() =>
 			expect(canvas.getByText(t('lplat.archive.tenantNote'))).toBeInTheDocument()
 		);
-		await expect(canvas.queryByText(t('lplat.archive.table.files'))).toBeNull();
+		await expect(canvas.queryByText(t('lplat.archive.platform'))).toBeNull();
 		await expect(canvas.queryByRole('button', { name: t('lplat.catalog.repair') })).toBeNull();
+		// The readable point is the tenant's own last ingested record, 9 minutes ago.
+		await expect(canvas.getByText(t('lplat.read.until', { minutes: '9' }))).toBeInTheDocument();
 	}}
 >
 	{#snippet template()}
 		<LogPlatformStatus
 			client={createFakeLogPlatform({ scenario: 'tenant', delay: 0 })}
 			access={tenantAdmin}
+		/>
+	{/snippet}
+</Story>
+
+<Story name="With the audit coverage registry">
+	{#snippet template()}
+		<LogPlatformStatus
+			client={createFakeLogPlatform({ delay: 0 })}
+			access={platform}
+			showCoverage
 		/>
 	{/snippet}
 </Story>

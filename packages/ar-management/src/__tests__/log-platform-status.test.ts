@@ -179,7 +179,8 @@ describe('buildLogPlatformStatus', () => {
       table_size_hint: null,
     });
     expect(status.delivery).toEqual({
-      publications: { prepared: 0, published: 0, aborted: 0 },
+      recent: { prepared: 0, published: 0, aborted: 0, ingested: 0 },
+      last_ingested_at: null,
       outbox: null,
       export: null,
     });
@@ -199,6 +200,7 @@ describe('buildLogPlatformStatus', () => {
         oldest_pending_at: NOW - 60000,
       },
       'WHERE last_error_code IS NOT NULL': { last_error_code: 'stream_timeout' },
+      "WHERE state = 'ingested'": { total: '38', last_at: NOW - 240000 },
       'FROM sensitive_detail_chunk_index': { total: 5 },
       'FROM logging_delivery_event_aggregates': [
         { lane: 'critical', status: 'delivered', total: 9 },
@@ -232,7 +234,8 @@ describe('buildLogPlatformStatus', () => {
     expect(status.archive.table?.current_snapshot?.total_data_files).toBe(603);
     expect(status.archive.table?.last_compaction_at).toBeNull();
     expect(status.delivery).toEqual({
-      publications: { prepared: 2, published: 40, aborted: 0 },
+      recent: { prepared: 2, published: 40, aborted: 0, ingested: 38 },
+      last_ingested_at: NOW - 240000,
       outbox: {
         pending: 3,
         queued: 1,
@@ -251,9 +254,10 @@ describe('buildLogPlatformStatus', () => {
     expect(status.delivery_lanes).toEqual([{ lane: 'critical', status: 'delivered', total: 9 }]);
     // Tenant scoping: the tenant id goes to the Iceberg tables, the tenant key to the lanes.
     const sql = (adapter.query as any).mock.calls.map((c: unknown[]) => c[0] as string);
-    expect(sql.find((s: string) => s.includes('log_iceberg_publications'))).toContain(
-      'tenant_id = ?'
-    );
+    const publicationSql = sql.find((s: string) => s.includes('log_iceberg_publications'));
+    expect(publicationSql).toContain('tenant_id = ?');
+    // The counts are the window's, not the generation's lifetime.
+    expect(publicationSql).toContain('created_at >= ?');
     expect(sql.find((s: string) => s.includes('logging_delivery_event_aggregates'))).toContain(
       'tenant_key = ?'
     );

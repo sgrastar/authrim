@@ -73,7 +73,14 @@ export interface LogPlatformArchiveStatus {
 }
 
 export interface LogPlatformDeliveryStatus {
-  publications: { prepared: number; published: number; aborted: number };
+  /**
+   * Records in the window (`window_start_at` to now), by how far they got: sealed as the
+   * authoritative entry (`published`), still being sealed (`prepared`), withdrawn (`aborted`),
+   * and confirmed inside an Iceberg snapshot (`ingested`, pipeline mode).
+   */
+  recent: { prepared: number; published: number; aborted: number; ingested: number };
+  /** When the newest record of this scope was confirmed inside the archive (pipeline mode). */
+  last_ingested_at: number | null;
   /** Pipeline mode only. */
   outbox: {
     pending: number;
@@ -299,7 +306,8 @@ function tenantClause(column: string, tenantId: string | null): { sql: string; b
 
 async function describeDelivery(
   input: BuildLogPlatformStatusInput,
-  config: LogIcebergConfig | null
+  config: LogIcebergConfig | null,
+  windowStart: number
 ): Promise<LogPlatformDeliveryStatus> {
   const { adapter, tenantId } = input;
   const scope = tenantClause('tenant_id', tenantId);
@@ -309,14 +317,15 @@ async function describeDelivery(
 
   const publicationRows = await adapter.query<{ state: string; total: unknown }>(
     `SELECT state, COUNT(*) AS total FROM log_iceberg_publications
-     WHERE 1 = 1${scope.sql}${generationClause} GROUP BY state`,
-    [...scope.binds, ...generationBinds]
+     WHERE created_at >= ?${scope.sql}${generationClause} GROUP BY state`,
+    [windowStart, ...scope.binds, ...generationBinds]
   );
-  const publications = { prepared: 0, published: 0, aborted: 0 };
+  const recent = { prepared: 0, published: 0, aborted: 0, ingested: 0 };
   for (const row of publicationRows) {
-    if (row.state in publications)
-      publications[row.state as keyof typeof publications] = integer(row.total);
+    if (row.state === 'prepared' || row.state === 'published' || row.state === 'aborted')
+      recent[row.state] = integer(row.total);
   }
+  let lastIngestedAt: number | null = null;
 
   let outbox: LogPlatformDeliveryStatus['outbox'] = null;
   let exportState: LogPlatformDeliveryStatus['export'] = null;
@@ -339,6 +348,15 @@ async function describeDelivery(
        ORDER BY updated_at DESC LIMIT 1`,
       [...scope.binds, ...generationBinds]
     );
+    const ingested = await adapter.queryOne<{ total: unknown; last_at: unknown }>(
+      `SELECT
+         SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END) AS total,
+         MAX(updated_at) AS last_at
+       FROM log_iceberg_outbox WHERE state = 'ingested'${scope.sql}${generationClause}`,
+      [windowStart, ...scope.binds, ...generationBinds]
+    );
+    recent.ingested = integer(ingested?.total);
+    lastIngestedAt = optionalInteger(ingested?.last_at);
     outbox = {
       pending: integer(counts?.pending),
       queued: integer(counts?.queued),
@@ -380,7 +398,7 @@ async function describeDelivery(
         : null,
     };
   }
-  return { publications, outbox, export: exportState };
+  return { recent, last_ingested_at: lastIngestedAt, outbox, export: exportState };
 }
 
 export async function buildLogPlatformStatus(
@@ -389,7 +407,7 @@ export async function buildLogPlatformStatus(
   const windowStart = input.now - (input.windowMs ?? DAY_MS);
   const repository = input.repository ?? new AdminLoggingControlRepository(input.adapter);
   const { archive, config } = await describeArchive(input);
-  const delivery = await describeDelivery(input, config);
+  const delivery = await describeDelivery(input, config, windowStart);
 
   const lastCheckedAt = await repository.readCoverageLastCheckedAt();
   const auditCoverage = summarizeAdminAuditCoverage(

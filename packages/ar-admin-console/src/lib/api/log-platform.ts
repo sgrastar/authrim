@@ -61,7 +61,10 @@ export interface LogPlatformArchive {
 }
 
 export interface LogPlatformDelivery {
-	publications: { prepared: number; published: number; aborted: number };
+	/** Records of the 24-hour window by how far they got; `ingested` = confirmed in the archive. */
+	recent: { prepared: number; published: number; aborted: number; ingested: number };
+	/** When the newest record of this scope was confirmed inside the archive (pipeline mode). */
+	last_ingested_at: number | null;
 	outbox: {
 		pending: number;
 		queued: number;

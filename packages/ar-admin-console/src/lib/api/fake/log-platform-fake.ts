@@ -71,7 +71,8 @@ function base(): LogPlatformStatus {
 			}
 		},
 		delivery: {
-			publications: { prepared: 2, published: 1_730, aborted: 0 },
+			recent: { prepared: 2, published: 1_730, aborted: 0, ingested: 1_728 },
+			last_ingested_at: LOG_PLATFORM_NOW - 4 * 60_000,
 			outbox: {
 				pending: 2,
 				queued: 0,
@@ -155,7 +156,8 @@ export function sampleLogPlatformStatus(
 				}
 			};
 			status.delivery = {
-				publications: { prepared: 0, published: 0, aborted: 0 },
+				recent: { prepared: 0, published: 0, aborted: 0, ingested: 0 },
+				last_ingested_at: null,
 				outbox: null,
 				export: null
 			};
@@ -172,6 +174,8 @@ export function sampleLogPlatformStatus(
 				has_archive: false,
 				coverage: null
 			};
+			status.delivery.recent = { prepared: 1, published: 1_730, aborted: 0, ingested: 1_675 };
+			status.delivery.last_ingested_at = LOG_PLATFORM_NOW - 3 * HOUR - 5 * 60_000;
 			status.delivery.outbox = {
 				pending: 48,
 				queued: 6,
@@ -187,6 +191,8 @@ export function sampleLogPlatformStatus(
 				complete: true
 			};
 			status.delivery.outbox = null;
+			status.delivery.recent.ingested = 0;
+			status.delivery.last_ingested_at = null;
 			status.delivery.export = {
 				last_state: 'verified',
 				last_error_code: null,
@@ -201,7 +207,8 @@ export function sampleLogPlatformStatus(
 		case 'tenant':
 			status.archive.table = null;
 			status.archive.table_size_hint = null;
-			status.delivery.publications = { prepared: 0, published: 212, aborted: 0 };
+			status.delivery.recent = { prepared: 0, published: 212, aborted: 0, ingested: 212 };
+			status.delivery.last_ingested_at = LOG_PLATFORM_NOW - 9 * 60_000;
 			status.delivery.outbox = {
 				pending: 0,
 				queued: 0,
