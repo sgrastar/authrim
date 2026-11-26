@@ -194,7 +194,7 @@ describe('buildLogPlatformStatus', () => {
         { state: 'published', total: '40' },
         { state: 'prepared', total: 2 },
       ],
-      "SUM(CASE WHEN state = 'pending'": {
+      "SUM(CASE WHEN state IN ('preparing','pending')": {
         pending: '3',
         queued: 1,
         oldest_pending_at: NOW - 60000,

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import type { Snippet } from 'svelte';
 	import { hasPermission, type AdminAccess } from '#lib/access/access.js';
 	import { adminAccess } from '#lib/access/admin-access.svelte.js';
 	import { StepUpCancelledError } from '#lib/api/admin-step-up.js';
@@ -10,11 +11,10 @@
 	import { i18n, t } from '#lib/i18n/i18n.svelte.js';
 	import { formatNumber } from '#lib/ui/format.js';
 	import Icon from '#lib/ui/icons/Icon.svelte';
+	import InfoTip from '#lib/ui/primitives/InfoTip.svelte';
 	import type { IconName } from '#lib/ui/icons/icons.js';
 	import Callout from '#lib/ui/patterns/Callout.svelte';
 	import Card from '#lib/ui/patterns/Card.svelte';
-	import DetailItem from '#lib/ui/patterns/DetailItem.svelte';
-	import DetailList from '#lib/ui/patterns/DetailList.svelte';
 	import EmptyState from '#lib/ui/patterns/EmptyState.svelte';
 	import LoadingState from '#lib/ui/patterns/LoadingState.svelte';
 	import PageHeader from '#lib/ui/patterns/PageHeader.svelte';
@@ -24,7 +24,7 @@
 	import ProgressBar from '#lib/ui/primitives/ProgressBar.svelte';
 	import Page from '#lib/ui/templates/Page.svelte';
 	import DateTime from '#lib/ui/time/DateTime.svelte';
-	import { consistencyLabel, modeLabel } from './log-platform-labels';
+	import { modeLabel } from './log-platform-labels';
 	import {
 		archiveVerdict,
 		deliveryVerdict,
@@ -173,11 +173,32 @@
 	}
 </script>
 
+{#snippet fact(label: string, value: Snippet)}
+	<div class="fact">
+		<dt>{label}</dt>
+		<dd>{@render value()}</dd>
+	</div>
+{/snippet}
+
+{#snippet count(value: number)}
+	<span class="num">{num(value)}</span><span class="unit">{t('lplat.delivery.unit')}</span>
+{/snippet}
+
+{#snippet when(value: number | null | undefined)}
+	{#if value}
+		<DateTime {value} seconds showSecondary stacked />
+	{:else}
+		<span class="muted">—</span>
+	{/if}
+{/snippet}
+
 {#snippet stageHead(icon: IconName, title: string, desc: string, verdict: StageVerdict)}
 	<header class="stage__head">
-		<span class="stage__icon" aria-hidden="true"><Icon name={icon} size={28} /></span>
-		<h2 class="stage__title">{title}</h2>
-		<p class="stage__desc">{desc}</p>
+		<span class="stage__icon" aria-hidden="true"><Icon name={icon} size={30} /></span>
+		<div class="stage__title-row">
+			<h2 class="stage__title">{title}</h2>
+			<InfoTip label="{t('common.moreInfo')}: {title}" text={desc} />
+		</div>
 	</header>
 	<div class="stage__status">
 		<span class="stage__status-label">{t('lplat.status')}</span>
@@ -221,7 +242,7 @@
 				<span class="muted">{t('lplat.asOf')}:</span>
 				<DateTime value={status.generated_at} seconds showSecondary />
 			</p>
-			<p class="muted meta__period">{t('lplat.period')}</p>
+			<p class="muted">{t('lplat.period')}</p>
 			{#if canSeeLogs}
 				<Link standalone href="/admin/monitoring/system">{t('lplat.links')}</Link>
 			{/if}
@@ -237,74 +258,51 @@
 					verdicts.delivery
 				)}
 				{#if archive.configured}
-					<DetailList ruled size="sm">
-						<DetailItem label={t('lplat.delivery.lastIngested')}>
-							{#if status.delivery.last_ingested_at}
-								<DateTime value={status.delivery.last_ingested_at} seconds showSecondary />
-							{:else}
-								—
-							{/if}
-						</DetailItem>
-						<DetailItem label={t('lplat.delivery.published')}>
-							{num(status.delivery.recent.published)}
-							<span class="muted unit">{t('lplat.delivery.unit')}</span>
-						</DetailItem>
-						<DetailItem label={t('lplat.delivery.prepared')}>
-							{num(status.delivery.recent.prepared)}
-							<span class="muted unit">{t('lplat.delivery.unit')}</span>
-						</DetailItem>
-						<DetailItem label={t('lplat.delivery.aborted')}>
-							{num(status.delivery.recent.aborted)}
-							<span class="muted unit">{t('lplat.delivery.unit')}</span>
-						</DetailItem>
+					<dl class="facts">
+						{#snippet lastAccepted()}{@render when(status?.delivery.last_ingested_at)}{/snippet}
+						{@render fact(t('lplat.delivery.lastIngested'), lastAccepted)}
+						{#snippet published()}{@render count(status?.delivery.recent.published ?? 0)}{/snippet}
+						{@render fact(t('lplat.delivery.published'), published)}
+						{#snippet prepared()}{@render count(status?.delivery.recent.prepared ?? 0)}{/snippet}
+						{@render fact(t('lplat.delivery.prepared'), prepared)}
+						{#snippet aborted()}{@render count(status?.delivery.recent.aborted ?? 0)}{/snippet}
+						{@render fact(t('lplat.delivery.aborted'), aborted)}
 						{#if outbox}
-							<DetailItem label={t('lplat.delivery.pending')}>
-								<span class:attention={verdicts.delivery.reasons.includes('delivery_stuck')}>
-									{num(outbox.pending)}
+							{#snippet pending()}
+								<span class:attention={verdicts?.delivery.reasons.includes('delivery_stuck')}>
+									{@render count(outbox?.pending ?? 0)}
 								</span>
-								<span class="muted unit">{t('lplat.delivery.unit')}</span>
-							</DetailItem>
-							<DetailItem label={t('lplat.delivery.queued')}>
-								{num(outbox.queued)}
-								<span class="muted unit">{t('lplat.delivery.unit')}</span>
-							</DetailItem>
-							<DetailItem label={t('lplat.delivery.ingested')}>
-								{num(status.delivery.recent.ingested)}
-								<span class="muted unit">{t('lplat.delivery.unit')}</span>
-							</DetailItem>
+							{/snippet}
+							{@render fact(t('lplat.delivery.pending'), pending)}
+							{#snippet queued()}{@render count(outbox?.queued ?? 0)}{/snippet}
+							{@render fact(t('lplat.delivery.queued'), queued)}
+							{#snippet ingested()}{@render count(status?.delivery.recent.ingested ?? 0)}{/snippet}
+							{@render fact(t('lplat.delivery.ingested'), ingested)}
 							{#if outbox.oldest_pending_at}
-								<DetailItem label={t('lplat.delivery.oldest')}>
-									<DateTime value={outbox.oldest_pending_at} seconds showSecondary />
-								</DetailItem>
+								{#snippet oldest()}{@render when(outbox?.oldest_pending_at)}{/snippet}
+								{@render fact(t('lplat.delivery.oldest'), oldest)}
 							{/if}
 							{#if outbox.last_error_code}
-								<DetailItem label={t('lplat.delivery.lastError')}>
-									<code>{outbox.last_error_code}</code>
-								</DetailItem>
+								{#snippet lastError()}<code>{outbox?.last_error_code}</code>{/snippet}
+								{@render fact(t('lplat.delivery.lastError'), lastError)}
 							{/if}
 						{/if}
 						{#if exp}
-							<DetailItem label={t('lplat.delivery.export.state')}>
-								{#if exp.last_state}<code>{exp.last_state}</code>{:else}—{/if}
-							</DetailItem>
-							{#if exp.updated_at}
-								<DetailItem label={t('lplat.delivery.export.updated')}>
-									<DateTime value={exp.updated_at} seconds showSecondary />
-								</DetailItem>
-							{/if}
-							{#if exp.last_error_code}
-								<DetailItem label={t('lplat.delivery.lastError')}>
-									<code>{exp.last_error_code}</code>
-								</DetailItem>
-							{/if}
-							{#if exp.watermark}
-								<DetailItem label={t('lplat.delivery.export.watermark')}>
-									<DateTime value={exp.watermark.updated_at} seconds showSecondary />
-									<span class="second"><code>{exp.watermark.snapshot_id}</code></span>
-								</DetailItem>
+							{#snippet exportState()}
+								{#if exp?.last_state}<code>{exp.last_state}</code>{:else}<span class="muted">—</span
+									>{/if}
+							{/snippet}
+							{@render fact(t('lplat.delivery.export.state'), exportState)}
+							{#snippet exportUpdated()}{@render when(exp?.updated_at)}{/snippet}
+							{@render fact(t('lplat.delivery.export.updated'), exportUpdated)}
+							{#if exp.active_failure || exp.last_error_code}
+								{#snippet exportError()}
+									<code>{exp?.active_failure?.error_code ?? exp?.last_error_code}</code>
+								{/snippet}
+								{@render fact(t('lplat.delivery.lastError'), exportError)}
 							{/if}
 						{/if}
-					</DetailList>
+					</dl>
 				{/if}
 			</article>
 
@@ -319,40 +317,39 @@
 					verdicts.archive
 				)}
 				{#if archive.configured}
-					<DetailList ruled size="sm">
-						<DetailItem
-							label={t(
+					<dl class="facts">
+						{#snippet readable()}{@render when(until)}{/snippet}
+						{@render fact(
+							t(
 								archive.mode === 'scheduled'
 									? 'lplat.delivery.export.watermark'
 									: 'lplat.archive.lastCommit'
-							)}
-						>
-							{#if until !== null}
-								<DateTime value={until} seconds showSecondary />
-							{:else}
-								—
-							{/if}
-						</DetailItem>
-						<DetailItem label={t('lplat.archive.mode')}>
-							{#if archive.local_staging_only}
+							),
+							readable
+						)}
+						{#snippet mode()}
+							{#if archive?.local_staging_only}
 								{t('lplat.archive.local')}
-							{:else if archive.mode}
+							{:else if archive?.mode}
 								{modeLabel(archive.mode, t)}
 							{:else}
 								—
 							{/if}
-						</DetailItem>
-						<DetailItem label={t('lplat.archive.generation')}>
-							{#if archive.generation}<code>{archive.generation}</code>{:else}—{/if}
-						</DetailItem>
-						<DetailItem label={t('lplat.archive.activated')}>
-							{#if archive.activated_at}
-								<DateTime value={archive.activated_at} showSecondary />
+						{/snippet}
+						{@render fact(t('lplat.archive.mode'), mode)}
+						{#snippet generationValue()}
+							{#if archive?.generation}<code>{archive.generation}</code>{:else}—{/if}
+						{/snippet}
+						{@render fact(t('lplat.archive.generation'), generationValue)}
+						{#snippet activated()}
+							{#if archive?.activated_at}
+								<DateTime value={archive.activated_at} showSecondary stacked />
 							{:else}
 								—
 							{/if}
-						</DetailItem>
-					</DetailList>
+						{/snippet}
+						{@render fact(t('lplat.archive.activated'), activated)}
+					</dl>
 
 					{#if table}
 						<div class="platform" data-testid="platform-box">
@@ -374,32 +371,39 @@
 									{#if budget > 100}<span class="attention"> ({budget}%)</span>{/if}
 								</p>
 							{/if}
-							<DetailList ruled size="sm">
-								<DetailItem label={t('lplat.archive.records')}>
-									{table.current_snapshot?.total_records === null ||
-									table.current_snapshot?.total_records === undefined
-										? '—'
-										: num(table.current_snapshot.total_records)}
-								</DetailItem>
-								<DetailItem label={t('lplat.archive.files')}>
-									{table.current_snapshot?.total_data_files === null ||
-									table.current_snapshot?.total_data_files === undefined
-										? '—'
-										: num(table.current_snapshot.total_data_files)}
-								</DetailItem>
-								<DetailItem label={t('lplat.archive.snapshots')}>
-									{num(table.snapshot_count)}
-								</DetailItem>
-								<DetailItem label={t('lplat.archive.lastCompaction')}>
-									{#if table.last_compaction_at}
-										<DateTime value={table.last_compaction_at} seconds showSecondary />
+							<dl class="facts facts--tight">
+								{#snippet records()}
+									<span class="num">
+										{table?.current_snapshot?.total_records === null ||
+										table?.current_snapshot?.total_records === undefined
+											? '—'
+											: num(table.current_snapshot.total_records)}
+									</span>
+								{/snippet}
+								{@render fact(t('lplat.archive.records'), records)}
+								{#snippet files()}
+									<span class="num">
+										{table?.current_snapshot?.total_data_files === null ||
+										table?.current_snapshot?.total_data_files === undefined
+											? '—'
+											: num(table.current_snapshot.total_data_files)}
+									</span>
+								{/snippet}
+								{@render fact(t('lplat.archive.files'), files)}
+								{#snippet snapshots()}<span class="num">{num(table?.snapshot_count ?? 0)}</span
+									>{/snippet}
+								{@render fact(t('lplat.archive.snapshots'), snapshots)}
+								{#snippet compaction()}
+									{#if table?.last_compaction_at}
+										<DateTime value={table.last_compaction_at} seconds showSecondary stacked />
 									{:else}
-										<Badge tone={verdicts.archive.tone === 'ok' ? 'neutral' : 'warning'}>
+										<Badge tone={verdicts?.archive.tone === 'ok' ? 'neutral' : 'warning'}>
 											{t('lplat.archive.never')}
 										</Badge>
 									{/if}
-								</DetailItem>
-							</DetailList>
+								{/snippet}
+								{@render fact(t('lplat.archive.lastCompaction'), compaction)}
+							</dl>
 						</div>
 					{:else if !archive.local_staging_only}
 						<p class="muted note">{t('lplat.archive.tenantNote')}</p>
@@ -427,58 +431,62 @@
 							{t('lplat.read.until', { minutes: num(lag) })}
 						{/if}
 					</p>
-					<DetailList ruled size="sm">
+					<dl class="facts">
 						{#if !archive.read_probe.ok}
-							<DetailItem label={t('lplat.read.reason')}>
-								<code>{archive.read_probe.reason ?? '—'}</code>
-							</DetailItem>
+							{#snippet reason()}<code>{archive?.read_probe.reason ?? '—'}</code>{/snippet}
+							{@render fact(t('lplat.read.reason'), reason)}
 						{/if}
 						{#if archive.read_probe.coverage}
-							<DetailItem label={t('lplat.read.consistency')}>
-								{consistencyLabel(archive.read_probe.coverage.consistency, t)}
-							</DetailItem>
+							{#if archive.read_probe.coverage.consistency === 'local_hot_only'}
+								{#snippet hotOnly()}
+									<span class="muted">{t('lplat.read.consistency.local_hot_only')}</span>
+								{/snippet}
+								{@render fact(t('lplat.read.consistency'), hotOnly)}
+							{/if}
 							{#if archive.read_probe.coverage.pending_deliveries !== null}
-								<DetailItem label={t('lplat.read.pending')}>
-									{num(archive.read_probe.coverage.pending_deliveries)}
-									<span class="muted unit">{t('lplat.delivery.unit')}</span>
-								</DetailItem>
+								{#snippet pendingDeliveries()}
+									{@render count(archive?.read_probe.coverage?.pending_deliveries ?? 0)}
+								{/snippet}
+								{@render fact(t('lplat.read.pending'), pendingDeliveries)}
 							{/if}
 						{/if}
 						{#if archive.read_probe.ok && !archive.read_probe.has_archive}
-							<DetailItem label={t('lplat.stage.archive')}>
-								<span class="muted">{t('lplat.read.noArchive')}</span>
-							</DetailItem>
+							{#snippet noArchive()}<span class="muted">{t('lplat.read.noArchive')}</span>{/snippet}
+							{@render fact(t('lplat.stage.archive'), noArchive)}
 						{/if}
-					</DetailList>
+					</dl>
 				{/if}
 			</article>
 		</section>
 
 		{#if showCoverage}
 			<Card title={t('lplat.coverage.title')} info={t('lplat.coverage.desc')}>
-				<DetailList columns={3} size="sm">
-					<DetailItem label={t('lplat.coverage.covered')}
-						>{num(status.audit_coverage.covered)}</DetailItem
-					>
-					<DetailItem label={t('lplat.coverage.gap')}>
-						<span class:attention={status.audit_coverage.gap_detected > 0}>
-							{num(status.audit_coverage.gap_detected)}
+				<dl class="facts facts--row">
+					{#snippet covered()}<span class="num">{num(status?.audit_coverage.covered ?? 0)}</span
+						>{/snippet}
+					{@render fact(t('lplat.coverage.covered'), covered)}
+					{#snippet gap()}
+						<span class="num" class:attention={(status?.audit_coverage.gap_detected ?? 0) > 0}>
+							{num(status?.audit_coverage.gap_detected ?? 0)}
 						</span>
-					</DetailItem>
-					<DetailItem label={t('lplat.coverage.acknowledged')}>
-						{num(status.audit_coverage.acknowledged)}
-					</DetailItem>
-					<DetailItem label={t('lplat.coverage.ignored')}
-						>{num(status.audit_coverage.ignored)}</DetailItem
-					>
-					<DetailItem label={t('lplat.coverage.lastChecked')}>
-						{#if status.audit_coverage.last_checked_at}
+					{/snippet}
+					{@render fact(t('lplat.coverage.gap'), gap)}
+					{#snippet acknowledged()}<span class="num"
+							>{num(status?.audit_coverage.acknowledged ?? 0)}</span
+						>{/snippet}
+					{@render fact(t('lplat.coverage.acknowledged'), acknowledged)}
+					{#snippet ignored()}<span class="num">{num(status?.audit_coverage.ignored ?? 0)}</span
+						>{/snippet}
+					{@render fact(t('lplat.coverage.ignored'), ignored)}
+					{#snippet lastChecked()}
+						{#if status?.audit_coverage.last_checked_at}
 							<DateTime value={status.audit_coverage.last_checked_at} showSecondary />
 						{:else}
 							<span class="muted">{t('lplat.coverage.never')}</span>
 						{/if}
-					</DetailItem>
-				</DetailList>
+					{/snippet}
+					{@render fact(t('lplat.coverage.lastChecked'), lastChecked)}
+				</dl>
 			</Card>
 		{/if}
 
@@ -501,22 +509,28 @@
 			{#if repairFailed}
 				<Callout tone="danger" live>{t('lplat.catalog.repair.failed')}</Callout>
 			{/if}
-			<DetailList columns={3} size="sm">
-				<DetailItem label={t('lplat.catalog.findings')}>
-					{#if status.chunk_catalog.sampled_repair_findings === 0}
+			<dl class="facts facts--row">
+				{#snippet findings()}
+					{#if status?.chunk_catalog.sampled_repair_findings === 0}
 						<Badge tone="success" dot>{t('lplat.catalog.clean')}</Badge>
 					{:else}
-						<Badge tone="warning" dot>{num(status.chunk_catalog.sampled_repair_findings)}</Badge>
+						<Badge tone="warning" dot
+							>{num(status?.chunk_catalog.sampled_repair_findings ?? 0)}</Badge
+						>
 					{/if}
-					<div class="muted">
-						{t('lplat.catalog.sample', { limit: num(status.chunk_catalog.scan_limit) })}
-					</div>
-				</DetailItem>
-				<DetailItem label={t('lplat.catalog.sensitive')}>
-					{num(status.chunk_catalog.sampled_sensitive_detail_findings)}
-				</DetailItem>
+					<span class="muted sample">
+						{t('lplat.catalog.sample', { limit: num(status?.chunk_catalog.scan_limit ?? 0) })}
+					</span>
+				{/snippet}
+				{@render fact(t('lplat.catalog.findings'), findings)}
+				{#snippet sensitive()}
+					<span class="num"
+						>{num(status?.chunk_catalog.sampled_sensitive_detail_findings ?? 0)}</span
+					>
+				{/snippet}
+				{@render fact(t('lplat.catalog.sensitive'), sensitive)}
 				{#each status.chunk_catalog.sensitive_detail_index as entry (entry.store)}
-					<DetailItem label="{t('lplat.catalog.index')} · {entry.store}">
+					{#snippet indexValue()}
 						{#if entry.indexed_objects !== null}
 							{t('lplat.catalog.index.count', { count: num(entry.indexed_objects) })}
 						{:else}
@@ -528,9 +542,10 @@
 								)}
 							</span>
 						{/if}
-					</DetailItem>
+					{/snippet}
+					{@render fact(`${t('lplat.catalog.index')} · ${entry.store}`, indexValue)}
 				{/each}
-			</DetailList>
+			</dl>
 		</Card>
 	{/if}
 </Page>
@@ -549,52 +564,100 @@
 	.muted {
 		color: var(--text-muted);
 	}
-	.unit {
-		margin-inline-start: 0.25em;
-		font-size: var(--fs-small);
+	.num {
+		font-variant-numeric: tabular-nums;
 	}
-	.second {
-		display: block;
-		font-size: var(--fs-small);
+	.unit {
+		margin-inline-start: 0.3em;
+		font-size: var(--fs-caption);
 		color: var(--text-muted);
 	}
 	.attention {
 		color: var(--danger);
 		font-weight: var(--fw-semibold);
 	}
+	.sample {
+		display: block;
+		font-size: var(--fs-caption);
+	}
 
-	/* The flow: three stages with an arrow between them; stacked when the row cannot fit. */
+	/* Compact fact rows: label at the start, value at the end, one thin rule between rows. */
+	.facts {
+		margin: 0;
+		font-size: var(--fs-small);
+	}
+	.fact {
+		display: flex;
+		justify-content: space-between;
+		align-items: baseline;
+		gap: var(--space-related);
+		padding-block: 5px;
+		border-top: 1px solid var(--border-subtle);
+	}
+	.fact:first-child {
+		border-top: 0;
+	}
+	.fact dt {
+		flex: 0 1 auto;
+		color: var(--text-muted);
+	}
+	.fact dd {
+		flex: 1 1 auto;
+		margin: 0;
+		min-width: 0;
+		text-align: end;
+		font-weight: var(--fw-medium);
+		color: var(--text-primary);
+	}
+	.facts--tight .fact {
+		padding-block: 4px;
+	}
+	.facts--row {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+		gap: 0 var(--space-section);
+	}
+
+	/* The flow: three stages joined at the icon line; stacked when the row cannot fit. */
 	.flow {
 		display: grid;
-		grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr);
-		gap: var(--space-related);
-		align-items: stretch;
+		grid-template-columns: minmax(0, 1fr) 28px minmax(0, 1fr) 28px minmax(0, 1fr);
+		gap: 6px;
+		align-items: start;
 	}
 	.stage {
 		display: flex;
 		flex-direction: column;
-		gap: var(--space-field);
-		padding: var(--space-field);
+		gap: var(--space-related);
+		padding: var(--space-related) var(--space-field) var(--space-field);
 		border: 1px solid var(--border);
 		border-radius: var(--radius-lg);
 		background: var(--bg-card);
+		min-height: 100%;
 	}
 	.stage__head {
-		display: grid;
-		grid-template-columns: auto 1fr;
-		grid-template-rows: auto auto;
-		column-gap: var(--space-related);
+		display: flex;
+		flex-direction: column;
 		align-items: center;
+		gap: 2px;
+		text-align: center;
 	}
 	.stage__icon {
-		grid-row: 1 / span 2;
 		display: grid;
 		place-items: center;
-		width: 44px;
-		height: 44px;
-		border-radius: var(--radius-md);
+		width: 48px;
+		height: 48px;
+		margin-bottom: 4px;
+		border-radius: var(--radius-round);
 		background: var(--bg-subtle);
-		color: var(--text-secondary);
+		color: var(--text-primary);
+	}
+	/* One line each, so the three status rows below sit on the same line. */
+	.stage__title-row {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+		white-space: nowrap;
 	}
 	.stage__title {
 		margin: 0;
@@ -602,32 +665,26 @@
 		font-weight: var(--fw-semibold);
 		line-height: var(--lh-tight);
 	}
-	.stage__desc {
-		margin: 0;
-		font-size: var(--fs-small);
-		line-height: var(--lh-snug);
-		color: var(--text-muted);
-	}
 	.stage__status {
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
 		gap: var(--space-related);
-		padding-block: var(--space-related);
+		padding-block: 6px;
 		border-block: 1px solid var(--border-subtle);
 	}
 	.stage__status-label {
-		font-size: var(--fs-label);
+		font-size: var(--fs-small);
 		font-weight: var(--fw-medium);
 		color: var(--text-secondary);
 	}
 	.stage__reasons {
 		margin: 0;
-		padding: var(--space-related) var(--space-field);
-		border-radius: var(--radius-md);
+		padding: 6px var(--space-related);
+		border-radius: var(--radius-sm);
 		background: var(--warning-bg);
 		color: var(--warning-text);
-		font-size: var(--fs-small);
+		font-size: var(--fs-caption);
 		line-height: var(--lh-snug);
 		list-style: none;
 	}
@@ -636,71 +693,72 @@
 		color: var(--danger);
 	}
 	.stage__reasons li + li {
-		margin-top: var(--space-related);
+		margin-top: 4px;
 	}
+	/* The arrow sits on the icon line (icon centre ≈ 24px below the card's top padding). */
 	.flow__arrow {
-		align-self: center;
-		width: 28px;
-		height: 2px;
-		margin-top: 22px;
-		background: var(--border);
 		position: relative;
+		align-self: start;
+		height: 2px;
+		margin-top: calc(var(--space-related) + 23px);
+		background: var(--text-secondary);
 	}
 	.flow__arrow::after {
 		content: '';
 		position: absolute;
 		inset-inline-end: -1px;
-		top: -5px;
-		border: 6px solid transparent;
-		border-inline-start: 8px solid var(--border);
+		top: -4px;
+		border: 5px solid transparent;
+		border-inline-start: 7px solid var(--text-secondary);
 		border-inline-end: 0;
 	}
 	.platform {
 		display: flex;
 		flex-direction: column;
-		gap: var(--space-related);
-		padding: var(--space-field);
+		gap: 6px;
+		padding: var(--space-related) var(--space-related) 6px;
 		border: 1px solid var(--border-subtle);
 		border-radius: var(--radius-md);
 		background: var(--bg-subtle);
 	}
 	.platform__title {
 		margin: 0;
-		font-size: var(--fs-label);
+		font-size: var(--fs-small);
 		font-weight: var(--fw-semibold);
 		color: var(--text-secondary);
 	}
 	.platform__detail {
 		margin: 0;
-		font-size: var(--fs-small);
+		font-size: var(--fs-caption);
 	}
 	.note {
 		margin: 0;
-		font-size: var(--fs-small);
+		font-size: var(--fs-caption);
 	}
 	.read__until {
 		margin: 0;
-		font-size: var(--fs-body);
+		font-size: var(--fs-small);
 		font-weight: var(--fw-medium);
+		line-height: var(--lh-snug);
 	}
 
-	@media (max-width: 1100px) {
+	@media (max-width: 1000px) {
 		.flow {
 			grid-template-columns: minmax(0, 1fr);
 		}
 		.flow__arrow {
 			justify-self: center;
 			width: 2px;
-			height: 24px;
+			height: 22px;
 			margin: 0;
 		}
 		.flow__arrow::after {
 			inset-inline-end: auto;
-			left: -5px;
+			left: -4px;
 			top: auto;
 			bottom: -1px;
-			border: 6px solid transparent;
-			border-top: 8px solid var(--border);
+			border: 5px solid transparent;
+			border-top: 7px solid var(--text-secondary);
 			border-bottom: 0;
 		}
 	}

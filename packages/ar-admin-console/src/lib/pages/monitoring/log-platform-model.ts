@@ -49,7 +49,9 @@ export function deliveryVerdict(status: LogPlatformStatus): StageVerdict {
 	}
 	const exp = status.delivery.export;
 	if (exp) {
-		if (exp.active_failure || exp.last_error_code) reasons.push('export_error');
+		// Only an unfinished failing batch counts: a done batch keeps retention/erasure markers in
+		// last_error_code that are not failures.
+		if (exp.active_failure) reasons.push('export_error');
 		// Work that sat for two export intervals (at least an hour) means the exporter stopped,
 		// with or without an error to show for it: an unfinished batch, or export-eligible records
 		// (past D1 retention) that no batch has selected because the exporter never ran again.

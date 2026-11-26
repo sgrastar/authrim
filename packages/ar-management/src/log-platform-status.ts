@@ -87,7 +87,10 @@ export interface LogPlatformDeliveryStatus {
    * Acceptance is not yet a commit: the record is in a Parquet file only after the next commit.
    */
   last_ingested_at: number | null;
-  /** Pipeline mode only. */
+  /**
+   * Pipeline mode only. `pending` includes intents still `preparing`: a publication whose
+   * reconciliation stalled after the business commit sits there and must count as waiting.
+   */
   outbox: {
     pending: number;
     queued: number;
@@ -354,15 +357,15 @@ async function describeDelivery(
       oldest_pending_at: unknown;
     }>(
       `SELECT
-         SUM(CASE WHEN state = 'pending' THEN 1 ELSE 0 END) AS pending,
+         SUM(CASE WHEN state IN ('preparing','pending') THEN 1 ELSE 0 END) AS pending,
          SUM(CASE WHEN state = 'queued' THEN 1 ELSE 0 END) AS queued,
-         MIN(CASE WHEN state IN ('pending','queued') THEN created_at END) AS oldest_pending_at
+         MIN(CASE WHEN state IN ('preparing','pending','queued') THEN created_at END) AS oldest_pending_at
        FROM log_iceberg_outbox WHERE 1 = 1${scope.sql}${generationClause}`,
       [...scope.binds, ...generationBinds]
     );
     const lastError = await adapter.queryOne<{ last_error_code: string | null }>(
       `SELECT last_error_code FROM log_iceberg_outbox
-       WHERE last_error_code IS NOT NULL AND state IN ('pending','queued')${scope.sql}${generationClause}
+       WHERE last_error_code IS NOT NULL AND state IN ('preparing','pending','queued')${scope.sql}${generationClause}
        ORDER BY updated_at DESC LIMIT 1`,
       [...scope.binds, ...generationBinds]
     );

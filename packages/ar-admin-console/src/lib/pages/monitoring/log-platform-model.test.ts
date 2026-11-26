@@ -73,6 +73,13 @@ describe('readable point', () => {
 		expect(deliveryVerdict(status)).toEqual({ tone: 'warning', reasons: ['export_error'] });
 	});
 
+	it("does not read a done batch's completion marker as a failure", () => {
+		const status = sampleLogPlatformStatus('scheduled');
+		status.delivery.export!.last_error_code = 'log_iceberg_retention_closed';
+		status.delivery.export!.last_state = 'done';
+		expect(deliveryVerdict(status)).toEqual({ tone: 'ok', reasons: [] });
+	});
+
 	it('calls a scheduled exporter stalled when a batch sat unfinished for two intervals', () => {
 		const status = sampleLogPlatformStatus('scheduled');
 		status.delivery.export!.oldest_unfinished_at = LOG_PLATFORM_NOW - 25 * 60_000;
