@@ -1,0 +1,399 @@
+/**
+ * Log platform status: one read-only picture of the log archive (Iceberg in R2 Data Catalog),
+ * the delivery path that fills it, the audit coverage registry and the sensitive-detail chunk
+ * catalog. Everything here is a cheap read: one Catalog `loadTable()`, a handful of COUNTs and the
+ * code registry. No Basin Catalog maintenance API is called (Workers hold no account API token),
+ * so compaction is inferred from the table's own snapshots.
+ */
+import type { DatabaseAdapter } from '@authrim/ar-lib-core';
+import { AdminLoggingControlRepository } from '@authrim/ar-lib-core';
+import {
+  resolveLogIcebergConfig,
+  type LogIcebergConfig,
+  type LogIcebergSettingsEnv,
+} from '@authrim/ar-lib-core/services/log-iceberg-config';
+import {
+  createLogIcebergCatalog,
+  type LogIcebergCatalogEnv,
+} from '@authrim/ar-lib-core/services/log-iceberg-catalog';
+import { LOG_ARCHIVE_READ_LIMITS, type IcebergLoadedTable } from '@authrim/ar-lib-logging/iceberg';
+import {
+  LOGGING_ADMIN_AUDIT_COVERAGE_REGISTRY,
+  summarizeAdminAuditCoverage,
+  type AdminAuditCoverageSummary,
+} from '@authrim/ar-lib-logging/coverage';
+import type { LogReadCoverage } from './log-read-adapter';
+
+export interface LogPlatformSnapshot {
+  id: string;
+  committed_at: number;
+  operation: string | null;
+  total_data_files: number | null;
+  total_records: number | null;
+}
+
+export interface LogPlatformArchiveStatus {
+  configured: boolean;
+  /** `log_iceberg_configuration_required` / `_invalid` when not configured. */
+  configuration_error: string | null;
+  mode: 'pipeline' | 'scheduled' | null;
+  generation: string | null;
+  activated_at: number | null;
+  local_staging_only: boolean;
+  /** `loadTable()` answered and the table is the configured one. */
+  reachable: boolean;
+  reachability_error: string | null;
+  table: {
+    uuid: string;
+    snapshot_count: number;
+    current_snapshot: LogPlatformSnapshot | null;
+    /** Newest snapshot whose operation is `replace` (what Catalog compaction commits). */
+    last_compaction_at: number | null;
+  } | null;
+  read_budget: {
+    max_files: number;
+    /** More data files than one read may open: log views come back incomplete. */
+    over_budget: boolean;
+  };
+  /** Outcome of the 24-hour admin audit read through the ordinary read path. */
+  read_probe: {
+    ok: boolean;
+    reason: string | null;
+    has_archive: boolean;
+    coverage: LogReadCoverage | null;
+  };
+}
+
+export interface LogPlatformDeliveryStatus {
+  publications: { prepared: number; published: number; aborted: number };
+  /** Pipeline mode only. */
+  outbox: {
+    pending: number;
+    queued: number;
+    oldest_pending_at: number | null;
+    last_error_code: string | null;
+  } | null;
+  /** Scheduled mode only. */
+  export: {
+    last_state: string | null;
+    last_error_code: string | null;
+    updated_at: number | null;
+    watermark: {
+      snapshot_id: string;
+      minimum_sequence_number: number;
+      updated_at: number;
+    } | null;
+  } | null;
+}
+
+export interface LogPlatformStatus {
+  generated_at: number;
+  window_start_at: number;
+  archive: LogPlatformArchiveStatus;
+  delivery: LogPlatformDeliveryStatus;
+  audit_coverage: AdminAuditCoverageSummary;
+  sensitive_detail_catalog: {
+    indexed_objects: number;
+    pending_repair_findings: number;
+    /** Findings the safe repair will not touch; someone has to look. */
+    manual_review_findings: number;
+  };
+  delivery_lanes: { lane: string; status: string; total: number }[];
+}
+
+export interface LogPlatformReadProbe {
+  ok: boolean;
+  reason: string | null;
+  has_archive: boolean;
+  coverage: LogReadCoverage | null;
+}
+
+export interface BuildLogPlatformStatusInput {
+  env: LogIcebergSettingsEnv & LogIcebergCatalogEnv;
+  adapter: DatabaseAdapter;
+  repository?: Pick<
+    AdminLoggingControlRepository,
+    'detectCatalogRepairFindings' | 'readCoverageLastCheckedAt'
+  >;
+  /** Null for a platform caller: every tenant is counted. */
+  tenantId: string | null;
+  tenantKey: string | null;
+  now: number;
+  windowMs?: number;
+  readProbe: LogPlatformReadProbe;
+  /** Test seam; defaults to the configured read-only Catalog. */
+  loadTable?: (config: LogIcebergConfig) => Promise<IcebergLoadedTable>;
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const REPAIR_PENDING_TTL_MS = 15 * 60 * 1000;
+const REPAIR_FINDINGS_LIMIT = 200;
+
+function errorCode(error: unknown): string {
+  if (error instanceof Error && error.message) return error.message.slice(0, 120);
+  return 'unknown_error';
+}
+
+function integer(value: unknown): number {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && /^-?(0|[1-9][0-9]*)$/.test(value)) return Number(value);
+  return 0;
+}
+
+function optionalInteger(value: unknown): number | null {
+  if (value === null || value === undefined) return null;
+  const parsed = integer(value);
+  return typeof value === 'number' || typeof value === 'string' ? parsed : null;
+}
+
+function summaryInteger(summary: Record<string, unknown> | undefined, key: string): number | null {
+  const raw = summary?.[key];
+  if (typeof raw === 'number' && Number.isSafeInteger(raw) && raw >= 0) return raw;
+  if (typeof raw === 'string' && /^(0|[1-9][0-9]*)$/.test(raw)) return Number(raw);
+  return null;
+}
+
+/** Reads what the table metadata says about itself; nothing in R2 is opened. */
+export function summarizeLogArchiveTable(
+  table: IcebergLoadedTable
+): NonNullable<LogPlatformArchiveStatus['table']> {
+  const metadata = table.metadata as unknown as {
+    'table-uuid'?: unknown;
+    'current-snapshot-id'?: unknown;
+    snapshots?: unknown;
+  };
+  const snapshots = Array.isArray(metadata.snapshots) ? metadata.snapshots : [];
+  const rawCurrent = metadata['current-snapshot-id'];
+  const currentId =
+    typeof rawCurrent === 'number' || typeof rawCurrent === 'string' ? String(rawCurrent) : null;
+  let current: LogPlatformSnapshot | null = null;
+  let lastCompactionAt: number | null = null;
+  for (const raw of snapshots) {
+    if (typeof raw !== 'object' || raw === null) continue;
+    const snapshot = raw as Record<string, unknown>;
+    const summary =
+      typeof snapshot.summary === 'object' && snapshot.summary !== null
+        ? (snapshot.summary as Record<string, unknown>)
+        : undefined;
+    const committedAt = integer(snapshot['timestamp-ms']);
+    const operation = typeof summary?.operation === 'string' ? summary.operation : null;
+    if (operation === 'replace' && (lastCompactionAt === null || committedAt > lastCompactionAt))
+      lastCompactionAt = committedAt;
+    const rawId = snapshot['snapshot-id'];
+    const snapshotId =
+      typeof rawId === 'number' || typeof rawId === 'string' ? String(rawId) : null;
+    if (currentId !== null && snapshotId === currentId) {
+      current = {
+        id: currentId,
+        committed_at: committedAt,
+        operation,
+        total_data_files: summaryInteger(summary, 'total-data-files'),
+        total_records: summaryInteger(summary, 'total-records'),
+      };
+    }
+  }
+  return {
+    uuid: typeof metadata['table-uuid'] === 'string' ? metadata['table-uuid'] : '',
+    snapshot_count: snapshots.length,
+    current_snapshot: current,
+    last_compaction_at: lastCompactionAt,
+  };
+}
+
+async function describeArchive(
+  input: BuildLogPlatformStatusInput
+): Promise<{ archive: LogPlatformArchiveStatus; config: LogIcebergConfig | null }> {
+  const base: LogPlatformArchiveStatus = {
+    configured: false,
+    configuration_error: null,
+    mode: null,
+    generation: null,
+    activated_at: null,
+    local_staging_only: false,
+    reachable: false,
+    reachability_error: null,
+    table: null,
+    read_budget: { max_files: LOG_ARCHIVE_READ_LIMITS.maxFiles, over_budget: false },
+    read_probe: input.readProbe,
+  };
+  let config: LogIcebergConfig;
+  try {
+    config = resolveLogIcebergConfig(input.env);
+  } catch (error) {
+    return { archive: { ...base, configuration_error: errorCode(error) }, config: null };
+  }
+  const archive: LogPlatformArchiveStatus = {
+    ...base,
+    configured: true,
+    mode: config.mode,
+    generation: config.generation,
+    activated_at: config.activatedAt,
+    local_staging_only: config.localStagingOnly === true,
+  };
+  if (config.localStagingOnly) return { archive, config };
+  try {
+    const load =
+      input.loadTable ??
+      ((resolved: LogIcebergConfig) =>
+        createLogIcebergCatalog(input.env, resolved, 'read').loadTable());
+    const table = await load(config);
+    const summary = summarizeLogArchiveTable(table);
+    if (summary.uuid !== config.tableUuid) throw new Error('log_iceberg_table_identity_changed');
+    archive.reachable = true;
+    archive.table = summary;
+    const files = summary.current_snapshot?.total_data_files;
+    archive.read_budget.over_budget =
+      typeof files === 'number' && files > LOG_ARCHIVE_READ_LIMITS.maxFiles;
+  } catch (error) {
+    archive.reachability_error = errorCode(error);
+  }
+  return { archive, config };
+}
+
+function tenantClause(column: string, tenantId: string | null): { sql: string; binds: string[] } {
+  return tenantId === null
+    ? { sql: '', binds: [] }
+    : { sql: ` AND ${column} = ?`, binds: [tenantId] };
+}
+
+async function describeDelivery(
+  input: BuildLogPlatformStatusInput,
+  config: LogIcebergConfig | null
+): Promise<LogPlatformDeliveryStatus> {
+  const { adapter, tenantId } = input;
+  const scope = tenantClause('tenant_id', tenantId);
+  const generation = config?.generation ?? null;
+  const generationClause = generation === null ? '' : ' AND storage_generation = ?';
+  const generationBinds = generation === null ? [] : [generation];
+
+  const publicationRows = await adapter.query<{ state: string; total: unknown }>(
+    `SELECT state, COUNT(*) AS total FROM log_iceberg_publications
+     WHERE 1 = 1${scope.sql}${generationClause} GROUP BY state`,
+    [...scope.binds, ...generationBinds]
+  );
+  const publications = { prepared: 0, published: 0, aborted: 0 };
+  for (const row of publicationRows) {
+    if (row.state in publications)
+      publications[row.state as keyof typeof publications] = integer(row.total);
+  }
+
+  let outbox: LogPlatformDeliveryStatus['outbox'] = null;
+  let exportState: LogPlatformDeliveryStatus['export'] = null;
+  if (config?.mode === 'pipeline') {
+    const counts = await adapter.queryOne<{
+      pending: unknown;
+      queued: unknown;
+      oldest_pending_at: unknown;
+    }>(
+      `SELECT
+         SUM(CASE WHEN state = 'pending' THEN 1 ELSE 0 END) AS pending,
+         SUM(CASE WHEN state = 'queued' THEN 1 ELSE 0 END) AS queued,
+         MIN(CASE WHEN state IN ('pending','queued') THEN created_at END) AS oldest_pending_at
+       FROM log_iceberg_outbox WHERE 1 = 1${scope.sql}${generationClause}`,
+      [...scope.binds, ...generationBinds]
+    );
+    const lastError = await adapter.queryOne<{ last_error_code: string | null }>(
+      `SELECT last_error_code FROM log_iceberg_outbox
+       WHERE last_error_code IS NOT NULL${scope.sql}${generationClause}
+       ORDER BY updated_at DESC LIMIT 1`,
+      [...scope.binds, ...generationBinds]
+    );
+    outbox = {
+      pending: integer(counts?.pending),
+      queued: integer(counts?.queued),
+      oldest_pending_at: optionalInteger(counts?.oldest_pending_at),
+      last_error_code: lastError?.last_error_code ?? null,
+    };
+  } else if (config?.mode === 'scheduled') {
+    const batch = await adapter.queryOne<{
+      state: string;
+      last_error_code: string | null;
+      updated_at: unknown;
+    }>(
+      `SELECT state, last_error_code, updated_at FROM log_iceberg_export_batches
+       WHERE 1 = 1${scope.sql}${generationClause} ORDER BY updated_at DESC LIMIT 1`,
+      [...scope.binds, ...generationBinds]
+    );
+    const watermark =
+      config.localStagingOnly || !config.tableUuid
+        ? null
+        : await adapter.queryOne<{
+            snapshot_id: string;
+            minimum_sequence_number: unknown;
+            updated_at: unknown;
+          }>(
+            `SELECT snapshot_id, minimum_sequence_number, updated_at
+             FROM log_iceberg_read_watermarks WHERE table_uuid = ? ORDER BY updated_at DESC LIMIT 1`,
+            [config.tableUuid]
+          );
+    exportState = {
+      last_state: batch?.state ?? null,
+      last_error_code: batch?.last_error_code ?? null,
+      updated_at: optionalInteger(batch?.updated_at),
+      watermark: watermark
+        ? {
+            snapshot_id: watermark.snapshot_id,
+            minimum_sequence_number: integer(watermark.minimum_sequence_number),
+            updated_at: integer(watermark.updated_at),
+          }
+        : null,
+    };
+  }
+  return { publications, outbox, export: exportState };
+}
+
+export async function buildLogPlatformStatus(
+  input: BuildLogPlatformStatusInput
+): Promise<LogPlatformStatus> {
+  const windowStart = input.now - (input.windowMs ?? DAY_MS);
+  const repository = input.repository ?? new AdminLoggingControlRepository(input.adapter);
+  const { archive, config } = await describeArchive(input);
+  const delivery = await describeDelivery(input, config);
+
+  const lastCheckedAt = await repository.readCoverageLastCheckedAt();
+  const auditCoverage = summarizeAdminAuditCoverage(
+    LOGGING_ADMIN_AUDIT_COVERAGE_REGISTRY,
+    lastCheckedAt
+  );
+
+  const indexScope = tenantClause('tenant_id', input.tenantId);
+  const indexed = await input.adapter.queryOne<{ total: unknown }>(
+    `SELECT COUNT(*) AS total FROM sensitive_detail_chunk_index
+     WHERE deleted_at IS NULL${indexScope.sql}`,
+    indexScope.binds
+  );
+  const findings = await repository.detectCatalogRepairFindings({
+    now: input.now,
+    limit: REPAIR_FINDINGS_LIMIT,
+    pendingTtlMs: REPAIR_PENDING_TTL_MS,
+    tenantKey: input.tenantKey ?? undefined,
+  });
+  const manualReview = findings.filter((finding) => finding.safety === 'manual_review').length;
+
+  const laneScope = tenantClause('tenant_key', input.tenantKey);
+  const lanes = await input.adapter.query<{ lane: string; status: string; total: unknown }>(
+    `SELECT lane, status, SUM(batch_count) AS total
+     FROM logging_delivery_event_aggregates
+     WHERE bucket_start_at >= ?${laneScope.sql}
+     GROUP BY lane, status`,
+    [windowStart, ...laneScope.binds]
+  );
+
+  return {
+    generated_at: input.now,
+    window_start_at: windowStart,
+    archive,
+    delivery,
+    audit_coverage: auditCoverage,
+    sensitive_detail_catalog: {
+      indexed_objects: integer(indexed?.total),
+      pending_repair_findings: findings.length,
+      manual_review_findings: manualReview,
+    },
+    delivery_lanes: lanes.map((row) => ({
+      lane: row.lane,
+      status: row.status,
+      total: integer(row.total),
+    })),
+  };
+}

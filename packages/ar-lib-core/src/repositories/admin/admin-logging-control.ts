@@ -225,6 +225,17 @@ async function upsertCoverageStatus(
 export class AdminLoggingControlRepository {
   constructor(private readonly adapter: DatabaseAdapter) {}
 
+  /** When the coverage rows were last written by a check; null before the first check. */
+  async readCoverageLastCheckedAt(): Promise<number | null> {
+    const row = await this.adapter.queryOne<{ last_checked_at: number | string | null }>(
+      'SELECT MAX(updated_at) AS last_checked_at FROM admin_audit_coverage_status'
+    );
+    const raw = row?.last_checked_at;
+    if (typeof raw === 'number' && Number.isSafeInteger(raw)) return raw;
+    if (typeof raw === 'string' && /^(0|[1-9][0-9]*)$/.test(raw)) return Number(raw);
+    return null;
+  }
+
   /** `tenantId` limits the tenant-level assignments to that tenant's; omitted, it is every tenant's. */
   async loadCriticalPolicy(tenantId?: string): Promise<AdminLoggingCriticalPolicyState> {
     const destinations = await this.adapter.query<AdminLoggingCriticalDestinationRow>(
