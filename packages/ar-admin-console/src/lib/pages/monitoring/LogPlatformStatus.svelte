@@ -259,8 +259,8 @@
 				{/if}
 			</div>
 			<p class="meta__as-of">
-				<span class="muted">{t('lplat.asOf')}:</span>
-				<DateTime value={status.generated_at} seconds showSecondary />
+				<span class="muted">{t('lplat.asOf')}</span>
+				<DateTime value={status.generated_at} seconds showSecondary stacked />
 			</p>
 		</div>
 
@@ -498,7 +498,7 @@
 					{@render fact(t('lplat.coverage.ignored'), ignored)}
 					{#snippet lastChecked()}
 						{#if status?.audit_coverage.last_checked_at}
-							<DateTime value={status.audit_coverage.last_checked_at} showSecondary />
+							<DateTime value={status.audit_coverage.last_checked_at} showSecondary stacked />
 						{:else}
 							<span class="muted">{t('lplat.coverage.never')}</span>
 						{/if}
@@ -588,7 +588,11 @@
 		font-size: var(--fs-small);
 	}
 	.meta__as-of {
+		display: flex;
+		align-items: baseline;
+		gap: var(--space-related);
 		margin-inline-start: auto;
+		text-align: end;
 		white-space: nowrap;
 	}
 	.muted {
