@@ -202,7 +202,7 @@ export function sampleLogPlatformStatus(
 				updated_at: LOG_PLATFORM_NOW - 11 * 60_000,
 				active_failure: null,
 				oldest_unfinished_at: null,
-				oldest_unselected_at: LOG_PLATFORM_NOW - 6 * 60_000,
+				oldest_eligible_since: null,
 				watermark: {
 					snapshot_id: '8532431906541772489',
 					minimum_sequence_number: 1_204,

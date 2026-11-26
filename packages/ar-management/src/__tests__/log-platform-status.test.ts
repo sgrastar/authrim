@@ -322,7 +322,9 @@ describe('buildLogPlatformStatus', () => {
         updated_at: NOW - 900,
       },
       'SELECT MIN(created_at) AS oldest FROM log_iceberg_export_batches': { oldest: NOW - 3000 },
-      'SELECT MIN(ingested_at) AS oldest FROM log_iceberg_records': { oldest: NOW - 7000 },
+      'SELECT MIN(ingested_at) AS oldest FROM log_iceberg_records': {
+        oldest: NOW - 7 * 86_400_000 - 7000,
+      },
       'FROM log_iceberg_export_batches': {
         state: 'verified',
         last_error_code: null,
@@ -375,7 +377,7 @@ describe('buildLogPlatformStatus', () => {
         updated_at: NOW - 900,
       },
       oldest_unfinished_at: NOW - 3000,
-      oldest_unselected_at: NOW - 7000,
+      oldest_eligible_since: NOW - 7000,
       watermark: { snapshot_id: '42', minimum_sequence_number: 17, updated_at: NOW - 400 },
     });
     expect(status.archive.table?.last_compaction_at).toBe(NOW - 400);

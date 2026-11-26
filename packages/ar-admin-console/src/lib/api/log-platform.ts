@@ -81,8 +81,8 @@ export interface LogPlatformDelivery {
 		active_failure: { batch_id: string; error_code: string; updated_at: number } | null;
 		/** When the oldest batch that is not done yet was created. */
 		oldest_unfinished_at: number | null;
-		/** When the oldest staged record that no batch has selected yet arrived. */
-		oldest_unselected_at: number | null;
+		/** Since when the oldest export-eligible record (past D1 retention) has waited for a batch. */
+		oldest_eligible_since: number | null;
 		watermark: { snapshot_id: string; minimum_sequence_number: number; updated_at: number } | null;
 	} | null;
 }
@@ -159,8 +159,9 @@ export const httpLogPlatform: LogPlatformClient = {
 				includeJsonContentType: true
 			});
 			if (!response.ok) throw await errorFromResponse(response);
-			const body = (await response.json()) as { item: SafeRepairResult };
-			return body.item;
+			// An action envelope: `result`, not `item`.
+			const body = (await response.json()) as { result: SafeRepairResult };
+			return body.result;
 		});
 	}
 };

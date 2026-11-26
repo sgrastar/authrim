@@ -51,11 +51,11 @@ export function deliveryVerdict(status: LogPlatformStatus): StageVerdict {
 	if (exp) {
 		if (exp.active_failure || exp.last_error_code) reasons.push('export_error');
 		// Work that sat for two export intervals (at least an hour) means the exporter stopped,
-		// with or without an error to show for it: an unfinished batch, or staged records that no
-		// batch has selected because the exporter never ran again.
+		// with or without an error to show for it: an unfinished batch, or export-eligible records
+		// (past D1 retention) that no batch has selected because the exporter never ran again.
 		const interval = (status.archive.export_interval_minutes ?? 60) * 60_000;
 		const limit = Math.max(2 * interval, STUCK_AFTER_MS);
-		const oldest = [exp.oldest_unfinished_at, exp.oldest_unselected_at]
+		const oldest = [exp.oldest_unfinished_at, exp.oldest_eligible_since]
 			.filter((at): at is number => at !== null)
 			.reduce<number | null>((min, at) => (min === null || at < min ? at : min), null);
 		if (oldest !== null && status.generated_at - oldest >= limit) reasons.push('delivery_stuck');

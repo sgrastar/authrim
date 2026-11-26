@@ -16,6 +16,7 @@ import {
   createLogIcebergCatalog,
   type LogIcebergCatalogEnv,
 } from '@authrim/ar-lib-core/services/log-iceberg-catalog';
+import { logIcebergPublicationVisibleSql } from '@authrim/ar-lib-core/services/log-iceberg-store';
 import { LOG_ARCHIVE_READ_LIMITS, type IcebergLoadedTable } from '@authrim/ar-lib-logging/iceberg';
 import {
   LOGGING_ADMIN_AUDIT_COVERAGE_REGISTRY,
@@ -103,10 +104,11 @@ export interface LogPlatformDeliveryStatus {
     /** When the oldest batch that is not done yet was created; a stalled exporter shows here. */
     oldest_unfinished_at: number | null;
     /**
-     * When the oldest staged record that no batch has selected yet arrived. An exporter that
-     * stopped between batches leaves no unfinished batch, only these.
+     * Since when the oldest export-eligible record has been waiting for a batch: a published,
+     * visible staged record past the D1 retention period that no batch has selected. An
+     * exporter that stopped between batches leaves no unfinished batch, only these.
      */
-    oldest_unselected_at: number | null;
+    oldest_eligible_since: number | null;
     watermark: {
       snapshot_id: string;
       minimum_sequence_number: number;
@@ -405,11 +407,15 @@ async function describeDelivery(
        WHERE state != 'done'${scope.sql}${generationClause}`,
       [...scope.binds, ...generationBinds]
     );
-    const unselected = await adapter.queryOne<{ oldest: unknown }>(
+    // The exporter's own eligibility: visible, published, past the D1 retention period.
+    const retentionMs = (config.dbRetentionDays ?? 0) * 86_400_000;
+    const eligible = await adapter.queryOne<{ oldest: unknown }>(
       `SELECT MIN(ingested_at) AS oldest FROM log_iceberg_records
-       WHERE batch_id IS NULL${scope.sql}${generationClause}`,
-      [...scope.binds, ...generationBinds]
+       WHERE batch_id IS NULL AND ${logIcebergPublicationVisibleSql()}
+         AND ingested_at <= ? - ?${scope.sql}${generationClause}`,
+      [input.now, retentionMs, ...scope.binds, ...generationBinds]
     );
+    const oldestEligible = optionalInteger(eligible?.oldest);
     const watermark =
       config.localStagingOnly || !config.tableUuid
         ? null
@@ -434,7 +440,7 @@ async function describeDelivery(
           }
         : null,
       oldest_unfinished_at: optionalInteger(unfinished?.oldest),
-      oldest_unselected_at: optionalInteger(unselected?.oldest),
+      oldest_eligible_since: oldestEligible === null ? null : oldestEligible + retentionMs,
       watermark: watermark
         ? {
             snapshot_id: watermark.snapshot_id,

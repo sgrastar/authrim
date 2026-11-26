@@ -142,7 +142,7 @@
 				if (exp && !outbox) {
 					const oldest = Math.min(
 						exp.oldest_unfinished_at ?? Number.POSITIVE_INFINITY,
-						exp.oldest_unselected_at ?? Number.POSITIVE_INFINITY
+						exp.oldest_eligible_since ?? Number.POSITIVE_INFINITY
 					);
 					return t('lplat.reason.export_stalled', {
 						hours: Math.floor((status.generated_at - oldest) / 3_600_000)
