@@ -29648,6 +29648,35 @@ paths:
         - adminBearer: []
         - adminSessionCookie: []
       parameters: []
+  /api/admin/admin-logging/platform-status:
+    get:
+      tags:
+        - Logging - Administration
+      operationId: getApiAdminAdminLoggingPlatformStatus
+      summary: Get log platform status
+      description: |-
+        One read-only picture of the log platform: whether the Iceberg log archive is configured and
+        reachable, whether a 24-hour read through the ordinary log read path completed and why not,
+        the delivery state (publications, pipeline outbox or scheduled export and watermark), the
+        admin audit coverage summary, the chunk-format catalog still filled by sensitive-detail
+        chunks (a bounded sample of repair findings and the sensitive-detail index per store) and the
+        24-hour delivery lane totals. The table's own statistics (snapshots, data file count, last
+        compaction, the read-limit size hint) are shared by every tenant and are therefore returned
+        only to a platform caller; a tenant caller gets `archive.table: null`. The response is never
+        503: a broken archive is reported in `archive.reachability_error` / `archive.read_probe`.
+      responses:
+        '200':
+          $ref: '#/components/responses/AdminLoggingDetail'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+      parameters: []
   /api/admin/admin-logging/coverage:
     get:
       tags:

@@ -3,7 +3,8 @@ import {
   LOG_ICEBERG_POLICY_PREFIX,
 } from '@authrim/ar-lib-core/services/log-iceberg-policy-artifacts';
 import { createLogReadAdapter, logCoverageHeaders } from '../../log-read-adapter';
-import { logQueryErrorResponse } from '../../log-archive-query';
+import { LogQueryIncompleteError, logQueryErrorResponse } from '../../log-archive-query';
+import { buildLogPlatformStatus, type LogPlatformReadProbe } from '../../log-platform-status';
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import type { AdminAuthContext, Env } from '@authrim/ar-lib-core';
@@ -12886,6 +12887,71 @@ adminLoggingRouter.post('/coverage/check', async (c) => {
       )
     );
   } catch {
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+  }
+});
+
+/**
+ * One read-only picture of the log platform: archive configuration and reachability, the table's
+ * own snapshots (file count, last compaction), the delivery path, audit coverage and the
+ * sensitive-detail chunk catalog. Never 503: a broken archive is what this view is for.
+ */
+adminLoggingRouter.get('/platform-status', async (c) => {
+  const authContext = getAuth(c);
+  if (!hasPermission(authContext, ADMIN_PERMISSIONS.ADMIN_LOGGING_OVERVIEW_READ)) {
+    return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
+  }
+  const platform = hasPlatformAuthority(authContext);
+  const tenantId = getTenantIdFromContext(c);
+  const now = Date.now();
+  const from = now - 24 * 60 * 60 * 1000;
+
+  try {
+    const tenantKeyFilter = await resolveTenantKeyFilter(c, undefined);
+    if (!tenantKeyFilter.ok) return tenantKeyFilter.response;
+
+    // The same read path the log views use: when it is incomplete, say why instead of failing.
+    const read = createLogReadAdapter({
+      env: c.env,
+      tenantId,
+      dataset: 'admin.admin_audit_log',
+      window: { fromMs: from },
+    });
+    let readProbe: LogPlatformReadProbe;
+    try {
+      await read.adapter.queryOne<Record<string, unknown>>(
+        'SELECT COUNT(*) AS total FROM admin_audit_log WHERE tenant_id = ? AND created_at >= ?',
+        [tenantId, from]
+      );
+      readProbe = {
+        ok: true,
+        reason: null,
+        has_archive: read.hasArchive(),
+        coverage: read.coverage() ?? null,
+      };
+    } catch (error) {
+      if (!(error instanceof LogQueryIncompleteError)) throw error;
+      readProbe = { ok: false, reason: error.reason, has_archive: false, coverage: null };
+    }
+
+    const status = await buildLogPlatformStatus({
+      env: c.env,
+      adapter: getAdminAdapter(c),
+      repository: getAdminLoggingControlRepository(c),
+      tenantId: platform ? null : tenantId,
+      platform,
+      tenantKey: tenantKeyFilter.tenantKey,
+      sensitiveDetailIndexStores: getSensitiveDetailProbeAdapters(c).map((entry) => ({
+        store: entry.binding,
+        adapter: entry.adapter,
+      })),
+      now,
+      readProbe,
+    });
+    return c.json(adminDetailEnvelope(status));
+  } catch (error) {
+    const logError = logQueryErrorResponse(c, error);
+    if (logError) return logError;
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 });

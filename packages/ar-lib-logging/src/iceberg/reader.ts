@@ -49,13 +49,21 @@ export interface SnapshotReadResult {
   sequenceNumber: number;
   records: LogArchiveRecord[];
 }
-const READ_LIMITS = {
+/** Ceilings of one snapshot read; callers may lower them, never raise them. */
+export const LOG_ARCHIVE_READ_LIMITS = {
   maxRows: 10_000,
   maxFiles: 128,
   maxBytes: 32 * 1024 * 1024,
   maxFileBytes: 8 * 1024 * 1024,
   deadlineMs: 10_000,
-};
+} as const;
+const READ_LIMITS: {
+  maxRows: number;
+  maxFiles: number;
+  maxBytes: number;
+  maxFileBytes: number;
+  deadlineMs: number;
+} = { ...LOG_ARCHIVE_READ_LIMITS };
 
 function rowFromParquet(value: unknown): LogArchiveRecord {
   if (typeof value !== 'object' || value === null || Array.isArray(value))
