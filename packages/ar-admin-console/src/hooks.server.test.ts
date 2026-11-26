@@ -494,6 +494,38 @@ describe('apiProxy', () => {
 		expect(resolve).not.toHaveBeenCalled();
 	});
 
+	it('does not require a BFF machine token to read the Admin sign-in methods', async () => {
+		const bffEnv = await createBffEnv();
+		const fetch = vi
+			.fn()
+			.mockResolvedValueOnce(new Response('{"methods":{"passkey":true,"vc":false}}'));
+		const resolve = vi.fn(async () => new Response('resolved'));
+		const event = {
+			url: new URL('https://mt-ar-admin-ui.pages.dev/api/admin/auth/methods'),
+			request: new Request('https://mt-ar-admin-ui.pages.dev/api/admin/auth/methods', {
+				headers: { Origin: 'https://mt-ar-admin-ui.pages.dev' }
+			}),
+			platform: {
+				env: {
+					AR_ROUTER: { fetch },
+					PUBLIC_AUTHRIM_ISSUER: 'https://api.authrim.example',
+					...bffEnv
+				}
+			},
+			getClientAddress: () => '203.0.113.10'
+		} as unknown as Parameters<typeof apiProxy>[0]['event'];
+
+		const response = await apiProxy({ event, resolve });
+		const proxiedRequest = fetch.mock.calls[0][0] as Request;
+
+		expect(response.status).toBe(200);
+		expect(await response.text()).toBe('{"methods":{"passkey":true,"vc":false}}');
+		expect(proxiedRequest.url).toBe('https://api.authrim.example/api/admin/auth/methods');
+		expect(proxiedRequest.headers.get('Authorization')).toBeNull();
+		expect(proxiedRequest.headers.get('X-Authrim-Admin-UI-Api-Mode')).toBe('cross-site-proxy-bff');
+		expect(resolve).not.toHaveBeenCalled();
+	});
+
 	it('does not require a BFF machine token for Admin passkey bootstrap options', async () => {
 		const bffEnv = await createBffEnv();
 		const fetch = vi.fn().mockResolvedValueOnce(new Response('options'));

@@ -8,6 +8,32 @@ import { adminAuthAPI, authErrorKey } from './admin-auth';
 
 const apiBaseUrl = import.meta.env.PUBLIC_API_BASE_URL || '';
 
+describe('adminAuthAPI sign-in methods', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+	});
+
+	it('reads which methods the platform allows', async () => {
+		adminFetch.mockResolvedValue(
+			new Response(JSON.stringify({ methods: { passkey: true, vc: true } }), { status: 200 })
+		);
+		await expect(adminAuthAPI.getSignInMethods()).resolves.toEqual({ passkey: true, vc: true });
+		expect(adminFetch).toHaveBeenCalledWith(
+			`${apiBaseUrl}/api/admin/auth/methods`,
+			expect.objectContaining({ credentials: 'include', skipTenantHeader: true })
+		);
+	});
+
+	it('falls back to the passkey only when the answer fails or cannot be read', async () => {
+		adminFetch.mockResolvedValue(new Response('{}', { status: 503 }));
+		await expect(adminAuthAPI.getSignInMethods()).resolves.toEqual({ passkey: true, vc: false });
+		adminFetch.mockResolvedValue(new Response(JSON.stringify({ methods: { vc: 'yes' } })));
+		await expect(adminAuthAPI.getSignInMethods()).resolves.toEqual({ passkey: true, vc: false });
+		adminFetch.mockRejectedValue(new TypeError('network'));
+		await expect(adminAuthAPI.getSignInMethods()).resolves.toEqual({ passkey: true, vc: false });
+	});
+});
+
 describe('adminAuthAPI wallet login', () => {
 	const requestId = 'g1:apac:3:vp_6f1c2a10-9a47-4d1b-8f7e-0c4d5a6b7c8d';
 

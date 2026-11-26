@@ -2659,6 +2659,45 @@ paths:
           $ref: '#/components/responses/Error'
         '403':
           $ref: '#/components/responses/Error'
+  /api/admin/auth/methods:
+    get:
+      tags:
+        - Auth
+      operationId: getApiAdminAuthMethods
+      summary: Which ways an administrator can sign in to the console.
+      description: >-
+        The sign-in methods the platform allows (platform setting
+        security.admin_sign_in_methods, env ADMIN_SIGN_IN_METHODS): the passkey always, a wallet
+        presentation of the admin credential (vc) only when the platform turned it on. Read by the
+        console's sign-in page before anyone is signed in, so it shows only the ways that work; the
+        wallet sign-in endpoints refuse with 403 wallet_login_disabled while vc is off. A list that
+        cannot be read, or a failure to read it, answers passkey only.
+      responses:
+        '200':
+          description: The methods the platform allows.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - methods
+                properties:
+                  methods:
+                    type: object
+                    required:
+                      - passkey
+                      - vc
+                    properties:
+                      passkey:
+                        type: boolean
+                        description: Always true.
+                      vc:
+                        type: boolean
+                        description: Whether signing in with a wallet is on.
+              example:
+                methods:
+                  passkey: true
+                  vc: false
   /api/admin/auth/passkey/options:
     post:
       tags:

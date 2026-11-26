@@ -79,9 +79,8 @@ export function refusal(meta: SettingMeta, value: unknown): string | null {
 		case 'string':
 			return typeof value === 'string' ? null : 'Value must be text';
 		case 'json':
-			return value !== null && typeof value === 'object' && !Array.isArray(value)
-				? null
-				: 'Value must be an object';
+			// A map or a list (the allowed second-factor kinds, the sign-in methods), as the API takes.
+			return value !== null && typeof value === 'object' ? null : 'Value must be an object';
 		default:
 			return null;
 	}

@@ -25,6 +25,8 @@
 
 	let errorKey = $state<MessageKey | null>(null);
 	let loading = $state(false);
+	// The wallet button only once the platform says it is on (`security.admin_sign_in_methods`).
+	let walletEnabled = $state(false);
 
 	async function resumeAfterLogin(): Promise<void> {
 		const handoffId = resolveAdminAgentLoginHandoffId(window.location.search);
@@ -43,6 +45,10 @@
 	// the passkeys this browser still holds for it, administrators' included.
 	onMount(async () => {
 		await leaveForNoticeIfTenantDeleted();
+	});
+
+	onMount(async () => {
+		walletEnabled = (await adminAuthAPI.getSignInMethods()).vc;
 	});
 
 	// An Admin Agent handoff can resume without a new ceremony when a session already exists.
@@ -96,7 +102,9 @@
 	<Button variant="primary" icon="fingerprint" block {loading} onclick={signIn}>
 		{loading ? t('login.authenticating') : t('login.passkey')}
 	</Button>
-	<WalletLogin disabled={loading} />
+	{#if walletEnabled}
+		<WalletLogin disabled={loading} />
+	{/if}
 	<Callout>{t('login.hint')}</Callout>
 	{#snippet footer()}
 		<LanguageSwitch />

@@ -76,6 +76,17 @@ export const enSettings: Record<keyof typeof jaSettings, string> = {
 	'set.kind.totp': 'Authenticator app',
 	'set.kind.totp.desc':
 		'A 6-digit code. It is weak against phishing: allow it only for admins who cannot have a key.',
+	'set.section.adminSignInMethods': 'Sign-in methods for administrators',
+	'set.section.adminSignInMethods.desc':
+		'The ways the console’s sign-in page offers. Applies to every tenant. Only platform administrators can change it.',
+	'set.k.security.admin_sign_in_methods': 'Sign-in methods',
+	'set.k.security.admin_sign_in_methods.desc':
+		'A passkey is always available. Turning on VC (wallet) shows “Open the wallet on this device” on the sign-in page, so an administrator can sign in by presenting their admin credential. While it is off, the button is hidden and the API refuses wallet sign-ins too.',
+	'set.method.passkey': 'Passkey',
+	'set.method.passkey.desc': 'Verifies the person with a registered passkey. Always available.',
+	'set.method.vc': 'VC (wallet)',
+	'set.method.vc.desc':
+		'Signs in by presenting the admin credential held in a wallet. Off by default while it is being built out.',
 	'set.k.security.admin_step_up_enforced': 'Ask for extra checks before admin operations',
 	'set.k.security.admin_step_up_enforced.desc':
 		'Off skips the passkey and second-factor checks before sensitive admin operations. Turn it off only during a migration; turning it off itself needs an L2 check.',
