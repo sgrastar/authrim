@@ -185,6 +185,10 @@ describe('buildHttpSinkAuthHeaders', () => {
     await expect(buildHttpSinkAuthHeaders({ mode: 'other' as never })).rejects.toThrow(
       'unsupported_http_sink_auth_mode:other'
     );
+    // Arbitrary values are never echoed.
+    await expect(
+      buildHttpSinkAuthHeaders({ mode: 'sk_live_secret value' as never })
+    ).rejects.toThrow('unsupported_http_sink_auth_mode:invalid');
   });
 
   it('sends a bearer token and redacts it', async () => {

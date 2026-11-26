@@ -1,3 +1,9 @@
+import {
+  HTTP_SINK_AUTH_MODE_CONFIG_KEYS,
+  isHttpSinkAuthMode,
+  resolveHttpSinkAuthMode,
+} from '../delivery/http-sink-auth';
+
 export type DestinationKind =
   | 'object_storage'
   | 'http_sink'
@@ -146,6 +152,17 @@ export function validateDestinationProviderConfig(
     const value = config[field];
     if (value === undefined || value === null || value === '') {
       errors.push({ field, message: 'required' });
+    }
+  }
+
+  if (provider === 'http') {
+    // An explicitly provided auth mode must be a known one; omitting it is allowed (delivery then
+    // defaults to none, or bearer when a credential exists). Unknown modes are rejected at save
+    // time because delivery fails closed on them.
+    // Only the effective (highest-priority provided) key is validated, matching delivery.
+    const resolved = resolveHttpSinkAuthMode(config, HTTP_SINK_AUTH_MODE_CONFIG_KEYS);
+    if (resolved && !isHttpSinkAuthMode(resolved.mode)) {
+      errors.push({ field: resolved.key, message: 'invalid_value' });
     }
   }
 

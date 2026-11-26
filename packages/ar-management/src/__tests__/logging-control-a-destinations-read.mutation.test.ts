@@ -203,6 +203,26 @@ describe('GET /:id visibility', () => {
 });
 
 describe('small destination edge cases', () => {
+  it('provider-preview reports an unsupported http auth mode as invalid_value, not required', async () => {
+    const res = await call(
+      [P.STORAGE_DESTINATIONS_CREATE],
+      'POST',
+      '/provider-preview',
+      {
+        provider: 'http',
+        provider_config: { url: 'https://collector.example/logs', authMode: 'mystery' },
+      },
+      { platform: true }
+    );
+    expect(res.body.item.validation.errors).toEqual([
+      {
+        path: 'provider_config.authMode',
+        code: 'invalid_value',
+        message: 'Provider config value is not supported.',
+      },
+    ]);
+  });
+
   it('provider-preview accepts an http provider without a url (required-field error only)', async () => {
     const res = await call(
       [P.STORAGE_DESTINATIONS_CREATE],

@@ -2152,6 +2152,12 @@ function parseJsonObjectValue(value: unknown): Record<string, unknown> | undefin
   }
 }
 
+function providerConfigErrorMessage(code: string): string {
+  return code === 'invalid_value'
+    ? 'Provider config value is not supported.'
+    : 'Provider config field is required.';
+}
+
 function hasForbiddenProviderConfigField(
   config: Record<string, unknown>,
   path: string[] = []
@@ -2244,7 +2250,7 @@ function buildDestinationProviderPayloadPreview(input: {
       fieldError(
         `provider_config.${error.field}`,
         error.message,
-        'Provider config field is required.'
+        providerConfigErrorMessage(error.message)
       )
     );
   }
@@ -2546,7 +2552,7 @@ async function readDestinationBody(
         fieldError(
           `provider_config.${error.field}`,
           error.message,
-          'Provider config field is required.'
+          providerConfigErrorMessage(error.message)
         )
       );
     }
