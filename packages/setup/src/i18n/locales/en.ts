@@ -518,7 +518,7 @@ const en: Translations = {
   // Feature flags
   'features.title': 'Feature Flags',
   'features.queuePrompt':
-    'Enable Cloudflare Queues? Disabled by default. Free plan capacity is roughly 3,000 delivered messages/day; Authrim queues async audit fan-out, logging delivery retries, export build jobs, and rewrap retry jobs.',
+    'Enable Cloudflare Queues? Disabled by default. Free plan capacity is roughly 3,000 delivered messages/day; Authrim queues async audit fan-out, logging delivery retries, and export build jobs.',
   'features.r2Prompt': 'Enable Cloudflare R2 object storage?',
   'features.queue': 'Queue:',
   'features.r2': 'R2:',

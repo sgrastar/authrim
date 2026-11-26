@@ -263,7 +263,6 @@ export const IND_QL_VALUES: Record<string, readonly Scalar[]> = {
     'delivery-fanout',
     'http-sink-batch',
     'dlq-replay',
-    'rewrap-chunk',
     'future-schema',
     'malformed',
   ],
@@ -639,7 +638,6 @@ export function independentQlLegal(row: Row): boolean {
       'delivery-fanout',
       'http-sink-batch',
       'dlq-replay',
-      'rewrap-chunk',
     ].includes(payloadFamily);
     const unavailablePayload =
       dlqArchive !== 'success' &&
@@ -732,7 +730,7 @@ const EXPECTED_CS_PAIR_COUNT = 311;
 const EXPECTED_CT_PAIR_COUNT = 488;
 const EXPECTED_QA_PAIR_COUNT = 148;
 const EXPECTED_QD_PAIR_COUNT = 115;
-const EXPECTED_QL_PAIR_COUNT = 359;
+const EXPECTED_QL_PAIR_COUNT = 342;
 
 interface MatrixSpec {
   name: string;

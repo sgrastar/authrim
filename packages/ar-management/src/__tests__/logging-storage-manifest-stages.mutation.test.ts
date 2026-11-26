@@ -308,7 +308,6 @@ describe('scheduler stage isolation and cleanup guards', () => {
       'Logging destination scheduled health checks failed',
       'Logging chunk manifest scheduled publish failed',
       'Logging catalog scheduled safe repair failed',
-      'Logging key rewrap dispatch failed',
       'Logging message job scheduled processing failed',
       'Logging usage/quota scheduled maintenance failed',
       'Logging delivery event retention failed',
@@ -322,7 +321,6 @@ describe('scheduler stage isolation and cleanup guards', () => {
       healthChecks: { checked: 0, failed: 0 },
       manifests: { published: 0, skipped: 0 },
       catalogRepair: { findings: 0, applied: 0, skipped: 0 },
-      rewrap: { candidates: 0, jobsCreated: 0, dispatched: 0, queueUnavailable: 0, skipped: 0 },
       messageJobs: {
         repaired: 0,
         repairFindings: 0,
@@ -379,8 +377,8 @@ describe('scheduler stage isolation and cleanup guards', () => {
       bucket_binding: 'AUDIT_ARCHIVE',
       object_catalog_id: 'object',
       object_key: 'logs/tenant/source.bin',
-      replacement_object_key: 'logs-rewrapped/tenant/object/v2.bin',
-      reason: 'rewrap',
+      replacement_object_key: null,
+      reason: 'catalog_delete',
       created_at: 1234,
       ...over,
     });
@@ -414,7 +412,7 @@ describe('scheduler stage isolation and cleanup guards', () => {
       ).rejects.toThrow('retired_r2_generation_bucket_unavailable');
     });
 
-    it('keeps a generation whose replacement is not the served object yet', async () => {
+    it('keeps a generation whose catalog row still serves an object', async () => {
       const del = vi.fn();
       serve([retired()], { object_key: 'other.bin', status: 'committed' });
       await runScheduledRetiredR2GenerationCleanup(
@@ -429,20 +427,9 @@ describe('scheduler stage isolation and cleanup guards', () => {
       });
     });
 
-    it('keeps a rewrapped generation whose catalog row still serves the old key', async () => {
-      const del = vi.fn();
-      serve([retired()], { object_key: 'logs/tenant/source.bin', status: 'deleted' });
-      await runScheduledRetiredR2GenerationCleanup(
-        { AUDIT_ARCHIVE: { delete: del } } as unknown as Env,
-        mockAdapter as any,
-        log
-      );
-      expect(del).not.toHaveBeenCalled();
-    });
-
     it('keeps a catalog-delete generation whose row is not deleted', async () => {
       const del = vi.fn();
-      serve([retired({ reason: 'catalog_delete' })], {
+      serve([retired()], {
         object_key: 'logs/tenant/source.bin',
         status: 'committed',
       });

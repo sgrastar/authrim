@@ -550,7 +550,7 @@ export const API_GROUPS: readonly ApiGroup[] = [
 	},
 	{
 		id: 'admin-logging',
-		name: 'Admin logging (coverage, policies, key rewrap)',
+		name: 'Admin logging (coverage, policies, sensitive-detail repair)',
 		kind: 'settings',
 		page: 'monitoring/admin-logging',
 		paths: [`${A}/admin-logging`]

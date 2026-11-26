@@ -112,7 +112,7 @@ describe('logging/storage admin UI smoke checks', () => {
 		expect(loggingControlApi).toContain('/api/admin/notifications/delivery/run');
 	});
 
-	it('keeps admin logging coverage, critical policy, sensitive detail, key, and repair panels wired', () => {
+	it('keeps admin logging coverage, critical policy, sensitive detail, and repair panels wired', () => {
 		const adminLogging = readRoute('admin/admin-logging/+page.svelte');
 		const loggingControlApi = readApi('admin-logging-control.ts');
 
@@ -123,20 +123,11 @@ describe('logging/storage admin UI smoke checks', () => {
 		expect(adminLogging).toContain('applyDangerousDeleteObject');
 		expect(adminLogging).toContain('criticalPolicy');
 		expect(adminLogging).toContain('sensitiveDetailPolicy');
-		expect(adminLogging).toContain('keyRegistryItems');
-		expect(adminLogging).toContain('rewrapJobs');
-		expect(adminLogging).toContain('retryRewrapJob');
-		expect(adminLogging).toContain('cancelRewrapJob');
-		expect(adminLogging).toContain('updateRewrapJobPriority');
 		expect(adminLogging).toContain('messageJobs');
 		expect(loggingControlApi).toContain('/api/admin/admin-logging/coverage/check');
 		expect(loggingControlApi).toContain('/api/admin/admin-logging/critical-policy');
 		expect(loggingControlApi).toContain('/api/admin/admin-logging/sensitive-detail-policy');
-		expect(loggingControlApi).toContain('/api/admin/admin-logging/key-registry');
-		expect(loggingControlApi).toContain('/api/admin/admin-logging/rewrap-jobs');
-		expect(loggingControlApi).toContain('/retry');
 		expect(loggingControlApi).toContain('/cancel');
-		expect(loggingControlApi).toContain('/priority');
 		expect(loggingControlApi).toContain('/api/admin/logging-policies/message-jobs');
 		expect(loggingControlApi).toContain('/api/admin/admin-logging/catalog-repairs');
 		expect(loggingControlApi).toContain('/api/admin/admin-logging/catalog-repair-jobs');

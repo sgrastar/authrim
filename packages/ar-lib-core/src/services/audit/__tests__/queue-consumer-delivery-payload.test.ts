@@ -167,7 +167,6 @@ describe('logging delivery queue consumer', () => {
       records: [],
       records_object_ref: 'r2://old.json',
     },
-    { payload_type: 'rewrap_chunk', rewrap_job_id: 'old-job', object_catalog_id: 'old-object' },
     {
       payload_type: 'log_chunk_delivery',
       catalog_id: 'old-catalog',

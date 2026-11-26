@@ -6,8 +6,7 @@ export type LoggingDeliveryPayloadType =
   | 'delivery_fanout'
   | 'log_chunk_delivery'
   | 'http_sink_batch'
-  | 'dlq_replay'
-  | 'rewrap_chunk';
+  | 'dlq_replay';
 
 export interface LoggingDeliveryQueueEnvelope {
   payload_type: LoggingDeliveryPayloadType;
@@ -68,20 +67,12 @@ export interface DlqReplayPayload extends LoggingDeliveryQueueEnvelope {
   requested_by: string;
 }
 
-export interface RewrapChunkPayload extends LoggingDeliveryQueueEnvelope {
-  payload_type: 'rewrap_chunk';
-  schema_version: 1;
-  rewrap_job_id: string;
-  object_catalog_id: string;
-}
-
 export type LoggingDeliveryQueuePayload =
   | ChunkWritePayload
   | DeliveryFanoutPayload
   | LogChunkDeliveryPayload
   | HttpSinkBatchPayload
-  | DlqReplayPayload
-  | RewrapChunkPayload;
+  | DlqReplayPayload;
 
 export type LoggingDeliveryQueuePayloadParseResult =
   | { ok: true; payload: LoggingDeliveryQueuePayload }
@@ -105,7 +96,6 @@ export const SUPPORTED_LOGGING_DELIVERY_PAYLOAD_SCHEMAS: Record<
   log_chunk_delivery: [1],
   http_sink_batch: [1],
   dlq_replay: [1],
-  rewrap_chunk: [1],
 };
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -171,9 +161,6 @@ function hasPayloadSpecificFields(value: Record<string, unknown>): boolean {
   }
   if (value.payload_type === 'dlq_replay') {
     return typeof value.dlq_item_id === 'string' && typeof value.requested_by === 'string';
-  }
-  if (value.payload_type === 'rewrap_chunk') {
-    return typeof value.rewrap_job_id === 'string' && typeof value.object_catalog_id === 'string';
   }
   return false;
 }
