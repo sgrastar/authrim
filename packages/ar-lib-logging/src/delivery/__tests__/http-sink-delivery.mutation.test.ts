@@ -103,6 +103,38 @@ describe('the private network block: IPv4', () => {
     }
   });
 
+  it('blocks only the documentation /24s, not the enclosing /16s (same table as ar-lib-core url-security)', async () => {
+    const blocked = [
+      '192.0.2.0',
+      '192.0.2.1',
+      '192.0.2.255',
+      '198.51.100.0',
+      '198.51.100.255',
+      '203.0.113.0',
+      '203.0.113.255',
+    ];
+    for (const address of blocked) {
+      expect(await reaches(`https://${address}/logs`)).toBe(false);
+    }
+    const allowed = [
+      '192.0.0.1',
+      '192.0.1.255',
+      '192.0.3.0',
+      '192.0.255.255',
+      '198.51.0.0',
+      '198.51.99.255',
+      '198.51.101.0',
+      '198.51.255.255',
+      '203.0.0.0',
+      '203.0.112.255',
+      '203.0.114.0',
+      '203.0.255.255',
+    ];
+    for (const address of allowed) {
+      expect(await reaches(`https://${address}/logs`)).toBe(true);
+    }
+  });
+
   it('lets through the addresses just outside each range', async () => {
     const allowed = [
       '1.0.0.0',

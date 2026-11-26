@@ -7,6 +7,7 @@ import { processLoggingDeliveryQueue } from '../queue-consumer';
 import {
   ROOT_KEY,
   createFakeAdminDb,
+  createFakeLogger,
   createMemoryBucket,
   createMessage,
   fetchResponse,
@@ -308,8 +309,12 @@ describe('queue consumer runtime credential resolution', () => {
       expect(Object.keys(headers ?? {}).sort()).toEqual(['Content-Type', 'X-Authrim-Delivery']);
     });
 
-    it('treats unknown profiles as bearer', async () => {
-      const { headers } = await deliver({
+    // Updated: this used to pin "unknown profiles are treated as bearer", which sent the
+    // credential as a Bearer token to a sink configured for a mode we do not understand and made
+    // the fail-closed throw in buildHttpSinkAuthHeaders unreachable. Unknown modes now fail the
+    // delivery (retry -> DLQ) and nothing is sent.
+    it('fails closed for an explicitly provided unknown profile instead of using bearer', async () => {
+      const { fetchMock, message, logger } = await deliver({
         destination: {
           provider_config: JSON.stringify({
             url: 'https://collector.example/logs',
@@ -319,7 +324,202 @@ describe('queue consumer runtime credential resolution', () => {
         },
         env: { AUTH_UNKNOWN_BINDING: 'mystery-token' },
       });
-      expect(headers?.Authorization).toBe('Bearer mystery-token');
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(message.retry).toHaveBeenCalledOnce();
+      expect(message.ack).not.toHaveBeenCalled();
+      expect(loggedError(logger)).toContain('unsupported_http_sink_auth_mode:mystery');
+    });
+
+    it('fails closed for an unknown profile without a credential instead of using none', async () => {
+      const { fetchMock, message, logger } = await deliver({
+        destination: {
+          provider_config: JSON.stringify({
+            url: 'https://collector.example/logs',
+            auth_mode: 'mystery',
+          }),
+        },
+      });
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(message.retry).toHaveBeenCalledOnce();
+      expect(loggedError(logger)).toContain('unsupported_http_sink_auth_mode:mystery');
+    });
+
+    it('fails closed for an unknown mode carried by the credential JSON', async () => {
+      const { fetchMock, message, logger } = await deliver({
+        destination: { credential_ref: bindingRef('AUTH_UNKNOWN_CRED_MODE') },
+        env: { AUTH_UNKNOWN_CRED_MODE: JSON.stringify({ mode: 'oauth2', value: 'v' }) },
+      });
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(message.retry).toHaveBeenCalledOnce();
+      expect(loggedError(logger)).toContain('unsupported_http_sink_auth_mode:oauth2');
+    });
+
+    it('fails closed for a non-string mode value', async () => {
+      const { fetchMock, message, logger } = await deliver({
+        destination: {
+          provider_config: JSON.stringify({
+            url: 'https://collector.example/logs',
+            authMode: 5,
+          }),
+          credential_ref: bindingRef('AUTH_NON_STRING_MODE'),
+        },
+        env: { AUTH_NON_STRING_MODE: 'tok' },
+      });
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(message.retry).toHaveBeenCalledOnce();
+      expect(loggedError(logger)).toContain('unsupported_http_sink_auth_mode:5');
+    });
+
+    it('only an omitted (or blank) mode defaults: none without a credential, bearer with one', async () => {
+      const none = await deliver({
+        destination: {
+          provider_config: JSON.stringify({ url: 'https://collector.example/logs', authMode: ' ' }),
+        },
+      });
+      expect(none.message.ack).toHaveBeenCalledOnce();
+      expect(none.headers?.Authorization).toBeUndefined();
+
+      const bearer = await deliver({
+        destination: { credential_ref: bindingRef('AUTH_OMITTED_MODE') },
+        env: { AUTH_OMITTED_MODE: 'omitted-token' },
+      });
+      expect(bearer.headers?.Authorization).toBe('Bearer omitted-token');
+    });
+
+    it.each(['bearer', 'api_key', 'custom_headers', 'hmac'])(
+      'fails closed for explicit mode %s when no credential is available',
+      async (mode) => {
+        const { fetchMock, message, logger } = await deliver({
+          destination: {
+            provider_config: JSON.stringify({
+              url: 'https://collector.example/logs',
+              authMode: mode,
+            }),
+            credential_ref: null,
+          },
+        });
+        expect(fetchMock).not.toHaveBeenCalled();
+        expect(message.retry).toHaveBeenCalledOnce();
+        expect(loggedError(logger)).toContain(`http_sink_auth_credential_missing:${mode}`);
+      }
+    );
+
+    it('keeps explicit custom_headers working with only non-secret config headers', async () => {
+      const { headers, message } = await deliver({
+        destination: {
+          provider_config: JSON.stringify({
+            url: 'https://collector.example/logs',
+            authMode: 'custom_headers',
+            headers: { 'X-Tenant': 'acme' },
+          }),
+        },
+      });
+      expect(headers?.['X-Tenant']).toBe('acme');
+      expect(message.ack).toHaveBeenCalledOnce();
+    });
+
+    it('does not echo arbitrary invalid mode values into the error', async () => {
+      const secretLike = 'sk_live_' + 'x'.repeat(40);
+      for (const bad of [secretLike, 'has space', 'bad value!', { a: 1 }]) {
+        const { fetchMock, message, logger } = await deliver({
+          destination: {
+            provider_config: JSON.stringify({
+              url: 'https://collector.example/logs',
+              authMode: bad,
+            }),
+            credential_ref: bindingRef('AUTH_ECHO'),
+          },
+          env: { AUTH_ECHO: 'tok' },
+        });
+        expect(fetchMock).not.toHaveBeenCalled();
+        expect(message.retry).toHaveBeenCalledOnce();
+        const logged = loggedError(logger);
+        expect(logged).toContain('unsupported_http_sink_auth_mode:invalid');
+        expect(logged).not.toContain('sk_live_');
+        expect(logged).not.toContain('bad value');
+      }
+    });
+
+    it('uses only the highest-priority mode key when several coexist', async () => {
+      const { headers, message } = await deliver({
+        destination: {
+          provider_config: JSON.stringify({
+            url: 'https://collector.example/logs',
+            authProfile: 'bearer',
+            auth_mode: 'legacy_stale',
+          }),
+          credential_ref: bindingRef('AUTH_COEXIST'),
+        },
+        env: { AUTH_COEXIST: 'coexist-token' },
+      });
+      expect(headers?.Authorization).toBe('Bearer coexist-token');
+      expect(message.ack).toHaveBeenCalledOnce();
+    });
+
+    it.each([
+      ['empty headers object, no credential', { headers: {} }, undefined],
+      ['non-string header values only', { headers: { 'X-A': 1 } }, undefined],
+      ['credential without usable headers', {}, JSON.stringify({ headers: 5 })],
+      ['non-JSON credential', {}, 'plain-token'],
+    ])('fails closed for custom_headers with no usable header (%s)', async (name, extra, cred) => {
+      const ref = `AUTH_CH_EMPTY_${name.replace(/\W/g, '_')}`;
+      const { fetchMock, message, logger } = await deliver({
+        destination: {
+          provider_config: JSON.stringify({
+            url: 'https://collector.example/logs',
+            authMode: 'custom_headers',
+            ...extra,
+          }),
+          credential_ref: cred === undefined ? null : bindingRef(ref),
+        },
+        env: cred === undefined ? {} : { [ref]: cred },
+      });
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(message.retry).toHaveBeenCalledOnce();
+      expect(loggedError(logger)).toContain('http_sink_auth_credential_missing:custom_headers');
+    });
+
+    it('fails closed for an unknown mode on the delivery fanout (http chunk reference) path', async () => {
+      const fetchMock = vi.fn().mockResolvedValue(fetchResponse(200));
+      vi.stubGlobal('fetch', fetchMock);
+      const logger = createFakeLogger();
+      const message = createMessage({
+        payload_type: 'delivery_fanout',
+        schema_version: 1,
+        payload_id: 'qpl_fanout_unknown_mode',
+        tenant_key: 'tk_123',
+        lane: 'critical',
+        created_at: 1779148800000,
+        catalog_id: 'chk_1',
+        object_key: 'logs/tk_123/archive/audit/chunk.jsonl',
+        destination_id: 'dest_1',
+        log_type: 'audit',
+        plane: 'external_sink',
+        record_count: 10,
+      });
+      await processLoggingDeliveryQueue(
+        {
+          messages: [message],
+          queue: 'LOGGING_DELIVERY_QUEUE',
+        } as unknown as MessageBatch<unknown>,
+        {
+          DB: {} as D1Database,
+          DB_PII: {} as D1Database,
+          DB_ADMIN: createFakeAdminDb({
+            destination: {
+              provider_config: JSON.stringify({
+                url: 'https://collector.example/chunks',
+                authMode: 'mystery',
+              }),
+            },
+          }),
+        },
+        logger
+      );
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(message.retry).toHaveBeenCalledOnce();
+      expect(message.ack).not.toHaveBeenCalled();
+      expect(loggedError(logger)).toContain('unsupported_http_sink_auth_mode:mystery');
     });
   });
 });

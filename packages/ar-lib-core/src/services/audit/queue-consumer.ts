@@ -20,13 +20,18 @@ import {
 import {
   computeHttpSinkRetryDelayMs,
   deliverHttpSinkBatch,
+  HTTP_SINK_AUTH_MODE_CONFIG_KEYS,
+  isHttpSinkAuthMode,
   parseLoggingDeliveryQueuePayload,
+  resolveHttpSinkAuthMode,
+  sanitizeHttpSinkAuthModeForError,
   shouldDlqUnsupportedQueuePayload,
   SqlLoggingDeliveryEventStore,
   SqlLoggingDlqItemStore,
   type ChunkWritePayload,
   type DeliveryFanoutPayload,
   type HttpSinkAuthConfig,
+  type HttpSinkAuthMode,
   type HttpSinkBatchPayload,
   type HttpSinkDeliveryResult,
   type HttpSinkSignatureProfile,
@@ -485,13 +490,34 @@ function buildRuntimeHttpSinkAuth(input: {
   credentialPlaintext: string | null;
 }): HttpSinkAuthConfig {
   const credential = parseCredentialPlaintextJson(input.credentialPlaintext);
-  const profile =
-    configString(input.providerConfig, ['authProfile', 'auth_profile', 'authMode', 'auth_mode']) ??
-    credentialString(credential, ['mode', 'authProfile', 'auth_profile'], null) ??
-    (input.credentialPlaintext ? 'bearer' : 'none');
+  const explicitProfile =
+    resolveHttpSinkAuthMode(input.providerConfig, HTTP_SINK_AUTH_MODE_CONFIG_KEYS)?.mode ??
+    resolveHttpSinkAuthMode(credential, ['mode', 'authProfile', 'auth_profile'])?.mode ??
+    null;
 
-  if (profile === 'none' || !input.credentialPlaintext) {
+  // Only an omitted mode may default (bearer when a credential exists, otherwise none). An
+  // explicitly provided mode is never rounded to none/bearer: unknown modes and credential-less
+  // credentialed modes fail closed (the delivery is retried and ends in the DLQ).
+  let profile: HttpSinkAuthMode;
+  if (explicitProfile === null) {
+    profile = input.credentialPlaintext ? 'bearer' : 'none';
+  } else if (isHttpSinkAuthMode(explicitProfile)) {
+    profile = explicitProfile;
+  } else {
+    throw new Error(
+      `unsupported_http_sink_auth_mode:${sanitizeHttpSinkAuthModeForError(explicitProfile)}`
+    );
+  }
+
+  if (profile === 'none') {
     return { mode: 'none' };
+  }
+  if (!input.credentialPlaintext) {
+    const hasConfigHeaders =
+      profile === 'custom_headers' && configObject(input.providerConfig, ['headers']) !== null;
+    if (!hasConfigHeaders) {
+      throw new Error(`http_sink_auth_credential_missing:${profile}`);
+    }
   }
   if (profile === 'api_key') {
     return {
@@ -544,6 +570,10 @@ function buildRuntimeHttpSinkAuth(input: {
           headers.push({ name, value, secret: false });
         }
       }
+    }
+    // Validate what was actually built: an empty/unusable header set must not deliver unauthenticated.
+    if (headers.length === 0) {
+      throw new Error('http_sink_auth_credential_missing:custom_headers');
     }
     return { mode: 'custom_headers', customHeaders: headers };
   }
@@ -1201,6 +1231,12 @@ function deliveryErrorClass(error: unknown, fallback: string): string {
   const message = String(error);
   if (message.includes('http_sink_url_must_use_https')) {
     return 'http_sink_url_must_use_https';
+  }
+  if (message.includes('unsupported_http_sink_auth_mode')) {
+    return 'http_sink_auth_mode_unsupported';
+  }
+  if (message.includes('http_sink_auth_credential_missing')) {
+    return 'http_sink_auth_credential_missing';
   }
   if (message.includes('HTTP sink auth token not resolved')) {
     return 'http_sink_auth_unresolved';
@@ -3141,9 +3177,10 @@ async function processDeliveryFanoutPayload(input: {
       credentialRef: destination.credential_ref,
       credentialVersion: destination.credential_version,
     });
-    const auth = buildRuntimeHttpSinkAuth({ providerConfig, credentialPlaintext });
 
     if (destination.provider === 'http') {
+      // Built only for http destinations: other providers carry no HTTP sink auth config.
+      const auth = buildRuntimeHttpSinkAuth({ providerConfig, credentialPlaintext });
       const endpointUrl = configString(providerConfig, ['url', 'endpointUrl']);
       if (!endpointUrl) {
         throw new Error('logging_delivery_http_url_missing');

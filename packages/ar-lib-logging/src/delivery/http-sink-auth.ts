@@ -1,6 +1,64 @@
 import { signHttpSinkPayload, type HttpSinkSignatureInput } from './http-sink-signature';
 
-export type HttpSinkAuthMode = 'none' | 'bearer' | 'api_key' | 'custom_headers' | 'hmac';
+export const HTTP_SINK_AUTH_MODES = [
+  'none',
+  'bearer',
+  'api_key',
+  'custom_headers',
+  'hmac',
+] as const;
+
+export type HttpSinkAuthMode = (typeof HTTP_SINK_AUTH_MODES)[number];
+
+export function isHttpSinkAuthMode(value: unknown): value is HttpSinkAuthMode {
+  return typeof value === 'string' && (HTTP_SINK_AUTH_MODES as readonly string[]).includes(value);
+}
+
+/** Provider-config keys that can carry the HTTP sink auth mode (shared by save-time validation and delivery). */
+export const HTTP_SINK_AUTH_MODE_CONFIG_KEYS = [
+  'authProfile',
+  'auth_profile',
+  'authMode',
+  'auth_mode',
+] as const;
+
+/** Result of resolving the effective (highest-priority provided) auth mode from a config source. */
+export interface ResolvedHttpSinkAuthMode {
+  /** The key that supplied the mode. */
+  key: string;
+  /** Trimmed string form of the provided value (non-strings are JSON-stringified, never mistaken for omitted). */
+  mode: string;
+}
+
+/**
+ * Resolves the effective auth mode: the first key (in priority order) whose value is provided.
+ * null / undefined / blank strings count as "not provided". Only this key is authoritative; lower
+ * priority keys are ignored. Shared by save-time validation and delivery so they cannot disagree.
+ */
+export function resolveHttpSinkAuthMode(
+  source: Record<string, unknown> | null | undefined,
+  keys: readonly string[] = HTTP_SINK_AUTH_MODE_CONFIG_KEYS
+): ResolvedHttpSinkAuthMode | null {
+  for (const key of keys) {
+    const value = source?.[key];
+    if (value === undefined || value === null) {
+      continue;
+    }
+    if (typeof value === 'string') {
+      if (value.trim()) {
+        return { key, mode: value.trim() };
+      }
+      continue;
+    }
+    return { key, mode: JSON.stringify(value) ?? 'invalid' };
+  }
+  return null;
+}
+
+/** Returns the mode only when it is short and token-like; otherwise 'invalid' (safe for errors/logs). */
+export function sanitizeHttpSinkAuthModeForError(mode: unknown): string {
+  return typeof mode === 'string' && /^[A-Za-z0-9_-]{1,32}$/.test(mode) ? mode : 'invalid';
+}
 
 export interface HttpSinkAuthConfig {
   mode: HttpSinkAuthMode;
@@ -114,5 +172,7 @@ export async function buildHttpSinkAuthHeaders(
   }
 
   // An unknown mode must not silently degrade to unauthenticated delivery.
-  throw new Error(`unsupported_http_sink_auth_mode:${String((config as { mode: unknown }).mode)}`);
+  throw new Error(
+    `unsupported_http_sink_auth_mode:${sanitizeHttpSinkAuthModeForError((config as { mode: unknown }).mode)}`
+  );
 }

@@ -201,15 +201,19 @@ describe('queue consumer runtime credential resolution', () => {
       ]);
     });
 
-    it('does not turn an empty JSON object credential into headers', async () => {
-      const { headers } = await deliver({
+    // Updated: an empty credential used to deliver unauthenticated under custom_headers; with no
+    // usable header it now fails closed (retry -> DLQ) instead.
+    it('does not turn an empty JSON object credential into headers and fails closed', async () => {
+      const { headers, message } = await deliver({
         destination: {
           provider_config: customConfig(),
           credential_ref: 'cfsecret://env/CUSTOM_EMPTY_BINDING',
         },
         env: { CUSTOM_EMPTY_BINDING: '{}' },
       });
-      expect(Object.keys(headers ?? {}).sort()).toEqual(['Content-Type', 'X-Authrim-Delivery']);
+      expect(headers).toBeUndefined();
+      expect(message.retry).toHaveBeenCalledOnce();
+      expect(message.ack).not.toHaveBeenCalled();
     });
   });
 

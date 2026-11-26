@@ -9,7 +9,13 @@ export {
 } from './cursor';
 
 export {
+  HTTP_SINK_AUTH_MODES,
+  HTTP_SINK_AUTH_MODE_CONFIG_KEYS,
   buildHttpSinkAuthHeaders,
+  isHttpSinkAuthMode,
+  resolveHttpSinkAuthMode,
+  sanitizeHttpSinkAuthModeForError,
+  type ResolvedHttpSinkAuthMode,
   type HttpSinkAuthConfig,
   type HttpSinkAuthHeadersResult,
   type HttpSinkAuthMode,
