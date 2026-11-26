@@ -104,6 +104,7 @@ function freshDatabase(family: Family) {
           '022_mapped_identifier_exceptions.sql',
           '023_mapping_rule_graph.sql',
           '026_platform_launchers.sql',
+          '029_drop_logging_key_registry.sql',
         ]
       : []),
     ...(family === 'core'

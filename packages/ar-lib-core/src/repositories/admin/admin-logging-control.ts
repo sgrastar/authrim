@@ -79,11 +79,6 @@ export interface SensitiveDetailIndexSummaryRow {
   last_created_at: number | string | null;
 }
 
-export interface LoggingKeyVersionStatusRow {
-  status: string;
-  total: number | string;
-}
-
 export interface AdminAuditCoverageStatusRowInput {
   operation_id: string;
   surface: string;
@@ -114,12 +109,10 @@ export interface AdminLoggingSensitiveDetailPolicyState {
     assignment_count: number;
     policy_count: number;
     indexed_object_class_count: number;
-    stale_key_count: number;
   };
   policies: AdminLoggingSensitiveDetailPolicyRow[];
   assignments: AdminLoggingDestinationOverrideViewRow[];
   index_summary: SensitiveDetailIndexSummaryRow[];
-  key_versions: LoggingKeyVersionStatusRow[];
 }
 
 interface LogCatalogRepairObjectDbRow {
@@ -231,6 +224,17 @@ async function upsertCoverageStatus(
 
 export class AdminLoggingControlRepository {
   constructor(private readonly adapter: DatabaseAdapter) {}
+
+  /** When the coverage rows were last written by a check; null before the first check. */
+  async readCoverageLastCheckedAt(): Promise<number | null> {
+    const row = await this.adapter.queryOne<{ last_checked_at: number | string | null }>(
+      'SELECT MAX(updated_at) AS last_checked_at FROM admin_audit_coverage_status'
+    );
+    const raw = row?.last_checked_at;
+    if (typeof raw === 'number' && Number.isSafeInteger(raw)) return raw;
+    if (typeof raw === 'string' && /^(0|[1-9][0-9]*)$/.test(raw)) return Number(raw);
+    return null;
+  }
 
   /** `tenantId` limits the tenant-level assignments to that tenant's; omitted, it is every tenant's. */
   async loadCriticalPolicy(tenantId?: string): Promise<AdminLoggingCriticalPolicyState> {
@@ -409,17 +413,6 @@ export class AdminLoggingControlRepository {
        LIMIT 100`,
       tenantId === undefined ? [] : [tenantId]
     );
-    const keyVersions = await this.adapter.query<LoggingKeyVersionStatusRow>(
-      `SELECT kv.status, COUNT(*) AS total
-       FROM logging_key_versions kv
-       INNER JOIN logging_key_registry kr ON kr.id = kv.key_registry_id
-       WHERE kr.plane = 'sensitive_detail'
-       GROUP BY kv.status
-       ORDER BY kv.status ASC`
-    );
-    const staleKeyCount = keyVersions
-      .filter((row) => ['rewrap_required', 'compromised', 'retiring'].includes(row.status))
-      .reduce((sum, row) => sum + toInteger(row.total), 0);
 
     return {
       summary: {
@@ -428,12 +421,10 @@ export class AdminLoggingControlRepository {
         assignment_count: assignments.length,
         policy_count: policies.length,
         indexed_object_class_count: indexSummary.length,
-        stale_key_count: staleKeyCount,
       },
       policies,
       assignments,
       index_summary: indexSummary,
-      key_versions: keyVersions,
     };
   }
 

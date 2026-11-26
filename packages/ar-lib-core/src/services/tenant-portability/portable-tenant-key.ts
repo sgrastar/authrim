@@ -19,7 +19,6 @@ export const PORTABLE_TENANT_KEY_SQLITE_DATASETS = [
   'admin.logging_dlq_items',
   'admin.logging_export_jobs',
   'admin.logging_key_material_bodies',
-  'admin.logging_key_registry',
   'admin.logging_message_jobs',
   'admin.logging_quota_evaluations',
   'admin.logging_usage_aggregates',

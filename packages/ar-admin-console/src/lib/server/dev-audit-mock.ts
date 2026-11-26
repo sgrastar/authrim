@@ -20,6 +20,12 @@ import {
 	answerSystemLogList,
 	sampleSystemLogEntries
 } from '#lib/api/fake/system-log-fake.js';
+import { createFakeLogPlatform } from '#lib/api/fake/log-platform-fake.js';
+import {
+	EMAIL_DELIVERIES_NOW,
+	answerEmailDeliveriesList,
+	sampleEmailDeliveries
+} from '#lib/api/fake/email-deliveries-fake.js';
 import { ApiError } from '#lib/api/api-error.js';
 import type { AuditResult } from '#lib/api/admin-audit.js';
 
@@ -29,11 +35,35 @@ export interface MockAnswer {
 }
 
 /** The answer for an audit request, or null when the path is not an audit one. */
+const devLogPlatform = createFakeLogPlatform({ scenario: 'over-limit' });
+
 export async function answerAuditMock(
 	segments: readonly string[],
 	method: string,
 	params: URLSearchParams
 ): Promise<MockAnswer | null> {
+	if (segments[0] === 'admin-logging') {
+		if (method === 'GET' && segments[1] === 'platform-status' && segments.length === 2) {
+			return { status: 200, body: { item: await devLogPlatform.status() } };
+		}
+		if (
+			method === 'POST' &&
+			segments[1] === 'delivery' &&
+			segments[2] === 'reclaim-intents' &&
+			segments.length === 3
+		) {
+			return { status: 200, body: { result: await devLogPlatform.reclaimIntents() } };
+		}
+		if (
+			method === 'POST' &&
+			segments[1] === 'catalog-repairs' &&
+			segments[2] === 'apply-safe' &&
+			segments.length === 3
+		) {
+			return { status: 200, body: { result: await devLogPlatform.applySafeRepairs(200) } };
+		}
+		return null;
+	}
 	if (method !== 'GET') return null;
 	if (segments[0] === 'audit-logs' && segments.length === 1) {
 		const shift = Date.now() - USER_AUDIT_NOW;
@@ -44,6 +74,17 @@ export async function answerAuditMock(
 		return answerUserAuditList(params, entries);
 	}
 	if (segments[0] === 'admin-audit-log') return answerAdminAudit(segments.slice(1), params);
+	if (segments[0] === 'email-deliveries' && segments.length === 1) {
+		const shift = Date.now() - EMAIL_DELIVERIES_NOW;
+		const items = sampleEmailDeliveries().map((item) => ({
+			...item,
+			requested_at: item.requested_at === null ? null : item.requested_at + shift,
+			provider_accepted_at:
+				item.provider_accepted_at === null ? null : item.provider_accepted_at + shift,
+			status_updated_at: item.status_updated_at === null ? null : item.status_updated_at + shift
+		}));
+		return answerEmailDeliveriesList(params, items, 'masked');
+	}
 	if (segments[0] === 'system-logs' && segments.length === 1) {
 		const shift = Date.now() - SYSTEM_LOG_NOW;
 		const entries = sampleSystemLogEntries().map((entry) => ({

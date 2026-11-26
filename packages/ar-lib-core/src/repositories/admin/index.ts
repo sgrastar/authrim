@@ -218,7 +218,6 @@ export {
   type AdminLoggingPolicyAssignmentViewRow,
   type AdminLoggingSensitiveDetailPolicyRow,
   type AdminLoggingSensitiveDetailPolicyState,
-  type LoggingKeyVersionStatusRow,
   type SensitiveDetailIndexSummaryRow,
 } from './admin-logging-control';
 export {

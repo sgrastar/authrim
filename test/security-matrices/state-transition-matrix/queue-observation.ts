@@ -279,9 +279,7 @@ export function loggingMessageBody(
             ? 'delivery_fanout'
             : payloadFamily === 'http-sink-batch'
               ? 'http_sink_batch'
-              : payloadFamily === 'dlq-replay'
-                ? 'dlq_replay'
-                : 'rewrap_chunk',
+              : 'dlq_replay',
     schema_version: schema === 'future' ? 99 : 1,
     payload_id: `qpl_${id}`,
     tenant_key: tenantKey,
@@ -309,10 +307,12 @@ export function loggingMessageBody(
       batch_id: `batch-${id}`,
     };
   }
-  if (payloadFamily === 'dlq-replay') {
-    return { ...base, dlq_item_id: `dlq-${id}`, requested_by: 'matrix-test' };
+  if (payloadFamily === 'malformed') {
+    // A well-formed envelope whose payload-specific fields are missing.
+    return base;
   }
-  return { ...base, rewrap_job_id: `rewrap-${id}`, object_catalog_id: `catalog-${id}` };
+  // dlq-replay, and the future-schema family (the schema version alone makes it unsupported).
+  return { ...base, dlq_item_id: `dlq-${id}`, requested_by: 'matrix-test' };
 }
 
 function consumerOf(entry: StateCase): 'audit' | 'dlq' | 'logging-delivery' {

@@ -17582,7 +17582,7 @@ type RootTranslation = {
 	 */
 	admin_admin_logging_title: string;
 	/**
-	 * M​o​n​i​t​o​r​ ​a​d​m​i​n​ ​a​u​d​i​t​ ​v​o​l​u​m​e​,​ ​c​h​u​n​k​ ​a​r​c​h​i​v​e​s​,​ ​a​n​d​ ​d​e​l​i​v​e​r​y​ ​h​e​a​l​t​h​.
+	 * M​o​n​i​t​o​r​ ​a​d​m​i​n​ ​a​u​d​i​t​ ​v​o​l​u​m​e​,​ ​l​o​g​g​i​n​g​ ​p​o​l​i​c​i​e​s​,​ ​a​n​d​ ​d​e​l​i​v​e​r​y​ ​h​e​a​l​t​h​.
 	 */
 	admin_admin_logging_description: string;
 	/**
@@ -17815,10 +17815,6 @@ type RootTranslation = {
 	 */
 	admin_admin_logging_encrypted: string;
 	/**
-	 * S​t​a​l​e​ ​k​e​y​s
-	 */
-	admin_admin_logging_stale_keys: string;
-	/**
 	 * N​o​ ​s​e​n​s​i​t​i​v​e​ ​d​e​t​a​i​l​ ​c​h​u​n​k​ ​i​n​d​e​x​ ​r​e​c​o​r​d​s​ ​f​o​u​n​d​.
 	 */
 	admin_admin_logging_no_sensitive_index: string;
@@ -17879,41 +17875,9 @@ type RootTranslation = {
 	 */
 	admin_admin_logging_probe_bytes: string;
 	/**
-	 * K​e​y​ ​R​e​g​i​s​t​r​y
-	 */
-	admin_admin_logging_key_registry: string;
-	/**
-	 * N​o​ ​l​o​g​g​i​n​g​ ​k​e​y​ ​r​e​g​i​s​t​r​y​ ​r​o​w​s​ ​f​o​u​n​d​.
-	 */
-	admin_admin_logging_no_key_registry: string;
-	/**
-	 * S​c​o​p​e
-	 */
-	admin_admin_logging_scope: string;
-	/**
-	 * A​c​t​i​v​e
-	 */
-	admin_admin_logging_active: string;
-	/**
-	 * V​e​r​s​i​o​n
-	 */
-	admin_admin_logging_version: string;
-	/**
-	 * U​s​a​g​e
-	 */
-	admin_admin_logging_usage: string;
-	/**
 	 * S​t​a​l​e
 	 */
 	admin_admin_logging_stale: string;
-	/**
-	 * I​m​p​a​c​t
-	 */
-	admin_admin_logging_impact: string;
-	/**
-	 * Q​u​e​u​e​ ​r​e​w​r​a​p
-	 */
-	admin_admin_logging_queue_rewrap: string;
 	/**
 	 * M​e​s​s​a​g​e​ ​J​o​b​s
 	 */
@@ -17943,30 +17907,6 @@ type RootTranslation = {
 	 */
 	admin_admin_logging_error: string;
 	/**
-	 * R​e​w​r​a​p​ ​J​o​b​s
-	 */
-	admin_admin_logging_rewrap_jobs: string;
-	/**
-	 * N​o​ ​r​e​w​r​a​p​ ​j​o​b​s​ ​f​o​u​n​d​.
-	 */
-	admin_admin_logging_no_rewrap_jobs: string;
-	/**
-	 * P​r​i​o​r​i​t​y
-	 */
-	admin_admin_logging_priority: string;
-	/**
-	 * S​e​t
-	 */
-	admin_admin_logging_set: string;
-	/**
-	 * R​e​t​r​y
-	 */
-	admin_admin_logging_retry: string;
-	/**
-	 * C​a​n​c​e​l
-	 */
-	admin_admin_logging_cancel: string;
-	/**
 	 * R​e​c​e​n​t​ ​C​r​i​t​i​c​a​l​ ​C​h​a​n​g​e​s
 	 */
 	admin_admin_logging_recent_critical_changes: string;
@@ -17991,18 +17931,6 @@ type RootTranslation = {
 	 */
 	admin_admin_logging_time: string;
 	/**
-	 * A​r​c​h​i​v​e​ ​C​h​u​n​k​s
-	 */
-	admin_admin_logging_archive_chunks: string;
-	/**
-	 * N​o​ ​a​r​c​h​i​v​e​ ​c​h​u​n​k​s​ ​f​o​u​n​d​.
-	 */
-	admin_admin_logging_no_archive_chunks: string;
-	/**
-	 * C​h​u​n​k​s
-	 */
-	admin_admin_logging_chunks: string;
-	/**
 	 * D​e​l​i​v​e​r​y​ ​H​e​a​l​t​h
 	 */
 	admin_admin_logging_delivery_health: string;
@@ -18022,14 +17950,6 @@ type RootTranslation = {
 	 * D​e​l​e​t​e​ ​C​a​t​a​l​o​g​ ​O​b​j​e​c​t
 	 */
 	admin_admin_logging_delete_catalog_object: string;
-	/**
-	 * C​a​n​c​e​l​ ​R​e​w​r​a​p​ ​J​o​b
-	 */
-	admin_admin_logging_cancel_rewrap_job: string;
-	/**
-	 * C​a​n​c​e​l​ ​j​o​b
-	 */
-	admin_admin_logging_cancel_job: string;
 	/**
 	 * F​a​i​l​e​d​ ​t​o​ ​l​o​a​d​ ​a​d​m​i​n​ ​l​o​g​g​i​n​g​ ​o​v​e​r​v​i​e​w
 	 */
@@ -18058,34 +17978,6 @@ type RootTranslation = {
 	 * F​a​i​l​e​d​ ​t​o​ ​p​r​o​b​e​ ​s​e​n​s​i​t​i​v​e​ ​d​e​t​a​i​l
 	 */
 	admin_admin_logging_probe_failed: string;
-	/**
-	 * F​a​i​l​e​d​ ​t​o​ ​l​o​a​d​ ​k​e​y​ ​i​m​p​a​c​t
-	 */
-	admin_admin_logging_key_impact_failed: string;
-	/**
-	 * F​a​i​l​e​d​ ​t​o​ ​c​r​e​a​t​e​ ​r​e​w​r​a​p​ ​j​o​b​s
-	 */
-	admin_admin_logging_create_rewrap_failed: string;
-	/**
-	 * F​a​i​l​e​d​ ​t​o​ ​r​e​t​r​y​ ​r​e​w​r​a​p​ ​j​o​b
-	 */
-	admin_admin_logging_retry_rewrap_failed: string;
-	/**
-	 * F​a​i​l​e​d​ ​t​o​ ​c​a​n​c​e​l​ ​r​e​w​r​a​p​ ​j​o​b
-	 */
-	admin_admin_logging_cancel_rewrap_failed: string;
-	/**
-	 * F​a​i​l​e​d​ ​t​o​ ​u​p​d​a​t​e​ ​r​e​w​r​a​p​ ​j​o​b​ ​p​r​i​o​r​i​t​y
-	 */
-	admin_admin_logging_update_priority_failed: string;
-	/**
-	 * m​a​n​u​a​l​ ​r​e​t​r​y​ ​f​r​o​m​ ​A​d​m​i​n​U​I
-	 */
-	admin_admin_logging_manual_retry_reason: string;
-	/**
-	 * m​a​n​u​a​l​ ​c​a​n​c​e​l​l​a​t​i​o​n​ ​f​r​o​m​ ​A​d​m​i​n​U​I
-	 */
-	admin_admin_logging_manual_cancel_reason: string;
 	/**
 	 * I​P​ ​A​l​l​o​w​l​i​s​t​ ​-​ ​A​u​t​h​r​i​m
 	 */
@@ -50117,7 +50009,7 @@ Remove this role from {email}?
 	 */
 	admin_admin_logging_title: () => LocalizedString;
 	/**
-	 * Monitor admin audit volume, chunk archives, and delivery health.
+	 * Monitor admin audit volume, logging policies, and delivery health.
 	 */
 	admin_admin_logging_description: () => LocalizedString;
 	/**
@@ -50349,10 +50241,6 @@ Remove this role from {email}?
 	 */
 	admin_admin_logging_encrypted: () => LocalizedString;
 	/**
-	 * Stale keys
-	 */
-	admin_admin_logging_stale_keys: () => LocalizedString;
-	/**
 	 * No sensitive detail chunk index records found.
 	 */
 	admin_admin_logging_no_sensitive_index: () => LocalizedString;
@@ -50413,41 +50301,9 @@ Remove this role from {email}?
 	 */
 	admin_admin_logging_probe_bytes: () => LocalizedString;
 	/**
-	 * Key Registry
-	 */
-	admin_admin_logging_key_registry: () => LocalizedString;
-	/**
-	 * No logging key registry rows found.
-	 */
-	admin_admin_logging_no_key_registry: () => LocalizedString;
-	/**
-	 * Scope
-	 */
-	admin_admin_logging_scope: () => LocalizedString;
-	/**
-	 * Active
-	 */
-	admin_admin_logging_active: () => LocalizedString;
-	/**
-	 * Version
-	 */
-	admin_admin_logging_version: () => LocalizedString;
-	/**
-	 * Usage
-	 */
-	admin_admin_logging_usage: () => LocalizedString;
-	/**
 	 * Stale
 	 */
 	admin_admin_logging_stale: () => LocalizedString;
-	/**
-	 * Impact
-	 */
-	admin_admin_logging_impact: () => LocalizedString;
-	/**
-	 * Queue rewrap
-	 */
-	admin_admin_logging_queue_rewrap: () => LocalizedString;
 	/**
 	 * Message Jobs
 	 */
@@ -50477,30 +50333,6 @@ Remove this role from {email}?
 	 */
 	admin_admin_logging_error: () => LocalizedString;
 	/**
-	 * Rewrap Jobs
-	 */
-	admin_admin_logging_rewrap_jobs: () => LocalizedString;
-	/**
-	 * No rewrap jobs found.
-	 */
-	admin_admin_logging_no_rewrap_jobs: () => LocalizedString;
-	/**
-	 * Priority
-	 */
-	admin_admin_logging_priority: () => LocalizedString;
-	/**
-	 * Set
-	 */
-	admin_admin_logging_set: () => LocalizedString;
-	/**
-	 * Retry
-	 */
-	admin_admin_logging_retry: () => LocalizedString;
-	/**
-	 * Cancel
-	 */
-	admin_admin_logging_cancel: () => LocalizedString;
-	/**
 	 * Recent Critical Changes
 	 */
 	admin_admin_logging_recent_critical_changes: () => LocalizedString;
@@ -50525,18 +50357,6 @@ Remove this role from {email}?
 	 */
 	admin_admin_logging_time: () => LocalizedString;
 	/**
-	 * Archive Chunks
-	 */
-	admin_admin_logging_archive_chunks: () => LocalizedString;
-	/**
-	 * No archive chunks found.
-	 */
-	admin_admin_logging_no_archive_chunks: () => LocalizedString;
-	/**
-	 * Chunks
-	 */
-	admin_admin_logging_chunks: () => LocalizedString;
-	/**
 	 * Delivery Health
 	 */
 	admin_admin_logging_delivery_health: () => LocalizedString;
@@ -50556,14 +50376,6 @@ Remove this role from {email}?
 	 * Delete Catalog Object
 	 */
 	admin_admin_logging_delete_catalog_object: () => LocalizedString;
-	/**
-	 * Cancel Rewrap Job
-	 */
-	admin_admin_logging_cancel_rewrap_job: () => LocalizedString;
-	/**
-	 * Cancel job
-	 */
-	admin_admin_logging_cancel_job: () => LocalizedString;
 	/**
 	 * Failed to load admin logging overview
 	 */
@@ -50592,34 +50404,6 @@ Remove this role from {email}?
 	 * Failed to probe sensitive detail
 	 */
 	admin_admin_logging_probe_failed: () => LocalizedString;
-	/**
-	 * Failed to load key impact
-	 */
-	admin_admin_logging_key_impact_failed: () => LocalizedString;
-	/**
-	 * Failed to create rewrap jobs
-	 */
-	admin_admin_logging_create_rewrap_failed: () => LocalizedString;
-	/**
-	 * Failed to retry rewrap job
-	 */
-	admin_admin_logging_retry_rewrap_failed: () => LocalizedString;
-	/**
-	 * Failed to cancel rewrap job
-	 */
-	admin_admin_logging_cancel_rewrap_failed: () => LocalizedString;
-	/**
-	 * Failed to update rewrap job priority
-	 */
-	admin_admin_logging_update_priority_failed: () => LocalizedString;
-	/**
-	 * manual retry from AdminUI
-	 */
-	admin_admin_logging_manual_retry_reason: () => LocalizedString;
-	/**
-	 * manual cancellation from AdminUI
-	 */
-	admin_admin_logging_manual_cancel_reason: () => LocalizedString;
 	/**
 	 * IP Allowlist - Authrim
 	 */
