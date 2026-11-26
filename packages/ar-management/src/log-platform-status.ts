@@ -79,7 +79,10 @@ export interface LogPlatformDeliveryStatus {
    * and confirmed inside an Iceberg snapshot (`ingested`, pipeline mode).
    */
   recent: { prepared: number; published: number; aborted: number; ingested: number };
-  /** When the newest record of this scope was confirmed inside the archive (pipeline mode). */
+  /**
+   * When the newest record of this scope was accepted by the Pipeline stream (pipeline mode).
+   * Acceptance is not yet a commit: the record is in a Parquet file only after the next commit.
+   */
   last_ingested_at: number | null;
   /** Pipeline mode only. */
   outbox: {
@@ -93,6 +96,8 @@ export interface LogPlatformDeliveryStatus {
     last_state: string | null;
     last_error_code: string | null;
     updated_at: number | null;
+    /** The newest batch that failed and is not done yet, whatever happened after it. */
+    active_failure: { batch_id: string; error_code: string; updated_at: number } | null;
     watermark: {
       snapshot_id: string;
       minimum_sequence_number: number;
@@ -373,6 +378,16 @@ async function describeDelivery(
        WHERE 1 = 1${scope.sql}${generationClause} ORDER BY updated_at DESC LIMIT 1`,
       [...scope.binds, ...generationBinds]
     );
+    const failing = await adapter.queryOne<{
+      id: string;
+      last_error_code: string;
+      updated_at: unknown;
+    }>(
+      `SELECT id, last_error_code, updated_at FROM log_iceberg_export_batches
+       WHERE last_error_code IS NOT NULL AND state != 'done'${scope.sql}${generationClause}
+       ORDER BY updated_at DESC LIMIT 1`,
+      [...scope.binds, ...generationBinds]
+    );
     const watermark =
       config.localStagingOnly || !config.tableUuid
         ? null
@@ -389,6 +404,13 @@ async function describeDelivery(
       last_state: batch?.state ?? null,
       last_error_code: batch?.last_error_code ?? null,
       updated_at: optionalInteger(batch?.updated_at),
+      active_failure: failing
+        ? {
+            batch_id: failing.id,
+            error_code: failing.last_error_code,
+            updated_at: integer(failing.updated_at),
+          }
+        : null,
       watermark: watermark
         ? {
             snapshot_id: watermark.snapshot_id,

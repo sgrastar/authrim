@@ -22,7 +22,7 @@ describe('log platform verdicts', () => {
 		const status = sampleLogPlatformStatus('over-limit');
 		expect(deliveryVerdict(status).tone).toBe('ok');
 		expect(archiveVerdict(status)).toEqual({
-			tone: 'danger',
+			tone: 'warning',
 			reasons: ['files_over_limit', 'compaction_never']
 		});
 		expect(readVerdict(status)).toEqual({ tone: 'danger', reasons: ['read_incomplete'] });
@@ -55,12 +55,22 @@ describe('log platform verdicts', () => {
 });
 
 describe('readable point', () => {
-	it('is the last commit for a platform caller and the last ingested record for a tenant', () => {
+	it('is the last commit for a platform caller and unknown to a tenant in pipeline mode', () => {
 		const platform = sampleLogPlatformStatus('healthy');
 		expect(readableUntil(platform)).toBe(platform.archive.table!.current_snapshot!.committed_at);
 		expect(readableLagMinutes(platform)).toBe(4);
 		const tenant = sampleLogPlatformStatus('tenant');
-		expect(readableUntil(tenant)).toBe(tenant.delivery.last_ingested_at);
+		expect(readableUntil(tenant)).toBeNull();
+	});
+
+	it('flags an outstanding export failure even after a later batch succeeded', () => {
+		const status = sampleLogPlatformStatus('scheduled');
+		status.delivery.export!.active_failure = {
+			batch_id: 'b1',
+			error_code: 'catalog_commit_conflict',
+			updated_at: LOG_PLATFORM_NOW - 60_000
+		};
+		expect(deliveryVerdict(status)).toEqual({ tone: 'warning', reasons: ['export_error'] });
 	});
 
 	it('is the verified watermark in scheduled mode', () => {

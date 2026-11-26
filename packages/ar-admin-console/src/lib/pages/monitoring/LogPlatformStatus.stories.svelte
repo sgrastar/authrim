@@ -63,8 +63,9 @@
 	name="Table outgrew the read limit"
 	play={async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
-		// Delivery is fine; the archive and the read are failing, and the reasons say why.
-		await waitFor(() => expect(statusBadges(canvas, t('lplat.status.danger'))).toBe(2));
+		// Delivery is fine, the archive asks for attention (size is advisory), the read is failing.
+		await waitFor(() => expect(statusBadges(canvas, t('lplat.status.danger'))).toBe(1));
+		await expect(statusBadges(canvas, t('lplat.status.warning'))).toBe(1);
 		await expect(statusBadges(canvas, t('lplat.status.ok'))).toBe(1);
 		await expect(canvas.getByText(t('lplat.reason.compaction_never'))).toBeInTheDocument();
 		await expect(
@@ -134,8 +135,8 @@
 		);
 		await expect(canvas.queryByText(t('lplat.archive.platform'))).toBeNull();
 		await expect(canvas.queryByRole('button', { name: t('lplat.catalog.repair') })).toBeNull();
-		// The readable point is the tenant's own last ingested record, 9 minutes ago.
-		await expect(canvas.getByText(t('lplat.read.until', { minutes: '9' }))).toBeInTheDocument();
+		// A tenant is not told a readable point in pipeline mode: its accepted records are not yet a commit.
+		await expect(canvas.getByText(t('lplat.read.unknown'))).toBeInTheDocument();
 	}}
 >
 	{#snippet template()}

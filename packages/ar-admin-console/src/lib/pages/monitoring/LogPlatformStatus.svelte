@@ -157,7 +157,9 @@
 			case 'read_incomplete':
 				return t('lplat.reason.read_incomplete', { code: a.read_probe.reason ?? '' });
 			case 'export_error':
-				return t('lplat.reason.export_error', { code: exp?.last_error_code ?? '' });
+				return t('lplat.reason.export_error', {
+					code: exp?.active_failure?.error_code ?? exp?.last_error_code ?? ''
+				});
 		}
 	}
 </script>

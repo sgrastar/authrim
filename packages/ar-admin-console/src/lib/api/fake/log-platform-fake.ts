@@ -197,6 +197,7 @@ export function sampleLogPlatformStatus(
 				last_state: 'verified',
 				last_error_code: null,
 				updated_at: LOG_PLATFORM_NOW - 11 * 60_000,
+				active_failure: null,
 				watermark: {
 					snapshot_id: '8532431906541772489',
 					minimum_sequence_number: 1_204,

@@ -35,13 +35,13 @@ export const deLogPlatform: Record<keyof typeof jaLogPlatform, string> = {
 
 	'lplat.stage.delivery': 'Zustellung',
 	'lplat.stage.delivery.desc': 'In D1 geschriebene Datensätze auf dem Weg ins Archiv',
-	'lplat.delivery.lastIngested': 'Zuletzt zugestellt',
+	'lplat.delivery.lastIngested': 'Zuletzt angenommen',
 	'lplat.delivery.published': 'Versiegelt',
 	'lplat.delivery.prepared': 'In Vorbereitung',
 	'lplat.delivery.aborted': 'Zurückgezogen',
 	'lplat.delivery.pending': 'Wartet auf Versand',
 	'lplat.delivery.queued': 'In der Warteschlange',
-	'lplat.delivery.ingested': 'Aufgenommen',
+	'lplat.delivery.ingested': 'Von der Pipeline angenommen',
 	'lplat.delivery.oldest': 'Älteste wartende',
 	'lplat.delivery.lastError': 'Letzter Fehler',
 	'lplat.delivery.unit': 'Datensätze',
@@ -72,8 +72,8 @@ export const deLogPlatform: Record<keyof typeof jaLogPlatform, string> = {
 	'lplat.stage.read': 'Protokolllesen',
 	'lplat.stage.read.desc':
 		'Die letzten 24 Stunden der Administratoraktivität, gelesen wie auf den Protokollseiten',
-	'lplat.read.until': 'Protokolle bis vor {minutes} Minuten sind lesbar',
-	'lplat.read.untilNow': 'Protokolle sind bis jetzt lesbar',
+	'lplat.read.until': 'Committet bis vor {minutes} Minuten',
+	'lplat.read.untilNow': 'Committet bis jetzt',
 	'lplat.read.unknown': 'Wie weit Protokolle lesbar sind, ist nicht bekannt',
 	'lplat.read.consistency': 'Konsistenz',
 	'lplat.read.consistency.eventual':

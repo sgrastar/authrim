@@ -63,7 +63,7 @@ export interface LogPlatformArchive {
 export interface LogPlatformDelivery {
 	/** Records of the 24-hour window by how far they got; `ingested` = confirmed in the archive. */
 	recent: { prepared: number; published: number; aborted: number; ingested: number };
-	/** When the newest record of this scope was confirmed inside the archive (pipeline mode). */
+	/** When the newest record of this scope was accepted by the Pipeline stream (pipeline mode); not yet a commit. */
 	last_ingested_at: number | null;
 	outbox: {
 		pending: number;
@@ -75,6 +75,8 @@ export interface LogPlatformDelivery {
 		last_state: string | null;
 		last_error_code: string | null;
 		updated_at: number | null;
+		/** The newest batch that failed and is not done yet. */
+		active_failure: { batch_id: string; error_code: string; updated_at: number } | null;
 		watermark: { snapshot_id: string; minimum_sequence_number: number; updated_at: number } | null;
 	} | null;
 }

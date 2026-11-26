@@ -47,11 +47,16 @@ export function deliveryVerdict(status: LogPlatformStatus): StageVerdict {
 			reasons.push('delivery_stuck');
 		if (outbox.last_error_code) reasons.push('delivery_error');
 	}
-	if (status.delivery.export?.last_error_code) reasons.push('export_error');
+	if (status.delivery.export?.active_failure || status.delivery.export?.last_error_code)
+		reasons.push('export_error');
 	return okOr(reasons, reasons.includes('delivery_stuck') ? 'danger' : 'warning');
 }
 
-/** Archive: the table answers and stays readable (platform callers also see its size). */
+/**
+ * Archive: the table answers and stays readable. Its size against the read limit is advisory
+ * (the reader prunes files before opening them), so it is attention, never failure; a failed
+ * read shows up as such on the reading stage.
+ */
 export function archiveVerdict(status: LogPlatformStatus): StageVerdict {
 	const archive = status.archive;
 	if (!archive.configured) return { tone: 'danger', reasons: ['archive_unconfigured'] };
@@ -65,7 +70,7 @@ export function archiveVerdict(status: LogPlatformStatus): StageVerdict {
 		} else if (status.generated_at - archive.table.last_compaction_at >= COMPACTION_STALE_AFTER_MS)
 			reasons.push('compaction_stale');
 	}
-	return okOr(reasons, reasons.includes('files_over_limit') ? 'danger' : 'warning');
+	return okOr(reasons, 'warning');
 }
 
 /** Reading: the ordinary read path completed within its budget. */
@@ -77,17 +82,15 @@ export function readVerdict(status: LogPlatformStatus): StageVerdict {
 }
 
 /**
- * The newest moment whose logs can be read. A platform caller sees the table's last commit;
- * a tenant caller the last record of its own that was confirmed in the archive; in scheduled
- * mode it is the verified watermark for everyone. Null when nothing says.
+ * The newest commit whose records can be read: the table's last commit for a platform caller,
+ * the verified watermark in scheduled mode. A tenant caller in pipeline mode gets null: its
+ * last accepted record is not yet a commit, and the table's commits are not shown to it.
  */
 export function readableUntil(status: LogPlatformStatus): number | null {
 	if (status.archive.mode === 'scheduled') {
 		return status.delivery.export?.watermark?.updated_at ?? null;
 	}
-	return (
-		status.archive.table?.current_snapshot?.committed_at ?? status.delivery.last_ingested_at ?? null
-	);
+	return status.archive.table?.current_snapshot?.committed_at ?? null;
 }
 
 /** Whole minutes between the status and the readable point; null when either is missing. */

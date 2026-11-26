@@ -312,6 +312,11 @@ describe('buildLogPlatformStatus', () => {
 
   it('reads the export batch and watermark in scheduled mode, platform-wide for a platform caller', async () => {
     const adapter = fakeAdapter({
+      "last_error_code IS NOT NULL AND state != 'done'": {
+        id: 'batch-7',
+        last_error_code: 'catalog_commit_conflict',
+        updated_at: NOW - 900,
+      },
       'FROM log_iceberg_export_batches': {
         state: 'verified',
         last_error_code: null,
@@ -358,6 +363,11 @@ describe('buildLogPlatformStatus', () => {
       last_state: 'verified',
       last_error_code: null,
       updated_at: NOW - 500,
+      active_failure: {
+        batch_id: 'batch-7',
+        error_code: 'catalog_commit_conflict',
+        updated_at: NOW - 900,
+      },
       watermark: { snapshot_id: '42', minimum_sequence_number: 17, updated_at: NOW - 400 },
     });
     expect(status.archive.table?.last_compaction_at).toBe(NOW - 400);
