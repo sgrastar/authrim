@@ -135,8 +135,8 @@
 		);
 		await expect(canvas.queryByText(t('lplat.archive.platform'))).toBeNull();
 		await expect(canvas.queryByRole('button', { name: t('lplat.catalog.repair') })).toBeNull();
-		// A tenant is not told a readable point in pipeline mode: its accepted records are not yet a commit.
-		await expect(canvas.getByText(t('lplat.read.unknown'))).toBeInTheDocument();
+		// A tenant is not told a commit point in pipeline mode; it sees its own last acceptance instead.
+		await expect(canvas.getByText(t('lplat.read.accepted', { minutes: '9' }))).toBeInTheDocument();
 	}}
 >
 	{#snippet template()}

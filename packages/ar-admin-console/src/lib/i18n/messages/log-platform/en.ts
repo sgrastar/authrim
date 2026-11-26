@@ -30,6 +30,8 @@ export const enLogPlatform: Record<keyof typeof jaLogPlatform, string> = {
 	'lplat.reason.read_incomplete': 'The read did not complete ({code})',
 	'lplat.reason.export_error': 'The last export failed ({code})',
 	'lplat.reason.export_stalled': 'An export has been unfinished for more than {hours} hours',
+	'lplat.reason.publication_stalled':
+		'A record has been sealing for more than {hours} hours (publication is stuck)',
 
 	'lplat.stage.delivery': 'Delivery',
 	'lplat.stage.delivery.desc': 'Records written to D1 on their way to the archive',
@@ -75,7 +77,9 @@ export const enLogPlatform: Record<keyof typeof jaLogPlatform, string> = {
 	'lplat.read.untilNow': 'The newest commit was within the last minute',
 	'lplat.read.watermark':
 		'The read watermark is {minutes} minutes old (reads cover the verified exports)',
-	'lplat.read.unknown': 'How far logs can be read is not known',
+	'lplat.read.accepted':
+		'Last accepted {minutes} minutes ago; accepted records become readable at the next commit (every few minutes)',
+	'lplat.read.none': 'No readable records yet',
 	'lplat.read.consistency': 'Consistency',
 	'lplat.read.consistency.eventual': 'The newest records may not be visible yet',
 	'lplat.read.consistency.snapshot': 'Complete as of the snapshot',

@@ -17,7 +17,8 @@ export type StageReason =
 	| 'compaction_stale'
 	| 'compaction_never'
 	| 'read_incomplete'
-	| 'export_error';
+	| 'export_error'
+	| 'publication_stalled';
 
 export interface StageVerdict {
 	tone: StageTone;
@@ -38,6 +39,14 @@ const okOr = (reasons: StageReason[], worst: StageTone): StageVerdict => ({
 export function deliveryVerdict(status: LogPlatformStatus): StageVerdict {
 	if (!status.archive.configured) return { tone: 'none', reasons: ['archive_unconfigured'] };
 	const reasons: StageReason[] = [];
+	// A publication still being sealed after an hour never reaches the archive on its own.
+	if (
+		status.delivery.oldest_prepared_at !== null &&
+		status.generated_at - status.delivery.oldest_prepared_at >= STUCK_AFTER_MS
+	)
+		reasons.push('publication_stalled');
+	// Local staging keeps hot records on purpose and exports nothing: no remote stall to judge.
+	if (status.archive.local_staging_only) return okOr(reasons, 'danger');
 	const outbox = status.delivery.outbox;
 	if (outbox) {
 		if (
@@ -62,7 +71,12 @@ export function deliveryVerdict(status: LogPlatformStatus): StageVerdict {
 			.reduce<number | null>((min, at) => (min === null || at < min ? at : min), null);
 		if (oldest !== null && status.generated_at - oldest >= limit) reasons.push('delivery_stuck');
 	}
-	return okOr(reasons, reasons.includes('delivery_stuck') ? 'danger' : 'warning');
+	return okOr(
+		reasons,
+		reasons.includes('delivery_stuck') || reasons.includes('publication_stalled')
+			? 'danger'
+			: 'warning'
+	);
 }
 
 /**

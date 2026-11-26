@@ -30,6 +30,7 @@ export const arLogPlatform: Record<keyof typeof jaLogPlatform, string> = {
 	'lplat.reason.read_incomplete': 'لم تكتمل القراءة ({code})',
 	'lplat.reason.export_error': 'فشل آخر تصدير ({code})',
 	'lplat.reason.export_stalled': 'ثمة تصدير غير مكتمل منذ أكثر من {hours} ساعة',
+	'lplat.reason.publication_stalled': 'ثمة سجل قيد الختم منذ أكثر من {hours} ساعة (النشر متوقف)',
 
 	'lplat.stage.delivery': 'التسليم',
 	'lplat.stage.delivery.desc': 'السجلات المكتوبة في D1 في طريقها إلى الأرشيف',
@@ -74,7 +75,9 @@ export const arLogPlatform: Record<keyof typeof jaLogPlatform, string> = {
 	'lplat.read.untilNow': 'أحدث حفظ كان خلال الدقيقة الأخيرة',
 	'lplat.read.watermark':
 		'علامة القراءة عمرها {minutes} دقيقة (تغطي القراءة عمليات التصدير المتحقق منها)',
-	'lplat.read.unknown': 'لا يُعرف إلى أي مدى يمكن قراءة السجلات',
+	'lplat.read.accepted':
+		'آخر قبول قبل {minutes} دقيقة؛ تصبح السجلات المقبولة قابلة للقراءة مع الحفظ التالي (كل بضع دقائق)',
+	'lplat.read.none': 'لا سجلات قابلة للقراءة بعد',
 	'lplat.read.consistency': 'الاتساق',
 	'lplat.read.consistency.eventual': 'قد لا تكون أحدث السجلات ظاهرة بعد',
 	'lplat.read.consistency.snapshot': 'مكتملة حتى اللقطة',

@@ -181,6 +181,7 @@ describe('buildLogPlatformStatus', () => {
     expect(status.delivery).toEqual({
       recent: { prepared: 0, published: 0, aborted: 0, ingested: 0 },
       last_ingested_at: null,
+      oldest_prepared_at: null,
       outbox: null,
       export: null,
     });
@@ -190,6 +191,7 @@ describe('buildLogPlatformStatus', () => {
 
   it('flags, for a platform caller, a pipeline archive whose table outgrew the read limit', async () => {
     const adapter = fakeAdapter({
+      "WHERE state = 'prepared'": { oldest: NOW - 5000 },
       'FROM log_iceberg_publications': [
         { state: 'published', total: '40' },
         { state: 'prepared', total: 2 },
@@ -240,6 +242,7 @@ describe('buildLogPlatformStatus', () => {
     expect(status.delivery).toEqual({
       recent: { prepared: 2, published: 40, aborted: 0, ingested: 38 },
       last_ingested_at: NOW - 240000,
+      oldest_prepared_at: NOW - 5000,
       outbox: {
         pending: 3,
         queued: 1,

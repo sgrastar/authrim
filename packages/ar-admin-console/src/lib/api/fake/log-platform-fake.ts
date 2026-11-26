@@ -74,6 +74,7 @@ function base(): LogPlatformStatus {
 		delivery: {
 			recent: { prepared: 2, published: 1_730, aborted: 0, ingested: 1_728 },
 			last_ingested_at: LOG_PLATFORM_NOW - 4 * 60_000,
+			oldest_prepared_at: LOG_PLATFORM_NOW - 40_000,
 			outbox: {
 				pending: 2,
 				queued: 0,
@@ -160,6 +161,7 @@ export function sampleLogPlatformStatus(
 			status.delivery = {
 				recent: { prepared: 0, published: 0, aborted: 0, ingested: 0 },
 				last_ingested_at: null,
+				oldest_prepared_at: null,
 				outbox: null,
 				export: null
 			};
@@ -214,6 +216,7 @@ export function sampleLogPlatformStatus(
 			status.archive.table = null;
 			status.archive.table_size_hint = null;
 			status.delivery.recent = { prepared: 0, published: 212, aborted: 0, ingested: 212 };
+			status.delivery.oldest_prepared_at = null;
 			status.delivery.last_ingested_at = LOG_PLATFORM_NOW - 9 * 60_000;
 			status.delivery.outbox = {
 				pending: 0,

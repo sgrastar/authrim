@@ -88,6 +88,12 @@ export interface LogPlatformDeliveryStatus {
    */
   last_ingested_at: number | null;
   /**
+   * When the oldest publication still `prepared` was created, in either mode. A publication
+   * whose reconciliation stalled after the business commit never becomes visible to export or
+   * delivery, so it is tracked here on its own.
+   */
+  oldest_prepared_at: number | null;
+  /**
    * Pipeline mode only. `pending` includes intents still `preparing`: a publication whose
    * reconciliation stalled after the business commit sits there and must count as waiting.
    */
@@ -347,6 +353,12 @@ async function describeDelivery(
       recent[row.state] = integer(row.total);
   }
   let lastIngestedAt: number | null = null;
+  const prepared = await adapter.queryOne<{ oldest: unknown }>(
+    `SELECT MIN(created_at) AS oldest FROM log_iceberg_publications
+     WHERE state = 'prepared'${scope.sql}${generationClause}`,
+    [...scope.binds, ...generationBinds]
+  );
+  const oldestPreparedAt = optionalInteger(prepared?.oldest);
 
   let outbox: LogPlatformDeliveryStatus['outbox'] = null;
   let exportState: LogPlatformDeliveryStatus['export'] = null;
@@ -453,7 +465,13 @@ async function describeDelivery(
         : null,
     };
   }
-  return { recent, last_ingested_at: lastIngestedAt, outbox, export: exportState };
+  return {
+    recent,
+    last_ingested_at: lastIngestedAt,
+    oldest_prepared_at: oldestPreparedAt,
+    outbox,
+    export: exportState,
+  };
 }
 
 export async function buildLogPlatformStatus(

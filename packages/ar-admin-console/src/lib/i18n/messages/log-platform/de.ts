@@ -33,6 +33,8 @@ export const deLogPlatform: Record<keyof typeof jaLogPlatform, string> = {
 	'lplat.reason.read_incomplete': 'Der Lesevorgang ist nicht abgeschlossen ({code})',
 	'lplat.reason.export_error': 'Der letzte Export ist fehlgeschlagen ({code})',
 	'lplat.reason.export_stalled': 'Ein Export ist seit mehr als {hours} Stunden unvollendet',
+	'lplat.reason.publication_stalled':
+		'Ein Datensatz wird seit mehr als {hours} Stunden versiegelt (die Veröffentlichung hängt)',
 
 	'lplat.stage.delivery': 'Zustellung',
 	'lplat.stage.delivery.desc': 'In D1 geschriebene Datensätze auf dem Weg ins Archiv',
@@ -78,7 +80,9 @@ export const deLogPlatform: Record<keyof typeof jaLogPlatform, string> = {
 	'lplat.read.untilNow': 'Der neueste Commit war in der letzten Minute',
 	'lplat.read.watermark':
 		'Die Lesemarke ist {minutes} Minuten alt (gelesen wird bis zu den geprüften Exporten)',
-	'lplat.read.unknown': 'Wie weit Protokolle lesbar sind, ist nicht bekannt',
+	'lplat.read.accepted':
+		'Zuletzt vor {minutes} Minuten angenommen; angenommene Datensätze werden mit dem nächsten Commit (alle paar Minuten) lesbar',
+	'lplat.read.none': 'Noch keine lesbaren Datensätze',
 	'lplat.read.consistency': 'Konsistenz',
 	'lplat.read.consistency.eventual':
 		'Die neuesten Datensätze sind möglicherweise noch nicht sichtbar',

@@ -73,6 +73,19 @@ describe('readable point', () => {
 		expect(deliveryVerdict(status)).toEqual({ tone: 'warning', reasons: ['export_error'] });
 	});
 
+	it('calls a publication stalled when it has been sealing for over an hour, in any mode', () => {
+		const status = sampleLogPlatformStatus('healthy');
+		status.delivery.oldest_prepared_at = LOG_PLATFORM_NOW - 61 * 60_000;
+		expect(deliveryVerdict(status)).toEqual({ tone: 'danger', reasons: ['publication_stalled'] });
+	});
+
+	it('does not judge remote export in local staging mode', () => {
+		const status = sampleLogPlatformStatus('scheduled');
+		status.archive.local_staging_only = true;
+		status.delivery.export!.oldest_eligible_since = LOG_PLATFORM_NOW - 3 * 60 * 60_000;
+		expect(deliveryVerdict(status)).toEqual({ tone: 'ok', reasons: [] });
+	});
+
 	it("does not read a done batch's completion marker as a failure", () => {
 		const status = sampleLogPlatformStatus('scheduled');
 		status.delivery.export!.last_error_code = 'log_iceberg_retention_closed';

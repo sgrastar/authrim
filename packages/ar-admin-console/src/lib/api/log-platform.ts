@@ -67,6 +67,8 @@ export interface LogPlatformDelivery {
 	recent: { prepared: number; published: number; aborted: number; ingested: number };
 	/** When the Pipeline stream last acknowledged a record of this scope (pipeline mode); not yet a commit. */
 	last_ingested_at: number | null;
+	/** When the oldest publication still being sealed was created (either mode). */
+	oldest_prepared_at: number | null;
 	/** `pending` includes intents still `preparing` (a stalled reconciliation waits there too). */
 	outbox: {
 		pending: number;

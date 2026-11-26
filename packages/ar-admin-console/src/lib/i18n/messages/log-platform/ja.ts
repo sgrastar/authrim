@@ -28,6 +28,8 @@ export const jaLogPlatform = {
 	'lplat.reason.read_incomplete': '読み取りが完了しませんでした（{code}）',
 	'lplat.reason.export_error': '直近のエクスポートでエラーがありました（{code}）',
 	'lplat.reason.export_stalled': '未完了のエクスポートが {hours} 時間以上残っています',
+	'lplat.reason.publication_stalled':
+		'確定できていないレコードが {hours} 時間以上あります（公開処理が止まっています）',
 
 	'lplat.stage.delivery': '配信',
 	'lplat.stage.delivery.desc': 'D1 に書かれたレコードがアーカイブに届くまで',
@@ -71,7 +73,9 @@ export const jaLogPlatform = {
 	'lplat.read.untilNow': '最新のコミットは 1 分以内です',
 	'lplat.read.watermark':
 		'読み取り基準点は {minutes} 分前です（検証済みのエクスポートまで読めます）',
-	'lplat.read.unknown': 'どこまで読めるかは分かりません',
+	'lplat.read.accepted':
+		'最終受理は {minutes} 分前です。受理後、次のコミット（数分おき）で読めるようになります',
+	'lplat.read.none': 'まだ読めるレコードがありません',
 	'lplat.read.consistency': '整合性',
 	'lplat.read.consistency.eventual': '最新のレコードはまだ反映されていない可能性があります',
 	'lplat.read.consistency.snapshot': 'スナップショット時点で完全です',

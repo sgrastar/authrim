@@ -120,6 +120,12 @@
 	);
 	const until = $derived(status ? readableUntil(status) : null);
 	const lag = $derived(status ? readableLagMinutes(status) : null);
+	/** For a caller who is not shown the table's commits: minutes since its last accepted record. */
+	const acceptedLag = $derived(
+		status?.delivery.last_ingested_at
+			? Math.max(0, Math.floor((status.generated_at - status.delivery.last_ingested_at) / 60_000))
+			: null
+	);
 	const budget = $derived(status ? readBudgetPercent(status) : null);
 
 	const TONE = {
@@ -165,6 +171,13 @@
 				return t('lplat.reason.compaction_never');
 			case 'read_incomplete':
 				return t('lplat.reason.read_incomplete', { code: a.read_probe.reason ?? '' });
+			case 'publication_stalled':
+				return t('lplat.reason.publication_stalled', {
+					hours: Math.floor(
+						(status.generated_at - (status.delivery.oldest_prepared_at ?? status.generated_at)) /
+							3_600_000
+					)
+				});
 			case 'export_error':
 				return t('lplat.reason.export_error', {
 					code: exp?.active_failure?.error_code ?? exp?.last_error_code ?? ''
@@ -194,6 +207,7 @@
 
 {#snippet stageHead(icon: IconName, title: string, desc: string, verdict: StageVerdict)}
 	<header class="stage__head">
+		<span class="stage__link" aria-hidden="true"></span>
 		<span class="stage__icon" aria-hidden="true"><Icon name={icon} size={30} /></span>
 		<div class="stage__title-row">
 			<h2 class="stage__title">{title}</h2>
@@ -306,8 +320,6 @@
 				{/if}
 			</article>
 
-			<div class="flow__arrow" aria-hidden="true"></div>
-
 			<!-- 2. Archive -->
 			<article class="stage" data-stage="archive">
 				{@render stageHead(
@@ -318,15 +330,17 @@
 				)}
 				{#if archive.configured}
 					<dl class="facts">
-						{#snippet readable()}{@render when(until)}{/snippet}
-						{@render fact(
-							t(
-								archive.mode === 'scheduled'
-									? 'lplat.delivery.export.watermark'
-									: 'lplat.archive.lastCommit'
-							),
-							readable
-						)}
+						{#if until !== null}
+							{#snippet readable()}{@render when(until)}{/snippet}
+							{@render fact(
+								t(
+									archive.mode === 'scheduled'
+										? 'lplat.delivery.export.watermark'
+										: 'lplat.archive.lastCommit'
+								),
+								readable
+							)}
+						{/if}
 						{#snippet mode()}
 							{#if archive?.local_staging_only}
 								{t('lplat.archive.local')}
@@ -411,8 +425,6 @@
 				{/if}
 			</article>
 
-			<div class="flow__arrow" aria-hidden="true"></div>
-
 			<!-- 3. Reading -->
 			<article class="stage" data-stage="read">
 				{@render stageHead(
@@ -422,15 +434,19 @@
 					verdicts.read
 				)}
 				{#if archive.configured}
-					<p class="read__until">
-						{#if lag === null || !archive.read_probe.ok}
-							<span class="muted">{t('lplat.read.unknown')}</span>
-						{:else if archive.mode === 'scheduled'}
-							{t('lplat.read.watermark', { minutes: num(lag) })}
-						{:else}
-							{t('lplat.read.until', { minutes: num(lag) })}
-						{/if}
-					</p>
+					{#if archive.read_probe.ok}
+						<p class="read__until">
+							{#if lag !== null && archive.mode === 'scheduled'}
+								{t('lplat.read.watermark', { minutes: num(lag) })}
+							{:else if lag !== null}
+								{t('lplat.read.until', { minutes: num(lag) })}
+							{:else if acceptedLag !== null}
+								{t('lplat.read.accepted', { minutes: num(acceptedLag) })}
+							{:else}
+								<span class="muted">{t('lplat.read.none')}</span>
+							{/if}
+						</p>
+					{/if}
 					<dl class="facts">
 						{#if !archive.read_probe.ok}
 							{#snippet reason()}<code>{archive?.read_probe.reason ?? '—'}</code>{/snippet}
@@ -618,22 +634,60 @@
 		gap: 0 var(--space-section);
 	}
 
-	/* The flow: three stages joined at the icon line; stacked when the row cannot fit. */
+	/*
+	 * The flow: one frame, three equal columns divided by a rule that starts under the icon
+	 * line, and an arrow from each icon to the next drawn across the divider. Stacked when the
+	 * row cannot fit.
+	 */
 	.flow {
 		display: grid;
-		grid-template-columns: minmax(0, 1fr) 28px minmax(0, 1fr) 28px minmax(0, 1fr);
-		gap: 6px;
-		align-items: start;
+		grid-template-columns: repeat(3, minmax(0, 1fr));
+		border: 1px solid var(--border);
+		border-radius: var(--radius-lg);
+		background: var(--bg-card);
+		overflow: hidden;
 	}
 	.stage {
+		position: relative;
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-related);
 		padding: var(--space-related) var(--space-field) var(--space-field);
-		border: 1px solid var(--border);
-		border-radius: var(--radius-lg);
-		background: var(--bg-card);
-		min-height: 100%;
+		min-width: 0;
+	}
+	.stage + .stage::before {
+		content: '';
+		position: absolute;
+		inset-inline-start: 0;
+		top: calc(var(--space-related) + 48px + 8px);
+		bottom: 0;
+		width: 1px;
+		background: var(--border-subtle);
+	}
+	/*
+	 * The arrow belongs to the stage it points to: it runs from the previous icon's edge to this
+	 * icon's edge. Columns are equal, so "the previous icon centre" is half a column to the start.
+	 */
+	.stage__link {
+		display: none;
+	}
+	.stage + .stage .stage__link {
+		display: block;
+		position: absolute;
+		top: calc(var(--space-related) + 23px);
+		inset-inline-start: calc(-50% + 24px + 10px);
+		inset-inline-end: calc(50% + 24px + 10px);
+		height: 2px;
+		background: var(--text-secondary);
+	}
+	.stage + .stage .stage__link::after {
+		content: '';
+		position: absolute;
+		inset-inline-end: -1px;
+		top: -4px;
+		border: 5px solid transparent;
+		border-inline-start: 7px solid var(--text-secondary);
+		border-inline-end: 0;
 	}
 	.stage__head {
 		display: flex;
@@ -671,7 +725,6 @@
 		justify-content: space-between;
 		gap: var(--space-related);
 		padding-block: 6px;
-		border-block: 1px solid var(--border-subtle);
 	}
 	.stage__status-label {
 		font-size: var(--fs-small);
@@ -694,23 +747,6 @@
 	}
 	.stage__reasons li + li {
 		margin-top: 4px;
-	}
-	/* The arrow sits on the icon line (icon centre ≈ 24px below the card's top padding). */
-	.flow__arrow {
-		position: relative;
-		align-self: start;
-		height: 2px;
-		margin-top: calc(var(--space-related) + 23px);
-		background: var(--text-secondary);
-	}
-	.flow__arrow::after {
-		content: '';
-		position: absolute;
-		inset-inline-end: -1px;
-		top: -4px;
-		border: 5px solid transparent;
-		border-inline-start: 7px solid var(--text-secondary);
-		border-inline-end: 0;
 	}
 	.platform {
 		display: flex;
@@ -746,20 +782,15 @@
 		.flow {
 			grid-template-columns: minmax(0, 1fr);
 		}
-		.flow__arrow {
-			justify-self: center;
-			width: 2px;
-			height: 22px;
-			margin: 0;
+		.stage + .stage::before {
+			inset-inline: 0;
+			top: 0;
+			bottom: auto;
+			width: auto;
+			height: 1px;
 		}
-		.flow__arrow::after {
-			inset-inline-end: auto;
-			left: -4px;
-			top: auto;
-			bottom: -1px;
-			border: 5px solid transparent;
-			border-top: 7px solid var(--text-secondary);
-			border-bottom: 0;
+		.stage + .stage .stage__link {
+			display: none;
 		}
 	}
 </style>
