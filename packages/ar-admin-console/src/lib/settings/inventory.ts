@@ -92,9 +92,24 @@ export const DRAFT_PAGES: readonly DraftPage[] = [
 	},
 	{ id: 'customization/screens', scope: 'tenant' },
 	{ id: 'customization/account-page', scope: 'tenant' },
-	{ id: 'monitoring/diagnostics', scope: 'tenant' },
-	{ id: 'monitoring/log-settings', scope: 'tenant' },
-	{ id: 'monitoring/destinations', scope: 'tenant' },
+	{
+		id: 'monitoring/diagnostics',
+		scope: 'tenant',
+		proposed: true,
+		note: 'Not in the navigation until the page exists: diagnostic logging is a tenant setting with an export and a storage test, used for support and conformance testing.'
+	},
+	{
+		id: 'monitoring/log-settings',
+		scope: 'tenant',
+		proposed: true,
+		note: 'Not in the navigation until the page exists: logging policies route log types to destinations with lanes and fallbacks, which only matters once external destinations are in use.'
+	},
+	{
+		id: 'monitoring/destinations',
+		scope: 'tenant',
+		proposed: true,
+		note: 'Not in the navigation until the page exists: the destination registry (R2, S3, HTTP sinks, collectors) that logging policies refer to; built together with them.'
+	},
 	{ id: 'integrations/plugins', scope: 'tenant' },
 	{ id: 'settings/general', scope: 'tenant' },
 	{ id: 'settings/domains', scope: 'tenant' },

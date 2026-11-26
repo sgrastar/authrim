@@ -66,16 +66,9 @@ const cryptoWorker = buildSync({
     contents: `
   import {encryptLogChunkBody} from './packages/ar-lib-logging/src/chunks/r2-chunk-writer.ts';
   import {decryptLogChunkBody} from './packages/ar-lib-logging/src/chunks/r2-chunk-reader.ts';
-  import {rewrapLogChunkObject} from './packages/ar-lib-logging/src/chunks/r2-chunk-rewrap.ts';
   export default {async fetch(request,env) {
     const {action,bytes,options}=await request.json();
     try {
-      if(action==='rewrap') {
-        await rewrapLogChunkObject({...options,bucket:env.ASSETS,
-          from:{...options.from,keyBytes:new Uint8Array(options.from.keyBytes)},
-          to:{...options.to,keyBytes:new Uint8Array(options.to.keyBytes)}});
-        return Response.json([]);
-      }
       const keyBytes=new Uint8Array(options.keyBytes);
       if(action==='encrypt') return Response.json(Array.from(await encryptLogChunkBody(new Uint8Array(bytes),{...options,keyBytes})));
       if(action==='decrypt') return Response.json(Array.from((await decryptLogChunkBody({...options,keyBytes,
@@ -142,18 +135,6 @@ try {
         keyBytes: Array.from(input.keyBytes),
       }),
     };
-  }
-  function rewrapLogChunkObject(
-    input: Record<string, unknown> & {
-      from: { keyBytes: Uint8Array; encryptionScope: string; keyVersion: number };
-      to: { keyBytes: Uint8Array; encryptionScope: string; keyVersion: number };
-    }
-  ) {
-    return cipher('rewrap', '', {
-      ...input,
-      from: { ...input.from, keyBytes: Array.from(input.from.keyBytes) },
-      to: { ...input.to, keyBytes: Array.from(input.to.keyBytes) },
-    });
   }
   await db.batch(splitMigrationSql(ddl).map((sql) => db.prepare(sql)));
   async function upload(
@@ -367,40 +348,6 @@ try {
       expectedKeyVersion: 1,
     })
   );
-  // Characterize the existing rewrap path: it replaces ciphertext at the SAME key. This must
-  // change or participate in version preservation before production backup can rely on pins.
-  const legacyKey = 'fixture/legacy-rewrap';
-  const legacyBody = await encryptLogChunkBody(plaintext, {
-    ...cryptoContext,
-    keyBytes: key1,
-    keyVersion: 1,
-    objectKey: legacyKey,
-  });
-  await bucket.put(legacyKey, legacyBody);
-  await rewrapLogChunkObject({
-    objectCatalogId: 'fixture',
-    objectKey: legacyKey,
-    chunkId: cryptoContext.chunkId,
-    tenantKey: cryptoContext.tenantKey,
-    logType: 'audit',
-    plane: 'archive',
-    compression: 'none',
-    from: { keyBytes: key1, encryptionScope: cryptoContext.encryptionScope, keyVersion: 1 },
-    to: { keyBytes: key2, encryptionScope: cryptoContext.encryptionScope, keyVersion: 2 },
-  });
-  const rewrapped = await bucket.get(legacyKey);
-  assert.ok(rewrapped);
-  const rewrappedBody = new Uint8Array(await rewrapped.arrayBuffer());
-  assert.notEqual(sha256(rewrappedBody), sha256(legacyBody));
-  await assert.rejects(
-    decryptLogChunkBody({
-      ...cryptoContext,
-      storedBody: rewrappedBody,
-      keyBytes: key1,
-      objectKey: legacyKey,
-      expectedKeyVersion: 1,
-    })
-  );
   await db.prepare("DELETE FROM tenant_backup_snapshots WHERE id='encrypted'").run();
   assert.equal(await claim('a', 'encrypted-v1'), encryptedKey1);
   await finishDelete('a', 'encrypted-v1', encryptedKey1);
@@ -489,7 +436,6 @@ try {
           'corrupt body invalidates snapshot',
           'encrypted object retention protects old key generation',
           'real log encryption rejects wrong key and changed object AAD',
-          'existing same-key rewrap requires a version-preserving writer change',
           'retired key cannot be attached to a new object',
         ],
       },

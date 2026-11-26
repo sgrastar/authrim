@@ -3,7 +3,9 @@ import {
   LOG_ICEBERG_POLICY_PREFIX,
 } from '@authrim/ar-lib-core/services/log-iceberg-policy-artifacts';
 import { createLogReadAdapter, logCoverageHeaders } from '../../log-read-adapter';
-import { logQueryErrorResponse } from '../../log-archive-query';
+import { LogQueryIncompleteError, logQueryErrorResponse } from '../../log-archive-query';
+import { buildLogPlatformStatus, type LogPlatformReadProbe } from '../../log-platform-status';
+import { runLogIcebergIntentReclaim } from '@authrim/ar-lib-core/services/log-iceberg-intent-reclaim';
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import type { AdminAuthContext, Env } from '@authrim/ar-lib-core';
@@ -53,12 +55,10 @@ import {
   activateCredentialRotation,
   D1EncryptedCredentialSecretBackend,
   finishCredentialRetirement,
-  classifyLoggingRewrapPriority,
   markCredentialRotationReady,
   parseCredentialSecretRef,
   prepareCredentialRotation,
   R2EncryptedCredentialSecretBackend,
-  SqlLoggingRewrapJobQueue,
   type CredentialSecretBackend,
   type CredentialSecretBackendKind,
 } from '@authrim/ar-lib-logging/keys';
@@ -1266,63 +1266,6 @@ function loggingExportFileExtension(format: LoggingExportJobRow['format']): stri
   return format === 'csv' ? 'csv' : format === 'zip' ? 'zip' : 'jsonl';
 }
 
-interface LoggingKeyRegistryVersionRow extends Record<string, unknown> {
-  id: string;
-  tenant_key: string;
-  surface: string | null;
-  log_type: LogType;
-  plane: LogPlane;
-  active_version: number | string;
-  registry_status: string;
-  last_rotated_at: number | string | null;
-  registry_created_at: number | string;
-  registry_updated_at: number | string;
-  version: number | string | null;
-  backend_ref: string | null;
-  version_status: string | null;
-  usage_count: number | string | null;
-  stale_count: number | string | null;
-  version_created_at: number | string | null;
-  retired_at: number | string | null;
-}
-
-interface LoggingRewrapJobViewRow extends Record<string, unknown> {
-  id: string;
-  key_registry_id: string;
-  from_version: number | string;
-  to_version: number | string;
-  priority: number | string;
-  status: string;
-  created_at: number | string;
-  started_at: number | string | null;
-  completed_at: number | string | null;
-  metadata: string | null;
-}
-
-function serializeLoggingRewrapJob(row: LoggingRewrapJobViewRow): Record<string, unknown> {
-  const metadata = parseJsonMetadata(row.metadata);
-  return {
-    id: row.id,
-    key_registry_id: row.key_registry_id,
-    from_version: toInteger(row.from_version),
-    to_version: toInteger(row.to_version),
-    priority: toInteger(row.priority),
-    status: row.status,
-    created_at: toInteger(row.created_at),
-    started_at: readNullableInteger(row.started_at),
-    completed_at: readNullableInteger(row.completed_at),
-    object_catalog_id:
-      typeof metadata.object_catalog_id === 'string' ? metadata.object_catalog_id : null,
-    object_key: typeof metadata.object_key === 'string' ? metadata.object_key : null,
-    tenant_key: typeof metadata.tenant_key === 'string' ? metadata.tenant_key : null,
-    log_type: typeof metadata.log_type === 'string' ? metadata.log_type : null,
-    plane: typeof metadata.plane === 'string' ? metadata.plane : null,
-    reason: typeof metadata.reason === 'string' ? metadata.reason : null,
-    error: typeof metadata.error === 'string' ? metadata.error : null,
-    metadata,
-  };
-}
-
 interface SensitiveDetailChunkProbeRow extends Record<string, unknown> {
   catalog_id: string;
   tenant_id: string;
@@ -1338,22 +1281,6 @@ interface SensitiveDetailChunkProbeRow extends Record<string, unknown> {
   created_at: number | string;
   deleted_at: number | string | null;
   public_artifact_id: string | null;
-}
-
-interface LoggingRewrapCandidateRow extends Record<string, unknown> {
-  key_registry_id: string;
-  tenant_key: string;
-  surface: string | null;
-  log_type: LogType;
-  plane: LogPlane;
-  active_version: number | string;
-  from_version: number | string;
-  key_version_status: string;
-  object_catalog_id: string;
-  object_key: string;
-  record_count: number | string;
-  byte_count: number | string;
-  committed_at: number | string | null;
 }
 
 function readNullableInteger(value: unknown): number | null {
@@ -11984,570 +11911,6 @@ adminLoggingRouter.get('/coverage', async (c) => {
   return c.json(adminListEnvelope(items));
 });
 
-adminLoggingRouter.get('/key-registry', async (c) => {
-  const authContext = getAuth(c);
-  if (!hasPermission(authContext, ADMIN_PERMISSIONS.ADMIN_LOGGING_SENSITIVE_DETAIL_POLICY_READ)) {
-    return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
-  }
-  const platformError = await requirePlatformAuthority(c);
-  if (platformError) {
-    return platformError;
-  }
-
-  try {
-    const limit = parseLimit(c, 100, 500);
-    const rows = await getAdminAdapter(c).query<LoggingKeyRegistryVersionRow>(
-      `SELECT kr.id, kr.tenant_key, kr.surface, kr.log_type, kr.plane,
-              kr.active_version, kr.status AS registry_status,
-              kr.last_rotated_at, kr.created_at AS registry_created_at,
-              kr.updated_at AS registry_updated_at,
-              kv.version, kv.backend_ref, kv.status AS version_status,
-              kv.usage_count, kv.stale_count,
-              kv.created_at AS version_created_at, kv.retired_at
-       FROM logging_key_registry kr
-       LEFT JOIN logging_key_versions kv ON kv.key_registry_id = kr.id
-       ORDER BY kr.tenant_key ASC, kr.log_type ASC, kr.plane ASC, kv.version DESC
-       LIMIT ?`,
-      [limit]
-    );
-    return c.json(
-      adminListEnvelope(
-        rows.map((row) => ({
-          id: row.id,
-          tenant_key: row.tenant_key,
-          surface: row.surface,
-          log_type: row.log_type,
-          plane: row.plane,
-          active_version: toInteger(row.active_version),
-          registry_status: row.registry_status,
-          last_rotated_at: readNullableInteger(row.last_rotated_at),
-          registry_created_at: toInteger(row.registry_created_at),
-          registry_updated_at: toInteger(row.registry_updated_at),
-          version: readNullableInteger(row.version),
-          backend_ref: row.backend_ref,
-          version_status: row.version_status,
-          usage_count: toInteger(row.usage_count),
-          stale_count: toInteger(row.stale_count),
-          version_created_at: readNullableInteger(row.version_created_at),
-          retired_at: readNullableInteger(row.retired_at),
-        }))
-      )
-    );
-  } catch {
-    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
-  }
-});
-
-adminLoggingRouter.get('/key-registry/:id/impact', async (c) => {
-  const authContext = getAuth(c);
-  if (!hasPermission(authContext, ADMIN_PERMISSIONS.ADMIN_LOGGING_SENSITIVE_DETAIL_POLICY_READ)) {
-    return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
-  }
-  const platformError = await requirePlatformAuthority(c);
-  if (platformError) {
-    return platformError;
-  }
-
-  try {
-    const adapter = getAdminAdapter(c);
-    const id = c.req.param('id');
-    const registry = await adapter.queryOne<Record<string, unknown>>(
-      `SELECT id, tenant_key, surface, log_type, plane, active_version, status,
-              last_rotated_at, created_at, updated_at
-       FROM logging_key_registry
-       WHERE id = ?`,
-      [id]
-    );
-    if (!registry) {
-      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
-    }
-    const versions = await adapter.query<Record<string, unknown>>(
-      `SELECT kv.version, kv.status, kv.usage_count, kv.stale_count,
-              COUNT(loc.id) AS object_count,
-              SUM(loc.record_count) AS record_count,
-              SUM(loc.byte_count) AS byte_count,
-              MIN(loc.committed_at) AS oldest_committed_at,
-              MAX(loc.committed_at) AS newest_committed_at
-       FROM logging_key_versions kv
-       INNER JOIN logging_key_registry kr ON kr.id = kv.key_registry_id
-       LEFT JOIN log_object_catalog loc
-         ON loc.tenant_key = kr.tenant_key
-        AND loc.log_type = kr.log_type
-        AND loc.plane = kr.plane
-        AND COALESCE(loc.surface, '') = COALESCE(kr.surface, '')
-        AND loc.key_version = kv.version
-        AND loc.status = 'committed'
-        AND loc.object_kind = 'chunk'
-       WHERE kv.key_registry_id = ?
-       GROUP BY kv.version, kv.status, kv.usage_count, kv.stale_count
-       ORDER BY kv.version DESC`,
-      [id]
-    );
-    const jobs = await adapter.query<Record<string, unknown>>(
-      `SELECT status, COUNT(*) AS total
-       FROM logging_rewrap_jobs
-       WHERE key_registry_id = ?
-       GROUP BY status
-       ORDER BY status ASC`,
-      [id]
-    );
-    return c.json(
-      adminDetailEnvelope({
-        registry,
-        versions,
-        rewrap_jobs: jobs,
-        checked_at: Date.now(),
-      })
-    );
-  } catch {
-    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
-  }
-});
-
-adminLoggingRouter.post('/rewrap-jobs', async (c) => {
-  const authContext = getAuth(c);
-  if (!hasPermission(authContext, ADMIN_PERMISSIONS.ADMIN_LOGGING_REPAIR_RUN)) {
-    return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
-  }
-  const platformError = await requirePlatformAuthority(c);
-  if (platformError) {
-    return platformError;
-  }
-
-  const body = await parseJsonObject(c);
-  const keyRegistryId = parseOptionalString(body.key_registry_id);
-  const fromVersion = parseOptionalPositiveInteger(body.from_version);
-  const limit =
-    typeof body.limit === 'number' && Number.isInteger(body.limit) && body.limit > 0
-      ? Math.min(body.limit, 100)
-      : 25;
-  const fromVersionInvalid = typeof fromVersion === 'number' && Number.isNaN(fromVersion);
-  if (!keyRegistryId || fromVersionInvalid) {
-    return createAdminFieldErrorResponse(c, [
-      ...(!keyRegistryId
-        ? [fieldError('key_registry_id', 'required', 'Key registry id is required.')]
-        : []),
-      ...(fromVersionInvalid
-        ? [fieldError('from_version', 'invalid_value', 'from_version must be a positive integer.')]
-        : []),
-    ]);
-  }
-
-  try {
-    const adapter = getAdminAdapter(c);
-    const conditions = [
-      'kr.id = ?',
-      "kr.status IN ('active', 'rotating', 'stale', 'compromised')",
-      "kv.status IN ('rewrap_required', 'compromised')",
-      'kv.version < kr.active_version',
-      "loc.status = 'committed'",
-      "loc.object_kind = 'chunk'",
-      'loc.encryption_scope IS NOT NULL',
-    ];
-    const params: unknown[] = [keyRegistryId];
-    if (typeof fromVersion === 'number' && Number.isFinite(fromVersion)) {
-      conditions.push('kv.version = ?');
-      params.push(fromVersion);
-    }
-    const candidates = await adapter.query<LoggingRewrapCandidateRow>(
-      `SELECT kr.id AS key_registry_id, kr.tenant_key, kr.surface, kr.log_type, kr.plane,
-              kr.active_version, kv.version AS from_version, kv.status AS key_version_status,
-              loc.id AS object_catalog_id, loc.object_key, loc.record_count, loc.byte_count,
-              loc.committed_at
-       FROM logging_key_registry kr
-       INNER JOIN logging_key_versions kv ON kv.key_registry_id = kr.id
-       INNER JOIN log_object_catalog loc
-         ON loc.tenant_key = kr.tenant_key
-        AND loc.log_type = kr.log_type
-        AND loc.plane = kr.plane
-        AND COALESCE(loc.surface, '') = COALESCE(kr.surface, '')
-        AND loc.key_version = kv.version
-       WHERE ${conditions.join(' AND ')}
-       ORDER BY CASE kv.status WHEN 'compromised' THEN 0 ELSE 1 END,
-                loc.committed_at ASC,
-                loc.id ASC
-       LIMIT ?`,
-      [...params, limit]
-    );
-    const queue = new SqlLoggingRewrapJobQueue(adapter);
-    const created: Record<string, unknown>[] = [];
-    const skipped: Record<string, unknown>[] = [];
-    const now = Date.now();
-    for (const candidate of candidates) {
-      const candidateFromVersion = toInteger(candidate.from_version);
-      const toVersion = toInteger(candidate.active_version);
-      const existing = await adapter.queryOne<{ id: string; status: string }>(
-        `SELECT id, status
-         FROM logging_rewrap_jobs
-         WHERE key_registry_id = ?
-           AND from_version = ?
-           AND to_version = ?
-           AND metadata LIKE ?
-         ORDER BY created_at DESC
-         LIMIT 1`,
-        [
-          candidate.key_registry_id,
-          candidateFromVersion,
-          toVersion,
-          `%"object_catalog_id":"${candidate.object_catalog_id}"%`,
-        ]
-      );
-      if (existing) {
-        skipped.push({
-          object_catalog_id: candidate.object_catalog_id,
-          existing_job_id: existing.id,
-          existing_status: existing.status,
-        });
-        continue;
-      }
-      const priority = classifyLoggingRewrapPriority({
-        logType: candidate.log_type,
-        plane: candidate.plane,
-        compromised: candidate.key_version_status === 'compromised',
-        critical: candidate.log_type === 'admin_audit' || candidate.log_type === 'audit',
-      });
-      const job = await queue.enqueue({
-        keyRegistryId: candidate.key_registry_id,
-        fromVersion: candidateFromVersion,
-        toVersion,
-        priority: priority.priority,
-        metadata: {
-          object_catalog_id: candidate.object_catalog_id,
-          object_key: candidate.object_key,
-          tenant_key: candidate.tenant_key,
-          log_type: candidate.log_type,
-          plane: candidate.plane,
-          surface: candidate.surface,
-          reason: priority.reason,
-          record_count: toInteger(candidate.record_count),
-          byte_count: toInteger(candidate.byte_count),
-        },
-        now,
-      });
-      created.push({
-        id: job.id,
-        object_catalog_id: candidate.object_catalog_id,
-        from_version: candidateFromVersion,
-        to_version: toVersion,
-        priority: job.priority,
-      });
-    }
-
-    const auditId = await writeAdminAuditLog(c, {
-      action: 'admin_logging.rewrap_jobs.create',
-      resourceType: 'logging_key_registry',
-      resourceId: keyRegistryId,
-      result: 'success',
-      severity: created.length > 0 ? 'warn' : 'info',
-      metadata: {
-        requested_limit: limit,
-        candidate_count: candidates.length,
-        created_count: created.length,
-        skipped_count: skipped.length,
-        from_version:
-          typeof fromVersion === 'number' && Number.isFinite(fromVersion) ? fromVersion : null,
-      },
-    });
-
-    return c.json(
-      adminActionEnvelope(
-        {
-          key_registry_id: keyRegistryId,
-          candidate_count: candidates.length,
-          created_count: created.length,
-          skipped_count: skipped.length,
-          created,
-          skipped,
-        },
-        { auditId }
-      ),
-      202
-    );
-  } catch {
-    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
-  }
-});
-
-adminLoggingRouter.post('/rewrap-jobs/:id/retry', async (c) => {
-  const authContext = getAuth(c);
-  if (!hasPermission(authContext, ADMIN_PERMISSIONS.ADMIN_LOGGING_REPAIR_RUN)) {
-    return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
-  }
-  const platformError = await requirePlatformAuthority(c);
-  if (platformError) {
-    return platformError;
-  }
-
-  const body = await parseJsonObject(c);
-  const reason = parseOptionalString(body.reason) ?? 'manual retry requested';
-
-  try {
-    const adapter = getAdminAdapter(c);
-    const id = c.req.param('id');
-    const row = await adapter.queryOne<LoggingRewrapJobViewRow>(
-      `SELECT id, key_registry_id, from_version, to_version, priority, status,
-              created_at, started_at, completed_at, metadata
-       FROM logging_rewrap_jobs
-       WHERE id = ?`,
-      [id]
-    );
-    if (!row) {
-      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
-    }
-    if (!['failed', 'skipped'].includes(row.status)) {
-      return createAdminFieldErrorResponse(c, [
-        fieldError('status', 'invalid_state', 'Only failed or skipped rewrap jobs can be retried.'),
-      ]);
-    }
-
-    const now = Date.now();
-    const metadata = {
-      ...parseJsonMetadata(row.metadata),
-      retry_requested_by: authContext.userId ?? null,
-      retry_requested_at: now,
-      retry_reason: reason,
-      previous_status: row.status,
-    };
-    await adapter.execute(
-      `UPDATE logging_rewrap_jobs
-       SET status = 'queued',
-           started_at = NULL,
-           completed_at = NULL,
-           metadata = ?
-       WHERE id = ? AND status = ?`,
-      [JSON.stringify(metadata), row.id, row.status]
-    );
-    const auditId = await writeAdminAuditLog(c, {
-      action: 'admin_logging.rewrap_jobs.retry',
-      resourceType: 'logging_rewrap_job',
-      resourceId: row.id,
-      result: 'success',
-      severity: 'warn',
-      metadata: {
-        key_registry_id: row.key_registry_id,
-        from_version: toInteger(row.from_version),
-        to_version: toInteger(row.to_version),
-        previous_status: row.status,
-        next_status: 'queued',
-        reason,
-      },
-    });
-
-    return c.json(
-      adminActionEnvelope(
-        {
-          ...serializeLoggingRewrapJob({
-            ...row,
-            status: 'queued',
-            started_at: null,
-            completed_at: null,
-            metadata: JSON.stringify(metadata),
-          }),
-        },
-        { auditId }
-      )
-    );
-  } catch {
-    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
-  }
-});
-
-adminLoggingRouter.post('/rewrap-jobs/:id/cancel', async (c) => {
-  const authContext = getAuth(c);
-  if (!hasPermission(authContext, ADMIN_PERMISSIONS.ADMIN_LOGGING_REPAIR_RUN)) {
-    return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
-  }
-  const platformError = await requirePlatformAuthority(c);
-  if (platformError) {
-    return platformError;
-  }
-
-  const body = await parseJsonObject(c);
-  const reason = parseOptionalString(body.reason) ?? 'manual cancellation requested';
-
-  try {
-    const adapter = getAdminAdapter(c);
-    const id = c.req.param('id');
-    const row = await adapter.queryOne<LoggingRewrapJobViewRow>(
-      `SELECT id, key_registry_id, from_version, to_version, priority, status,
-              created_at, started_at, completed_at, metadata
-       FROM logging_rewrap_jobs
-       WHERE id = ?`,
-      [id]
-    );
-    if (!row) {
-      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
-    }
-    if (!['queued', 'running', 'failed'].includes(row.status)) {
-      return createAdminFieldErrorResponse(c, [
-        fieldError(
-          'status',
-          'invalid_state',
-          'Only queued, running, or failed rewrap jobs can be cancelled.'
-        ),
-      ]);
-    }
-
-    const now = Date.now();
-    const metadata = {
-      ...parseJsonMetadata(row.metadata),
-      cancelled_by: authContext.userId ?? null,
-      cancelled_at: now,
-      cancellation_reason: reason,
-      previous_status: row.status,
-    };
-    await adapter.execute(
-      `UPDATE logging_rewrap_jobs
-       SET status = 'skipped',
-           completed_at = ?,
-           metadata = ?
-       WHERE id = ? AND status = ?`,
-      [now, JSON.stringify(metadata), row.id, row.status]
-    );
-    const auditId = await writeAdminAuditLog(c, {
-      action: 'admin_logging.rewrap_jobs.cancel',
-      resourceType: 'logging_rewrap_job',
-      resourceId: row.id,
-      result: 'success',
-      severity: row.status === 'running' ? 'warn' : 'info',
-      metadata: {
-        key_registry_id: row.key_registry_id,
-        from_version: toInteger(row.from_version),
-        to_version: toInteger(row.to_version),
-        previous_status: row.status,
-        next_status: 'skipped',
-        reason,
-      },
-    });
-
-    return c.json(
-      adminActionEnvelope(
-        serializeLoggingRewrapJob({
-          ...row,
-          status: 'skipped',
-          completed_at: now,
-          metadata: JSON.stringify(metadata),
-        }),
-        { auditId }
-      )
-    );
-  } catch {
-    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
-  }
-});
-
-adminLoggingRouter.post('/rewrap-jobs/:id/priority', async (c) => {
-  const authContext = getAuth(c);
-  if (!hasPermission(authContext, ADMIN_PERMISSIONS.ADMIN_LOGGING_REPAIR_RUN)) {
-    return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
-  }
-  const platformError = await requirePlatformAuthority(c);
-  if (platformError) {
-    return platformError;
-  }
-
-  const body = await parseJsonObject(c);
-  const priorityRaw = Number.parseInt(String(body.priority ?? ''), 10);
-  if (!Number.isInteger(priorityRaw) || priorityRaw < 0 || priorityRaw > 1000) {
-    return createAdminFieldErrorResponse(c, [
-      fieldError('priority', 'invalid_value', 'Priority must be an integer from 0 to 1000.'),
-    ]);
-  }
-
-  try {
-    const adapter = getAdminAdapter(c);
-    const id = c.req.param('id');
-    const row = await adapter.queryOne<LoggingRewrapJobViewRow>(
-      `SELECT id, key_registry_id, from_version, to_version, priority, status,
-              created_at, started_at, completed_at, metadata
-       FROM logging_rewrap_jobs
-       WHERE id = ?`,
-      [id]
-    );
-    if (!row) {
-      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
-    }
-    if (row.status !== 'queued') {
-      return createAdminFieldErrorResponse(c, [
-        fieldError('status', 'invalid_state', 'Only queued rewrap jobs can change priority.'),
-      ]);
-    }
-
-    const metadata = {
-      ...parseJsonMetadata(row.metadata),
-      priority_changed_by: authContext.userId ?? null,
-      priority_changed_at: Date.now(),
-      previous_priority: toInteger(row.priority),
-    };
-    await adapter.execute(
-      `UPDATE logging_rewrap_jobs
-       SET priority = ?,
-           metadata = ?
-       WHERE id = ? AND status = 'queued'`,
-      [priorityRaw, JSON.stringify(metadata), row.id]
-    );
-    const auditId = await writeAdminAuditLog(c, {
-      action: 'admin_logging.rewrap_jobs.priority_update',
-      resourceType: 'logging_rewrap_job',
-      resourceId: row.id,
-      result: 'success',
-      severity: 'info',
-      metadata: {
-        key_registry_id: row.key_registry_id,
-        previous_priority: toInteger(row.priority),
-        next_priority: priorityRaw,
-      },
-    });
-
-    return c.json(
-      adminActionEnvelope(
-        serializeLoggingRewrapJob({
-          ...row,
-          priority: priorityRaw,
-          metadata: JSON.stringify(metadata),
-        }),
-        { auditId }
-      )
-    );
-  } catch {
-    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
-  }
-});
-
-adminLoggingRouter.get('/rewrap-jobs', async (c) => {
-  const authContext = getAuth(c);
-  if (!hasPermission(authContext, ADMIN_PERMISSIONS.ADMIN_LOGGING_REPAIR_READ)) {
-    return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
-  }
-  const platformError = await requirePlatformAuthority(c);
-  if (platformError) {
-    return platformError;
-  }
-
-  try {
-    const limit = parseLimit(c, 50, 200);
-    const rows = await getAdminAdapter(c).query<LoggingRewrapJobViewRow>(
-      `SELECT id, key_registry_id, from_version, to_version, priority, status,
-              created_at, started_at, completed_at, metadata
-       FROM logging_rewrap_jobs
-       ORDER BY CASE status
-                  WHEN 'running' THEN 0
-                  WHEN 'queued' THEN 1
-                  WHEN 'failed' THEN 2
-                  WHEN 'skipped' THEN 3
-                  ELSE 4
-                END,
-                priority ASC,
-                created_at DESC
-       LIMIT ?`,
-      [limit]
-    );
-    return c.json(adminListEnvelope(rows.map(serializeLoggingRewrapJob)));
-  } catch {
-    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
-  }
-});
-
 adminLoggingRouter.get('/catalog-repair-jobs', async (c) => {
   const authContext = getAuth(c);
   if (!hasPermission(authContext, ADMIN_PERMISSIONS.ADMIN_LOGGING_REPAIR_READ)) {
@@ -13527,6 +12890,114 @@ adminLoggingRouter.post('/coverage/check', async (c) => {
   } catch {
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
+});
+
+/**
+ * One read-only picture of the log platform: archive configuration and reachability, the table's
+ * own snapshots (file count, last compaction), the delivery path, audit coverage and the
+ * sensitive-detail chunk catalog. Never 503: a broken archive is what this view is for.
+ */
+adminLoggingRouter.get('/platform-status', async (c) => {
+  const authContext = getAuth(c);
+  if (!hasPermission(authContext, ADMIN_PERMISSIONS.ADMIN_LOGGING_OVERVIEW_READ)) {
+    return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
+  }
+  const platform = hasPlatformAuthority(authContext);
+  const tenantId = getTenantIdFromContext(c);
+  const now = Date.now();
+  const from = now - 24 * 60 * 60 * 1000;
+
+  try {
+    const tenantKeyFilter = await resolveTenantKeyFilter(c, undefined);
+    if (!tenantKeyFilter.ok) return tenantKeyFilter.response;
+
+    // The same read path the log views use: when it is incomplete, say why instead of failing.
+    const read = createLogReadAdapter({
+      env: c.env,
+      tenantId,
+      dataset: 'admin.admin_audit_log',
+      window: { fromMs: from },
+    });
+    let readProbe: LogPlatformReadProbe;
+    try {
+      await read.adapter.queryOne<Record<string, unknown>>(
+        'SELECT COUNT(*) AS total FROM admin_audit_log WHERE tenant_id = ? AND created_at >= ?',
+        [tenantId, from]
+      );
+      readProbe = {
+        ok: true,
+        reason: null,
+        has_archive: read.hasArchive(),
+        coverage: read.coverage() ?? null,
+      };
+    } catch (error) {
+      if (!(error instanceof LogQueryIncompleteError)) throw error;
+      readProbe = { ok: false, reason: error.reason, has_archive: false, coverage: null };
+    }
+
+    const status = await buildLogPlatformStatus({
+      env: c.env,
+      adapter: getAdminAdapter(c),
+      repository: getAdminLoggingControlRepository(c),
+      tenantId: platform ? null : tenantId,
+      platform,
+      tenantKey: tenantKeyFilter.tenantKey,
+      sensitiveDetailIndexStores: getSensitiveDetailProbeAdapters(c).map((entry) => ({
+        store: entry.binding,
+        adapter: entry.adapter,
+      })),
+      now,
+      readProbe,
+    });
+    return c.json(adminDetailEnvelope(status));
+  } catch (error) {
+    const logError = logQueryErrorResponse(c, error);
+    if (logError) return logError;
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+  }
+});
+
+/**
+ * Runs the orphaned-intent reclaim the minute tick also runs: pipeline outbox intents a dead
+ * writer (or a rolled-back business batch) left `preparing` with no publication are
+ * acknowledged (recorded as never committed, kept for a producer that may still return,
+ * retired at retention), never resumed. A tenant caller reclaims its own intents only; a
+ * platform caller every tenant's. The same lease as the tick, so a concurrent run answers
+ * `leased: false` and changes nothing. 409 when the archive is not activated or not in pipeline
+ * mode.
+ */
+adminLoggingRouter.post('/delivery/reclaim-intents', async (c) => {
+  const authContext = getAuth(c);
+  if (!hasPermission(authContext, ADMIN_PERMISSIONS.ADMIN_LOGGING_REPAIR_RUN)) {
+    return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
+  }
+  const platform = hasPlatformAuthority(authContext);
+  const tenantId = getTenantIdFromContext(c);
+  let outcome: Awaited<ReturnType<typeof runLogIcebergIntentReclaim>>;
+  try {
+    outcome = await runLogIcebergIntentReclaim(c.env, platform ? {} : { tenantId });
+  } catch (error) {
+    // Not activated, not pipeline mode, bindings missing: the request is fine, the platform is not.
+    if (error instanceof Error && /^log_iceberg_[a-z_]+$/.test(error.message))
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
+    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+  }
+  const result = {
+    leased: outcome.leased,
+    abandoned: outcome.abandoned,
+    retired: outcome.retired,
+    retained: outcome.retained,
+    failed: outcome.failed,
+  };
+  const auditId = await writeAdminAuditLog(c, {
+    action: 'admin_logging.delivery.reclaim_intents',
+    resourceType: 'log_iceberg_outbox',
+    resourceId: platform ? 'platform' : tenantId,
+    result: 'success',
+    severity: result.abandoned > 0 || result.failed > 0 ? 'warn' : 'info',
+    metadata: { ...result, scope: platform ? 'platform' : 'tenant' },
+  });
+  return c.json(adminActionEnvelope(result, { auditId }));
 });
 
 adminLoggingRouter.get('/', async (c) => {

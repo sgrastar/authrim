@@ -4049,7 +4049,7 @@ async function editFeatures(config: AuthrimConfig): Promise<boolean> {
       ? true
       : await confirm({
           message:
-            'Enable Cloudflare Queues? Disabled by default. Free plan capacity is roughly 3,000 delivered messages/day; Authrim queues async audit fan-out, logging delivery retries, export build jobs, and rewrap retry jobs.',
+            'Enable Cloudflare Queues? Disabled by default. Free plan capacity is roughly 3,000 delivered messages/day; Authrim queues async audit fan-out, logging delivery retries, and export build jobs.',
           default: config.features.queue?.enabled || false,
         });
 

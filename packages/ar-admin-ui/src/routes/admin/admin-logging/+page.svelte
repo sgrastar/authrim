@@ -5,11 +5,8 @@
 		adminLoggingControlAPI,
 		type AdminAuditCoverageStatus,
 		type AdminLoggingCriticalPolicy,
-		type AdminLoggingKeyRegistryItem,
 		type AdminLoggingOverview,
-		type AdminLoggingRewrapJob,
 		type AdminLoggingSensitiveDetailPolicy,
-		type AdminLoggingKeyImpact,
 		type SensitiveDetailProbeResult,
 		type DangerousLogCatalogRepairPlan,
 		type LoggingMessageJob,
@@ -34,8 +31,6 @@
 	let catalogRepairJobs = $state<LoggingCatalogRepairJob[]>([]);
 	let criticalPolicy = $state<AdminLoggingCriticalPolicy | null>(null);
 	let sensitiveDetailPolicy = $state<AdminLoggingSensitiveDetailPolicy | null>(null);
-	let keyRegistryItems = $state<AdminLoggingKeyRegistryItem[]>([]);
-	let rewrapJobs = $state<AdminLoggingRewrapJob[]>([]);
 	let messageJobs = $state<LoggingMessageJob[]>([]);
 	let catalogRepairTenantKey = $state('');
 	let catalogRepairLogType = $state('');
@@ -45,11 +40,6 @@
 	let sensitiveProbeObjectClass = $state('');
 	let sensitiveProbe = $state<SensitiveDetailProbeResult | null>(null);
 	let sensitiveProbeLoading = $state(false);
-	let keyImpact = $state<AdminLoggingKeyImpact | null>(null);
-	let keyActionId = $state<string | null>(null);
-	let rewrapJobActionId = $state<string | null>(null);
-	let rewrapPriorityInputs = $state<Record<string, number>>({});
-	let rewrapCreateLimit = $state(25);
 	let loading = $state(true);
 	let checkingCoverage = $state(false);
 	let applyingRepairs = $state(false);
@@ -119,8 +109,6 @@
 				repairResponse,
 				criticalResponse,
 				sensitiveDetailResponse,
-				keyRegistryResponse,
-				rewrapJobsResponse,
 				messageJobsResponse
 			] = await Promise.all([
 				adminLoggingControlAPI.getAdminLoggingOverview(from),
@@ -144,18 +132,6 @@
 							.getAdminLoggingSensitiveDetailPolicy()
 							.catch(() => ({ item: null }))
 					: Promise.resolve({ item: null }),
-				canViewSensitiveDetailPolicy
-					? adminLoggingControlAPI.listAdminLoggingKeyRegistry().catch(() => ({
-							items: [],
-							total: 0
-						}))
-					: Promise.resolve({ items: [], total: 0 }),
-				canReadCatalogRepair
-					? adminLoggingControlAPI.listAdminLoggingRewrapJobs().catch(() => ({
-							items: [],
-							total: 0
-						}))
-					: Promise.resolve({ items: [], total: 0 }),
 				canReadMessageJobs
 					? adminLoggingControlAPI
 							.listMessageJobs({
@@ -182,11 +158,6 @@
 				: [];
 			criticalPolicy = criticalResponse.item;
 			sensitiveDetailPolicy = sensitiveDetailResponse.item;
-			keyRegistryItems = keyRegistryResponse.items;
-			rewrapJobs = rewrapJobsResponse.items;
-			rewrapPriorityInputs = Object.fromEntries(
-				rewrapJobsResponse.items.map((job) => [job.id, job.priority])
-			);
 			messageJobs = messageJobsResponse.items;
 		} catch (err) {
 			error = err instanceof Error ? err.message : $LL.admin_admin_logging_load_failed();
@@ -196,9 +167,6 @@
 			catalogRepairJobs = [];
 			criticalPolicy = null;
 			sensitiveDetailPolicy = null;
-			keyRegistryItems = [];
-			rewrapJobs = [];
-			rewrapPriorityInputs = {};
 			messageJobs = [];
 		} finally {
 			loading = false;
@@ -344,114 +312,6 @@
 			error = err instanceof Error ? err.message : $LL.admin_admin_logging_probe_failed();
 		} finally {
 			sensitiveProbeLoading = false;
-		}
-	}
-
-	async function loadKeyImpact(item: AdminLoggingKeyRegistryItem) {
-		if (keyActionId || !canViewSensitiveDetailPolicy) return;
-		keyActionId = item.id;
-		error = '';
-		try {
-			const response = await adminLoggingControlAPI.getAdminLoggingKeyImpact(item.id);
-			keyImpact = response.item;
-		} catch (err) {
-			error = err instanceof Error ? err.message : $LL.admin_admin_logging_key_impact_failed();
-		} finally {
-			keyActionId = null;
-		}
-	}
-
-	async function createRewrapJobs(item: AdminLoggingKeyRegistryItem) {
-		if (keyActionId || !canRunCatalogRepair) return;
-		keyActionId = item.id;
-		error = '';
-		try {
-			await adminLoggingControlAPI.createAdminLoggingRewrapJobs({
-				keyRegistryId: item.id,
-				fromVersion: item.version ?? undefined,
-				limit: rewrapCreateLimit
-			});
-			const [impactResponse, jobsResponse] = await Promise.all([
-				adminLoggingControlAPI.getAdminLoggingKeyImpact(item.id),
-				adminLoggingControlAPI.listAdminLoggingRewrapJobs()
-			]);
-			keyImpact = impactResponse.item;
-			rewrapJobs = jobsResponse.items;
-		} catch (err) {
-			error = err instanceof Error ? err.message : $LL.admin_admin_logging_create_rewrap_failed();
-		} finally {
-			keyActionId = null;
-		}
-	}
-
-	async function refreshRewrapJobs() {
-		if (!canReadCatalogRepair) return;
-		const jobsResponse = await adminLoggingControlAPI.listAdminLoggingRewrapJobs();
-		rewrapJobs = jobsResponse.items;
-		rewrapPriorityInputs = Object.fromEntries(
-			jobsResponse.items.map((job) => [job.id, job.priority])
-		);
-	}
-
-	function rewrapPriorityFor(job: AdminLoggingRewrapJob): number {
-		return rewrapPriorityInputs[job.id] ?? job.priority;
-	}
-
-	async function retryRewrapJob(job: AdminLoggingRewrapJob) {
-		if (rewrapJobActionId || !canRunCatalogRepair) return;
-		rewrapJobActionId = job.id;
-		error = '';
-		try {
-			await adminLoggingControlAPI.retryAdminLoggingRewrapJob(
-				job.id,
-				$LL.admin_admin_logging_manual_retry_reason()
-			);
-			await refreshRewrapJobs();
-		} catch (err) {
-			error = err instanceof Error ? err.message : $LL.admin_admin_logging_retry_rewrap_failed();
-		} finally {
-			rewrapJobActionId = null;
-		}
-	}
-
-	async function cancelRewrapJob(job: AdminLoggingRewrapJob) {
-		if (rewrapJobActionId || !canRunCatalogRepair) return;
-		const confirmation = await requestDangerConfirmation({
-			title: $LL.admin_admin_logging_cancel_rewrap_job(),
-			resourceName: job.id,
-			phrase: `CANCEL REWRAP ${job.id}`,
-			confirmLabel: $LL.admin_admin_logging_cancel_job()
-		});
-		if (!confirmation) return;
-		rewrapJobActionId = job.id;
-		error = '';
-		try {
-			await adminLoggingControlAPI.cancelAdminLoggingRewrapJob(
-				job.id,
-				$LL.admin_admin_logging_manual_cancel_reason()
-			);
-			await refreshRewrapJobs();
-		} catch (err) {
-			error = err instanceof Error ? err.message : $LL.admin_admin_logging_cancel_rewrap_failed();
-		} finally {
-			rewrapJobActionId = null;
-		}
-	}
-
-	async function updateRewrapJobPriority(job: AdminLoggingRewrapJob) {
-		if (rewrapJobActionId || !canRunCatalogRepair) return;
-		rewrapJobActionId = job.id;
-		error = '';
-		try {
-			await adminLoggingControlAPI.updateAdminLoggingRewrapJobPriority(
-				job.id,
-				rewrapPriorityFor(job)
-			);
-			await refreshRewrapJobs();
-		} catch (err) {
-			error = err instanceof Error ? err.message : $LL.admin_admin_logging_update_priority_failed();
-		} finally {
-			rewrapJobActionId = null;
 		}
 	}
 
@@ -764,10 +624,6 @@
 									: $LL.admin_admin_logging_no()}
 							</strong>
 						</div>
-						<div class="stat">
-							<span>{$LL.admin_admin_logging_stale_keys()}</span>
-							<strong>{sensitiveDetailPolicy.summary.stale_key_count}</strong>
-						</div>
 					</div>
 					{#if sensitiveDetailPolicy.index_summary.length === 0}
 						<p class="muted">{$LL.admin_admin_logging_no_sensitive_index()}</p>
@@ -840,78 +696,6 @@
 			</section>
 		{/if}
 
-		{#if canViewSensitiveDetailPolicy}
-			<section class="panel">
-				<div class="section-header">
-					<h2>{$LL.admin_admin_logging_key_registry()}</h2>
-					<div class="inline-actions">
-						<input type="number" min="1" max="100" bind:value={rewrapCreateLimit} />
-						<span>{keyRegistryItems.length}</span>
-					</div>
-				</div>
-				{#if keyRegistryItems.length === 0}
-					<p class="muted">{$LL.admin_admin_logging_no_key_registry()}</p>
-				{:else}
-					<AdminDataTable>
-						<thead>
-							<tr>
-								<th>{$LL.admin_admin_logging_scope()}</th>
-								<th>{$LL.admin_admin_logging_active()}</th>
-								<th>{$LL.admin_admin_logging_version()}</th>
-								<th>{$LL.admin_admin_logging_status()}</th>
-								<th>{$LL.admin_admin_logging_usage()}</th>
-								<th>{$LL.admin_admin_logging_stale()}</th>
-								<th>{$LL.admin_admin_logging_actions()}</th>
-							</tr>
-						</thead>
-						<tbody>
-							{#each keyRegistryItems as item (item.id)}
-								<tr>
-									<td>{item.log_type}:{item.plane}</td>
-									<td>{item.active_version}</td>
-									<td>{item.version ?? '-'}</td>
-									<td>{item.version_status ?? item.registry_status}</td>
-									<td>{item.usage_count}</td>
-									<td>{item.stale_count}</td>
-									<td>
-										<div class="row-actions">
-											<button
-												class="btn btn-secondary"
-												onclick={() => loadKeyImpact(item)}
-												disabled={keyActionId === item.id}
-											>
-												{$LL.admin_admin_logging_impact()}
-											</button>
-											<button
-												class="btn btn-secondary"
-												onclick={() => createRewrapJobs(item)}
-												disabled={keyActionId === item.id ||
-													item.version === null ||
-													!canRunCatalogRepair}
-											>
-												{$LL.admin_admin_logging_queue_rewrap()}
-											</button>
-										</div>
-									</td>
-								</tr>
-							{/each}
-						</tbody>
-					</AdminDataTable>
-					{#if keyImpact}
-						<pre class="summary-preview">{JSON.stringify(
-								{
-									registry: keyImpact.registry,
-									versions: keyImpact.versions,
-									rewrap_jobs: keyImpact.rewrap_jobs
-								},
-								null,
-								2
-							)}</pre>
-					{/if}
-				{/if}
-			</section>
-		{/if}
-
 		{#if canReadMessageJobs}
 			<section class="panel">
 				<div class="section-header">
@@ -949,91 +733,6 @@
 			</section>
 		{/if}
 
-		{#if canReadCatalogRepair}
-			<section class="panel">
-				<div class="section-header">
-					<h2>{$LL.admin_admin_logging_rewrap_jobs()}</h2>
-					<span>{rewrapJobs.length}</span>
-				</div>
-				{#if rewrapJobs.length === 0}
-					<p class="muted">{$LL.admin_admin_logging_no_rewrap_jobs()}</p>
-				{:else}
-					<AdminDataTable>
-						<thead>
-							<tr>
-								<th>{$LL.admin_admin_logging_status()}</th>
-								<th>{$LL.admin_admin_logging_scope()}</th>
-								<th>{$LL.admin_admin_logging_version()}</th>
-								<th>{$LL.admin_admin_logging_priority()}</th>
-								<th>{$LL.admin_admin_logging_object()}</th>
-								<th>{$LL.admin_admin_logging_created()}</th>
-								<th>{$LL.admin_admin_logging_actions()}</th>
-							</tr>
-						</thead>
-						<tbody>
-							{#each rewrapJobs as job (job.id)}
-								<tr>
-									<td>{job.status}</td>
-									<td>{job.log_type ?? '-'}:{job.plane ?? '-'}</td>
-									<td>{job.from_version} -> {job.to_version}</td>
-									<td>
-										<div class="priority-control">
-											<input
-												type="number"
-												min="0"
-												max="1000"
-												value={rewrapPriorityFor(job)}
-												disabled={job.status !== 'queued' || rewrapJobActionId === job.id}
-												oninput={(event) =>
-													(rewrapPriorityInputs = {
-														...rewrapPriorityInputs,
-														[job.id]: Number((event.currentTarget as HTMLInputElement).value)
-													})}
-											/>
-											<button
-												class="btn btn-secondary btn-small"
-												onclick={() => updateRewrapJobPriority(job)}
-												disabled={job.status !== 'queued' ||
-													rewrapJobActionId === job.id ||
-													rewrapPriorityFor(job) === job.priority ||
-													!canRunCatalogRepair}
-											>
-												{$LL.admin_admin_logging_set()}
-											</button>
-										</div>
-									</td>
-									<td>{job.object_catalog_id ?? '-'}</td>
-									<td>{formatDate(job.created_at)}</td>
-									<td>
-										<div class="row-actions">
-											<button
-												class="btn btn-secondary btn-small"
-												onclick={() => retryRewrapJob(job)}
-												disabled={!['failed', 'skipped'].includes(job.status) ||
-													rewrapJobActionId === job.id ||
-													!canRunCatalogRepair}
-											>
-												{$LL.admin_admin_logging_retry()}
-											</button>
-											<button
-												class="btn btn-danger btn-small"
-												onclick={() => cancelRewrapJob(job)}
-												disabled={!['queued', 'running', 'failed'].includes(job.status) ||
-													rewrapJobActionId === job.id ||
-													!canRunCatalogRepair}
-											>
-												{$LL.admin_admin_logging_cancel()}
-											</button>
-										</div>
-									</td>
-								</tr>
-							{/each}
-						</tbody>
-					</AdminDataTable>
-				{/if}
-			</section>
-		{/if}
-
 		<section class="panel">
 			<div class="section-header">
 				<h2>{$LL.admin_admin_logging_recent_critical_changes()}</h2>
@@ -1060,39 +759,6 @@
 								<td>{item.severity}</td>
 								<td>{item.actor_id ?? '-'}</td>
 								<td>{formatDate(item.created_at)}</td>
-							</tr>
-						{/each}
-					</tbody>
-				</AdminDataTable>
-			{/if}
-		</section>
-
-		<section class="panel">
-			<div class="section-header">
-				<h2>{$LL.admin_admin_logging_archive_chunks()}</h2>
-				<span>{overview.archive.length}</span>
-			</div>
-			{#if overview.archive.length === 0}
-				<p class="muted">{$LL.admin_admin_logging_no_archive_chunks()}</p>
-			{:else}
-				<AdminDataTable>
-					<thead>
-						<tr>
-							<th>{$LL.admin_admin_logging_log_type()}</th>
-							<th>{$LL.admin_admin_logging_plane()}</th>
-							<th>{$LL.admin_admin_logging_status()}</th>
-							<th>{$LL.admin_admin_logging_chunks()}</th>
-							<th>{$LL.admin_admin_logging_records_label()}</th>
-						</tr>
-					</thead>
-					<tbody>
-						{#each overview.archive as item (`${item.log_type}:${item.plane}:${item.status}`)}
-							<tr>
-								<td>{item.log_type}</td>
-								<td>{item.plane}</td>
-								<td>{item.status}</td>
-								<td>{item.chunks ?? 0}</td>
-								<td>{item.records ?? 0}</td>
 							</tr>
 						{/each}
 					</tbody>
@@ -1211,23 +877,11 @@
 		gap: 0.75rem;
 	}
 
-	.repair-controls,
-	.row-actions {
+	.repair-controls {
 		display: flex;
 		flex-wrap: wrap;
 		align-items: center;
 		gap: 0.5rem;
-	}
-
-	.priority-control {
-		display: grid;
-		grid-template-columns: 80px auto;
-		gap: 0.5rem;
-		align-items: center;
-	}
-
-	.priority-control input {
-		min-height: 2rem;
 	}
 
 	.repair-controls {
@@ -1236,8 +890,6 @@
 
 	.repair-controls input,
 	.repair-controls select,
-	.inline-actions input,
-	.priority-control input,
 	.window-select {
 		min-height: var(--control-height, 2.25rem);
 		padding: var(--control-padding, 0.45rem 0.65rem);
@@ -1268,18 +920,6 @@
 		align-items: center;
 		margin-top: 0.75rem;
 		color: var(--color-danger);
-	}
-
-	.summary-preview {
-		margin: 0.75rem 0 0;
-		overflow: auto;
-		border: var(--settings-card-border, 1px solid var(--color-border));
-		border-radius: var(--settings-card-radius, var(--radius-control));
-		padding: 0.75rem;
-		background: var(--settings-card-bg, var(--color-surface-muted));
-		color: var(--color-text);
-		font-size: 0.8125rem;
-		white-space: pre-wrap;
 	}
 
 	.alert.error {

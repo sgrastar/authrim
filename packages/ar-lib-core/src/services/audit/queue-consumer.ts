@@ -14,7 +14,6 @@ import {
   createUuidV7,
   deriveTenantKeyFromTenantId,
   formatUtcPartition,
-  type LogChunkCompression,
   type LogPlane,
   type LogType,
 } from '@authrim/ar-lib-logging/contract';
@@ -42,14 +41,11 @@ import {
   type LoggingDeliveryQueuePayloadParseResult,
   type LoggingDeliveryStatus,
   type LoggingDlqItemStore,
-  type RewrapChunkPayload,
 } from '@authrim/ar-lib-logging/delivery';
 import {
   buildLogChunkObjectKey,
-  buildLogChunkRewrapObjectKey,
   defaultLogStorageShard,
   deriveLogChunkEncryptionKey,
-  rewrapLogChunkObject,
   writeLogChunkToR2,
   type LogChunkEncryptionOptions,
   type LogChunkRecord,
@@ -87,10 +83,7 @@ import {
 import type { ControlServiceBinding } from '../control-plane/control-plane-contracts';
 import { runTenantBackupCoveredEffect } from '../tenant-portability/covered-mutation';
 import { consumeLogIcebergMessage, type LogIcebergRuntimeEnv } from '../log-iceberg-runtime';
-import {
-  hasCapturingTenantBackupSnapshot,
-  persistRewrappedLogObjectGeneration,
-} from '../tenant-portability/r2-generation-retention';
+import { hasCapturingTenantBackupSnapshot } from '../tenant-portability/r2-generation-retention';
 
 function fetchInputToUrl(input: Parameters<typeof fetch>[0]): string {
   if (typeof input === 'string') {
@@ -3333,368 +3326,6 @@ async function processDeliveryFanoutPayload(input: {
   }
 }
 
-interface LoggingRewrapJobQueueRow {
-  id: string;
-  key_registry_id: string;
-  from_version: number;
-  to_version: number;
-  status: string;
-  metadata: string | null;
-}
-
-interface LoggingRewrapCatalogRow {
-  id: string;
-  tenant_key: string;
-  log_type: LogType;
-  plane: LogPlane;
-  object_key: string;
-  chunk_id: string | null;
-  object_kind: string;
-  status: string;
-  record_count: number;
-  byte_count: number;
-  checksum_sha256: string | null;
-  compression: LogChunkCompression | null;
-  encryption_scope: string | null;
-  key_version: number | null;
-}
-
-function parseRewrapMetadata(value: string | null): Record<string, unknown> {
-  if (!value) {
-    return {};
-  }
-  try {
-    const parsed = JSON.parse(value) as unknown;
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : {};
-  } catch {
-    return {};
-  }
-}
-
-function serializeRewrapMetadata(value: Record<string, unknown>): string {
-  return JSON.stringify(value);
-}
-
-async function completeLoggingRewrapJob(input: {
-  adapter: ReturnType<typeof ensureDatabaseAdapter>;
-  job: LoggingRewrapJobQueueRow;
-  status: 'succeeded' | 'failed' | 'skipped';
-  metadata: Record<string, unknown>;
-  completedAt: number;
-}): Promise<void> {
-  await input.adapter.execute(
-    `UPDATE logging_rewrap_jobs
-     SET status = ?, completed_at = ?, metadata = ?
-     WHERE id = ?`,
-    [
-      input.status,
-      input.completedAt,
-      serializeRewrapMetadata({
-        ...parseRewrapMetadata(input.job.metadata),
-        ...input.metadata,
-      }),
-      input.job.id,
-    ]
-  );
-}
-
-async function processRewrapChunkDeliveryPayload(input: {
-  payload: RewrapChunkPayload;
-  message: Message<unknown>;
-  env: AuditQueueConsumerEnv;
-  logger: Logger;
-}): Promise<'ack' | 'retry'> {
-  const { payload, message, env, logger } = input;
-  if (!env.DB_ADMIN) {
-    throw new Error('logging_rewrap_admin_db_unavailable');
-  }
-  if (!env.AUDIT_ARCHIVE) {
-    throw new Error('logging_rewrap_archive_bucket_unavailable');
-  }
-  if (!env.OBJECT_ENCRYPTION_ROOT_KEY) {
-    throw new Error('logging_rewrap_object_encryption_root_key_unavailable');
-  }
-
-  const adapter = ensureDatabaseAdapter(env.DB_ADMIN, 'logging-rewrap');
-  const deliveryEventStore = createDeliveryEventStore(env);
-  const notificationRepository = createInternalNotificationRepository(env);
-  const attemptCount = Math.max(1, message.attempts);
-  const metadataBase = {
-    payload_id: payload.payload_id,
-    rewrap_job_id: payload.rewrap_job_id,
-    object_catalog_id: payload.object_catalog_id,
-  };
-  const job = await adapter.queryOne<LoggingRewrapJobQueueRow>(
-    `SELECT id, key_registry_id, from_version, to_version, status, metadata
-     FROM logging_rewrap_jobs
-     WHERE id = ?`,
-    [payload.rewrap_job_id]
-  );
-  if (!job) {
-    throw new Error('logging_rewrap_job_not_found');
-  }
-  if (job.status === 'succeeded' || job.status === 'skipped') {
-    return 'ack';
-  }
-  if (job.status !== 'queued' && job.status !== 'running') {
-    throw new Error(`logging_rewrap_job_not_runnable:${job.status}`);
-  }
-
-  const object = await adapter.queryOne<LoggingRewrapCatalogRow>(
-    `SELECT id, tenant_key, log_type, plane, object_key,
-            -- Archived row chunks have no record index; their catalog row carries the chunk id.
-            COALESCE(
-              (SELECT chunk_id FROM log_chunk_record_index WHERE object_catalog_id = log_object_catalog.id LIMIT 1),
-              log_object_catalog.chunk_id
-            ) AS chunk_id,
-            object_kind, status,
-            record_count, byte_count, checksum_sha256, compression, encryption_scope, key_version
-     FROM log_object_catalog
-     WHERE id = ?`,
-    [payload.object_catalog_id]
-  );
-  if (!object) {
-    throw new Error('logging_rewrap_object_catalog_not_found');
-  }
-
-  const completeSkipped = async (reason: string) => {
-    const now = Date.now();
-    await completeLoggingRewrapJob({
-      adapter,
-      job,
-      status: 'skipped',
-      completedAt: now,
-      metadata: {
-        ...metadataBase,
-        skip_reason: reason,
-        object_key: object.object_key,
-      },
-    });
-    await recordDeliveryEvent(deliveryEventStore, logger, {
-      tenantKey: object.tenant_key,
-      destinationId: `rewrap:${job.id}`,
-      logType: object.log_type,
-      plane: object.plane,
-      lane: payload.lane,
-      status: 'delivered',
-      attemptCount,
-      objectCatalogId: object.id,
-      metadata: {
-        ...metadataBase,
-        skip_reason: reason,
-      },
-    });
-  };
-
-  if (
-    object.object_kind !== 'chunk' ||
-    object.status !== 'committed' ||
-    !object.chunk_id ||
-    !object.compression ||
-    !object.encryption_scope ||
-    !object.key_version
-  ) {
-    await completeSkipped('object_not_rewrappable');
-    return 'ack';
-  }
-  const targetObjectKey = buildLogChunkRewrapObjectKey({
-    tenantKey: object.tenant_key,
-    objectCatalogId: object.id,
-    rewrapJobId: job.id,
-    keyVersion: job.to_version,
-  });
-  if (object.key_version === job.to_version && object.object_key === targetObjectKey) {
-    const now = Date.now();
-    await completeLoggingRewrapJob({
-      adapter,
-      job,
-      status: 'succeeded',
-      completedAt: now,
-      metadata: {
-        ...metadataBase,
-        object_key: targetObjectKey,
-        from_version: job.from_version,
-        to_version: job.to_version,
-        byte_count: object.byte_count,
-        checksum_sha256: object.checksum_sha256,
-        resumed_after_catalog_commit: true,
-      },
-    });
-    return 'ack';
-  }
-  if (object.key_version !== job.from_version) {
-    await completeSkipped('object_key_version_mismatch');
-    return 'ack';
-  }
-
-  try {
-    if (job.status === 'queued') {
-      await adapter.execute(
-        `UPDATE logging_rewrap_jobs
-         SET status = ?, started_at = ?
-         WHERE id = ? AND status = ?`,
-        ['running', Date.now(), job.id, 'queued']
-      );
-    }
-
-    const encryptionScope = `tenant:${object.tenant_key}:${object.log_type}:${object.plane}`;
-    const result = await rewrapLogChunkObject({
-      bucket: env.AUDIT_ARCHIVE,
-      objectCatalogId: object.id,
-      objectKey: object.object_key,
-      targetObjectKey,
-      chunkId: object.chunk_id,
-      tenantKey: object.tenant_key,
-      logType: object.log_type,
-      plane: object.plane,
-      compression: object.compression,
-      from: {
-        keyBytes: await deriveLogChunkEncryptionKey({
-          rootKeyHex: env.OBJECT_ENCRYPTION_ROOT_KEY,
-          tenantKey: object.tenant_key,
-          logType: object.log_type,
-          plane: object.plane,
-          keyVersion: job.from_version,
-        }),
-        encryptionScope: object.encryption_scope,
-        keyVersion: job.from_version,
-      },
-      to: {
-        keyBytes: await deriveLogChunkEncryptionKey({
-          rootKeyHex: env.OBJECT_ENCRYPTION_ROOT_KEY,
-          tenantKey: object.tenant_key,
-          logType: object.log_type,
-          plane: object.plane,
-          keyVersion: job.to_version,
-        }),
-        encryptionScope,
-        keyVersion: job.to_version,
-      },
-      maxBytes: object.byte_count,
-      catalogUpdater: {
-        updateRewrappedObject: async (update) => {
-          await persistRewrappedLogObjectGeneration(adapter, {
-            retirementId: `log-rewrap:${job.id}`,
-            tenantKey: object.tenant_key,
-            objectCatalogId: update.objectCatalogId,
-            previousObjectKey: update.previousObjectKey,
-            objectKey: update.objectKey,
-            keyRegistryId: job.key_registry_id,
-            previousKeyVersion: job.from_version,
-            recordCount: object.record_count,
-            byteCount: update.byteCount,
-            checksumSha256: update.checksumSha256,
-            encryptionScope: update.encryptionScope,
-            keyVersion: update.keyVersion,
-            updatedAt: update.updatedAt,
-          });
-        },
-      },
-    });
-    await completeLoggingRewrapJob({
-      adapter,
-      job,
-      status: 'succeeded',
-      completedAt: result.updatedAt,
-      metadata: {
-        ...metadataBase,
-        object_key: result.objectKey,
-        from_version: job.from_version,
-        to_version: job.to_version,
-        byte_count: result.byteCount,
-        checksum_sha256: result.checksumSha256,
-      },
-    });
-    await recordDeliveryEvent(deliveryEventStore, logger, {
-      tenantKey: object.tenant_key,
-      destinationId: `rewrap:${job.id}`,
-      logType: object.log_type,
-      plane: object.plane,
-      lane: payload.lane,
-      status: 'delivered',
-      attemptCount,
-      objectCatalogId: object.id,
-      metadata: {
-        ...metadataBase,
-        from_version: job.from_version,
-        to_version: job.to_version,
-        byte_count: result.byteCount,
-      },
-    });
-    return 'ack';
-  } catch (error) {
-    const errorClass = deliveryErrorClass(error, 'logging_rewrap_failed');
-    const metadata = {
-      ...metadataBase,
-      object_key: object.object_key,
-      error: sanitizeErrorMessage(String(error)),
-    };
-    if (attemptCount >= 5) {
-      await completeLoggingRewrapJob({
-        adapter,
-        job,
-        status: 'failed',
-        completedAt: Date.now(),
-        metadata,
-      });
-      await recordDeliveryEvent(deliveryEventStore, logger, {
-        tenantKey: object.tenant_key,
-        destinationId: `rewrap:${job.id}`,
-        logType: object.log_type,
-        plane: object.plane,
-        lane: payload.lane,
-        status: 'failed',
-        attemptCount,
-        errorClass,
-        objectCatalogId: object.id,
-        metadata,
-      });
-      await recordDeliveryNotification(notificationRepository, logger, {
-        tenantId: object.tenant_key,
-        tenantKey: object.tenant_key,
-        destinationId: `rewrap:${job.id}`,
-        logType: object.log_type,
-        plane: object.plane,
-        lane: payload.lane,
-        status: 'failed',
-        attemptCount,
-        errorClass,
-        metadata,
-      });
-      return 'ack';
-    }
-
-    await recordDeliveryEvent(deliveryEventStore, logger, {
-      tenantKey: object.tenant_key,
-      destinationId: `rewrap:${job.id}`,
-      logType: object.log_type,
-      plane: object.plane,
-      lane: payload.lane,
-      status: 'retrying',
-      attemptCount,
-      errorClass,
-      objectCatalogId: object.id,
-      nextRetryAt: Date.now() + computeHttpSinkRetryDelayMs({ attempt: attemptCount }),
-      metadata,
-    });
-    await recordDeliveryNotification(notificationRepository, logger, {
-      tenantId: object.tenant_key,
-      tenantKey: object.tenant_key,
-      destinationId: `rewrap:${job.id}`,
-      logType: object.log_type,
-      plane: object.plane,
-      lane: payload.lane,
-      status: 'retrying',
-      attemptCount,
-      errorClass,
-      metadata,
-    });
-    throw error;
-  }
-}
-
 async function processDlqReplayDeliveryPayload(input: {
   payload: DlqReplayPayload;
   message: Message<unknown>;
@@ -3910,7 +3541,6 @@ export async function processLoggingDeliveryQueue(
 
       if (
         parseResult.payload.payload_type === 'chunk_write' ||
-        parseResult.payload.payload_type === 'rewrap_chunk' ||
         parseResult.payload.payload_type === 'log_chunk_delivery'
       ) {
         throw new Error('logging_delivery_legacy_log_chunk_not_supported');
@@ -3996,23 +3626,6 @@ export async function processLoggingDeliveryQueue(
       if (payload.payload_type === 'dlq_replay') {
         const result = await runTenantBackupCoveredEffect(env, { environment: true }, () =>
           processDlqReplayDeliveryPayload({
-            payload,
-            message,
-            env,
-            logger: log,
-          })
-        );
-        if (result === 'retry') {
-          message.retry();
-        } else {
-          message.ack();
-        }
-        continue;
-      }
-
-      if (payload.payload_type === 'rewrap_chunk') {
-        const result = await runTenantBackupCoveredEffect(env, { environment: true }, () =>
-          processRewrapChunkDeliveryPayload({
             payload,
             message,
             env,

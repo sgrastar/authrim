@@ -48,11 +48,6 @@ export const TENANT_BACKUP_OWNERSHIP_RULES: ReadonlyArray<{
     table,
     ownership: parent('admin_destinations', 'destination_id', 'id', tenantScope),
   })),
-  ...['logging_key_versions', 'logging_rewrap_jobs'].map((table) => ({
-    family: 'admin' as const,
-    table,
-    ownership: parent('logging_key_registry', 'key_registry_id', 'id', byTenantKey),
-  })),
   {
     family: 'core',
     table: 'tenants',
@@ -127,7 +122,6 @@ export const TENANT_BACKUP_OWNERSHIP_RULES: ReadonlyArray<{
     'logging_dlq_items',
     'logging_export_jobs',
     'logging_key_material_bodies',
-    'logging_key_registry',
   ].map((table) => ({
     family: 'admin' as const,
     table,

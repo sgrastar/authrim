@@ -27,17 +27,6 @@
       "count": 1
     }
   },
-  "src/chunks/r2-chunk-rewrap.ts": {
-    "@typescript-eslint/no-unsafe-argument": {
-      "count": 1
-    },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 1
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 1
-    }
-  },
   "src/coverage/__tests__/admin-audit-coverage.test.ts": {
     "@typescript-eslint/no-unsafe-argument": {
       "count": 2
@@ -70,11 +59,6 @@
   "src/keys/key-material-backend.ts": {
     "@typescript-eslint/no-unsafe-argument": {
       "count": 2
-    }
-  },
-  "src/keys/rewrap-policy.ts": {
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 1
     }
   },
   "src/messaging/__tests__/store.test.ts": {
