@@ -18,7 +18,7 @@ import {
   SAML_NAMESPACES,
 } from './constants';
 import { parseSAMLXml, parseXml } from './xml-utils';
-import type { XMLNode, XMLElement, SignedXmlWithErrors } from './types';
+import type { XMLNode, XMLElement } from './types';
 import { isElementNode } from './types';
 import { assertCertificateCurrentlyValid, extractSubjectPublicKeyInfo } from './x509';
 
@@ -131,10 +131,6 @@ class X509KeyInfo {
 
   getKeyInfo(): string {
     return `<X509Data><X509Certificate>${this.certificate}</X509Certificate></X509Data>`;
-  }
-
-  getKey(): string | null {
-    return null; // Not used for signing
   }
 }
 
@@ -276,12 +272,7 @@ export function verifyXmlSignatureAndGetReferences(
 
     // 2. XSW Attack Protection: Validate every Reference before cryptographic verification.
     const referenceUris: string[] = [];
-    for (let referenceIndex = 0; referenceIndex < references.length; referenceIndex++) {
-      const reference = references[referenceIndex];
-      if (!reference) {
-        continue;
-      }
-
+    for (const reference of references) {
       const referenceUri = reference.getAttribute('URI') ?? '';
       referenceUris.push(referenceUri);
 
@@ -339,24 +330,12 @@ export function verifyXmlSignatureAndGetReferences(
         throw new Error(`XSW Protection: Reference URI does not match expected "#${expectedId}"`);
       }
 
-      // Verify the referenced element actually exists
-      // Note: @xmldom/xmldom doesn't support querySelectorAll, so we use a manual search
-      // Cast doc to XMLNode for compatibility with our type-safe helper
-      const expectedElements = findElementsById(doc as unknown as XMLNode, expectedId);
-      if (expectedElements.length === 0) {
-        throw new Error(`XSW Protection: Element with ID "${expectedId}" not found`);
-      }
-
-      // Strict mode: Check for multiple elements with the same ID (XSW attack indicator)
-      if (strictXswProtection && expectedElements.length > 1) {
-        throw new Error(
-          `XSW Protection: Multiple elements with ID "${expectedId}" detected (possible XSW attack)`
-        );
-      }
+      // The referenced element's existence and uniqueness were already enforced for every
+      // Reference above, and this Reference is one of them.
     }
 
-    for (let referenceIndex = 0; referenceIndex < references.length; referenceIndex++) {
-      validateReferenceTransforms(references[referenceIndex]);
+    for (const reference of references) {
+      validateReferenceTransforms(reference);
     }
 
     // 5. Check signature algorithm (reject SHA-1) BEFORE verification
@@ -393,9 +372,7 @@ export function verifyXmlSignatureAndGetReferences(
     // Verify
     const isValid = sig.checkSignature(xml);
     if (!isValid) {
-      const sigWithErrors = sig as unknown as SignedXmlWithErrors;
-      const errors = sigWithErrors.validationErrors || [];
-      throw new Error(`Signature verification failed: ${errors.join(', ')}`);
+      throw new Error(`Signature verification failed: ${describeSignatureFailure(sig)}`);
     }
 
     const signedReferences = sig.getSignedReferences();
@@ -413,6 +390,35 @@ export function verifyXmlSignatureAndGetReferences(
   }
 
   return verifiedReferences;
+}
+
+/**
+ * Build a non-sensitive failure description from xml-crypto's per-Reference `validationError`
+ * (xml-crypto 6.1.2 records errors on each Reference, not on the SignedXml object). Only a fixed
+ * category and the Reference URI are reported; digests and signature values are never echoed.
+ */
+/** Conservative, bounded form of a Reference URI for error messages; unsafe input is omitted. */
+function sanitizeReferenceUriForMessage(uri: unknown): string {
+  if (typeof uri !== 'string' || !/^[A-Za-z0-9#_.:/-]+$/.test(uri)) return '';
+  return uri.length > 64 ? `${uri.slice(0, 64)}...` : uri;
+}
+
+function describeSignatureFailure(sig: SignedXml): string {
+  const failures: string[] = [];
+  for (const reference of sig.getReferences()) {
+    const error = (reference as { validationError?: unknown }).validationError;
+    if (error == null) continue;
+    const message = error instanceof Error ? error.message : '';
+    const uri = sanitizeReferenceUriForMessage(reference.uri);
+    if (message.includes('could not find such element')) {
+      failures.push(`referenced element not found (${uri})`);
+    } else if (message.includes('calculated digest')) {
+      failures.push(`digest mismatch (${uri})`);
+    } else {
+      failures.push(`reference validation failed (${uri})`);
+    }
+  }
+  return failures.length > 0 ? failures.join(', ') : 'signature value is invalid';
 }
 
 function validateReferenceTransforms(reference: Element): void {

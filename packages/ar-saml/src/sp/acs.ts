@@ -1621,20 +1621,30 @@ function validateAuthnContextPolicy(
   idpConfig: SAMLIdPConfig,
   authnContextClassRef: string | undefined
 ): Error | null {
-  const policy = idpConfig.authnContextPolicy;
-  if (!policy || policy.mode === 'observe') {
+  const rawPolicy: unknown = idpConfig.authnContextPolicy;
+  if (rawPolicy === undefined || rawPolicy === null) {
+    return null; // No policy configured
+  }
+  // Fail closed: a stored policy of the wrong shape must not let authentication succeed.
+  if (typeof rawPolicy !== 'object' || Array.isArray(rawPolicy)) {
+    return new Error('AuthnContext policy is malformed');
+  }
+  const policy = rawPolicy as { mode?: unknown; allowedClassRefs?: unknown };
+  if (policy.mode === 'observe') {
     return null;
   }
-
   if (policy.mode !== 'require_any') {
-    return null;
+    return new Error('AuthnContext policy has an unknown mode');
   }
 
-  const allowedClassRefs = (policy.allowedClassRefs || [])
-    .map((value: string) => value.trim())
-    .filter(Boolean);
+  const rawRefs = policy.allowedClassRefs ?? [];
+  if (!Array.isArray(rawRefs) || rawRefs.some((value) => typeof value !== 'string')) {
+    return new Error('AuthnContext policy allowedClassRefs is malformed');
+  }
+  const allowedClassRefs = (rawRefs as string[]).map((value) => value.trim()).filter(Boolean);
   if (allowedClassRefs.length === 0) {
-    return null;
+    // Fail closed: require_any with nothing allowed is a misconfiguration, not "allow all".
+    return new Error('AuthnContext policy requires a class reference but allows none');
   }
 
   if (!authnContextClassRef || !allowedClassRefs.includes(authnContextClassRef)) {

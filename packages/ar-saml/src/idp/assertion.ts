@@ -419,6 +419,11 @@ export function buildErrorResponse(options: {
   secondLevelStatusCode?: string;
   statusMessage?: string;
 }): string {
+  // A Success status would be built with an empty-id Assertion; a success Response must come
+  // from buildSAMLResponse with real assertion data.
+  if (options.statusCode === STATUS_CODES.SUCCESS) {
+    throw new Error('buildErrorResponse cannot build a Success status response');
+  }
   return buildSAMLResponse({
     ...options,
     assertionId: '', // Not used for error responses

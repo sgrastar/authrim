@@ -772,9 +772,9 @@ function isSupportedLogoutRequestNameIDFormat(format: string): boolean {
 /**
  * Terminate session by NameID (sharded)
  *
- * Note: Authrim emits opaque SAML SessionIndex values and resolves them through
- * STATE_STORE. Legacy direct Authrim session IDs are still accepted for
- * compatibility with earlier builds.
+ * Note: Authrim emits opaque SAML SessionIndex values (`sidx_` prefix) and resolves them through
+ * STATE_STORE. Any other SessionIndex is unresolvable: raw Authrim session IDs are never accepted
+ * from a LogoutRequest, and the session store is not queried for them.
  */
 async function terminateSessionByNameId(
   c: Context<{ Bindings: Env }>,
@@ -796,7 +796,7 @@ async function terminateSessionByNameId(
             spEntityId,
             sessionIndex,
           })
-        : sessionIndex;
+        : null;
 
       if (!resolvedSessionId || !isShardedSessionId(resolvedSessionId)) {
         log.warn('sessionIndex could not be resolved to a sharded session', { sessionIndex });
@@ -840,6 +840,15 @@ async function terminateSessionByNameId(
   }
 }
 
+async function wasSessionDeleted(response: Response): Promise<boolean> {
+  try {
+    const body = await response.json<{ deleted?: string | null }>();
+    return typeof body?.deleted === 'string' && body.deleted.length > 0;
+  } catch {
+    return false;
+  }
+}
+
 async function deleteAuthrimSessionById(
   c: Context<{ Bindings: Env }>,
   env: Env,
@@ -859,7 +868,8 @@ async function deleteAuthrimSessionById(
         method: 'DELETE',
       }
     );
-    if (response.ok) {
+    // SessionStore answers 200 with `deleted: null` when the session no longer exists.
+    if (response.ok && (await wasSessionDeleted(response))) {
       log.info('Terminated session', { sessionIndex: options.sessionIndex });
       return true;
     }

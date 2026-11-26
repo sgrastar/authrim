@@ -288,9 +288,13 @@ describe('SP SLO handler policy boundaries', () => {
     expect(response.headers.get('set-cookie')).toContain('Max-Age=0');
   });
 
-  it('continues safely when signing a LogoutResponse fails', async () => {
+  // Changed from 'continues safely ...' (expected 200 + unsigned response): signing is always
+  // attempted for SP LogoutResponses, so a failure must fail closed (500), never send unsigned.
+  it('fails closed with an error response when signing a LogoutResponse fails', async () => {
     mocks.signingError = true;
-    expect((await post('SAMLRequest', requestXml())).status).toBe(200);
+    const response = await post('SAMLRequest', requestXml());
+    expect(response.status).toBe(500);
+    expect(await response.text()).not.toContain('SAMLResponse');
   });
 
   it('rejects unknown and uncorrelated LogoutResponses', async () => {
@@ -434,16 +438,20 @@ describe('SP-initiated SLO', () => {
     );
   });
 
-  it('continues with an unsigned request when signing material is unavailable', async () => {
+  // Changed from 'continues with an unsigned request ...': there is no "signing not requested"
+  // configuration for SP LogoutRequests (signing is always attempted), so unavailable signing
+  // material is a signing failure and must reject instead of producing an unsigned request.
+  it('rejects instead of sending an unsigned request when signing material is unavailable', async () => {
     mocks.signingError = true;
-    const result = await initiateSPLogout(
-      environment() as never,
-      'user-a',
-      idp() as never,
-      undefined,
-      undefined,
-      'tenant-a'
-    );
-    expect(typeof result.html).toBe('string');
+    await expect(
+      initiateSPLogout(
+        environment() as never,
+        'user-a',
+        idp() as never,
+        undefined,
+        undefined,
+        'tenant-a'
+      )
+    ).rejects.toThrow();
   });
 });
