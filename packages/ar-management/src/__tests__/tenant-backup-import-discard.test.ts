@@ -68,6 +68,7 @@ export function freshDatabase(family: Family) {
           '022_mapped_identifier_exceptions.sql',
           '023_mapping_rule_graph.sql',
           '026_platform_launchers.sql',
+          '029_drop_logging_key_registry.sql',
         ]
       : []),
     ...(family === 'core'
@@ -197,9 +198,6 @@ describe('tenant restore discard plan on the installed schema', () => {
       expect(core.indexOf('sessions')).toBeLessThan(core.indexOf('users_core'));
       const admin = tables('admin');
       expect(admin.indexOf('field_catalog_versions')).toBeLessThan(admin.indexOf('field_catalogs'));
-      expect(admin.indexOf('logging_key_versions')).toBeLessThan(
-        admin.indexOf('logging_key_registry')
-      );
     } finally {
       for (const database of Object.values(databases)) database.close();
     }

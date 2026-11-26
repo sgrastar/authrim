@@ -9,6 +9,7 @@ import { logIcebergRetryMarkerMetadata } from '../log-iceberg-retry-marker';
 import type { LogIcebergConfig } from '../log-iceberg-config';
 import {
   consumeLogIcebergMessage,
+  LOG_ICEBERG_INTENT_ABANDONED_CODE,
   createLogIcebergWritePort,
   logIcebergOutboxStatement,
   type LogIcebergRuntimeEnv,
@@ -438,6 +439,62 @@ describe('Iceberg runtime mode isolation and durable delivery', () => {
       expect(bucket.put).toHaveBeenCalledOnce();
     }
   );
+
+  it('continues an intent the orphan reclaim acknowledged when its producer comes back', async () => {
+    const port = pipeline(),
+      record = await makeRecord(),
+      id = await logIcebergRecordId(record);
+    const key = `_authrim_retry/iceberg/v1/${base.generation}/${id}.json`;
+    const text = JSON.stringify(record),
+      digest = await logIcebergDigest(text);
+    // As the reclaim leaves it: still `preparing`, its envelope in R2, marked as never committed.
+    bucket.objects.set(key, {
+      text,
+      metadata: {
+        authrim_record_id: id,
+        authrim_storage_generation: base.generation,
+        authrim_payload_hmac: record.payload_hmac,
+        authrim_payload_sha256: digest,
+      },
+    });
+    fixture.db
+      .prepare(
+        `INSERT INTO log_iceberg_outbox(id,tenant_id,storage_generation,source_dataset,subject_id,payload_hmac,payload_key,payload_digest,payload_bytes,expires_at,state,created_at,updated_at,next_attempt_at,last_error_code) VALUES(?,'tenant-a',?,?,NULL,?,?,?,?,?,'preparing',?,?,?,?)`
+      )
+      .run(
+        id,
+        base.generation,
+        record.source_dataset,
+        record.payload_hmac,
+        key,
+        digest,
+        new TextEncoder().encode(text).byteLength,
+        record.expires_at,
+        now - 5 * 3_600_000,
+        now - 3_600_000,
+        now + 300_000,
+        LOG_ICEBERG_INTENT_ABANDONED_CODE
+      );
+    const [ref] = await port.preparePipelineReferences({
+      tenantId: 'tenant-a',
+      storageGeneration: base.generation,
+      records: [record],
+    });
+    expect(ref).toMatchObject({ id, payload_digest: digest });
+    expect(bucket.put).not.toHaveBeenCalled();
+    const row = fixture.db
+      .prepare(
+        'SELECT state,last_error_code,next_attempt_at,updated_at FROM log_iceberg_outbox WHERE id=?'
+      )
+      .get(id);
+    // The producer's own intent statement lifted the mark and took the row back.
+    expect(row).toMatchObject({
+      state: 'preparing',
+      last_error_code: null,
+      next_attempt_at: 0,
+      updated_at: now,
+    });
+  });
 
   it('fails closed for an unexplained marker or a foreign existing object', async () => {
     const port = pipeline(),

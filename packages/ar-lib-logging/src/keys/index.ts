@@ -63,34 +63,3 @@ export {
   type R2WrappedLoggingKeyMaterialBackendOptions,
   type WrappedLoggingKeyMaterialEnvelope,
 } from './key-material-backend';
-
-export {
-  buildRuntimeLoggingKeyRegistrySnapshot,
-  type LoggingKeyRegistryRow,
-  type LoggingKeyRegistryStatus,
-  type LoggingKeyVersionRow,
-  type LoggingKeyVersionStatus,
-  type RuntimeLoggingKeyRegistrySnapshot,
-  type RuntimeLoggingKeyVersionSnapshot,
-} from './key-registry-snapshot';
-
-export {
-  rotateLoggingKeyRegistry,
-  type RotateLoggingKeyRegistryInput,
-  type RotateLoggingKeyRegistryResult,
-} from './key-rotation';
-
-export {
-  classifyLoggingRewrapPriority,
-  shouldSkipLoggingRewrapForRetention,
-  SqlLoggingRewrapJobQueue,
-  type ClassifyLoggingRewrapInput,
-  type CompleteLoggingRewrapJobInput,
-  type EnqueueLoggingRewrapJobInput,
-  type LoggingRewrapJobRecord,
-  type LoggingRewrapJobStatus,
-  type LoggingRewrapPriorityDecision,
-  type LoggingRewrapReason,
-  type LoggingRewrapRetentionDecisionInput,
-  type LoggingRewrapSqlExecutor,
-} from './rewrap-policy';

@@ -14,7 +14,6 @@ import {
   completeRetiredTenantBackupR2Generation,
   hasCapturingTenantBackupSnapshot,
   listRetiredTenantBackupR2Generations,
-  persistRewrappedLogObjectGeneration,
   retireDeletedLogObjectGeneration,
 } from '../r2-generation-retention';
 
@@ -105,13 +104,6 @@ function database(): { sqlite: DatabaseSync; adapter: SqliteAdapter } {
       object_catalog_id TEXT NOT NULL,
       status TEXT NOT NULL
     );
-    CREATE TABLE logging_key_versions(
-      key_registry_id TEXT NOT NULL,
-      version INTEGER NOT NULL,
-      stale_count INTEGER NOT NULL,
-      usage_count INTEGER NOT NULL,
-      PRIMARY KEY(key_registry_id, version)
-    );
     CREATE TABLE tenant_backup_snapshots(
       id TEXT PRIMARY KEY NOT NULL,
       state TEXT NOT NULL
@@ -120,22 +112,6 @@ function database(): { sqlite: DatabaseSync; adapter: SqliteAdapter } {
   sqlite.exec(migration);
   return { sqlite, adapter: new SqliteAdapter(sqlite) };
 }
-
-const rewrap = {
-  retirementId: 'retire-rewrap-1',
-  tenantKey: 'tenant-key',
-  objectCatalogId: 'catalog-1',
-  previousObjectKey: 'logs/source.bin',
-  objectKey: 'logs-rewrapped/target.bin',
-  keyRegistryId: 'registry-1',
-  previousKeyVersion: 1,
-  keyVersion: 2,
-  recordCount: 3,
-  byteCount: 128,
-  checksumSha256: 'a'.repeat(64),
-  encryptionScope: 'tenant:tenant-key:audit:archive',
-  updatedAt: 100,
-};
 
 it('adds the retirement schema without changing existing Admin data and enforces invariants', () => {
   const { sqlite } = database();
@@ -169,96 +145,9 @@ it('adds the retirement schema without changing existing Admin data and enforces
   }
 });
 
-it('atomically switches a rewrapped generation and applies key accounting once', async () => {
+it('retires a deleted catalog generation atomically and lets the cleanup complete it', async () => {
   const { sqlite, adapter } = database();
   try {
-    sqlite.exec(`
-      INSERT INTO log_object_catalog VALUES (
-        'catalog-1','tenant-key','logs/source.bin',64,'${'b'.repeat(64)}',
-        'tenant:tenant-key:audit:archive',1,10,'committed',NULL
-      );
-      INSERT INTO logging_key_versions VALUES ('registry-1',1,3,0);
-      INSERT INTO logging_key_versions VALUES ('registry-1',2,0,4);
-    `);
-    await persistRewrappedLogObjectGeneration(adapter, rewrap);
-    expect(
-      sqlite
-        .prepare(
-          'SELECT object_key,byte_count,checksum_sha256,key_version,committed_at,status FROM log_object_catalog'
-        )
-        .get()
-    ).toEqual({
-      object_key: rewrap.objectKey,
-      byte_count: 128,
-      checksum_sha256: rewrap.checksumSha256,
-      key_version: 2,
-      committed_at: 100,
-      status: 'committed',
-    });
-    expect(
-      sqlite
-        .prepare(
-          'SELECT version,stale_count,usage_count FROM logging_key_versions ORDER BY version'
-        )
-        .all()
-    ).toEqual([
-      { version: 1, stale_count: 2, usage_count: 0 },
-      { version: 2, stale_count: 0, usage_count: 7 },
-    ]);
-    expect(
-      sqlite
-        .prepare(
-          'SELECT replacement_object_key,accounting_applied,record_count FROM tenant_backup_r2_retired_generations'
-        )
-        .get()
-    ).toEqual({
-      replacement_object_key: rewrap.objectKey,
-      accounting_applied: 1,
-      record_count: 3,
-    });
-
-    await persistRewrappedLogObjectGeneration(adapter, { ...rewrap, updatedAt: 200 });
-    expect(
-      sqlite
-        .prepare(
-          'SELECT version,stale_count,usage_count FROM logging_key_versions ORDER BY version'
-        )
-        .all()
-    ).toEqual([
-      { version: 1, stale_count: 2, usage_count: 0 },
-      { version: 2, stale_count: 0, usage_count: 7 },
-    ]);
-    expect(sqlite.prepare('SELECT committed_at FROM log_object_catalog').get()).toEqual({
-      committed_at: 100,
-    });
-  } finally {
-    sqlite.close();
-  }
-});
-
-it('keeps the source catalog active until accounting is available and retires deletes safely', async () => {
-  const { sqlite, adapter } = database();
-  try {
-    sqlite.exec(`
-      INSERT INTO log_object_catalog VALUES (
-        'catalog-1','tenant-key','logs/source.bin',64,'${'b'.repeat(64)}',
-        'tenant:tenant-key:audit:archive',1,10,'committed',NULL
-      );
-      INSERT INTO logging_key_versions VALUES ('registry-1',1,3,0);
-    `);
-    await expect(persistRewrappedLogObjectGeneration(adapter, rewrap)).rejects.toThrow(
-      'tenant_backup_r2_generation_retention_invalid'
-    );
-    expect(sqlite.prepare('SELECT object_key,key_version FROM log_object_catalog').get()).toEqual({
-      object_key: rewrap.previousObjectKey,
-      key_version: 1,
-    });
-    expect(
-      sqlite.prepare('SELECT accounting_applied FROM tenant_backup_r2_retired_generations').get()
-    ).toEqual({ accounting_applied: 0 });
-
-    sqlite.exec("INSERT INTO logging_key_versions VALUES ('registry-1',2,0,4)");
-    await persistRewrappedLogObjectGeneration(adapter, rewrap);
     sqlite.exec(`
       INSERT INTO log_object_catalog VALUES (
         'catalog-2','tenant-key','logs/delete.bin',12,'${'c'.repeat(64)}',
@@ -283,7 +172,7 @@ it('keeps the source catalog active until accounting is available and retires de
       sqlite.prepare("SELECT status FROM log_chunk_record_index WHERE id='record-2'").get()
     ).toEqual({ status: 'deleted' });
     const retired = await listRetiredTenantBackupR2Generations(adapter, 10);
-    expect(retired).toHaveLength(2);
+    expect(retired).toHaveLength(1);
     const deleted = retired.find((row) => row.id === 'retire-delete-2')!;
     expect(deleted.reason).toBe('catalog_delete');
     await completeRetiredTenantBackupR2Generation(adapter, {
@@ -292,7 +181,7 @@ it('keeps the source catalog active until accounting is available and retires de
     });
     expect(
       sqlite.prepare('SELECT count(*) AS count FROM tenant_backup_r2_retired_generations').get()
-    ).toEqual({ count: 1 });
+    ).toEqual({ count: 0 });
   } finally {
     sqlite.close();
   }

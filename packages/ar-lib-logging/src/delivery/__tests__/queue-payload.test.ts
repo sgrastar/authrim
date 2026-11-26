@@ -129,29 +129,6 @@ describe('logging delivery queue payload parser', () => {
     });
   });
 
-  it('accepts supported rewrap chunk payloads', () => {
-    const result = parseLoggingDeliveryQueuePayload({
-      payload_type: 'rewrap_chunk',
-      schema_version: 1,
-      payload_id: 'payload_rewrap_1',
-      tenant_key: 'tk_123',
-      lane: 'bulk',
-      created_at: 1779148800000,
-      rewrap_job_id: 'lrw_1',
-      object_catalog_id: 'obj_1',
-    });
-
-    expect(result).toMatchObject({
-      ok: true,
-      payload: {
-        payload_type: 'rewrap_chunk',
-        schema_version: 1,
-        rewrap_job_id: 'lrw_1',
-        object_catalog_id: 'obj_1',
-      },
-    });
-  });
-
   it('rejects malformed payloads without DLQ schema handling', () => {
     const result = parseLoggingDeliveryQueuePayload({
       payload_type: 'http_sink_batch',

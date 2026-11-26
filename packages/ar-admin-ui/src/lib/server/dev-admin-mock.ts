@@ -12589,8 +12589,7 @@ async function handleAdminLogging(
 		encrypted: true,
 		assignment_count: 5,
 		policy_count: 3,
-		indexed_object_class_count: 4,
-		stale_key_count: 1
+		indexed_object_class_count: 4
 	};
 	const coverageItems = [
 		{
@@ -12660,54 +12659,8 @@ async function handleAdminLogging(
 			{ object_class: 'approval_grant', total: 42, last_created_at: now - 420000 },
 			{ object_class: 'session_risk', total: 19, last_created_at: now - 2400000 },
 			{ object_class: 'webauthn_attestation', total: 7, last_created_at: now - 3600000 }
-		],
-		key_versions: [
-			{ status: 'active', total: 3 },
-			{ status: 'stale', total: 1 }
 		]
 	};
-	const keyRegistryItems = [
-		{
-			id: 'dev-key-registry-audit-sensitive',
-			tenant_key: 'dev-tenant',
-			surface: 'admin',
-			log_type: 'audit',
-			plane: 'sensitive_detail',
-			active_version: 3,
-			registry_status: 'active',
-			last_rotated_at: now - 86400 * 1000 * 12,
-			registry_created_at: now - 86400 * 1000 * 90,
-			registry_updated_at: now - 86400 * 1000,
-			version: 2,
-			backend_ref: 'dev-kms://audit-sensitive/v3',
-			version_status: 'active',
-			usage_count: 84,
-			stale_count: 6,
-			version_created_at: now - 86400 * 1000 * 12,
-			retired_at: null
-		}
-	];
-	const rewrapJobs = [
-		{
-			id: 'dev-rewrap-job-1',
-			key_registry_id: 'dev-key-registry-audit-sensitive',
-			from_version: 2,
-			to_version: 3,
-			priority: 80,
-			status: 'queued',
-			created_at: now - 1800000,
-			started_at: null,
-			completed_at: null,
-			object_catalog_id: 'dev-sensitive-object-21',
-			object_key: 'sensitive/dev-tenant/audit/21.jsonl',
-			tenant_key: 'dev-tenant',
-			log_type: 'audit',
-			plane: 'sensitive_detail',
-			reason: 'stale key version',
-			error: null,
-			metadata: {}
-		}
-	];
 	const repairFindings = [
 		{
 			type: 'expired_pending_object',
@@ -12754,10 +12707,11 @@ async function handleAdminLogging(
 					failures: 3,
 					critical: 27
 				},
-				archive: [
-					{ log_type: 'audit', plane: 'archive', status: 'sealed', chunks: 18, records: 1284 },
-					{ log_type: 'security', plane: 'archive', status: 'open', chunks: 3, records: 188 }
-				],
+				archive: {
+					format: 'iceberg',
+					has_archive: true,
+					coverage: { consistency: 'eventual', pending_deliveries: 0, complete: true }
+				},
 				delivery: [
 					{ lane: 'standard', status: 'delivered', total: 119 },
 					{ lane: 'critical', status: 'retrying', total: 2 }
@@ -12831,40 +12785,6 @@ async function handleAdminLogging(
 			},
 			audit_id: 'dev-audit-sensitive-probe'
 		});
-	}
-
-	if (segments[1] === 'key-registry') {
-		if (segments[3] === 'impact' && method === 'GET') {
-			return json({
-				item: {
-					registry: keyRegistryItems[0],
-					versions: [
-						{ version: 2, status: 'stale' },
-						{ version: 3, status: 'active' }
-					],
-					rewrap_jobs: rewrapJobs,
-					checked_at: now
-				}
-			});
-		}
-		if (method === 'GET') return json({ items: keyRegistryItems, total: keyRegistryItems.length });
-	}
-
-	if (segments[1] === 'rewrap-jobs') {
-		if (method === 'GET') return json({ items: rewrapJobs, total: rewrapJobs.length });
-		if (method === 'POST') {
-			return json({
-				result: {
-					key_registry_id: 'dev-key-registry-audit-sensitive',
-					candidate_count: 6,
-					created_count: 1,
-					skipped_count: 5,
-					created: rewrapJobs,
-					skipped: []
-				},
-				audit_id: 'dev-audit-rewrap-create'
-			});
-		}
 	}
 
 	if (segments[1] === 'catalog-repairs') {

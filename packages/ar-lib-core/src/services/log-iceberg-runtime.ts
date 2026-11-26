@@ -63,6 +63,13 @@ import {
 
 const MAX_PAYLOAD_BYTES = 4 * 1024 * 1024;
 const encoder = new TextEncoder();
+/**
+ * `last_error_code` of a `preparing` intent the orphan reclaim acknowledged: no publication and
+ * no writer for an hour, so its business batch never committed. The row stays `preparing`, its
+ * envelope stays in R2, and a producer that does come back (a durable job resuming after a long
+ * interruption) continues on the ordinary path, its intent statement clearing the mark.
+ */
+export const LOG_ICEBERG_INTENT_ABANDONED_CODE = 'log_iceberg_intent_not_committed';
 
 export interface LogIcebergQueueReference {
   payload_type: 'iceberg_ingest';
@@ -296,7 +303,15 @@ export function logIcebergOutboxStatement(
   };
 }
 
-function outboxIntentStatement(
+/**
+ * The metadata-only `preparing` intent. A retry of the same record (a writer that lost its
+ * first request) also refreshes `updated_at` while the row is still `preparing`: that is the
+ * writer's claim on the row, which the orphan reclaim reads to leave a retry in flight alone,
+ * and it lifts the reclaim's acknowledgement (`LOG_ICEBERG_INTENT_ABANDONED_CODE`): the producer
+ * came back after all. A row erased for any reason stays erased.
+ */
+const ACKNOWLEDGED = `(log_iceberg_outbox.state='preparing' AND log_iceberg_outbox.last_error_code='${LOG_ICEBERG_INTENT_ABANDONED_CODE}')`;
+export function logIcebergOutboxIntentStatement(
   tenantId: string,
   ref: Omit<LogIcebergQueueReference, 'payload_digest' | 'payload_bytes'>,
   now: number,
@@ -319,7 +334,10 @@ function outboxIntentStatement(
         log_iceberg_outbox.tenant_id=excluded.tenant_id AND log_iceberg_outbox.storage_generation=excluded.storage_generation
         AND log_iceberg_outbox.source_dataset=excluded.source_dataset AND log_iceberg_outbox.subject_id IS excluded.subject_id
         AND log_iceberg_outbox.payload_hmac=excluded.payload_hmac AND log_iceberg_outbox.payload_key=excluded.payload_key
-        AND log_iceberg_outbox.expires_at IS excluded.expires_at AND log_iceberg_outbox.publication_id IS excluded.publication_id THEN log_iceberg_outbox.payload_hmac ELSE NULL END`,
+        AND log_iceberg_outbox.expires_at IS excluded.expires_at AND log_iceberg_outbox.publication_id IS excluded.publication_id THEN log_iceberg_outbox.payload_hmac ELSE NULL END,
+        last_error_code=CASE WHEN ${ACKNOWLEDGED} THEN NULL ELSE log_iceberg_outbox.last_error_code END,
+        next_attempt_at=CASE WHEN ${ACKNOWLEDGED} THEN 0 ELSE log_iceberg_outbox.next_attempt_at END,
+        updated_at=CASE WHEN log_iceberg_outbox.state='preparing' THEN excluded.updated_at ELSE log_iceberg_outbox.updated_at END`,
     params: [
       ref.id,
       tenantId,
@@ -537,7 +555,12 @@ function createWritePortImplementation(
         payload_key: `_authrim_retry/iceberg/v1/${config.generation}/${id}.json`,
         expires_at: record.expires_at,
       };
-      const intent = outboxIntentStatement(request.tenantId, identity, now(), publicationId);
+      const intent = logIcebergOutboxIntentStatement(
+        request.tenantId,
+        identity,
+        now(),
+        publicationId
+      );
       await admin().execute(intent.sql, intent.params);
       const load = () =>
         admin().queryOne<OutboxRow>('SELECT * FROM log_iceberg_outbox WHERE id=?', [id], {

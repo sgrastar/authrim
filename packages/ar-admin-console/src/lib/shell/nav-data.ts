@@ -257,8 +257,9 @@ export const TENANT_AREAS: readonly NavArea[] = [
 				requires: { permission: 'admin:admin_audit:read' }
 			},
 			{
-				id: 'admin-logging',
-				label: 'nav.mon.adminLogging'
+				id: 'log-platform',
+				label: 'nav.mon.logPlatform',
+				requires: { permission: 'admin:admin_logging:overview:read' }
 			},
 			{
 				id: 'system',
@@ -266,20 +267,9 @@ export const TENANT_AREAS: readonly NavArea[] = [
 				requires: { permission: 'admin:system_logs:read' }
 			},
 			{
-				id: 'diagnostics',
-				label: 'nav.mon.diagnostics'
-			},
-			{
 				id: 'deliveries',
-				label: 'nav.mon.deliveries'
-			},
-			{
-				id: 'log-settings',
-				label: 'nav.mon.settings'
-			},
-			{
-				id: 'destinations',
-				label: 'nav.mon.destinations'
+				label: 'nav.mon.deliveries',
+				requires: { permission: 'admin:email_deliveries:read' }
 			}
 		]
 	},

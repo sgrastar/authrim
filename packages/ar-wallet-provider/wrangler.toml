@@ -1,0 +1,64 @@
+# Authrim-operated Keyring wallet provider. Tenant-independent: no binding to any tenant resource
+# (no DB_ADMIN, SETTINGS, tenant KV, KEY_MANAGER or service bindings), see design section 12.
+#
+# NOTHING HERE HAS BEEN DEPLOYED. The database ids and the custom domains below are placeholders
+# until the owner approves the Cloudflare plan (design section 16). Secrets are never written to
+# this file; they are set with `wrangler secret put` (see the list at the end).
+name = "ar-wallet-provider"
+main = "src/cloudflare/index.ts"
+compatibility_date = "2026-09-01"
+workers_dev = false
+
+[env.staging]
+name = "ar-wallet-provider-staging"
+routes = [{ pattern = "wallet-provider-staging.authrim.com", custom_domain = true }]
+
+[env.staging.triggers]
+crons = ["17 * * * *"] # purge expired rate-limit counters
+
+[env.staging.vars]
+ENVIRONMENT = "staging"
+PROVIDER_ISSUER = "https://wallet-provider-staging.authrim.com"
+WALLET_CLIENT_ID = "keyring-ios-staging"
+APP_IDS = "BQ23XXWDX8.com.authrim.keyring.staging"
+# Apple's public App Attest root (CN=Apple App Attestation Root CA, P-384, valid until 2045-03-15),
+# downloaded from apple.com/certificateauthority and verified on 2026-11-25.
+APPLE_ROOT_DER_B64 = "MIICITCCAaegAwIBAgIQC/O+DvHN0uD7jG5yH2IXmDAKBggqhkjOPQQDAzBSMSYwJAYDVQQDDB1BcHBsZSBBcHAgQXR0ZXN0YXRpb24gUm9vdCBDQTETMBEGA1UECgwKQXBwbGUgSW5jLjETMBEGA1UECAwKQ2FsaWZvcm5pYTAeFw0yMDAzMTgxODMyNTNaFw00NTAzMTUwMDAwMDBaMFIxJjAkBgNVBAMMHUFwcGxlIEFwcCBBdHRlc3RhdGlvbiBSb290IENBMRMwEQYDVQQKDApBcHBsZSBJbmMuMRMwEQYDVQQIDApDYWxpZm9ybmlhMHYwEAYHKoZIzj0CAQYFK4EEACIDYgAERTHhmLW07ATaFQIEVwTtT4dyctdhNbJhFs/Ii2FdCgAHGbpphY3+d8qjuDngIN3WVhQUBHAoMeQ/cLiP1sOUtgjqK9auYen1mMEvRq9Sk3Jm5X8U62H+xTD3FE9TgS41o0IwQDAPBgNVHRMBAf8EBTADAQH/MB0GA1UdDgQWBBSskRBTM72+aEH/pwyp5frq5eWKoTAOBgNVHQ8BAf8EBAMCAQYwCgYIKoZIzj0EAwMDaAAwZQIwQgFGnByvsiVbpTKwSga0kP0e8EeDS4+sQmTvb7vn53O5+FRXgeLhpJ06ysC5PrOyAjEAp5U4xDgEgllF7En3VcE3iexZZtKeYnpqtijVoyFraWVIyd/dganmrduC1bmTBGwD"
+APPLE_ROOT_SHA256 = "1cb9823ba28ba6ad2d33a006941de2ae4f513ef1d4e831b9f7e0fa7b6242c932"
+# SHA-256 (hex) of the two provider intermediates each signing chain must end at.
+WALLET_INTERMEDIATE_SHA256 = "a76a4cdc1ef72cfc56ea773d1b85dd26fa47c2a7c5d4c98b748f5700fe20f111"
+KEY_INTERMEDIATE_SHA256 = "6fbf25eb9294aa5c15409ddaac5ad114c858b17c84de16cd26c82bdf7933a1af"
+
+[[env.staging.d1_databases]]
+binding = "DB"
+database_name = "wallet-provider-staging"
+database_id = "93fb16a7-576e-4e2d-b288-e89207d331b3"
+migrations_dir = "migrations"
+
+[env.production]
+name = "ar-wallet-provider"
+routes = [{ pattern = "wallet-provider.authrim.com", custom_domain = true }]
+
+[env.production.triggers]
+crons = ["17 * * * *"]
+
+[env.production.vars]
+ENVIRONMENT = "production"
+PROVIDER_ISSUER = "https://wallet-provider.authrim.com"
+WALLET_CLIENT_ID = "keyring-ios"
+APP_IDS = "BQ23XXWDX8.com.authrim.keyring"
+APPLE_ROOT_DER_B64 = "MIICITCCAaegAwIBAgIQC/O+DvHN0uD7jG5yH2IXmDAKBggqhkjOPQQDAzBSMSYwJAYDVQQDDB1BcHBsZSBBcHAgQXR0ZXN0YXRpb24gUm9vdCBDQTETMBEGA1UECgwKQXBwbGUgSW5jLjETMBEGA1UECAwKQ2FsaWZvcm5pYTAeFw0yMDAzMTgxODMyNTNaFw00NTAzMTUwMDAwMDBaMFIxJjAkBgNVBAMMHUFwcGxlIEFwcCBBdHRlc3RhdGlvbiBSb290IENBMRMwEQYDVQQKDApBcHBsZSBJbmMuMRMwEQYDVQQIDApDYWxpZm9ybmlhMHYwEAYHKoZIzj0CAQYFK4EEACIDYgAERTHhmLW07ATaFQIEVwTtT4dyctdhNbJhFs/Ii2FdCgAHGbpphY3+d8qjuDngIN3WVhQUBHAoMeQ/cLiP1sOUtgjqK9auYen1mMEvRq9Sk3Jm5X8U62H+xTD3FE9TgS41o0IwQDAPBgNVHRMBAf8EBTADAQH/MB0GA1UdDgQWBBSskRBTM72+aEH/pwyp5frq5eWKoTAOBgNVHQ8BAf8EBAMCAQYwCgYIKoZIzj0EAwMDaAAwZQIwQgFGnByvsiVbpTKwSga0kP0e8EeDS4+sQmTvb7vn53O5+FRXgeLhpJ06ysC5PrOyAjEAp5U4xDgEgllF7En3VcE3iexZZtKeYnpqtijVoyFraWVIyd/dganmrduC1bmTBGwD"
+APPLE_ROOT_SHA256 = "1cb9823ba28ba6ad2d33a006941de2ae4f513ef1d4e831b9f7e0fa7b6242c932"
+# SHA-256 (hex) of the two provider intermediates each signing chain must end at.
+WALLET_INTERMEDIATE_SHA256 = ""
+KEY_INTERMEDIATE_SHA256 = ""
+
+[[env.production.d1_databases]]
+binding = "DB"
+database_name = "wallet-provider"
+database_id = "00000000-0000-0000-0000-000000000000" # placeholder
+migrations_dir = "migrations"
+
+# Secrets per environment (wrangler secret put <NAME> --env <env>):
+#   CHALLENGE_HMAC_KEY, CHALLENGE_HMAC_KEY_PREVIOUS (optional)   base64, >= 32 random bytes
+#   WALLET_ATTESTATION_SIGNER, KEY_ATTESTATION_SIGNER            JSON {"privateKeyPkcs8","chain"}
