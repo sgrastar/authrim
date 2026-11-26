@@ -179,7 +179,9 @@ describe('buildLogPlatformStatus', () => {
       table_size_hint: null,
     });
     expect(status.delivery).toEqual({
-      publications: { prepared: 0, published: 0, aborted: 0 },
+      recent: { prepared: 0, published: 0, aborted: 0, ingested: 0 },
+      last_ingested_at: null,
+      oldest_prepared_at: null,
       outbox: null,
       export: null,
     });
@@ -189,16 +191,21 @@ describe('buildLogPlatformStatus', () => {
 
   it('flags, for a platform caller, a pipeline archive whose table outgrew the read limit', async () => {
     const adapter = fakeAdapter({
+      "WHERE state = 'prepared'": { oldest: NOW - 5000 },
       'FROM log_iceberg_publications': [
         { state: 'published', total: '40' },
         { state: 'prepared', total: 2 },
       ],
-      "SUM(CASE WHEN state = 'pending'": {
+      "SUM(CASE WHEN state IN ('preparing','pending')": {
         pending: '3',
         queued: 1,
         oldest_pending_at: NOW - 60000,
       },
       'WHERE last_error_code IS NOT NULL': { last_error_code: 'stream_timeout' },
+      "WHERE state = 'ingested' AND stream_acknowledged_at IS NOT NULL": {
+        total: '38',
+        last_at: NOW - 240000,
+      },
       'FROM sensitive_detail_chunk_index': { total: 5 },
       'FROM logging_delivery_event_aggregates': [
         { lane: 'critical', status: 'delivered', total: 9 },
@@ -227,12 +234,15 @@ describe('buildLogPlatformStatus', () => {
       reachable: true,
       reachability_error: null,
       table_size_hint: { max_files: 128, data_files_over_limit: true },
+      export_interval_minutes: null,
       read_probe: okProbe,
     });
     expect(status.archive.table?.current_snapshot?.total_data_files).toBe(603);
     expect(status.archive.table?.last_compaction_at).toBeNull();
     expect(status.delivery).toEqual({
-      publications: { prepared: 2, published: 40, aborted: 0 },
+      recent: { prepared: 2, published: 40, aborted: 0, ingested: 38 },
+      last_ingested_at: NOW - 240000,
+      oldest_prepared_at: NOW - 5000,
       outbox: {
         pending: 3,
         queued: 1,
@@ -251,9 +261,10 @@ describe('buildLogPlatformStatus', () => {
     expect(status.delivery_lanes).toEqual([{ lane: 'critical', status: 'delivered', total: 9 }]);
     // Tenant scoping: the tenant id goes to the Iceberg tables, the tenant key to the lanes.
     const sql = (adapter.query as any).mock.calls.map((c: unknown[]) => c[0] as string);
-    expect(sql.find((s: string) => s.includes('log_iceberg_publications'))).toContain(
-      'tenant_id = ?'
-    );
+    const publicationSql = sql.find((s: string) => s.includes('log_iceberg_publications'));
+    expect(publicationSql).toContain('tenant_id = ?');
+    // The counts are the window's, not the generation's lifetime.
+    expect(publicationSql).toContain('created_at >= ?');
     expect(sql.find((s: string) => s.includes('logging_delivery_event_aggregates'))).toContain(
       'tenant_key = ?'
     );
@@ -308,6 +319,15 @@ describe('buildLogPlatformStatus', () => {
 
   it('reads the export batch and watermark in scheduled mode, platform-wide for a platform caller', async () => {
     const adapter = fakeAdapter({
+      "last_error_code IS NOT NULL AND state != 'done'": {
+        id: 'batch-7',
+        last_error_code: 'catalog_commit_conflict',
+        updated_at: NOW - 900,
+      },
+      'SELECT MIN(created_at) AS oldest FROM log_iceberg_export_batches': { oldest: NOW - 3000 },
+      'SELECT MIN(ingested_at) AS oldest FROM log_iceberg_records': {
+        oldest: NOW - 7 * 86_400_000 - 7000,
+      },
       'FROM log_iceberg_export_batches': {
         state: 'verified',
         last_error_code: null,
@@ -354,6 +374,13 @@ describe('buildLogPlatformStatus', () => {
       last_state: 'verified',
       last_error_code: null,
       updated_at: NOW - 500,
+      active_failure: {
+        batch_id: 'batch-7',
+        error_code: 'catalog_commit_conflict',
+        updated_at: NOW - 900,
+      },
+      oldest_unfinished_at: NOW - 3000,
+      oldest_eligible_since: NOW - 7000,
       watermark: { snapshot_id: '42', minimum_sequence_number: 17, updated_at: NOW - 400 },
     });
     expect(status.archive.table?.last_compaction_at).toBe(NOW - 400);

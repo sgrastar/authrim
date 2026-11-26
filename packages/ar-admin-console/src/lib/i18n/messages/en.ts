@@ -19,6 +19,7 @@ import { enStepUp } from './step-up/en';
 import { enAdminAudit } from './admin-audit/en';
 import { enUserAudit } from './user-audit/en';
 import { enSystemLog } from './system-log/en';
+import { enLogPlatform } from './log-platform/en';
 import { enTeam } from './team/en';
 import { enIpAllowlist } from './ip-allowlist/en';
 import { enAccountPages } from './account-pages/en';
@@ -53,6 +54,7 @@ export const en = {
 	...enAdminAudit,
 	...enUserAudit,
 	...enSystemLog,
+	...enLogPlatform,
 	...enTeam,
 	...enIpAllowlist,
 	...enAccountPages,
@@ -149,7 +151,7 @@ export const en = {
 	'nav.data.profiles': 'Source / Destination',
 	'nav.data.mappingSets': 'Mappings',
 	'nav.data.readiness': 'Schema readiness',
-	'nav.mon.adminLogging': 'Admin logging',
+	'nav.mon.logPlatform': 'Log platform',
 	'nav.mon.diagnostics': 'Diagnostic logs',
 	'nav.mon.destinations': 'Log destinations',
 	'nav.int.agentGrants': 'Agent grants',

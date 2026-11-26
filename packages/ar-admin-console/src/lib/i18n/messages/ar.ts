@@ -19,6 +19,7 @@ import { arStepUp } from './step-up/ar';
 import { arAdminAudit } from './admin-audit/ar';
 import { arUserAudit } from './user-audit/ar';
 import { arSystemLog } from './system-log/ar';
+import { arLogPlatform } from './log-platform/ar';
 import { arTeam } from './team/ar';
 import { arIpAllowlist } from './ip-allowlist/ar';
 import { arAccountPages } from './account-pages/ar';
@@ -53,6 +54,7 @@ export const ar = {
 	...arAdminAudit,
 	...arUserAudit,
 	...arSystemLog,
+	...arLogPlatform,
 	...arTeam,
 	...arIpAllowlist,
 	...arAccountPages,
@@ -149,7 +151,7 @@ export const ar = {
 	'nav.data.profiles': 'المصدر / الوجهة',
 	'nav.data.mappingSets': 'الربط',
 	'nav.data.readiness': 'جاهزية المخطط',
-	'nav.mon.adminLogging': 'تسجيل عمليات المسؤولين',
+	'nav.mon.logPlatform': 'منصة السجلات',
 	'nav.mon.diagnostics': 'سجلات التشخيص',
 	'nav.mon.destinations': 'وجهات السجلات',
 	'nav.int.agentGrants': 'تفويضات الوكلاء',

@@ -16,6 +16,7 @@ import {
   createLogIcebergCatalog,
   type LogIcebergCatalogEnv,
 } from '@authrim/ar-lib-core/services/log-iceberg-catalog';
+import { logIcebergPublicationVisibleSql } from '@authrim/ar-lib-core/services/log-iceberg-store';
 import { LOG_ARCHIVE_READ_LIMITS, type IcebergLoadedTable } from '@authrim/ar-lib-logging/iceberg';
 import {
   LOGGING_ADMIN_AUDIT_COVERAGE_REGISTRY,
@@ -40,6 +41,8 @@ export interface LogPlatformArchiveStatus {
   generation: string | null;
   activated_at: number | null;
   local_staging_only: boolean;
+  /** Scheduled mode: how often an export is due, in minutes. */
+  export_interval_minutes: number | null;
   /** `loadTable()` answered and the table is the configured one. */
   reachable: boolean;
   reachability_error: string | null;
@@ -73,8 +76,27 @@ export interface LogPlatformArchiveStatus {
 }
 
 export interface LogPlatformDeliveryStatus {
-  publications: { prepared: number; published: number; aborted: number };
-  /** Pipeline mode only. */
+  /**
+   * Records in the window (`window_start_at` to now), by how far they got: sealed as the
+   * authoritative entry (`published`), still being sealed (`prepared`), withdrawn (`aborted`),
+   * and confirmed inside an Iceberg snapshot (`ingested`, pipeline mode).
+   */
+  recent: { prepared: number; published: number; aborted: number; ingested: number };
+  /**
+   * When the Pipeline stream last acknowledged a record of this scope (pipeline mode).
+   * Acceptance is not yet a commit: the record is in a Parquet file only after the next commit.
+   */
+  last_ingested_at: number | null;
+  /**
+   * When the oldest publication still `prepared` was created, in either mode. A publication
+   * whose reconciliation stalled after the business commit never becomes visible to export or
+   * delivery, so it is tracked here on its own.
+   */
+  oldest_prepared_at: number | null;
+  /**
+   * Pipeline mode only. `pending` includes intents still `preparing`: a publication whose
+   * reconciliation stalled after the business commit sits there and must count as waiting.
+   */
   outbox: {
     pending: number;
     queued: number;
@@ -86,6 +108,16 @@ export interface LogPlatformDeliveryStatus {
     last_state: string | null;
     last_error_code: string | null;
     updated_at: number | null;
+    /** The newest batch that failed and is not done yet, whatever happened after it. */
+    active_failure: { batch_id: string; error_code: string; updated_at: number } | null;
+    /** When the oldest batch that is not done yet was created; a stalled exporter shows here. */
+    oldest_unfinished_at: number | null;
+    /**
+     * Since when the oldest export-eligible record has been waiting for a batch: a published,
+     * visible staged record past the D1 retention period that no batch has selected. An
+     * exporter that stopped between batches leaves no unfinished batch, only these.
+     */
+    oldest_eligible_since: number | null;
     watermark: {
       snapshot_id: string;
       minimum_sequence_number: number;
@@ -246,6 +278,7 @@ async function describeArchive(
     generation: null,
     activated_at: null,
     local_staging_only: false,
+    export_interval_minutes: null,
     reachable: false,
     reachability_error: null,
     table: null,
@@ -265,6 +298,7 @@ async function describeArchive(
     generation: config.generation,
     activated_at: config.activatedAt,
     local_staging_only: config.localStagingOnly === true,
+    export_interval_minutes: config.exportIntervalMinutes,
   };
   if (config.localStagingOnly) return { archive, config };
   try {
@@ -299,7 +333,8 @@ function tenantClause(column: string, tenantId: string | null): { sql: string; b
 
 async function describeDelivery(
   input: BuildLogPlatformStatusInput,
-  config: LogIcebergConfig | null
+  config: LogIcebergConfig | null,
+  windowStart: number
 ): Promise<LogPlatformDeliveryStatus> {
   const { adapter, tenantId } = input;
   const scope = tenantClause('tenant_id', tenantId);
@@ -309,14 +344,21 @@ async function describeDelivery(
 
   const publicationRows = await adapter.query<{ state: string; total: unknown }>(
     `SELECT state, COUNT(*) AS total FROM log_iceberg_publications
-     WHERE 1 = 1${scope.sql}${generationClause} GROUP BY state`,
+     WHERE created_at >= ?${scope.sql}${generationClause} GROUP BY state`,
+    [windowStart, ...scope.binds, ...generationBinds]
+  );
+  const recent = { prepared: 0, published: 0, aborted: 0, ingested: 0 };
+  for (const row of publicationRows) {
+    if (row.state === 'prepared' || row.state === 'published' || row.state === 'aborted')
+      recent[row.state] = integer(row.total);
+  }
+  let lastIngestedAt: number | null = null;
+  const prepared = await adapter.queryOne<{ oldest: unknown }>(
+    `SELECT MIN(created_at) AS oldest FROM log_iceberg_publications
+     WHERE state = 'prepared'${scope.sql}${generationClause}`,
     [...scope.binds, ...generationBinds]
   );
-  const publications = { prepared: 0, published: 0, aborted: 0 };
-  for (const row of publicationRows) {
-    if (row.state in publications)
-      publications[row.state as keyof typeof publications] = integer(row.total);
-  }
+  const oldestPreparedAt = optionalInteger(prepared?.oldest);
 
   let outbox: LogPlatformDeliveryStatus['outbox'] = null;
   let exportState: LogPlatformDeliveryStatus['export'] = null;
@@ -327,18 +369,28 @@ async function describeDelivery(
       oldest_pending_at: unknown;
     }>(
       `SELECT
-         SUM(CASE WHEN state = 'pending' THEN 1 ELSE 0 END) AS pending,
+         SUM(CASE WHEN state IN ('preparing','pending') THEN 1 ELSE 0 END) AS pending,
          SUM(CASE WHEN state = 'queued' THEN 1 ELSE 0 END) AS queued,
-         MIN(CASE WHEN state IN ('pending','queued') THEN created_at END) AS oldest_pending_at
+         MIN(CASE WHEN state IN ('preparing','pending','queued') THEN created_at END) AS oldest_pending_at
        FROM log_iceberg_outbox WHERE 1 = 1${scope.sql}${generationClause}`,
       [...scope.binds, ...generationBinds]
     );
     const lastError = await adapter.queryOne<{ last_error_code: string | null }>(
       `SELECT last_error_code FROM log_iceberg_outbox
-       WHERE last_error_code IS NOT NULL${scope.sql}${generationClause}
+       WHERE last_error_code IS NOT NULL AND state IN ('preparing','pending','queued')${scope.sql}${generationClause}
        ORDER BY updated_at DESC LIMIT 1`,
       [...scope.binds, ...generationBinds]
     );
+    const ingested = await adapter.queryOne<{ total: unknown; last_at: unknown }>(
+      `SELECT
+         SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END) AS total,
+         MAX(stream_acknowledged_at) AS last_at
+       FROM log_iceberg_outbox
+       WHERE state = 'ingested' AND stream_acknowledged_at IS NOT NULL${scope.sql}${generationClause}`,
+      [windowStart, ...scope.binds, ...generationBinds]
+    );
+    recent.ingested = integer(ingested?.total);
+    lastIngestedAt = optionalInteger(ingested?.last_at);
     outbox = {
       pending: integer(counts?.pending),
       queued: integer(counts?.queued),
@@ -355,6 +407,30 @@ async function describeDelivery(
        WHERE 1 = 1${scope.sql}${generationClause} ORDER BY updated_at DESC LIMIT 1`,
       [...scope.binds, ...generationBinds]
     );
+    const failing = await adapter.queryOne<{
+      id: string;
+      last_error_code: string;
+      updated_at: unknown;
+    }>(
+      `SELECT id, last_error_code, updated_at FROM log_iceberg_export_batches
+       WHERE last_error_code IS NOT NULL AND state != 'done'${scope.sql}${generationClause}
+       ORDER BY updated_at DESC LIMIT 1`,
+      [...scope.binds, ...generationBinds]
+    );
+    const unfinished = await adapter.queryOne<{ oldest: unknown }>(
+      `SELECT MIN(created_at) AS oldest FROM log_iceberg_export_batches
+       WHERE state != 'done'${scope.sql}${generationClause}`,
+      [...scope.binds, ...generationBinds]
+    );
+    // The exporter's own eligibility: visible, published, past the D1 retention period.
+    const retentionMs = (config.dbRetentionDays ?? 0) * 86_400_000;
+    const eligible = await adapter.queryOne<{ oldest: unknown }>(
+      `SELECT MIN(ingested_at) AS oldest FROM log_iceberg_records
+       WHERE batch_id IS NULL AND ${logIcebergPublicationVisibleSql()}
+         AND ingested_at <= ? - ?${scope.sql}${generationClause}`,
+      [input.now, retentionMs, ...scope.binds, ...generationBinds]
+    );
+    const oldestEligible = optionalInteger(eligible?.oldest);
     const watermark =
       config.localStagingOnly || !config.tableUuid
         ? null
@@ -371,6 +447,15 @@ async function describeDelivery(
       last_state: batch?.state ?? null,
       last_error_code: batch?.last_error_code ?? null,
       updated_at: optionalInteger(batch?.updated_at),
+      active_failure: failing
+        ? {
+            batch_id: failing.id,
+            error_code: failing.last_error_code,
+            updated_at: integer(failing.updated_at),
+          }
+        : null,
+      oldest_unfinished_at: optionalInteger(unfinished?.oldest),
+      oldest_eligible_since: oldestEligible === null ? null : oldestEligible + retentionMs,
       watermark: watermark
         ? {
             snapshot_id: watermark.snapshot_id,
@@ -380,7 +465,13 @@ async function describeDelivery(
         : null,
     };
   }
-  return { publications, outbox, export: exportState };
+  return {
+    recent,
+    last_ingested_at: lastIngestedAt,
+    oldest_prepared_at: oldestPreparedAt,
+    outbox,
+    export: exportState,
+  };
 }
 
 export async function buildLogPlatformStatus(
@@ -389,7 +480,7 @@ export async function buildLogPlatformStatus(
   const windowStart = input.now - (input.windowMs ?? DAY_MS);
   const repository = input.repository ?? new AdminLoggingControlRepository(input.adapter);
   const { archive, config } = await describeArchive(input);
-  const delivery = await describeDelivery(input, config);
+  const delivery = await describeDelivery(input, config, windowStart);
 
   const lastCheckedAt = await repository.readCoverageLastCheckedAt();
   const auditCoverage = summarizeAdminAuditCoverage(
