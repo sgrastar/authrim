@@ -28,6 +28,10 @@ import {
   type Env as CoreEnv,
 } from '@authrim/ar-lib-core';
 import { getRequestIssuerUrl } from '../../request-identifiers';
+import { vciError } from '../oauth-errors';
+
+/** The Wallet Allowlist could not be read, so whether HAIP applies is unknown: nothing is signed. */
+class AllowlistUnavailableError extends Error {}
 
 /**
  * Status List Credential response format
@@ -165,9 +169,11 @@ async function servesHaipWallets(env: Env, tenantId: string): Promise<boolean> {
     return (await loadWalletAllowlist(env as unknown as CoreEnv, tenantId)).entries.some(
       (entry) => entry.enabled && entry.keyAttestationRoots.length > 0
     );
-  } catch {
-    // An unreadable allowlist serves no wallet.
-    return false;
+  } catch (err) {
+    // "No allowlist configured" comes back as an empty list, not as an error. A read error leaves
+    // it unknown whether HAIP applies: signing without x5c could serve a list a HAIP credential
+    // refers to without its certificate chain, so refuse instead of relaxing the requirement.
+    throw new AllowlistUnavailableError('wallet allowlist unreadable', { cause: err });
   }
 }
 
@@ -278,6 +284,17 @@ export async function statusListRoute(c: Context<{ Bindings: Env }>): Promise<Re
       ETag: etag,
     });
   } catch (err) {
+    // Allowlist unreadable: retry later; nothing was signed. The log tells a failed read (transient)
+    // from stored data that cannot be parsed (persistent) without echoing the stored content.
+    if (err instanceof AllowlistUnavailableError) {
+      const cause = err.cause;
+      log.error(
+        'Failed to generate status list credential: wallet allowlist unreadable',
+        { cause_name: cause instanceof Error ? cause.name : typeof cause },
+        err
+      );
+      return vciError(c, 503, 'temporarily_unavailable');
+    }
     log.error('Failed to generate status list credential', {}, err as Error);
     // No certificate chain for a list a HAIP credential refers to: retry later (below 500, as the
     // signing refused before anything was signed).

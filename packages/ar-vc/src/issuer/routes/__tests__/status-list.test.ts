@@ -448,7 +448,9 @@ describe('Status List Routes', () => {
       ]);
     });
 
-    it('signs WITHOUT the x5c requirement when the allowlist cannot be read (today), whatever the tenant serves', async () => {
+    // An unreadable allowlist leaves it unknown whether HAIP applies: it used to sign without the
+    // x5c requirement (a chain-less list for a HAIP credential); it now refuses with 503.
+    it('answers 503 and signs nothing when the allowlist cannot be read', async () => {
       const signRpc = (env: Env) =>
         (
           env.KEY_MANAGER as unknown as {
@@ -466,9 +468,10 @@ describe('Status List Routes', () => {
       ]) {
         const env = createMockEnv(mockTslListData);
         (env as unknown as { SETTINGS: unknown }).SETTINGS = settings;
-        expect((await request(env)).status).toBe(200);
-        // The unreadable list is treated as "serves no wallet": no option is passed.
-        expect(signRpc(env).mock.calls[0]).toHaveLength(1);
+        const res = await request(env);
+        expect(res.status).toBe(503);
+        expect(await res.json()).toEqual({ error: 'temporarily_unavailable' });
+        expect(signRpc(env)).not.toHaveBeenCalled();
       }
     });
 

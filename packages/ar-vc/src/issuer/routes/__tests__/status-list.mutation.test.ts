@@ -261,6 +261,28 @@ describe('statusListRoute: Token Status List', () => {
       expect(sign).toHaveBeenCalledTimes(1);
       expect(sign.mock.calls[0]).toHaveLength(1);
     });
+
+    it('answers 503, logs and signs nothing when the allowlist read fails', async () => {
+      h.loadWalletAllowlist.mockRejectedValue(new Error('kv down'));
+      const response = await get('/lists/sl_tsl');
+      expect(response.status).toBe(503);
+      expect(await response.json()).toEqual({ error: 'temporarily_unavailable' });
+      expect(response.headers.get('Cache-Control')).toBe('no-store');
+      expect(h.logger.error).toHaveBeenCalledWith(
+        'Failed to generate status list credential: wallet allowlist unreadable',
+        { cause_name: 'Error' },
+        expect.any(Error)
+      );
+      expect(h.ensureVcSigningCertificate).not.toHaveBeenCalled();
+      expect(sign).not.toHaveBeenCalled();
+    });
+
+    it('does not read the allowlist for legacy lists, so a read failure does not affect them', async () => {
+      h.queryOne.mockResolvedValue(legacyList);
+      h.loadWalletAllowlist.mockRejectedValue(new Error('kv down'));
+      expect((await get('/lists/sl_legacy')).status).toBe(200);
+      expect(h.loadWalletAllowlist).not.toHaveBeenCalled();
+    });
   });
 });
 
