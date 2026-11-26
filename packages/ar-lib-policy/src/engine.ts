@@ -608,7 +608,7 @@ const conditionEvaluators: Record<ConditionType, ConditionEvaluator> = {
   valid_during: (params, context) => {
     const from = params.from as number | undefined;
     const to = params.to as number | undefined;
-    const now = Math.floor(context.timestamp / 1000);
+    const now = Math.floor(evaluatedAt(context) / 1000);
 
     if (from !== undefined && now < from) return false;
     if (to !== undefined && now > to) return false;
