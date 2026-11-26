@@ -116,7 +116,7 @@ function hasBaseEnvelope(value: Record<string, unknown>): boolean {
 
 function payloadSchemaIsSupported(payloadType: string, schemaVersion: number): boolean {
   return (
-    payloadType in SUPPORTED_LOGGING_DELIVERY_PAYLOAD_SCHEMAS &&
+    Object.hasOwn(SUPPORTED_LOGGING_DELIVERY_PAYLOAD_SCHEMAS, payloadType) &&
     SUPPORTED_LOGGING_DELIVERY_PAYLOAD_SCHEMAS[payloadType as LoggingDeliveryPayloadType].includes(
       schemaVersion
     )

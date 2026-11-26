@@ -127,9 +127,8 @@ const PROFILE_BY_LOG_TYPE = new Map<LogType, LogChunkIndexProfile>(
 );
 
 export function getLogChunkIndexProfile(nameOrLogType: string): LogChunkIndexProfile {
-  const direct = LOG_CHUNK_INDEX_PROFILES[nameOrLogType];
-  if (direct) {
-    return direct;
+  if (Object.hasOwn(LOG_CHUNK_INDEX_PROFILES, nameOrLogType)) {
+    return LOG_CHUNK_INDEX_PROFILES[nameOrLogType];
   }
   if ((LOG_TYPES as readonly string[]).includes(nameOrLogType)) {
     const byLogType = PROFILE_BY_LOG_TYPE.get(nameOrLogType as LogType);

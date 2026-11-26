@@ -113,5 +113,6 @@ export async function buildHttpSinkAuthHeaders(
     return result;
   }
 
-  return result;
+  // An unknown mode must not silently degrade to unauthenticated delivery.
+  throw new Error(`unsupported_http_sink_auth_mode:${String((config as { mode: unknown }).mode)}`);
 }
