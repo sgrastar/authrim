@@ -47,8 +47,18 @@ export function deliveryVerdict(status: LogPlatformStatus): StageVerdict {
 			reasons.push('delivery_stuck');
 		if (outbox.last_error_code) reasons.push('delivery_error');
 	}
-	if (status.delivery.export?.active_failure || status.delivery.export?.last_error_code)
-		reasons.push('export_error');
+	const exp = status.delivery.export;
+	if (exp) {
+		if (exp.active_failure || exp.last_error_code) reasons.push('export_error');
+		// A batch that sat unfinished for two export intervals (at least an hour) means the
+		// exporter stopped, with or without an error to show for it.
+		const interval = (status.archive.export_interval_minutes ?? 60) * 60_000;
+		if (
+			exp.oldest_unfinished_at !== null &&
+			status.generated_at - exp.oldest_unfinished_at >= Math.max(2 * interval, STUCK_AFTER_MS)
+		)
+			reasons.push('delivery_stuck');
+	}
 	return okOr(reasons, reasons.includes('delivery_stuck') ? 'danger' : 'warning');
 }
 
@@ -82,9 +92,10 @@ export function readVerdict(status: LogPlatformStatus): StageVerdict {
 }
 
 /**
- * The newest commit whose records can be read: the table's last commit for a platform caller,
- * the verified watermark in scheduled mode. A tenant caller in pipeline mode gets null: its
- * last accepted record is not yet a commit, and the table's commits are not shown to it.
+ * The time of the newest commit (platform caller) or of the last verified watermark (scheduled
+ * mode). It says when the archive last moved, not that every older record is in: a record
+ * still pending while another tenant commits is not covered by it. A tenant caller in pipeline
+ * mode gets null, since the table's commits are not shown to it.
  */
 export function readableUntil(status: LogPlatformStatus): number | null {
 	if (status.archive.mode === 'scheduled') {

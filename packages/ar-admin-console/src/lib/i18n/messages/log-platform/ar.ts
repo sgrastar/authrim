@@ -29,6 +29,7 @@ export const arLogPlatform: Record<keyof typeof jaLogPlatform, string> = {
 	'lplat.reason.compaction_never': 'لم يعمل الضغط قط',
 	'lplat.reason.read_incomplete': 'لم تكتمل القراءة ({code})',
 	'lplat.reason.export_error': 'فشل آخر تصدير ({code})',
+	'lplat.reason.export_stalled': 'ثمة تصدير غير مكتمل منذ أكثر من {hours} ساعة',
 
 	'lplat.stage.delivery': 'التسليم',
 	'lplat.stage.delivery.desc': 'السجلات المكتوبة في D1 في طريقها إلى الأرشيف',
@@ -48,7 +49,7 @@ export const arLogPlatform: Record<keyof typeof jaLogPlatform, string> = {
 
 	'lplat.stage.archive': 'أرشيف السجلات',
 	'lplat.stage.archive.desc': 'جدول Iceberg في R2 Data Catalog',
-	'lplat.archive.readableUntil': 'قابل للقراءة حتى',
+	'lplat.archive.readableUntil': 'آخر حفظ',
 	'lplat.archive.mode': 'الوضع',
 	'lplat.archive.mode.pipeline': 'Pipeline (مستمر)',
 	'lplat.archive.mode.scheduled': 'مجدول (تصدير دوري)',
@@ -69,8 +70,10 @@ export const arLogPlatform: Record<keyof typeof jaLogPlatform, string> = {
 	'lplat.stage.read': 'قراءة السجلات',
 	'lplat.stage.read.desc':
 		'آخر 24 ساعة من سجل نشاط المسؤولين، مقروءة بالطريقة نفسها التي تقرأ بها صفحات السجلات',
-	'lplat.read.until': 'محفوظ حتى قبل {minutes} دقيقة',
-	'lplat.read.untilNow': 'محفوظ حتى الآن',
+	'lplat.read.until': 'أحدث حفظ كان قبل {minutes} دقيقة (السجلات اللاحقة لا يمكن قراءتها بعد)',
+	'lplat.read.untilNow': 'أحدث حفظ كان خلال الدقيقة الأخيرة',
+	'lplat.read.watermark':
+		'علامة القراءة عمرها {minutes} دقيقة (تغطي القراءة عمليات التصدير المتحقق منها)',
 	'lplat.read.unknown': 'لا يُعرف إلى أي مدى يمكن قراءة السجلات',
 	'lplat.read.consistency': 'الاتساق',
 	'lplat.read.consistency.eventual': 'قد لا تكون أحدث السجلات ظاهرة بعد',

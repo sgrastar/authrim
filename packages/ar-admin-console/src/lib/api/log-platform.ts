@@ -46,6 +46,8 @@ export interface LogPlatformArchive {
 	generation: string | null;
 	activated_at: number | null;
 	local_staging_only: boolean;
+	/** Scheduled mode: how often an export is due, in minutes. */
+	export_interval_minutes: number | null;
 	reachable: boolean;
 	reachability_error: string | null;
 	/** Platform callers only. */
@@ -63,7 +65,7 @@ export interface LogPlatformArchive {
 export interface LogPlatformDelivery {
 	/** Records of the 24-hour window by how far they got; `ingested` = confirmed in the archive. */
 	recent: { prepared: number; published: number; aborted: number; ingested: number };
-	/** When the newest record of this scope was accepted by the Pipeline stream (pipeline mode); not yet a commit. */
+	/** When the Pipeline stream last acknowledged a record of this scope (pipeline mode); not yet a commit. */
 	last_ingested_at: number | null;
 	outbox: {
 		pending: number;
@@ -77,6 +79,8 @@ export interface LogPlatformDelivery {
 		updated_at: number | null;
 		/** The newest batch that failed and is not done yet. */
 		active_failure: { batch_id: string; error_code: string; updated_at: number } | null;
+		/** When the oldest batch that is not done yet was created. */
+		oldest_unfinished_at: number | null;
 		watermark: { snapshot_id: string; minimum_sequence_number: number; updated_at: number } | null;
 	} | null;
 }

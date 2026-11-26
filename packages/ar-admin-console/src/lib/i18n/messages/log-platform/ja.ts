@@ -27,6 +27,7 @@ export const jaLogPlatform = {
 	'lplat.reason.compaction_never': 'コンパクションがまだ一度も走っていません',
 	'lplat.reason.read_incomplete': '読み取りが完了しませんでした（{code}）',
 	'lplat.reason.export_error': '直近のエクスポートでエラーがありました（{code}）',
+	'lplat.reason.export_stalled': '未完了のエクスポートが {hours} 時間以上残っています',
 
 	'lplat.stage.delivery': '配信',
 	'lplat.stage.delivery.desc': 'D1 に書かれたレコードがアーカイブに届くまで',
@@ -46,7 +47,7 @@ export const jaLogPlatform = {
 
 	'lplat.stage.archive': 'ログアーカイブ',
 	'lplat.stage.archive.desc': 'R2 Data Catalog 上の Iceberg テーブル',
-	'lplat.archive.readableUntil': '最終読み出し可能ログ',
+	'lplat.archive.readableUntil': '最終コミット',
 	'lplat.archive.mode': '方式',
 	'lplat.archive.mode.pipeline': 'Pipeline（随時）',
 	'lplat.archive.mode.scheduled': 'Scheduled（定期エクスポート）',
@@ -66,8 +67,10 @@ export const jaLogPlatform = {
 
 	'lplat.stage.read': 'ログ読み取り',
 	'lplat.stage.read.desc': '通常のログ画面と同じ経路で、直近 24 時間の管理操作ログを読んだ結果',
-	'lplat.read.until': '{minutes} 分前のコミットまで反映されています',
-	'lplat.read.untilNow': '最新のコミットまで反映されています',
+	'lplat.read.until': '最新のコミットは {minutes} 分前です（それ以降のレコードはまだ読めません）',
+	'lplat.read.untilNow': '最新のコミットは 1 分以内です',
+	'lplat.read.watermark':
+		'読み取り基準点は {minutes} 分前です（検証済みのエクスポートまで読めます）',
 	'lplat.read.unknown': 'どこまで読めるかは分かりません',
 	'lplat.read.consistency': '整合性',
 	'lplat.read.consistency.eventual': '最新のレコードはまだ反映されていない可能性があります',

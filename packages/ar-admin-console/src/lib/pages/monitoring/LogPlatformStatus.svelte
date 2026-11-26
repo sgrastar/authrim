@@ -139,6 +139,10 @@
 			case 'archive_unreachable':
 				return t('lplat.reason.archive_unreachable', { code: a.reachability_error ?? '' });
 			case 'delivery_stuck':
+				if (exp?.oldest_unfinished_at && !outbox)
+					return t('lplat.reason.export_stalled', {
+						hours: Math.floor((status.generated_at - exp.oldest_unfinished_at) / 3_600_000)
+					});
 				return t('lplat.reason.delivery_stuck', {
 					count: num((outbox?.pending ?? 0) + (outbox?.queued ?? 0)),
 					hours: stuckHours(status)
@@ -311,7 +315,13 @@
 				)}
 				{#if archive.configured}
 					<DetailList ruled size="sm">
-						<DetailItem label={t('lplat.archive.readableUntil')}>
+						<DetailItem
+							label={t(
+								archive.mode === 'scheduled'
+									? 'lplat.delivery.export.watermark'
+									: 'lplat.archive.lastCommit'
+							)}
+						>
 							{#if until !== null}
 								<DateTime value={until} seconds showSecondary />
 							{:else}
@@ -375,13 +385,6 @@
 								<DetailItem label={t('lplat.archive.snapshots')}>
 									{num(table.snapshot_count)}
 								</DetailItem>
-								<DetailItem label={t('lplat.archive.lastCommit')}>
-									{#if table.current_snapshot}
-										<DateTime value={table.current_snapshot.committed_at} seconds showSecondary />
-									{:else}
-										—
-									{/if}
-								</DetailItem>
 								<DetailItem label={t('lplat.archive.lastCompaction')}>
 									{#if table.last_compaction_at}
 										<DateTime value={table.last_compaction_at} seconds showSecondary />
@@ -413,8 +416,8 @@
 					<p class="read__until">
 						{#if lag === null || !archive.read_probe.ok}
 							<span class="muted">{t('lplat.read.unknown')}</span>
-						{:else if lag === 0}
-							{t('lplat.read.untilNow')}
+						{:else if archive.mode === 'scheduled'}
+							{t('lplat.read.watermark', { minutes: num(lag) })}
 						{:else}
 							{t('lplat.read.until', { minutes: num(lag) })}
 						{/if}

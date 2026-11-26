@@ -59,6 +59,7 @@ function base(): LogPlatformStatus {
 			generation: 'gen-20261101-a7f3',
 			activated_at: Date.UTC(2026, 10, 1, 0, 0, 0),
 			local_staging_only: false,
+			export_interval_minutes: null,
 			reachable: true,
 			reachability_error: null,
 			table: healthyTable,
@@ -144,6 +145,7 @@ export function sampleLogPlatformStatus(
 				generation: null,
 				activated_at: null,
 				local_staging_only: false,
+				export_interval_minutes: null,
 				reachable: false,
 				reachability_error: null,
 				table: null,
@@ -185,6 +187,7 @@ export function sampleLogPlatformStatus(
 			return status;
 		case 'scheduled':
 			status.archive.mode = 'scheduled';
+			status.archive.export_interval_minutes = 15;
 			status.archive.read_probe.coverage = {
 				consistency: 'snapshot',
 				pending_deliveries: 0,
@@ -198,6 +201,7 @@ export function sampleLogPlatformStatus(
 				last_error_code: null,
 				updated_at: LOG_PLATFORM_NOW - 11 * 60_000,
 				active_failure: null,
+				oldest_unfinished_at: null,
 				watermark: {
 					snapshot_id: '8532431906541772489',
 					minimum_sequence_number: 1_204,

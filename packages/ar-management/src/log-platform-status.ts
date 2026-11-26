@@ -40,6 +40,8 @@ export interface LogPlatformArchiveStatus {
   generation: string | null;
   activated_at: number | null;
   local_staging_only: boolean;
+  /** Scheduled mode: how often an export is due, in minutes. */
+  export_interval_minutes: number | null;
   /** `loadTable()` answered and the table is the configured one. */
   reachable: boolean;
   reachability_error: string | null;
@@ -80,7 +82,7 @@ export interface LogPlatformDeliveryStatus {
    */
   recent: { prepared: number; published: number; aborted: number; ingested: number };
   /**
-   * When the newest record of this scope was accepted by the Pipeline stream (pipeline mode).
+   * When the Pipeline stream last acknowledged a record of this scope (pipeline mode).
    * Acceptance is not yet a commit: the record is in a Parquet file only after the next commit.
    */
   last_ingested_at: number | null;
@@ -98,6 +100,8 @@ export interface LogPlatformDeliveryStatus {
     updated_at: number | null;
     /** The newest batch that failed and is not done yet, whatever happened after it. */
     active_failure: { batch_id: string; error_code: string; updated_at: number } | null;
+    /** When the oldest batch that is not done yet was created; a stalled exporter shows here. */
+    oldest_unfinished_at: number | null;
     watermark: {
       snapshot_id: string;
       minimum_sequence_number: number;
@@ -258,6 +262,7 @@ async function describeArchive(
     generation: null,
     activated_at: null,
     local_staging_only: false,
+    export_interval_minutes: null,
     reachable: false,
     reachability_error: null,
     table: null,
@@ -277,6 +282,7 @@ async function describeArchive(
     generation: config.generation,
     activated_at: config.activatedAt,
     local_staging_only: config.localStagingOnly === true,
+    export_interval_minutes: config.exportIntervalMinutes,
   };
   if (config.localStagingOnly) return { archive, config };
   try {
@@ -349,15 +355,16 @@ async function describeDelivery(
     );
     const lastError = await adapter.queryOne<{ last_error_code: string | null }>(
       `SELECT last_error_code FROM log_iceberg_outbox
-       WHERE last_error_code IS NOT NULL${scope.sql}${generationClause}
+       WHERE last_error_code IS NOT NULL AND state IN ('pending','queued')${scope.sql}${generationClause}
        ORDER BY updated_at DESC LIMIT 1`,
       [...scope.binds, ...generationBinds]
     );
     const ingested = await adapter.queryOne<{ total: unknown; last_at: unknown }>(
       `SELECT
          SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END) AS total,
-         MAX(updated_at) AS last_at
-       FROM log_iceberg_outbox WHERE state = 'ingested'${scope.sql}${generationClause}`,
+         MAX(stream_acknowledged_at) AS last_at
+       FROM log_iceberg_outbox
+       WHERE state = 'ingested' AND stream_acknowledged_at IS NOT NULL${scope.sql}${generationClause}`,
       [windowStart, ...scope.binds, ...generationBinds]
     );
     recent.ingested = integer(ingested?.total);
@@ -388,6 +395,11 @@ async function describeDelivery(
        ORDER BY updated_at DESC LIMIT 1`,
       [...scope.binds, ...generationBinds]
     );
+    const unfinished = await adapter.queryOne<{ oldest: unknown }>(
+      `SELECT MIN(created_at) AS oldest FROM log_iceberg_export_batches
+       WHERE state != 'done'${scope.sql}${generationClause}`,
+      [...scope.binds, ...generationBinds]
+    );
     const watermark =
       config.localStagingOnly || !config.tableUuid
         ? null
@@ -411,6 +423,7 @@ async function describeDelivery(
             updated_at: integer(failing.updated_at),
           }
         : null,
+      oldest_unfinished_at: optionalInteger(unfinished?.oldest),
       watermark: watermark
         ? {
             snapshot_id: watermark.snapshot_id,

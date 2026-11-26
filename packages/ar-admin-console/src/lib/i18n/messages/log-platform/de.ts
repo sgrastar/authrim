@@ -32,6 +32,7 @@ export const deLogPlatform: Record<keyof typeof jaLogPlatform, string> = {
 	'lplat.reason.compaction_never': 'Die Verdichtung lief noch nie',
 	'lplat.reason.read_incomplete': 'Der Lesevorgang ist nicht abgeschlossen ({code})',
 	'lplat.reason.export_error': 'Der letzte Export ist fehlgeschlagen ({code})',
+	'lplat.reason.export_stalled': 'Ein Export ist seit mehr als {hours} Stunden unvollendet',
 
 	'lplat.stage.delivery': 'Zustellung',
 	'lplat.stage.delivery.desc': 'In D1 geschriebene Datensätze auf dem Weg ins Archiv',
@@ -51,7 +52,7 @@ export const deLogPlatform: Record<keyof typeof jaLogPlatform, string> = {
 
 	'lplat.stage.archive': 'Protokollarchiv',
 	'lplat.stage.archive.desc': 'Die Iceberg-Tabelle im R2 Data Catalog',
-	'lplat.archive.readableUntil': 'Lesbar bis',
+	'lplat.archive.readableUntil': 'Letzter Commit',
 	'lplat.archive.mode': 'Modus',
 	'lplat.archive.mode.pipeline': 'Pipeline (laufend)',
 	'lplat.archive.mode.scheduled': 'Geplant (periodischer Export)',
@@ -72,8 +73,11 @@ export const deLogPlatform: Record<keyof typeof jaLogPlatform, string> = {
 	'lplat.stage.read': 'Protokolllesen',
 	'lplat.stage.read.desc':
 		'Die letzten 24 Stunden der Administratoraktivität, gelesen wie auf den Protokollseiten',
-	'lplat.read.until': 'Committet bis vor {minutes} Minuten',
-	'lplat.read.untilNow': 'Committet bis jetzt',
+	'lplat.read.until':
+		'Der neueste Commit war vor {minutes} Minuten (spätere Datensätze sind noch nicht lesbar)',
+	'lplat.read.untilNow': 'Der neueste Commit war in der letzten Minute',
+	'lplat.read.watermark':
+		'Die Lesemarke ist {minutes} Minuten alt (gelesen wird bis zu den geprüften Exporten)',
 	'lplat.read.unknown': 'Wie weit Protokolle lesbar sind, ist nicht bekannt',
 	'lplat.read.consistency': 'Konsistenz',
 	'lplat.read.consistency.eventual':

@@ -200,7 +200,10 @@ describe('buildLogPlatformStatus', () => {
         oldest_pending_at: NOW - 60000,
       },
       'WHERE last_error_code IS NOT NULL': { last_error_code: 'stream_timeout' },
-      "WHERE state = 'ingested'": { total: '38', last_at: NOW - 240000 },
+      "WHERE state = 'ingested' AND stream_acknowledged_at IS NOT NULL": {
+        total: '38',
+        last_at: NOW - 240000,
+      },
       'FROM sensitive_detail_chunk_index': { total: 5 },
       'FROM logging_delivery_event_aggregates': [
         { lane: 'critical', status: 'delivered', total: 9 },
@@ -229,6 +232,7 @@ describe('buildLogPlatformStatus', () => {
       reachable: true,
       reachability_error: null,
       table_size_hint: { max_files: 128, data_files_over_limit: true },
+      export_interval_minutes: null,
       read_probe: okProbe,
     });
     expect(status.archive.table?.current_snapshot?.total_data_files).toBe(603);
@@ -317,6 +321,7 @@ describe('buildLogPlatformStatus', () => {
         last_error_code: 'catalog_commit_conflict',
         updated_at: NOW - 900,
       },
+      'SELECT MIN(created_at) AS oldest FROM log_iceberg_export_batches': { oldest: NOW - 3000 },
       'FROM log_iceberg_export_batches': {
         state: 'verified',
         last_error_code: null,
@@ -368,6 +373,7 @@ describe('buildLogPlatformStatus', () => {
         error_code: 'catalog_commit_conflict',
         updated_at: NOW - 900,
       },
+      oldest_unfinished_at: NOW - 3000,
       watermark: { snapshot_id: '42', minimum_sequence_number: 17, updated_at: NOW - 400 },
     });
     expect(status.archive.table?.last_compaction_at).toBe(NOW - 400);

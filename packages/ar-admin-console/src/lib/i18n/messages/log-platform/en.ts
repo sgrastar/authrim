@@ -29,6 +29,7 @@ export const enLogPlatform: Record<keyof typeof jaLogPlatform, string> = {
 	'lplat.reason.compaction_never': 'Compaction has never run',
 	'lplat.reason.read_incomplete': 'The read did not complete ({code})',
 	'lplat.reason.export_error': 'The last export failed ({code})',
+	'lplat.reason.export_stalled': 'An export has been unfinished for more than {hours} hours',
 
 	'lplat.stage.delivery': 'Delivery',
 	'lplat.stage.delivery.desc': 'Records written to D1 on their way to the archive',
@@ -48,7 +49,7 @@ export const enLogPlatform: Record<keyof typeof jaLogPlatform, string> = {
 
 	'lplat.stage.archive': 'Log archive',
 	'lplat.stage.archive.desc': 'The Iceberg table in R2 Data Catalog',
-	'lplat.archive.readableUntil': 'Readable up to',
+	'lplat.archive.readableUntil': 'Last commit',
 	'lplat.archive.mode': 'Mode',
 	'lplat.archive.mode.pipeline': 'Pipeline (continuous)',
 	'lplat.archive.mode.scheduled': 'Scheduled (periodic export)',
@@ -69,8 +70,11 @@ export const enLogPlatform: Record<keyof typeof jaLogPlatform, string> = {
 	'lplat.stage.read': 'Log reading',
 	'lplat.stage.read.desc':
 		'The last 24 hours of the admin activity log, read the way the log pages read it',
-	'lplat.read.until': 'Committed up to {minutes} minutes ago',
-	'lplat.read.untilNow': 'Committed up to now',
+	'lplat.read.until':
+		'The newest commit was {minutes} minutes ago (later records cannot be read yet)',
+	'lplat.read.untilNow': 'The newest commit was within the last minute',
+	'lplat.read.watermark':
+		'The read watermark is {minutes} minutes old (reads cover the verified exports)',
 	'lplat.read.unknown': 'How far logs can be read is not known',
 	'lplat.read.consistency': 'Consistency',
 	'lplat.read.consistency.eventual': 'The newest records may not be visible yet',
