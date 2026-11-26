@@ -121,6 +121,31 @@ describe('summarizeLogArchiveTable', () => {
     });
   });
 
+  it('keeps 64-bit snapshot IDs that arrive as bigint', () => {
+    const big = 9_007_199_254_740_993n;
+    const summary = summarizeLogArchiveTable({
+      metadataLocation: 'x',
+      metadata: {
+        'table-uuid': TABLE_UUID,
+        'current-snapshot-id': big,
+        snapshots: [
+          {
+            'snapshot-id': big,
+            'timestamp-ms': BigInt(NOW),
+            summary: { operation: 'append', 'total-data-files': '200' },
+          },
+        ],
+      } as any,
+    });
+    expect(summary.current_snapshot).toEqual({
+      id: '9007199254740993',
+      committed_at: NOW,
+      operation: 'append',
+      total_data_files: 200,
+      total_records: null,
+    });
+  });
+
   it('tolerates a table without snapshots or summaries', () => {
     expect(summarizeLogArchiveTable(table([], null))).toEqual({
       uuid: TABLE_UUID,
@@ -180,8 +205,8 @@ describe('buildLogPlatformStatus', () => {
     });
     const repository = {
       detectCatalogRepairFindings: vi.fn(async () => [
-        { safety: 'safe_auto' },
-        { safety: 'manual_review' },
+        { safety: 'safe_auto', plane: 'sensitive_detail' },
+        { safety: 'safe_auto', plane: 'archive' },
       ]),
       readCoverageLastCheckedAt: vi.fn(async () => NOW - 1000),
     } as any;
@@ -215,10 +240,10 @@ describe('buildLogPlatformStatus', () => {
       export: null,
     });
     expect(status.audit_coverage.last_checked_at).toBe(NOW - 1000);
-    expect(status.sensitive_detail_catalog).toEqual({
-      indexed_objects: 5,
+    expect(status.chunk_catalog).toEqual({
       pending_repair_findings: 2,
-      manual_review_findings: 1,
+      sensitive_detail_findings: 1,
+      sensitive_detail_index: [{ store: 'DB_ADMIN', indexed_objects: 5 }],
     });
     expect(status.delivery_lanes).toEqual([{ lane: 'critical', status: 'delivered', total: 9 }]);
     // Tenant scoping: the tenant id goes to the Iceberg tables, the tenant key to the lanes.
@@ -274,11 +299,22 @@ describe('buildLogPlatformStatus', () => {
         adapter,
         tenantId: null,
         tenantKey: null,
+        sensitiveDetailIndexStores: [
+          {
+            store: 'LOGGING_INDEX_DB',
+            adapter: fakeAdapter({ 'FROM sensitive_detail_chunk_index': { total: '7' } }),
+          },
+          { store: 'DB', adapter: fakeAdapter({}) },
+        ],
         loadTable: async () =>
           table([{ id: 42, at: NOW - 400, operation: 'replace', files: 3, records: 10 }], 42),
       })
     );
     expect(status.delivery.outbox).toBeNull();
+    expect(status.chunk_catalog.sensitive_detail_index).toEqual([
+      { store: 'LOGGING_INDEX_DB', indexed_objects: 7 },
+      { store: 'DB', indexed_objects: 0 },
+    ]);
     expect(status.delivery.export).toEqual({
       last_state: 'verified',
       last_error_code: null,

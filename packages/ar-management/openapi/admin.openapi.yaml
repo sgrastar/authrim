@@ -29659,7 +29659,8 @@ paths:
         reachable, the table's own snapshots (data file count, last compaction), whether a 24-hour
         read through the ordinary log read path completed, the delivery state (publications, pipeline
         outbox or scheduled export and watermark), the admin audit coverage summary, the
-        sensitive-detail chunk catalog and the 24-hour delivery lane totals. A platform caller sees
+        chunk-format catalog still filled by sensitive-detail chunks (repair findings and the
+        sensitive-detail index per store) and the 24-hour delivery lane totals. A platform caller sees
         every tenant; a tenant caller sees its own. The response is never 503: a broken archive is
         reported in `archive.reachability_error` / `archive.read_probe`.
       responses:

@@ -92,11 +92,16 @@ export interface LogPlatformStatus {
   archive: LogPlatformArchiveStatus;
   delivery: LogPlatformDeliveryStatus;
   audit_coverage: AdminAuditCoverageSummary;
-  sensitive_detail_catalog: {
-    indexed_objects: number;
+  /**
+   * The chunk-format catalog that the sensitive-detail writer (and the retention archive copy)
+   * still fill. Findings are what the safe repair would act on; `sensitive_detail` is the part
+   * of them on that plane.
+   */
+  chunk_catalog: {
     pending_repair_findings: number;
-    /** Findings the safe repair will not touch; someone has to look. */
-    manual_review_findings: number;
+    sensitive_detail_findings: number;
+    /** Live sensitive-detail chunk index rows, per index store (stores may alias one database). */
+    sensitive_detail_index: { store: string; indexed_objects: number }[];
   };
   delivery_lanes: { lane: string; status: string; total: number }[];
 }
@@ -117,6 +122,8 @@ export interface BuildLogPlatformStatusInput {
   >;
   /** Null for a platform caller: every tenant is counted. */
   tenantId: string | null;
+  /** Where `sensitive_detail_chunk_index` may live; counted per store, never summed. */
+  sensitiveDetailIndexStores?: { store: string; adapter: DatabaseAdapter }[];
   tenantKey: string | null;
   now: number;
   windowMs?: number;
@@ -136,6 +143,7 @@ function errorCode(error: unknown): string {
 
 function integer(value: unknown): number {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'bigint') return Number(value);
   if (typeof value === 'string' && /^-?(0|[1-9][0-9]*)$/.test(value)) return Number(value);
   return 0;
 }
@@ -144,6 +152,12 @@ function optionalInteger(value: unknown): number | null {
   if (value === null || value === undefined) return null;
   const parsed = integer(value);
   return typeof value === 'number' || typeof value === 'string' ? parsed : null;
+}
+
+function snapshotIdText(value: unknown): string | null {
+  return typeof value === 'number' || typeof value === 'bigint' || typeof value === 'string'
+    ? String(value)
+    : null;
 }
 
 function summaryInteger(summary: Record<string, unknown> | undefined, key: string): number | null {
@@ -163,9 +177,8 @@ export function summarizeLogArchiveTable(
     snapshots?: unknown;
   };
   const snapshots = Array.isArray(metadata.snapshots) ? metadata.snapshots : [];
-  const rawCurrent = metadata['current-snapshot-id'];
-  const currentId =
-    typeof rawCurrent === 'number' || typeof rawCurrent === 'string' ? String(rawCurrent) : null;
+  // Snapshot IDs are 64-bit; the Catalog JSON parser hands the large ones over as bigint.
+  const currentId = snapshotIdText(metadata['current-snapshot-id']);
   let current: LogPlatformSnapshot | null = null;
   let lastCompactionAt: number | null = null;
   for (const raw of snapshots) {
@@ -179,10 +192,7 @@ export function summarizeLogArchiveTable(
     const operation = typeof summary?.operation === 'string' ? summary.operation : null;
     if (operation === 'replace' && (lastCompactionAt === null || committedAt > lastCompactionAt))
       lastCompactionAt = committedAt;
-    const rawId = snapshot['snapshot-id'];
-    const snapshotId =
-      typeof rawId === 'number' || typeof rawId === 'string' ? String(rawId) : null;
-    if (currentId !== null && snapshotId === currentId) {
+    if (currentId !== null && snapshotIdText(snapshot['snapshot-id']) === currentId) {
       current = {
         id: currentId,
         committed_at: committedAt,
@@ -357,18 +367,27 @@ export async function buildLogPlatformStatus(
   );
 
   const indexScope = tenantClause('tenant_id', input.tenantId);
-  const indexed = await input.adapter.queryOne<{ total: unknown }>(
-    `SELECT COUNT(*) AS total FROM sensitive_detail_chunk_index
-     WHERE deleted_at IS NULL${indexScope.sql}`,
-    indexScope.binds
-  );
+  const indexStores = input.sensitiveDetailIndexStores ?? [
+    { store: 'DB_ADMIN', adapter: input.adapter },
+  ];
+  const sensitiveDetailIndex: { store: string; indexed_objects: number }[] = [];
+  for (const { store, adapter } of indexStores) {
+    const indexed = await adapter.queryOne<{ total: unknown }>(
+      `SELECT COUNT(*) AS total FROM sensitive_detail_chunk_index
+       WHERE deleted_at IS NULL${indexScope.sql}`,
+      indexScope.binds
+    );
+    sensitiveDetailIndex.push({ store, indexed_objects: integer(indexed?.total) });
+  }
   const findings = await repository.detectCatalogRepairFindings({
     now: input.now,
     limit: REPAIR_FINDINGS_LIMIT,
     pendingTtlMs: REPAIR_PENDING_TTL_MS,
     tenantKey: input.tenantKey ?? undefined,
   });
-  const manualReview = findings.filter((finding) => finding.safety === 'manual_review').length;
+  const sensitiveDetailFindings = findings.filter(
+    (finding) => finding.plane === 'sensitive_detail'
+  ).length;
 
   const laneScope = tenantClause('tenant_key', input.tenantKey);
   const lanes = await input.adapter.query<{ lane: string; status: string; total: unknown }>(
@@ -385,10 +404,10 @@ export async function buildLogPlatformStatus(
     archive,
     delivery,
     audit_coverage: auditCoverage,
-    sensitive_detail_catalog: {
-      indexed_objects: integer(indexed?.total),
+    chunk_catalog: {
       pending_repair_findings: findings.length,
-      manual_review_findings: manualReview,
+      sensitive_detail_findings: sensitiveDetailFindings,
+      sensitive_detail_index: sensitiveDetailIndex,
     },
     delivery_lanes: lanes.map((row) => ({
       lane: row.lane,
