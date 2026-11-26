@@ -567,7 +567,11 @@ async function terminateSessionByNameId(
         const response = await sessionStore.fetch(`https://session-store/session/${sessionIndex}`, {
           method: 'DELETE',
         });
-        if (response.ok) {
+        // SessionStore answers 200 with `deleted: null` when the session no longer exists.
+        const body = response.ok
+          ? await response.json<{ deleted?: string | null }>().catch(() => null)
+          : null;
+        if (typeof body?.deleted === 'string' && body.deleted.length > 0) {
           log.info('Terminated session', { sessionIndex });
           return;
         } else {
@@ -635,7 +639,7 @@ async function sendLogoutResponse(
 
   const log = getLogger(c).module('SAML-SP');
 
-  // Sign the response
+  // Sign the response. Fail closed: a signing failure must never produce an unsigned message.
   try {
     const { privateKeyPem, certificate } = await getSAMLSigningMaterial(env, {
       tenantId,
@@ -653,7 +657,8 @@ async function sendLogoutResponse(
     });
   } catch (error) {
     log.error('Error signing LogoutResponse', {}, error as Error);
-    // Continue without signature if signing fails
+    // Fail closed (same as the IdP side): propagate so the handler returns its normal error response
+    throw error;
   }
 
   // Send via HTTP-POST binding (recommended for responses)
@@ -712,13 +717,6 @@ export async function initiateSPLogout(
   if (!env.STATE_STORE) {
     throw new Error('STATE_STORE is required for SP-initiated SLO correlation');
   }
-  await storeSAMLOutboundLogoutRequest(env.STATE_STORE, {
-    tenantId: resolvedTenantId,
-    spEntityId: idpConfig.entityId,
-    requestId,
-    relayState: returnUrl,
-    ttlSeconds: await resolveSamlRequestTtlSeconds(env, resolvedTenantId),
-  });
 
   // Build LogoutRequest
   let logoutRequestXml = buildLogoutRequest({
@@ -750,7 +748,18 @@ export async function initiateSPLogout(
   } catch (error) {
     const log = createLogger().module('SAML-SP-SLO');
     log.error('Error signing LogoutRequest', { action: 'sign_logout_request' }, error as Error);
+    // Fail closed (same as the IdP side): never send an unsigned LogoutRequest
+    throw error;
   }
+
+  // Store correlation info only after signing succeeded, so a failed attempt leaves nothing behind
+  await storeSAMLOutboundLogoutRequest(env.STATE_STORE, {
+    tenantId: resolvedTenantId,
+    spEntityId: idpConfig.entityId,
+    requestId,
+    relayState: returnUrl,
+    ttlSeconds: await resolveSamlRequestTtlSeconds(env, resolvedTenantId),
+  });
 
   // Encode for POST binding
   const encodedRequest = encodeForPostBinding(logoutRequestXml);

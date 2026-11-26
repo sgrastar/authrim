@@ -1,4 +1,4 @@
-import type { SAMLSPConfig } from '@authrim/ar-lib-core';
+import { createLogger, type SAMLSPConfig } from '@authrim/ar-lib-core';
 import { STATUS_CODES } from '../common/constants';
 import { generateSAMLId, nowAsDateTime } from '../common/xml-utils';
 import type { MissingRequiredSAMLAttribute } from './attributes';
@@ -88,9 +88,18 @@ export function applySAMLErrorResponseOverride(
     return input;
   }
 
+  let statusCode = override.statusCode ?? input.statusCode;
+  if (statusCode === STATUS_CODES.SUCCESS) {
+    // An error response can never carry Success; keep the default status for this violation.
+    createLogger().module('SAML-IDP').warn('Ignoring errorResponseOverrides statusCode Success', {
+      failureKind: input.failureKind,
+    });
+    statusCode = input.statusCode;
+  }
+
   return {
     failureKind: input.failureKind,
-    statusCode: override.statusCode ?? input.statusCode,
+    statusCode,
     secondLevelStatusCode:
       override.secondLevelStatusCode === null
         ? undefined
