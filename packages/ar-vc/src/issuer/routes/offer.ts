@@ -83,7 +83,7 @@ export async function credentialOfferRoute(c: Context<{ Bindings: Env }>): Promi
     };
 
     // Expired or already used offers are indistinguishable from unknown ones
-    if (Date.now() > offer.expiresAt || offer.status !== 'pending') {
+    if (Date.now() >= offer.expiresAt || offer.status !== 'pending') {
       return offerNotFound(c);
     }
 

@@ -847,8 +847,9 @@ function buildPresentationDefinition(
 /**
  * Build authorization request URL for wallet
  *
- * OpenID4VP 1.0: Supports both inline presentation_definition and URI reference.
- * Uses inline for small PDs (< 2KB), URI reference for larger ones.
+ * The request is always `direct_post` with an inline presentation definition, so the wallet
+ * answers at `response_uri`. OpenID4VP 1.0: small definitions (< 2KB) travel inline, larger ones by
+ * URI reference.
  */
 function buildAuthorizationRequestUrl(
   c: Context<{ Bindings: Env }>,
@@ -861,29 +862,14 @@ function buildAuthorizationRequestUrl(
     response_mode: vpRequest.responseMode,
     nonce: vpRequest.nonce,
     state: vpRequest.id,
+    response_uri: vpRequest.responseUri,
   });
 
-  // OpenID4VP 1.0: Use response_uri for direct_post, redirect_uri for fragment/query
-  if (vpRequest.responseMode === 'direct_post' || vpRequest.responseMode === 'direct_post.jwt') {
-    params.set('response_uri', vpRequest.responseUri);
-  } else {
-    params.set('redirect_uri', vpRequest.responseUri);
-  }
-
-  // OpenID4VP 1.0: Support both inline and URI reference for presentation_definition
-  // Use inline for small PDs (< 2KB), URI reference for larger ones
   const MAX_INLINE_PD_SIZE = 2048;
-  if (vpRequest.presentationDefinition) {
-    const pdJson = JSON.stringify(vpRequest.presentationDefinition);
-    if (pdJson.length < MAX_INLINE_PD_SIZE) {
-      // Inline presentation definition (more efficient for small PDs)
-      params.set('presentation_definition', pdJson);
-    } else {
-      // URI reference for large presentation definitions
-      params.set('presentation_definition_uri', `${baseUrl}/vp/pd/${vpRequest.id}`);
-    }
+  const pdJson = JSON.stringify(vpRequest.presentationDefinition);
+  if (pdJson.length < MAX_INLINE_PD_SIZE) {
+    params.set('presentation_definition', pdJson);
   } else {
-    // Fallback to URI reference when PD not provided inline
     params.set('presentation_definition_uri', `${baseUrl}/vp/pd/${vpRequest.id}`);
   }
 

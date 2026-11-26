@@ -20,6 +20,7 @@ import {
   getTenantIdFromContext,
 } from '@authrim/ar-lib-core';
 import { sha256Base64url } from '../../utils/crypto';
+import { extractBearerToken } from '../../utils/bearer';
 
 /**
  * GET /vp/requests/:id
@@ -37,10 +38,11 @@ export async function vpRequestStatusRoute(c: Context<{ Bindings: Env }>): Promi
       });
     }
     const authorization = c.req.header('Authorization');
-    if (!authorization?.startsWith('Bearer ') || authorization.length <= 7) {
+    const statusToken = extractBearerToken(authorization);
+    if (statusToken === null) {
       return createErrorResponse(c, AR_ERROR_CODES.TOKEN_INVALID);
     }
-    const statusTokenHash = await sha256Base64url(authorization.slice(7));
+    const statusTokenHash = await sha256Base64url(statusToken);
 
     // Get DO stub using region-aware sharding (self-routing from ID)
     // Request ID format: g{gen}:{region}:{shard}:vp_{uuid}

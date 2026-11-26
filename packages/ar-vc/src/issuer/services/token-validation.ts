@@ -125,7 +125,7 @@ export async function validateVCIAccessToken(
 
     // Check expiration (always present on tokens signed by KeyManager)
     const now = Math.floor(Date.now() / 1000);
-    if (typeof payload.exp !== 'number' || payload.exp < now) {
+    if (typeof payload.exp !== 'number' || payload.exp <= now) {
       return { valid: false, error: 'Token expired' };
     }
 

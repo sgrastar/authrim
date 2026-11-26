@@ -182,9 +182,15 @@ const EC_CURVE_ALGORITHMS: Record<string, string> = {
  * Whether a JWK may verify an issuer's signature: an EC key whose `alg` (when stated) is its
  * curve's, or an Ed25519 key, and never one whose stated `use` or `key_ops` rule verifying out.
  */
-function isIssuerSigningJwk(
-  jwk: { kty?: string; crv?: string; alg?: string; use?: string; key_ops?: string[] } | undefined
-): boolean {
+type IssuerSigningJwk = {
+  kty?: string;
+  crv?: string;
+  alg?: string;
+  use?: string;
+  key_ops?: string[];
+};
+
+function isIssuerSigningJwk(jwk: IssuerSigningJwk | undefined): jwk is IssuerSigningJwk {
   if (!jwk) return false;
   if (jwk.use !== undefined && jwk.use !== 'sig') return false;
   if (jwk.key_ops !== undefined && !jwk.key_ops.includes('verify')) return false;
@@ -323,24 +329,25 @@ async function getKeyFromDid(env: Env, did: string, kid?: string): Promise<Crypt
 
   // Only the issuer's own assertion keys sign credentials and status lists, with or without a kid:
   // a key for another purpose, of another controller or of another type never does.
-  const isIssuerAssertionKey = (vm: DidVerificationMethod) =>
-    vm.controller === did && isIssuerSigningJwk(vm.publicKeyJwk);
   const assertionMethods = assertionMethodsOf(did, didDocument);
 
-  let verificationMethod: DidVerificationMethod;
+  let jwk: IssuerSigningJwk;
   if (kid !== undefined) {
     // A kid names exactly one assertion method; a missing one is an error, not a reason to try
     // others.
-    verificationMethod = methodNamedBy(did, kid, assertionMethods);
+    const verificationMethod = methodNamedBy(did, kid, assertionMethods);
     if (verificationMethod.controller !== did) {
       throw new Error('Verification method is controlled by another DID');
     }
     if (!isIssuerSigningJwk(verificationMethod.publicKeyJwk)) {
       throw new Error('Verification method is not a supported signing key');
     }
+    jwk = verificationMethod.publicKeyJwk;
   } else {
     // Without a kid the issuer must have exactly one usable assertion key.
-    const candidates = assertionMethods.filter(isIssuerAssertionKey);
+    const candidates = assertionMethods.flatMap((vm) =>
+      vm.controller === did && isIssuerSigningJwk(vm.publicKeyJwk) ? [vm.publicKeyJwk] : []
+    );
     if (candidates.length !== 1) {
       throw new Error(
         candidates.length
@@ -348,24 +355,14 @@ async function getKeyFromDid(env: Env, did: string, kid?: string): Promise<Crypt
           : 'No assertion key found in DID document'
       );
     }
-    verificationMethod = candidates[0];
+    jwk = candidates[0];
   }
 
-  if (!verificationMethod.publicKeyJwk) {
-    throw new Error('No public key found in DID document');
-  }
-
-  const jwk = verificationMethod.publicKeyJwk;
-
-  // Import based on key type
+  // isIssuerSigningJwk lets through EC and Ed25519 keys only.
   if (jwk.kty === 'EC') {
     return importECPublicKey(withEcAlgorithm(jwk as JWK));
-  } else if (jwk.kty === 'OKP') {
-    // Use jose's importJWK for OKP keys
-    return (await importJWK(jwk as JWK, jwk.alg || 'EdDSA')) as CryptoKey;
-  } else {
-    throw new Error(`Unsupported key type: ${jwk.kty}`);
   }
+  return (await importJWK(jwk as JWK, jwk.alg || 'EdDSA')) as CryptoKey;
 }
 
 /**

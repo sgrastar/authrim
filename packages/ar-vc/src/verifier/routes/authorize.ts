@@ -54,30 +54,6 @@ interface VPAuthorizeRequest {
 }
 
 /**
- * Validate client_id matches the declared client_id_scheme
- *
- * @param clientId - Client ID
- * @param scheme - Client ID scheme
- * @returns Error message if validation fails, null if valid
- */
-function validateClientIdScheme(clientId: string, scheme?: ClientIdScheme): string | null {
-  // If no scheme specified, default to 'pre-registered'
-  const effectiveScheme = scheme || 'pre-registered';
-
-  switch (effectiveScheme) {
-    case 'pre-registered':
-      // Pre-registered: no specific format, but should not be a DID or URL
-      // This is a soft validation - pre-registered clients can have any format
-      break;
-
-    default:
-      return `Unsupported client_id_scheme: ${scheme}`;
-  }
-
-  return null;
-}
-
-/**
  * POST /vp/authorize
  *
  * Creates a VP authorization request and returns the request URI.
@@ -101,12 +77,6 @@ export async function vpAuthorizeRoute(c: Context<{ Bindings: Env }>): Promise<R
 
     // Validate client_id_scheme if provided
     if (body.client_id_scheme && !SUPPORTED_CLIENT_ID_SCHEMES.includes(body.client_id_scheme)) {
-      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
-    }
-
-    // Validate client_id matches the declared scheme
-    const clientIdSchemeError = validateClientIdScheme(body.client_id, body.client_id_scheme);
-    if (clientIdSchemeError) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 

@@ -22,6 +22,7 @@ import type { JWTPayload } from 'jose';
 import { getRequestIssuerUrl } from '../../request-identifiers';
 import { listCredentialConfigurations } from '../credential-configurations';
 import { invalidTokenError } from '../oauth-errors';
+import { extractBearerToken } from '../../utils/bearer';
 
 interface DeferredCredentialRequest {
   transaction_id: string;
@@ -38,11 +39,10 @@ export async function deferredCredentialRoute(c: Context<{ Bindings: Env }>): Pr
   try {
     // Verify access token
     const authHeader = c.req.header('Authorization');
-    if (!authHeader?.startsWith('Bearer ')) {
+    const accessToken = extractBearerToken(authHeader);
+    if (accessToken === null) {
       return invalidTokenError(c);
     }
-
-    const accessToken = authHeader.substring(7);
     const tokenResult = await validateVCIAccessToken(
       c.env,
       accessToken,
