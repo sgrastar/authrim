@@ -12,6 +12,7 @@
 	import TextField from '#lib/ui/primitives/TextField.svelte';
 	import { useChangeMark } from '#lib/ui/save/save-scope.js';
 	import AllowedKindsField from './AllowedKindsField.svelte';
+	import SignInMethodsField from './SignInMethodsField.svelte';
 	import JsonSettingField from './JsonSettingField.svelte';
 	import { formatSetting } from './setting-format';
 	import { settingText } from './setting-text';
@@ -164,6 +165,13 @@
 					/>
 				{:else if key === 'security.admin_second_factor_allowed_kinds'}
 					<AllowedKindsField
+						{changed}
+						disabled={inherited}
+						value={entry.v}
+						onvalue={(next) => (entry.v = next)}
+					/>
+				{:else if key === 'security.admin_sign_in_methods'}
+					<SignInMethodsField
 						{changed}
 						disabled={inherited}
 						value={entry.v}
