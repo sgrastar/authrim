@@ -19,6 +19,7 @@ import { arStepUp } from './step-up/ar';
 import { arAdminAudit } from './admin-audit/ar';
 import { arUserAudit } from './user-audit/ar';
 import { arSystemLog } from './system-log/ar';
+import { arEmailDeliveries } from './email-deliveries/ar';
 import { arLogPlatform } from './log-platform/ar';
 import { arTeam } from './team/ar';
 import { arIpAllowlist } from './ip-allowlist/ar';
@@ -54,6 +55,7 @@ export const ar = {
 	...arAdminAudit,
 	...arUserAudit,
 	...arSystemLog,
+	...arEmailDeliveries,
 	...arLogPlatform,
 	...arTeam,
 	...arIpAllowlist,
@@ -120,8 +122,7 @@ export const ar = {
 	'nav.mon.audit': 'سجلات التدقيق',
 	'nav.mon.adminActivity': 'نشاط المسؤولين',
 	'nav.mon.system': 'سجلات النظام',
-	'nav.mon.deliveries': 'عمليات التسليم',
-	'nav.mon.settings': 'سياسات التسجيل',
+	'nav.mon.deliveries': 'تسليم البريد',
 	'nav.int.agents': 'وكلاء الذكاء الاصطناعي',
 	'nav.int.plugins': 'الإضافات',
 	'nav.int.notifications': 'الإشعارات',
@@ -152,8 +153,6 @@ export const ar = {
 	'nav.data.mappingSets': 'الربط',
 	'nav.data.readiness': 'جاهزية المخطط',
 	'nav.mon.logPlatform': 'منصة السجلات',
-	'nav.mon.diagnostics': 'سجلات التشخيص',
-	'nav.mon.destinations': 'وجهات السجلات',
 	'nav.int.agentGrants': 'تفويضات الوكلاء',
 	'nav.int.agentPlans': 'خطط الإعداد',
 	'nav.int.agentPolicies': 'سياسات الوكلاء',
