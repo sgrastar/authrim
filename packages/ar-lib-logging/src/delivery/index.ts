@@ -91,5 +91,4 @@ export {
   type LoggingDeliveryQueueEnvelope,
   type LoggingDeliveryQueuePayload,
   type LoggingDeliveryQueuePayloadParseResult,
-  type RewrapChunkPayload,
 } from './queue-payload';

@@ -161,22 +161,24 @@ describe('Phase 8 SQL references', () => {
 
   it('pins the target tenant key for datasets owned through a parent table', () => {
     const plan = planned();
-    const registry = plan.find(({ dataset }) => dataset.id === 'admin.logging_key_registry')!;
+    const registry = plan.find(({ dataset }) => dataset.id === 'admin.logging_export_jobs')!;
     registry.capture = {
-      table: 'logging_key_registry',
+      table: 'logging_export_jobs',
       columns: ['id', 'tenant_key'],
       primaryKey: ['id'],
       uniqueKeys: [],
       tenantColumn: 'tenant_key',
       tenantIdentity: 'tenantKey',
     };
-    const versions = plan.find(({ dataset }) => dataset.id === 'admin.logging_key_versions')!;
+    const versions = plan.find(
+      ({ dataset }) => dataset.id === 'admin.logging_message_export_builds'
+    )!;
     versions.capture = {
-      table: 'logging_key_versions',
-      columns: ['key_registry_id', 'version'],
-      primaryKey: ['key_registry_id', 'version'],
+      table: 'logging_message_export_builds',
+      columns: ['export_job_id', 'version'],
+      primaryKey: ['export_job_id', 'version'],
       uniqueKeys: [],
-      parent: { childColumns: ['key_registry_id'], schema: structuredClone(registry.capture) },
+      parent: { childColumns: ['export_job_id'], schema: structuredClone(registry.capture) },
     };
     const policy = createPhase8SqliteInspectionPolicies(plan, {
       tenantKey: 'tenant-key-a',
@@ -185,7 +187,7 @@ describe('Phase 8 SQL references', () => {
       resolveAdminReference: vi.fn(async (_context, source) => `target-${source}`),
       resolvePluginReference: vi.fn(async (_context, _source, plugin) => `target-${plugin}`),
       restoreHold: restoreHold(),
-    }).find(({ dataset }) => dataset.id === 'admin.logging_key_versions');
+    }).find(({ dataset }) => dataset.id === 'admin.logging_message_export_builds');
     expect(policy).toMatchObject({
       tenantKey: PORTABLE_TENANT_KEY,
       restoreTenantKey: 'tenant-key-a',

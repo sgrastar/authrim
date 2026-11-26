@@ -1,0 +1,20 @@
+# Keyring app-link host: AASA file and a fallback page for /oauth/callback. Static, no bindings.
+# `wrangler deploy -c applink/wrangler.toml --env staging`. Production is created later (W5).
+name = "ar-keyring-applink"
+main = "../src/applink/index.ts"
+compatibility_date = "2026-09-01"
+workers_dev = false
+
+[env.staging]
+name = "ar-keyring-applink-staging"
+routes = [{ pattern = "keyring-staging.authrim.com", custom_domain = true }]
+
+[env.staging.vars]
+APP_IDS = "BQ23XXWDX8.com.authrim.keyring.staging"
+
+[env.production]
+name = "ar-keyring-applink"
+routes = [{ pattern = "keyring.authrim.com", custom_domain = true }]
+
+[env.production.vars]
+APP_IDS = "BQ23XXWDX8.com.authrim.keyring"

@@ -6,6 +6,7 @@ import {
 import { runLogIcebergDelivery } from '@authrim/ar-lib-core/services/log-iceberg-delivery';
 import { runLogIcebergExport } from '@authrim/ar-lib-core/services/log-iceberg-export';
 import { runLogIcebergRetryCleanup } from '@authrim/ar-lib-core/services/log-iceberg-retry-cleanup';
+import { runLogIcebergIntentReclaim } from '@authrim/ar-lib-core/services/log-iceberg-intent-reclaim';
 import {
   runLogIcebergRetention,
   runLogIcebergSnapshotMaintenance,
@@ -65,6 +66,8 @@ export async function runLogIcebergScheduledMaintenance(
   if (config.mode === 'pipeline') {
     await attempt(() => runLogIcebergDelivery(env));
     await attempt(() => runLogIcebergRetryCleanup(env));
+    // Intents a dead writer left `preparing` with no publication: resumed or abandoned.
+    await attempt(() => runLogIcebergIntentReclaim(env));
   } else {
     if (config.exportIntervalMinutes === null) throw new Error('log_iceberg_schedule_invalid');
     if (Math.floor(event.scheduledTime / 60000) % config.exportIntervalMinutes === 0)

@@ -1,0 +1,125 @@
+import type { jaLogPlatform } from './ja';
+
+/** Monitoring → Log platform: is the log platform healthy. Spread into `../en.ts`. */
+export const enLogPlatform: Record<keyof typeof jaLogPlatform, string> = {
+	'lplat.page.desc': 'Whether logs are being stored and can be read.',
+	'lplat.asOf': 'Status as of',
+	'lplat.period': 'Delivery counts cover the last 24 hours; the archive shows its current totals.',
+	'lplat.refresh': 'Refresh',
+	'lplat.noAccess': 'You do not have permission to see the log platform status',
+	'lplat.loadFailed': 'Could not load the log platform status',
+	'lplat.links': 'The logs themselves are in System logs, Audit logs and Admin activity',
+	'lplat.flow.label': 'Log flow',
+	'lplat.flow.next': 'then',
+
+	'lplat.status': 'Status',
+	'lplat.status.ok': 'Healthy',
+	'lplat.status.warning': 'Attention',
+	'lplat.status.danger': 'Failing',
+	'lplat.status.none': '—',
+
+	'lplat.reason.archive_unconfigured': 'The log archive is not configured ({code})',
+	'lplat.reason.archive_unreachable': 'The Catalog does not return the table ({code})',
+	'lplat.reason.delivery_stuck': '{count} records have waited more than {hours} hours to be sent',
+	'lplat.reason.delivery_error': 'The last send failed ({code})',
+	'lplat.reason.files_over_limit':
+		'{files} data files exceed the {max} one read can open. If compaction is not running, the Catalog maintenance credential may be missing (setup update registers it)',
+	'lplat.reason.compaction_stale': 'Compaction has not run for more than 24 hours',
+	'lplat.reason.compaction_never': 'Compaction has never run',
+	'lplat.reason.read_incomplete': 'The read did not complete ({code})',
+	'lplat.reason.export_error': 'The last export failed ({code})',
+	'lplat.reason.export_stalled': 'An export has been unfinished for more than {hours} hours',
+	'lplat.reason.publication_stalled':
+		'A record has been sealing for more than {hours} hours (publication is stuck)',
+	'lplat.reason.intent_orphaned':
+		'{count} records were left mid-write more than {hours} hours ago (never committed, so never delivered)',
+
+	'lplat.stage.delivery': 'Delivery',
+	'lplat.stage.delivery.desc': 'Records written to D1 on their way to the archive',
+	'lplat.delivery.lastIngested': 'Last accepted',
+	'lplat.delivery.published': 'Sealed',
+	'lplat.delivery.prepared': 'Preparing',
+	'lplat.delivery.aborted': 'Withdrawn',
+	'lplat.delivery.pending': 'Waiting to send',
+	'lplat.delivery.queued': 'Queued',
+	'lplat.delivery.ingested': 'Accepted by Pipeline',
+	'lplat.delivery.oldest': 'Oldest waiting',
+	'lplat.delivery.lastError': 'Last error',
+	'lplat.delivery.unit': 'records',
+	'lplat.delivery.orphaned': 'Left behind',
+	'lplat.delivery.oldestOrphaned': 'Oldest left behind',
+	'lplat.delivery.abandoned': 'Recorded as never committed',
+	'lplat.delivery.reclaim': 'Record as never committed',
+	'lplat.delivery.reclaim.done':
+		'{abandoned} records were recorded as never committed (in the system log; erased after their retention)',
+	'lplat.delivery.reclaim.busy': 'Another reclaim is running; reload in a moment',
+	'lplat.delivery.reclaim.partial':
+		'{abandoned} records were recorded as never committed; {failed} could not be processed and will be retried on the next tick',
+	'lplat.delivery.reclaim.failed': 'Could not run the reclaim',
+	'lplat.delivery.export.state': 'Last export',
+	'lplat.delivery.export.updated': 'Updated',
+	'lplat.delivery.export.watermark': 'Read watermark',
+
+	'lplat.stage.archive': 'Log archive',
+	'lplat.stage.archive.desc': 'The Iceberg table in R2 Data Catalog',
+	'lplat.archive.readableUntil': 'Last commit',
+	'lplat.archive.mode': 'Mode',
+	'lplat.archive.mode.pipeline': 'Pipeline (continuous)',
+	'lplat.archive.mode.scheduled': 'Scheduled (periodic export)',
+	'lplat.archive.local': 'Local staging only (development)',
+	'lplat.archive.generation': 'Generation',
+	'lplat.archive.activated': 'Activated',
+	'lplat.archive.platform': 'Whole platform',
+	'lplat.archive.budget': 'Read budget used (files)',
+	'lplat.archive.budget.detail': 'Data files {files} / {max}',
+	'lplat.archive.records': 'Records',
+	'lplat.archive.files': 'Data files',
+	'lplat.archive.snapshots': 'Snapshots',
+	'lplat.archive.lastCommit': 'Last commit',
+	'lplat.archive.lastCompaction': 'Last compaction',
+	'lplat.archive.never': 'None yet',
+	'lplat.archive.tenantNote': 'Table-wide statistics are shown to platform administrators only.',
+
+	'lplat.stage.read': 'Log reading',
+	'lplat.stage.read.desc':
+		'The last 24 hours of the admin activity log, read the way the log pages read it',
+	'lplat.read.until':
+		'The newest commit was {minutes} minutes ago (later records cannot be read yet)',
+	'lplat.read.untilNow': 'The newest commit was within the last minute',
+	'lplat.read.watermark':
+		'The read watermark is {minutes} minutes old (reads cover the verified exports)',
+	'lplat.read.accepted':
+		'Last accepted {minutes} minutes ago; accepted records become readable at the next commit (every few minutes)',
+	'lplat.read.none': 'No readable records yet',
+	'lplat.read.consistency': 'Consistency',
+	'lplat.read.consistency.eventual': 'The newest records may not be visible yet',
+	'lplat.read.consistency.snapshot': 'Complete as of the snapshot',
+	'lplat.read.consistency.local_hot_only': 'Only recent records were read',
+	'lplat.read.pending': 'Awaiting ingestion',
+	'lplat.read.noArchive': 'No archived records in this period',
+	'lplat.read.reason': 'Reason',
+
+	'lplat.coverage.title': 'Audit coverage',
+	'lplat.coverage.desc':
+		'The in-code registry of admin operations and whether each writes an audit record.',
+	'lplat.coverage.covered': 'Covered',
+	'lplat.coverage.gap': 'Gaps',
+	'lplat.coverage.acknowledged': 'Acknowledged',
+	'lplat.coverage.ignored': 'Out of scope',
+	'lplat.coverage.lastChecked': 'Last checked',
+	'lplat.coverage.never': 'Never',
+
+	'lplat.catalog.title': 'Sensitive-detail chunk catalog',
+	'lplat.catalog.desc':
+		'The ledger of chunks that hold approval details and the sensitive parts of webhooks. Inconsistencies can be fixed by the safe repair.',
+	'lplat.catalog.findings': 'Findings to repair',
+	'lplat.catalog.sensitive': 'Of which sensitive detail',
+	'lplat.catalog.clean': 'No inconsistencies',
+	'lplat.catalog.index': 'Sensitive-detail index',
+	'lplat.catalog.index.count': '{count} rows',
+	'lplat.catalog.index.missing': 'No index table',
+	'lplat.catalog.index.unavailable': 'Unreadable',
+	'lplat.catalog.repair': 'Apply safe repairs',
+	'lplat.catalog.repair.done': 'Repaired {applied}, skipped {skipped}',
+	'lplat.catalog.repair.failed': 'Could not apply the repairs'
+};

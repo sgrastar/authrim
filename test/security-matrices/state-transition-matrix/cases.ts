@@ -804,7 +804,6 @@ export const QUEUE_LOG_VALUES: Record<string, readonly Scalar[]> = {
     'delivery-fanout',
     'http-sink-batch',
     'dlq-replay',
-    'rewrap-chunk',
     'future-schema',
     'malformed',
   ],
@@ -856,13 +855,9 @@ export const QUEUE_LOG_CONSTRAINTS: Constraint[] = [
     String(row.bindingState) !== 'present' ||
     (['iceberg-ingest', 'future-schema'].includes(String(row.payloadFamily)) &&
       String(row.dlqArchive) !== 'success') ||
-    [
-      'legacy-chunk-write',
-      'delivery-fanout',
-      'http-sink-batch',
-      'dlq-replay',
-      'rewrap-chunk',
-    ].includes(String(row.payloadFamily)),
+    ['legacy-chunk-write', 'delivery-fanout', 'http-sink-batch', 'dlq-replay'].includes(
+      String(row.payloadFamily)
+    ),
 ];
 
 export const QUEUE_LOG_SELECTED_TRIPLES: Array<[string, string, string]> = [

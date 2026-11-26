@@ -19,6 +19,8 @@ import { enStepUp } from './step-up/en';
 import { enAdminAudit } from './admin-audit/en';
 import { enUserAudit } from './user-audit/en';
 import { enSystemLog } from './system-log/en';
+import { enEmailDeliveries } from './email-deliveries/en';
+import { enLogPlatform } from './log-platform/en';
 import { enTeam } from './team/en';
 import { enIpAllowlist } from './ip-allowlist/en';
 import { enAccountPages } from './account-pages/en';
@@ -53,6 +55,8 @@ export const en = {
 	...enAdminAudit,
 	...enUserAudit,
 	...enSystemLog,
+	...enEmailDeliveries,
+	...enLogPlatform,
 	...enTeam,
 	...enIpAllowlist,
 	...enAccountPages,
@@ -118,8 +122,7 @@ export const en = {
 	'nav.mon.audit': 'Audit logs',
 	'nav.mon.adminActivity': 'Admin activity',
 	'nav.mon.system': 'System logs',
-	'nav.mon.deliveries': 'Deliveries',
-	'nav.mon.settings': 'Logging policies',
+	'nav.mon.deliveries': 'Email deliveries',
 	'nav.int.agents': 'AI agents',
 	'nav.int.plugins': 'Plugins',
 	'nav.int.notifications': 'Notifications',
@@ -149,9 +152,7 @@ export const en = {
 	'nav.data.profiles': 'Source / Destination',
 	'nav.data.mappingSets': 'Mappings',
 	'nav.data.readiness': 'Schema readiness',
-	'nav.mon.adminLogging': 'Admin logging',
-	'nav.mon.diagnostics': 'Diagnostic logs',
-	'nav.mon.destinations': 'Log destinations',
+	'nav.mon.logPlatform': 'Log platform',
 	'nav.int.agentGrants': 'Agent grants',
 	'nav.int.agentPlans': 'Configuration plans',
 	'nav.int.agentPolicies': 'Agent policies',

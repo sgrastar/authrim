@@ -99,11 +99,6 @@ const RULES: readonly Rule[] = [
     to: id('admin', 'credential_secret_metadata'),
   },
   {
-    from: id('admin', 'logging_key_versions'),
-    columns: ['key_registry_id'],
-    to: id('admin', 'logging_key_registry'),
-  },
-  {
     from: id('admin', 'logging_destination_overrides'),
     columns: ['destination_id'],
     to: id('admin', 'admin_destinations'),

@@ -722,13 +722,15 @@ export interface AdminLoggingOverview {
 		failures: number;
 		critical: number;
 	};
-	archive: Array<{
-		log_type: string;
-		plane: string;
-		status: string;
-		chunks: number;
-		records: number;
-	}>;
+	archive: {
+		format: 'iceberg';
+		has_archive: boolean;
+		coverage: {
+			consistency: string;
+			pending_deliveries: number | null;
+			complete: boolean;
+		};
+	};
 	delivery: Array<{
 		lane: string;
 		status: string;
@@ -818,7 +820,6 @@ export interface AdminLoggingSensitiveDetailSummary {
 	assignment_count: number;
 	policy_count: number;
 	indexed_object_class_count: number;
-	stale_key_count: number;
 }
 
 export interface AdminLoggingSensitiveDetailPolicy {
@@ -843,66 +844,6 @@ export interface AdminLoggingSensitiveDetailPolicy {
 		total: number;
 		last_created_at: number | null;
 	}>;
-	key_versions: Array<{
-		status: string;
-		total: number;
-	}>;
-}
-
-export interface AdminLoggingKeyRegistryItem {
-	id: string;
-	tenant_key: string;
-	surface: string | null;
-	log_type: string;
-	plane: string;
-	active_version: number;
-	registry_status: string;
-	last_rotated_at: number | null;
-	registry_created_at: number;
-	registry_updated_at: number;
-	version: number | null;
-	backend_ref: string | null;
-	version_status: string | null;
-	usage_count: number;
-	stale_count: number;
-	version_created_at: number | null;
-	retired_at: number | null;
-}
-
-export interface AdminLoggingRewrapJob {
-	id: string;
-	key_registry_id: string;
-	from_version: number;
-	to_version: number;
-	priority: number;
-	status: string;
-	created_at: number;
-	started_at: number | null;
-	completed_at: number | null;
-	object_catalog_id: string | null;
-	object_key: string | null;
-	tenant_key: string | null;
-	log_type: string | null;
-	plane: string | null;
-	reason: string | null;
-	error: string | null;
-	metadata?: Record<string, unknown>;
-}
-
-export interface AdminLoggingKeyImpact {
-	registry: Record<string, unknown>;
-	versions: Array<Record<string, unknown>>;
-	rewrap_jobs: Array<Record<string, unknown>>;
-	checked_at: number;
-}
-
-export interface AdminLoggingRewrapCreateResult {
-	key_registry_id: string;
-	candidate_count: number;
-	created_count: number;
-	skipped_count: number;
-	created: Array<Record<string, unknown>>;
-	skipped: Array<Record<string, unknown>>;
 }
 
 export interface SensitiveDetailProbeResult {
@@ -2067,97 +2008,6 @@ export const adminLoggingControlAPI = {
 		return parseResponse<{ item: SensitiveDetailProbeResult; audit_id?: string | null }>(
 			response,
 			'Failed to probe sensitive detail'
-		);
-	},
-
-	async listAdminLoggingKeyRegistry() {
-		const response = await adminFetch(`${API_BASE_URL}/api/admin/admin-logging/key-registry`);
-		return parseResponse<{ items: AdminLoggingKeyRegistryItem[]; total: number }>(
-			response,
-			'Failed to load logging key registry'
-		);
-	},
-
-	async getAdminLoggingKeyImpact(id: string) {
-		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/admin-logging/key-registry/${encodeURIComponent(id)}/impact`
-		);
-		return parseResponse<{ item: AdminLoggingKeyImpact }>(
-			response,
-			'Failed to load logging key impact'
-		);
-	},
-
-	async createAdminLoggingRewrapJobs(input: {
-		keyRegistryId: string;
-		fromVersion?: number;
-		limit?: number;
-	}) {
-		const response = await adminFetch(`${API_BASE_URL}/api/admin/admin-logging/rewrap-jobs`, {
-			method: 'POST',
-			includeJsonContentType: true,
-			body: JSON.stringify({
-				key_registry_id: input.keyRegistryId,
-				from_version: input.fromVersion,
-				limit: input.limit
-			})
-		});
-		return parseResponse<{ result: AdminLoggingRewrapCreateResult; audit_id?: string | null }>(
-			response,
-			'Failed to create logging rewrap jobs'
-		);
-	},
-
-	async listAdminLoggingRewrapJobs() {
-		const response = await adminFetch(`${API_BASE_URL}/api/admin/admin-logging/rewrap-jobs`);
-		return parseResponse<{ items: AdminLoggingRewrapJob[]; total: number }>(
-			response,
-			'Failed to load logging rewrap jobs'
-		);
-	},
-
-	async retryAdminLoggingRewrapJob(id: string, reason?: string) {
-		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/admin-logging/rewrap-jobs/${encodeURIComponent(id)}/retry`,
-			{
-				method: 'POST',
-				includeJsonContentType: true,
-				body: JSON.stringify({ reason })
-			}
-		);
-		return parseResponse<{ result: AdminLoggingRewrapJob; audit_id?: string | null }>(
-			response,
-			'Failed to retry logging rewrap job'
-		);
-	},
-
-	async cancelAdminLoggingRewrapJob(id: string, reason?: string) {
-		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/admin-logging/rewrap-jobs/${encodeURIComponent(id)}/cancel`,
-			{
-				method: 'POST',
-				includeJsonContentType: true,
-				body: JSON.stringify({ reason })
-			}
-		);
-		return parseResponse<{ result: AdminLoggingRewrapJob; audit_id?: string | null }>(
-			response,
-			'Failed to cancel logging rewrap job'
-		);
-	},
-
-	async updateAdminLoggingRewrapJobPriority(id: string, priority: number) {
-		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/admin-logging/rewrap-jobs/${encodeURIComponent(id)}/priority`,
-			{
-				method: 'POST',
-				includeJsonContentType: true,
-				body: JSON.stringify({ priority })
-			}
-		);
-		return parseResponse<{ result: AdminLoggingRewrapJob; audit_id?: string | null }>(
-			response,
-			'Failed to update logging rewrap job priority'
 		);
 	},
 

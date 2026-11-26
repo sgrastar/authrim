@@ -75,15 +75,6 @@ export const messagingFakes = {
   writePayload: vi.fn(),
 };
 
-export const keysFakes = { enqueue: vi.fn() };
-
-export function buildKeysMock<T extends Record<string, unknown>>(actual: T) {
-  class FakeSqlLoggingRewrapJobQueue {
-    enqueue = keysFakes.enqueue;
-  }
-  return { ...actual, SqlLoggingRewrapJobQueue: FakeSqlLoggingRewrapJobQueue };
-}
-
 export function buildMessagingMock<T extends Record<string, unknown>>(actual: T) {
   class FakeSqlLoggingMessageJobStore {
     listJobs = messagingFakes.listJobs;
@@ -180,7 +171,6 @@ export function resetFakes(): void {
   for (const fn of Object.values(coreFakes)) fn.mockReset();
   coreFakes.hasBackupSnapshot.mockResolvedValue(false);
   coreFakes.listBackupTenantKeys.mockResolvedValue(new Set());
-  keysFakes.enqueue.mockReset();
   for (const fn of Object.values(repoFakes)) fn.mockReset();
   repoFakes.detectCatalogRepairFindings.mockResolvedValue([]);
   repoFakes.applySafeCatalogRepairs.mockResolvedValue({ applied: [], skipped: [] });

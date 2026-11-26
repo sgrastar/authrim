@@ -194,6 +194,10 @@
             {
               "path": "028_system_logs_permission.sql",
               "checksum": "233f130db139c9e50523a052c0927370d6e6591be1f3681c21172118fd39bebd"
+            },
+            {
+              "path": "029_drop_logging_key_registry.sql",
+              "checksum": "ab4995e501efcb2d58c06e07df76261b2f8aaf571a500d906d26eb652d4e7c2c"
             }
           ]
         },
@@ -493,6 +497,10 @@
         {
           "path": "028_system_logs_permission.sql",
           "checksum": "233f130db139c9e50523a052c0927370d6e6591be1f3681c21172118fd39bebd"
+        },
+        {
+          "path": "029_drop_logging_key_registry.sql",
+          "checksum": "ab4995e501efcb2d58c06e07df76261b2f8aaf571a500d906d26eb652d4e7c2c"
         }
       ]
     },
