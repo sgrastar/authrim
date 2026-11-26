@@ -882,27 +882,135 @@ function getBuiltinBootstrapConfig(env: Env, pluginId: string): Record<string, u
   return resolveBuiltinPluginBootstrapConfig(env, pluginId);
 }
 
-function isMaskedSecretReplacement(value: unknown): value is string {
-  return typeof value === 'string' && value.includes('****');
+/** The marker the masker puts where it refused to descend past its depth limit. */
+const MASKED_DEPTH_PLACEHOLDER = '[MAX_DEPTH_EXCEEDED]';
+
+/** Raised when a saved configuration carries a mask that has no stored secret to restore. */
+export class UnrestorableMaskedValueError extends Error {
+  constructor() {
+    super('A masked placeholder was sent where no stored value exists to restore');
+    this.name = 'UnrestorableMaskedValueError';
+  }
 }
 
-function mergeConfigPreservingSecrets(
+/**
+ * The mask a read returns for a stored secret, produced by the masker itself (a secret-named key
+ * puts the value through its string masker), so the two cannot drift apart.
+ */
+function maskedFormOf(stored: unknown): string | undefined {
+  if (typeof stored !== 'string' && typeof stored !== 'number' && typeof stored !== 'bigint') {
+    return undefined;
+  }
+  const masked = maskSensitiveFieldsRecursive(
+    { password: String(stored) },
+    { usePatternMatching: true }
+  ).password;
+  return typeof masked === 'string' ? masked : undefined;
+}
+
+/** Whether the value has the shape of a mask the masker makes (any stored secret's mask). */
+function looksLikeMaskOutput(value: unknown): boolean {
+  if (typeof value !== 'string') {
+    return false;
+  }
+  return (
+    value === maskedFormOf('x') ||
+    (/^.{4}\*\*\*\*.{4}$/su.test(value) &&
+      value === maskedFormOf(`${value.slice(0, 4)}${'x'.repeat(8)}${value.slice(-4)}`))
+  );
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+/** Keys that identify an element of an array of settings (a provider, an entry), in priority order. */
+const ARRAY_ELEMENT_ID_KEYS = ['id', 'name', 'key', 'provider'] as const;
+
+/**
+ * The stored array element an incoming element stands for. Elements carrying a stable identifier
+ * are matched by it (so a reorder or a deletion cannot hand one element another's secret); without
+ * one, the element at the same index counts only when the array kept its length.
+ */
+function storedArrayElement(
+  stored: unknown[],
+  incomingLength: number,
+  item: unknown,
+  index: number
+): unknown {
+  if (isPlainRecord(item)) {
+    for (const idKey of ARRAY_ELEMENT_ID_KEYS) {
+      const id = item[idKey];
+      if (typeof id !== 'string' && typeof id !== 'number') {
+        continue;
+      }
+      const matches = stored.filter((entry) => isPlainRecord(entry) && entry[idKey] === id);
+      if (matches.length === 1) {
+        return matches[0];
+      }
+      if (matches.length > 1 || stored.some((entry) => isPlainRecord(entry) && idKey in entry)) {
+        return undefined;
+      }
+    }
+  }
+  return stored.length === incomingLength ? stored[index] : undefined;
+}
+
+/**
+ * Merges one incoming value over the stored one. A value is restored only when it is exactly what a
+ * read returns for the stored value (the mask the masker makes of it, or the depth placeholder
+ * standing for a stored object or array); anything else, asterisks included, is a real new value.
+ * A mask with nothing stored to restore is refused instead of being saved as a credential.
+ */
+function restoreMaskedValues(existing: unknown, incoming: unknown, inSecret: boolean): unknown {
+  if (incoming === MASKED_DEPTH_PLACEHOLDER) {
+    if (existing !== null && typeof existing === 'object') {
+      return existing;
+    }
+    if (existing === undefined) {
+      throw new UnrestorableMaskedValueError();
+    }
+    return incoming;
+  }
+  if (existing === undefined && inSecret && looksLikeMaskOutput(incoming)) {
+    throw new UnrestorableMaskedValueError();
+  }
+  if (inSecret && typeof incoming === 'string' && incoming === maskedFormOf(existing)) {
+    return existing;
+  }
+  if (Array.isArray(incoming)) {
+    const stored = Array.isArray(existing) ? existing : undefined;
+    return incoming.map((item, index) =>
+      restoreMaskedValues(
+        stored && storedArrayElement(stored, incoming.length, item, index),
+        item,
+        inSecret
+      )
+    );
+  }
+  if (isPlainRecord(incoming)) {
+    const stored = isPlainRecord(existing) ? existing : undefined;
+    const restored: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(incoming)) {
+      restored[key] = restoreMaskedValues(
+        stored?.[key],
+        value,
+        inSecret || matchesSecretPattern(key)
+      );
+    }
+    return restored;
+  }
+  return incoming;
+}
+
+export function mergeConfigPreservingSecrets(
   existingConfig: Record<string, unknown>,
   patch: Record<string, unknown>
 ): Record<string, unknown> {
   const merged = { ...existingConfig };
 
   for (const [key, value] of Object.entries(patch)) {
-    if (
-      matchesSecretPattern(key) &&
-      isMaskedSecretReplacement(value) &&
-      typeof existingConfig[key] === 'string'
-    ) {
-      merged[key] = existingConfig[key];
-      continue;
-    }
-
-    merged[key] = value;
+    merged[key] = restoreMaskedValues(existingConfig[key], value, matchesSecretPattern(key));
   }
 
   return merged;
@@ -1430,7 +1538,18 @@ export async function updatePluginConfigHandler(c: Context<{ Bindings: Env }>) {
     : `plugins:config:${pluginId}`;
 
   // Merge with existing config
-  const newConfig = mergeConfigPreservingSecrets(existingConfig, body.config);
+  let newConfig: Record<string, unknown>;
+  try {
+    newConfig = mergeConfigPreservingSecrets(existingConfig, body.config);
+  } catch (error) {
+    if (error instanceof UnrestorableMaskedValueError) {
+      // A mask with no stored secret behind it is not a credential: ask for the real value.
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: { field: 'plugin configuration' },
+      });
+    }
+    throw error;
+  }
   const builtinEmailPlugin = getBuiltinEmailPluginById(pluginId);
   if (builtinEmailPlugin && !builtinEmailPlugin.configSchema.safeParse(newConfig).success) {
     return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {

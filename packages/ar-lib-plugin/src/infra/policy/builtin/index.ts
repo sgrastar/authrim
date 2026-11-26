@@ -428,7 +428,10 @@ export class BuiltinPolicyInfra implements IPolicyInfra {
       const cached = await this.cache.get(`rules:${tenantId}`);
       if (cached) {
         try {
-          return JSON.parse(cached) as Rule[];
+          const parsed = JSON.parse(cached) as unknown;
+          if (Array.isArray(parsed) && parsed.every(isCachedRule)) {
+            return parsed;
+          }
         } catch {
           // Ignore parse errors
         }
@@ -445,7 +448,12 @@ export class BuiltinPolicyInfra implements IPolicyInfra {
       [tenantId, Date.now(), Date.now()]
     );
 
-    const parsedRules = rules.map((row) => this.parseRule(row));
+    // An allow rule whose conditions cannot be read is dropped (it must not match everyone); a deny
+    // rule whose conditions cannot be read denies everyone (fail closed), see parseRule.
+    const parsedRules = rules.flatMap((row) => {
+      const rule = this.parseRule(row);
+      return rule ? [rule] : [];
+    });
 
     // Cache rules
     if (this.cache) {
@@ -461,16 +469,34 @@ export class BuiltinPolicyInfra implements IPolicyInfra {
     return parsedRules;
   }
 
-  private parseRule(row: RuleRow): Rule {
+  private parseRule(row: RuleRow): Rule | null {
+    // No conditions at all (null or empty) is a rule that applies to everyone, as designed;
+    // conditions that are there but cannot be read mean the rule's scope is unknown.
+    const conditions = parseJsonArray(row.conditions, isRuleCondition);
+    if (conditions === null) {
+      if (row.action === 'allow') return null;
+      // A deny whose scope is unknown cannot be skipped: it applies to everyone (no conditions).
+      return {
+        id: row.id,
+        tenant_id: row.tenant_id,
+        priority: row.priority,
+        conditions: [],
+        action: 'deny',
+        roles_to_assign: [],
+        orgs_to_join: [],
+        attributes_to_set: [],
+        deny_reason: row.deny_reason ?? undefined,
+      };
+    }
     return {
       id: row.id,
       tenant_id: row.tenant_id,
       priority: row.priority,
-      conditions: parseJsonArray(row.conditions, isRuleCondition),
+      conditions,
       action: row.action === 'allow' ? 'allow' : 'deny',
-      roles_to_assign: parseJsonArray(row.roles_to_assign, isString),
-      orgs_to_join: parseJsonArray(row.orgs_to_join, isString),
-      attributes_to_set: parseJsonArray(row.attributes_to_set, isAttributeAssignment),
+      roles_to_assign: parseJsonArray(row.roles_to_assign, isString) ?? [],
+      orgs_to_join: parseJsonArray(row.orgs_to_join, isString) ?? [],
+      attributes_to_set: parseJsonArray(row.attributes_to_set, isAttributeAssignment) ?? [],
       deny_reason: row.deny_reason ?? undefined,
     };
   }
@@ -634,13 +660,14 @@ interface RuleCondition {
   value: unknown;
 }
 
-function parseJsonArray<T>(value: string | null, isItem: (item: unknown) => item is T): T[] {
+/** The items of a JSON array column: [] when it is empty, null when it cannot be read. */
+function parseJsonArray<T>(value: string | null, isItem: (item: unknown) => item is T): T[] | null {
   if (!value) return [];
   try {
     const parsed = JSON.parse(value) as unknown;
-    return Array.isArray(parsed) && parsed.every(isItem) ? parsed : [];
+    return Array.isArray(parsed) && parsed.every(isItem) ? parsed : null;
   } catch {
-    return [];
+    return null;
   }
 }
 
@@ -656,8 +683,45 @@ function isRuleCondition(value: unknown): value is RuleCondition {
   if (!isRecord(value) || typeof value.field !== 'string' || typeof value.operator !== 'string') {
     return false;
   }
-  return ['eq', 'neq', 'contains', 'starts_with', 'ends_with', 'matches', 'in', 'exists'].includes(
-    value.operator
+  switch (value.operator) {
+    case 'starts_with':
+    case 'ends_with':
+    case 'matches':
+      // Compared to a string only: any other value can never match.
+      return typeof value.value === 'string';
+    case 'in':
+      return Array.isArray(value.value);
+    case 'eq':
+    case 'neq':
+    case 'contains':
+      return 'value' in value;
+    case 'exists':
+      return true;
+    default:
+      return false;
+  }
+}
+
+/**
+ * The cached rules are written by parseRule, so this is the shape it produces. A cache entry that
+ * does not match (written by an older build, or damaged) is ignored and the rules are reloaded.
+ * The cache key itself stays as it is: it is an external contract.
+ */
+function isCachedRule(value: unknown): value is Rule {
+  return (
+    isRecord(value) &&
+    typeof value.id === 'string' &&
+    typeof value.tenant_id === 'string' &&
+    typeof value.priority === 'number' &&
+    (value.action === 'allow' || value.action === 'deny') &&
+    Array.isArray(value.conditions) &&
+    value.conditions.every(isRuleCondition) &&
+    Array.isArray(value.roles_to_assign) &&
+    value.roles_to_assign.every(isString) &&
+    Array.isArray(value.orgs_to_join) &&
+    value.orgs_to_join.every(isString) &&
+    Array.isArray(value.attributes_to_set) &&
+    value.attributes_to_set.every(isAttributeAssignment)
   );
 }
 

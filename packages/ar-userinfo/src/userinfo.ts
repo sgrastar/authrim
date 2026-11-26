@@ -24,8 +24,6 @@ import {
   pairwiseTokenLacksReference,
   buildStandardUserClaims,
   canonicalProjectionToOIDCClaimsUser,
-  canServeUserInfoWithPIIStatus,
-  resolveOIDCPIIRequirement,
   applyOIDCIdentityMapping,
   createAuthContextFromHono,
   OIDCIdentityMappingRuntimeError,
@@ -40,7 +38,6 @@ import {
   resolveAccountDataContextFromHono,
   resolveIDTokenSigningPolicy,
   resolveAssuranceClaims,
-  asksForEduPersonAssurance,
 } from '@authrim/ar-lib-core';
 import {
   resolveUserInfoSigningAlgorithm,
@@ -274,7 +271,6 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
   );
   const projection = await canonicalProjectionRepository.findByLegacyUserId(sub);
   const user = projection ? canonicalProjectionToOIDCClaimsUser(projection) : null;
-  const piiStatus = undefined;
 
   if (!user) {
     // Security: Generic message to prevent user enumeration
@@ -286,29 +282,6 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
       },
       401
     );
-  }
-
-  const piiRequirement = resolveOIDCPIIRequirement({
-    scopes,
-    claimsRequest,
-    targets: ['userinfo'],
-  });
-  if (piiStatus) {
-    const piiAccess = canServeUserInfoWithPIIStatus(piiStatus, {
-      requiresPII: piiRequirement.requiresPII,
-    });
-    if (!piiAccess.ok) {
-      const status = piiAccess.error === 'invalid_token' ? 401 : 503;
-      c.header('Cache-Control', 'no-store');
-      c.header('Pragma', 'no-cache');
-      return c.json(
-        {
-          error: piiAccess.error,
-          error_description: piiAccess.error_description,
-        },
-        status
-      );
-    }
   }
 
   const userData = {
@@ -342,33 +315,22 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
 
   // eduperson_assurance comes from the person's evidence, read now and only when the request asks
   // for it and the tenant has values to release. A failed read releases nothing (and is logged).
-  // Without the client's metadata (the client was deleted, and an access token it was issued is
-  // still valid) the client's claims policy, identity mapping, Destination Profile and attribute
-  // release consent cannot be applied, and those are what decide who may be told a person's
-  // assurance. So it is not released then: the rest of UserInfo is answered as before.
-  const assuranceRequest = {
+  // A token whose client is unknown never gets here (it is refused above): the client's claims
+  // policy, identity mapping, Destination Profile and attribute release consent decide who may be
+  // told a person's assurance, and they cannot be applied without the client's metadata.
+  const assuranceClaims = await resolveAssuranceClaims({
     target: 'userinfo' as const,
     scopes,
     claimsRequest,
     includeScopeClaims: true,
-  };
-  if (!clientMetadata && asksForEduPersonAssurance(assuranceRequest)) {
-    log.warn('eduperson_assurance not released: the client of the access token is unknown', {
-      client_id,
-    });
-  }
-  const assuranceClaims = clientMetadata
-    ? await resolveAssuranceClaims({
-        ...assuranceRequest,
-        tenantId,
-        userId: sub,
-        clientPolicy: clientMetadata,
-        requestScope: c,
-        loadSettings: () => resolveEffectiveSettings(c.env, 'assurance', { tenantId }),
-        getAdapter: () => piiCtx.coreAdapter,
-        onError: (message, error) => log.error(message, { client_id }, error as Error),
-      })
-    : {};
+    tenantId,
+    userId: sub,
+    clientPolicy: clientMetadata,
+    requestScope: c,
+    loadSettings: () => resolveEffectiveSettings(c.env, 'assurance', { tenantId }),
+    getAdapter: () => piiCtx.coreAdapter,
+    onError: (message, error) => log.error(message, { client_id }, error as Error),
+  });
 
   // A `sub` value the claims request names is the sub the app was given, as recorded in the token
   // (never derived again: the app's configuration may have changed since), never the account's id.
@@ -518,15 +480,12 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
 
   // The information release the token's authorization was approved for: claims about the person
   // it does not approve are left out, and a required one it does not approve refuses the answer
-  // (the app asks for authorization again, where the person is asked). Without the app's
-  // metadata nothing about the person is released (its rules cannot be applied).
-  const held = clientMetadata
-    ? applyReleaseApproval(
-        userClaims,
-        releaseOptional,
-        readReleaseApproval(tokenClaims[RELEASE_APPROVAL_CLAIM])
-      )
-    : applyReleaseApproval(userClaims, new Set(Object.keys(userClaims)), null);
+  // (the app asks for authorization again, where the person is asked).
+  const held = applyReleaseApproval(
+    userClaims,
+    releaseOptional,
+    readReleaseApproval(tokenClaims[RELEASE_APPROVAL_CLAIM])
+  );
   if (!held.ok) {
     log.warn('OIDC UserInfo claim release is not approved', {
       client_id,
@@ -548,15 +507,6 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
   Object.assign(userClaims, held.claims);
 
   // JWE: Check if client requires UserInfo encryption (RFC 7516)
-  if (!client_id || !clientMetadata) {
-    // If no client_id in token or metadata not found, return unencrypted response
-    // OIDC Security: Set cache control headers to prevent caching of user data
-    c.header('Cache-Control', 'no-store');
-    c.header('Pragma', 'no-cache');
-    return c.json(userClaims);
-  }
-
-  // Check if client requires UserInfo encryption
   if (isUserInfoEncryptionRequired(clientMetadata)) {
     const alg = clientMetadata.userinfo_encrypted_response_alg as string;
     const enc = clientMetadata.userinfo_encrypted_response_enc as string;

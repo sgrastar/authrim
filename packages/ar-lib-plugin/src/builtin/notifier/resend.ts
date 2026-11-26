@@ -413,7 +413,10 @@ async function sendEmail(
     body: JSON.stringify(request),
     requireHttps: true,
     timeoutMs: config.timeoutMs,
-    maxResponseSize: MAX_RESEND_SEND_RESPONSE_BYTES,
+    // safeFetch would throw on an oversize Content-Length before the status is known, losing the
+    // retry decision for a 429/5xx. The size is enforced below while reading the body (streaming),
+    // with a limit per outcome.
+    maxResponseSize: 0,
   });
 
   if (response.ok) {
@@ -428,18 +431,30 @@ async function sendEmail(
   }
 
   // Handle error response
-  const errorBody = await readResponseTextWithLimit(response, MAX_RESEND_ERROR_RESPONSE_BYTES);
+  let errorBody = '';
+  try {
+    errorBody = await readResponseTextWithLimit(response, MAX_RESEND_ERROR_RESPONSE_BYTES);
+  } catch {
+    // The body is too large or cannot be read: the status still decides the outcome.
+  }
   let errorMessage = `Resend API error: ${response.status}`;
   let errorCode: string | undefined;
-  let retryable = false;
+  // Server errors and rate limiting are retryable whether or not the body can be read (a gateway
+  // error is often HTML).
+  const retryable = response.status >= 500 || response.status === 429;
 
   try {
-    const errorData = JSON.parse(errorBody) as ResendErrorResponse;
-    errorMessage = errorData.message || errorMessage;
-    errorCode = errorData.name;
-
-    // Determine if error is retryable
-    retryable = response.status >= 500 || response.status === 429;
+    const errorData: unknown = JSON.parse(errorBody);
+    if (errorData !== null && typeof errorData === 'object') {
+      const { message, name } = errorData as Partial<Record<keyof ResendErrorResponse, unknown>>;
+      // Only strings are used: a body with another shape keeps the status-based default.
+      if (typeof message === 'string' && message) {
+        errorMessage = message;
+      }
+      if (typeof name === 'string') {
+        errorCode = name;
+      }
+    }
   } catch {
     // Failed to parse error body, use status code message
   }
