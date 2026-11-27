@@ -95,16 +95,50 @@ class ScimFilterTokenizer {
     this.advance(); // Skip opening quote
 
     while (this.current && this.current !== '"') {
-      if (this.current === '\\' && this.peek() === '"') {
-        this.advance();
-        value += '"';
-        this.advance();
+      if (this.current === '\\' && this.position < this.input.length) {
+        // RFC 7644 3.4.2.2: comparison values follow JSON string rules (RFC 8259 section 7).
+        // `position` already points at the character after `current`.
+        const next = this.input[this.position];
+        const simple: Record<string, string> = {
+          '"': '"',
+          '\\': '\\',
+          '/': '/',
+          b: '\b',
+          f: '\f',
+          n: '\n',
+          r: '\r',
+          t: '\t',
+        };
+        if (next in simple) {
+          value += simple[next];
+          this.advance();
+          this.advance();
+        } else if (
+          next === 'u' &&
+          /^[0-9a-fA-F]{4}$/.test(this.input.slice(this.position + 1, this.position + 5))
+        ) {
+          const code = parseInt(this.input.slice(this.position + 1, this.position + 5), 16);
+          // A NUL cannot be compared reliably (SQLite LIKE stops at it), so reject it outright.
+          if (code === 0) {
+            throw new Error('Invalid string literal: NUL character');
+          }
+          value += String.fromCharCode(code);
+          for (let i = 0; i < 6; i++) this.advance();
+        } else {
+          // Unknown escape: keep the backslash literally (lenient, as before).
+          value += this.current;
+          this.advance();
+        }
       } else {
         value += this.current;
         this.advance();
       }
     }
 
+    // An unterminated literal is a syntax error, not a string that ends at end of input.
+    if (this.current !== '"') {
+      throw new Error('Unterminated string literal');
+    }
     this.advance(); // Skip closing quote
     return { type: 'STRING', value };
   }
@@ -152,6 +186,11 @@ class ScimFilterTokenizer {
 /**
  * Parser for SCIM filter expressions
  */
+/** Escape LIKE wildcards so co/sw/ew compare literally (paired with ESCAPE '\\'). */
+function escapeLike(value: unknown): string {
+  return String(value).replace(/[\\%_]/g, '\\$&');
+}
+
 export class ScimFilterParser {
   private tokenizer: ScimFilterTokenizer;
   private currentToken: { type: string; value: string } | null = null;
@@ -175,7 +214,14 @@ export class ScimFilterParser {
    * Parse the filter expression
    */
   public parse(): ScimFilterNode {
-    return this.parseLogicalOr();
+    const node = this.parseLogicalOr();
+    // RFC 7644 3.4.2.2: the whole filter must be consumed. Trailing tokens (e.g. a second
+    // comparison with no logical operator, or a stray ")") would otherwise be silently dropped,
+    // changing the meaning of the filter.
+    if (this.currentToken !== null) {
+      throw new Error(`Unexpected token: ${this.currentToken.type}`);
+    }
+    return node;
   }
 
   private parseLogicalOr(): ScimFilterNode {
@@ -379,14 +425,14 @@ export function filterToSql(
             params.push(n.value);
             return `${column} != ?${paramIndex + 1}`;
           case 'co':
-            params.push(`%${n.value}%`);
-            return `${column} LIKE ?${paramIndex + 1}`;
+            params.push(`%${escapeLike(n.value)}%`);
+            return `${column} LIKE ?${paramIndex + 1} ESCAPE '\\'`;
           case 'sw':
-            params.push(`${n.value}%`);
-            return `${column} LIKE ?${paramIndex + 1}`;
+            params.push(`${escapeLike(n.value)}%`);
+            return `${column} LIKE ?${paramIndex + 1} ESCAPE '\\'`;
           case 'ew':
-            params.push(`%${n.value}`);
-            return `${column} LIKE ?${paramIndex + 1}`;
+            params.push(`%${escapeLike(n.value)}`);
+            return `${column} LIKE ?${paramIndex + 1} ESCAPE '\\'`;
           case 'pr':
             return `${column} IS NOT NULL`;
           case 'gt':

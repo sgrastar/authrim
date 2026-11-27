@@ -233,7 +233,7 @@ describe('filterToSql details', () => {
 
   it('numbers placeholders sequentially across a logical expression', () => {
     expect(filterToSql(parseScimFilter('a eq 1 and b pr and c sw "x"'))).toEqual({
-      sql: '((a = ?1 AND b IS NOT NULL) AND c LIKE ?2)',
+      sql: "((a = ?1 AND b IS NOT NULL) AND c LIKE ?2 ESCAPE '\\')",
       params: [1, 'x%'],
     });
   });
