@@ -81,20 +81,19 @@ import {
 // Admin operations are recorded through the forwarding shim (see the helper).
 vi.mock('../admin-operation-audit', () => import('./helpers/legacy-admin-audit-shim'));
 
-function app(hierarchyLevel = 80, auth: { permissions?: string[]; maxGrantTier?: number } = {}) {
+function app(maxGrantTier = 2, auth: { permissions?: string[]; maxGrantTier?: number } = {}) {
   const instance = new Hono<{
     Bindings: { EMAIL_FROM?: string };
     Variables: {
       adminAuth: {
         adminId: string;
-        hierarchyLevel: number;
         permissions?: string[];
         maxGrantTier?: number;
       };
     };
   }>();
   instance.use('*', async (c, next) => {
-    c.set('adminAuth', { adminId: 'admin-actor', hierarchyLevel, ...auth });
+    c.set('adminAuth', { adminId: 'admin-actor', maxGrantTier, ...auth });
     await next();
   });
   instance.post('/tenants/:id/invitations', createTenantInvitationHandler as never);
@@ -111,7 +110,6 @@ function invitationRow(overrides: Record<string, unknown> = {}) {
     invited_email: 'user@example.test',
     invited_by: 'admin-actor',
     role_id: null,
-    org_id: null,
     max_uses: 1,
     use_count: 0,
     expires_at: 2_000_000_000,
@@ -133,8 +131,7 @@ describe('tenant invitation security behavior', () => {
     mocks.query.mockResolvedValue([]);
     mocks.queryOne.mockImplementation(async (sql: string) => {
       if (sql.includes('FROM tenants')) return { id: 'tenant-a', name: 'Tenant A' };
-      if (sql.includes('FROM roles')) return { id: 'role-a', grant_tier: 1, hierarchy_level: 10 };
-      if (sql.includes('FROM organizations')) return { id: 'org-a' };
+      if (sql.includes('FROM roles')) return { id: 'role-a', grant_tier: 1 };
       if (sql.includes('FROM "groups"')) return { id: 'group-a' };
       if (sql.includes('COUNT(*)')) return { count: 0 };
       if (sql.includes('FROM tenant_invitations')) return { id: 'invitation-a' };
@@ -184,7 +181,6 @@ describe('tenant invitation security behavior', () => {
   it.each([
     { invited_email: 'not-email' },
     { role_id: '' },
-    { org_id: 'x'.repeat(64) },
     { group_id: '' },
     { max_uses: -2 },
     { max_uses: 1001 },
@@ -217,7 +213,6 @@ describe('tenant invitation security behavior', () => {
 
   it.each([
     [{ role_id: 'role-b' }, 'roles'],
-    [{ org_id: 'org-b' }, 'organizations'],
     [{ group_id: 'group-b' }, '"groups"'],
   ])('rejects a foreign or inactive assignment target %#', async (body, table) => {
     mocks.queryOne.mockImplementation(async (sql: string) => {
@@ -245,6 +240,7 @@ describe('tenant invitation security behavior', () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           role_id: 'role-a',
+          // No longer a field of an invitation: ignored, not stored.
           org_id: 'org-a',
           max_uses: 2,
           expires_in_hours: 24,
@@ -259,28 +255,29 @@ describe('tenant invitation security behavior', () => {
     expect(body.email_sent).toBe(false);
     expect(mocks.execute).toHaveBeenCalledWith(
       expect.stringContaining('INSERT INTO tenant_invitations'),
-      expect.arrayContaining(['tenant-a', 'admin-actor', 'role-a', 'org-a', 2])
+      expect.arrayContaining(['tenant-a', 'admin-actor', 'role-a', 2])
     );
+    expect(mocks.execute.mock.calls[0][1]).not.toContain('org-a');
+    expect(String(mocks.execute.mock.calls[0][0])).not.toContain('org_id');
     expect(mocks.audit).toHaveBeenCalledWith(
       expect.anything(),
       'tenant_invitation.create',
       'tenant_invitation',
       expect.any(String),
-      expect.objectContaining({ tenant_id: 'tenant-a', role_id: 'role-a', org_id: 'org-a' })
+      expect.objectContaining({ tenant_id: 'tenant-a', role_id: 'role-a' })
     );
   });
 
   it.each([
-    ['above', 90],
-    ['at', 80],
-  ])('refuses a role %s the inviter level, as role assignment does', async (_name, level) => {
+    ['without a ceiling', 0],
+    ['below the role', 1],
+  ])('refuses a role to an inviter %s, as role assignment does', async (_name, ceiling) => {
     mocks.queryOne.mockImplementation(async (sql: string) => {
       if (sql.includes('FROM tenants')) return { id: 'tenant-a', name: 'Tenant A' };
-      if (sql.includes('FROM roles'))
-        return { id: 'role-a', grant_tier: 1, hierarchy_level: level };
+      if (sql.includes('FROM roles')) return { id: 'role-a', grant_tier: 2 };
       return null;
     });
-    const response = await app(80).request('/tenants/tenant-a/invitations', {
+    const response = await app(ceiling).request('/tenants/tenant-a/invitations', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ role_id: 'role-a', max_uses: 1, expires_in_hours: 24 }),
@@ -293,11 +290,10 @@ describe('tenant invitation security behavior', () => {
   it('refuses a role whose grant tier is above the inviter ceiling', async () => {
     mocks.queryOne.mockImplementation(async (sql: string) => {
       if (sql.includes('FROM tenants')) return { id: 'tenant-a', name: 'Tenant A' };
-      if (sql.includes('FROM roles')) return { id: 'role-a', grant_tier: 3, hierarchy_level: 10 };
+      if (sql.includes('FROM roles')) return { id: 'role-a', grant_tier: 3 };
       return null;
     });
-    // Level 80 maps to grant tier 2: the role's level is below the inviter's, its tier is not.
-    const response = await app(80).request('/tenants/tenant-a/invitations', {
+    const response = await app(2).request('/tenants/tenant-a/invitations', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ role_id: 'role-a' }),
@@ -308,31 +304,33 @@ describe('tenant invitation security behavior', () => {
 
   it('refuses a group carrying roles the inviter may not delegate', async () => {
     // The roles the group (or an ancestor) carries.
-    mocks.query.mockResolvedValue([{ grant_tier: 1, hierarchy_level: 10 }]);
+    mocks.query.mockResolvedValue([{ grant_tier: 1 }]);
     const body = JSON.stringify({ group_id: 'group-a' });
     const headers = { 'Content-Type': 'application/json' };
     // Without the role-grant permission.
-    let response = await app(80).request('/tenants/tenant-a/invitations', {
+    let response = await app(2).request('/tenants/tenant-a/invitations', {
       method: 'POST',
       headers,
       body,
     });
     expect(response.status).toBe(403);
     // With it, but a grant ceiling below the role's tier.
-    mocks.query.mockResolvedValue([{ grant_tier: 2, hierarchy_level: 10 }]);
-    response = await app(80, {
+    mocks.query.mockResolvedValue([{ grant_tier: 2 }]);
+    response = await app(2, {
       permissions: ['admin:roles:write'],
       maxGrantTier: 1,
     }).request('/tenants/tenant-a/invitations', { method: 'POST', headers, body });
     expect(response.status).toBe(403);
     expect(mocks.execute).not.toHaveBeenCalled();
-    expect(String(mocks.query.mock.calls[0]?.[0])).toContain('group_role_assignments');
-    expect(mocks.query.mock.calls[0]?.[1]).toEqual(expect.arrayContaining(['tenant-a', 'group-a']));
+    const grantRead = mocks.query.mock.calls.find((call) =>
+      String(call[0]).includes('group_role_assignments')
+    );
+    expect(grantRead?.[1]).toEqual(expect.arrayContaining(['tenant-a', 'group-a']));
   });
 
   it('stores and returns the group of an invitation the inviter may delegate', async () => {
-    mocks.query.mockResolvedValue([{ grant_tier: 1, hierarchy_level: 10 }]);
-    const response = await app(80, { permissions: ['admin:roles:write'] }).request(
+    mocks.query.mockResolvedValue([{ grant_tier: 1 }]);
+    const response = await app(2, { permissions: ['admin:roles:write'] }).request(
       '/tenants/tenant-a/invitations',
       {
         method: 'POST',

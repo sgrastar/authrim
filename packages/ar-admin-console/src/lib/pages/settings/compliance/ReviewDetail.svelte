@@ -203,8 +203,8 @@
 	function accessText(item: ReviewItem): string {
 		if (item.permission_type === 'role')
 			return t('cmp.access.role', { value: item.permission_value });
-		if (item.permission_type === 'organization') {
-			return t('cmp.access.organization', { value: item.permission_value });
+		if (item.permission_type === 'group') {
+			return t('cmp.access.group', { value: item.permission_value });
 		}
 		return t('cmp.access.account');
 	}

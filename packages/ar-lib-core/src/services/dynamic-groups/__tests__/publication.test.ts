@@ -72,9 +72,11 @@ describe('dynamic membership publication', () => {
     generation: number,
     results: Record<string, { member: boolean; dynamic: boolean }>,
     ruleVersion = 1,
-    committed: InputVersion = VERSION
+    committed: InputVersion = VERSION,
+    inputValidUntil?: number
   ) {
     const evaluation: Evaluation = {
+      ...(inputValidUntil === undefined ? {} : { inputValidUntil }),
       nodes: {},
       evaluatedNodes: 0,
       groups: Object.fromEntries(
@@ -170,7 +172,7 @@ describe('dynamic membership publication', () => {
     const { cache, put } = kv();
     commit(1, {
       A: { member: true, dynamic: true },
-      B: { member: true, dynamic: false }, // manual or SCIM: not a dynamic row
+      B: { member: true, dynamic: false }, // SCIM: not a dynamic row
       C: { member: false, dynamic: false },
     });
     const result = await publishDynamicMemberships(store, reader, account.adapter, { cache });
@@ -194,6 +196,36 @@ describe('dynamic membership publication', () => {
       NOW
     );
     expect([...effective.directGroupIds]).toEqual(['A']);
+  });
+
+  it('lets a row derived from an expiring manual membership expire with it', async () => {
+    // D derives from a manual membership that ends at NOW + 100.
+    commit(1, { A: { member: true, dynamic: true } }, 1, VERSION, NOW + 100);
+    expect((await store.snapshot(USER, reader)).freshness).toBe('fresh');
+    await publishDynamicMemberships(store, reader, account.adapter);
+    expect(rows()).toEqual([
+      expect.objectContaining({ group_id: 'A', lifecycle_state: 'active', stale_after: NOW + 100 }),
+    ]);
+    // Published again before then: still capped, and current (not rewritten each time).
+    vi.setSystemTime((NOW + 90) * 1000);
+    expect((await publishDynamicMemberships(store, reader, account.adapter)).status).toBe(
+      'current'
+    );
+    // Past it, the result is not fresh: the scheduler evaluates again, the rows stop granting.
+    vi.setSystemTime((NOW + 101) * 1000);
+    expect((await store.snapshot(USER, reader)).freshness).toBe('stale');
+    expect((await publishDynamicMemberships(store, reader, account.adapter)).status).toBe(
+      'not_fresh'
+    );
+    expect(rows()[0].stale_after).toBeLessThanOrEqual(NOW + 101);
+  });
+
+  it('evaluates again once a manual membership that starts later starts', async () => {
+    // Not yet a member; the manual membership starts at NOW + 100.
+    commit(1, { A: { member: false, dynamic: false } }, 1, VERSION, NOW + 100);
+    expect((await store.snapshot(USER, reader)).freshness).toBe('fresh');
+    vi.setSystemTime((NOW + 100) * 1000);
+    expect((await store.snapshot(USER, reader)).freshness).toBe('stale');
   });
 
   it('replaces the previous generation and keeps rows of other sources', async () => {
@@ -409,17 +441,6 @@ describe('dynamic membership publication', () => {
       (await publishDynamicMemberships(store, reader, account.adapter, { freshnessSeconds: 3600 }))
         .status
     ).toBe('current');
-  });
-
-  it('writes a manual input only for the catalog revision it was checked against', async () => {
-    await expect(store.setManual(USER, 'A', true, 'admin', 0)).rejects.toThrow(
-      'group_version_conflict'
-    );
-    // Checked at revision 1, then the group was removed: a conflict, not "not found".
-    await store.save([group('B'), group('C')], BUILTIN_GROUP_FIELDS, 1, 'actor');
-    await expect(store.setManual(USER, 'A', true, 'admin', 1)).rejects.toThrow(
-      'group_version_conflict'
-    );
   });
 
   it('refuses an older generation also after the rows were deleted', async () => {
@@ -757,7 +778,11 @@ describe('service groups as canonical groups', () => {
     membership(shardB, 'm2', 'u2');
     meta.db
       .exec(`INSERT INTO group_role_assignments(id, tenant_id, group_id, role_id, created_at, updated_at)
-      VALUES ('g1', '${TENANT}', 'A', 'reader', 1, 1)`);
+      VALUES ('g1', '${TENANT}', 'A', 'reader', 1, 1);
+      INSERT INTO resource_permissions(id, tenant_id, subject_type, subject_id, resource_type,
+        resource_id, actions_json, created_at, updated_at)
+      VALUES ('rp-a', '${TENANT}', 'group', 'A', 'documents', 'd1', '["read"]', 1, 1),
+             ('rp-user', '${TENANT}', 'user', 'A', 'documents', 'd1', '["read"]', 1, 1)`);
     await store.save([group('B')], BUILTIN_GROUP_FIELDS, 1, 'actor');
     await expect(
       removeDynamicGroup(meta.adapter, [shardA.adapter], TENANT, 'B', cache)
@@ -770,6 +795,10 @@ describe('service groups as canonical groups', () => {
     expect(meta.db.prepare('SELECT COUNT(*) AS n FROM group_role_assignments').get()).toEqual({
       n: 0,
     });
+    // The group's resource permissions go with it; a user's of the same id stays.
+    expect(meta.db.prepare('SELECT id FROM resource_permissions ORDER BY id').all()).toEqual([
+      { id: 'rp-user' },
+    ]);
     expect(canonical().map((row) => (row as { id: string }).id)).toEqual(['B']);
     expect(put).toHaveBeenCalledWith(`rbac:v2:tenant-version:${TENANT}`, expect.any(String));
     expect(put).toHaveBeenCalledWith(`rbac:v2:subject-version:${TENANT}:u1`, expect.any(String));
@@ -898,6 +927,51 @@ describe('SCIM link input from SCIM memberships', () => {
     meta.db.exec(`UPDATE "groups" SET lifecycle_state = 'active' WHERE id = 'scim-1'`);
     core.db.exec(`UPDATE group_memberships SET lifecycle_state = 'revoked' WHERE id = 's1'`);
     expect((await instance.load(plan)).sources.linked).toEqual({ manual: false, scim: false });
+  });
+
+  it('reads effective manual memberships as the manual input, and versions them', async () => {
+    const before = await instance.version();
+    const now = Math.floor(Date.now() / 1000);
+    const insert = core.db.prepare(
+      `INSERT INTO group_memberships(id, tenant_id, group_id, subject_id, assignment_source,
+        source_ref, starts_at, expires_at, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'manual', '', ?, ?, 1, 1)`
+    );
+    // Not yet started and already expired: not members.
+    insert.run('m-later', TENANT, 'linked', USER, now + 3600, null);
+    insert.run('m-ended', TENANT, 'broken', USER, null, now - 60);
+    expect((await instance.version()).core).toBe(before.core + 2);
+    const manual = async () =>
+      Object.fromEntries(
+        Object.entries((await instance.load(plan)).sources).map(([id, source]) => [
+          id,
+          source.manual,
+        ])
+      );
+    expect(await manual()).toEqual({ linked: false, broken: false });
+    core.db.exec(`UPDATE group_memberships SET starts_at = NULL WHERE id = 'm-later'`);
+    expect((await instance.version()).core).toBe(before.core + 3);
+    expect(await manual()).toEqual({ linked: true, broken: false });
+    // Removing it is a change of the input too.
+    core.db.exec(`UPDATE group_memberships SET lifecycle_state = 'revoked' WHERE id = 'm-later'`);
+    expect((await instance.version()).core).toBe(before.core + 4);
+    expect(await manual()).toEqual({ linked: false, broken: false });
+  });
+
+  it('reports when the manual input changes by itself (the next start or end)', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const insert = core.db.prepare(
+      `INSERT INTO group_memberships(id, tenant_id, group_id, subject_id, assignment_source,
+        source_ref, starts_at, expires_at, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'manual', '', ?, ?, 1, 1)`
+    );
+    expect((await instance.load(plan)).validUntil).toBeUndefined();
+    // A start already past changes nothing any more; the end still does.
+    insert.run('m-1', TENANT, 'linked', USER, now - 10, now + 500);
+    insert.run('m-2', TENANT, 'broken', USER, now + 200, null);
+    // Another subject's membership is not this subject's input.
+    insert.run('m-3', TENANT, 'broken', USER + '-other', null, now + 50);
+    expect((await instance.load(plan)).validUntil).toBe(now + 200);
   });
 
   it('keeps evaluating a plan saved without the self-writable mark', async () => {

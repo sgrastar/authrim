@@ -198,9 +198,6 @@ describe('bridgeExternalProvidersListed', () => {
 describe('externalJitSignupPolicy', () => {
   const rest = {
     'external_idp.jit_require_verified_email': true,
-    'external_idp.jit_join_all_matching_orgs': false,
-    'external_idp.jit_allow_user_without_org': true,
-    'external_idp.jit_allow_unverified_domain_mappings': false,
     'external_idp.jit_default_role_id': 'role_end_user',
   };
 
@@ -335,9 +332,6 @@ describe('jitSettingValuesWellTyped', () => {
   const good = {
     'external_idp.jit_provisioning_enabled': true,
     'external_idp.jit_require_verified_email': true,
-    'external_idp.jit_join_all_matching_orgs': false,
-    'external_idp.jit_allow_user_without_org': true,
-    'external_idp.jit_allow_unverified_domain_mappings': false,
     'external_idp.jit_allowed_provider_ids': '',
     'external_idp.jit_default_role_id': 'role_end_user',
   };

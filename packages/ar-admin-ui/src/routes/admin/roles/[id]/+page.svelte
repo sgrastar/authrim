@@ -291,6 +291,12 @@
 					<dt class="info-label">{$LL.admin_roles_type()}</dt>
 					<dd class="info-value">{formatRoleType(roleType, $LL)}</dd>
 				</div>
+				{#if role.grant_tier !== undefined}
+					<div class="info-item">
+						<dt class="info-label">{$LL.admin_roles_grant_tier()}</dt>
+						<dd class="info-value">{role.grant_tier}</dd>
+					</div>
+				{/if}
 				<div class="info-item">
 					<dt class="info-label">{$LL.admin_roles_assigned_users()}</dt>
 					<dd class="info-value">{role.assignment_count}</dd>

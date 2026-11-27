@@ -105,8 +105,9 @@ function resourceFromPath(routePath) {
   const resource =
     [...segments]
       .reverse()
-      .find((segment) => !actionWords.has(segment) && !['status', 'stats', 'info'].includes(segment)) ??
-    lastMeaningfulSegment(routePath);
+      .find(
+        (segment) => !actionWords.has(segment) && !['status', 'stats', 'info'].includes(segment)
+      ) ?? lastMeaningfulSegment(routePath);
   return titleCase(singular(resource));
 }
 
@@ -169,12 +170,18 @@ function adminTag(routePath) {
     if (routePath.includes('/rate-limits')) return 'Settings - Rate Limits';
     if (routePath.includes('/audit')) return 'Settings - Audit';
     if (routePath.includes('/pii-partitions')) return 'Settings - PII';
-    if (routePath.includes('/oauth') || routePath.includes('/token') || routePath.includes('/introspection')) {
+    if (
+      routePath.includes('/oauth') ||
+      routePath.includes('/token') ||
+      routePath.includes('/introspection')
+    ) {
       return 'Settings - OAuth and Tokens';
     }
     if (routePath.includes('/error')) return 'Settings - Error Handling';
-    if (routePath.includes('/shards') || routePath.includes('/cache-mode')) return 'Settings - Storage and Runtime';
-    if (routePath.includes('/security') || routePath.includes('/assurance')) return 'Settings - Security';
+    if (routePath.includes('/shards') || routePath.includes('/cache-mode'))
+      return 'Settings - Storage and Runtime';
+    if (routePath.includes('/security') || routePath.includes('/assurance'))
+      return 'Settings - Security';
     if (routePath.includes('/plugins')) return 'Settings - Plugins';
     if (routePath.includes('/ui-')) return 'Settings - UI';
     if (routePath.includes('/migrate')) return 'Settings - Migration';
@@ -183,13 +190,19 @@ function adminTag(routePath) {
   if (routePath.startsWith('/api/admin/users')) return 'Users';
   if (routePath.startsWith('/api/admin/clients')) return 'Clients';
   if (routePath.startsWith('/api/admin/tenants')) return 'Tenants';
-  if (routePath.includes('/tenant-vanity-domains') || routePath.includes('/tenant-domain-mappings')) {
+  if (
+    routePath.includes('/tenant-vanity-domains') ||
+    routePath.includes('/tenant-domain-mappings')
+  ) {
     return 'Tenant Domains';
   }
   if (routePath.startsWith('/api/admin/admins')) return 'Admin Users';
   if (routePath.startsWith('/api/admin/admin-roles')) return 'Admin Roles';
   if (routePath.startsWith('/api/admin/admin-attributes')) return 'Admin Attributes';
-  if (routePath.startsWith('/api/admin/admin-rebac') || routePath.startsWith('/api/admin/admin-relationships')) {
+  if (
+    routePath.startsWith('/api/admin/admin-rebac') ||
+    routePath.startsWith('/api/admin/admin-relationships')
+  ) {
     return 'Admin ReBAC';
   }
   if (routePath.startsWith('/api/admin/admin-policies')) return 'Admin Policies';
@@ -203,7 +216,6 @@ function adminTag(routePath) {
   if (routePath.startsWith('/auth/step-up')) return 'Step-Up Authentication';
   if (routePath.startsWith('/api/admin/policies')) return 'Policy Administration';
   if (routePath.startsWith('/api/admin/rebac')) return 'ReBAC Administration';
-  if (routePath.startsWith('/api/admin/organizations')) return 'Organizations';
   if (routePath.startsWith('/api/admin/roles')) return 'Roles';
   if (routePath.startsWith('/api/admin/attributes')) return 'User Attributes';
   if (routePath.startsWith('/api/admin/custom-claims')) return 'Custom Claims';
@@ -219,7 +231,10 @@ function adminTag(routePath) {
   if (routePath.startsWith('/api/admin/database-connections')) return 'Database Connections';
   if (routePath.startsWith('/api/admin/machine-access')) return 'Machine Access';
   if (routePath.startsWith('/api/admin/support-ops')) return 'Support Operations';
-  if (routePath.startsWith('/api/admin/plugins') || routePath.startsWith('/api/admin/platform/plugins')) {
+  if (
+    routePath.startsWith('/api/admin/plugins') ||
+    routePath.startsWith('/api/admin/platform/plugins')
+  ) {
     return 'Plugins';
   }
   if (routePath.startsWith('/api/admin/security')) return 'Security';
@@ -358,7 +373,10 @@ function refineOperations(doc, docName) {
       }
 
       const currentSummary = operation.summary ?? '';
-      if (/^(GET|POST|PUT|PATCH|DELETE)(\s|$)/.test(currentSummary) || operation['x-authrim-route-coverage']) {
+      if (
+        /^(GET|POST|PUT|PATCH|DELETE)(\s|$)/.test(currentSummary) ||
+        operation['x-authrim-route-coverage']
+      ) {
         operation.summary = summaryFor(method, routePath);
       }
 
@@ -438,6 +456,9 @@ refineOperations(userSelfService, 'userSelfService');
 
 await writeFile(path.join(root, docs.admin), stringify(admin, { lineWidth: 100 }));
 await writeFile(path.join(root, docs.frontendAuth), stringify(frontendAuth, { lineWidth: 100 }));
-await writeFile(path.join(root, docs.userSelfService), stringify(userSelfService, { lineWidth: 100 }));
+await writeFile(
+  path.join(root, docs.userSelfService),
+  stringify(userSelfService, { lineWidth: 100 })
+);
 
 process.stdout.write('Refined management OpenAPI navigation, summaries, and descriptions.\n');

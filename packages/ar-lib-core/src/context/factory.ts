@@ -217,7 +217,6 @@ export class ContextFactory implements IContextFactory {
       totp: new TotpCredentialRepository(this.coreAdapter, this.tenantId),
       role: new RoleRepository(this.coreAdapter, this.tenantId),
       sessionClient: new SessionClientRepository(this.coreAdapter, this.tenantId),
-      // Future: organization: new OrganizationRepository(this.coreAdapter),
     };
   }
 

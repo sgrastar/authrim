@@ -4,7 +4,7 @@
  *
  * Contract:
  * - Only groups whose committed result has `dynamic === true` are published (`member` also
- *   counts manual and SCIM contributions, which have their own rows or none), less the groups
+ *   counts SCIM contributions, which have their own rows), less the groups
  *   whose result depends on a field the person can write themselves while they carry roles
  *   (role-guard.ts; the fields' self-writable mark is read fresh at every publication). Each is a
  *   row on the subject's account database with `assignment_source = 'dynamic'` and
@@ -398,6 +398,10 @@ export async function publishDynamicMemberships(
     if (existing.length && !published?.generation)
       await markStale(account, tenantId, subjectId, null);
     const now = nowSeconds();
+    // Rows never outlive the result: at most the window, and no later than the time the input
+    // changes by itself (a manual membership starting or ending).
+    const validUntil = snapshot.evaluation.inputValidUntil;
+    const expiry = validUntil === undefined ? now + window : Math.min(now + window, validUntil);
     const active = existing.filter((row) => row.lifecycle_state === 'active');
     const current =
       published?.generation === ref &&
@@ -405,15 +409,15 @@ export async function publishDynamicMemberships(
       active.every(
         (row) =>
           row.stale_after !== null &&
-          Number(row.stale_after) > now + renewBefore &&
-          // A window shortened since: the rows are written again with the shorter one.
-          Number(row.stale_after) <= now + window
+          (Number(row.stale_after) > now + renewBefore || Number(row.stale_after) === expiry) &&
+          // A window shortened (or a cap set) since: the rows are written again with it.
+          Number(row.stale_after) <= expiry
       ) &&
       [...new Set(active.map((row) => row.group_id))].sort().join('\n') === groupIds.join('\n');
     if (current) return { status: 'current', generation, groupIds };
     await requireCanonicalGroups(store, groupIds);
     await account.batch(
-      replaceStatements(account, tenantId, subjectId, ref, groupIds, now + window, now)
+      replaceStatements(account, tenantId, subjectId, ref, groupIds, expiry, now)
     );
     written = ref;
     // Two databases: read the committed result again first, whatever the invalidation does.

@@ -156,7 +156,7 @@ export function createAccountAuthContextFromHono(
 
 /**
  * The databases RBAC reads need for the request's account: the tenant metadata database (role and
- * organisation definitions) and the account's database (its assignments and memberships).
+ * group definitions) and the account's database (its assignments and memberships).
  * Callers must resolve and attach AccountDataContext first, as for createAccountAuthContextFromHono.
  */
 export function createTenantRBACDatabasesFromHono(

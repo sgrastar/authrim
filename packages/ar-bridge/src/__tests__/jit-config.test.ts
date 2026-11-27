@@ -91,10 +91,7 @@ describe('getJITConfig', () => {
       jit_provisioning_config: {
         enabled: true,
         require_verified_email: false,
-        join_all_matching_orgs: true,
-        allow_user_without_org: true,
         default_role_id: 'role_member',
-        allow_unverified_domain_mappings: true,
         allowed_provider_ids: ['idp-a', 'idp-b'],
       },
       'settings:tenant:acme:external-idp': {
@@ -105,10 +102,7 @@ describe('getJITConfig', () => {
     await expect(getJITConfig(saved(documents), 'acme')).resolves.toMatchObject({
       enabled: true,
       require_verified_email: true,
-      join_all_matching_orgs: true,
-      allow_user_without_org: true,
       default_role_id: '',
-      allow_unverified_domain_mappings: true,
       allowed_provider_ids: ['idp-a', 'idp-b'],
     });
   });
@@ -116,10 +110,7 @@ describe('getJITConfig', () => {
   it('reads the defaults with nothing saved', async () => {
     await expect(getJITConfig(saved({}), 'plain')).resolves.toMatchObject({
       require_verified_email: true,
-      join_all_matching_orgs: false,
-      allow_user_without_org: true,
       default_role_id: 'role_end_user',
-      allow_unverified_domain_mappings: false,
       allowed_provider_ids: null,
     });
   });
@@ -130,7 +121,6 @@ describe('getJITConfig', () => {
     ).resolves.toMatchObject({
       enabled: true,
       require_verified_email: false,
-      allow_user_without_org: false,
       default_role_id: '',
       allowed_provider_ids: null,
     });
@@ -261,9 +251,6 @@ describe('getJITConfig and the sign-up prediction read the JIT settings alike', 
     for (const key of [
       'external_idp.jit_provisioning_enabled',
       'external_idp.jit_require_verified_email',
-      'external_idp.jit_join_all_matching_orgs',
-      'external_idp.jit_allow_user_without_org',
-      'external_idp.jit_allow_unverified_domain_mappings',
       'external_idp.jit_allowed_provider_ids',
       'external_idp.jit_default_role_id',
     ]) {

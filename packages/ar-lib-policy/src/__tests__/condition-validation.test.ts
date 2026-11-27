@@ -5,7 +5,7 @@ describe('validatePolicyConditions', () => {
   it('accepts conditions with the parameters their types need', () => {
     expect(
       validatePolicyConditions([
-        { type: 'has_role', params: { role: 'auditor', scope: 'org', scopeTarget: 'org:a' } },
+        { type: 'has_role', params: { role: 'auditor', scope: 'group', scopeTarget: 'group:a' } },
         { type: 'attribute_equals', params: { name: 'tier', value: 'premium' } },
         { type: 'numeric_between', params: { name: 'age', min: 18, max: 65 } },
         { type: 'day_of_week', params: { allowedDays: [1, 2, 3] } },
@@ -52,7 +52,7 @@ describe('validatePolicyConditions', () => {
   });
 
   it('limits the types to what the Check API can evaluate', () => {
-    for (const type of ['user_type_is', 'same_organization', 'country_not_in', 'ip_in_range']) {
+    for (const type of ['user_type_is', 'has_relationship', 'country_not_in', 'ip_in_range']) {
       const params =
         type === 'user_type_is'
           ? { types: ['end_user'] }
@@ -60,7 +60,7 @@ describe('validatePolicyConditions', () => {
             ? { ranges: ['10.0.0.0/8'] }
             : type === 'country_not_in'
               ? { countries: ['JP'] }
-              : {};
+              : { types: ['parent_of'] };
       expect(validatePolicyConditions([{ type, params }])).toBeNull();
       expect(validatePolicyConditions([{ type, params }], CHECK_API_CONDITION_TYPES)).toContain(
         'cannot be evaluated here'

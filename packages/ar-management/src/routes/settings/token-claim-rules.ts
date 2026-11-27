@@ -26,6 +26,7 @@ import {
   RESERVED_CLAIMS,
   createTokenClaimEvaluator,
   testTokenClaimRule,
+  tokenClaimRuleRemovedFields,
 } from '@authrim/ar-lib-core';
 import { resolveSettingsCoreAdapter, resolveSettingsTenantId } from './tenant-resolver';
 
@@ -82,6 +83,12 @@ function validateRuleInput(input: TokenClaimRuleInput): {
 
   if (!input.actions || !Array.isArray(input.actions) || input.actions.length === 0) {
     errors.push('actions is required and must be a non-empty array');
+  }
+
+  // Fields that no longer exist (organisations were removed): the evaluator skips such a rule.
+  const removedFields = tokenClaimRuleRemovedFields(input);
+  if (removedFields.length > 0) {
+    errors.push(`Removed fields cannot be used: ${removedFields.join(', ')}`);
   }
 
   // Validate each action
@@ -364,12 +371,16 @@ export async function updateTokenClaimRule(c: Context) {
       );
     }
 
-    // Validate actions if provided
-    if (body.actions) {
+    // Validate the rule as it will be after any change (turning it on or off included: a rule
+    // naming a removed field is not switched on again).
+    if (Object.keys(body ?? {}).length > 0) {
       const { errors: validationErrors, warnings } = validateRuleInput({
         name: body.name || existing.name,
-        condition: body.condition || JSON.parse(existing.conditions_json),
-        actions: body.actions,
+        condition:
+          body.condition ||
+          (JSON.parse(existing.conditions_json) as TokenClaimRuleInput['condition']),
+        actions:
+          body.actions || (JSON.parse(existing.actions_json) as TokenClaimRuleInput['actions']),
       });
       if (validationErrors.length > 0) {
         return c.json(
@@ -534,8 +545,6 @@ export async function testTokenClaimRuleHandler(c: Context) {
       scope?: string;
       roles?: string[];
       permissions?: string[];
-      org_id?: string;
-      org_type?: string;
       user_type?: string;
       idp_claims?: Record<string, unknown>;
     };
@@ -570,8 +579,6 @@ export async function testTokenClaimRuleHandler(c: Context) {
       scope: body.context.scope || '',
       roles: body.context.roles || [],
       permissions: body.context.permissions || [],
-      org_id: body.context.org_id,
-      org_type: body.context.org_type,
       user_type: body.context.user_type,
       idp_claims: body.context.idp_claims,
     };
@@ -607,8 +614,6 @@ export async function evaluateTokenClaimRules(c: Context) {
       scope?: string;
       roles?: string[];
       permissions?: string[];
-      org_id?: string;
-      org_type?: string;
       user_type?: string;
       idp_claims?: Record<string, unknown>;
     };
@@ -623,8 +628,6 @@ export async function evaluateTokenClaimRules(c: Context) {
       scope: body.context.scope || '',
       roles: body.context.roles || [],
       permissions: body.context.permissions || [],
-      org_id: body.context.org_id,
-      org_type: body.context.org_type,
       user_type: body.context.user_type,
       idp_claims: body.context.idp_claims,
     };

@@ -1010,17 +1010,14 @@ function containsUncopiedScopeReference(serialized: string): boolean {
   const visit = (node: unknown, key = ''): boolean => {
     const normalizedKey = key.toLowerCase().replaceAll('_', '');
     const hasValue = node !== null && node !== undefined && node !== '';
-    if (
-      hasValue &&
-      ['orgid', 'organizationid', 'resourceid', 'scopetarget', 'tenantid'].includes(normalizedKey)
-    ) {
+    if (hasValue && ['groupid', 'resourceid', 'scopetarget', 'tenantid'].includes(normalizedKey)) {
       return true;
     }
     if (normalizedKey === 'scopetype' && node !== 'global') return true;
     if (Array.isArray(node)) return node.some((child) => visit(child, key));
     if (!node || typeof node !== 'object') return false;
     const record = node as Record<string, unknown>;
-    if (typeof record.type === 'string' && record.type.toLowerCase() === 'join_org') return true;
+    if (typeof record.type === 'string' && record.type.toLowerCase() === 'join_group') return true;
     return Object.entries(record).some(([childKey, child]) => visit(child, childKey));
   };
   return visit(JSON.parse(serialized) as unknown);
@@ -1373,8 +1370,8 @@ async function cloneRoles(
 }> {
   const ruleNow = Math.floor(now / 1000);
   const roles = await source.query<Record<string, unknown>>(
-    `SELECT id, name, description, permissions_json, role_type, hierarchy_level, grant_tier,
-            is_assignable, parent_role_id, display_name
+    `SELECT id, name, description, permissions_json, role_type, grant_tier,
+            is_assignable, display_name
        FROM roles WHERE tenant_id = ? AND is_system = 0`,
     [sourceTenantId]
   );
@@ -1399,9 +1396,9 @@ async function cloneRoles(
   for (const role of roles) {
     await target.execute(
       `INSERT INTO roles (
-         id, tenant_id, name, description, permissions_json, role_type, hierarchy_level, grant_tier,
-         is_assignable, parent_role_id, display_name, is_system, created_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
+         id, tenant_id, name, description, permissions_json, role_type, grant_tier,
+         is_assignable, display_name, is_system, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
       [
         idMap.get(String(role.id)),
         targetTenantId,
@@ -1409,10 +1406,8 @@ async function cloneRoles(
         role.description,
         role.permissions_json,
         role.role_type,
-        role.hierarchy_level ?? 0,
         role.grant_tier ?? 1,
         role.is_assignable ?? 1,
-        null,
         role.display_name,
         now,
         now,
@@ -1420,18 +1415,6 @@ async function cloneRoles(
     );
   }
   let unresolvedRoleReferences = 0;
-  for (const role of roles) {
-    const sourceParentRoleId = nonEmptyString(role.parent_role_id);
-    const parentRoleId = sourceParentRoleId ? (idMap.get(sourceParentRoleId) ?? null) : null;
-    if (sourceParentRoleId && !parentRoleId) unresolvedRoleReferences += 1;
-    if (parentRoleId) {
-      await target.execute('UPDATE roles SET parent_role_id = ? WHERE tenant_id = ? AND id = ?', [
-        parentRoleId,
-        targetTenantId,
-        idMap.get(String(role.id)),
-      ]);
-    }
-  }
 
   const rules = await source.query<Record<string, unknown>>(
     `SELECT name, description, role_id, scope_type, scope_target, conditions_json, actions_json,
@@ -1727,7 +1710,6 @@ async function cleanupInternalCloneDatabaseRows(
   const tables = [
     'role_assignment_rules',
     'role_assignments',
-    'user_roles',
     'roles',
     'webhook_configs',
     'client_trust_policies',
@@ -2246,7 +2228,7 @@ async function executeTenantCloneHandler(
         : []),
       ...(summary.role_assignment_rules_skipped > 0
         ? [
-            `${summary.role_assignment_rules_skipped} role assignment rules were omitted because they were malformed or referenced tenant, organization, or resource scope data that was not copied.`,
+            `${summary.role_assignment_rules_skipped} role assignment rules were omitted because they were malformed or referenced tenant, group, or resource scope data that was not copied.`,
           ]
         : []),
       ...(summary.admin_role_inheritance_unresolved > 0

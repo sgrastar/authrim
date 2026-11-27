@@ -8,7 +8,7 @@ const cacheKey = 'rebac:user:alice#viewer@document:report';
 function storage(options: { direct?: boolean; inherited?: boolean } = {}) {
   const queryOne = vi.fn(async (sql: string) => {
     if (sql.includes('SELECT COUNT(*)')) return { count: options.direct ? 1 : 0 };
-    if (sql.includes('WITH RECURSIVE')) return options.inherited ? { found: 1 } : null;
+    if (sql.includes('FROM role_assignments ra')) return options.inherited ? { found: 1 } : null;
     throw new Error('unexpected query');
   });
   const query = vi.fn(async () => []);
@@ -69,7 +69,7 @@ describe('BuiltinPolicyInfra relationship checks', () => {
     expect(db.adapter.queryOne).toHaveBeenCalledTimes(1);
   });
 
-  it('checks role inheritance only after a direct miss', async () => {
+  it("checks the subject's roles only after a direct miss", async () => {
     const db = storage({ inherited: true });
     const policy = new BuiltinPolicyInfra();
     await policy.initialize({} as InfraEnv, db);
@@ -81,8 +81,8 @@ describe('BuiltinPolicyInfra relationship checks', () => {
     });
     expect(db.adapter.queryOne).toHaveBeenCalledTimes(2);
     expect(db.adapter.queryOne).toHaveBeenLastCalledWith(
-      expect.stringContaining('WITH RECURSIVE role_chain'),
-      ['alice', expect.any(Number), 'viewer', 'document', 'report']
+      expect.stringContaining('FROM role_assignments ra'),
+      ['viewer', 'document', 'report', 'alice', expect.any(Number)]
     );
   });
 

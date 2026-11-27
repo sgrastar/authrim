@@ -246,6 +246,21 @@ describe('evaluate', () => {
     expect(snap.generation).toBe(5);
   });
 
+  it('records in the result when its input changes by itself', async () => {
+    const { db } = makeDb();
+    const { reader } = makeReader([V], {
+      load: vi.fn(async () => ({ ...input, validUntil: 12345 })),
+    });
+    const audit = makeAudit();
+    prepareMock.mockResolvedValue(audit);
+    await new DynamicGroupStore(db, TENANT, publication).evaluate(USER, reader);
+    const [statements] = audit.wrapBusinessBatch.mock.calls[0];
+    expect(JSON.parse(String(statements[0].params[5]))).toEqual({
+      ...expectedEvaluation,
+      inputValidUntil: 12345,
+    });
+  });
+
   it('writes an empty route when the input version has none', async () => {
     const { db } = makeDb();
     const { reader } = makeReader([V]);

@@ -2,7 +2,6 @@
  * RBAC Admin API Endpoints
  *
  * Phase 1 RBAC implementation for administrative dashboard:
- * - Organization management
  * - Role management (read-only for system roles)
  * - Role assignment management
  * - Relationship management (parent-child between subjects)
@@ -11,14 +10,10 @@
  */
 
 import { mayManageEndUserRole } from './role-delegation';
-export { canGrantRole, canManageRoleHierarchy } from './role-delegation';
+export { canGrantRole } from './role-delegation';
 import { Context } from 'hono';
 import type { Env, AdminAuthContext } from '@authrim/ar-lib-core';
-import {
-  removeOrganizationMembership,
-  removeRoleAssignment,
-  type RevocationContext,
-} from './access-revocation';
+import { removeRoleAssignment, type RevocationContext } from './access-revocation';
 import {
   getTenantIdFromContext,
   createAuthContextFromHono,
@@ -36,23 +31,19 @@ import {
   generateId,
   createAuditLogFromContext,
   CanonicalRuntimeUserStore,
-  findTenantOrganization,
   findTenantRole,
   listSubjectRoleAssignments,
   loadTenantRoles,
-  resolveSubjectOrganizations,
   resolveSubjectRoles,
   invalidateSubjectRBACCache,
   bumpTenantRBACCacheVersion,
   roleAssignmentHolds,
+  roleScopeTargetError,
+  ensureDatabaseAdapter,
   rolePermissions,
   type TenantRBACDatabases,
-  ORGANIZATION_TYPES,
-  isOrganizationType,
   isUniqueConstraintError,
-  countOrganizationMembers,
   countRoleAssignments,
-  listOrganizationMembersPage,
   listRoleAssignmentsPage,
   MergedPageTooDeepError,
   DEFAULT_ROLES,
@@ -72,8 +63,6 @@ import { recordAdminOperationAudit } from './admin-operation-audit';
  * Hono context type with admin auth variable
  */
 type AdminContext = Context<{ Bindings: Env; Variables: { adminAuth?: AdminAuthContext } }>;
-type MembershipType = 'member' | 'admin' | 'owner';
-const VALID_MEMBERSHIP_TYPES = new Set<MembershipType>(['member', 'admin', 'owner']);
 
 /**
  * Convert timestamp to milliseconds for API response
@@ -98,20 +87,13 @@ function getAdminAuthFromContext(c: Context<{ Bindings: Env }>): AdminAuthContex
   return (c as unknown as AdminContext).get('adminAuth') ?? null;
 }
 
-function insufficientAdminPermissions(c: Context<{ Bindings: Env }>) {
-  return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
+/** A role's delegation tier: an integer from 1 to 3. */
+function isValidGrantTier(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 3;
 }
 
-function normalizeMembershipType(value: unknown): MembershipType | null {
-  if (typeof value !== 'string') {
-    return null;
-  }
-
-  if (VALID_MEMBERSHIP_TYPES.has(value as MembershipType)) {
-    return value as MembershipType;
-  }
-
-  return null;
+function insufficientAdminPermissions(c: Context<{ Bindings: Env }>) {
+  return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
 }
 
 /** Removals made through the Admin API, audited with the request. */
@@ -141,18 +123,8 @@ function revocationContext(
   };
 }
 
-function invalidOrganizationType(c: Context<{ Bindings: Env }>) {
-  return c.json(
-    {
-      error: 'invalid_request',
-      error_description: `Invalid org_type. Must be one of: ${ORGANIZATION_TYPES.join(', ')}`,
-    },
-    400
-  );
-}
-
 /**
- * The databases of an account's RBAC: role and organisation definitions in the tenant metadata
+ * The databases of an account's RBAC: role and group definitions in the tenant metadata
  * database, the account's assignments and memberships in `account` (its account database, from
  * createAdaptersFromContext after the account was resolved).
  */
@@ -314,769 +286,6 @@ export async function runtimeUserExists(
 }
 
 // =============================================================================
-// Organization Management
-// =============================================================================
-
-/**
- * GET /api/admin/organizations
- * List organizations with pagination and filtering
- */
-export async function adminOrganizationsListHandler(c: Context<{ Bindings: Env }>) {
-  try {
-    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
-    const tenantId = getTenantIdFromContext(c);
-    const page = parseInt(c.req.query('page') || '1');
-    const limit = parseInt(c.req.query('limit') || '20');
-    const search = c.req.query('search') || '';
-    const isActive = c.req.query('is_active'); // 'true', 'false', or undefined
-    const plan = c.req.query('plan');
-    const orgType = c.req.query('org_type');
-
-    const offset = (page - 1) * limit;
-
-    // Build query - tenant_id is always first for index usage
-    const whereClauses: string[] = ['tenant_id = ?'];
-    const bindings: unknown[] = [tenantId];
-
-    // Search filter (name or display_name)
-    // Escape special LIKE characters (%, _) to prevent unintended wildcards
-    if (search) {
-      const escapedSearch = escapeLikePattern(search);
-      whereClauses.push("(name LIKE ? ESCAPE '\\' OR display_name LIKE ? ESCAPE '\\')");
-      bindings.push(`%${escapedSearch}%`, `%${escapedSearch}%`);
-    }
-
-    // Active status filter
-    if (isActive !== undefined) {
-      whereClauses.push('is_active = ?');
-      bindings.push(isActive === 'true' ? 1 : 0);
-    }
-
-    // Plan filter
-    if (plan) {
-      whereClauses.push('plan = ?');
-      bindings.push(plan);
-    }
-
-    // Org type filter
-    if (orgType) {
-      whereClauses.push('org_type = ?');
-      bindings.push(orgType);
-    }
-
-    const whereClause = ' WHERE ' + whereClauses.join(' AND ');
-    const countQuery = 'SELECT COUNT(*) as count FROM organizations' + whereClause;
-    let query = 'SELECT * FROM organizations' + whereClause;
-
-    // Order and pagination
-    query += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
-
-    // Execute queries in parallel
-    const countBindings = [...bindings];
-    const queryBindings = [...bindings, limit, offset];
-
-    const [totalResult, organizations] = await Promise.all([
-      coreAdapter.queryOne<{ count: number }>(countQuery, countBindings),
-      coreAdapter.query<Record<string, unknown>>(query, queryBindings),
-    ]);
-
-    const total = totalResult?.count || 0;
-    const totalPages = Math.ceil(total / limit);
-
-    // Format organizations with boolean conversions and millisecond timestamps
-    const formattedOrgs = organizations.map((org: Record<string, unknown>) => ({
-      ...org,
-      is_active: Boolean(org.is_active),
-      created_at: toMilliseconds(org.created_at as number),
-      updated_at: toMilliseconds(org.updated_at as number),
-    }));
-
-    return c.json({
-      organizations: formattedOrgs,
-      pagination: {
-        page,
-        limit,
-        total,
-        totalPages,
-        hasNext: page < totalPages,
-        hasPrev: page > 1,
-      },
-    });
-  } catch (error) {
-    const log = getLogger(c).module('ADMIN-RBAC');
-    log.error('Admin organizations list error', { action: 'list_organizations' }, error as Error);
-    return c.json(
-      {
-        error: 'server_error',
-        error_description: 'Failed to retrieve organizations',
-      },
-      500
-    );
-  }
-}
-
-/**
- * GET /api/admin/organizations/:id
- * Get organization details by ID
- */
-export async function adminOrganizationGetHandler(c: Context<{ Bindings: Env }>) {
-  try {
-    const tenantId = getTenantIdFromContext(c);
-    const orgId = c.req.param('id')!;
-    const stores = await tenantRBACStores(c, tenantId);
-
-    // The organisation is in the metadata database, its members in every account database.
-    const [org, memberCounts] = await Promise.all([
-      stores.metadata.queryOne<Record<string, unknown>>(
-        'SELECT * FROM organizations WHERE tenant_id = ? AND id = ?',
-        [tenantId, orgId]
-      ),
-      countOrganizationMembers(stores.accounts, tenantId, [orgId]),
-    ]);
-
-    if (!org) {
-      return c.json(
-        {
-          error: 'not_found',
-          error_description: 'The requested resource was not found',
-        },
-        404
-      );
-    }
-
-    // Format organization
-    const formattedOrg = {
-      ...org,
-      is_active: Boolean(org.is_active),
-      created_at: toMilliseconds(org.created_at as number),
-      updated_at: toMilliseconds(org.updated_at as number),
-      member_count: memberCounts.get(orgId) ?? 0,
-    };
-
-    return c.json({
-      organization: formattedOrg,
-    });
-  } catch (error) {
-    const log = getLogger(c).module('ADMIN-RBAC');
-    log.error('Admin organization get error', { action: 'get_organization' }, error as Error);
-    return c.json(
-      {
-        error: 'server_error',
-        error_description: 'Failed to retrieve organization',
-      },
-      500
-    );
-  }
-}
-
-/**
- * POST /api/admin/organizations
- * Create a new organization
- */
-export async function adminOrganizationCreateHandler(c: Context<{ Bindings: Env }>) {
-  try {
-    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
-    const tenantId = getTenantIdFromContext(c);
-    const body = await c.req.json<{
-      name: string;
-      display_name?: string;
-      plan?: string;
-      org_type?: string;
-      parent_org_id?: string | null;
-      metadata_json?: string;
-    }>();
-
-    const { name, display_name, plan, org_type, parent_org_id, metadata_json } = body;
-
-    if (!name) {
-      return c.json(
-        {
-          error: 'invalid_request',
-          error_description: 'Organization name is required',
-        },
-        400
-      );
-    }
-
-    if (org_type !== undefined && !isOrganizationType(org_type)) {
-      return invalidOrganizationType(c);
-    }
-
-    // Check if organization with same name already exists
-    const existing = await coreAdapter.queryOne<{ id: string }>(
-      'SELECT id FROM organizations WHERE tenant_id = ? AND name = ?',
-      [tenantId, name]
-    );
-
-    if (existing) {
-      return c.json(
-        {
-          error: 'conflict',
-          error_description: 'Organization with this name already exists',
-        },
-        409
-      );
-    }
-
-    // The parent, when given, is an organisation of the same tenant.
-    if (parent_org_id !== undefined && parent_org_id !== null) {
-      const parent =
-        typeof parent_org_id === 'string' && parent_org_id
-          ? await coreAdapter.queryOne<{ id: string }>(
-              'SELECT id FROM organizations WHERE tenant_id = ? AND id = ?',
-              [tenantId, parent_org_id]
-            )
-          : null;
-      if (!parent) {
-        return c.json(
-          {
-            error: 'invalid_request',
-            error_description: 'parent_org_id must name an organization of this tenant',
-          },
-          400
-        );
-      }
-    }
-
-    const orgId = crypto.randomUUID();
-    const now = Math.floor(Date.now() / 1000); // UNIX seconds
-
-    // Validate plan
-    const validPlans = ['free', 'starter', 'professional', 'enterprise'];
-    const orgPlan = plan && validPlans.includes(plan) ? plan : 'free';
-
-    // The column default when no type is given.
-    const orgTypeValue = org_type ?? 'enterprise';
-
-    await coreAdapter.execute(
-      `INSERT INTO organizations (id, tenant_id, name, display_name, plan, org_type, parent_org_id, is_active, metadata_json, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`,
-      [
-        orgId,
-        tenantId,
-        name,
-        display_name || name,
-        orgPlan,
-        orgTypeValue,
-        parent_org_id ?? null,
-        metadata_json || null,
-        now,
-        now,
-      ]
-    );
-
-    // Get created organization
-    const org = await coreAdapter.queryOne<Record<string, unknown>>(
-      'SELECT * FROM organizations WHERE tenant_id = ? AND id = ?',
-      [tenantId, orgId]
-    );
-
-    return c.json(
-      {
-        organization: {
-          ...org,
-          is_active: Boolean(org?.is_active),
-          created_at: toMilliseconds(org?.created_at as number),
-          updated_at: toMilliseconds(org?.updated_at as number),
-        },
-      },
-      201
-    );
-  } catch (error) {
-    const log = getLogger(c).module('ADMIN-RBAC');
-    log.error('Admin organization create error', { action: 'create_organization' }, error as Error);
-    return c.json(
-      {
-        error: 'server_error',
-        error_description: 'Failed to create organization',
-      },
-      500
-    );
-  }
-}
-
-/**
- * PUT /api/admin/organizations/:id
- * Update organization
- */
-export async function adminOrganizationUpdateHandler(c: Context<{ Bindings: Env }>) {
-  try {
-    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
-    const tenantId = getTenantIdFromContext(c);
-    const orgId = c.req.param('id')!;
-    const body = await c.req.json<{
-      name?: string;
-      display_name?: string;
-      plan?: string;
-      org_type?: string;
-      is_active?: boolean;
-      metadata_json?: string;
-    }>();
-
-    // Check if organization exists
-    const org = await coreAdapter.queryOne<{ id: string }>(
-      'SELECT id FROM organizations WHERE tenant_id = ? AND id = ?',
-      [tenantId, orgId]
-    );
-
-    if (!org) {
-      return c.json(
-        {
-          error: 'not_found',
-          error_description: 'The requested resource was not found',
-        },
-        404
-      );
-    }
-
-    const now = Math.floor(Date.now() / 1000); // UNIX seconds
-    const updates: string[] = [];
-    const bindings: unknown[] = [];
-
-    // Build update query
-    if (body.name !== undefined) {
-      updates.push('name = ?');
-      bindings.push(body.name);
-    }
-    if (body.display_name !== undefined) {
-      updates.push('display_name = ?');
-      bindings.push(body.display_name);
-    }
-    if (body.plan !== undefined) {
-      const validPlans = ['free', 'starter', 'professional', 'enterprise'];
-      if (!validPlans.includes(body.plan)) {
-        return c.json(
-          {
-            error: 'invalid_request',
-            error_description: `Invalid plan. Must be one of: ${validPlans.join(', ')}`,
-          },
-          400
-        );
-      }
-      updates.push('plan = ?');
-      bindings.push(body.plan);
-    }
-    if (body.org_type !== undefined) {
-      if (!isOrganizationType(body.org_type)) {
-        return invalidOrganizationType(c);
-      }
-      updates.push('org_type = ?');
-      bindings.push(body.org_type);
-    }
-    if (body.is_active !== undefined) {
-      updates.push('is_active = ?');
-      bindings.push(body.is_active ? 1 : 0);
-    }
-    if (body.metadata_json !== undefined) {
-      updates.push('metadata_json = ?');
-      bindings.push(body.metadata_json);
-    }
-
-    // Always update updated_at
-    updates.push('updated_at = ?');
-    bindings.push(now);
-
-    if (updates.length === 1) {
-      return c.json(
-        {
-          error: 'invalid_request',
-          error_description: 'No fields to update',
-        },
-        400
-      );
-    }
-
-    // Execute update
-    bindings.push(tenantId, orgId);
-    await coreAdapter.execute(
-      `UPDATE organizations SET ${updates.join(', ')} WHERE tenant_id = ? AND id = ?`,
-      bindings
-    );
-
-    // Get updated organization
-    const updatedOrg = await coreAdapter.queryOne<Record<string, unknown>>(
-      'SELECT * FROM organizations WHERE tenant_id = ? AND id = ?',
-      [tenantId, orgId]
-    );
-
-    return c.json({
-      organization: {
-        ...updatedOrg,
-        is_active: Boolean(updatedOrg?.is_active),
-        created_at: toMilliseconds(updatedOrg?.created_at as number),
-        updated_at: toMilliseconds(updatedOrg?.updated_at as number),
-      },
-    });
-  } catch (error) {
-    const log = getLogger(c).module('ADMIN-RBAC');
-    log.error('Admin organization update error', { action: 'update_organization' }, error as Error);
-    return c.json(
-      {
-        error: 'server_error',
-        error_description: 'Failed to update organization',
-      },
-      500
-    );
-  }
-}
-
-/**
- * DELETE /api/admin/organizations/:id
- * Delete organization (soft delete by setting is_active = 0)
- */
-export async function adminOrganizationDeleteHandler(c: Context<{ Bindings: Env }>) {
-  try {
-    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
-    const tenantId = getTenantIdFromContext(c);
-    const orgId = c.req.param('id')!;
-
-    // Check if organization exists
-    const org = await coreAdapter.queryOne<{ id: string }>(
-      'SELECT id FROM organizations WHERE tenant_id = ? AND id = ?',
-      [tenantId, orgId]
-    );
-
-    if (!org) {
-      return c.json(
-        {
-          error: 'not_found',
-          error_description: 'The requested resource was not found',
-        },
-        404
-      );
-    }
-
-    // Soft delete by deactivating
-    const now = Math.floor(Date.now() / 1000);
-    await coreAdapter.execute(
-      'UPDATE organizations SET is_active = 0, updated_at = ? WHERE tenant_id = ? AND id = ?',
-      [now, tenantId, orgId]
-    );
-
-    return c.json({
-      success: true,
-      message: 'Organization deactivated successfully',
-    });
-  } catch (error) {
-    const log = getLogger(c).module('ADMIN-RBAC');
-    log.error('Admin organization delete error', { action: 'delete_organization' }, error as Error);
-    return c.json(
-      {
-        error: 'server_error',
-        error_description: 'Failed to delete organization',
-      },
-      500
-    );
-  }
-}
-
-/**
- * GET /api/admin/organizations/:id/members
- * List organization members
- */
-export async function adminOrganizationMembersListHandler(c: Context<{ Bindings: Env }>) {
-  try {
-    const tenantId = getTenantIdFromContext(c);
-    const orgId = c.req.param('id')!;
-    const { page, limit, offset } = listPage(c);
-    const stores = await tenantRBACStores(c, tenantId);
-
-    // Check if organization exists
-    const org = await findTenantOrganization(stores.metadata, tenantId, orgId);
-
-    if (!org) {
-      return c.json(
-        {
-          error: 'not_found',
-          error_description: 'The requested resource was not found',
-        },
-        404
-      );
-    }
-
-    // The members are in every account database; their contacts are fetched afterwards.
-    const { total, items } = await listOrganizationMembersPage(stores.accounts, tenantId, orgId, {
-      limit,
-      offset,
-    });
-    const totalPages = Math.ceil(total / limit);
-    const members = items.map(({ row }) => row);
-    const memberPIIMap = await subjectContacts(
-      c,
-      stores,
-      tenantId,
-      members.map((m) => m.subject_id)
-    );
-
-    const formattedMembers = members.map((m) => {
-      const pii = memberPIIMap.get(m.subject_id);
-      return {
-        subject_id: m.subject_id,
-        org_id: m.org_id,
-        membership_type: m.membership_type,
-        is_primary: Boolean(m.is_primary),
-        joined_at: toMilliseconds(m.created_at),
-        user_email: pii?.email || null,
-        user_name: pii?.name || null,
-      };
-    });
-
-    return c.json({
-      members: formattedMembers,
-      pagination: {
-        page,
-        limit,
-        total,
-        totalPages,
-        hasNext: page < totalPages,
-        hasPrev: page > 1,
-      },
-    });
-  } catch (error) {
-    if (error instanceof MergedPageTooDeepError) return pageTooDeep(c);
-    const log = getLogger(c).module('ADMIN-RBAC');
-    log.error(
-      'Admin organization members list error',
-      { action: 'list_org_members' },
-      error as Error
-    );
-    return c.json(
-      {
-        error: 'server_error',
-        error_description: 'Failed to retrieve organization members',
-      },
-      500
-    );
-  }
-}
-
-/**
- * POST /api/admin/organizations/:id/members
- * Add member to organization
- */
-export async function adminOrganizationMemberAddHandler(c: Context<{ Bindings: Env }>) {
-  try {
-    const tenantId = getTenantIdFromContext(c);
-    const orgId = c.req.param('id')!;
-    const body = await c.req.json<{
-      subject_id: string;
-      membership_type?: MembershipType;
-      org_role?: string;
-      is_primary?: boolean;
-    }>();
-
-    const { subject_id, is_primary } = body;
-
-    if (!subject_id) {
-      return c.json(
-        {
-          error: 'invalid_request',
-          error_description: 'subject_id is required',
-        },
-        400
-      );
-    }
-
-    const membershipType =
-      normalizeMembershipType(body.membership_type) ??
-      normalizeMembershipType(body.org_role) ??
-      'member';
-
-    if (
-      body.membership_type !== undefined &&
-      normalizeMembershipType(body.membership_type) === null
-    ) {
-      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
-        variables: {
-          field: 'membership_type',
-          reason: 'Must be one of: member, admin, owner',
-        },
-      });
-    }
-
-    if (body.membership_type === undefined && body.org_role !== undefined) {
-      if (normalizeMembershipType(body.org_role) === null) {
-        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
-          variables: {
-            field: 'membership_type',
-            reason: 'Must be one of: member, admin, owner',
-          },
-        });
-      }
-    }
-
-    // Check if organization exists (a tenant setting, in the tenant metadata database)
-    const org = await findTenantOrganization(
-      createAuthContextFromHono(c, tenantId).coreAdapter,
-      tenantId,
-      orgId
-    );
-
-    if (!org) {
-      return c.json(
-        {
-          error: 'not_found',
-          error_description: 'The requested resource was not found',
-        },
-        404
-      );
-    }
-
-    // The membership is the user's account data, in its account database.
-    if (!(await resolveSubjectAccount(c, subject_id))) {
-      return c.json(
-        {
-          error: 'not_found',
-          error_description: 'The requested resource was not found',
-        },
-        404
-      );
-    }
-    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
-
-    if (!(await runtimeUserExists(coreAdapter, piiAdapter, tenantId, subject_id))) {
-      return c.json(
-        {
-          error: 'not_found',
-          error_description: 'The requested resource was not found',
-        },
-        404
-      );
-    }
-
-    // Check if membership already exists
-    const existing = await coreAdapter.queryOne<{ subject_id: string }>(
-      `SELECT subject_id FROM subject_org_membership
-       WHERE tenant_id = ? AND org_id = ? AND subject_id = ?`,
-      [tenantId, orgId, subject_id]
-    );
-
-    if (existing) {
-      return c.json(
-        {
-          error: 'conflict',
-          error_description: 'User is already a member of this organization',
-        },
-        409
-      );
-    }
-
-    const now = Math.floor(Date.now() / 1000);
-    const primary = is_primary ? 1 : 0;
-    const membershipId = generateId();
-
-    // If setting as primary, unset other primary memberships for this user
-    if (primary) {
-      await coreAdapter.execute(
-        `UPDATE subject_org_membership
-         SET is_primary = 0, updated_at = ?
-         WHERE tenant_id = ? AND subject_id = ?`,
-        [now, tenantId, subject_id]
-      );
-    }
-
-    await coreAdapter.execute(
-      `INSERT INTO subject_org_membership (
-        id, tenant_id, subject_id, org_id, membership_type, is_primary, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [membershipId, tenantId, subject_id, orgId, membershipType, primary, now, now]
-    );
-
-    return c.json(
-      {
-        success: true,
-        message: 'Member added to organization',
-        membership: {
-          id: membershipId,
-          tenant_id: tenantId,
-          org_id: orgId,
-          subject_id,
-          membership_type: membershipType,
-          is_primary: Boolean(primary),
-          created_at: toMilliseconds(now),
-          updated_at: toMilliseconds(now),
-        },
-      },
-      201
-    );
-  } catch (error) {
-    const log = getLogger(c).module('ADMIN-RBAC');
-    log.error('Admin organization member add error', { action: 'add_org_member' }, error as Error);
-    return c.json(
-      {
-        error: 'server_error',
-        error_description: 'Failed to add member to organization',
-      },
-      500
-    );
-  }
-}
-
-/**
- * DELETE /api/admin/organizations/:id/members/:subjectId
- * Remove member from organization
- */
-export async function adminOrganizationMemberRemoveHandler(c: Context<{ Bindings: Env }>) {
-  try {
-    const tenantId = getTenantIdFromContext(c);
-    const orgId = c.req.param('id')!;
-    const subjectId = c.req.param('subjectId')!;
-    // The membership is in the user's account database, suspended or not.
-    const coreAdapter = await subjectAccountForRevocation(c, tenantId, subjectId);
-    if (!coreAdapter) {
-      return c.json(
-        {
-          error: 'not_found',
-          error_description: 'The requested resource was not found',
-        },
-        404
-      );
-    }
-
-    // Check if membership exists
-    const membership = await coreAdapter.queryOne<{ subject_id: string }>(
-      `SELECT subject_id FROM subject_org_membership
-       WHERE tenant_id = ? AND org_id = ? AND subject_id = ?`,
-      [tenantId, orgId, subjectId]
-    );
-
-    if (!membership) {
-      return c.json(
-        {
-          error: 'not_found',
-          error_description: 'The requested resource was not found',
-        },
-        404
-      );
-    }
-
-    await removeOrganizationMembership(revocationContext(c, tenantId, coreAdapter), {
-      userId: subjectId,
-      orgId,
-    });
-
-    return c.json({
-      success: true,
-      message: 'Member removed from organization',
-    });
-  } catch (error) {
-    const log = getLogger(c).module('ADMIN-RBAC');
-    log.error(
-      'Admin organization member remove error',
-      { action: 'remove_org_member' },
-      error as Error
-    );
-    return c.json(
-      {
-        error: 'server_error',
-        error_description: 'Failed to remove member from organization',
-      },
-      500
-    );
-  }
-}
-
-// =============================================================================
 // Role Management
 // =============================================================================
 
@@ -1092,7 +301,7 @@ export async function adminRolesListHandler(c: Context<{ Bindings: Env }>) {
     const [roles, countMap] = await Promise.all([
       stores.metadata.query<Record<string, unknown>>(
         `SELECT id, tenant_id, name, display_name, description, permissions_json,
-                is_system, role_type, parent_role_id, created_at, updated_at
+                is_system, role_type, grant_tier, created_at, updated_at
          FROM roles
          WHERE tenant_id = ?
          ORDER BY is_system DESC, role_type ASC, name ASC`,
@@ -1127,7 +336,7 @@ export async function adminRolesListHandler(c: Context<{ Bindings: Env }>) {
 
 /**
  * GET /api/admin/roles/:id
- * Get role details with effective permissions (including inherited)
+ * Get role details with its permissions
  */
 export async function adminRoleGetHandler(c: Context<{ Bindings: Env }>) {
   try {
@@ -1154,24 +363,6 @@ export async function adminRoleGetHandler(c: Context<{ Bindings: Env }>) {
     // Parse own permissions
     const ownPermissions: string[] = JSON.parse((role.permissions_json as string) || '[]');
 
-    // Calculate effective permissions (including inherited from parent role)
-    let effectivePermissions = [...ownPermissions];
-    let parentRole: Record<string, unknown> | null = null;
-
-    if (role.parent_role_id) {
-      parentRole = await coreAdapter.queryOne<Record<string, unknown>>(
-        'SELECT id, name, display_name, permissions_json FROM roles WHERE id = ? AND tenant_id = ?',
-        [role.parent_role_id, tenantId]
-      );
-      if (parentRole) {
-        const parentPermissions: string[] = JSON.parse(
-          (parentRole.permissions_json as string) || '[]'
-        );
-        // Merge permissions (parent + own, deduplicated)
-        effectivePermissions = [...new Set([...parentPermissions, ...ownPermissions])];
-      }
-    }
-
     // Users with this role, in every account database
     const assignmentCount = (
       await countRoleAssignments(stores.accounts, tenantId, { per: 'subject', roleIds: [roleId] })
@@ -1186,14 +377,8 @@ export async function adminRoleGetHandler(c: Context<{ Bindings: Env }>) {
         assignment_count: assignmentCount ?? 0,
         // Parsed permissions for easier frontend consumption
         added_permissions: ownPermissions,
-        effective_permissions: effectivePermissions,
-        parent_role: parentRole
-          ? {
-              id: parentRole.id,
-              name: parentRole.name,
-              display_name: parentRole.display_name,
-            }
-          : null,
+        // Roles do not inherit: a role's effective permissions are its own.
+        effective_permissions: ownPermissions,
       },
     });
   } catch (error) {
@@ -1328,8 +513,12 @@ export async function adminUserRoleAssignHandler(c: AdminContext) {
 
     // Get role (by id or name), from the tenant metadata database; the assignment goes to the
     // user's account database (coreAdapter).
+    const metadata = rbacDatabasesFromContext(
+      c as unknown as Context<{ Bindings: Env }>,
+      coreAdapter
+    ).metadata;
     const role = await findTenantRole(
-      rbacDatabasesFromContext(c as unknown as Context<{ Bindings: Env }>, coreAdapter).metadata,
+      metadata,
       tenantId,
       role_id ? { id: role_id } : { name: role_name! }
     );
@@ -1358,24 +547,23 @@ export async function adminUserRoleAssignHandler(c: AdminContext) {
     const assignmentScope = scope || 'global';
     const assignmentScopeTarget = scope_target || '';
 
-    // Validate scope
-    const validScopes = ['global', 'org', 'resource'];
-    if (!validScopes.includes(assignmentScope)) {
-      return c.json(
-        {
-          error: 'invalid_request',
-          error_description: `Invalid scope. Must be one of: ${validScopes.join(', ')}`,
-        },
-        400
-      );
+    // The scope and target as readers read them (roleAssignmentHolds): none for global, empty or
+    // this tenant for tenant, `group:<id>` of a group of the tenant, `resource:[<type>:]<id>`.
+    const scopeError = roleScopeTargetError(assignmentScope, assignmentScopeTarget, tenantId);
+    if (scopeError) {
+      return c.json({ error: 'invalid_request', error_description: scopeError }, 400);
     }
-
-    // If scope is org or resource, scope_target is required
-    if ((assignmentScope === 'org' || assignmentScope === 'resource') && !scope_target) {
+    if (
+      assignmentScope === 'group' &&
+      !(await ensureDatabaseAdapter(metadata).queryOne<{ id: string }>(
+        'SELECT id FROM "groups" WHERE tenant_id = ? AND id = ?',
+        [tenantId, assignmentScopeTarget.slice('group:'.length)]
+      ))
+    ) {
       return c.json(
         {
           error: 'invalid_request',
-          error_description: 'scope_target is required for org or resource scope',
+          error_description: 'scope_target names no group of the tenant',
         },
         400
       );
@@ -1500,7 +688,7 @@ export async function adminUserRoleRemoveHandler(c: Context<{ Bindings: Env }>) 
     }
 
     // An assignment of a role the tenant no longer has grants nothing: it can be removed without a
-    // hierarchy to check.
+    // grant tier to check.
     if (role && !mayManageEndUserRole(adminAuth, role)) {
       return insufficientAdminPermissions(c);
     }
@@ -1937,169 +1125,15 @@ export async function adminUserRelationshipDeleteHandler(c: Context<{ Bindings: 
 }
 
 // =============================================================================
-// Organization Hierarchy and Effective Permissions
+// Effective Permissions
 // =============================================================================
 
 /**
- * Organization hierarchy node
- */
-interface OrganizationNode {
-  id: string;
-  name: string;
-  display_name: string | null;
-  parent_id: string | null;
-  depth: number;
-  is_active: boolean;
-  member_count: number;
-  children: OrganizationNode[];
-}
-
-/**
- * GET /api/admin/organizations/:id/hierarchy
- * Get organization hierarchy tree
- *
- * Returns the organization and all its descendants in a tree structure.
- * For root organization (parent_id = null), returns the full tree.
- */
-export async function adminOrganizationHierarchyHandler(c: Context<{ Bindings: Env }>) {
-  try {
-    const tenantId = getTenantIdFromContext(c);
-    const orgId = c.req.param('id')!;
-    const maxDepth = parseInt(c.req.query('max_depth') || '10', 10);
-    const stores = await tenantRBACStores(c, tenantId);
-    const coreAdapter = stores.metadata;
-
-    if (!orgId) {
-      return c.json(
-        { error: 'invalid_request', error_description: 'Organization ID is required' },
-        400
-      );
-    }
-
-    // Get the root organization
-    const rootOrg = await coreAdapter.queryOne<{
-      id: string;
-      name: string;
-      display_name: string | null;
-      parent_id: string | null;
-      is_active: number;
-    }>(
-      'SELECT id, name, display_name, parent_org_id AS parent_id, is_active FROM organizations WHERE id = ? AND tenant_id = ?',
-      [orgId, tenantId]
-    );
-
-    if (!rootOrg) {
-      return c.json({ error: 'not_found', error_description: 'Organization not found' }, 404);
-    }
-
-    // Get all descendant organizations using recursive CTE
-    // Note: SQLite supports recursive CTEs
-    const descendants = await coreAdapter.query<{
-      id: string;
-      name: string;
-      display_name: string | null;
-      parent_id: string | null;
-      is_active: number;
-      depth: number;
-    }>(
-      `WITH RECURSIVE org_tree AS (
-        -- Base case: start with the root organization
-        SELECT id, name, display_name, parent_org_id AS parent_id, is_active, 0 as depth
-        FROM organizations
-        WHERE id = ? AND tenant_id = ?
-
-        UNION ALL
-
-        -- Recursive case: get children
-        SELECT o.id, o.name, o.display_name, o.parent_org_id, o.is_active, ot.depth + 1
-        FROM organizations o
-        INNER JOIN org_tree ot ON o.parent_org_id = ot.id
-        WHERE o.tenant_id = ? AND ot.depth < ?
-      )
-      SELECT * FROM org_tree ORDER BY depth, name`,
-      [orgId, tenantId, tenantId, maxDepth]
-    );
-
-    // Member counts for all organizations, from every account database
-    const memberCounts = await countOrganizationMembers(
-      stores.accounts,
-      tenantId,
-      descendants.map((o) => o.id)
-    );
-
-    // Build tree structure
-    const nodesById: Map<string, OrganizationNode> = new Map();
-
-    // Create all nodes first
-    for (const org of descendants) {
-      nodesById.set(org.id, {
-        id: org.id,
-        name: org.name,
-        display_name: org.display_name,
-        parent_id: org.parent_id,
-        depth: org.depth,
-        is_active: org.is_active === 1,
-        member_count: memberCounts.get(org.id) ?? 0,
-        children: [],
-      });
-    }
-
-    // Link children to parents
-    for (const node of nodesById.values()) {
-      if (node.parent_id && nodesById.has(node.parent_id)) {
-        nodesById.get(node.parent_id)!.children.push(node);
-      }
-    }
-
-    // Get the root node
-    const rootNode = nodesById.get(orgId);
-
-    if (!rootNode) {
-      return c.json({ error: 'server_error', error_description: 'Failed to build hierarchy' }, 500);
-    }
-
-    // Calculate totals
-    function countDescendants(node: OrganizationNode): { orgs: number; members: number } {
-      let totalOrgs = 1;
-      let totalMembers = node.member_count;
-      for (const child of node.children) {
-        const childTotals = countDescendants(child);
-        totalOrgs += childTotals.orgs;
-        totalMembers += childTotals.members;
-      }
-      return { orgs: totalOrgs, members: totalMembers };
-    }
-
-    const totals = countDescendants(rootNode);
-
-    return c.json({
-      organization: rootNode,
-      summary: {
-        total_organizations: totals.orgs,
-        total_members: totals.members,
-        max_depth: Math.max(...descendants.map((d) => d.depth)),
-      },
-    });
-  } catch (error) {
-    const log = getLogger(c).module('ADMIN-RBAC');
-    log.error(
-      'Admin organization hierarchy error',
-      { action: 'get_org_hierarchy' },
-      error as Error
-    );
-    return c.json(
-      { error: 'server_error', error_description: 'Failed to get organization hierarchy' },
-      500
-    );
-  }
-}
-
-/**
- * Effective permission with source information
+ * Effective permission entry
  */
 interface EffectivePermission {
   permission: string;
-  source: 'direct' | 'role' | 'organization' | 'inherited';
+  source: 'role';
   source_id: string | null;
   source_name: string | null;
   granted_at: number | null;
@@ -2111,9 +1145,8 @@ interface EffectivePermission {
  * Get user's effective permissions
  *
  * As tokens carry them: the permissions of the user's unexpired roles assigned across the tenant
- * (global, or tenant in this tenant). Roles assigned in one organisation or on one resource are
+ * (global, or tenant in this tenant). Roles assigned for one group or on one resource are
  * listed with their scope; their permissions hold there only, so they are not counted here.
- * Organisation memberships are listed; they grant no permissions of their own.
  */
 export async function adminUserEffectivePermissionsHandler(c: Context<{ Bindings: Env }>) {
   try {
@@ -2135,10 +1168,7 @@ export async function adminUserEffectivePermissionsHandler(c: Context<{ Bindings
     }
 
     const dbs = rbacDatabasesFromContext(c, coreAdapter);
-    const [userRoles, orgMemberships] = await Promise.all([
-      resolveSubjectRoles(dbs, tenantId, userId),
-      resolveSubjectOrganizations(dbs, tenantId, userId),
-    ]);
+    const userRoles = await resolveSubjectRoles(dbs, tenantId, userId);
 
     const permissions: EffectivePermission[] = [];
     const seenPermissions = new Set<string>();
@@ -2182,8 +1212,6 @@ export async function adminUserEffectivePermissionsHandler(c: Context<{ Bindings
       summary: {
         total_permissions: permissions.length,
         from_roles: permissions.filter((p) => p.source === 'role').length,
-        from_organizations: permissions.filter((p) => p.source === 'organization').length,
-        from_inherited: permissions.filter((p) => p.source === 'inherited').length,
       },
       roles: userRoles.map(({ assignment, role }) => ({
         role_id: role.id,
@@ -2200,13 +1228,6 @@ export async function adminUserEffectivePermissionsHandler(c: Context<{ Bindings
                 through_group_id: assignment.via.throughGroupId,
               }
             : { kind: 'direct' as const },
-      })),
-      organizations: orgMemberships.map(({ membership, organization }) => ({
-        organization_id: organization.id,
-        organization_name: organization.name,
-        role_id: null,
-        role_name: membership.membership_type,
-        joined_at: toMilliseconds(membership.created_at),
       })),
     });
   } catch (error) {
@@ -2330,9 +1351,7 @@ export async function adminRoleCreateHandler(c: Context<{ Bindings: Env }>) {
       name: string;
       description?: string;
       permissions: string[];
-      inherits_from?: string;
-      parent_role_id?: string;
-      hierarchy_level?: number;
+      grant_tier?: unknown;
     }>();
     const adminAuth = getAdminAuthFromContext(c);
 
@@ -2383,9 +1402,15 @@ export async function adminRoleCreateHandler(c: Context<{ Bindings: Env }>) {
     }
 
     const { coreAdapter: adapter } = createAdaptersFromContext(c);
-    const hierarchyLevel = body.hierarchy_level ?? 0;
-
-    if (!mayManageEndUserRole(adminAuth, { hierarchy_level: hierarchyLevel, grant_tier: 1 })) {
+    // A new role has the lowest grant tier (1) unless one is asked for, and the caller can grant
+    // only a tier up to its own.
+    const grantTier = body.grant_tier === undefined ? 1 : body.grant_tier;
+    if (!isValidGrantTier(grantTier)) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: { field: 'grant_tier', reason: 'grant_tier must be an integer from 1 to 3' },
+      });
+    }
+    if (!mayManageEndUserRole(adminAuth, { grant_tier: grantTier })) {
       return insufficientAdminPermissions(c);
     }
 
@@ -2401,40 +1426,16 @@ export async function adminRoleCreateHandler(c: Context<{ Bindings: Env }>) {
       });
     }
 
-    const parentRoleId = body.parent_role_id ?? body.inherits_from;
-
-    // Validate inherits_from if provided
-    if (parentRoleId) {
-      const parentRole = await adapter.queryOne<{
-        id: string;
-        hierarchy_level: number;
-        grant_tier: number;
-      }>('SELECT id, hierarchy_level, grant_tier FROM roles WHERE tenant_id = ? AND id = ?', [
-        tenantId,
-        parentRoleId,
-      ]);
-
-      if (!parentRole) {
-        return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND, {
-          variables: { resource: 'parent_role', id: parentRoleId },
-        });
-      }
-
-      if (!mayManageEndUserRole(adminAuth, parentRole)) {
-        return insufficientAdminPermissions(c);
-      }
-    }
-
     const roleId = generateId();
     const nowTs = Date.now();
 
     // Create the role
     await adapter.execute(
       `INSERT INTO roles (
-         id, tenant_id, name, description, permissions_json, role_type, hierarchy_level,
-         is_assignable, parent_role_id, is_system, created_at, updated_at
+         id, tenant_id, name, description, permissions_json, role_type,
+         is_assignable, is_system, grant_tier, created_at, updated_at
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         roleId,
         tenantId,
@@ -2442,10 +1443,9 @@ export async function adminRoleCreateHandler(c: Context<{ Bindings: Env }>) {
         body.description ?? null,
         JSON.stringify(body.permissions),
         'custom',
-        hierarchyLevel,
         1,
-        parentRoleId ?? null,
         0,
+        grantTier,
         nowTs,
         nowTs,
       ]
@@ -2459,7 +1459,7 @@ export async function adminRoleCreateHandler(c: Context<{ Bindings: Env }>) {
       metadata: {
         name: body.name,
         permission_count: body.permissions.length,
-        parent_role_id: parentRoleId,
+        grant_tier: grantTier,
       },
     });
 
@@ -2471,9 +1471,7 @@ export async function adminRoleCreateHandler(c: Context<{ Bindings: Env }>) {
         name: body.name,
         description: body.description ?? null,
         permissions: body.permissions,
-        parent_role_id: parentRoleId ?? null,
-        inherits_from: parentRoleId ?? null,
-        hierarchy_level: hierarchyLevel,
+        grant_tier: grantTier,
         is_system: false,
         created_at: new Date(nowTs).toISOString(),
       },
@@ -2498,9 +1496,7 @@ export async function adminRoleUpdateHandler(c: Context<{ Bindings: Env }>) {
     const body = await c.req.json<{
       description?: string;
       permissions?: string[];
-      hierarchy_level?: number;
-      parent_role_id?: string | null;
-      inherits_from?: string | null;
+      grant_tier?: unknown;
     }>();
     const adminAuth = getAdminAuthFromContext(c);
 
@@ -2514,12 +1510,9 @@ export async function adminRoleUpdateHandler(c: Context<{ Bindings: Env }>) {
       permissions_json: string;
       is_system: number;
       role_type: string | null;
-      hierarchy_level: number;
       grant_tier: number;
-      parent_role_id: string | null;
     }>(
-      `SELECT id, name, description, permissions_json, is_system, role_type, hierarchy_level, grant_tier,
-              parent_role_id
+      `SELECT id, name, description, permissions_json, is_system, role_type, grant_tier
        FROM roles WHERE tenant_id = ? AND id = ?`,
       [tenantId, roleId]
     );
@@ -2546,6 +1539,19 @@ export async function adminRoleUpdateHandler(c: Context<{ Bindings: Env }>) {
       return insufficientAdminPermissions(c);
     }
 
+    // A new grant tier must be valid, and one the caller may grant (the role's current tier was
+    // checked above).
+    if (body.grant_tier !== undefined) {
+      if (!isValidGrantTier(body.grant_tier)) {
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+          variables: { field: 'grant_tier', reason: 'grant_tier must be an integer from 1 to 3' },
+        });
+      }
+      if (!mayManageEndUserRole(adminAuth, { grant_tier: body.grant_tier })) {
+        return insufficientAdminPermissions(c);
+      }
+    }
+
     // Validate permissions if provided
     if (body.permissions !== undefined) {
       if (!Array.isArray(body.permissions) || body.permissions.length === 0) {
@@ -2567,35 +1573,6 @@ export async function adminRoleUpdateHandler(c: Context<{ Bindings: Env }>) {
       }
     }
 
-    if (
-      body.hierarchy_level !== undefined &&
-      !mayManageEndUserRole(adminAuth, { ...existingRole, hierarchy_level: body.hierarchy_level })
-    ) {
-      return insufficientAdminPermissions(c);
-    }
-
-    const parentRoleId = body.parent_role_id ?? body.inherits_from;
-    if (parentRoleId !== undefined && parentRoleId !== null) {
-      const parentRole = await adapter.queryOne<{
-        id: string;
-        hierarchy_level: number;
-        grant_tier: number;
-      }>('SELECT id, hierarchy_level, grant_tier FROM roles WHERE tenant_id = ? AND id = ?', [
-        tenantId,
-        parentRoleId,
-      ]);
-
-      if (!parentRole) {
-        return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND, {
-          variables: { resource: 'parent_role', id: parentRoleId },
-        });
-      }
-
-      if (!mayManageEndUserRole(adminAuth, parentRole)) {
-        return insufficientAdminPermissions(c);
-      }
-    }
-
     const nowTs = Date.now();
     const updates: string[] = ['updated_at = ?'];
     const bindings: unknown[] = [nowTs];
@@ -2610,23 +1587,26 @@ export async function adminRoleUpdateHandler(c: Context<{ Bindings: Env }>) {
       bindings.push(JSON.stringify(body.permissions));
     }
 
-    if (body.hierarchy_level !== undefined) {
-      updates.push('hierarchy_level = ?');
-      bindings.push(body.hierarchy_level);
+    if (body.grant_tier !== undefined) {
+      updates.push('grant_tier = ?');
+      bindings.push(body.grant_tier);
     }
 
-    if (parentRoleId !== undefined) {
-      updates.push('parent_role_id = ?');
-      bindings.push(parentRoleId);
-    }
+    // Add WHERE clause bindings: only the role as it was checked (its grant tier decides who may
+    // change it), so a tier changed since by another administrator is not overwritten.
+    bindings.push(tenantId, roleId, existingRole.grant_tier);
 
-    // Add WHERE clause bindings
-    bindings.push(tenantId, roleId);
-
-    await adapter.execute(
-      `UPDATE roles SET ${updates.join(', ')} WHERE tenant_id = ? AND id = ?`,
+    const updated = await adapter.execute(
+      `UPDATE roles SET ${updates.join(', ')}
+        WHERE tenant_id = ? AND id = ? AND grant_tier = ?`,
       bindings
     );
+    if (!updated.rowsAffected) {
+      return c.json(
+        { error: 'conflict', error_description: 'Role changed since it was read. Try again.' },
+        409
+      );
+    }
     // Every subject holding the role (directly or through a group) carries its permissions.
     if (body.permissions !== undefined && c.env.REBAC_CACHE)
       await bumpTenantRBACCacheVersion(c.env.REBAC_CACHE, tenantId);
@@ -2641,8 +1621,7 @@ export async function adminRoleUpdateHandler(c: Context<{ Bindings: Env }>) {
         description_changed: body.description !== undefined,
         permissions_changed: body.permissions !== undefined,
         new_permission_count: body.permissions?.length,
-        hierarchy_changed: body.hierarchy_level !== undefined,
-        parent_role_changed: parentRoleId !== undefined,
+        grant_tier_changed: body.grant_tier !== undefined,
       },
     });
 
@@ -2657,9 +1636,7 @@ export async function adminRoleUpdateHandler(c: Context<{ Bindings: Env }>) {
       name: existingRole.name,
       description: body.description !== undefined ? body.description : existingRole.description,
       permissions: updatedPermissions,
-      parent_role_id: parentRoleId !== undefined ? parentRoleId : existingRole.parent_role_id,
-      hierarchy_level:
-        body.hierarchy_level !== undefined ? body.hierarchy_level : existingRole.hierarchy_level,
+      grant_tier: body.grant_tier ?? existingRole.grant_tier,
       is_system: false,
       updated_at: new Date(nowTs).toISOString(),
     });
@@ -2688,10 +1665,9 @@ export async function adminRoleDeleteHandler(c: Context<{ Bindings: Env }>) {
       name: string;
       is_system: number;
       role_type: string | null;
-      hierarchy_level: number;
       grant_tier: number;
     }>(
-      'SELECT id, name, is_system, role_type, hierarchy_level, grant_tier FROM roles WHERE tenant_id = ? AND id = ?',
+      'SELECT id, name, is_system, role_type, grant_tier FROM roles WHERE tenant_id = ? AND id = ?',
       [tenantId, roleId]
     );
 
@@ -2739,11 +1715,12 @@ export async function adminRoleDeleteHandler(c: Context<{ Bindings: Env }>) {
     }
 
     // Delete the role
+    // Only the role as it was checked (its grant tier decides who may delete it).
     const removed = await adapter.execute(
-      `DELETE FROM roles WHERE tenant_id = ? AND id = ? AND NOT EXISTS (
+      `DELETE FROM roles WHERE tenant_id = ? AND id = ? AND grant_tier = ? AND NOT EXISTS (
         SELECT 1 FROM group_role_assignments WHERE tenant_id = ? AND role_id = ?
       )`,
-      [tenantId, roleId, tenantId, roleId]
+      [tenantId, roleId, existingRole.grant_tier, tenantId, roleId]
     );
     if (!removed.rowsAffected) {
       return c.json(

@@ -537,7 +537,7 @@ describe('admin policies APIs', () => {
     const categories = new Set(body.categories.map((category) => category.id));
     // Sample values a form would send for each parameter.
     const sample = (name: string, type: string): unknown => {
-      if (name === 'scope') return 'org';
+      if (name === 'scope') return 'group';
       if (name === 'timezone') return 'Asia/Tokyo';
       if (name === 'startHour') return 9;
       if (name === 'endHour') return 17;

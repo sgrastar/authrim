@@ -2,7 +2,6 @@ import type { KVNamespace } from '@cloudflare/workers-types';
 import type { DatabaseSource } from '../db';
 import { ensureDatabaseAdapter } from '../db';
 import { upsertGroupMembership } from './group-membership';
-import { joinOrganization, type OrgJoinResult } from './org-domain-resolver';
 import { findTenantRole, type TenantRBACDatabases } from './tenant-rbac';
 
 export interface TenantInvitationRecord {
@@ -11,7 +10,6 @@ export interface TenantInvitationRecord {
   tenant_id: string;
   invited_email: string | null;
   role_id: string | null;
-  org_id: string | null;
   /** The group the invitation joins (migration 016); null or absent: none. */
   group_id?: string | null;
   max_uses: number;
@@ -32,7 +30,6 @@ export interface GroupMembershipResult {
 
 export interface InvitationAssignmentResults {
   roleAssignment?: RoleAssignmentResult;
-  orgMembership?: OrgJoinResult;
   groupMembership?: GroupMembershipResult;
 }
 
@@ -52,7 +49,7 @@ export async function findActiveInvitationByToken(
   const adapter = getAdapter(db);
 
   return adapter.queryOne<TenantInvitationRecord>(
-    `SELECT id, token, tenant_id, invited_email, role_id, org_id, group_id, max_uses, use_count, expires_at
+    `SELECT id, token, tenant_id, invited_email, role_id, group_id, max_uses, use_count, expires_at
      FROM tenant_invitations
      WHERE token = ? AND expires_at > ?`,
     [token, now]
@@ -360,7 +357,7 @@ export async function findInvitationById(
 ): Promise<TenantInvitationRecord | null> {
   const adapter = getAdapter(db);
   return adapter.queryOne<TenantInvitationRecord>(
-    `SELECT id, token, tenant_id, invited_email, role_id, org_id, group_id, max_uses, use_count, expires_at
+    `SELECT id, token, tenant_id, invited_email, role_id, group_id, max_uses, use_count, expires_at
      FROM tenant_invitations
      WHERE id = ? AND tenant_id = ?`,
     [invitationId, tenantId]
@@ -446,7 +443,7 @@ export async function joinInvitationGroup(
 }
 
 /**
- * Gives the user the role, organisation and group an invitation names (each may be absent). The
+ * Gives the user the role and group an invitation names (each may be absent). The
  * group membership is written on the user's account database and the user's cached RBAC claims
  * are invalidated (`cache`, when bound).
  */
@@ -456,21 +453,16 @@ export async function applyInvitationAssignments(
     userId: string;
     tenantId: string;
     roleId?: string | null;
-    orgId?: string | null;
     groupId?: string | null;
     invitationId?: string;
     cache?: KVNamespace;
   }
 ): Promise<InvitationAssignmentResults> {
-  const { userId, tenantId, roleId, orgId, groupId, invitationId } = params;
+  const { userId, tenantId, roleId, groupId, invitationId } = params;
   const results: InvitationAssignmentResults = {};
 
   if (roleId) {
     results.roleAssignment = await assignTenantRoleToUser(dbs, userId, roleId, tenantId);
-  }
-
-  if (orgId) {
-    results.orgMembership = await joinOrganization(dbs, userId, orgId, tenantId, 'member');
   }
 
   if (groupId) {

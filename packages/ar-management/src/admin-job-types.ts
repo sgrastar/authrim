@@ -89,14 +89,6 @@ export const ADMIN_JOB_TYPE_REGISTRY = {
     supportedResultDelivery: ['auto', 'inline', 'artifact'],
     createEndpoint: '/api/admin/jobs/reports/generate',
   },
-  'organizations/bulk-members': {
-    jobType: 'organizations/bulk-members',
-    processorStatus: 'scheduled',
-    creatableFromAdminApi: true,
-    resultObjectClass: 'admin_job_result',
-    supportedResultDelivery: ['auto', 'inline', 'artifact'],
-    createEndpoint: '/api/admin/jobs/organizations/:id/bulk-members',
-  },
 } as const satisfies Record<string, AdminJobTypeDefinition>;
 
 export type AdminJobType = keyof typeof ADMIN_JOB_TYPE_REGISTRY;
@@ -125,12 +117,7 @@ export function listAdminJobTypeDefinitions(): AdminJobTypeDefinition[] {
  * deletion and lifecycle, tenant database export and restore checks, downstream logout, Support
  * Ops, reconciliation and reindexing) is system work and is never held by the capability.
  */
-export const BULK_JOB_TYPES = [
-  'users/import',
-  'users/bulk-update',
-  'reports/generate',
-  'organizations/bulk-members',
-] as const;
+export const BULK_JOB_TYPES = ['users/import', 'users/bulk-update', 'reports/generate'] as const;
 
 export function isBulkJobType(jobType: string): boolean {
   return (BULK_JOB_TYPES as readonly string[]).includes(jobType);

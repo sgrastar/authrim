@@ -502,7 +502,7 @@ describe('POST /policy/check-access', () => {
       claims: { sub: 'claim-user', authrim_roles: ['end_user'] },
       subjectId: 'explicit-user',
       resourceOwnerId: 'explicit-user',
-      resourceOrgId: 'org',
+      resourceGroupIds: ['grp'],
       operation: 'view',
     });
     expect(result.status).toBe(200);
@@ -510,7 +510,7 @@ describe('POST /policy/check-access', () => {
     const context = must(probe.engineContexts[0]) as { subject: { id: string } };
     expect(context).toEqual({
       subject: objectContaining({ id: 'explicit-user' }),
-      resource: { type: 'document', id: 'doc', ownerId: 'explicit-user', orgId: 'org' },
+      resource: { type: 'document', id: 'doc', ownerId: 'explicit-user', groupIds: ['grp'] },
       action: { name: 'read', operation: 'view' },
       timestamp: NOW_MS,
     });

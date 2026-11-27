@@ -14,7 +14,6 @@ import adminDrBackup from './admin-dr-backup';
 import adminScale from './admin-scale';
 import adminSessions from './admin-sessions';
 import adminAuditLogs from './admin-audit-logs';
-import adminOrganizations from './admin-organizations';
 import adminRoles from './admin-roles';
 import adminAccessControl from './admin-access-control';
 import adminAccessTrace from './admin-access-trace';
@@ -74,7 +73,6 @@ const en: BaseTranslation = {
 	...adminScale,
 	...adminSessions,
 	...adminAuditLogs,
-	...adminOrganizations,
 	...adminRoles,
 	...adminAccessControl,
 	...adminAccessTrace,

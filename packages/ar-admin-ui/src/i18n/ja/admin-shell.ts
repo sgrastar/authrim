@@ -28,7 +28,6 @@ const adminShell = {
 	admin_nav_group_admin_operators: '管理者運用',
 	admin_nav_end_users: 'エンドユーザー',
 	admin_nav_user_sessions: 'ユーザーセッション',
-	admin_nav_organizations: '組織',
 	admin_nav_access_control: 'アクセス制御',
 	admin_nav_rbac_roles: 'RBAC（ロール）',
 	admin_nav_abac_attributes: 'ABAC（属性）',

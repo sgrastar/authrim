@@ -60,7 +60,7 @@ it('keeps the user-specific permission partition out of the Phase 3 settings dat
   );
   expect(permission).toMatchObject({
     dataset: { id: 'core.resource_permissions.settings', module: 'authorization' },
-    partitions: ['role', 'org'],
+    partitions: ['role', 'group'],
   });
   expect(
     PHASE3_SQLITE_DATASET_REGISTRATIONS.filter(({ partitions }) => partitions !== undefined)

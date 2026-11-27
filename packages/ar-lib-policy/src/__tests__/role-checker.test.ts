@@ -43,9 +43,11 @@ describe('role-checker', () => {
     });
 
     it('should handle scoped role matching', () => {
-      const roles: SubjectRole[] = [{ name: 'org_admin', scope: 'org', scopeTarget: 'org:123' }];
-      expect(hasRole(roles, 'org_admin', { scope: 'org', scopeTarget: 'org:123' })).toBe(true);
-      expect(hasRole(roles, 'org_admin', { scope: 'org', scopeTarget: 'org:456' })).toBe(false);
+      const roles: SubjectRole[] = [
+        { name: 'org_admin', scope: 'group', scopeTarget: 'group:123' },
+      ];
+      expect(hasRole(roles, 'org_admin', { scope: 'group', scopeTarget: 'group:123' })).toBe(true);
+      expect(hasRole(roles, 'org_admin', { scope: 'group', scopeTarget: 'group:456' })).toBe(false);
     });
 
     it('should accept PolicySubject as input', () => {
@@ -136,7 +138,7 @@ describe('role-checker', () => {
     it('should return unique role names', () => {
       const roles: SubjectRole[] = [
         { name: 'admin', scope: 'global' },
-        { name: 'admin', scope: 'org', scopeTarget: 'org:123' },
+        { name: 'admin', scope: 'group', scopeTarget: 'group:123' },
       ];
       expect(getActiveRoles(roles)).toEqual(['admin']);
     });
@@ -144,9 +146,9 @@ describe('role-checker', () => {
     it('should filter by scope when specified', () => {
       const roles: SubjectRole[] = [
         { name: 'admin', scope: 'global' },
-        { name: 'org_admin', scope: 'org', scopeTarget: 'org:123' },
+        { name: 'org_admin', scope: 'group', scopeTarget: 'group:123' },
       ];
-      expect(getActiveRoles(roles, { scope: 'org' })).toEqual(['admin', 'org_admin']);
+      expect(getActiveRoles(roles, { scope: 'group' })).toEqual(['admin', 'org_admin']);
     });
   });
 
@@ -156,9 +158,7 @@ describe('role-checker', () => {
         sub: 'user_123',
         authrim_roles: ['admin', 'editor'],
         authrim_user_type: 'end_user',
-        authrim_org_id: 'org_456',
-        authrim_plan: 'professional',
-        authrim_org_type: 'enterprise',
+        authrim_groups: [{ id: 'grp_456' }],
       };
 
       const subject = subjectFromClaims(claims);
@@ -168,9 +168,7 @@ describe('role-checker', () => {
       expect(subject.roles[0]).toEqual({ name: 'admin', scope: 'global' });
       expect(subject.roles[1]).toEqual({ name: 'editor', scope: 'global' });
       expect(subject.userType).toBe('end_user');
-      expect(subject.orgId).toBe('org_456');
-      expect(subject.plan).toBe('professional');
-      expect(subject.orgType).toBe('enterprise');
+      expect(subject.groupIds).toEqual(['grp_456']);
     });
 
     it('should handle missing claims', () => {
@@ -180,7 +178,7 @@ describe('role-checker', () => {
       expect(subject.id).toBe('');
       expect(subject.roles).toEqual([]);
       expect(subject.userType).toBeUndefined();
-      expect(subject.orgId).toBeUndefined();
+      expect(subject.groupIds).toBeUndefined();
     });
   });
 });

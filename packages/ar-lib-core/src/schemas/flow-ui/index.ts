@@ -105,7 +105,7 @@ export interface PolicyConfig {
   rbac: boolean | 'simple' | 'full';
   /** Attribute-Based Access Control */
   abac: boolean;
-  /** Relationship-Based Access Control (organizations) */
+  /** Relationship-Based Access Control (relationships) */
   rebac: boolean;
 }
 

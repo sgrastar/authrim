@@ -205,8 +205,6 @@ export function registerAdminResourcePermissionMiddleware(app: Hono<any, any, an
   app.use('/api/admin/custom-claims/*', settingsPermission);
   app.use('/api/admin/token-claim-rules', settingsPermission);
   app.use('/api/admin/token-claim-rules/*', settingsPermission);
-  app.use('/api/admin/org-domain-mappings', settingsPermission);
-  app.use('/api/admin/org-domain-mappings/*', settingsPermission);
   app.use('/api/admin/signing-keys', securityCredentialPermission);
   app.use('/api/admin/signing-keys/*', securityCredentialPermission);
   app.use('/api/admin/scim-tokens', securityCredentialPermission);

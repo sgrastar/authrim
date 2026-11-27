@@ -171,8 +171,6 @@ export const load: PageServerLoad = async (event) => {
 			deny: LL.consent_denyButton(),
 			privacyPolicy: LL.consent_privacyPolicy(),
 			termsOfService: LL.consent_termsOfService(),
-			organization: LL.consent_organizationSelect(),
-			currentOrganization: LL.consent_currentOrganization(),
 			actingAs: view.actingAs ? LL.consent_actingOnBehalfOf({ name: view.actingAs.name }) : '',
 			requiredTitle: LL.consent_items_required_title(),
 			optionalTitle: LL.consent_items_optional_title(),

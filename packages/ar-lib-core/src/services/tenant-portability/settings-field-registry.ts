@@ -1229,9 +1229,6 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
       'value',
       `
     external_idp.jit_require_verified_email
-    external_idp.jit_join_all_matching_orgs
-    external_idp.jit_allow_user_without_org
-    external_idp.jit_allow_unverified_domain_mappings
   `,
     ],
     [

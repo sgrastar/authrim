@@ -65,9 +65,6 @@ const completion = {
 	consent_scope_phone: 'Ver seu número de telefone',
 	consent_scope_address: 'Ver seu endereço',
 	consent_scope_offline_access: 'Acessar sua conta quando você não estiver usando o aplicativo',
-	consent_organizationSelect: 'Selecionar organização',
-	consent_primaryOrg: 'Principal',
-	consent_currentOrganization: 'Organização atual',
 	consent_actingOnBehalfOf: 'Agir em nome de {name}',
 	consent_delegatedAccess: 'Acesso delegado',
 	consent_delegatedAccessWarning:

@@ -20,7 +20,6 @@ import {
   type KeyRotationResult,
   getEmailDomainHashConfig,
   validateDomainHashConfig,
-  getMappingCountByVersion,
   getLogger,
   getTenantIdFromContext,
 } from '@authrim/ar-lib-core';
@@ -298,7 +297,6 @@ export async function getDomainHashKeyStatus(c: Context) {
         current_version: 0,
         migration_in_progress: false,
         users_by_version: {},
-        org_mappings_by_version: {},
         deprecated_versions: [],
         message: 'No domain hash key configured',
       });
@@ -307,7 +305,6 @@ export async function getDomainHashKeyStatus(c: Context) {
     // Get counts
     const coreAdapter = createAuthContextFromHono(c as never, tenantId).coreAdapter;
     const usersByVersion = await getUserCountByVersion(coreAdapter, tenantId);
-    const orgMappingsByVersion = await getMappingCountByVersion(coreAdapter, tenantId);
 
     // Calculate estimated completion
     let estimatedCompletion: string | undefined;
@@ -329,7 +326,6 @@ export async function getDomainHashKeyStatus(c: Context) {
       current_version: config.current_version,
       migration_in_progress: config.migration_in_progress,
       users_by_version: usersByVersion,
-      org_mappings_by_version: orgMappingsByVersion,
       deprecated_versions: config.deprecated_versions,
       estimated_completion: estimatedCompletion,
     };

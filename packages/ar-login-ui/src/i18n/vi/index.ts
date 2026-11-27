@@ -389,9 +389,6 @@ const vi = createTranslation({
 	consent_scope_phone: 'Xem số điện thoại của bạn',
 	consent_scope_address: 'Xem địa chỉ của bạn',
 	consent_scope_offline_access: 'Truy cập tài khoản khi bạn không sử dụng ứng dụng',
-	consent_organizationSelect: 'Chọn tổ chức',
-	consent_primaryOrg: 'Chính',
-	consent_currentOrganization: 'Tổ chức hiện tại',
 	consent_actingOnBehalfOf: 'Đang thay mặt {name}',
 	consent_delegatedAccess: 'Quyền truy cập được ủy quyền',
 	consent_delegatedAccessWarning:

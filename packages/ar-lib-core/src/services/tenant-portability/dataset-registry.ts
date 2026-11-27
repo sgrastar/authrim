@@ -46,8 +46,8 @@ const TABLE_GROUPS: Partial<
       custom_claim_schemas directory_auth_retention_policies directory_auth_tenant_policies directory_connector_instances
       field_usage_bindings flow_assignments flow_versions flows
       group_role_assignments groups identity_providers internal_notification_delivery_routes logging_quota_policies
-      lookup_retention_policies oauth_clients oidc_scopes org_domain_mappings
-      organizations policy_rules presentation_definitions provisioning_assignment_rules
+      lookup_retention_policies oauth_clients oidc_scopes
+      policy_rules presentation_definitions provisioning_assignment_rules
       relation_definitions resource_permissions role_assignment_rules roles
       saml_attribute_presets scope_mappings screens service_group_catalog service_group_revisions shared_launcher_states sign_in_confirmation_policies
       status_lists tenant_domain_mappings tenant_vanity_domains
@@ -68,10 +68,10 @@ const TABLE_GROUPS: Partial<
       plugin_account_metadata
       plugin_account_metadata_mutations plugin_hook_outbox profile_attribute_values
       profiles provisioning_assignment_ownership provisioning_revocation_receipts relationships role_assignments
-      service_group_inputs service_group_manual service_group_write_boundaries structured_attribute_values subject_account_links
-      subject_org_membership tenant_invitation_redemptions tenant_invitations totp_backup_codes totp_credentials
+      service_group_inputs service_group_write_boundaries structured_attribute_values subject_account_links
+      tenant_invitation_redemptions tenant_invitations totp_backup_codes totp_credentials
       statement_consent_key_states statement_consent_operations statement_consent_admissions
-      user_consent_records user_custom_fields user_roles
+      user_consent_records user_custom_fields
       user_verified_attributes users users_core value_provenance
       webhook_deliveries
     `,
@@ -348,7 +348,7 @@ export const TENANT_DATASET_ROW_PARTITIONS: readonly TenantDatasetRowPartition[]
     values: [
       { value: 'user', kind: 'users' },
       { value: 'role', kind: 'settings' },
-      { value: 'org', kind: 'settings' },
+      { value: 'group', kind: 'settings' },
     ],
   },
 ];

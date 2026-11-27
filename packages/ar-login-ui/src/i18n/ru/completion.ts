@@ -67,9 +67,6 @@ const completion = {
 	consent_scope_address: 'Просматривать адрес',
 	consent_scope_offline_access:
 		'Получать доступ к вашей учётной записи, когда вы не используете приложение',
-	consent_organizationSelect: 'Выберите организацию',
-	consent_primaryOrg: 'Основная',
-	consent_currentOrganization: 'Текущая организация',
 	consent_actingOnBehalfOf: 'Действовать от имени {name}',
 	consent_delegatedAccess: 'Делегированный доступ',
 	consent_delegatedAccessWarning:

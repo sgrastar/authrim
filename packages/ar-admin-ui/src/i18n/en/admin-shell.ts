@@ -28,7 +28,6 @@ const adminShell = {
 	admin_nav_group_admin_operators: 'Admin Operators',
 	admin_nav_end_users: 'End Users',
 	admin_nav_user_sessions: 'User Sessions',
-	admin_nav_organizations: 'Organizations',
 	admin_nav_access_control: 'Access Control',
 	admin_nav_rbac_roles: 'RBAC (Roles)',
 	admin_nav_abac_attributes: 'ABAC (Attributes)',

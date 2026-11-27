@@ -295,7 +295,6 @@ export class SavedGroupInputReader implements GroupInputReader {
           ? undefined
           : decode(typeof raw === 'string' ? raw : JSON.stringify(raw), plan.fields[key]);
     }
-    const manual = new Set<string>();
     // The SCIM link (`scimRoleId`, name kept for saved catalogs) is the id of a SCIM-kind
     // canonical group (`groups.kind = 'scim'`: since SCIM Groups moved to the canonical tables, a
     // SCIM Group's id is its `groups.id`). The subject is linked while it has an active SCIM
@@ -305,15 +304,41 @@ export class SavedGroupInputReader implements GroupInputReader {
     // versioned by the migration 017 triggers.
     const scimGroups = new Map<string, boolean>();
     const scimMembers = new Set<string>();
+    // Manual members: an effective 'manual' membership row of the group (the service group's
+    // canonical group) on the subject's account database, as effective membership is read
+    // everywhere (active, started, not expired, not stale). Versioned by the input triggers
+    // (migrations 017 and 018).
+    const manual = new Set<string>();
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    let validUntil: number | undefined;
     for (let offset = 0; offset < plan.groups.length; offset += 40) {
       const page = plan.groups.slice(offset, offset + 40);
       const placeholders = page.map(() => '?').join(',');
-      for (const row of await this.metadata.query<{ group_id: string }>(
-        `SELECT group_id FROM service_group_manual WHERE tenant_id = ? AND user_id = ? AND group_id IN (${placeholders})`,
+      for (const row of await this.core.query<{
+        group_id: string;
+        starts_at: number | string | null;
+        expires_at: number | string | null;
+        stale_after: number | string | null;
+      }>(
+        `SELECT group_id, starts_at, expires_at, stale_after FROM group_memberships
+          WHERE tenant_id = ? AND subject_id = ? AND assignment_source = 'manual'
+            AND lifecycle_state = 'active' AND group_id IN (${placeholders})`,
         [this.tenantId, this.userId, ...page.map((g) => g.id)],
         primary
-      ))
-        manual.add(row.group_id);
+      )) {
+        const startsAt = row.starts_at == null ? null : Number(row.starts_at);
+        const expiresAt = row.expires_at == null ? null : Number(row.expires_at);
+        const staleAfter = row.stale_after == null ? null : Number(row.stale_after);
+        const effective =
+          (startsAt === null || startsAt <= nowSeconds) &&
+          (expiresAt === null || expiresAt > nowSeconds) &&
+          (staleAfter === null || staleAfter > nowSeconds);
+        if (effective) manual.add(row.group_id);
+        // The next time this row starts or stops counting.
+        for (const boundary of [startsAt, expiresAt, staleAfter])
+          if (boundary !== null && Number.isFinite(boundary) && boundary > nowSeconds)
+            validUntil = validUntil === undefined ? boundary : Math.min(validUntil, boundary);
+      }
       const ids = [...new Set(page.flatMap((g) => (g.scimRoleId ? [g.scimRoleId] : [])))];
       if (!ids.length) continue;
       const slots = ids.map(() => '?').join(',');
@@ -340,6 +365,6 @@ export class SavedGroupInputReader implements GroupInputReader {
           : scimGroups.get(group.scimRoleId) === true && scimMembers.has(group.scimRoleId);
       sources[group.id] = { manual: manual.has(group.id), scim };
     }
-    return { attributes, sources };
+    return { attributes, sources, ...(validUntil === undefined ? {} : { validUntil }) };
   }
 }

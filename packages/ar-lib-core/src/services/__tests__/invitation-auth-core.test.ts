@@ -34,7 +34,6 @@ describe('invitation-auth-core', () => {
       tenant_id: 'tenant-1',
       invited_email: 'user@example.com',
       role_id: 'role-1',
-      org_id: 'org-1',
       max_uses: 3,
       use_count: 1,
       expires_at: 200,
@@ -57,7 +56,6 @@ describe('invitation-auth-core', () => {
         tenant_id: 'tenant-1',
         invited_email: null,
         role_id: null,
-        org_id: null,
         max_uses: -1,
         use_count: 99,
         expires_at: 200,
@@ -71,7 +69,6 @@ describe('invitation-auth-core', () => {
         tenant_id: 'tenant-1',
         invited_email: null,
         role_id: null,
-        org_id: null,
         max_uses: 2,
         use_count: 2,
         expires_at: 200,
@@ -110,16 +107,10 @@ describe('invitation-auth-core', () => {
     expect(adapter.execute).not.toHaveBeenCalled();
   });
 
-  it('applies tenant role and organization membership via portable inserts', async () => {
+  it('applies the tenant role via a portable insert', async () => {
     const adapter = createMockAdapter();
-    vi.mocked(adapter.queryOne)
-      .mockResolvedValueOnce({ id: 'role-1' })
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce(null);
-    vi.mocked(adapter.query).mockResolvedValueOnce([{ id: 'org-1' }]);
-    vi.mocked(adapter.execute)
-      .mockResolvedValueOnce({ success: true, rowsAffected: 1 })
-      .mockResolvedValueOnce({ success: true, rowsAffected: 1 });
+    vi.mocked(adapter.queryOne).mockResolvedValueOnce({ id: 'role-1' }).mockResolvedValueOnce(null);
+    vi.mocked(adapter.execute).mockResolvedValueOnce({ success: true, rowsAffected: 1 });
 
     const result = await applyInvitationAssignments(
       { metadata: adapter, account: adapter },
@@ -127,21 +118,15 @@ describe('invitation-auth-core', () => {
         userId: 'user-1',
         tenantId: 'tenant-1',
         roleId: 'role-1',
-        orgId: 'org-1',
       }
     );
 
-    expect(result.roleAssignment?.success).toBe(true);
-    expect(result.orgMembership?.success).toBe(true);
-    expect(adapter.execute).toHaveBeenNthCalledWith(
-      1,
+    expect(Object.keys(result)).toEqual(['roleAssignment']);
+    expect(result.roleAssignment).toMatchObject({ success: true });
+    expect(adapter.execute).toHaveBeenCalledTimes(1);
+    expect(adapter.execute).toHaveBeenCalledWith(
       expect.stringContaining('INSERT INTO role_assignments'),
       expect.arrayContaining(['tenant-1', 'user-1', 'role-1', 'tenant-1'])
-    );
-    expect(adapter.execute).toHaveBeenNthCalledWith(
-      2,
-      expect.stringContaining('INSERT INTO subject_org_membership'),
-      expect.arrayContaining(['tenant-1', 'user-1', 'org-1', 'member'])
     );
   });
 });

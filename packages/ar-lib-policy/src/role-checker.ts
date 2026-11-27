@@ -169,9 +169,7 @@ export function getActiveRoles(
  *   sub: 'user_123',
  *   authrim_roles: ['end_user', 'billing_manager'],
  *   authrim_user_type: 'end_user',
- *   authrim_org_id: 'org_456',
- *   authrim_plan: 'professional',
- *   authrim_org_type: 'enterprise'
+ *   authrim_groups: [{ id: 'grp_456', key: 'sales', name: 'Sales', kind: 'static' }]
  * });
  * ```
  */
@@ -179,9 +177,7 @@ export function subjectFromClaims(claims: {
   sub?: string;
   authrim_roles?: string[];
   authrim_user_type?: string;
-  authrim_org_id?: string;
-  authrim_plan?: string;
-  authrim_org_type?: string;
+  authrim_groups?: { id: string }[];
 }): PolicySubject {
   // Convert flat role names to SubjectRole objects (assume global scope from token)
   const roles: SubjectRole[] = (claims.authrim_roles || []).map((name) => ({
@@ -193,8 +189,8 @@ export function subjectFromClaims(claims: {
     id: claims.sub || '',
     userType: claims.authrim_user_type as PolicySubject['userType'],
     roles,
-    orgId: claims.authrim_org_id,
-    plan: claims.authrim_plan as PolicySubject['plan'],
-    orgType: claims.authrim_org_type as PolicySubject['orgType'],
+    ...(claims.authrim_groups && {
+      groupIds: claims.authrim_groups.map((group) => group.id),
+    }),
   };
 }

@@ -19,12 +19,9 @@ export const consentBase: ConsentScreenData = {
 		{ name: 'email', title: 'email', description: '', required: false }
 	],
 	user: { id: 'u1', email: 'ada@example.com', name: 'Ada Lovelace' },
-	organizations: [],
-	primary_org: { id: 'org1', name: 'Acme Inc.', type: 'company', is_primary: true },
 	roles: [],
 	acting_as: null,
-	target_org_id: null,
-	features: { org_selector_enabled: false, acting_as_enabled: false, show_roles: false }
+	features: { acting_as_enabled: false, show_roles: false }
 };
 
 const item = (overrides: Partial<ConsentScreenItem>): ConsentScreenItem => ({

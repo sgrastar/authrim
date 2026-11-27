@@ -24,7 +24,6 @@
 	let denyLoading = $state(false);
 	let consentData = $state<ConsentScreenData | null>(null);
 	let error = $state('');
-	let selectedOrgId = $state<string | null>(null);
 	let consentItemDecisions = $state<Record<string, 'granted' | 'denied'>>({});
 	// The optional information items the user changed; an unset one starts from its default.
 	let releaseChoices = $state<Record<string, boolean>>({});
@@ -59,7 +58,6 @@
 			// A reloaded screen starts from its own defaults (what is shown may have changed).
 			releaseChoices = {};
 			if (consentData) {
-				selectedOrgId = consentData.target_org_id || consentData.primary_org?.id || null;
 				// Initialize consent item decisions
 				if (consentData.consent_items) {
 					const decisions: Record<string, 'granted' | 'denied'> = {};
@@ -90,7 +88,6 @@
 			const submitPayload: ConsentSubmission = {
 				challenge_id: consentData.challenge_id,
 				approved: true,
-				selected_org_id: selectedOrgId || undefined,
 				acting_as_user_id: consentData.acting_as?.id
 			};
 			// Echo the documents displayed, including optional items omitted from decisions.
@@ -180,11 +177,6 @@
 		const returnUrl = new URL(returnPath, window.location.origin).toString();
 		window.location.href = `${API_BASE_URL}/logout?redirect_uri=${encodeURIComponent(returnUrl)}`;
 	}
-
-	function handleOrgChange(event: Event) {
-		const target = event.target as HTMLSelectElement;
-		selectedOrgId = target.value || null;
-	}
 </script>
 
 <svelte:head>
@@ -199,12 +191,10 @@
 		{loading}
 		{error}
 		{consentData}
-		{selectedOrgId}
 		bind:consentItemDecisions
 		bind:releaseChoices
 		{allowLoading}
 		{denyLoading}
-		onOrgChange={handleOrgChange}
 		onSwitchAccount={handleSwitchAccount}
 		onAllow={handleAllow}
 		onDeny={handleDeny}

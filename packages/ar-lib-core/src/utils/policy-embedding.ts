@@ -30,6 +30,7 @@ import {
 } from '../services/effective-settings';
 import {
   resolveSubjectRoles,
+  roleScopeTargetError,
   roleAssignmentHolds,
   rolePermissions,
   type TenantRBACDatabases,
@@ -100,7 +101,8 @@ export interface PolicyEmbeddingOptions {
 /**
  * Role-permission mapping cache key prefix
  */
-const PERMISSION_CACHE_PREFIX = 'policy:perms:v3:';
+// v4: organisations removed (no organisation-scoped grants).
+const PERMISSION_CACHE_PREFIX = 'policy:perms:v4:';
 
 /**
  * Parse scope string into resource:action pairs
@@ -288,13 +290,12 @@ export async function evaluatePermissionEmbeddingForScope(
         continue;
       }
 
-      // Only an organisation or resource assignment with its target is a scoped grant; any
-      // other (an unknown scope, or one without its target) grants nothing.
+      // Only a group or resource assignment with a target of its scope (`group:<id>`,
+      // `resource:[<type>:]<id>`) is a scoped grant; any other (an unknown scope such as the
+      // removed `org`, or a malformed or missing target) grants nothing.
       if (
-        (grant.scopeType !== 'org' &&
-          grant.scopeType !== 'resource' &&
-          grant.scopeType !== 'group') ||
-        !grant.scopeTarget
+        (grant.scopeType !== 'resource' && grant.scopeType !== 'group') ||
+        roleScopeTargetError(grant.scopeType, grant.scopeTarget, tenantId)
       ) {
         continue;
       }

@@ -20,8 +20,6 @@ export const m = {
   audit: vi.fn(),
   ruleEvaluate: vi.fn(),
   createRuleEvaluator: vi.fn(),
-  orgByDomain: vi.fn(),
-  allOrgsByDomain: vi.fn(),
   hashConfig: vi.fn(),
   hashFor: vi.fn(),
   registration: vi.fn(),
@@ -63,11 +61,9 @@ export function libCoreMock(actual: typeof import('@authrim/ar-lib-core')) {
     validateCustomClaimWrite: m.validateClaims,
     persistCustomClaimWrite: m.persist,
     syncUserLifecycleState: m.sync,
-    joinOrganization: m.join,
+    upsertGroupMembership: m.join,
     assignScopedRoleToUser: m.assign,
     createRuleEvaluator: m.createRuleEvaluator,
-    resolveOrgByDomainHash: m.orgByDomain,
-    resolveAllOrgsByDomainHash: m.allOrgsByDomain,
     getEmailDomainHashConfig: m.hashConfig,
     generateEmailDomainHashWithVersion: m.hashFor,
     checkEmailRegistration: m.registration,
@@ -206,12 +202,10 @@ export function resetIdentityMocks() {
     denied: false,
     matched_rules: [],
     roles_to_assign: [],
-    orgs_to_join: [],
+    groups_to_join: [],
     attributes_to_set: [],
   });
   m.createRuleEvaluator.mockReset().mockImplementation(() => ({ evaluate: m.ruleEvaluate }));
-  m.orgByDomain.mockReset().mockResolvedValue(null);
-  m.allOrgsByDomain.mockReset().mockResolvedValue([]);
   m.hashConfig.mockReset().mockResolvedValue({ cfg: 1 });
   m.hashFor.mockReset().mockResolvedValue({ hash: 'domain-hash', version: 3 });
   m.registration.mockReset().mockResolvedValue('allowed');

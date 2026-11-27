@@ -476,6 +476,13 @@ describe('UnifiedCheckService', () => {
     it('grants a scoped role only where it is assigned', async () => {
       mockSubjectRoles([
         {
+          name: 'group_editor',
+          permissions_json: JSON.stringify(['documents:read']),
+          scope_type: 'group',
+          scope_target: 'group:grp_a',
+        },
+        {
+          // The organisation scope is gone: an assignment still naming it grants nothing.
           name: 'org_editor',
           permissions_json: JSON.stringify(['documents:read']),
           scope_type: 'org',
@@ -488,16 +495,17 @@ describe('UnifiedCheckService', () => {
           scope_target: 'resource:reports:rep_1',
         },
       ]);
-      const check = (permission: string, orgId?: string) =>
+      const check = (permission: string, groupId?: string) =>
         service.check({
           subject_id: 'user_123',
           permission,
           tenant_id: 'default',
-          ...(orgId ? { resource_context: { org_id: orgId } } : {}),
+          ...(groupId ? { resource_context: { group_id: groupId } } : {}),
         });
 
-      expect((await check('documents:read', 'org_a')).resolved_via).toContain('role');
-      expect((await check('documents:read', 'org_b')).allowed).toBe(false);
+      expect((await check('documents:read', 'grp_a')).resolved_via).toContain('role');
+      expect((await check('documents:read', 'grp_b')).allowed).toBe(false);
+      expect((await check('documents:read', 'org_a')).allowed).toBe(false);
       expect((await check('documents:read')).allowed).toBe(false);
       expect((await check('reports:rep_1:write')).resolved_via).toContain('role');
       expect((await check('reports:rep_2:write')).allowed).toBe(false);
@@ -620,13 +628,13 @@ describe('UnifiedCheckService', () => {
       expect(result.resolved_via).toContain('computed');
     });
 
-    it('grants nothing for membership of the resource organization alone', async () => {
-      // The subject's membership (account database) of an active organisation (metadata)
+    it('grants nothing for membership of the resource group alone', async () => {
+      // The subject's membership (account database) of an active group (metadata)
       mockD1.all.mockImplementation(async (sql: string) => ({
-        results: sql.includes('FROM subject_org_membership')
-          ? [{ id: 'membership_1', org_id: 'org_456', membership_type: 'member', is_primary: 0 }]
-          : sql.includes('FROM organizations')
-            ? [{ id: 'org_456', name: 'Org', org_type: 'enterprise', is_active: 1 }]
+        results: sql.includes('FROM group_memberships')
+          ? [{ group_id: 'grp_456' }]
+          : sql.includes('FROM "groups"')
+            ? [{ id: 'grp_456', parent_group_id: null, lifecycle_state: 'active' }]
             : [],
       }));
 
@@ -635,7 +643,7 @@ describe('UnifiedCheckService', () => {
         permission: 'documents:read',
         tenant_id: 'default',
         resource_context: {
-          org_id: 'org_456',
+          group_id: 'grp_456',
         },
       };
 

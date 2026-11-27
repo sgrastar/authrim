@@ -126,6 +126,24 @@ describe('token claim rules settings API', () => {
         },
         'Cannot override reserved claim: verified_claims',
       ],
+      [
+        { ...validInput, condition: { field: 'org_id', operator: 'ne', value: 'org-1' } },
+        'Removed fields cannot be used: org_id',
+      ],
+      [
+        {
+          ...validInput,
+          actions: [
+            {
+              type: 'conditional_value',
+              claim_name: 'tier',
+              condition: { field: 'plan', operator: 'eq', value: 'gold' },
+            },
+            { type: 'add_claim_template', claim_name: 'kind', template: '{{org_type}}' },
+          ],
+        },
+        'Removed fields cannot be used: org_type, plan',
+      ],
     ])('rejects unsafe or incomplete claim rule %#', async (body, error) => {
       const response = await createTokenClaimRule(context({ body }));
       expect(response.status).toBe(400);
@@ -301,6 +319,28 @@ describe('token claim rules settings API', () => {
       });
     });
 
+    it('refuses a condition naming a removed field, kept actions or not', async () => {
+      mocks.adapter.queryOne.mockResolvedValueOnce(row());
+      const response = await updateTokenClaimRule(
+        context({ body: { condition: { field: 'org_context', operator: 'exists', value: '' } } })
+      );
+      expect(response.status).toBe(400);
+      const error = await response.json<{ error_description: string }>();
+      expect(error.error_description).toContain('Removed fields cannot be used: org_context');
+      expect(mocks.adapter.execute).not.toHaveBeenCalled();
+    });
+
+    it('refuses to switch on a stored rule naming a removed field', async () => {
+      mocks.adapter.queryOne.mockResolvedValueOnce(
+        row({ conditions_json: JSON.stringify({ field: 'plan', operator: 'eq', value: 'gold' }) })
+      );
+      const response = await updateTokenClaimRule(context({ body: { is_active: true } }));
+      expect(response.status).toBe(400);
+      const error = await response.json<{ error_description: string }>();
+      expect(error.error_description).toContain('Removed fields cannot be used: plan');
+      expect(mocks.adapter.execute).not.toHaveBeenCalled();
+    });
+
     it('returns the current rule for an empty patch', async () => {
       mocks.adapter.queryOne.mockResolvedValueOnce(row());
       const response = await updateTokenClaimRule(context({ body: {} }));
@@ -409,8 +449,6 @@ describe('token claim rules settings API', () => {
               scope: 'openid profile',
               roles: ['member'],
               permissions: ['profile:read'],
-              org_id: 'org-1',
-              org_type: 'company',
               user_type: 'employee',
               idp_claims: { department: 'engineering' },
             },
@@ -419,7 +457,7 @@ describe('token claim rules settings API', () => {
       );
       expect(mocks.testRule).toHaveBeenCalledWith(
         expect.any(Object),
-        expect.objectContaining({ org_id: 'org-1', user_type: 'employee' })
+        expect.objectContaining({ roles: ['member'], user_type: 'employee' })
       );
     });
 
@@ -467,8 +505,6 @@ describe('token claim rules settings API', () => {
               scope: 'openid',
               roles: ['member'],
               permissions: ['profile:read'],
-              org_id: 'org-1',
-              org_type: 'company',
               user_type: 'employee',
               idp_claims: { department: 'engineering' },
             },
@@ -476,7 +512,7 @@ describe('token claim rules settings API', () => {
         })
       );
       expect(mocks.evaluate).toHaveBeenCalledWith(
-        expect.objectContaining({ org_id: 'org-1', idp_claims: { department: 'engineering' } }),
+        expect.objectContaining({ roles: ['member'], idp_claims: { department: 'engineering' } }),
         'id'
       );
     });

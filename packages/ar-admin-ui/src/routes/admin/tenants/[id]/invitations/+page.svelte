@@ -21,7 +21,7 @@
 		invited_email: string | null;
 		invited_by: string;
 		role_id: string | null;
-		org_id: string | null;
+		group_id: string | null;
 		max_uses: number;
 		use_count: number;
 		expires_at: number;
@@ -54,7 +54,7 @@
 	let createError = $state('');
 	let newInvitedEmail = $state('');
 	let newRoleId = $state('');
-	let newOrgId = $state('');
+	let newGroupId = $state('');
 	let newMaxUses = $state(1);
 	let newExpiresInHours = $state(72);
 
@@ -111,7 +111,7 @@
 			};
 			if (newInvitedEmail) body.invited_email = newInvitedEmail;
 			if (newRoleId) body.role_id = newRoleId;
-			if (newOrgId) body.org_id = newOrgId;
+			if (newGroupId) body.group_id = newGroupId;
 
 			const result = await apiFetch(`/api/admin/tenants/${tenantId}/invitations`, {
 				method: 'POST',
@@ -170,7 +170,7 @@
 	function resetCreateForm() {
 		newInvitedEmail = '';
 		newRoleId = '';
-		newOrgId = '';
+		newGroupId = '';
 		newMaxUses = 1;
 		newExpiresInHours = 72;
 		createError = '';
@@ -238,7 +238,7 @@
 						<tr>
 							<th>{$LL.admin_tenants_email()}</th>
 							<th>{$LL.admin_tenants_role()}</th>
-							<th>{$LL.admin_tenants_org()}</th>
+							<th>{$LL.admin_tenants_group()}</th>
 							<th>{$LL.admin_tenants_uses()}</th>
 							<th>{$LL.admin_tenants_expires()}</th>
 							<th>{$LL.admin_tenants_status()}</th>
@@ -256,7 +256,7 @@
 									{/if}
 								</td>
 								<td>{inv.role_id ?? '—'}</td>
-								<td>{inv.org_id ?? '—'}</td>
+								<td>{inv.group_id ?? '—'}</td>
 								<td>{inv.use_count} / {inv.max_uses === -1 ? '∞' : inv.max_uses}</td>
 								<td>{formatDate(inv.expires_at)}</td>
 								<td>
@@ -311,8 +311,8 @@
 								<dd>{inv.role_id ?? '—'}</dd>
 							</div>
 							<div>
-								<dt>{$LL.admin_tenants_org()}</dt>
-								<dd>{inv.org_id ?? '—'}</dd>
+								<dt>{$LL.admin_tenants_group()}</dt>
+								<dd>{inv.group_id ?? '—'}</dd>
 							</div>
 							<div>
 								<dt>{$LL.admin_tenants_uses()}</dt>
@@ -375,8 +375,14 @@
 	</div>
 
 	<div class="form-field">
-		<label for="org-id">{$LL.admin_tenants_auto_org()}</label>
-		<input id="org-id" type="text" bind:value={newOrgId} placeholder="org_id" class="form-input" />
+		<label for="group-id">{$LL.admin_tenants_auto_group()}</label>
+		<input
+			id="group-id"
+			type="text"
+			bind:value={newGroupId}
+			placeholder="group_id"
+			class="form-input"
+		/>
 	</div>
 
 	<div class="form-row">

@@ -31,7 +31,6 @@ export type JobType =
 	| 'users_import'
 	| 'users_bulk_update'
 	| 'report_generation'
-	| 'org_bulk_members'
 	| 'tenant_delete'
 	| 'tenant_database_export'
 	| 'tenant_database_restore_dry_run'
@@ -230,7 +229,6 @@ type ApiJobType =
 	| 'users/import'
 	| 'users/bulk-update'
 	| 'reports/generate'
-	| 'organizations/bulk-members'
 	| 'tenants/delete'
 	| 'tenant-database/export'
 	| 'tenant-database/restore-dry-run'
@@ -240,7 +238,6 @@ const JOB_TYPE_TO_API: Record<JobType, ApiJobType> = {
 	users_import: 'users/import',
 	users_bulk_update: 'users/bulk-update',
 	report_generation: 'reports/generate',
-	org_bulk_members: 'organizations/bulk-members',
 	tenant_delete: 'tenants/delete',
 	tenant_database_export: 'tenant-database/export',
 	tenant_database_restore_dry_run: 'tenant-database/restore-dry-run',
@@ -251,7 +248,6 @@ const JOB_TYPE_FROM_API: Record<ApiJobType, JobType> = {
 	'users/import': 'users_import',
 	'users/bulk-update': 'users_bulk_update',
 	'reports/generate': 'report_generation',
-	'organizations/bulk-members': 'org_bulk_members',
 	'tenants/delete': 'tenant_delete',
 	'tenant-database/export': 'tenant_database_export',
 	'tenant-database/restore-dry-run': 'tenant_database_restore_dry_run',
@@ -752,37 +748,6 @@ export const adminJobsAPI = {
 		}
 
 		return normalizeJob((await response.json()) as Record<string, unknown>);
-	},
-
-	/**
-	 * Create organization bulk members job
-	 */
-	async createOrgBulkMembers(
-		organizationId: string,
-		params: {
-			action: 'add' | 'remove';
-			user_ids: string[];
-			role?: 'member' | 'admin' | 'owner';
-			result_delivery?: ResultDelivery;
-		}
-	): Promise<Job> {
-		const response = await adminFetch(
-			`${API_BASE_URL}/api/admin/jobs/organizations/${organizationId}/bulk-members`,
-			{
-				method: 'POST',
-				credentials: 'include',
-				headers: {
-					'Content-Type': 'application/json'
-				},
-				body: JSON.stringify(params)
-			}
-		);
-
-		if (!response.ok) {
-			throw await handleAPIError(response, 'Failed to create org bulk members job');
-		}
-
-		return normalizeJob((await response.json()) as Record<string, unknown>);
 	}
 };
 
@@ -835,7 +800,6 @@ export function getJobTypeDisplayName(type: JobType): string {
 		users_import: 'User Import',
 		users_bulk_update: 'Bulk User Update',
 		report_generation: 'Report Generation',
-		org_bulk_members: 'Organization Bulk Members',
 		tenant_delete: 'Tenant Deletion',
 		tenant_database_export: 'Tenant DB Export',
 		tenant_database_restore_dry_run: 'Tenant DB Restore Dry-Run',

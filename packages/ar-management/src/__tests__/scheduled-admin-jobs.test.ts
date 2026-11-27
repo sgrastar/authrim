@@ -15,6 +15,7 @@ const {
   mockProcessPendingTenantDiscoveryReindexJobs,
   mockProcessLoggingStorageMaintenanceJobs,
   mockProcessPendingGenericAdminJobs,
+  mockProcessRetiredAdminJobs,
   mockProcessPendingIdentityMappingHistory,
 } = vi.hoisted(() => ({
   mockProcessPendingTenantDeletionJobs: vi.fn(),
@@ -31,6 +32,7 @@ const {
   mockProcessPendingTenantDiscoveryReindexJobs: vi.fn(),
   mockProcessLoggingStorageMaintenanceJobs: vi.fn(),
   mockProcessPendingGenericAdminJobs: vi.fn(),
+  mockProcessRetiredAdminJobs: vi.fn(),
   mockProcessPendingIdentityMappingHistory: vi.fn(),
 }));
 
@@ -87,6 +89,7 @@ vi.mock('../logging-storage-maintenance-jobs', () => ({
 
 vi.mock('../admin-job-executor', () => ({
   processPendingGenericAdminJobs: mockProcessPendingGenericAdminJobs,
+  processRetiredAdminJobs: mockProcessRetiredAdminJobs,
 }));
 
 import {
@@ -108,7 +111,10 @@ describe('scheduled admin job queues', () => {
     mockProcessPendingIdentityMappingHistory.mockRejectedValueOnce(new Error('unavailable'));
     await processInteractiveAdminJobQueues(env as never, log);
     expect(mockProcessPendingGenericAdminJobs).toHaveBeenCalled();
+    // Jobs of a retired type are failed on each scan.
+    expect(mockProcessRetiredAdminJobs).toHaveBeenCalledWith(env, log);
     await processScheduledAdminJobQueues(env as never, log);
+    expect(mockProcessRetiredAdminJobs).toHaveBeenCalledTimes(2);
     expect(mockProcessPendingIdentityMappingHistory).toHaveBeenCalledTimes(2);
   });
 
@@ -128,6 +134,7 @@ describe('scheduled admin job queues', () => {
     mockProcessPendingTenantDiscoveryReindexJobs.mockResolvedValue(undefined);
     mockProcessLoggingStorageMaintenanceJobs.mockResolvedValue(undefined);
     mockProcessPendingGenericAdminJobs.mockResolvedValue(undefined);
+    mockProcessRetiredAdminJobs.mockResolvedValue(undefined);
   });
 
   it.each([

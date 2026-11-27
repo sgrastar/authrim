@@ -7,17 +7,17 @@
  * Environment Variables:
  * - RBAC_ID_TOKEN_CLAIMS: Comma-separated list of claims to include in ID Token
  *   Default: "roles,groups,permissions,user_type"
- *   Available: roles,groups,permissions,scoped_roles,user_type,org_id,org_name,plan,org_type,orgs,relationships_summary
+ *   Available: roles,groups,permissions,scoped_roles,user_type,relationships_summary
  *
  * - RBAC_ACCESS_TOKEN_CLAIMS: Comma-separated list of claims to include in Access Token
  *   Default: "roles,groups"
- *   Available: roles,groups,scoped_roles,org_id,org_type,permissions,org_context
+ *   Available: roles,groups,scoped_roles,permissions
  *
  * Usage:
  * ```typescript
  * import { getUserRBACClaims, getIDTokenRBACClaims, getAccessTokenRBACClaims } from '@authrim/ar-lib-core';
  *
- * // Roles and organisations are defined in the tenant metadata database and assigned in the
+ * // Roles and groups are defined in the tenant metadata database and assigned in the
  * // subject's account database (see services/tenant-rbac.ts).
  * const dbs = { metadata: tenantMetadataDb, account: accountCoreDb };
  * const claims = await getUserRBACClaims(dbs, subjectId, tenantId);
@@ -55,10 +55,7 @@ import { ensureDatabaseAdapter } from '../db';
 import type {
   RBACTokenClaims,
   UserType,
-  PlanType,
-  OrganizationType,
   ScopeType,
-  TokenOrgInfo,
   TokenScopedRole,
   TokenGroup,
   RelationshipsSummary,
@@ -67,12 +64,10 @@ import type {
 } from '../types/rbac';
 import { DEFAULT_ID_TOKEN_CLAIMS, DEFAULT_ACCESS_TOKEN_CLAIMS } from '../types/rbac';
 import {
-  resolveSubjectOrganizations,
   resolveSubjectRoles,
-  isSet,
   roleAssignmentHolds,
+  roleScopeTargetError,
   rolePermissions,
-  type ResolvedSubjectOrganization,
   type ResolvedSubjectRole,
   type TenantRBACDatabases,
 } from '../services/tenant-rbac';
@@ -92,12 +87,7 @@ export interface CompositeRBACCache {
   scoped_roles: TokenScopedRole[];
   permissions: string[];
   groups: TokenGroup[];
-  organizations: TokenOrgInfo[];
   user_type: UserType;
-  plan: PlanType | null;
-  org_id: string | null;
-  org_name: string | null;
-  org_type: OrganizationType | null;
   relationships_summary: RelationshipsSummary;
   cached_at: number; // Unix timestamp
 }
@@ -116,28 +106,20 @@ export async function getCompositeRBACCache(
     options,
     async (version) => {
       const data = subjectRBACData(dbs, subjectId, tenantId);
-      const [subjectRoles, subjectGroups, subjectOrganizations, userType, relationships] =
-        await Promise.all([
-          data.roles(),
-          data.groups(),
-          data.organizations(),
-          resolveUserType(dbs.account, subjectId, tenantId),
-          resolveRelationshipsSummary(dbs.account, subjectId, tenantId),
-        ]);
-      const orgInfo = organizationInfo(subjectOrganizations);
+      const [subjectRoles, subjectGroups, userType, relationships] = await Promise.all([
+        data.roles(),
+        data.groups(),
+        resolveUserType(dbs.account, subjectId, tenantId),
+        resolveRelationshipsSummary(dbs.account, subjectId, tenantId),
+      ]);
 
       return {
         version,
         roles: claimRoleNames(subjectRoles, tenantId),
-        scoped_roles: scopedRoles(subjectRoles),
+        scoped_roles: scopedRoles(subjectRoles, tenantId),
         permissions: grantedPermissions(subjectRoles, tenantId),
         groups: subjectGroups,
-        organizations: organizationList(subjectOrganizations),
         user_type: userType,
-        plan: orgInfo?.plan ?? null,
-        org_id: orgInfo?.org_id ?? null,
-        org_name: primaryOrganization(subjectOrganizations)?.organization.name ?? null,
-        org_type: orgInfo?.org_type ?? null,
         relationships_summary: relationships,
         cached_at: Math.floor(Date.now() / 1000),
       };
@@ -185,26 +167,6 @@ export function extractIDTokenClaimsFromCache(
     claims.authrim_user_type = compositeCache.user_type;
   }
 
-  if (enabledClaims.includes('org_id') && compositeCache.org_id) {
-    claims.authrim_org_id = compositeCache.org_id;
-  }
-
-  if (enabledClaims.includes('org_name') && compositeCache.org_name) {
-    claims.authrim_org_name = compositeCache.org_name;
-  }
-
-  if (enabledClaims.includes('plan') && compositeCache.plan) {
-    claims.authrim_plan = compositeCache.plan;
-  }
-
-  if (enabledClaims.includes('org_type') && compositeCache.org_type) {
-    claims.authrim_org_type = compositeCache.org_type;
-  }
-
-  if (enabledClaims.includes('orgs') && compositeCache.organizations.length > 0) {
-    claims.authrim_orgs = compositeCache.organizations;
-  }
-
   if (enabledClaims.includes('relationships_summary')) {
     const rs = compositeCache.relationships_summary;
     if (rs.children_ids.length > 0 || rs.parent_ids.length > 0) {
@@ -250,40 +212,21 @@ export function extractAccessTokenClaimsFromCache(
     claims.authrim_scoped_roles = compositeCache.scoped_roles;
   }
 
-  if (enabledClaims.includes('org_id') && compositeCache.org_id) {
-    claims.authrim_org_id = compositeCache.org_id;
-  }
-
-  if (enabledClaims.includes('org_type') && compositeCache.org_type) {
-    claims.authrim_org_type = compositeCache.org_type;
-  }
-
   if (enabledClaims.includes('permissions') && compositeCache.permissions.length > 0) {
     claims.authrim_permissions = compositeCache.permissions;
   }
 
-  // org_context is not populated here - it requires request context (acting_as parameter)
-
   return claims;
 }
-/**
- * Resolved organization information
- */
-interface ResolvedOrgInfo {
-  org_id: string;
-  plan: PlanType;
-  org_type: OrganizationType;
-}
 
 /**
- * One subject's roles and active organisations, each read at most once per claim set.
+ * One subject's roles and groups, each read at most once per claim set.
  * Roles are read from the account database and named by the metadata database
  * (see services/tenant-rbac.ts); a claim set asks for several views of the same rows.
  */
 interface SubjectRBACData {
   roles(): Promise<ResolvedSubjectRole[]>;
   groups(): Promise<TokenGroup[]>;
-  organizations(): Promise<ResolvedSubjectOrganization[]>;
 }
 
 function subjectRBACData(
@@ -293,14 +236,9 @@ function subjectRBACData(
 ): SubjectRBACData {
   let roles: Promise<ResolvedSubjectRole[]> | undefined;
   let groups: Promise<TokenGroup[]> | undefined;
-  let organizations: Promise<ResolvedSubjectOrganization[]> | undefined;
   return {
     roles: () => (roles ??= resolveSubjectRoles(dbs, tenantId, subjectId)),
     groups: () => (groups ??= resolveSubjectGroupClaims(dbs, tenantId, subjectId)),
-    organizations: () =>
-      (organizations ??= resolveSubjectOrganizations(dbs, tenantId, subjectId, {
-        activeOnly: true,
-      })),
   };
 }
 
@@ -361,9 +299,12 @@ export async function resolveSubjectGroupClaims(
   return groups.sort((left, right) => (left.key < right.key ? -1 : left.key > right.key ? 1 : 0));
 }
 
-function scopedRoles(roles: ResolvedSubjectRole[]): TokenScopedRole[] {
+function scopedRoles(roles: ResolvedSubjectRole[], tenantId: string): TokenScopedRole[] {
   const claims = new Map<string, TokenScopedRole>();
   for (const { role, assignment } of roles) {
+    // An assignment of a scope no reader knows (the removed `org`), or with a target that is not
+    // one of its scope, is not in the claim.
+    if (roleScopeTargetError(assignment.scope_type, assignment.scope_target, tenantId)) continue;
     const claim = {
       name: role.name,
       scope: assignment.scope_type as ScopeType,
@@ -376,7 +317,7 @@ function scopedRoles(roles: ResolvedSubjectRole[]): TokenScopedRole[] {
 
 /**
  * The tenant-wide permissions of the subject's roles: only from assignments that hold across the
- * tenant (global, or tenant in its own tenant). A role assigned in one organisation or on one
+ * tenant (global, or tenant in its own tenant). A role assigned in one group or on one
  * resource gives its permissions there only, so not in a tenant-wide claim (its role is still in
  * authrim_scoped_roles with its scope).
  */
@@ -395,39 +336,13 @@ function grantedPermissions(roles: ResolvedSubjectRole[], tenantId: string): str
   ].sort();
 }
 
-function primaryOrganization(
-  organizations: ResolvedSubjectOrganization[]
-): ResolvedSubjectOrganization | null {
-  return organizations.find(({ membership }) => isSet(membership.is_primary)) ?? null;
-}
-
-function organizationInfo(organizations: ResolvedSubjectOrganization[]): ResolvedOrgInfo | null {
-  const primary = primaryOrganization(organizations);
-  return primary
-    ? {
-        org_id: primary.organization.id,
-        plan: primary.organization.plan as PlanType,
-        org_type: primary.organization.org_type as OrganizationType,
-      }
-    : null;
-}
-
-function organizationList(organizations: ResolvedSubjectOrganization[]): TokenOrgInfo[] {
-  return organizations.map(({ organization, membership }) => ({
-    id: organization.id,
-    name: organization.name,
-    type: organization.org_type as OrganizationType,
-    is_primary: isSet(membership.is_primary),
-  }));
-}
-
 /**
  * Get user's effective roles from role_assignments
  *
  * Returns distinct role names that are:
  * 1. Assigned to the user
  * 2. Not expired
- * 3. Any scope (global, org, resource)
+ * 3. Any scope (global, tenant, group, resource)
  *
  * @param dbs - The tenant's metadata and the subject's account database
  * @param subjectId - User ID
@@ -439,24 +354,6 @@ export async function resolveEffectiveRoles(
   tenantId: string
 ): Promise<string[]> {
   return roleNames(await resolveSubjectRoles(dbs, tenantId, subjectId));
-}
-
-/**
- * Get user's primary organization information
- *
- * Returns the primary organization for the user based on
- * subject_org_membership.is_primary = 1.
- *
- * @param dbs - The tenant's metadata and the subject's account database
- * @param subjectId - User ID
- * @returns Organization info or null if no primary org
- */
-export async function resolveOrganizationInfo(
-  dbs: TenantRBACDatabases,
-  subjectId: string,
-  tenantId: string
-): Promise<ResolvedOrgInfo | null> {
-  return organizationInfo(await subjectRBACData(dbs, subjectId, tenantId).organizations());
 }
 
 /**
@@ -498,9 +395,6 @@ export async function resolveUserType(
  * // {
  * //   authrim_roles: ['end_user', 'billing_manager'],
  * //   authrim_user_type: 'end_user',
- * //   authrim_org_id: 'org_123',
- * //   authrim_plan: 'professional',
- * //   authrim_org_type: 'enterprise'
  * // }
  * ```
  */
@@ -511,14 +405,12 @@ export async function getUserRBACClaims(
 ): Promise<RBACTokenClaims> {
   const data = subjectRBACData(dbs, subjectId, tenantId);
   // Fetch all RBAC info in parallel
-  const [roles, groups, organizations, userType] = await Promise.all([
+  const [roles, groups, userType] = await Promise.all([
     data.roles(),
     data.groups(),
-    data.organizations(),
     resolveUserType(dbs.account, subjectId, tenantId),
   ]);
   const names = claimRoleNames(roles, tenantId);
-  const orgInfo = organizationInfo(organizations);
 
   const claims: RBACTokenClaims = {};
 
@@ -534,13 +426,6 @@ export async function getUserRBACClaims(
   // Add user type
   claims.authrim_user_type = userType;
 
-  // Add organization info if user has a primary org
-  if (orgInfo) {
-    claims.authrim_org_id = orgInfo.org_id;
-    claims.authrim_plan = orgInfo.plan;
-    claims.authrim_org_type = orgInfo.org_type;
-  }
-
   return claims;
 }
 
@@ -549,12 +434,12 @@ export async function getUserRBACClaims(
  *
  * ID Token includes all RBAC claims:
  * - authrim_roles
+ * - authrim_groups
+ * - authrim_permissions
  * - authrim_user_type
- * - authrim_org_id
- * - authrim_plan
  *
  * When claimsConfig is provided, it controls which claims are included.
- * Available claims: roles,scoped_roles,user_type,org_id,org_name,plan,org_type,orgs,relationships_summary
+ * Available claims: roles,groups,permissions,scoped_roles,user_type,relationships_summary
  *
  * Caching: When cache (REBAC_CACHE KV) is provided, claims are cached for 5 minutes.
  *
@@ -592,10 +477,9 @@ export async function getIDTokenRBACClaims(
  *
  * Access Token includes:
  * - authrim_roles
- * - authrim_org_id
- * - authrim_org_type
+ * - authrim_groups
  *
- * Note: user_type and plan are omitted from access token
+ * Note: user_type is omitted from access token
  * as they are primarily for client-side display purposes.
  *
  * Caching: When cache (REBAC_CACHE KV) is provided, claims are cached for 5 minutes.
@@ -648,19 +532,16 @@ async function getAccessTokenRBACClaimsInternal(
   const needsRoles = enabledClaims.includes('roles');
   const needsGroups = enabledClaims.includes('groups');
   const needsScopedRoles = enabledClaims.includes('scoped_roles');
-  const needsOrgInfo = enabledClaims.includes('org_id') || enabledClaims.includes('org_type');
   const needsPermissions = enabledClaims.includes('permissions');
 
   // Fetch required data in parallel
   const data = subjectRBACData(dbs, subjectId, tenantId);
-  const [roles, groups, organizations] = await Promise.all([
+  const [roles, groups] = await Promise.all([
     needsRoles || needsScopedRoles || needsPermissions ? data.roles() : Promise.resolve([]),
     needsGroups ? data.groups() : Promise.resolve([]),
-    needsOrgInfo ? data.organizations() : Promise.resolve([]),
   ]);
   const names = needsRoles ? claimRoleNames(roles, tenantId) : [];
-  const scoped = needsScopedRoles ? scopedRoles(roles) : [];
-  const orgInfo = needsOrgInfo ? organizationInfo(organizations) : null;
+  const scoped = needsScopedRoles ? scopedRoles(roles, tenantId) : [];
   const permissions = needsPermissions ? grantedPermissions(roles, tenantId) : [];
 
   // Add claims based on configuration
@@ -676,21 +557,9 @@ async function getAccessTokenRBACClaimsInternal(
     claims.authrim_scoped_roles = scoped;
   }
 
-  if (orgInfo) {
-    if (enabledClaims.includes('org_id')) {
-      claims.authrim_org_id = orgInfo.org_id;
-    }
-    if (enabledClaims.includes('org_type')) {
-      claims.authrim_org_type = orgInfo.org_type;
-    }
-  }
-
   if (needsPermissions && permissions.length > 0) {
     claims.authrim_permissions = permissions;
   }
-
-  // org_context is not populated here - it requires request context (acting_as parameter)
-  // This will be handled at the token endpoint level
 
   return claims;
 }
@@ -711,22 +580,7 @@ export async function resolveScopedRoles(
   subjectId: string,
   tenantId: string
 ): Promise<TokenScopedRole[]> {
-  return scopedRoles(await resolveSubjectRoles(dbs, tenantId, subjectId));
-}
-
-/**
- * Get all organizations the user belongs to
- *
- * @param dbs - The tenant's metadata and the subject's account database
- * @param subjectId - User ID
- * @returns Array of organization info
- */
-export async function resolveAllOrganizations(
-  dbs: TenantRBACDatabases,
-  subjectId: string,
-  tenantId: string
-): Promise<TokenOrgInfo[]> {
-  return organizationList(await subjectRBACData(dbs, subjectId, tenantId).organizations());
+  return scopedRoles(await resolveSubjectRoles(dbs, tenantId, subjectId), tenantId);
 }
 
 /**
@@ -792,24 +646,6 @@ export async function resolvePermissions(
   return grantedPermissions(await resolveSubjectRoles(dbs, tenantId, subjectId), tenantId);
 }
 
-/**
- * Get primary organization name
- *
- * @param dbs - The tenant's metadata and the subject's account database
- * @param subjectId - User ID
- * @returns Organization name or null
- */
-export async function resolveOrganizationName(
-  dbs: TenantRBACDatabases,
-  subjectId: string,
-  tenantId: string
-): Promise<string | null> {
-  return (
-    primaryOrganization(await subjectRBACData(dbs, subjectId, tenantId).organizations())
-      ?.organization.name ?? null
-  );
-}
-
 // =============================================================================
 // Helper Functions
 // =============================================================================
@@ -865,22 +701,13 @@ export async function getIDTokenRBACClaimsConfigurable(
   const needsPermissions = enabledClaims.includes('permissions');
   const needsScopedRoles = enabledClaims.includes('scoped_roles');
   const needsUserType = enabledClaims.includes('user_type');
-  const needsOrgId = enabledClaims.includes('org_id');
-  const needsOrgName = enabledClaims.includes('org_name');
-  const needsPlan = enabledClaims.includes('plan');
-  const needsOrgType = enabledClaims.includes('org_type');
-  const needsOrgs = enabledClaims.includes('orgs');
   const needsRelationships = enabledClaims.includes('relationships_summary');
-
-  // Determine if we need basic org info
-  const needsBasicOrgInfo = needsOrgId || needsPlan || needsOrgType;
 
   // Fetch required data in parallel
   const data = subjectRBACData(dbs, subjectId, tenantId);
-  const [roles, groups, organizations, userType, relationships] = await Promise.all([
+  const [roles, groups, userType, relationships] = await Promise.all([
     needsRoles || needsScopedRoles || needsPermissions ? data.roles() : Promise.resolve([]),
     needsGroups ? data.groups() : Promise.resolve([]),
-    needsBasicOrgInfo || needsOrgName || needsOrgs ? data.organizations() : Promise.resolve([]),
     needsUserType
       ? resolveUserType(dbs.account, subjectId, tenantId)
       : Promise.resolve('end_user' as UserType),
@@ -889,13 +716,8 @@ export async function getIDTokenRBACClaimsConfigurable(
       : Promise.resolve({ children_ids: [], parent_ids: [] }),
   ]);
   const names = needsRoles ? claimRoleNames(roles, tenantId) : [];
-  const scoped = needsScopedRoles ? scopedRoles(roles) : [];
+  const scoped = needsScopedRoles ? scopedRoles(roles, tenantId) : [];
   const permissions = needsPermissions ? grantedPermissions(roles, tenantId) : [];
-  const orgInfo = needsBasicOrgInfo ? organizationInfo(organizations) : null;
-  const orgName = needsOrgName
-    ? (primaryOrganization(organizations)?.organization.name ?? null)
-    : null;
-  const orgs = needsOrgs ? organizationList(organizations) : [];
 
   // Add claims based on configuration
   if (needsRoles && names.length > 0) {
@@ -916,26 +738,6 @@ export async function getIDTokenRBACClaimsConfigurable(
 
   if (needsUserType) {
     claims.authrim_user_type = userType;
-  }
-
-  if (orgInfo) {
-    if (needsOrgId) {
-      claims.authrim_org_id = orgInfo.org_id;
-    }
-    if (needsPlan) {
-      claims.authrim_plan = orgInfo.plan;
-    }
-    if (needsOrgType) {
-      claims.authrim_org_type = orgInfo.org_type;
-    }
-  }
-
-  if (needsOrgName && orgName) {
-    claims.authrim_org_name = orgName;
-  }
-
-  if (needsOrgs && orgs.length > 0) {
-    claims.authrim_orgs = orgs;
   }
 
   if (

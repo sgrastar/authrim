@@ -147,19 +147,6 @@
 					{/each}
 				</ul>
 			{/if}
-			{#if consent.organizations.length <= 1 && consent.targetOrg}
-				<p>{data.text.currentOrganization}: {consent.targetOrg.name}</p>
-			{/if}
-			{#if consent.organizations.length > 1}
-				<label>
-					{data.text.organization}
-					<select name="org">
-						{#each consent.organizations as org (org.id)}
-							<option value={org.id} selected={org.id === consent.defaultOrgId}>{org.name}</option>
-						{/each}
-					</select>
-				</label>
-			{/if}
 			{#if consent.actingAs}<p>{data.text.actingAs}</p>{/if}
 			<p class="muted">{data.text.userInfo} <strong>{consent.userEmail}</strong></p>
 			{#if consent.policyUri || consent.tosUri}

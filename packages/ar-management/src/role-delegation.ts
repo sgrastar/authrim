@@ -1,16 +1,5 @@
 import { ADMIN_PERMISSIONS, hasAdminPermission, type AdminAuthContext } from '@authrim/ar-lib-core';
 
-function getNumericHierarchyLevel(value: unknown): number {
-  if (typeof value === 'number') {
-    return Number.isFinite(value) ? value : 0;
-  }
-  if (typeof value === 'string' && value.trim() !== '') {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : 0;
-  }
-  return 0;
-}
-
 function hasMachineFullAdminBypass(authContext: AdminAuthContext | null): boolean {
   if (authContext?.authMethod !== 'machine_access_token') {
     return false;
@@ -22,41 +11,24 @@ function hasMachineFullAdminBypass(authContext: AdminAuthContext | null): boolea
   );
 }
 
-export function canManageRoleHierarchy(
-  authContext: AdminAuthContext | null,
-  targetHierarchyLevel: unknown
-): boolean {
-  if (hasMachineFullAdminBypass(authContext)) {
-    return true;
-  }
+type GrantRole = { grant_tier: number };
 
-  if (authContext?.hierarchyLevel === undefined) {
-    return false;
-  }
+/** The tier a machine access token with every admin permission may delegate (the highest). */
+const MACHINE_FULL_ADMIN_GRANT_TIER = 3;
 
-  return getNumericHierarchyLevel(targetHierarchyLevel) < authContext.hierarchyLevel;
-}
-
-type GrantRole = { grant_tier: number; hierarchy_level: number | null };
-
-/** Compatibility mapping for current admin roles (support, tenant admin, super admin). */
-const LEGACY_GRANT_TIERS = [
-  { minLevel: 100, tier: 3 },
-  { minLevel: 80, tier: 2 },
-  { minLevel: 1, tier: 1 },
-] as const;
-
-export function canGrantRole(
-  auth: AdminAuthContext | null,
-  role: Pick<GrantRole, 'grant_tier'>
-): boolean {
+/**
+ * Whether the administrator may grant, revoke or edit an end-user role: the role's `grant_tier`
+ * is at most the administrator's `maxGrantTier` (from its admin roles' definitions). This is the
+ * only delegation guard for end-user roles.
+ */
+export function canGrantRole(auth: AdminAuthContext | null, role: GrantRole): boolean {
   if (!auth || !Number.isInteger(role.grant_tier) || role.grant_tier < 1) return false;
-  const level = hasMachineFullAdminBypass(auth) ? 100 : (auth.hierarchyLevel ?? 0);
-  const ceiling =
-    auth.maxGrantTier ?? LEGACY_GRANT_TIERS.find((row) => level >= row.minLevel)?.tier ?? 0;
+  const ceiling = hasMachineFullAdminBypass(auth)
+    ? MACHINE_FULL_ADMIN_GRANT_TIER
+    : (auth.maxGrantTier ?? 0);
   return Number.isInteger(ceiling) && role.grant_tier <= ceiling;
 }
 
 export function mayManageEndUserRole(auth: AdminAuthContext | null, role: GrantRole) {
-  return canGrantRole(auth, role) && canManageRoleHierarchy(auth, role.hierarchy_level);
+  return canGrantRole(auth, role);
 }

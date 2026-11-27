@@ -500,7 +500,6 @@
 			users_import: $LL.admin_jobs_type_users_import(),
 			users_bulk_update: $LL.admin_jobs_type_users_bulk_update(),
 			report_generation: $LL.admin_jobs_type_report_generation(),
-			org_bulk_members: $LL.admin_jobs_type_org_bulk_members(),
 			tenant_delete: $LL.admin_jobs_type_tenant_delete(),
 			tenant_database_export: $LL.admin_jobs_type_tenant_database_export(),
 			tenant_database_restore_dry_run: $LL.admin_jobs_type_tenant_database_restore_dry_run(),
@@ -805,7 +804,6 @@
 					<option value="users_import">{$LL.admin_jobs_type_users_import()}</option>
 					<option value="users_bulk_update">{$LL.admin_jobs_type_users_bulk_update()}</option>
 					<option value="report_generation">{$LL.admin_jobs_type_report_generation()}</option>
-					<option value="org_bulk_members">{$LL.admin_jobs_type_org_bulk_members()}</option>
 					<option value="tenant_delete">{$LL.admin_jobs_type_tenant_delete()}</option>
 					<option value="tenant_database_export"
 						>{$LL.admin_jobs_type_tenant_database_export()}</option

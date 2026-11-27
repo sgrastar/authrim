@@ -59,10 +59,9 @@ const roleRow = (id: string, name: string) => ({
   description: null,
   permissions_json: '[]',
   role_type: 'custom',
-  hierarchy_level: null,
+  grant_tier: 1,
   is_assignable: 1,
   is_system: 0,
-  parent_role_id: null,
 });
 const assignmentRow = (roleId: string) => ({
   id: `ra-${roleId}`,
@@ -333,7 +332,7 @@ describe('Resource Permissions Utilities', () => {
       // The write is fire-and-forget: it lands after the validity boundary has been read.
       await vi.waitFor(() =>
         expect(mockKV.put).toHaveBeenCalledWith(
-          'policy:idperms:v3:default:user_123',
+          'policy:idperms:v4:default:user_123',
           expect.stringContaining('"claims":["documents:doc_123:read"]'),
           { expirationTtl: 300 }
         )
@@ -572,7 +571,7 @@ describe('Resource Permissions Utilities', () => {
     it('should delete cache entry', async () => {
       await invalidateIdPermissionCache(mockKV as unknown as KVNamespace, 'user_123', 'default');
 
-      expect(mockKV.delete).toHaveBeenCalledWith('policy:idperms:v3:default:user_123');
+      expect(mockKV.delete).toHaveBeenCalledWith('policy:idperms:v4:default:user_123');
     });
   });
 

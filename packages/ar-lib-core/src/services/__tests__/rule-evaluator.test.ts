@@ -76,7 +76,7 @@ describe('Rule Evaluator Service', () => {
 
       expect(result.matched_rules).toEqual([]);
       expect(result.roles_to_assign).toEqual([]);
-      expect(result.orgs_to_join).toEqual([]);
+      expect(result.groups_to_join).toEqual([]);
       expect(result.denied).toBe(false);
     });
 
@@ -505,7 +505,7 @@ describe('Rule Evaluator Service', () => {
     });
   });
 
-  describe('Organization Join Actions', () => {
+  describe('Group Join Actions', () => {
     const baseContext: RuleEvaluationContext = {
       email_domain_hash: 'company-hash',
       email_verified: true,
@@ -514,63 +514,100 @@ describe('Rule Evaluator Service', () => {
       tenant_id: 'default',
     };
 
-    it('should collect org IDs to join from matched rules', async () => {
-      const orgRule: Partial<RoleAssignmentRule> = {
-        id: 'rule-org',
-        name: 'Auto Join Org Rule',
+    it('should collect the groups to join once per group and rule, keeping each rule', async () => {
+      const groupRule: Partial<RoleAssignmentRule> = {
+        id: 'rule-group',
+        name: 'Join Staff Group',
         role_id: 'role_member',
-        scope_type: 'organization',
-        scope_target: 'org-123',
+        scope_type: 'group',
+        scope_target: 'group:grp-123',
         condition: {
           field: 'email_domain_hash',
           operator: 'eq',
           value: 'company-hash',
         },
         actions: [
-          { type: 'join_org', org_id: 'org-123' },
+          { type: 'join_group', group_id: 'grp-123' },
+          { type: 'join_group', group_id: 'grp-123' },
           {
             type: 'assign_role',
             role_id: 'role_member',
-            scope_type: 'organization',
-            scope_target: 'org-123',
+            scope_type: 'group',
+            scope_target: 'group:grp-123',
           },
         ],
         priority: 100,
         is_active: true,
         stop_processing: false,
       };
+      const secondRule: Partial<RoleAssignmentRule> = {
+        ...groupRule,
+        id: 'rule-second',
+        name: 'Join Second Group',
+        actions: [
+          { type: 'join_group', group_id: 'grp-123' },
+          { type: 'join_group', group_id: 'grp-456' },
+          { type: 'join_group' },
+        ],
+        priority: 50,
+      };
 
       mockD1.all.mockResolvedValue({
-        results: [ruleToRow(orgRule)],
+        results: [ruleToRow(groupRule), ruleToRow(secondRule)],
       });
 
       const result = await evaluator.evaluate(baseContext);
 
-      expect(result.orgs_to_join).toContain('org-123');
+      // The second rule joining grp-123 keeps its own entry (its own membership source).
+      expect(result.groups_to_join).toEqual([
+        { group_id: 'grp-123', rule_id: 'rule-group' },
+        { group_id: 'grp-123', rule_id: 'rule-second' },
+        { group_id: 'grp-456', rule_id: 'rule-second' },
+      ]);
     });
+  });
 
-    it('should handle org_id=auto for domain-based resolution', async () => {
-      const autoOrgRule: Partial<RoleAssignmentRule> = {
-        id: 'rule-auto-org',
-        name: 'Auto Org Resolution',
+  describe('Role scopes', () => {
+    it('does not give a role of the removed organisation scope or with a malformed target', async () => {
+      const rule: Partial<RoleAssignmentRule> = {
+        id: 'rule-scopes',
+        name: 'Scopes',
         role_id: 'role_member',
-        scope_type: 'organization',
-        scope_target: 'auto',
-        condition: { field: 'email_verified', operator: 'eq', value: true },
-        actions: [{ type: 'join_org', org_id: 'auto' }],
+        scope_type: 'global',
+        scope_target: '',
+        condition: { field: 'email_domain_hash', operator: 'eq', value: 'company-hash' },
+        actions: [
+          {
+            type: 'assign_role',
+            role_id: 'role_org',
+            scope_type: 'org' as never,
+            scope_target: 'org:o1',
+          },
+          { type: 'assign_role', role_id: 'role_bare', scope_type: 'group', scope_target: 'grp-1' },
+          {
+            type: 'assign_role',
+            role_id: 'role_group',
+            scope_type: 'group',
+            scope_target: 'group:grp-1',
+          },
+          { type: 'assign_role', role_id: 'role_global' },
+        ],
         priority: 100,
         is_active: true,
         stop_processing: false,
       };
-
-      mockD1.all.mockResolvedValue({
-        results: [ruleToRow(autoOrgRule)],
+      mockD1.all.mockResolvedValue({ results: [ruleToRow(rule)] });
+      const result = await evaluator.evaluate({
+        email_domain_hash: 'company-hash',
+        email_verified: true,
+        idp_claims: {},
+        provider_id: 'google',
+        tenant_id: 'default',
       });
-
-      const result = await evaluator.evaluate(baseContext);
-
-      // 'auto' should be included to signal domain-based resolution
-      expect(result.orgs_to_join).toContain('auto');
+      expect(result.roles_to_assign).toEqual([
+        { role_id: 'role_group', scope_type: 'group', scope_target: 'group:grp-1' },
+        { role_id: 'role_global', scope_type: 'global', scope_target: '' },
+      ]);
     });
   });
 

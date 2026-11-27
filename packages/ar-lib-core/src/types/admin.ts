@@ -163,8 +163,6 @@ export interface AdminAuthContext {
   // ==========================================================================
   /** User type classification (for UI/logging purposes) */
   user_type?: UserType;
-  /** Primary organization ID */
-  org_id?: string;
 }
 
 /**

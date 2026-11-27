@@ -532,10 +532,6 @@ export interface Passkey {
 // =============================================================================
 
 import type {
-  Organization,
-  OrganizationRow,
-  SubjectOrgMembership,
-  SubjectOrgMembershipRow,
   Role,
   RoleRow,
   RoleAssignment,
@@ -547,10 +543,6 @@ import type {
 
 // Re-export RBAC types for convenience
 export type {
-  Organization,
-  OrganizationRow,
-  SubjectOrgMembership,
-  SubjectOrgMembershipRow,
   Role,
   RoleRow,
   RoleAssignment,
@@ -559,55 +551,6 @@ export type {
   RelationshipRow,
   ScopeType,
 };
-
-/**
- * IOrganizationStore interface
- * Manages organizations and subject-organization memberships
- */
-export interface IOrganizationStore {
-  // Organization CRUD
-  getOrganization(tenantId: string, orgId: string): Promise<Organization | null>;
-  getOrganizationByName(tenantId: string, name: string): Promise<Organization | null>;
-  createOrganization(
-    org: Omit<Organization, 'id' | 'created_at' | 'updated_at'>
-  ): Promise<Organization>;
-  updateOrganization(
-    tenantId: string,
-    orgId: string,
-    updates: Partial<Organization>
-  ): Promise<Organization>;
-  deleteOrganization(tenantId: string, orgId: string): Promise<void>;
-  listOrganizations(
-    tenantId: string,
-    options?: { limit?: number; offset?: number; parentOrgId?: string }
-  ): Promise<Organization[]>;
-
-  // Membership CRUD
-  getMembership(tenantId: string, membershipId: string): Promise<SubjectOrgMembership | null>;
-  getMembershipBySubjectAndOrg(
-    tenantId: string,
-    subjectId: string,
-    orgId: string
-  ): Promise<SubjectOrgMembership | null>;
-  createMembership(
-    membership: Omit<SubjectOrgMembership, 'id' | 'created_at' | 'updated_at'>
-  ): Promise<SubjectOrgMembership>;
-  updateMembership(
-    tenantId: string,
-    membershipId: string,
-    updates: Partial<SubjectOrgMembership>
-  ): Promise<SubjectOrgMembership>;
-  deleteMembership(tenantId: string, membershipId: string): Promise<void>;
-
-  // Membership queries
-  listMembershipsBySubject(tenantId: string, subjectId: string): Promise<SubjectOrgMembership[]>;
-  listMembershipsByOrg(
-    tenantId: string,
-    orgId: string,
-    options?: { limit?: number; offset?: number }
-  ): Promise<SubjectOrgMembership[]>;
-  getPrimaryOrganization(tenantId: string, subjectId: string): Promise<Organization | null>;
-}
 
 /**
  * IRoleStore interface
@@ -623,7 +566,6 @@ export interface IRoleStore {
     tenantId: string,
     options?: { limit?: number; offset?: number; roleType?: string }
   ): Promise<Role[]>;
-  getChildRoles(tenantId: string, roleId: string): Promise<Role[]>;
 }
 
 /**

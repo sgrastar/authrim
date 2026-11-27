@@ -965,7 +965,7 @@ interface DevTenantInvitation {
 	invited_email: string | null;
 	invited_by: string;
 	role_id: string | null;
-	org_id: string | null;
+	group_id: string | null;
 	max_uses: number;
 	use_count: number;
 	expires_at: number;
@@ -2506,19 +2506,16 @@ const policyRules = new Map<string, DevPolicyRule>([
 		}
 	],
 	[
-		'policy-rule-org-editors',
+		'policy-rule-editors',
 		{
-			id: 'policy-rule-org-editors',
-			name: 'organization_editors',
-			description: 'Allows editors to update resources owned by their organization.',
+			id: 'policy-rule-editors',
+			name: 'resource_editors',
+			description: 'Allows editors to update documents.',
 			priority: 80,
 			effect: 'allow',
 			resource_types: ['document'],
 			actions: ['update', 'comment'],
-			conditions: [
-				{ type: 'has_role', params: { role: 'editor', scope: 'organization' } },
-				{ type: 'same_organization', params: {} }
-			],
+			conditions: [{ type: 'has_role', params: { role: 'editor', scope: 'global' } }],
 			enabled: true,
 			created_by: 'dev-admin',
 			created_at: Math.floor(NOW / 1000) - 86400 * 18,
@@ -2733,7 +2730,7 @@ const tenantInvitations = new Map<string, DevTenantInvitation>([
 			invited_email: 'ops@example.test',
 			invited_by: 'admin-dev-admin',
 			role_id: 'tenant_admin',
-			org_id: null,
+			group_id: null,
 			max_uses: 1,
 			use_count: 0,
 			expires_at: Math.floor(Date.now() / 1000) + 86400 * 3,
@@ -2749,7 +2746,7 @@ const tenantInvitations = new Map<string, DevTenantInvitation>([
 			invited_email: null,
 			invited_by: 'admin-dev-admin',
 			role_id: null,
-			org_id: 'dev-org',
+			group_id: 'dev-group',
 			max_uses: 5,
 			use_count: 2,
 			expires_at: Math.floor(Date.now() / 1000) + 86400 * 7,
@@ -8040,7 +8037,6 @@ function buildTenantInfo(origin: string) {
 			settings: `${apiBase}/settings/meta`,
 			tenants: `${apiBase}/tenants`,
 			custom_claims: `${apiBase}/custom-claims`,
-			organizations: `${apiBase}/organizations`,
 			roles: `${apiBase}/roles`,
 			webhooks: `${apiBase}/webhooks`
 		}
@@ -11665,7 +11661,8 @@ async function handleSettings(event: RequestEvent, segments: string[]): Promise<
 			invited_by: 'admin-dev-admin',
 			role_id:
 				typeof input.role_id === 'string' && input.role_id.trim() ? input.role_id.trim() : null,
-			org_id: typeof input.org_id === 'string' && input.org_id.trim() ? input.org_id.trim() : null,
+			group_id:
+				typeof input.group_id === 'string' && input.group_id.trim() ? input.group_id.trim() : null,
 			max_uses:
 				typeof input.max_uses === 'number' && Number.isFinite(input.max_uses)
 					? Math.floor(input.max_uses)

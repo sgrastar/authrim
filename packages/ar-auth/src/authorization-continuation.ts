@@ -20,7 +20,6 @@ const AUTHORIZATION_REQUEST_STRING_FIELDS = [
   'ui_locales',
   'login_hint',
   'handoff',
-  'org_id',
   'acting_as',
   'error_uri',
   'cancel_uri',

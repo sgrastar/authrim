@@ -121,16 +121,16 @@ const ROLE_CONDITION_TYPES = new Set(['has_role', 'has_any_role', 'has_all_roles
 
 /**
  * The subject's role assignments that hold for the request's target: global ones, one for the
- * resource's organization (`org:<id>`), and one for the resource itself (`resource:<type>:<id>`
- * or `resource:<id>`). An assignment for another organization or resource does not count.
+ * resource's groups (`group:<id>`), and one for the resource itself (`resource:<type>:<id>`
+ * or `resource:<id>`). An assignment for another group or resource does not count.
  */
 function rolesForTarget(roles: readonly SubjectRole[], context: PolicyContext): SubjectRole[] {
-  const { orgId, id, type } = context.resource;
+  const { groupIds, id, type } = context.resource;
   // The same matching as the role check of the Check API (roleAssignmentHolds).
   return roles.filter((role) =>
     roleAssignmentHolds(
       { scope: role.scope, scopeTarget: role.scopeTarget },
-      { orgId, resourceType: type, resourceId: id }
+      { groupIds, resourceType: type, resourceId: id }
     )
   );
 }
@@ -144,7 +144,7 @@ function denyNeedsMissingTarget(rule: TenantPolicyRule, context: PolicyContext):
     }
     if (ROLE_CONDITION_TYPES.has(condition.type)) {
       const scope = condition.params.scope;
-      if (scope === 'org' && !context.resource.orgId) return "the resource's organization";
+      if (scope === 'group' && !context.resource.groupIds?.length) return "the resource's groups";
       if (scope === 'resource' && !context.resource.id) return 'the resource';
     }
   }

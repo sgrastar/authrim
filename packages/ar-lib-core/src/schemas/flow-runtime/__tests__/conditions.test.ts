@@ -118,6 +118,29 @@ describe('evaluateFlowCondition with the new kinds', () => {
     ).resolves.toBe(false);
   });
 
+  it('holds a group membership only for a group the user is in (by id)', async () => {
+    const member = { type: 'group_membership', group_ref: { id: 'grp_1' } } as const;
+    await expect(holds(member, { user: { group_ids: ['grp_0', 'grp_1'] } })).resolves.toBe(true);
+    await expect(holds(member, { user: { group_ids: ['grp_2'] } })).resolves.toBe(false);
+    await expect(holds(member, { user: {} })).resolves.toBe(false);
+    await expect(
+      holds({ type: 'group_membership' }, { user: { group_ids: ['grp_1'] } })
+    ).resolves.toBe(false);
+  });
+
+  it('reads one membership set for user.group and group_membership', async () => {
+    // A user in grp_1 only through its subgroup: the effective set holds both.
+    const context = { user: { group_ids: ['grp_child', 'grp_1'] } };
+    await expect(holds({ type: 'user.group', value: 'grp_1' }, context)).resolves.toBe(true);
+    await expect(
+      holds({ type: 'group_membership', group_ref: { id: 'grp_1' } }, context)
+    ).resolves.toBe(true);
+    await expect(holds({ type: 'user.group', value: 'grp_2' }, context)).resolves.toBe(false);
+    await expect(
+      holds({ type: 'group_membership', group_ref: { id: 'grp_2' } }, context)
+    ).resolves.toBe(false);
+  });
+
   it('never reads an inherited key as an attribute', async () => {
     const plain = {
       type: 'user.attribute',
@@ -292,7 +315,7 @@ describe('conditionsReadSignedInUser', () => {
     [{ type: 'user.attribute', attribute: 'nationality', value: 'JP' }],
     [{ type: 'user.role', value: 'admin' }],
     [{ type: 'user.age', operator: 'lt', value: 18 }],
-    [{ type: 'organization_membership', org_ref: { id: 'org_1' } }],
+    [{ type: 'group_membership', group_ref: { id: 'grp_1' } }],
     [
       {
         type: 'all',

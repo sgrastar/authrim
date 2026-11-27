@@ -20,12 +20,7 @@ vi.mock('../account-status', () => ({
   transitionAccountLifecycle: mocks.lifecycle,
 }));
 
-import {
-  removeOrganizationMembership,
-  removeRoleAssignment,
-  suspendAccount,
-  type RevocationContext,
-} from '../access-revocation';
+import { removeRoleAssignment, suspendAccount, type RevocationContext } from '../access-revocation';
 
 function context(
   rowsAffected = 1,
@@ -122,7 +117,7 @@ describe('access revocation', () => {
     mocks.invalidateSubjectRBACCache.mockRejectedValueOnce(new Error('kv_unavailable'));
     const ctx = context();
     await expect(
-      removeOrganizationMembership(ctx.value, { userId: 'user-1', orgId: 'org-1' })
+      removeRoleAssignment(ctx.value, { userId: 'user-1', assignmentId: 'ra-1' })
     ).rejects.toThrow('access_cache_invalidation_failed');
     expect(ctx.audit).not.toHaveBeenCalled();
   });
@@ -139,14 +134,14 @@ describe('access revocation', () => {
   it('only warns about caches for an Admin API request (they expire on their own)', async () => {
     mocks.invalidateSubjectRBACCache.mockRejectedValueOnce(new Error('kv_unavailable'));
     const ctx = context(1, { onCacheFailure: 'warn' });
-    expect(
-      await removeOrganizationMembership(ctx.value, { userId: 'user-1', orgId: 'org-1' })
-    ).toBe('removed');
+    expect(await removeRoleAssignment(ctx.value, { userId: 'user-1', assignmentId: 'ra-1' })).toBe(
+      'removed'
+    );
     expect(ctx.log.warn).toHaveBeenCalled();
     expect(ctx.audit).toHaveBeenCalledWith(
-      'organization_membership.removed',
-      'organization',
-      'org-1',
+      'role_assignment.removed',
+      'role_assignment',
+      'ra-1',
       { user_id: 'user-1' },
       undefined
     );

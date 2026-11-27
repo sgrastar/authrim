@@ -25,7 +25,7 @@ import type { DatabaseAdapter } from '../db/adapter';
 import { requireAdminDatabaseAdapter } from '../services/admin-database-adapter';
 import { createLogger } from '../utils/logger';
 import { hasAdminPermission } from '../types/admin-user';
-import { ADMIN_ROLE_GROUPS } from '../constants/admin-roles';
+import { ADMIN_ROLE_GROUPS, adminMaxGrantTier } from '../constants/admin-roles';
 import { buildRequestIssuerUrl, getDefaultTenantId } from '../utils/issuer';
 import { resolveTenantFromRequest } from '../utils/tenant-context';
 import { parseTokenHeader, verifyToken } from '../utils/jwt';
@@ -704,6 +704,7 @@ export async function authenticateAdminSessionForTenant(
       email: adminUser.email,
       permissions: Array.from(allPermissions),
       hierarchyLevel: maxHierarchyLevel,
+      maxGrantTier: adminMaxGrantTier(roles),
       mfaVerified: Boolean(session.mfa_verified),
       // The last verified passkey (sign-in or in-session re-authentication). A session created
       // before passkey evidence was recorded falls back to its sign-in time.

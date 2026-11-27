@@ -184,7 +184,7 @@ describe("external provisioning resume: the tenant's sign-in and sign-up switche
     mocks.completeJit.mockResolvedValue({
       linkedIdentityId: 'external-link-a',
       roles_assigned: [],
-      orgs_joined: [],
+      groups_joined: [],
     });
     mocks.getProvider.mockResolvedValue({
       id: 'provider-a',

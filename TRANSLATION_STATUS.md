@@ -275,7 +275,6 @@ This file tracks the progress of translating the project to English.
 | 200 | packages/ar-lib-core/src/services/__tests__/unified-check-service.test.ts | Untranslated | - | - | - | |
 | 201 | packages/ar-lib-core/src/services/backchannel-logout-sender.ts | Untranslated | - | - | - | |
 | 202 | packages/ar-lib-core/src/services/frontchannel-logout.ts | Untranslated | - | - | - | |
-| 203 | packages/ar-lib-core/src/services/org-domain-resolver.ts | Untranslated | - | - | - | |
 | 204 | packages/ar-lib-core/src/services/permission-change-notifier.ts | Untranslated | - | - | - | |
 | 205 | packages/ar-lib-core/src/services/rule-evaluator.ts | Untranslated | - | - | - | |
 | 206 | packages/ar-lib-core/src/services/token-claim-evaluator.ts | Untranslated | - | - | - | |
@@ -284,7 +283,6 @@ This file tracks the progress of translating the project to English.
 | 209 | packages/ar-lib-core/src/storage/adapters/cloudflare-adapter.ts | Untranslated | - | - | - | |
 | 210 | packages/ar-lib-core/src/storage/interfaces.ts | Untranslated | - | - | - | |
 | 211 | packages/ar-lib-core/src/storage/repositories/index.ts | Untranslated | - | - | - | |
-| 212 | packages/ar-lib-core/src/storage/repositories/organization-store.ts | Untranslated | - | - | - | |
 | 213 | packages/ar-lib-core/src/storage/repositories/relationship-store.ts | Untranslated | - | - | - | |
 | 214 | packages/ar-lib-core/src/storage/repositories/role-assignment-store.ts | Untranslated | - | - | - | |
 | 215 | packages/ar-lib-core/src/storage/repositories/role-store.ts | Untranslated | - | - | - | |
@@ -520,7 +518,6 @@ This file tracks the progress of translating the project to English.
 | 425 | packages/ar-management/src/routes/settings/logout-config.ts | Untranslated | - | - | - | |
 | 426 | packages/ar-management/src/routes/settings/logout-failures.ts | Untranslated | - | - | - | |
 | 427 | packages/ar-management/src/routes/settings/oauth-config.ts | Untranslated | - | - | - | |
-| 428 | packages/ar-management/src/routes/settings/org-domain-mappings.ts | Untranslated | - | - | - | |
 | 429 | packages/ar-management/src/routes/settings/pii-partitions.ts | Untranslated | - | - | - | |
 | 430 | packages/ar-management/src/routes/settings/plugins.ts | Untranslated | - | - | - | |
 | 431 | packages/ar-management/src/routes/settings/policy-flags.ts | Translated | ✅ | - | - | CLAUDE.md reference |

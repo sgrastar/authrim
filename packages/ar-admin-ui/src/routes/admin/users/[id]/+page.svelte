@@ -31,7 +31,6 @@
 		type UserConsentRecord,
 		type ConsentItemHistory
 	} from '#lib/api/admin-consent-statements.js';
-	import OrganizationSelectDialog from '#lib/components/OrganizationSelectDialog.svelte';
 	import { Modal, ToggleSwitch } from '#lib/components/index.js';
 	import AdminPageHeader from '#lib/components/admin/AdminPageHeader.svelte';
 	import AdminPageShell from '#lib/components/admin/AdminPageShell.svelte';
@@ -40,10 +39,9 @@
 	import AdminDataTable from '#lib/components/admin/AdminDataTable.svelte';
 	import EmailDeliveryTable from '#lib/components/admin/EmailDeliveryTable.svelte';
 	import UserAssuranceSection from '#lib/components/admin/UserAssuranceSection.svelte';
-	import type { OrganizationNode } from '#lib/api/admin-organizations.js';
 	import { adminAuth } from '#lib/stores/admin-auth.svelte.js';
 	import { settingsContext } from '#lib/stores/settings-context.svelte.js';
-	import { sanitizeText, isValidUUID } from '#lib/utils/index.js';
+	import { sanitizeText } from '#lib/utils/index.js';
 	import { normalizeTimestampMs } from '#lib/utils/timestamp.js';
 	import { formatGuestAwareAuditAction } from '#lib/admin/account-audit-action-label.js';
 
@@ -83,15 +81,8 @@
 
 	// Assign role dialog state
 	let showAssignRoleDialog = $state(false);
-	let assignStep = $state<'select-role' | 'select-scope'>('select-role');
 	let selectedRoleId = $state('');
-	let selectedScope = $state<ScopeType>('global');
-	let selectedOrgId = $state<string | null>(null);
-	let selectedOrgName = $state<string | null>(null);
 	let assignLoading = $state(false);
-
-	// Organization select dialog
-	let showOrgSelectDialog = $state(false);
 
 	// Remove role confirmation
 	let showRemoveRoleDialog = $state(false);
@@ -336,10 +327,6 @@
 	function openAssignRoleDialog() {
 		if (!canManageRoles) return;
 		selectedRoleId = '';
-		selectedScope = 'global';
-		selectedOrgId = null;
-		selectedOrgName = null;
-		assignStep = 'select-role';
 		showAssignRoleDialog = true;
 		rolesError = '';
 	}
@@ -348,45 +335,15 @@
 		showAssignRoleDialog = false;
 	}
 
-	function goToScopeStep() {
-		if (selectedRoleId) {
-			assignStep = 'select-scope';
-		}
-	}
-
-	function goBackToRoleStep() {
-		assignStep = 'select-role';
-	}
-
-	function openOrgSelectDialog() {
-		showOrgSelectDialog = true;
-	}
-
-	function handleOrgSelect(org: OrganizationNode) {
-		selectedOrgId = org.id;
-		selectedOrgName = org.display_name || org.name;
-		showOrgSelectDialog = false;
-	}
-
 	async function assignRole() {
 		if (!canManageRoles || !selectedRoleId) return;
-		if (selectedScope === 'org' && !selectedOrgId) {
-			rolesError = $LL.admin_user_detail_error_select_org();
-			return;
-		}
-		if (selectedScope === 'org' && selectedOrgId && !isValidUUID(selectedOrgId)) {
-			rolesError = $LL.admin_user_detail_error_invalid_org();
-			return;
-		}
-
 		assignLoading = true;
 		rolesError = '';
 
 		try {
 			await adminRolesAPI.assignRole(userId, {
 				role_id: selectedRoleId,
-				scope: selectedScope,
-				scope_target: selectedScope === 'org' ? selectedOrgId! : undefined
+				scope: 'global'
 			});
 			await loadUserRoles();
 			closeAssignRoleDialog();
@@ -431,7 +388,7 @@
 		switch (scope) {
 			case 'global':
 				return 'badge badge-global';
-			case 'org':
+			case 'group':
 				return 'badge badge-org';
 			case 'resource':
 				return 'badge badge-resource';
@@ -1157,8 +1114,6 @@
 		switch (scope) {
 			case 'global':
 				return $LL.admin_user_detail_scope_global();
-			case 'org':
-				return $LL.admin_user_detail_scope_org();
 			case 'resource':
 			default:
 				return scope;
@@ -2296,87 +2251,30 @@
 		<div class="alert alert-error">{rolesError}</div>
 	{/if}
 
-	{#if assignStep === 'select-role'}
-		<!-- Step 1: Select Role -->
-		<p class="step-indicator">{$LL.admin_user_detail_assign_step_role()}</p>
-		<div class="form-group">
-			<label for="role-select" class="form-label">{$LL.admin_user_detail_select_role_label()}</label
-			>
+	<div class="form-group">
+		<label for="role-select" class="form-label">{$LL.admin_user_detail_select_role_label()}</label>
 
-			<select id="role-select" class="form-select" bind:value={selectedRoleId}>
-				<option value="">{$LL.admin_user_detail_select_role_placeholder()}</option>
-				{#each availableRoles as role (role.id)}
-					<option value={role.id}>
-						{role.display_name || role.name}
-						{role.is_system ? `(${$LL.admin_user_detail_system()})` : ''}
-					</option>
-				{/each}
-			</select>
-		</div>
-	{:else}
-		<!-- Step 2: Select Scope -->
-		<p class="step-indicator">{$LL.admin_user_detail_assign_step_scope()}</p>
-		<div class="form-group">
-			<!-- svelte-ignore a11y_label_has_associated_control -->
-			<label class="form-label">{$LL.admin_user_detail_scope_label()}</label>
-			<div class="scope-options">
-				<label class="scope-option" class:selected={selectedScope === 'global'}>
-					<input type="radio" value="global" bind:group={selectedScope} />
-					<div class="scope-option-content">
-						<span>{$LL.admin_user_detail_scope_global()}</span>
-						<p>{$LL.admin_user_detail_scope_global_desc()}</p>
-					</div>
-				</label>
-				<label class="scope-option" class:selected={selectedScope === 'org'}>
-					<input type="radio" value="org" bind:group={selectedScope} />
-					<div class="scope-option-content">
-						<span>{$LL.admin_user_detail_scope_org()}</span>
-						<p>{$LL.admin_user_detail_scope_org_desc()}</p>
-					</div>
-				</label>
-			</div>
-		</div>
-
-		{#if selectedScope === 'org'}
-			<div class="form-group">
-				<!-- svelte-ignore a11y_label_has_associated_control -->
-				<label class="form-label">{$LL.admin_user_detail_select_organization()}</label>
-				<div class="org-selector">
-					{#if selectedOrgName}
-						<span class="org-selector-name">{selectedOrgName}</span>
-					{:else}
-						<span class="org-selector-placeholder">
-							{$LL.admin_user_detail_no_organization_selected()}
-						</span>
-					{/if}
-					<button class="btn btn-primary btn-sm" onclick={openOrgSelectDialog}>
-						{selectedOrgId ? $LL.admin_user_detail_change() : $LL.admin_user_detail_select()}
-					</button>
-				</div>
-			</div>
-		{/if}
-	{/if}
+		<select id="role-select" class="form-select" bind:value={selectedRoleId}>
+			<option value="">{$LL.admin_user_detail_select_role_placeholder()}</option>
+			{#each availableRoles as role (role.id)}
+				<option value={role.id}>
+					{role.display_name || role.name}
+					{role.is_system ? `(${$LL.admin_user_detail_system()})` : ''}
+				</option>
+			{/each}
+		</select>
+	</div>
 	{#snippet footer()}
-		{#if assignStep === 'select-role'}
-			<button class="btn btn-secondary" onclick={closeAssignRoleDialog}
-				>{$LL.dialog_cancel()}</button
-			>
-			<button class="btn btn-primary" onclick={goToScopeStep} disabled={!selectedRoleId}>
-				{$LL.common_next()}
-			</button>
-		{:else}
-			<button class="btn btn-secondary" onclick={goBackToRoleStep} disabled={assignLoading}
-				>{$LL.common_previous()}</button
-			>
-
-			<button
-				class="btn btn-success"
-				onclick={assignRole}
-				disabled={assignLoading || (selectedScope === 'org' && !selectedOrgId)}
-			>
-				{assignLoading ? $LL.admin_user_detail_assigning() : $LL.admin_user_detail_assign_role()}
-			</button>
-		{/if}
+		<button class="btn btn-secondary" onclick={closeAssignRoleDialog} disabled={assignLoading}
+			>{$LL.dialog_cancel()}</button
+		>
+		<button
+			class="btn btn-success"
+			onclick={assignRole}
+			disabled={assignLoading || !selectedRoleId}
+		>
+			{assignLoading ? $LL.admin_user_detail_assigning() : $LL.admin_user_detail_assign_role()}
+		</button>
 	{/snippet}
 </Modal>
 
@@ -2409,15 +2307,6 @@
 		</button>
 	{/snippet}
 </Modal>
-
-<!-- Organization Select Dialog -->
-<OrganizationSelectDialog
-	open={showOrgSelectDialog}
-	onClose={() => (showOrgSelectDialog = false)}
-	onSelect={handleOrgSelect}
-	title={$LL.admin_user_detail_select_org_title()}
-/>
-
 <!-- Consent History Modal -->
 <Modal
 	open={showHistoryModal}

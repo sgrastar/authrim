@@ -29,7 +29,7 @@ export async function listGroupRoleAssignments(
 export interface GroupRoleKey {
   groupId: string;
   roleId: string;
-  scopeType?: 'global' | 'tenant' | 'group' | 'org' | 'resource';
+  scopeType?: 'global' | 'tenant' | 'group' | 'resource';
   scopeTarget?: string;
 }
 export interface GroupRoleGrant extends GroupRoleKey {

@@ -23,7 +23,7 @@ describe('Admin write tool catalog', () => {
 
   it('publishes read and reviewed write tools from one immutable catalog', () => {
     const catalog = createAdminToolCatalog();
-    expect(catalog.list()).toHaveLength(50);
+    expect(catalog.list()).toHaveLength(49);
     expect(catalog.get('inspect_protocol_security')).toMatchObject({
       id: 'admin.read.protocol-security.inspect',
       requiredPermissions: ['admin:settings:read'],

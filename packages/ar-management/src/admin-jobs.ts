@@ -26,7 +26,6 @@ import {
   createErrorResponse,
   AR_ERROR_CODES,
   getTenantIdFromContext,
-  getTenantMetadataContextFromHono,
   getLogger,
   listObjectCatalogObjects,
   type ObjectCatalogListResult,
@@ -34,8 +33,6 @@ import {
   type ObjectRepresentation,
   readR2ObjectTextWithLimit,
   ADMIN_ROLE_GROUPS,
-  chunkForBoundParameters,
-  sqlPlaceholders,
   getTenantCapabilityState,
 } from '@authrim/ar-lib-core';
 import {
@@ -54,7 +51,6 @@ import {
   isAdminJobTypeCreatableFromAdminApi,
 } from './admin-job-types';
 import { countBulkUserUpdateTargets, validateBulkUserUpdateConfig } from './admin-job-executor';
-import { usesRoutedAccountStorage } from './tenant-routed-storage';
 import {
   USER_IMPORT_MAX_UPLOAD_BYTES,
   buildUserImportResultKey,
@@ -85,10 +81,6 @@ export function registerAdminJobPermissionMiddleware(app: Hono<any, any, any>) {
   );
   app.use(
     '/api/admin/jobs/reports/generate',
-    requireAdminPermissions([ADMIN_PERMISSIONS.JOBS_WRITE])
-  );
-  app.use(
-    '/api/admin/jobs/organizations/:id/bulk-members',
     requireAdminPermissions([ADMIN_PERMISSIONS.JOBS_WRITE])
   );
   app.use('/api/admin/jobs/types', requireAdminPermissions([ADMIN_PERMISSIONS.JOBS_READ]));
@@ -217,7 +209,6 @@ export const JOB_ERROR_CODES = {
   duplicate_external_id: 'External ID already exists',
 
   // Reference errors
-  org_not_found: 'Organization not found',
   role_not_found: 'Role not found',
   tenant_mismatch: 'Tenant ID mismatch',
 
@@ -310,7 +301,7 @@ const ListJobsQuerySchema = z.object({
 // =============================================================================
 
 /**
- * The tenant's Core database: the tenant's own data (accounts, organizations).
+ * The tenant's Core database: the tenant's own data (accounts, groups).
  */
 function createAdapter(c: Context<{ Bindings: Env }>): DatabaseAdapter {
   const tenantId = getTenantIdFromContext(c);
@@ -2124,170 +2115,6 @@ export async function adminJobsReportsGenerateHandler(c: Context<{ Bindings: Env
   } catch (error) {
     const log = getLogger(c).module('ADMIN-JOBS');
     log.error('Failed to create report job', {}, error as Error);
-    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
-  }
-}
-
-/**
- * Bulk members options schema
- */
-const BulkMembersOptionsSchema = z.object({
-  user_ids: z.array(z.guid()).min(1).max(1000),
-  role: z.enum(['member', 'admin', 'owner']).optional(),
-  action: z.enum(['add', 'remove']).default('add'),
-  result_delivery: JobResultDeliverySchema,
-});
-
-/**
- * POST /api/admin/jobs/organizations/:id/bulk-members
- * Create a bulk member add/remove job for an organization
- */
-export async function adminJobsOrgBulkMembersHandler(c: Context<{ Bindings: Env }>) {
-  const bulkJobsOff = await refuseWhileBulkJobsOff(c);
-  if (bulkJobsOff) return bulkJobsOff;
-  const tenantId = getTenantIdFromContext(c);
-  const organizationId = c.req.param('id')!;
-
-  if (!isAdminJobTypeCreatableFromAdminApi('organizations/bulk-members')) {
-    return createUnsupportedJobTypeResponse(c, 'organizations/bulk-members');
-  }
-
-  if (!organizationId) {
-    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
-      variables: { field: 'organization_id' },
-    });
-  }
-
-  try {
-    const body = await c.req.json<z.infer<typeof BulkMembersOptionsSchema>>();
-
-    const parseResult = BulkMembersOptionsSchema.safeParse(body);
-    if (!parseResult.success) {
-      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
-        variables: {
-          field: 'body',
-          reason: parseResult.error.issues.map((i) => i.message).join(', '),
-        },
-      });
-    }
-
-    const options = parseResult.data;
-    const adapter = createAdapter(c);
-
-    // Verify organization exists and belongs to tenant
-    const org = await adapter.queryOne<{ id: string; tenant_id: string; name: string }>(
-      'SELECT id, tenant_id, name FROM organizations WHERE id = ? AND tenant_id = ?',
-      [organizationId, tenantId]
-    );
-
-    if (!org) {
-      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND, {
-        variables: { resource: 'organization', id: organizationId },
-      });
-    }
-
-    // Validate that all user_ids exist in tenant: to join, with an active account; to leave,
-    // with any account not deleted (as the job checks them). A routed tenant keeps each account
-    // in its own store: the job checks each member there and reports one it cannot find.
-    const invalidUserIds: string[] = [];
-    if (!usesRoutedAccountStorage(getTenantMetadataContextFromHono(c))) {
-      const existingUserIds = new Set<string>();
-      for (const chunk of chunkForBoundParameters(options.user_ids, 1)) {
-        const existingUsers = await adapter.query<{ id: string }>(
-          `SELECT legacy_user_id as id
-             FROM identity_accounts
-            WHERE legacy_user_id IN (${sqlPlaceholders(chunk.length)})
-              AND tenant_id = ?
-              AND ${options.action === 'add' ? "lifecycle_state = 'active'" : "lifecycle_state <> 'deleted'"}`,
-          [...chunk, tenantId]
-        );
-        for (const user of existingUsers) existingUserIds.add(user.id);
-      }
-      invalidUserIds.push(...options.user_ids.filter((id) => !existingUserIds.has(id)));
-    }
-
-    if (invalidUserIds.length > 0) {
-      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
-        variables: {
-          field: 'user_ids',
-          reason: `Users not found: ${invalidUserIds.slice(0, 5).join(', ')}${invalidUserIds.length > 5 ? '...' : ''}`,
-        },
-      });
-    }
-
-    const adminAuth = getAdminAuth(c);
-    const createdBy = adminAuth?.adminId ?? 'unknown';
-    const jobId = crypto.randomUUID();
-    const nowTs = Math.floor(Date.now() / 1000);
-
-    // Estimate completion (1 second per 10 users, minimum 30 seconds)
-    const estimatedSeconds = Math.max(30, Math.ceil(options.user_ids.length / 10));
-    const estimatedCompletion = nowTs + estimatedSeconds;
-
-    // Create job record
-    await createJobsAdapter(c).execute(
-      `INSERT INTO admin_jobs (
-        id, tenant_id, job_type, status, progress, config,
-        created_by, created_at, updated_at, estimated_completion
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        jobId,
-        tenantId,
-        'organizations/bulk-members',
-        'pending',
-        JSON.stringify({
-          total: options.user_ids.length,
-          processed: 0,
-          succeeded: 0,
-          failed: 0,
-        }),
-        JSON.stringify({
-          organization_id: organizationId,
-          organization_name: org.name,
-          action: options.action,
-          role: options.role,
-          user_ids: options.user_ids,
-          result_delivery: options.result_delivery,
-        }),
-        createdBy,
-        nowTs,
-        nowTs,
-        estimatedCompletion,
-      ]
-    );
-
-    // Write audit log
-    await recordAdminOperationAudit(c, {
-      action: 'job.created',
-      resourceType: 'job',
-      resourceId: jobId,
-      metadata: {
-        job_type: 'organizations/bulk-members',
-        organization_id: organizationId,
-        action: options.action,
-        user_count: options.user_ids.length,
-        role: options.role,
-      },
-    });
-
-    return c.json(
-      {
-        job_id: jobId,
-        status: 'pending',
-        job_type: 'organizations/bulk-members',
-        organization_id: organizationId,
-        organization_name: org.name,
-        action: options.action,
-        user_count: options.user_ids.length,
-        role: options.role,
-        created_at: new Date(nowTs * 1000).toISOString(),
-        estimated_completion: new Date(estimatedCompletion * 1000).toISOString(),
-      },
-      202
-    );
-  } catch (error) {
-    const log = getLogger(c).module('ADMIN-JOBS');
-    log.error('Failed to create bulk members job', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }

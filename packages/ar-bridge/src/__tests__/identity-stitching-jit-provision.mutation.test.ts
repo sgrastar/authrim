@@ -50,9 +50,6 @@ const jit = (extra: Record<string, unknown> = {}) => ({
   'external_idp.jit_require_verified_email': false,
   'external_idp.jit_allowed_provider_ids': '',
   'external_idp.jit_default_role_id': '',
-  'external_idp.jit_join_all_matching_orgs': false,
-  'external_idp.jit_allow_user_without_org': true,
-  'external_idp.jit_allow_unverified_domain_mappings': false,
   ...extra,
 });
 const run = (extra: Partial<HandleIdentityParams> = {}, env = ENV) =>
@@ -134,7 +131,7 @@ describe('the account provisioning request', () => {
     const sealed = String(sent().externalIdentity.profileDataEncrypted);
     const planText = await decrypt(sealed, KEY);
     expect(JSON.parse(planText)).toEqual({
-      schemaVersion: 1,
+      schemaVersion: 2,
       customClaimValidation: {
         ok: true,
         schemas: [],
@@ -143,7 +140,7 @@ describe('the account provisioning request', () => {
         nonPiiKeysToDelete: [],
         piiKeysToDelete: [],
       },
-      organizationIds: [],
+      groupJoins: [],
       roleAssignments: [],
       defaultRoleId: null,
       matchedRules: [],
@@ -260,7 +257,7 @@ describe('the account provisioning request', () => {
   });
 });
 
-describe('rules, organizations and roles', () => {
+describe('rules, groups and roles', () => {
   const planOf = async () =>
     JSON.parse(await decrypt(String(sent().externalIdentity.profileDataEncrypted), KEY)) as Record<
       string,
@@ -272,7 +269,7 @@ describe('rules, organizations and roles', () => {
       denied: false,
       matched_rules: [],
       roles_to_assign: [],
-      orgs_to_join: [],
+      groups_to_join: [],
       attributes_to_set: [],
       ...extra,
     });
@@ -293,75 +290,81 @@ describe('rules, organizations and roles', () => {
     });
   });
 
-  it('records the matched rules and attributes, and the first organization of a single match', async () => {
+  it('refuses a plan beyond the resume limits before the account is requested', async () => {
     rules({
       matched_rules: ['rule-1'],
-      attributes_to_set: [{ name: 'tier', value: 'gold' }],
-      orgs_to_join: ['org-rule', 'auto'],
+      groups_to_join: Array.from({ length: 65 }, (_, index) => ({
+        group_id: `group-${index}`,
+        rule_id: 'rule-1',
+      })),
     });
-    m.orgByDomain.mockResolvedValue({ org_id: 'org-domain', auto_assign_role_id: 'role-d' });
-    await run();
-    expect(m.orgByDomain).toHaveBeenCalledWith(
-      { db: 'meta' },
-      'domain-hash',
-      'tenant-a',
-      expect.objectContaining({ allow_user_without_org: true })
-    );
-    expect(m.allOrgsByDomain).not.toHaveBeenCalled();
-    expect(await planOf()).toMatchObject({
-      organizationIds: ['org-rule', 'org-domain'],
-      matchedRules: ['rule-1'],
-      attributesSet: [{ name: 'tier', value: 'gold' }],
-      roleAssignments: [{ roleId: 'role-d', scopeType: 'org', scopeTarget: 'org:org-domain' }],
-    });
-  });
-
-  it('uses every matching organization when the tenant joins all of them, without duplicates', async () => {
-    m.settings.mockResolvedValue(jit({ 'external_idp.jit_join_all_matching_orgs': true }));
-    rules({ orgs_to_join: ['org-a'] });
-    m.allOrgsByDomain.mockResolvedValue([
-      { org_id: 'org-a', auto_assign_role_id: null },
-      { org_id: 'org-b', auto_assign_role_id: 'role-b' },
-    ]);
-    await run();
-    expect(m.orgByDomain).not.toHaveBeenCalled();
-    expect(m.allOrgsByDomain).toHaveBeenCalledWith(
-      { db: 'meta' },
-      'domain-hash',
-      'tenant-a',
-      expect.objectContaining({ join_all_matching_orgs: true })
-    );
-    expect(await planOf()).toMatchObject({
-      organizationIds: ['org-a', 'org-b'],
-      roleAssignments: [{ roleId: 'role-b', scopeType: 'org', scopeTarget: 'org:org-b' }],
-    });
-  });
-
-  it('resolves the rule roles: auto targets follow the first organization, unresolved ones are dropped', async () => {
+    await expect(run()).rejects.toThrow('external_idp_jit_plan_invalid');
+    expect(m.provision).not.toHaveBeenCalled();
+    // 64 is within them.
     rules({
-      orgs_to_join: ['org-1'],
+      matched_rules: ['rule-1'],
+      groups_to_join: Array.from({ length: 64 }, (_, index) => ({
+        group_id: `group-${index}`,
+        rule_id: 'rule-1',
+      })),
+    });
+    await run();
+    expect(((await planOf()).groupJoins as unknown[]).length).toBe(64);
+  });
+
+  it('gives only a tenant-scoped rule role of this tenant', async () => {
+    rules({
+      matched_rules: ['rule-1'],
       roles_to_assign: [
-        { role_id: 'r-auto', scope_type: 'org', scope_target: 'auto' },
-        { role_id: 'r-fixed', scope_type: 'org', scope_target: 'org:other' },
-        { role_id: 'r-global', scope_type: 'global', scope_target: '' },
-        { role_id: 'r-empty', scope_type: 'org', scope_target: '' },
-        { role_id: 'r-dup', scope_type: 'org', scope_target: 'org:other' },
-        { role_id: 'r-fixed', scope_type: 'org', scope_target: 'org:other' },
+        { role_id: 'r-own', scope_type: 'tenant', scope_target: 'tenant-a' },
+        { role_id: 'r-other', scope_type: 'tenant', scope_target: 'tenant-b' },
       ],
     });
     await run();
     expect((await planOf()).roleAssignments).toEqual([
-      { roleId: 'r-auto', scopeType: 'org', scopeTarget: 'org:org-1' },
-      { roleId: 'r-fixed', scopeType: 'org', scopeTarget: 'org:other' },
-      { roleId: 'r-global', scopeType: 'global', scopeTarget: '' },
-      { roleId: 'r-dup', scopeType: 'org', scopeTarget: 'org:other' },
+      { roleId: 'r-own', scopeType: 'tenant', scopeTarget: 'tenant-a' },
     ]);
   });
 
-  it('drops an auto role target when there is no organization', async () => {
-    rules({ roles_to_assign: [{ role_id: 'r-auto', scope_type: 'org', scope_target: 'auto' }] });
+  it('records the matched rules, attributes and the groups the rules join', async () => {
+    rules({
+      matched_rules: ['rule-1'],
+      attributes_to_set: [{ name: 'tier', value: 'gold' }],
+      groups_to_join: [
+        { group_id: 'group-1', rule_id: 'rule-1' },
+        { group_id: 'group-2', rule_id: 'rule-2' },
+      ],
+    });
     await run();
-    expect((await planOf()).roleAssignments).toEqual([]);
+    expect(await planOf()).toMatchObject({
+      groupJoins: [
+        { groupId: 'group-1', ruleId: 'rule-1' },
+        { groupId: 'group-2', ruleId: 'rule-2' },
+      ],
+      matchedRules: ['rule-1'],
+      attributesSet: [{ name: 'tier', value: 'gold' }],
+      roleAssignments: [],
+    });
+  });
+
+  it('keeps the rule roles of a known scope and target, once each; drops the others', async () => {
+    rules({
+      roles_to_assign: [
+        { role_id: 'r-group', scope_type: 'group', scope_target: 'group:g1' },
+        { role_id: 'r-org', scope_type: 'org', scope_target: 'org:other' },
+        { role_id: 'r-global', scope_type: 'global', scope_target: '' },
+        { role_id: 'r-empty', scope_type: 'group', scope_target: '' },
+        { role_id: 'r-bare', scope_type: 'group', scope_target: 'g1' },
+        { role_id: 'r-dup', scope_type: 'resource', scope_target: 'resource:doc:1' },
+        { role_id: 'r-group', scope_type: 'group', scope_target: 'group:g1' },
+      ],
+    });
+    await run();
+    expect((await planOf()).roleAssignments).toEqual([
+      { roleId: 'r-group', scopeType: 'group', scopeTarget: 'group:g1' },
+      { roleId: 'r-global', scopeType: 'global', scopeTarget: '' },
+      { roleId: 'r-dup', scopeType: 'resource', scopeTarget: 'resource:doc:1' },
+    ]);
   });
 
   it('names the default role, or none for an empty one', async () => {
@@ -514,7 +517,7 @@ describe('an account created at once', () => {
       linkedIdentityId: `external-link-${sha256('tenant-a\u0000prov-1\u0000sub-1').slice(0, 32)}`,
       stitchedFromExisting: false,
       roles_assigned: [],
-      orgs_joined: [],
+      groups_joined: [],
       attributes_set: [{ name: 'tier', value: 'gold' }],
     });
     expect(m.persist).toHaveBeenCalledTimes(1);
@@ -528,7 +531,7 @@ describe('an account created at once', () => {
         metadata: JSON.stringify({
           providerId: 'prov-1',
           roles_assigned: [],
-          orgs_joined: [],
+          groups_joined: [],
           matched_rules: ['rule-1'],
         }),
       })
@@ -549,7 +552,7 @@ describe('an account created at once', () => {
       denied: false,
       matched_rules: ['rule-1'],
       roles_to_assign: [],
-      orgs_to_join: [],
+      groups_to_join: [],
       attributes_to_set: [{ name: 'tier', value: 'gold' }],
     });
   }

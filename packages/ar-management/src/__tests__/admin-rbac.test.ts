@@ -47,10 +47,6 @@ vi.mock('@authrim/ar-lib-core', async () => {
 
 import {
   adminRoleCreateHandler,
-  adminOrganizationHierarchyHandler,
-  adminOrganizationMemberAddHandler,
-  adminOrganizationMemberRemoveHandler,
-  adminOrganizationMembersListHandler,
   adminUserEffectivePermissionsHandler,
   adminUserRoleAssignHandler,
   adminUserRolesListHandler,
@@ -151,74 +147,6 @@ describe('admin-rbac schema alignment', () => {
     );
   });
 
-  it('uses subject_org_membership for organization hierarchy member counts', async () => {
-    const coreAdapter = createMockAdapter({
-      queryOne: (sql, params) => {
-        if (sql.includes('FROM organizations WHERE id = ? AND tenant_id = ?')) {
-          expect(params).toEqual(['org-root', 'default']);
-          return {
-            id: 'org-root',
-            name: 'Root',
-            display_name: 'Root Org',
-            parent_id: null,
-            is_active: 1,
-          };
-        }
-        return null;
-      },
-      query: (sql, params) => {
-        if (sql.includes('WITH RECURSIVE org_tree')) {
-          return [
-            {
-              id: 'org-root',
-              name: 'Root',
-              display_name: 'Root Org',
-              parent_id: null,
-              is_active: 1,
-              depth: 0,
-            },
-            {
-              id: 'org-child',
-              name: 'Child',
-              display_name: 'Child Org',
-              parent_id: 'org-root',
-              is_active: 1,
-              depth: 1,
-            },
-          ];
-        }
-
-        if (sql.includes('FROM subject_org_membership')) {
-          expect(sql).not.toContain('organization_members');
-          expect(params).toEqual(['default', 'org-root', 'org-child']);
-          return [
-            { key: 'org-root', count: 2 },
-            { key: 'org-child', count: 1 },
-          ];
-        }
-
-        return [];
-      },
-    });
-
-    mocked.createAuthContextFromHono.mockReturnValue({ coreAdapter });
-
-    const c = createMockContext({
-      params: { id: 'org-root' },
-    });
-
-    const res = await adminOrganizationHierarchyHandler(c);
-    expect(res.status).toBe(200);
-
-    const body = (await res.json()) as {
-      summary: { total_members: number; total_organizations: number };
-    };
-    expect(body.summary).toMatchObject({
-      total_members: 3,
-      total_organizations: 2,
-    });
-  });
-
   it('derives effective permissions from tenant-wide role assignments, as tokens do', async () => {
     const coreAdapter = createMockAdapter({
       query: (sql) => {
@@ -236,8 +164,8 @@ describe('admin-rbac schema alignment', () => {
             {
               id: 'ra-2',
               role_id: 'role-editor',
-              scope_type: 'org',
-              scope_target: 'org:org-1',
+              scope_type: 'group',
+              scope_target: 'group:grp-1',
               expires_at: null,
               assigned_by: null,
               created_at: 1700000001,
@@ -246,23 +174,9 @@ describe('admin-rbac schema alignment', () => {
         }
         if (sql.includes('FROM roles')) {
           return [
-            { id: 'role-admin', name: 'admin', permissions_json: '["org:manage"]' },
+            { id: 'role-admin', name: 'admin', permissions_json: '["users:manage"]' },
             { id: 'role-editor', name: 'editor', permissions_json: '["doc:write"]' },
           ];
-        }
-        if (sql.includes('FROM subject_org_membership')) {
-          return [
-            {
-              id: 'm-1',
-              org_id: 'org-1',
-              membership_type: 'admin',
-              is_primary: 1,
-              created_at: 1700000000,
-            },
-          ];
-        }
-        if (sql.includes('FROM organizations')) {
-          return [{ id: 'org-1', name: 'Acme Org', org_type: 'enterprise', is_active: 1 }];
         }
         return [];
       },
@@ -283,192 +197,16 @@ describe('admin-rbac schema alignment', () => {
     const body = (await res.json()) as {
       permissions: Array<{ permission: string; source: string; source_name: string }>;
       roles: Array<{ role_name: string; scope: string }>;
-      organizations: Array<{ organization_name: string; role_name: string }>;
     };
-    // The organisation-scoped role holds in its organisation only: not a tenant-wide permission.
+    // The group-scoped role holds for its group's resources only: not a tenant-wide permission.
     expect(body.permissions).toEqual([
-      expect.objectContaining({ permission: 'org:manage', source: 'role', source_name: 'admin' }),
+      expect.objectContaining({ permission: 'users:manage', source: 'role', source_name: 'admin' }),
     ]);
     expect(body.roles).toEqual([
       expect.objectContaining({ role_name: 'admin', scope: 'global' }),
-      expect.objectContaining({ role_name: 'editor', scope: 'org' }),
+      expect.objectContaining({ role_name: 'editor', scope: 'group' }),
     ]);
-    expect(body.organizations).toEqual([
-      expect.objectContaining({ organization_name: 'Acme Org', role_name: 'admin' }),
-    ]);
-  });
-
-  it('lists organization members with membership_type and tenant-scoped pii lookup', async () => {
-    const piiAdapter = createMockAdapter({
-      query: (sql, params) => {
-        if (sql.includes('FROM users_pii WHERE tenant_id = ? AND id IN')) {
-          expect(params).toEqual(['default', 'user-1']);
-          return [{ id: 'user-1', email: 'member@example.com', name: 'Member User' }];
-        }
-        return [];
-      },
-    });
-
-    const coreAdapter = createMockAdapter({
-      queryOne: (sql, params) => {
-        if (sql.includes('COUNT(*) AS count FROM subject_org_membership')) {
-          expect(params).toEqual(['default', 'org-1']);
-          return { count: 1 };
-        }
-        return null;
-      },
-      query: (sql, params) => {
-        if (sql.includes('FROM organizations') && sql.includes('id IN')) {
-          expect(params).toEqual(['default', 'org-1']);
-          return [{ id: 'org-1', name: 'Org One' }];
-        }
-        if (sql.includes('FROM subject_org_membership')) {
-          expect(params).toEqual(['default', 'org-1', 20, 0]);
-          return [
-            {
-              subject_id: 'user-1',
-              org_id: 'org-1',
-              membership_type: 'owner',
-              is_primary: 1,
-              created_at: 1700000000,
-            },
-          ];
-        }
-        return [];
-      },
-    });
-
-    mocked.hasPIIDatabase.mockReturnValue(true);
-    mocked.createAuthContextFromHono.mockReturnValue({ coreAdapter });
-    mocked.createPIIContextFromHono.mockReturnValue({ defaultPiiAdapter: piiAdapter });
-
-    const c = createMockContext({
-      params: { id: 'org-1' },
-      query: { page: '1', limit: '20' },
-    });
-
-    const res = await adminOrganizationMembersListHandler(c);
-    expect(res.status).toBe(200);
-
-    const body = (await res.json()) as {
-      members: Array<{ subject_id: string; membership_type: string; user_email: string | null }>;
-    };
-    expect(body.members).toEqual([
-      expect.objectContaining({
-        subject_id: 'user-1',
-        membership_type: 'owner',
-        user_email: 'member@example.com',
-      }),
-    ]);
-  });
-
-  it('adds organization members with membership_type and tenant-scoped guards', async () => {
-    const coreAdapter = createMockAdapter({
-      query: (sql, params) => {
-        if (sql.includes('FROM organizations') && sql.includes('id IN (?)')) {
-          expect(params).toEqual(['default', 'org-1']);
-          return [{ id: 'org-1' }];
-        }
-        return [];
-      },
-      queryOne: (sql, params) => {
-        if (sql.includes('SELECT subject_id FROM subject_org_membership')) {
-          expect(params).toEqual(['default', 'org-1', 'user-1']);
-          return null;
-        }
-        return null;
-      },
-    });
-
-    mocked.createAuthContextFromHono.mockReturnValue({ coreAdapter });
-    mocked.hasPIIDatabase.mockReturnValue(true);
-    mocked.createPIIContextFromHono.mockReturnValue({ defaultPiiAdapter: createMockAdapter() });
-
-    const c = createMockContext({
-      params: { id: 'org-1' },
-      body: {
-        subject_id: 'user-1',
-        membership_type: 'admin',
-        is_primary: true,
-      },
-    });
-
-    const res = await adminOrganizationMemberAddHandler(c);
-    expect(res.status).toBe(201);
-    // The membership is written in the member's account database.
-    expect(mocked.resolveAccountDataContextFromHono).toHaveBeenCalledWith(c, 'user-1');
-
-    const executeCalls = (coreAdapter.execute as any).mock.calls as Array<[string, unknown[]]>;
-    expect(executeCalls).toContainEqual([
-      expect.stringContaining('UPDATE subject_org_membership'),
-      [expect.any(Number), 'default', 'user-1'],
-    ]);
-    expect(executeCalls).toContainEqual([
-      expect.stringContaining('INSERT INTO subject_org_membership'),
-      [
-        expect.any(String),
-        'default',
-        'user-1',
-        'org-1',
-        'admin',
-        1,
-        expect.any(Number),
-        expect.any(Number),
-      ],
-    ]);
-
-    const body = (await res.json()) as {
-      membership: { tenant_id: string; membership_type: string; subject_id: string };
-    };
-    expect(body.membership).toMatchObject({
-      tenant_id: 'default',
-      membership_type: 'admin',
-      subject_id: 'user-1',
-    });
-  });
-
-  it('removes organization members with tenant-scoped checks and delete', async () => {
-    const coreAdapter = createMockAdapter({
-      queryOne: (sql, params) => {
-        if (sql.includes('SELECT subject_id FROM subject_org_membership')) {
-          expect(params).toEqual(['default', 'org-1', 'user-1']);
-          return { subject_id: 'user-1' };
-        }
-        return null;
-      },
-    });
-
-    mocked.createAuthContextFromHono.mockReturnValue({ coreAdapter });
-
-    const c = createMockContext({
-      params: { id: 'org-1', subjectId: 'user-1' },
-    });
-
-    const res = await adminOrganizationMemberRemoveHandler(c);
-    expect(res.status).toBe(200);
-    expect(coreAdapter.execute).toHaveBeenCalledWith(
-      'DELETE FROM subject_org_membership WHERE tenant_id = ? AND org_id = ? AND subject_id = ?',
-      ['default', 'org-1', 'user-1']
-    ); // Removing access is audited and drops the member's cached claims.
-    expect(mocked.createAuditLogFromContext).toHaveBeenCalledWith(
-      c,
-      'organization_membership.removed',
-      'organization',
-      'org-1',
-      { user_id: 'user-1' },
-      'info',
-      undefined,
-      undefined
-    );
-    // An Admin API removal only warns about caches (they expire on their own).
-    expect(mocked.invalidateUserCache).toHaveBeenCalledWith(
-      expect.anything(),
-      'default',
-      'user-1',
-      {
-        throwOnFailure: false,
-      }
-    );
+    expect(body).not.toHaveProperty('organizations');
   });
 
   it('removes a role assignment of the user only, audits it and drops cached claims', async () => {
@@ -477,7 +215,7 @@ describe('admin-rbac schema alignment', () => {
         sql.includes('FROM role_assignments')
           ? { id: 'ra-1', role_id: 'role-1' }
           : sql.includes('FROM roles WHERE tenant_id = ? AND id = ?')
-            ? { id: 'role-1', hierarchy_level: 10, grant_tier: 1 }
+            ? { id: 'role-1', grant_tier: 1 }
             : null,
     });
     mocked.createAuthContextFromHono.mockReturnValue({ coreAdapter });
@@ -486,7 +224,7 @@ describe('admin-rbac schema alignment', () => {
       params: { id: 'user-1', assignmentId: 'ra-1' },
       env: { REBAC_CACHE: rebacCache as never },
     });
-    c.set('adminAuth', { userId: 'admin-1', hierarchyLevel: 50 });
+    c.set('adminAuth', { userId: 'admin-1', maxGrantTier: 1 });
 
     const res = await adminUserRoleRemoveHandler(c);
     expect(res.status).toBe(200);
@@ -525,7 +263,7 @@ describe('admin-rbac schema alignment', () => {
     );
   });
 
-  it("removes a suspended user's membership and role assignment from its account database", async () => {
+  it("removes a suspended user's role assignment from its account database", async () => {
     // Account routes refuse a suspended account (of any type, with or without personal data);
     // it is found in the user store that holds it.
     mocked.resolveAccountDataContextFromHono.mockRejectedValue(
@@ -537,11 +275,9 @@ describe('admin-rbac schema alignment', () => {
       queryOne: (sql) =>
         sql.includes('FROM identity_accounts')
           ? { id: 'account:user-1' }
-          : sql.includes('FROM subject_org_membership')
-            ? { subject_id: 'user-1' }
-            : sql.includes('FROM role_assignments')
-              ? { id: 'ra-1', role_id: 'role-deleted' }
-              : null,
+          : sql.includes('FROM role_assignments')
+            ? { id: 'ra-1', role_id: 'role-deleted' }
+            : null,
     });
     mocked.tenantCoreStores.mockResolvedValue([
       { bindingRef: 'DB_USERS_0', adapter: otherStore },
@@ -550,8 +286,6 @@ describe('admin-rbac schema alignment', () => {
     mocked.createAuthContextFromHono.mockReturnValue({ coreAdapter: metadata });
     const env = {} as never;
 
-    const member = createMockContext({ params: { id: 'org-1', subjectId: 'user-1' }, env });
-    expect((await adminOrganizationMemberRemoveHandler(member)).status).toBe(200);
     const role = createMockContext({ params: { id: 'user-1', assignmentId: 'ra-1' }, env });
     role.set('adminAuth', { userId: 'admin-1', hierarchyLevel: 1 });
     expect((await adminUserRoleRemoveHandler(role)).status).toBe(200);
@@ -560,10 +294,6 @@ describe('admin-rbac schema alignment', () => {
       expect.anything(),
       'default',
       expect.objectContaining({ accountsOfRoutedTenant: true })
-    );
-    expect(account.execute).toHaveBeenCalledWith(
-      'DELETE FROM subject_org_membership WHERE tenant_id = ? AND org_id = ? AND subject_id = ?',
-      ['default', 'org-1', 'user-1']
     );
     expect(account.execute).toHaveBeenCalledWith(
       'DELETE FROM role_assignments WHERE tenant_id = ? AND id = ? AND subject_id = ?',
@@ -584,7 +314,7 @@ describe('admin-rbac schema alignment', () => {
     expect(mocked.tenantCoreStores).not.toHaveBeenCalled();
   });
 
-  it('rejects assigning a role at the caller hierarchy level', async () => {
+  it('rejects assigning a role above the caller grant tier, whatever its hierarchy level', async () => {
     const coreAdapter = createMockAdapter({
       queryOne: (sql, params) => {
         if (sql.includes('FROM roles WHERE tenant_id = ? AND id = ?')) {
@@ -592,7 +322,7 @@ describe('admin-rbac schema alignment', () => {
           return {
             id: 'role-peer',
             name: 'peer',
-            hierarchy_level: 50,
+            grant_tier: 3,
             is_assignable: 1,
           };
         }
@@ -613,7 +343,8 @@ describe('admin-rbac schema alignment', () => {
       authMethod: 'session',
       roles: ['admin'],
       permissions: ['admin:roles:write'],
-      hierarchyLevel: 50,
+      hierarchyLevel: 100,
+      maxGrantTier: 2,
     });
 
     const res = await adminUserRoleAssignHandler(c);
@@ -626,7 +357,7 @@ describe('admin-rbac schema alignment', () => {
     const coreAdapter = createMockAdapter({
       queryOne: (sql) =>
         sql.includes('FROM roles WHERE tenant_id = ? AND id = ?')
-          ? { id: 'role-fixed', name: 'fixed', hierarchy_level: 10, is_assignable: flag }
+          ? { id: 'role-fixed', name: 'fixed', grant_tier: 1, is_assignable: flag }
           : null,
     });
 
@@ -643,7 +374,8 @@ describe('admin-rbac schema alignment', () => {
       authMethod: 'session',
       roles: ['admin'],
       permissions: ['admin:roles:write'],
-      hierarchyLevel: 50,
+      hierarchyLevel: 100,
+      maxGrantTier: 2,
     });
 
     const res = await adminUserRoleAssignHandler(c);
@@ -654,8 +386,9 @@ describe('admin-rbac schema alignment', () => {
 
   it.each([
     [1, 201],
-    [2, 403],
-  ])('checks grant tier %i on a lower hierarchy role', async (tier, status) => {
+    [2, 201],
+    [3, 403],
+  ])('checks grant tier %i against the caller ceiling (2)', async (tier, status) => {
     const coreAdapter = createMockAdapter({
       queryOne: (sql, params) => {
         if (sql.includes('FROM roles WHERE tenant_id = ? AND id = ?')) {
@@ -664,7 +397,6 @@ describe('admin-rbac schema alignment', () => {
             id: 'role-lower',
             grant_tier: tier,
             name: 'lower',
-            hierarchy_level: 10,
             is_assignable: 1,
           };
         }
@@ -688,7 +420,8 @@ describe('admin-rbac schema alignment', () => {
       authMethod: 'session',
       roles: ['admin'],
       permissions: ['admin:roles:write'],
-      hierarchyLevel: 50,
+      hierarchyLevel: 100,
+      maxGrantTier: 2,
     });
 
     const res = await adminUserRoleAssignHandler(c);
@@ -704,7 +437,43 @@ describe('admin-rbac schema alignment', () => {
     );
   });
 
-  it('rejects creating a role at the caller hierarchy level', async () => {
+  it.each([
+    [{ scope: 'global', scope_target: 'x' }, 400],
+    [{ scope: 'org', scope_target: 'org:o1' }, 400],
+    [{ scope: 'group', scope_target: 'grp-1' }, 400],
+    [{ scope: 'group', scope_target: 'group:grp-missing' }, 400],
+    [{ scope: 'tenant', scope_target: 'other-tenant' }, 400],
+    [{ scope: 'resource', scope_target: 'resource:doc:1' }, 201],
+    [{ scope: 'group', scope_target: 'group:grp-1' }, 201],
+  ])('checks the scope and target of a direct grant %j', async (scope, status) => {
+    const coreAdapter = createMockAdapter({
+      queryOne: (sql, params) => {
+        if (sql.includes('FROM roles WHERE tenant_id = ? AND id = ?'))
+          return { id: 'role-lower', grant_tier: 1, name: 'lower', is_assignable: 1 };
+        if (sql.includes('FROM "groups"')) return params[1] === 'grp-1' ? { id: 'grp-1' } : null;
+        return null;
+      },
+    });
+    mocked.createAuthContextFromHono.mockReturnValue({ coreAdapter });
+    mocked.hasPIIDatabase.mockReturnValue(true);
+    mocked.createPIIContextFromHono.mockReturnValue({ defaultPiiAdapter: createMockAdapter() });
+    const c = createMockContext({
+      params: { id: 'user-1' },
+      body: { role_id: 'role-lower', ...scope },
+    });
+    (c as { set: (key: string, value: unknown) => void }).set('adminAuth', {
+      userId: 'admin-1',
+      authMethod: 'session',
+      roles: ['admin'],
+      permissions: ['admin:roles:write'],
+      maxGrantTier: 2,
+    });
+    const res = await adminUserRoleAssignHandler(c);
+    expect(res.status).toBe(status);
+    if (status === 400) expect(coreAdapter.execute).not.toHaveBeenCalled();
+  });
+
+  it('rejects creating a role without a grant tier ceiling', async () => {
     const coreAdapter = createMockAdapter();
     mocked.createAuthContextFromHono.mockReturnValue({ coreAdapter });
 
@@ -712,7 +481,6 @@ describe('admin-rbac schema alignment', () => {
       body: {
         name: 'peer_role',
         permissions: ['documents:read'],
-        hierarchy_level: 50,
       },
     });
     c.set('adminAuth', {
@@ -720,7 +488,8 @@ describe('admin-rbac schema alignment', () => {
       authMethod: 'session',
       roles: ['admin'],
       permissions: ['admin:roles:write'],
-      hierarchyLevel: 50,
+      hierarchyLevel: 100,
+      maxGrantTier: 0,
     });
 
     const res = await adminRoleCreateHandler(c);

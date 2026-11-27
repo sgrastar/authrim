@@ -221,10 +221,9 @@ export function canAccessTenant(
     return true;
   }
 
-  // viewer with tenant association
+  // viewer (the request is already scoped to the tenant)
   if (userRoles.includes(ADMIN_ROLES.VIEWER)) {
-    // Viewers can view if they have no org restriction or org matches
-    return !adminAuth.org_id || adminAuth.org_id === tenantId;
+    return true;
   }
 
   return false;

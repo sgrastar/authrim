@@ -40,15 +40,10 @@ function cacheFixture(overrides: Partial<CompositeRBACCache> = {}): CompositeRBA
   return {
     version: 1,
     roles: ['admin'],
-    scoped_roles: [{ name: 'editor', scope: 'organization', scopeTarget: 'org-1' }],
+    scoped_roles: [{ name: 'editor', scope: 'group', scopeTarget: 'group:g-1' }],
     permissions: ['users:read'],
     groups: [{ id: 'g-1', key: 'staff', name: 'Staff', kind: 'static' }],
-    organizations: [{ id: 'org-1', name: 'Acme', type: 'enterprise', is_primary: true }],
     user_type: 'admin',
-    plan: 'professional',
-    org_id: 'org-1',
-    org_name: 'Acme',
-    org_type: 'enterprise',
     relationships_summary: { children_ids: ['child-1'], parent_ids: ['parent-1'] },
     cached_at: 100,
     ...overrides,
@@ -107,17 +102,13 @@ describe('RBAC token claims', () => {
       cacheFixture(),
       'roles, groups, permissions, scoped_roles, user_type, org_id, org_name, plan, org_type, orgs, relationships_summary'
     );
+    // The organisation claim names are not claims any more: they give nothing.
     expect(all).toEqual({
       authrim_roles: ['admin'],
       authrim_groups: [{ id: 'g-1', key: 'staff', name: 'Staff', kind: 'static' }],
       authrim_permissions: ['users:read'],
-      authrim_scoped_roles: [{ name: 'editor', scope: 'organization', scopeTarget: 'org-1' }],
+      authrim_scoped_roles: [{ name: 'editor', scope: 'group', scopeTarget: 'group:g-1' }],
       authrim_user_type: 'admin',
-      authrim_org_id: 'org-1',
-      authrim_org_name: 'Acme',
-      authrim_plan: 'professional',
-      authrim_org_type: 'enterprise',
-      authrim_orgs: [{ id: 'org-1', name: 'Acme', type: 'enterprise', is_primary: true }],
       authrim_relationships_summary: {
         children_ids: ['child-1'],
         parent_ids: ['parent-1'],
@@ -139,11 +130,6 @@ describe('RBAC token claims', () => {
       groups: [],
       permissions: [],
       scoped_roles: [],
-      organizations: [],
-      org_id: null,
-      org_name: null,
-      plan: null,
-      org_type: null,
       relationships_summary: { children_ids: [], parent_ids: [] },
     });
     expect(
@@ -163,9 +149,7 @@ describe('RBAC token claims', () => {
     ).toEqual({
       authrim_roles: ['admin'],
       authrim_groups: [{ id: 'g-1', key: 'staff', name: 'Staff', kind: 'static' }],
-      authrim_scoped_roles: [{ name: 'editor', scope: 'organization', scopeTarget: 'org-1' }],
-      authrim_org_id: 'org-1',
-      authrim_org_type: 'enterprise',
+      authrim_scoped_roles: [{ name: 'editor', scope: 'group', scopeTarget: 'group:g-1' }],
       authrim_permissions: ['users:read'],
     });
     expect(extractAccessTokenClaimsFromCache(cacheFixture(), 'none')).toEqual({});
@@ -181,10 +165,8 @@ describe('RBAC token claims', () => {
           groups: [],
           scoped_roles: [],
           permissions: [],
-          org_id: null,
-          org_type: null,
         }),
-        'roles,groups,scoped_roles,org_id,org_type,permissions'
+        'roles,groups,scoped_roles,permissions'
       )
     ).toEqual({});
   });
@@ -247,7 +229,7 @@ describe('RBAC token claims', () => {
               validUntil: Math.floor(Date.now() / 1000) + 100,
               claims: key.includes(':id:')
                 ? { authrim_roles: ['cached'] }
-                : { authrim_org_id: 'o' },
+                : { authrim_groups: [{ id: 'g', key: 'g', name: 'G', kind: 'static' }] },
             })
       ),
       put: vi.fn(),
@@ -263,14 +245,14 @@ describe('RBAC token claims', () => {
         cache,
         tenantId: 'tenant-a',
       } as never)
-    ).resolves.toEqual({ authrim_org_id: 'o' });
+    ).resolves.toEqual({ authrim_groups: [{ id: 'g', key: 'g', name: 'G', kind: 'static' }] });
     expect(cache.get.mock.calls.map(([key]) => key)).toEqual([
       'rbac:v2:tenant-version:tenant-a',
       'rbac:v2:subject-version:tenant-a:user-1',
-      expect.stringContaining('rbac:v3:tenant-a:id:user-1:'),
+      expect.stringContaining('rbac:v4:tenant-a:id:user-1:'),
       'rbac:v2:tenant-version:tenant-a',
       'rbac:v2:subject-version:tenant-a:user-1',
-      expect.stringContaining('rbac:v3:tenant-a:access:user-1:'),
+      expect.stringContaining('rbac:v4:tenant-a:access:user-1:'),
     ]);
     expect(cache.put).not.toHaveBeenCalled();
   });
@@ -279,7 +261,7 @@ describe('RBAC token claims', () => {
     const one = adapter(() => []);
     const cache = {
       get: vi.fn(async (key: string) =>
-        key.startsWith('rbac:v3:')
+        key.startsWith('rbac:v4:')
           ? null
           : JSON.stringify({ authrim_permissions: ['reports:write'] })
       ),
@@ -292,7 +274,7 @@ describe('RBAC token claims', () => {
         claimsConfig: 'permissions',
       } as never)
     ).resolves.toEqual({});
-    expect(cache.get).toHaveBeenCalledWith(expect.stringMatching(/^rbac:v3:tenant-a:access:/));
+    expect(cache.get).toHaveBeenCalledWith(expect.stringMatching(/^rbac:v4:tenant-a:access:/));
   });
 
   it('uses a versioned composite cache entry without database access', async () => {

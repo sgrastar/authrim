@@ -1009,8 +1009,10 @@ components:
           type: string
         resourceOwnerId:
           type: string
-        resourceOrgId:
-          type: string
+        resourceGroupIds:
+          type: array
+          items:
+            type: string
         action:
           type: string
         operation:

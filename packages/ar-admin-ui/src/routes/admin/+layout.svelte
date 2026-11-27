@@ -78,11 +78,6 @@
 				icon: 'i-ph-users'
 			},
 
-			{
-				path: '/admin/organizations',
-				label: $LL.admin_nav_organizations(),
-				icon: 'i-ph-buildings'
-			},
 			{ path: '/admin/sessions', label: $LL.admin_nav_user_sessions(), icon: 'i-ph-clock' }
 		],
 		accessControl: {

@@ -265,10 +265,7 @@ place('authentication/social', 'Creating users on first sign-in', {
 		'external_idp.jit_update_fields',
 		'external_idp.jit_require_verified_email',
 		'external_idp.jit_allowed_provider_ids',
-		'external_idp.jit_default_role_id',
-		'external_idp.jit_join_all_matching_orgs',
-		'external_idp.jit_allow_user_without_org',
-		'external_idp.jit_allow_unverified_domain_mappings'
+		'external_idp.jit_default_role_id'
 	]
 });
 place('authentication/social', 'Provider callbacks', {

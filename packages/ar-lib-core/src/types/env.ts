@@ -758,7 +758,6 @@ export interface Env extends LogIcebergSettingsEnv {
   RBAC_CACHE_VERSION?: string; // Cache version for invalidation (default: 1)
 
   // RBAC Consent Screen Configuration
-  ENABLE_RBAC_CONSENT_ORG_SELECTOR?: string; // "true" to show organization selector for multi-org users
   ENABLE_RBAC_CONSENT_ACTING_AS?: string; // "true" to enable acting-as (delegation) feature
   ENABLE_RBAC_CONSENT_SHOW_ROLES?: string; // "true" to display user's roles on consent screen
 

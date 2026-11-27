@@ -781,7 +781,6 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   // The claim names the consent screen approved the information release for.
   let confirmedReleaseApproval: string[] | null = null;
   // Phase 2-B RBAC extensions
-  let org_id: string | undefined; // Target organization ID
   let acting_as: string | undefined; // Acting on behalf of user ID
   let _consent_confirmed: string | undefined; // Internal: consent was confirmed
   // Custom Redirect URIs (Authrim Extension)
@@ -822,7 +821,6 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           ? body._consent_confirmation_challenge
           : undefined;
       // Phase 2-B RBAC extensions
-      org_id = typeof body.org_id === 'string' ? body.org_id : undefined;
       acting_as = typeof body.acting_as === 'string' ? body.acting_as : undefined;
       // Custom Redirect URIs (Authrim Extension)
       error_uri = typeof body.error_uri === 'string' ? body.error_uri : undefined;
@@ -863,7 +861,6 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     _confirmation_challenge = c.req.query('_confirmation_challenge');
     _consent_confirmation_challenge = c.req.query('_consent_confirmation_challenge');
     // Phase 2-B RBAC extensions
-    org_id = c.req.query('org_id');
     acting_as = c.req.query('acting_as');
     // Custom Redirect URIs (Authrim Extension)
     error_uri = c.req.query('error_uri') ?? undefined;
@@ -1249,7 +1246,6 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     ui_locales = restoredAuthorizationRequest.ui_locales;
     login_hint = restoredAuthorizationRequest.login_hint;
     handoff = restoredAuthorizationRequest.handoff;
-    org_id = restoredAuthorizationRequest.org_id;
     acting_as = restoredAuthorizationRequest.acting_as;
     error_uri = restoredAuthorizationRequest.error_uri;
     cancel_uri = restoredAuthorizationRequest.cancel_uri;
@@ -4464,7 +4460,6 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
             authorization_request_encrypted: requestObjectEncrypted,
             authorization_server: 'default',
             // Phase 2-B RBAC extensions
-            org_id,
             acting_as,
             // Custom Redirect URIs (Authrim Extension)
             error_uri: validatedErrorUri,
@@ -4593,7 +4588,6 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
                 authorization_request_signed: requestObjectSigned,
                 authorization_request_encrypted: requestObjectEncrypted,
                 authorization_server: 'default',
-                org_id,
                 acting_as,
                 error_uri: validatedErrorUri,
                 cancel_uri: validatedCancelUri,

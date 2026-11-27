@@ -2056,7 +2056,7 @@ describe('Advanced Condition Evaluators', () => {
  */
 function createTestContext(options: {
   subjectId?: string;
-  roles?: Array<{ name: string; scope: 'global' | 'org' | 'resource' }>;
+  roles?: Array<{ name: string; scope: 'global' | 'group' | 'resource' }>;
 }): PolicyContext {
   return {
     subject: {

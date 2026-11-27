@@ -103,11 +103,14 @@ const coreDb = new DatabaseSync(':memory:');
   for (const file of ['001_0_5_0_admin_baseline.sql', '012_admin_groups.sql']) {
     adminDb.exec(readRenderedMigrationSql(resolve(REPO_ROOT, 'migrations/admin/d1/'), file));
   }
-  // The baseline, and the invitation's group column (migration 016) the invitation API writes.
+  // The baseline, the end-user groups (015), the invitation's group column (016) the invitation
+  // API writes, and the later core migrations.
   for (const file of [
     '001_0_5_0_core_baseline.sql',
+    '015_end_user_groups.sql',
     '016_invitation_group.sql',
     '017_service_group_scim_membership_inputs.sql',
+    '018_remove_organizations.sql',
   ]) {
     coreDb.exec(readRenderedMigrationSql(resolve(REPO_ROOT, 'migrations/core/d1/'), file));
   }

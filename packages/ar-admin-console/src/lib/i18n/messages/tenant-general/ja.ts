@@ -70,7 +70,6 @@ export const jaTenantGeneral = {
 	'tg.ep.admin_api.settings': '設定のカタログ',
 	'tg.ep.admin_api.tenants': 'テナント',
 	'tg.ep.admin_api.custom_claims': '属性スキーマ',
-	'tg.ep.admin_api.organizations': '組織',
 	'tg.ep.admin_api.roles': 'ロール',
 	'tg.ep.admin_api.webhooks': 'Webhook',
 	'tg.copy': '{name} をコピー',

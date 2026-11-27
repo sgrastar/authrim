@@ -73,7 +73,6 @@ export interface TenantEndpoints {
 		settings: string;
 		tenants: string;
 		custom_claims: string;
-		organizations: string;
 		roles: string;
 		webhooks: string;
 	};

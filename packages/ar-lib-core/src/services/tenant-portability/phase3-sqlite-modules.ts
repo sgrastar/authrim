@@ -54,8 +54,6 @@ export const PHASE3_SQLITE_TABLE_GROUPS: readonly Phase3TableGroup[] = [
       'group_role_assignments',
       'groups',
       'oidc_scopes',
-      'org_domain_mappings',
-      'organizations',
       'policy_rules',
       'provisioning_assignment_rules',
       'relation_definitions',
@@ -120,6 +118,6 @@ export const PHASE3_SQLITE_DATASET_REGISTRATIONS: readonly InstalledSqliteDatase
         schemaVersion: 1,
         disposition: 'include' as const,
       },
-      ...(table === 'resource_permissions' ? { partitions: ['role', 'org'] } : {}),
+      ...(table === 'resource_permissions' ? { partitions: ['role', 'group'] } : {}),
     }))
   );

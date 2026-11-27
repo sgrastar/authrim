@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EXTERNAL_IDP_DEFAULTS } from '@authrim/ar-lib-core';
 import { ExternalIdPError, ExternalIdPErrorCode, type HandleIdentityParams } from '../types';
-import { callArg } from './helpers/mock-args';
 import {
   NOW,
   m,
@@ -40,9 +39,6 @@ const jit = (extra: Record<string, unknown> = {}) => ({
   'external_idp.jit_require_verified_email': false,
   'external_idp.jit_allowed_provider_ids': '',
   'external_idp.jit_default_role_id': '',
-  'external_idp.jit_join_all_matching_orgs': false,
-  'external_idp.jit_allow_user_without_org': true,
-  'external_idp.jit_allow_unverified_domain_mappings': false,
   ...extra,
 });
 
@@ -439,7 +435,7 @@ describe('what a policy denial becomes', () => {
       deny_description: 'Not for you',
       matched_rules: ['r1'],
       roles_to_assign: [],
-      orgs_to_join: [],
+      groups_to_join: [],
     });
     const error = await failure(run());
     expect(error.code).toBe(code);
@@ -455,16 +451,5 @@ describe('what a policy denial becomes', () => {
       matched_rules: [],
     });
     expect((await failure(run())).message).toBe('Access denied by policy.');
-  });
-
-  it('denies a user without an organization when standalone users are not allowed', async () => {
-    m.settings.mockResolvedValue(jit({ 'external_idp.jit_allow_user_without_org': false }));
-    const error = await failure(run());
-    expect(error.code).toBe(ExternalIdPErrorCode.POLICY_ACCESS_DENIED);
-    expect(error.message).toBe(
-      'No organization found for this user and standalone users are not allowed.'
-    );
-    expect(error.details).toEqual({ providerName: 'Corp', deny_code: 'access_denied' });
-    expect(callArg(m.createRuleEvaluator, 0, 0)).toEqual({ db: 'meta' });
   });
 });

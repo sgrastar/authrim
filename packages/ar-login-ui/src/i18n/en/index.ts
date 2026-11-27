@@ -394,9 +394,6 @@ const en = {
 	consent_scope_address: 'View your address',
 	consent_scope_offline_access: "Access your account when you're not using the app",
 
-	consent_organizationSelect: 'Select organization',
-	consent_primaryOrg: 'Primary',
-	consent_currentOrganization: 'Current organization',
 	consent_actingOnBehalfOf: 'Acting on behalf of {name:string}',
 	consent_delegatedAccess: 'Delegated access',
 	consent_delegatedAccessWarning:

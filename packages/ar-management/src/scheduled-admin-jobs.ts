@@ -1,7 +1,7 @@
 import { processPendingSupportOpsExecuteJobs } from './support-ops-execute-job';
 import type { Env } from '@authrim/ar-lib-core';
 import { processPendingIdentityMappingHistory } from './identity-mapping-history-maintenance';
-import { processPendingGenericAdminJobs } from './admin-job-executor';
+import { processPendingGenericAdminJobs, processRetiredAdminJobs } from './admin-job-executor';
 import { processPendingDataExportRequests } from './data-export';
 import { processLoggingStorageMaintenanceJobs } from './logging-storage-maintenance-jobs';
 import { processPendingSupportOpsSnapshotJobs } from './support-ops';
@@ -95,6 +95,13 @@ export async function processInteractiveAdminJobQueues(
   }
 
   try {
+    // Jobs of a type that no longer exists are failed, as nothing would ever run them.
+    await processRetiredAdminJobs(env, log);
+  } catch (jobsError) {
+    log.error('Retired admin job processing failed', {}, jobsError as Error);
+  }
+
+  try {
     await processPendingGenericAdminJobs(env, log);
   } catch (jobsError) {
     log.error('Generic admin job processing failed', {}, jobsError as Error);
@@ -184,6 +191,13 @@ export async function processScheduledAdminJobQueues(
     } catch (jobsError) {
       log.error('Logging/storage maintenance job processing failed', {}, jobsError as Error);
     }
+  }
+
+  try {
+    // Jobs of a type that no longer exists are failed, as nothing would ever run them.
+    await processRetiredAdminJobs(env, log);
+  } catch (jobsError) {
+    log.error('Retired admin job processing failed', {}, jobsError as Error);
   }
 
   try {

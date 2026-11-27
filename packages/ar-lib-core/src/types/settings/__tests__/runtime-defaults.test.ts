@@ -73,17 +73,8 @@ describe('settings that replace older stores default to runtime behaviour', () =
     );
     expect(DEFAULT_JIT_CONFIG.allowed_provider_ids).toBeNull();
     expect(EXTERNAL_IDP_DEFAULTS['external_idp.jit_allowed_provider_ids']).toBe('');
-    expect(EXTERNAL_IDP_DEFAULTS['external_idp.jit_join_all_matching_orgs']).toBe(
-      DEFAULT_JIT_CONFIG.join_all_matching_orgs
-    );
-    expect(EXTERNAL_IDP_DEFAULTS['external_idp.jit_allow_user_without_org']).toBe(
-      DEFAULT_JIT_CONFIG.allow_user_without_org
-    );
     expect(EXTERNAL_IDP_DEFAULTS['external_idp.jit_default_role_id']).toBe(
       DEFAULT_JIT_CONFIG.default_role_id
-    );
-    expect(EXTERNAL_IDP_DEFAULTS['external_idp.jit_allow_unverified_domain_mappings']).toBe(
-      DEFAULT_JIT_CONFIG.allow_unverified_domain_mappings
     );
   });
 

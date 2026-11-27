@@ -1,7 +1,7 @@
 /**
  * Tenant-wide RBAC reads across the tenant's account databases
  *
- * A tenant's role assignments and organisation memberships are account data, spread over its
+ * A tenant's role assignments and group memberships are account data, spread over its
  * account databases (see tenant-rbac.ts). The admin views that count or list them for the whole
  * tenant read each of those databases (the bounded set of stores the tenant is assigned, each
  * once) and add up or merge what they find. A subject's rows are all in its own account
@@ -96,34 +96,6 @@ export async function countRoleAssignments(
   return total;
 }
 
-/** Organisation memberships by organisation, across the databases; only of `orgIds` when given. */
-export async function countOrganizationMembers(
-  stores: TenantAccountStores,
-  tenantId: string,
-  orgIds?: readonly string[]
-): Promise<Map<string, number>> {
-  const orgBatches = orgIds === undefined ? [null] : batches(orgIds);
-  const total = new Map<string, number>();
-  await Promise.all(
-    stores.map(async (adapter) => {
-      for (const ids of orgBatches) {
-        if (ids?.length === 0) continue;
-        const byOrg = ids ? ` AND org_id IN (${ids.map(() => '?').join(', ')})` : '';
-        addCounts(
-          total,
-          await adapter.query<{ key: string; count: number | null }>(
-            `SELECT org_id AS key, COUNT(*) AS count FROM subject_org_membership
-              WHERE tenant_id = ?${byOrg}
-              GROUP BY org_id`,
-            [tenantId, ...(ids ?? [])]
-          )
-        );
-      }
-    })
-  );
-  return total;
-}
-
 interface NewestFirst {
   id: string;
   created_at: number;
@@ -201,42 +173,6 @@ export async function listRoleAssignmentsPage(
           ORDER BY created_at DESC, id DESC
           LIMIT ? OFFSET ?`,
         [tenantId, roleId, page.activeAt, limit, offset]
-      )
-    ),
-  ]);
-  return { total, items };
-}
-
-export interface OrganizationMemberListRow {
-  id: string;
-  subject_id: string;
-  org_id: string;
-  membership_type: string;
-  is_primary: number | boolean | null;
-  created_at: number;
-}
-
-/** The members of an organisation, newest first, a page of them. */
-export async function listOrganizationMembersPage(
-  stores: TenantAccountStores,
-  tenantId: string,
-  orgId: string,
-  page: { limit: number; offset: number }
-): Promise<AccountStorePage<OrganizationMemberListRow>> {
-  const [total, items] = await Promise.all([
-    sumCounts(
-      stores,
-      'SELECT COUNT(*) AS count FROM subject_org_membership WHERE tenant_id = ? AND org_id = ?',
-      [tenantId, orgId]
-    ),
-    newestFirstPage(stores, page, (adapter, limit, offset) =>
-      adapter.query<OrganizationMemberListRow>(
-        `SELECT id, subject_id, org_id, membership_type, is_primary, created_at
-           FROM subject_org_membership
-          WHERE tenant_id = ? AND org_id = ?
-          ORDER BY created_at DESC, id DESC
-          LIMIT ? OFFSET ?`,
-        [tenantId, orgId, limit, offset]
       )
     ),
   ]);

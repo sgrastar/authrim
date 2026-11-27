@@ -386,9 +386,6 @@ const it = createTranslation({
 	consent_scope_phone: 'Visualizzare il tuo numero di telefono',
 	consent_scope_address: 'Visualizzare il tuo indirizzo',
 	consent_scope_offline_access: 'Accedere al tuo account quando non usi l’applicazione',
-	consent_organizationSelect: 'Seleziona organizzazione',
-	consent_primaryOrg: 'Principale',
-	consent_currentOrganization: 'Organizzazione attuale',
 	consent_actingOnBehalfOf: 'Operi per conto di {name}',
 	consent_delegatedAccess: 'Accesso delegato',
 	consent_delegatedAccessWarning:

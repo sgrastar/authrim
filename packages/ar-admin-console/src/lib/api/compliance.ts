@@ -95,7 +95,7 @@ export interface ComplianceStatus {
 	generated_at: string;
 }
 
-export type ReviewScope = 'all_users' | 'role' | 'organization' | 'inactive_users';
+export type ReviewScope = 'all_users' | 'role' | 'group' | 'inactive_users';
 export type ReviewStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled';
 
 export interface AccessReview {
@@ -134,7 +134,7 @@ export interface ReviewItem {
 	item_id: string;
 	user_id: string;
 	user: { email: string | null; name: string | null };
-	permission_type: 'role' | 'organization' | 'account';
+	permission_type: 'role' | 'group' | 'account';
 	permission_value: string;
 	decision: Decision | null;
 	decided_by: string | null;

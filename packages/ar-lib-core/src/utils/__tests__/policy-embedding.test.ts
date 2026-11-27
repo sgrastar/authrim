@@ -84,10 +84,9 @@ function grantsDatabases(
       description: null,
       permissions_json: row.permissions_json,
       role_type: 'custom',
-      hierarchy_level: null,
+      grant_tier: 1,
       is_assignable: 1,
       is_system: 0,
-      parent_role_id: null,
     })),
   });
   const account = new PolicyEmbeddingAdapter({
@@ -257,7 +256,7 @@ describe('evaluatePermissionEmbeddingForScope', () => {
       {
         permissions_json: JSON.stringify(['documents:read']),
         scope_type: 'resource',
-        scope_target: 'document:doc_123',
+        scope_target: 'resource:document:doc_123',
       },
     ]);
 
@@ -273,7 +272,7 @@ describe('evaluatePermissionEmbeddingForScope', () => {
       {
         permission: 'documents:read',
         scope_type: 'resource',
-        scope_target: 'document:doc_123',
+        scope_target: 'resource:document:doc_123',
       },
     ]);
   });
@@ -288,7 +287,7 @@ describe('evaluatePermissionEmbeddingForScope', () => {
       {
         permissions_json: JSON.stringify(['reports:read']),
         scope_type: 'resource',
-        scope_target: 'report:r1',
+        scope_target: 'resource:report:r1',
       },
     ]);
     const scope = 'documents:read documents:write reports:read';

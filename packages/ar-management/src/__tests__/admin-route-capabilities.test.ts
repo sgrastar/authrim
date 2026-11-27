@@ -174,7 +174,7 @@ describe('the route table', () => {
         (route.path === '/api/admin/jobs' || route.path.startsWith('/api/admin/jobs/'))
     );
     const writes = routes.filter((route) => WRITE.has(route.method));
-    expect(writes.length).toBeGreaterThanOrEqual(6);
+    expect(writes.length).toBeGreaterThanOrEqual(5);
     for (const route of writes) {
       expect(findAdminRouteAccessRule(route.method, route.path)?.capability, route.path).toBe(
         'bulk_jobs'

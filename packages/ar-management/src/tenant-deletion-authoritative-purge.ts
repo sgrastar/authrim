@@ -212,7 +212,7 @@ async function listTenantScopedTables(session: D1DatabaseSession): Promise<strin
     }
   }
   // A trigger on one tenant table that writes another (service_group_inputs, written when
-  // user_custom_fields, service_group_manual or group_memberships rows are deleted, ...): the
+  // user_custom_fields or group_memberships rows are deleted, ...): the
   // written table is purged after the table whose deletion writes it, or the purge would leave the
   // rows its own deletes wrote. An edge that would close a cycle is left out (the count check
   // after the purge still catches what it leaves).

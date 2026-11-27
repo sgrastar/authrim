@@ -23,9 +23,9 @@ describe('invitation use reservations in the real schema', () => {
   function createInvitation(id: string, maxUses: number, expiresAt = NOW + 86_400) {
     db.prepare(
       `INSERT INTO tenant_invitations
-       (id, token, tenant_id, invited_email, invited_by, role_id, org_id, max_uses, use_count,
+       (id, token, tenant_id, invited_email, invited_by, role_id, max_uses, use_count,
         expires_at, created_at, updated_at)
-       VALUES (?, ?, 'tenant-a', NULL, 'admin-1', NULL, NULL, ?, 0, ?, ?, ?)`
+       VALUES (?, ?, 'tenant-a', NULL, 'admin-1', NULL, ?, 0, ?, ?, ?)`
     ).run(id, `token-${id}`, maxUses, expiresAt, NOW, NOW);
   }
 

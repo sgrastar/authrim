@@ -1,13 +1,16 @@
 import type { Context } from 'hono';
 import { rbacIdBatches, type DatabaseAdapter, type Env } from '@authrim/ar-lib-core';
 import { getAdminAuth } from '../../admin-tenant-access';
-import { assertDelegableRole, isRoleAssignable } from '../../group-role-management';
+import {
+  assertDelegableRole,
+  canManageGroupMembership,
+  isRoleAssignable,
+} from '../../group-role-management';
 
 /**
  * The delegation check of a setting that grants roles later, without an administrator (a JIT
- * role assignment rule, a domain mapping's automatic role): the administrator saving it must be
- * allowed to grant each role directly (`admin:roles:write` and the role's grant tier within
- * their ceiling, below their level). A response to return (400: the role is not the tenant's,
+ * role assignment rule): the administrator saving it must be allowed to grant each role directly
+ * (`admin:roles:write` and the role's grant tier within their ceiling). A response to return (400: the role is not the tenant's,
  * 403: `role_delegation_denied`), or null when every role may be delegated.
  */
 export async function refuseUndelegableRoles(
@@ -27,7 +30,6 @@ export async function refuseUndelegableRoles(
     {
       id: string;
       grant_tier: number;
-      hierarchy_level: number | null;
       is_assignable: number | boolean | null;
     }
   >();
@@ -35,10 +37,9 @@ export async function refuseUndelegableRoles(
     const rows = await metadata.query<{
       id: string;
       grant_tier: number;
-      hierarchy_level: number | null;
       is_assignable: number | boolean | null;
     }>(
-      `SELECT id, grant_tier, hierarchy_level, is_assignable FROM roles
+      `SELECT id, grant_tier, is_assignable FROM roles
         WHERE tenant_id = ? AND id IN (${batch.map(() => '?').join(', ')})`,
       [tenantId, ...batch]
     );
@@ -70,6 +71,55 @@ export async function refuseUndelegableRoles(
     }
   }
   return null;
+}
+
+/**
+ * The same check for the groups a setting joins later without an administrator (a JIT role
+ * assignment rule's `join_group` actions): each group must be the tenant's, and the administrator
+ * saving it must be allowed to add a member to it (a group carrying roles grants them, so the
+ * grant ceiling of every role it and its ancestors carry). A response to return (400: the group is
+ * not the tenant's, 403: `role_delegation_denied`), or null.
+ */
+export async function refuseUndelegableGroupJoins(
+  c: Context,
+  metadata: DatabaseAdapter,
+  tenantId: string,
+  groupIds: Iterable<string>
+): Promise<Response | null> {
+  const auth = getAdminAuth(c as Context<{ Bindings: Env }>) ?? null;
+  for (const groupId of new Set(groupIds)) {
+    const group = await metadata.queryOne<{ id: string }>(
+      'SELECT id FROM "groups" WHERE tenant_id = ? AND id = ?',
+      [tenantId, groupId]
+    );
+    if (!group)
+      return c.json(
+        { error: 'invalid_request', error_description: `Group ${groupId} not found` },
+        400
+      );
+    if (!(await canManageGroupMembership(metadata, tenantId, auth, groupId)))
+      return c.json(
+        {
+          error: 'role_delegation_denied',
+          error_description: `The administrator may not add members to group ${groupId}`,
+        },
+        403
+      );
+  }
+  return null;
+}
+
+/** The groups a rule's `join_group` actions join. */
+export function actionGroupIds(actions: unknown): string[] {
+  if (!Array.isArray(actions)) return [];
+  return actions.flatMap((action: unknown) =>
+    action &&
+    typeof action === 'object' &&
+    (action as { type?: unknown }).type === 'join_group' &&
+    typeof (action as { group_id?: unknown }).group_id === 'string'
+      ? [(action as { group_id: string }).group_id]
+      : []
+  );
 }
 
 /** The roles a rule's actions assign. */

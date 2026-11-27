@@ -32,6 +32,7 @@ import {
   TokenClaimEvaluator,
   createTokenClaimEvaluator,
   testTokenClaimRule,
+  tokenClaimRuleRemovedFields,
 } from '../token-claim-evaluator';
 
 describe('Token Claim Evaluator Service', () => {
@@ -52,8 +53,6 @@ describe('Token Claim Evaluator Service', () => {
       scope: 'openid profile',
       roles: ['admin'],
       permissions: ['users:read', 'users:write'],
-      org_id: 'org_456',
-      org_type: 'enterprise',
       user_type: 'employee',
     };
 
@@ -129,17 +128,17 @@ describe('Token Claim Evaluator Service', () => {
       expect(result.claims_to_add).toEqual({ can_write_users: true });
     });
 
-    it('should match rule with org_type condition', async () => {
+    it('should match rule with user_type condition', async () => {
       const ruleRow = {
         id: 'rule-3',
         tenant_id: 'default',
-        name: 'Enterprise Org Rule',
-        description: 'Add enterprise feature flag for enterprise orgs',
+        name: 'Employee Rule',
+        description: 'Add enterprise feature flag for employees',
         token_type: 'access',
         conditions_json: JSON.stringify({
-          field: 'org_type',
+          field: 'user_type',
           operator: 'eq',
-          value: 'enterprise',
+          value: 'employee',
         }),
         actions_json: JSON.stringify([
           { type: 'add_claim', claim_name: 'enterprise_features', claim_value: true },
@@ -194,8 +193,7 @@ describe('Token Claim Evaluator Service', () => {
       scope: 'openid',
       roles: ['admin', 'manager'],
       permissions: ['users:read'],
-      org_id: 'org_456',
-      org_type: 'enterprise',
+      user_type: 'employee',
     };
 
     it('should match AND compound condition', async () => {
@@ -208,7 +206,7 @@ describe('Token Claim Evaluator Service', () => {
           type: 'and',
           conditions: [
             { field: 'has_role', operator: 'contains', value: 'admin' },
-            { field: 'org_type', operator: 'eq', value: 'enterprise' },
+            { field: 'user_type', operator: 'eq', value: 'employee' },
           ],
         }),
         actions_json: JSON.stringify([
@@ -242,7 +240,7 @@ describe('Token Claim Evaluator Service', () => {
           type: 'and',
           conditions: [
             { field: 'has_role', operator: 'contains', value: 'admin' },
-            { field: 'org_type', operator: 'eq', value: 'enterprise' },
+            { field: 'user_type', operator: 'eq', value: 'employee' },
           ],
         }),
         actions_json: JSON.stringify([
@@ -299,7 +297,6 @@ describe('Token Claim Evaluator Service', () => {
       scope: 'openid',
       roles: ['admin'],
       permissions: [],
-      org_id: 'org_456',
       user_type: 'employee',
     };
 
@@ -353,7 +350,7 @@ describe('Token Claim Evaluator Service', () => {
           {
             type: 'add_claim_template',
             claim_name: 'user_info',
-            template: 'User {{subject_id}} from org {{org_id}}',
+            template: 'User {{subject_id}} of {{client_id}}',
           },
         ]),
         priority: 100,
@@ -367,7 +364,7 @@ describe('Token Claim Evaluator Service', () => {
       const result = await evaluator.evaluate(baseContext, 'access');
 
       expect(result.claims_to_add).toEqual({
-        user_info: 'User user_123 from org org_456',
+        user_info: 'User user_123 of client_abc',
       });
     });
 
@@ -382,7 +379,7 @@ describe('Token Claim Evaluator Service', () => {
           {
             type: 'add_claim_template',
             claim_name: 'user_info',
-            template: 'User {{subject_id}} from org {{org_id}}',
+            template: 'User {{subject_id}} of {{client_id}}',
           },
         ]),
         priority: 100,
@@ -398,7 +395,7 @@ describe('Token Claim Evaluator Service', () => {
         'access'
       );
 
-      expect(result.claims_to_add).toEqual({ user_info: 'User pairwise-sub from org org_456' });
+      expect(result.claims_to_add).toEqual({ user_info: 'User pairwise-sub of client_abc' });
       expect(JSON.stringify(result.claims_to_add)).not.toContain('user_123');
     });
 
@@ -414,7 +411,7 @@ describe('Token Claim Evaluator Service', () => {
           value: 'admin',
         }),
         actions_json: JSON.stringify([
-          { type: 'copy_from_context', claim_name: 'user_org', context_field: 'org_id' },
+          { type: 'copy_from_context', claim_name: 'user_roles', context_field: 'roles' },
           { type: 'copy_from_context', claim_name: 'account_type', context_field: 'user_type' },
         ]),
         priority: 100,
@@ -428,7 +425,7 @@ describe('Token Claim Evaluator Service', () => {
       const result = await evaluator.evaluate(baseContext, 'access');
 
       expect(result.claims_to_add).toEqual({
-        user_org: 'org_456',
+        user_roles: ['admin'],
         account_type: 'employee',
       });
     });
@@ -882,6 +879,131 @@ describe('Token Claim Evaluator Service', () => {
 
       expect(result.matched).toBe(false);
       expect(result.would_add_claims).toEqual({});
+    });
+  });
+
+  describe('Rules naming removed fields', () => {
+    const context: TokenClaimEvaluationContext = {
+      tenant_id: 'default',
+      subject_id: 'user_123',
+      client_id: 'client_abc',
+      scope: 'openid',
+      roles: ['admin'],
+      permissions: [],
+    };
+    const row = (id: string, condition: unknown, actions: unknown[]) => ({
+      id,
+      tenant_id: 'default',
+      name: id,
+      token_type: 'access',
+      conditions_json: JSON.stringify(condition),
+      actions_json: JSON.stringify(actions),
+      priority: 100,
+      is_active: 1,
+      stop_processing: 0,
+      created_at: 1700000000,
+      updated_at: 1700000000,
+    });
+    const claim = { type: 'add_claim', claim_name: 'tier', claim_value: 'x' };
+
+    it('names the removed fields of a condition, a conditional value, a template and a copy', () => {
+      expect(
+        tokenClaimRuleRemovedFields({
+          condition: {
+            type: 'and',
+            conditions: [
+              { field: 'has_role', operator: 'contains', value: 'admin' },
+              { type: 'or', conditions: [{ field: 'org_type', operator: 'ne', value: 'x' }] },
+            ],
+          },
+          actions: [
+            {
+              type: 'conditional_value',
+              claim_name: 'a',
+              condition: { field: 'plan', operator: 'eq', value: 'gold' },
+            },
+            { type: 'add_claim_template', claim_name: 'b', template: '{{ org_id }}-{{user_type}}' },
+            { type: 'copy_from_context', claim_name: 'c', context_field: 'org_context' },
+          ],
+        })
+      ).toEqual(['org_context', 'org_id', 'org_type', 'plan']);
+      expect(
+        tokenClaimRuleRemovedFields({
+          condition: { field: 'user_type', operator: 'eq', value: 'x' },
+          actions: [claim],
+        })
+      ).toEqual([]);
+    });
+
+    it('reads a condition however deep, and only the fields an action uses', () => {
+      let deep: Record<string, unknown> = { field: 'org_id', operator: 'ne', value: 'x' };
+      for (let level = 0; level < 5000; level++) deep = { type: 'and', conditions: [deep] };
+      expect(tokenClaimRuleRemovedFields({ condition: deep, actions: [] })).toEqual(['org_id']);
+      // A fixed value with an unused context_field, template or condition reads none of them.
+      expect(
+        tokenClaimRuleRemovedFields({
+          condition: { field: 'user_type', operator: 'eq', value: 'x' },
+          actions: [
+            {
+              type: 'add_claim',
+              claim_name: 'a',
+              claim_value: 1,
+              context_field: 'org_id',
+              template: '{{plan}}',
+              condition: { field: 'org_type', operator: 'eq', value: 'x' },
+            },
+          ],
+        })
+      ).toEqual([]);
+    });
+
+    it('skips the whole rule, even one whose condition would match every token', async () => {
+      mockD1.all.mockResolvedValue({
+        results: [
+          // `ne` on an absent field matches: the rule must not be read at all.
+          row('cond', { field: 'org_id', operator: 'ne', value: 'org-1' }, [claim]),
+          row('value', { field: 'has_role', operator: 'contains', value: 'admin' }, [
+            {
+              type: 'conditional_value',
+              claim_name: 'plan_claim',
+              condition: { field: 'plan', operator: 'not_exists', value: '' },
+              if_true: 'free',
+              if_false: 'paid',
+            },
+          ]),
+          row('kept', { field: 'has_role', operator: 'contains', value: 'admin' }, [
+            { type: 'add_claim', claim_name: 'kept', claim_value: true },
+          ]),
+        ],
+      });
+      const result = await evaluator.evaluate(context, 'access');
+      expect(result.matched_rules).toEqual(['kept']);
+      expect(result.claims_to_add).toEqual({ kept: true });
+    });
+
+    it('previews such a rule as skipped, naming the fields', () => {
+      const result = testTokenClaimRule(
+        {
+          id: 'test-rule',
+          tenant_id: 'default',
+          name: 'Test Rule',
+          token_type: 'access',
+          condition: { field: 'org_type' as never, operator: 'ne', value: 'x' },
+          actions: [{ type: 'add_claim', claim_name: 'test', claim_value: true }],
+          priority: 100,
+          is_active: true,
+          stop_processing: false,
+          created_at: 1700000000,
+          updated_at: 1700000000,
+        },
+        context
+      );
+      expect(result).toEqual({
+        matched: false,
+        removed_fields: ['org_type'],
+        condition_results: [],
+        would_add_claims: {},
+      });
     });
   });
 });

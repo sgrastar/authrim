@@ -61,7 +61,7 @@ const {
     evaluate: vi.fn().mockResolvedValue({
       matched_rules: [],
       roles_to_assign: [],
-      orgs_to_join: [],
+      groups_to_join: [],
       attributes_to_set: [],
       denied: false,
     }),
@@ -213,9 +213,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     }),
     getDefaultTenantId: vi.fn(() => 'default'),
     createRuleEvaluator: mockCreateRuleEvaluator,
-    resolveOrgByDomainHash: vi.fn().mockResolvedValue(null),
-    resolveAllOrgsByDomainHash: vi.fn().mockResolvedValue([]),
-    joinOrganization: vi.fn().mockResolvedValue({ success: true }),
+    upsertGroupMembership: vi.fn().mockResolvedValue({ success: true }),
     assignRoleToUser: vi.fn().mockResolvedValue(undefined),
     generateEmailDomainHashWithVersion: vi.fn().mockResolvedValue({
       hash: 'mock-domain-hash',
@@ -229,11 +227,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     }),
     DEFAULT_JIT_CONFIG: {
       enabled: true,
-      auto_create_org_on_domain_match: false,
-      join_all_matching_orgs: false,
-      allow_user_without_org: true,
       default_role_id: 'role_end_user',
-      allow_unverified_domain_mappings: false,
     },
     validateCustomClaimWrite: mockValidateCustomClaimWrite,
     persistCustomClaimWrite: mockPersistCustomClaimWrite,
@@ -1322,10 +1316,7 @@ describe('Identity Stitching Service', () => {
               key === 'jit_provisioning_config'
                 ? JSON.stringify({
                     enabled: true,
-                    join_all_matching_orgs: false,
-                    allow_user_without_org: true,
                     default_role_id: null,
-                    allow_unverified_domain_mappings: false,
                   })
                 : null
             ),
@@ -1368,9 +1359,9 @@ describe('Identity Stitching Service', () => {
           providerUserId: mockUserInfo.sub,
           profileDataEncrypted: await encrypt(
             JSON.stringify({
-              schemaVersion: 1,
+              schemaVersion: 2,
               customClaimValidation: { ok: true },
-              organizationIds: [],
+              groupJoins: [],
               roleAssignments: [],
               defaultRoleId: null,
               matchedRules: [],

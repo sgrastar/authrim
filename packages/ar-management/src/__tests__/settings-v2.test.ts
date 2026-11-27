@@ -2324,7 +2324,6 @@ describe('Settings API v2', () => {
             userId: 'viewer_1',
             authMethod: 'bearer',
             roles: ['ar_viewer'],
-            org_id: 'tenant_123',
           },
         });
 
@@ -2381,7 +2380,6 @@ describe('Settings API v2', () => {
             userId: 'tenant_admin_1',
             authMethod: 'bearer',
             roles: ['ar_tenant_admin'],
-            org_id: 'tenant_123',
           },
         });
 
@@ -5486,7 +5484,6 @@ describe('Settings API v2', () => {
           userId: 'tenant_admin_1',
           authMethod: 'bearer',
           roles: ['ar_tenant_admin'],
-          org_id: 'tenant_123',
           tenantId: 'tenant_123',
         },
       });
@@ -5508,7 +5505,6 @@ describe('Settings API v2', () => {
           userId: 'tenant_admin_1',
           authMethod: 'bearer',
           roles: ['ar_tenant_admin'],
-          org_id: 'tenant_123',
         },
       });
 

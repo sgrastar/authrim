@@ -31,8 +31,6 @@ const PINNED_CONTRACT_DIGESTS: Readonly<Record<string, string>> = {
     'sha256:0dc39cff18c4a234665fcecee597765f393d018b033471144d20fbc618b4c2c0',
   'admin.read.identity-providers.inspect':
     'sha256:a54defa54a2a6ee061248647d21f3150f2b56b28da0a2940b26e2bb0be598be2',
-  'admin.read.authorization.organizations':
-    'sha256:120614694b229d84b3c17d9ccaece36a85d79f4b49931ca2d8ecdc40fa6707c6',
   'admin.read.authorization.roles':
     'sha256:c1fe9c33567b461396e65114713d4d4e67a8a9ecd7de9fa602640f35044ecf26',
   'admin.read.authorization.policies':
@@ -62,7 +60,7 @@ const PINNED_CONTRACT_DIGESTS: Readonly<Record<string, string>> = {
   'admin.read.flows.validate':
     'sha256:73b2e239f01b7ac25e30f860c1e7816f25ff2a09bb5b34639e8fb2728431690e',
   'admin.read.authorization.simulate':
-    'sha256:5dbf31df9a9267a81752c03980b58163d18c19670417ab5e455d3495919fde58',
+    'sha256:9a8746266f52e66333546cea4527c617cf2c2eec6e26edb024a4bf66329e8c25',
   'admin.read.tenant-policy.validate':
     'sha256:c3b3909904e56681586484b3d2e2393f1114b1b0f3dbb4acd2fc302bddf1307e',
   'admin.read.clients.profile-validate':

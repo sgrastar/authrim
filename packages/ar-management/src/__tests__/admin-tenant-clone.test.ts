@@ -1949,12 +1949,12 @@ describe('admin tenant clone', () => {
     expect(updates.flatMap(([, params]) => params as unknown[])).not.toContain('parent-custom');
   });
 
-  it('remaps role parents and omits malformed or external-scope assignment rules', async () => {
+  it('remaps role ids and omits malformed or external-scope assignment rules', async () => {
     mocks.source.query.mockImplementation(async (sql: string) => {
       if (sql.includes('FROM roles WHERE tenant_id = ? AND is_system = 0')) {
         return [
-          { id: 'parent', name: 'parent', permissions_json: '[]', parent_role_id: null },
-          { id: 'child', name: 'child', permissions_json: '[]', parent_role_id: 'parent' },
+          { id: 'parent', name: 'parent', permissions_json: '[]' },
+          { id: 'child', name: 'child', permissions_json: '[]' },
         ];
       }
       if (sql.includes('FROM roles WHERE tenant_id = ? AND is_system = 1')) return [];
@@ -1977,10 +1977,10 @@ describe('admin tenant clone', () => {
             actions_json: '[]',
           },
           {
-            name: 'organization',
+            name: 'group',
             role_id: 'child',
-            scope_type: 'org',
-            scope_target: 'org:source',
+            scope_type: 'group',
+            scope_target: 'group:source',
             conditions_json: '{}',
             actions_json: '[]',
           },
@@ -1988,7 +1988,7 @@ describe('admin tenant clone', () => {
             name: 'global-with-target',
             role_id: 'child',
             scope_type: 'global',
-            scope_target: 'org:source',
+            scope_target: 'group:source',
             conditions_json: '{}',
             actions_json: '[]',
           },
@@ -2001,12 +2001,12 @@ describe('admin tenant clone', () => {
             actions_json: '[]',
           },
           {
-            name: 'join-organization-auto',
+            name: 'join-group',
             role_id: 'child',
             scope_type: 'global',
             scope_target: '',
             conditions_json: '{}',
-            actions_json: '[{"type":"join_org","org_id":"auto"}]',
+            actions_json: '[{"type":"join_group","group_id":"source-group"}]',
           },
           {
             name: 'tenant-scoped-action',
@@ -2018,11 +2018,11 @@ describe('admin tenant clone', () => {
               '[{"type":"assign_role","role_id":"child","scope_type":"tenant","scope_target":"source"}]',
           },
           {
-            name: 'numeric-organization-reference',
+            name: 'numeric-group-reference',
             role_id: 'child',
             scope_type: 'global',
             scope_target: '',
-            conditions_json: '{"organizationId":42}',
+            conditions_json: '{"groupId":42}',
             actions_json: '[]',
           },
         ];

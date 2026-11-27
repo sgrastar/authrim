@@ -327,11 +327,6 @@ export const CLOUDFLARE_ADMIN_READ_ROUTES: Readonly<Record<string, ManagementOpe
     path: '/api/admin/external-providers',
     response: projectAgentInspectionResponse,
   },
-  'admin.read.authorization.organizations': {
-    method: 'GET',
-    path: '/api/admin/organizations?page=1&limit=50',
-    response: projectAgentInspectionResponse,
-  },
   'admin.read.authorization.roles': {
     method: 'GET',
     path: '/api/admin/roles?page=1&limit=50',

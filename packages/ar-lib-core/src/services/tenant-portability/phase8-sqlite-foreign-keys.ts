@@ -311,16 +311,6 @@ export const PHASE8_SQLITE_FOREIGN_KEY_RULES = [
     to: 'core.tenants',
   },
   {
-    from: 'core.user_roles',
-    columns: ['role_id'],
-    to: 'core.roles',
-  },
-  {
-    from: 'core.user_roles',
-    columns: ['user_id'],
-    to: 'core.users_core',
-  },
-  {
     from: 'core.user_verified_attributes',
     columns: ['verification_id'],
     to: 'core.attribute_verifications',

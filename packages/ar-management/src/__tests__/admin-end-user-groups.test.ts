@@ -92,6 +92,7 @@ import { registerAdminResourcePermissionMiddleware } from '../admin-resource-per
 const superAdmin = {
   userId: 'admin-1',
   hierarchyLevel: 100,
+  maxGrantTier: 3,
   permissions: ['admin:*'],
 } as unknown as AdminAuthContext;
 
@@ -107,12 +108,14 @@ const lowCeilingAdmin = {
 const groupsOnlyAdmin = {
   userId: 'admin-3',
   hierarchyLevel: 100,
+  maxGrantTier: 3,
   permissions: ['admin:groups:write', 'admin:groups:read'],
 } as unknown as AdminAuthContext;
 
 const readOnlyAdmin = {
   userId: 'admin-4',
   hierarchyLevel: 100,
+  maxGrantTier: 3,
   permissions: ['admin:groups:read'],
 } as unknown as AdminAuthContext;
 
@@ -174,8 +177,8 @@ let accountDb: ReturnType<typeof openCoreStore>['db'];
 function seedRole(id: string, tier: number, permissions: string[] = ['docs:read']) {
   metadataDb
     .prepare(
-      `INSERT INTO roles (id, name, tenant_id, grant_tier, hierarchy_level, permissions_json, created_at)
-       VALUES (?, ?, 'tenant-a', ?, 1, ?, 1)`
+      `INSERT INTO roles (id, name, tenant_id, grant_tier, permissions_json, created_at)
+       VALUES (?, ?, 'tenant-a', ?, ?, 1)`
     )
     .run(id, id, tier, JSON.stringify(permissions));
 }
@@ -306,17 +309,59 @@ describe('groups: create, list, get, update, delete', () => {
     expect(
       (await call('POST', `/api/admin/groups/${groupId}/roles`, { role_id: 'role-a' })).status
     ).toBe(201);
+    metadataDb
+      .prepare(
+        `INSERT INTO resource_permissions (id, tenant_id, subject_type, subject_id, resource_type,
+           resource_id, actions_json, created_at, updated_at)
+         VALUES ('rp-group', 'tenant-a', 'group', ?, 'documents', 'd1', '["read"]', 1, 1),
+                ('rp-user', 'tenant-a', 'user', ?, 'documents', 'd1', '["read"]', 1, 1)`
+      )
+      .run(groupId, groupId);
     cachePuts = [];
     expect((await call('DELETE', `/api/admin/groups/${groupId}`)).status).toBe(200);
     expect(accountDb.prepare('SELECT count(*) n FROM group_memberships').get()).toEqual({ n: 0 });
     expect(metadataDb.prepare('SELECT count(*) n FROM group_role_assignments').get()).toEqual({
       n: 0,
     });
+    // The resource permissions granted to the group go with it; a user's of the same id stays.
+    expect(metadataDb.prepare('SELECT id FROM resource_permissions').all()).toEqual([
+      { id: 'rp-user' },
+    ]);
     expect(cachePuts.length).toBeGreaterThan(0);
   });
 });
 
 describe('group members', () => {
+  it('needs the standing for every service group that a membership reaches through member()', async () => {
+    seedRole('role-strong', 2);
+    const base = await createGroupVia('base');
+    const derived = await createGroupVia('derived');
+    expect(
+      (await call('POST', `/api/admin/groups/${derived}/roles`, { role_id: 'role-strong' })).status
+    ).toBe(201);
+    // The saved service-group catalog: `derived` is decided by member(base).
+    metadataDb
+      .prepare(
+        `INSERT INTO service_group_catalog (tenant_id, revision, plan_json, updated_at, write_token)
+         VALUES ('tenant-a', 1, ?, 1, '')`
+      )
+      .run(JSON.stringify({ dependents: { [base]: [derived], [derived]: [] } }));
+    // The base group carries nothing itself; the group derived from it carries a tier 2 role.
+    currentAuth = lowCeilingAdmin;
+    expect(
+      (await call('POST', `/api/admin/groups/${base}/members`, { subject_id: 'user-1' })).status
+    ).toBe(403);
+    currentAuth = superAdmin;
+    expect(
+      (await call('POST', `/api/admin/groups/${base}/members`, { subject_id: 'user-1' })).status
+    ).toBe(201);
+    currentAuth = lowCeilingAdmin;
+    expect((await call('DELETE', `/api/admin/groups/${base}/members/user-1`)).status).toBe(403);
+    expect(accountDb.prepare('SELECT lifecycle_state FROM group_memberships').all()).toEqual([
+      { lifecycle_state: 'active' },
+    ]);
+  });
+
   it('adds and removes a manual membership in the account database and invalidates the subject', async () => {
     const groupId = await createGroupVia('team');
     const added = await call('POST', `/api/admin/groups/${groupId}/members`, {
@@ -1050,7 +1095,7 @@ describe('several account databases and another tenant', () => {
       .run(now, now);
     metadataDb
       .prepare(
-        "INSERT INTO roles (id, name, tenant_id, grant_tier, hierarchy_level, permissions_json, created_at) VALUES ('foreign-role', 'foreign', 'tenant-b', 1, 1, '[]', 1)"
+        "INSERT INTO roles (id, name, tenant_id, grant_tier, permissions_json, created_at) VALUES ('foreign-role', 'foreign', 'tenant-b', 1, '[]', 1)"
       )
       .run();
     const id = await createGroupVia('team');

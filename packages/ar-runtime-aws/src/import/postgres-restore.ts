@@ -197,7 +197,7 @@ function parentFirstRows(
     sourceRow(json, spec, tenantId);
     const row = JSON.parse(json) as PortableSqliteRow;
     const id = row.id[1];
-    const parent = row[spec.table === 'groups' ? 'parent_group_id' : 'parent_role_id'][1];
+    const parent = row.parent_group_id[1];
     if (!id || byId.has(id)) invalid();
     byId.set(id, { json, parent });
   }
@@ -578,7 +578,7 @@ export async function restoreVerifiedPostgresFamily(
         const next = await source.readNextRow(cursor);
         if (!next || next.nextCursor === cursor) invalid();
         cursor = next.nextCursor;
-        if (spec.table === 'roles' || spec.table === 'groups') {
+        if (spec.table === 'groups') {
           recordSourceRow(next.rowJson);
           hierarchyRows.push(next.rowJson);
         } else await insertRow(next.rowJson, false);

@@ -30,12 +30,12 @@ describe('built-in Agent Task Sets', () => {
       )
     );
     expect(resolved.map((item) => item.digest)).toEqual([
-      'u49bs50zVMDoRNR_D2zRJ9OWBb_HEReUTdViarG08Uc',
+      'tUOYK8CTMY_dpJv039XAP4_gWeLV0uJfLcN-IY7ifBU',
       'JET784ODvcv_ZBZO7Yfb59-NqSslyqqgEbfHiTCyoSo',
-      'L5PMVYmQNcv1TvqUgMY7P75Pvs02tq4Kze1zHrZL4Zc',
-      'JQ_DD8EaPb2bV_KvOd0BM1wrQRH7Pe6RckXIf0321YQ',
-      'IKzJzvGZY056MZMpHd3RloaZH4joF49ANVoDHntY-P4',
-      'SOMb-b3fNef_nyGvvt4FHn-z0XBTsaj9hZw42UNNC1U',
+      '8OtNxiHhimpXRGqvJ3b516wH_nWzy0v1MOTRJQzbb8s',
+      'bNYwCrTO8I8pqlORCz6TGoN0zlLGimQ_Lfl1EGCcSXs',
+      'Ww-UYAENvFVQYxrPdoM8-0k3LycEl-RK2FgV4h3ueyM',
+      'UV56vvPKc_sfWkfDvwqQMo968xLGcsDhbLs-LRJtRT4',
     ]);
     const items = await listAgentTaskSetsWithBuiltins({
       repository: repository(),
@@ -51,14 +51,14 @@ describe('built-in Agent Task Sets', () => {
       'configuration_operator',
       'bulk_configuration_operator',
     ]);
-    expect(items.every((item) => item.kind === 'builtin' && item.currentVersion === 8)).toBe(true);
+    expect(items.every((item) => item.kind === 'builtin' && item.currentVersion === 9)).toBe(true);
     expect(items.map((item) => item.version.digest)).toEqual([
-      'u49bs50zVMDoRNR_D2zRJ9OWBb_HEReUTdViarG08Uc',
+      'tUOYK8CTMY_dpJv039XAP4_gWeLV0uJfLcN-IY7ifBU',
       'JET784ODvcv_ZBZO7Yfb59-NqSslyqqgEbfHiTCyoSo',
-      'L5PMVYmQNcv1TvqUgMY7P75Pvs02tq4Kze1zHrZL4Zc',
-      'JQ_DD8EaPb2bV_KvOd0BM1wrQRH7Pe6RckXIf0321YQ',
-      'IKzJzvGZY056MZMpHd3RloaZH4joF49ANVoDHntY-P4',
-      'SOMb-b3fNef_nyGvvt4FHn-z0XBTsaj9hZw42UNNC1U',
+      '8OtNxiHhimpXRGqvJ3b516wH_nWzy0v1MOTRJQzbb8s',
+      'bNYwCrTO8I8pqlORCz6TGoN0zlLGimQ_Lfl1EGCcSXs',
+      'Ww-UYAENvFVQYxrPdoM8-0k3LycEl-RK2FgV4h3ueyM',
+      'UV56vvPKc_sfWkfDvwqQMo968xLGcsDhbLs-LRJtRT4',
     ]);
     expect(items.at(-1)?.version.tools.map((tool) => tool.toolId)).toContain(
       'admin.write.bulk.plan.create'
@@ -106,7 +106,7 @@ describe('built-in Agent Task Sets', () => {
         catalog: createAgentToolCatalog('admin-agent-access-v10', []),
         tenantId: 'tenant-1',
         id: BUILTIN_AGENT_TASK_SET_PRESETS[0].id,
-        version: 8,
+        version: 9,
       })
     ).rejects.toThrow('requires catalog admin-agent-access-v9');
   });

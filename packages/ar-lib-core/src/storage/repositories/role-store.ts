@@ -1,7 +1,7 @@
 /**
  * Role Store Implementation
  *
- * Manages roles with extended attributes (role_type, hierarchy_level, etc.) in D1.
+ * Manages roles with extended attributes (role_type, grant_tier, etc.) in D1.
  * Part of RBAC Phase 1 implementation.
  */
 
@@ -16,7 +16,6 @@ function rowToRole(row: RoleRow): Role {
     ...row,
     is_assignable: row.is_assignable === 1,
     description: row.description ?? undefined,
-    parent_role_id: row.parent_role_id ?? undefined,
   };
 }
 
@@ -54,16 +53,15 @@ export class RoleStore implements IRoleStore {
       permissions_json: role.permissions_json,
       role_type: role.role_type,
       is_assignable: role.is_assignable,
-      hierarchy_level: role.hierarchy_level,
-      parent_role_id: role.parent_role_id,
+      grant_tier: role.grant_tier,
       created_at: now,
     };
 
     await this.adapter.execute(
       `INSERT INTO roles (
         id, tenant_id, name, description, permissions_json, role_type,
-        is_assignable, hierarchy_level, parent_role_id, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        is_assignable, grant_tier, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         newRole.id,
         newRole.tenant_id,
@@ -72,8 +70,7 @@ export class RoleStore implements IRoleStore {
         newRole.permissions_json,
         newRole.role_type,
         newRole.is_assignable ? 1 : 0,
-        newRole.hierarchy_level,
-        newRole.parent_role_id ?? null,
+        newRole.grant_tier,
         newRole.created_at,
       ]
     );
@@ -102,15 +99,14 @@ export class RoleStore implements IRoleStore {
     await this.adapter.execute(
       `UPDATE roles SET
         name = ?, description = ?, permissions_json = ?,
-        is_assignable = ?, hierarchy_level = ?, parent_role_id = ?
+        is_assignable = ?, grant_tier = ?
       WHERE tenant_id = ? AND id = ?`,
       [
         updated.name,
         updated.description ?? null,
         updated.permissions_json,
         updated.is_assignable ? 1 : 0,
-        updated.hierarchy_level,
-        updated.parent_role_id ?? null,
+        updated.grant_tier,
         tenantId,
         roleId,
       ]
@@ -151,20 +147,10 @@ export class RoleStore implements IRoleStore {
       params.push(options.roleType);
     }
 
-    sql += ' ORDER BY hierarchy_level DESC, name ASC LIMIT ? OFFSET ?';
+    sql += ' ORDER BY name ASC LIMIT ? OFFSET ?';
     params.push(limit, offset);
 
     const results = await this.adapter.query<RoleRow>(sql, params);
-    return results.map(rowToRole);
-  }
-
-  async getChildRoles(tenantId: string, roleId: string): Promise<Role[]> {
-    const results = await this.adapter.query<RoleRow>(
-      `SELECT * FROM roles
-       WHERE tenant_id = ? AND parent_role_id = ?
-       ORDER BY hierarchy_level DESC, name ASC`,
-      [tenantId, roleId]
-    );
     return results.map(rowToRole);
   }
 }

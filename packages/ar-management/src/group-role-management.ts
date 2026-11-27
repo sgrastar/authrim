@@ -8,7 +8,9 @@ import {
   ensureDatabaseAdapter,
   updateGroup,
   upsertGroupMembership,
+  dependentGroups,
   type AdminAuthContext,
+  type GroupPlan,
   type DatabaseSource,
   type GroupRoleGrant,
   type GroupRoleKey,
@@ -20,10 +22,7 @@ import { mayManageEndUserRole } from './role-delegation';
 type Admin = AdminAuthContext | null;
 
 /** The delegation check of a grant: the role-write permission and the grant ceiling. */
-export function assertDelegableRole(
-  auth: Admin,
-  role: { grant_tier: number; hierarchy_level: number | null }
-) {
+export function assertDelegableRole(auth: Admin, role: { grant_tier: number }) {
   if (
     !auth ||
     !hasAdminPermission(auth.permissions ?? [], ADMIN_PERMISSIONS.ROLES_WRITE) ||
@@ -81,33 +80,93 @@ export async function adminRemoveGroupRole(
   await removeGroupRole(metadata, tenant, key, cache);
 }
 
-/** Include dormant groups: restoring their active state could expose an already delegated role. */
+/**
+ * Whether the admin may change who is a member of the group. A group carries authorization when
+ * it or an ancestor has an unexpired role grant or an active, unexpired resource permission
+ * granted to it (`subject_type = 'group'`): a member gets that authorization, so changing the
+ * membership needs what granting it directly needs (the role-write permission, which the resource
+ * permissions API also requires, and the grant ceiling of every role).
+ *
+ * Include dormant groups: restoring their active state could expose an already delegated role.
+ */
 export async function canManageGroupMembership(
   metadata: Pick<TransactionContext, 'query'>,
   tenant: string,
   auth: Admin,
   groupId: string
 ) {
-  const roles = await metadata.query<{
-    grant_tier: number;
-    hierarchy_level: number;
+  // A member of this group is, through member(<group>) conditions, also a member of every
+  // service group whose rule references it, transitively (as a service-group save checks it):
+  // the change needs the standing for each of those too.
+  const groups = await groupsReachedByMembership(metadata, tenant, groupId);
+  if (!groups) return false;
+  for (const id of groups) {
+    if (!(await canManageOneGroupMembership(metadata, tenant, auth, id))) return false;
+  }
+  return true;
+}
+
+/**
+ * The group and every service group whose membership depends on it (`dependentGroups` of the
+ * tenant's saved catalog). Null when the catalog cannot be read: no change is allowed on a guess.
+ */
+async function groupsReachedByMembership(
+  metadata: Pick<TransactionContext, 'query'>,
+  tenant: string,
+  groupId: string
+): Promise<Set<string> | null> {
+  const [catalog] = await metadata.query<{ plan_json?: unknown }>(
+    'SELECT plan_json FROM service_group_catalog WHERE tenant_id = ?',
+    [tenant]
+  );
+  if (typeof catalog?.plan_json !== 'string') return new Set([groupId]);
+  let plan: GroupPlan;
+  try {
+    plan = JSON.parse(catalog.plan_json) as GroupPlan;
+  } catch {
+    return null;
+  }
+  if (!plan || typeof plan !== 'object' || typeof plan.dependents !== 'object') return null;
+  return dependentGroups(plan, [groupId]);
+}
+
+async function canManageOneGroupMembership(
+  metadata: Pick<TransactionContext, 'query'>,
+  tenant: string,
+  auth: Admin,
+  groupId: string
+) {
+  const now = Math.floor(Date.now() / 1000);
+  const grants = await metadata.query<{
+    kind: string;
+    grant_tier: number | null;
   }>(
     `WITH RECURSIVE ancestors(id, parent_group_id) AS (
       SELECT id, parent_group_id FROM "groups" WHERE tenant_id=? AND id=?
       UNION SELECT g.id, g.parent_group_id FROM "groups" g JOIN ancestors a ON g.id=a.parent_group_id
       WHERE g.tenant_id=?
-    ) SELECT DISTINCT r.grant_tier, r.hierarchy_level FROM ancestors a
+    ) SELECT DISTINCT 'role' AS kind, r.grant_tier AS grant_tier FROM ancestors a
       JOIN group_role_assignments g ON g.group_id=a.id AND g.tenant_id=?
       JOIN roles r ON r.id=g.role_id AND r.tenant_id=g.tenant_id
-      WHERE g.expires_at IS NULL OR g.expires_at>?`,
-    [tenant, groupId, tenant, tenant, Math.floor(Date.now() / 1000)]
+      WHERE g.expires_at IS NULL OR g.expires_at>?
+    UNION
+    SELECT DISTINCT 'resource_permission' AS kind, NULL AS grant_tier FROM ancestors a
+      JOIN resource_permissions p
+        ON p.subject_type='group' AND p.subject_id=a.id AND p.tenant_id=?
+      WHERE p.is_active=1 AND (p.expires_at IS NULL OR p.expires_at>?)`,
+    [tenant, groupId, tenant, tenant, now, tenant, now]
   );
-  if (!roles.length) return true;
-  // Adding a member to a group that carries roles grants those roles: the same operation
+  if (!grants.length) return true;
+  // Adding a member to a group that carries authorization grants it: the same operation
   // permission as a direct grant is required, on top of the grant ceiling of every role.
   if (!auth || !hasAdminPermission(auth.permissions ?? [], ADMIN_PERMISSIONS.ROLES_WRITE))
     return false;
-  return roles.every((role) => mayManageEndUserRole(auth, role));
+  // A resource permission carries no grant tier: the permission above is all it needs.
+  return grants.every(
+    (grant) =>
+      grant.kind === 'resource_permission' ||
+      mayManageEndUserRole(auth, { grant_tier: Number(grant.grant_tier) })
+  );
 }
 
 export async function adminUpsertGroupMembership(

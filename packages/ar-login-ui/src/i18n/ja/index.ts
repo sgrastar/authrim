@@ -399,9 +399,6 @@ const ja = {
 	consent_scope_address: '住所の閲覧',
 	consent_scope_offline_access: 'アプリを使用していない間もアカウントにアクセス',
 
-	consent_organizationSelect: '組織を選択',
-	consent_primaryOrg: 'メイン',
-	consent_currentOrganization: '現在の組織',
 	consent_actingOnBehalfOf: '{name}の代理としてアクセス',
 	consent_delegatedAccess: '代理アクセス',
 	consent_delegatedAccessWarning:

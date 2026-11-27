@@ -187,10 +187,6 @@ export const TENANT_TABLES_TO_DELETE = [
   'upstream_providers',
   // Clients
   'oauth_clients',
-  // Organizations
-  'org_domain_mappings',
-  'subject_org_membership',
-  'organizations',
   // Policies
   'permission_change_audit',
   'permission_check_audit',
@@ -207,7 +203,6 @@ export const TENANT_TABLES_TO_DELETE = [
   'groups',
   // Roles
   'role_assignments',
-  'user_roles',
   'roles',
   // Security
   'security_threats',

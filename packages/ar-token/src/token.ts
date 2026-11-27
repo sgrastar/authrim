@@ -1554,7 +1554,7 @@ const moduleLogger = createLogger().module('TOKEN');
 
 type AccessTokenScopedPermission = {
   permission: string;
-  scope_type: 'org' | 'group' | 'resource';
+  scope_type: 'tenant' | 'group' | 'resource';
   scope_target: string;
 };
 
@@ -3225,8 +3225,6 @@ async function handleAuthorizationCodeGrant(
         scope: authCodeData.scope || '',
         roles: accessTokenRBACClaims.authrim_roles || [],
         permissions: policyEmbeddingPermissions,
-        org_id: accessTokenRBACClaims.authrim_org_id,
-        org_type: accessTokenRBACClaims.authrim_org_type,
       };
 
       // Evaluate for access token
@@ -3265,8 +3263,6 @@ async function handleAuthorizationCodeGrant(
     cnf?: { jkt?: string; 'x5t#S256'?: string };
     // Phase 1 RBAC claims
     authrim_roles?: string[];
-    authrim_org_id?: string;
-    authrim_org_type?: string;
     // Phase 2 Policy Embedding (type-level permissions)
     authrim_permissions?: string[];
     authrim_scoped_permissions?: AccessTokenScopedPermission[];

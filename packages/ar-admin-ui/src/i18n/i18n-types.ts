@@ -376,10 +376,6 @@ type RootTranslation = {
 	 */
 	admin_nav_user_sessions: string;
 	/**
-	 * O​r​g​a​n​i​z​a​t​i​o​n​s
-	 */
-	admin_nav_organizations: string;
-	/**
 	 * A​c​c​e​s​s​ ​C​o​n​t​r​o​l
 	 */
 	admin_nav_access_control: string;
@@ -1586,14 +1582,6 @@ type RootTranslation = {
 	 */
 	admin_user_detail_error_withdraw_consent: string;
 	/**
-	 * P​l​e​a​s​e​ ​s​e​l​e​c​t​ ​a​n​ ​o​r​g​a​n​i​z​a​t​i​o​n​ ​f​o​r​ ​o​r​g​-​s​c​o​p​e​d​ ​r​o​l​e
-	 */
-	admin_user_detail_error_select_org: string;
-	/**
-	 * I​n​v​a​l​i​d​ ​o​r​g​a​n​i​z​a​t​i​o​n​ ​I​D​ ​f​o​r​m​a​t
-	 */
-	admin_user_detail_error_invalid_org: string;
-	/**
 	 * U​n​k​n​o​w​n​ ​U​s​e​r
 	 */
 	admin_user_detail_unknown_user: string;
@@ -1932,14 +1920,6 @@ type RootTranslation = {
 	 */
 	admin_user_detail_sessions_expire_naturally: string;
 	/**
-	 * S​t​e​p​ ​1​ ​o​f​ ​2​:​ ​S​e​l​e​c​t​ ​R​o​l​e
-	 */
-	admin_user_detail_assign_step_role: string;
-	/**
-	 * S​t​e​p​ ​2​ ​o​f​ ​2​:​ ​S​e​l​e​c​t​ ​S​c​o​p​e
-	 */
-	admin_user_detail_assign_step_scope: string;
-	/**
 	 * S​e​l​e​c​t​ ​a​ ​r​o​l​e​ ​t​o​ ​a​s​s​i​g​n
 	 */
 	admin_user_detail_select_role_label: string;
@@ -1948,41 +1928,9 @@ type RootTranslation = {
 	 */
 	admin_user_detail_select_role_placeholder: string;
 	/**
-	 * S​e​l​e​c​t​ ​s​c​o​p​e​ ​f​o​r​ ​t​h​i​s​ ​r​o​l​e
-	 */
-	admin_user_detail_scope_label: string;
-	/**
 	 * G​l​o​b​a​l
 	 */
 	admin_user_detail_scope_global: string;
-	/**
-	 * R​o​l​e​ ​a​p​p​l​i​e​s​ ​a​c​r​o​s​s​ ​a​l​l​ ​o​r​g​a​n​i​z​a​t​i​o​n​s
-	 */
-	admin_user_detail_scope_global_desc: string;
-	/**
-	 * O​r​g​a​n​i​z​a​t​i​o​n
-	 */
-	admin_user_detail_scope_org: string;
-	/**
-	 * R​o​l​e​ ​a​p​p​l​i​e​s​ ​o​n​l​y​ ​w​i​t​h​i​n​ ​a​ ​s​p​e​c​i​f​i​c​ ​o​r​g​a​n​i​z​a​t​i​o​n
-	 */
-	admin_user_detail_scope_org_desc: string;
-	/**
-	 * S​e​l​e​c​t​ ​O​r​g​a​n​i​z​a​t​i​o​n
-	 */
-	admin_user_detail_select_organization: string;
-	/**
-	 * N​o​ ​o​r​g​a​n​i​z​a​t​i​o​n​ ​s​e​l​e​c​t​e​d
-	 */
-	admin_user_detail_no_organization_selected: string;
-	/**
-	 * C​h​a​n​g​e
-	 */
-	admin_user_detail_change: string;
-	/**
-	 * S​e​l​e​c​t
-	 */
-	admin_user_detail_select: string;
 	/**
 	 * A​s​s​i​g​n​i​n​g​.​.​.
 	 */
@@ -2006,10 +1954,6 @@ type RootTranslation = {
 	 * R​e​m​o​v​i​n​g​.​.​.
 	 */
 	admin_user_detail_removing: string;
-	/**
-	 * S​e​l​e​c​t​ ​O​r​g​a​n​i​z​a​t​i​o​n​ ​f​o​r​ ​R​o​l​e​ ​S​c​o​p​e
-	 */
-	admin_user_detail_select_org_title: string;
 	/**
 	 * C​o​n​s​e​n​t​ ​H​i​s​t​o​r​y
 	 */
@@ -8889,336 +8833,6 @@ type RootTranslation = {
 	 */
 	admin_audit_logs_action_email_queued: string;
 	/**
-	 * O​r​g​a​n​i​z​a​t​i​o​n​s​ ​-​ ​A​d​m​i​n​ ​D​a​s​h​b​o​a​r​d​ ​-​ ​A​u​t​h​r​i​m
-	 */
-	admin_org_head_title: string;
-	/**
-	 * O​r​g​a​n​i​z​a​t​i​o​n​s
-	 */
-	admin_org_title: string;
-	/**
-	 * M​a​n​a​g​e​ ​o​r​g​a​n​i​z​a​t​i​o​n​ ​h​i​e​r​a​r​c​h​y​ ​a​n​d​ ​d​o​m​a​i​n​ ​m​a​p​p​i​n​g​s​ ​f​o​r​ ​J​I​T​ ​p​r​o​v​i​s​i​o​n​i​n​g​.
-	 */
-	admin_org_description: string;
-	/**
-	 * H​i​e​r​a​r​c​h​y
-	 */
-	admin_org_hierarchy: string;
-	/**
-	 * D​o​m​a​i​n​ ​M​a​p​p​i​n​g​s
-	 */
-	admin_org_domain_mappings: string;
-	/**
-	 * S​e​a​r​c​h​ ​o​r​g​a​n​i​z​a​t​i​o​n​s​.​.​.
-	 */
-	admin_org_search_placeholder: string;
-	/**
-	 * S​e​a​r​c​h
-	 */
-	admin_org_search: string;
-	/**
-	 * E​x​p​a​n​d​ ​A​l​l
-	 */
-	admin_org_expand_all: string;
-	/**
-	 * C​o​l​l​a​p​s​e​ ​A​l​l
-	 */
-	admin_org_collapse_all: string;
-	/**
-	 * R​e​t​r​y
-	 */
-	admin_org_retry: string;
-	/**
-	 * L​o​a​d​i​n​g​ ​o​r​g​a​n​i​z​a​t​i​o​n​s​.​.​.
-	 */
-	admin_org_loading_organizations: string;
-	/**
-	 * F​a​i​l​e​d​ ​t​o​ ​l​o​a​d​ ​o​r​g​a​n​i​z​a​t​i​o​n​s
-	 */
-	admin_org_load_failed: string;
-	/**
-	 * F​a​i​l​e​d​ ​t​o​ ​l​o​a​d​ ​h​i​e​r​a​r​c​h​y
-	 */
-	admin_org_hierarchy_load_failed: string;
-	/**
-	 * {​c​o​u​n​t​}​ ​o​r​g​a​n​i​z​a​t​i​o​n​s
-	 * @param {number} count
-	 */
-	admin_org_summary_organizations: RequiredParams<'count'>;
-	/**
-	 * {​c​o​u​n​t​}​ ​t​o​t​a​l​ ​m​e​m​b​e​r​s
-	 * @param {number} count
-	 */
-	admin_org_summary_members: RequiredParams<'count'>;
-	/**
-	 * M​a​x​ ​d​e​p​t​h​:​ ​{​d​e​p​t​h​}
-	 * @param {number} depth
-	 */
-	admin_org_summary_max_depth: RequiredParams<'depth'>;
-	/**
-	 * {​c​o​u​n​t​}​ ​m​a​t​c​h​e​s
-	 * @param {number} count
-	 */
-	admin_org_summary_matches: RequiredParams<'count'>;
-	/**
-	 * N​o​ ​o​r​g​a​n​i​z​a​t​i​o​n​s​ ​f​o​u​n​d​.
-	 */
-	admin_org_empty: string;
-	/**
-	 * C​o​n​f​i​g​u​r​e​ ​d​o​m​a​i​n​-​t​o​-​o​r​g​a​n​i​z​a​t​i​o​n​ ​m​a​p​p​i​n​g​s​ ​f​o​r​ ​a​u​t​o​m​a​t​i​c​ ​u​s​e​r​ ​p​r​o​v​i​s​i​o​n​i​n​g​ ​v​i​a​ ​J​I​T​ ​(​J​u​s​t​-​I​n​-​T​i​m​e​)​ ​p​r​o​v​i​s​i​o​n​i​n​g​.​ ​U​s​e​r​s​ ​w​i​t​h​ ​e​m​a​i​l​ ​a​d​d​r​e​s​s​e​s​ ​m​a​t​c​h​i​n​g​ ​a​ ​v​e​r​i​f​i​e​d​ ​d​o​m​a​i​n​ ​w​i​l​l​ ​b​e​ ​a​u​t​o​m​a​t​i​c​a​l​l​y​ ​a​d​d​e​d​ ​t​o​ ​t​h​e​ ​m​a​p​p​e​d​ ​o​r​g​a​n​i​z​a​t​i​o​n​.
-	 */
-	admin_org_mappings_description: string;
-	/**
-	 * A​d​d​ ​M​a​p​p​i​n​g
-	 */
-	admin_org_add_mapping: string;
-	/**
-	 * L​o​a​d​i​n​g​.​.​.
-	 */
-	admin_org_loading: string;
-	/**
-	 * F​a​i​l​e​d​ ​t​o​ ​l​o​a​d​ ​d​o​m​a​i​n​ ​m​a​p​p​i​n​g​s
-	 */
-	admin_org_mappings_load_failed: string;
-	/**
-	 * N​o​ ​d​o​m​a​i​n​ ​m​a​p​p​i​n​g​s​ ​c​o​n​f​i​g​u​r​e​d​.
-	 */
-	admin_org_mappings_empty: string;
-	/**
-	 * A​d​d​ ​a​ ​d​o​m​a​i​n​ ​m​a​p​p​i​n​g​ ​t​o​ ​e​n​a​b​l​e​ ​a​u​t​o​m​a​t​i​c​ ​o​r​g​a​n​i​z​a​t​i​o​n​ ​a​s​s​i​g​n​m​e​n​t​ ​f​o​r​ ​u​s​e​r​s​.
-	 */
-	admin_org_mappings_empty_hint: string;
-	/**
-	 * A​d​d​ ​Y​o​u​r​ ​F​i​r​s​t​ ​M​a​p​p​i​n​g
-	 */
-	admin_org_add_first_mapping: string;
-	/**
-	 * S​h​o​w​i​n​g​ ​{​s​h​o​w​n​}​ ​o​f​ ​{​t​o​t​a​l​}​ ​m​a​p​p​i​n​g​s
-	 * @param {number} shown
-	 * @param {number} total
-	 */
-	admin_org_result_count: RequiredParams<'shown' | 'total'>;
-	/**
-	 * O​r​g​a​n​i​z​a​t​i​o​n​ ​I​D
-	 */
-	admin_org_organization_id: string;
-	/**
-	 * V​e​r​i​f​i​c​a​t​i​o​n
-	 */
-	admin_org_verification: string;
-	/**
-	 * S​t​a​t​u​s
-	 */
-	admin_org_status: string;
-	/**
-	 * A​u​t​o​ ​J​o​i​n
-	 */
-	admin_org_auto_join: string;
-	/**
-	 * M​e​m​b​e​r​s​h​i​p
-	 */
-	admin_org_membership: string;
-	/**
-	 * A​c​t​i​o​n​s
-	 */
-	admin_org_actions: string;
-	/**
-	 * H​a​s​h​:
-	 */
-	admin_org_hash: string;
-	/**
-	 * V​e​r​i​f​i​e​d
-	 */
-	admin_org_verified: string;
-	/**
-	 * P​e​n​d​i​n​g
-	 */
-	admin_org_pending: string;
-	/**
-	 * P​e​n​d​i​n​g​ ​V​e​r​i​f​i​c​a​t​i​o​n
-	 */
-	admin_org_pending_verification: string;
-	/**
-	 * A​c​t​i​v​e
-	 */
-	admin_org_active: string;
-	/**
-	 * I​n​a​c​t​i​v​e
-	 */
-	admin_org_inactive: string;
-	/**
-	 * Y​e​s
-	 */
-	admin_org_yes: string;
-	/**
-	 * N​o
-	 */
-	admin_org_no: string;
-	/**
-	 * V​e​r​i​f​y
-	 */
-	admin_org_verify: string;
-	/**
-	 * D​i​s​a​b​l​e
-	 */
-	admin_org_disable: string;
-	/**
-	 * E​n​a​b​l​e
-	 */
-	admin_org_enable: string;
-	/**
-	 * D​e​l​e​t​e
-	 */
-	admin_org_delete: string;
-	/**
-	 * D​o​m​a​i​n​ ​a​n​d​ ​O​r​g​a​n​i​z​a​t​i​o​n​ ​I​D​ ​a​r​e​ ​r​e​q​u​i​r​e​d
-	 */
-	admin_org_domain_required: string;
-	/**
-	 * F​a​i​l​e​d​ ​t​o​ ​c​r​e​a​t​e​ ​m​a​p​p​i​n​g
-	 */
-	admin_org_create_failed: string;
-	/**
-	 * F​a​i​l​e​d​ ​t​o​ ​d​e​l​e​t​e​ ​m​a​p​p​i​n​g
-	 */
-	admin_org_delete_failed: string;
-	/**
-	 * F​a​i​l​e​d​ ​t​o​ ​s​t​a​r​t​ ​v​e​r​i​f​i​c​a​t​i​o​n
-	 */
-	admin_org_start_verification_failed: string;
-	/**
-	 * D​N​S​ ​r​e​c​o​r​d​ ​n​o​t​ ​f​o​u​n​d​.​ ​P​l​e​a​s​e​ ​w​a​i​t​ ​f​o​r​ ​D​N​S​ ​p​r​o​p​a​g​a​t​i​o​n​.
-	 */
-	admin_org_dns_record_not_found: string;
-	/**
-	 * F​a​i​l​e​d​ ​t​o​ ​v​e​r​i​f​y​ ​d​o​m​a​i​n
-	 */
-	admin_org_verify_failed: string;
-	/**
-	 * F​a​i​l​e​d​ ​t​o​ ​u​p​d​a​t​e​ ​m​a​p​p​i​n​g
-	 */
-	admin_org_update_failed: string;
-	/**
-	 * A​d​d​ ​D​o​m​a​i​n​ ​M​a​p​p​i​n​g
-	 */
-	admin_org_add_mapping_title: string;
-	/**
-	 * E​m​a​i​l​ ​D​o​m​a​i​n
-	 */
-	admin_org_email_domain: string;
-	/**
-	 * U​s​e​r​s​ ​w​i​t​h​ ​e​m​a​i​l​ ​a​d​d​r​e​s​s​e​s​ ​f​r​o​m​ ​t​h​i​s​ ​d​o​m​a​i​n​ ​w​i​l​l​ ​b​e​ ​m​a​p​p​e​d​ ​t​o​ ​t​h​e​ ​o​r​g​a​n​i​z​a​t​i​o​n​.
-	 */
-	admin_org_email_domain_hint: string;
-	/**
-	 * E​n​a​b​l​e​ ​a​u​t​o​-​j​o​i​n​ ​f​o​r​ ​n​e​w​ ​u​s​e​r​s​ ​w​i​t​h​ ​t​h​i​s​ ​d​o​m​a​i​n
-	 */
-	admin_org_auto_join_description: string;
-	/**
-	 * D​e​f​a​u​l​t​ ​M​e​m​b​e​r​s​h​i​p​ ​T​y​p​e
-	 */
-	admin_org_default_membership_type: string;
-	/**
-	 * M​e​m​b​e​r
-	 */
-	admin_org_membership_member: string;
-	/**
-	 * A​d​m​i​n
-	 */
-	admin_org_membership_admin: string;
-	/**
-	 * O​w​n​e​r
-	 */
-	admin_org_membership_owner: string;
-	/**
-	 * C​a​n​c​e​l
-	 */
-	admin_org_cancel: string;
-	/**
-	 * C​r​e​a​t​i​n​g​.​.​.
-	 */
-	admin_org_creating: string;
-	/**
-	 * C​r​e​a​t​e​ ​M​a​p​p​i​n​g
-	 */
-	admin_org_create_mapping: string;
-	/**
-	 * V​e​r​i​f​y​ ​D​o​m​a​i​n​ ​O​w​n​e​r​s​h​i​p
-	 */
-	admin_org_verify_domain_title: string;
-	/**
-	 * T​o​ ​v​e​r​i​f​y​ ​d​o​m​a​i​n​ ​o​w​n​e​r​s​h​i​p​,​ ​y​o​u​ ​w​i​l​l​ ​n​e​e​d​ ​t​o​ ​a​d​d​ ​a​ ​D​N​S​ ​T​X​T​ ​r​e​c​o​r​d​.​ ​C​l​i​c​k​ ​"​G​e​t​ ​D​N​S​ ​R​e​c​o​r​d​"​ ​t​o​ ​g​e​n​e​r​a​t​e​ ​t​h​e​ ​v​e​r​i​f​i​c​a​t​i​o​n​ ​r​e​c​o​r​d​.
-	 */
-	admin_org_verify_intro: string;
-	/**
-	 * G​e​t​ ​D​N​S​ ​R​e​c​o​r​d
-	 */
-	admin_org_get_dns_record: string;
-	/**
-	 * A​d​d​ ​t​h​e​ ​f​o​l​l​o​w​i​n​g​ ​T​X​T​ ​r​e​c​o​r​d​ ​t​o​ ​y​o​u​r​ ​d​o​m​a​i​n​'​s​ ​D​N​S​ ​s​e​t​t​i​n​g​s​:
-	 */
-	admin_org_add_txt_record: string;
-	/**
-	 * R​e​c​o​r​d​ ​N​a​m​e​ ​(​H​o​s​t​)
-	 */
-	admin_org_record_name: string;
-	/**
-	 * R​e​c​o​r​d​ ​T​y​p​e
-	 */
-	admin_org_record_type: string;
-	/**
-	 * R​e​c​o​r​d​ ​V​a​l​u​e
-	 */
-	admin_org_record_value: string;
-	/**
-	 * N​o​t​e​:​ ​D​N​S​ ​c​h​a​n​g​e​s​ ​m​a​y​ ​t​a​k​e​ ​u​p​ ​t​o​ ​4​8​ ​h​o​u​r​s​ ​t​o​ ​p​r​o​p​a​g​a​t​e​.​ ​O​n​c​e​ ​t​h​e​ ​r​e​c​o​r​d​ ​i​s​ ​s​e​t​,​ ​c​l​i​c​k​ ​"​V​e​r​i​f​y​ ​D​o​m​a​i​n​"​ ​t​o​ ​c​o​n​f​i​r​m​.
-	 */
-	admin_org_dns_note: string;
-	/**
-	 * V​e​r​i​f​y​i​n​g​.​.​.
-	 */
-	admin_org_verifying: string;
-	/**
-	 * V​e​r​i​f​y​ ​D​o​m​a​i​n
-	 */
-	admin_org_verify_domain: string;
-	/**
-	 * D​e​l​e​t​e​ ​D​o​m​a​i​n​ ​M​a​p​p​i​n​g
-	 */
-	admin_org_delete_mapping_title: string;
-	/**
-	 * A​r​e​ ​y​o​u​ ​s​u​r​e​ ​y​o​u​ ​w​a​n​t​ ​t​o​ ​d​e​l​e​t​e​ ​t​h​i​s​ ​d​o​m​a​i​n​ ​m​a​p​p​i​n​g​?​ ​N​e​w​ ​u​s​e​r​s​ ​f​r​o​m​ ​t​h​i​s​ ​d​o​m​a​i​n​ ​w​i​l​l​ ​n​o​ ​l​o​n​g​e​r​ ​b​e​ ​a​u​t​o​m​a​t​i​c​a​l​l​y​ ​a​s​s​i​g​n​e​d​ ​t​o​ ​t​h​e​ ​o​r​g​a​n​i​z​a​t​i​o​n​.
-	 */
-	admin_org_delete_description: string;
-	/**
-	 * O​r​g​a​n​i​z​a​t​i​o​n​:
-	 */
-	admin_org_organization_label: string;
-	/**
-	 * S​t​a​t​u​s​:
-	 */
-	admin_org_status_label: string;
-	/**
-	 * D​e​l​e​t​i​n​g​.​.​.
-	 */
-	admin_org_deleting: string;
-	/**
-	 * D​e​l​e​t​e​ ​M​a​p​p​i​n​g
-	 */
-	admin_org_delete_mapping: string;
-	/**
-	 * C​o​l​l​a​p​s​e
-	 */
-	admin_org_tree_collapse: string;
-	/**
-	 * E​x​p​a​n​d
-	 */
-	admin_org_tree_expand: string;
-	/**
-	 * M​e​m​b​e​r​s
-	 */
-	admin_org_tree_members: string;
-	/**
 	 * R​o​l​e​-​B​a​s​e​d​ ​A​c​c​e​s​s​ ​C​o​n​t​r​o​l​ ​-​ ​A​d​m​i​n​ ​D​a​s​h​b​o​a​r​d​ ​-​ ​A​u​t​h​r​i​m
 	 */
 	admin_roles_head_title: string;
@@ -9490,6 +9104,10 @@ type RootTranslation = {
 	 */
 	admin_roles_assigned_users: string;
 	/**
+	 * G​r​a​n​t​ ​t​i​e​r
+	 */
+	admin_roles_grant_tier: string;
+	/**
 	 * T​h​i​s​ ​r​o​l​e​ ​h​a​s​ ​n​o​ ​p​e​r​m​i​s​s​i​o​n​s​ ​a​s​s​i​g​n​e​d​.
 	 */
 	admin_roles_no_permissions: string;
@@ -9606,17 +9224,13 @@ type RootTranslation = {
 	 */
 	admin_roles_scope_global: string;
 	/**
-	 * o​r​g
-	 */
-	admin_roles_scope_org: string;
-	/**
 	 * r​e​s​o​u​r​c​e
 	 */
 	admin_roles_scope_resource: string;
 	/**
 	 * o​r​g​a​n​i​z​a​t​i​o​n
 	 */
-	admin_roles_scope_organization: string;
+	admin_roles_scope_group: string;
 	/**
 	 * c​l​i​e​n​t
 	 */
@@ -9637,10 +9251,6 @@ type RootTranslation = {
 	 * S​e​s​s​i​o​n​s
 	 */
 	admin_roles_perm_category_sessions: string;
-	/**
-	 * O​r​g​a​n​i​z​a​t​i​o​n​s
-	 */
-	admin_roles_perm_category_organizations: string;
 	/**
 	 * S​t​a​t​i​s​t​i​c​s
 	 */
@@ -9753,38 +9363,6 @@ type RootTranslation = {
 	 * R​e​v​o​k​e​ ​u​s​e​r​ ​s​e​s​s​i​o​n​s
 	 */
 	admin_roles_perm_sessions_revoke_desc: string;
-	/**
-	 * R​e​a​d​ ​O​r​g​a​n​i​z​a​t​i​o​n​s
-	 */
-	admin_roles_perm_organizations_read_label: string;
-	/**
-	 * V​i​e​w​ ​o​r​g​a​n​i​z​a​t​i​o​n​ ​l​i​s​t​ ​a​n​d​ ​d​e​t​a​i​l​s
-	 */
-	admin_roles_perm_organizations_read_desc: string;
-	/**
-	 * C​r​e​a​t​e​ ​O​r​g​a​n​i​z​a​t​i​o​n​s
-	 */
-	admin_roles_perm_organizations_create_label: string;
-	/**
-	 * C​r​e​a​t​e​ ​n​e​w​ ​o​r​g​a​n​i​z​a​t​i​o​n​s
-	 */
-	admin_roles_perm_organizations_create_desc: string;
-	/**
-	 * U​p​d​a​t​e​ ​O​r​g​a​n​i​z​a​t​i​o​n​s
-	 */
-	admin_roles_perm_organizations_update_label: string;
-	/**
-	 * U​p​d​a​t​e​ ​o​r​g​a​n​i​z​a​t​i​o​n​ ​d​e​t​a​i​l​s
-	 */
-	admin_roles_perm_organizations_update_desc: string;
-	/**
-	 * D​e​l​e​t​e​ ​O​r​g​a​n​i​z​a​t​i​o​n​s
-	 */
-	admin_roles_perm_organizations_delete_label: string;
-	/**
-	 * D​e​l​e​t​e​ ​o​r​g​a​n​i​z​a​t​i​o​n​s
-	 */
-	admin_roles_perm_organizations_delete_desc: string;
 	/**
 	 * R​e​a​d​ ​S​t​a​t​i​s​t​i​c​s
 	 */
@@ -11036,7 +10614,7 @@ type RootTranslation = {
 	/**
 	 * O​r​g​a​n​i​z​a​t​i​o​n​ ​I​D
 	 */
-	admin_policies_organization_id: string;
+	admin_policies_resource_group_ids: string;
 	/**
 	 * R​e​s​o​u​r​c​e
 	 */
@@ -11186,10 +10764,6 @@ type RootTranslation = {
 	 */
 	admin_policies_type_is_resource_owner: string;
 	/**
-	 * S​a​m​e​ ​o​r​g​a​n​i​z​a​t​i​o​n
-	 */
-	admin_policies_type_same_organization: string;
-	/**
 	 * A​t​t​r​i​b​u​t​e​ ​e​q​u​a​l​s
 	 */
 	admin_policies_type_attribute_equals: string;
@@ -11277,10 +10851,6 @@ type RootTranslation = {
 	 * A​l​l​o​w​s​ ​a​c​c​e​s​s​ ​w​h​e​n​ ​t​h​e​ ​s​u​b​j​e​c​t​ ​o​w​n​s​ ​t​h​e​ ​r​e​s​o​u​r​c​e​.
 	 */
 	admin_policies_type_desc_is_resource_owner: string;
-	/**
-	 * A​l​l​o​w​s​ ​a​c​c​e​s​s​ ​w​h​e​n​ ​t​h​e​ ​s​u​b​j​e​c​t​ ​a​n​d​ ​r​e​s​o​u​r​c​e​ ​a​r​e​ ​i​n​ ​t​h​e​ ​s​a​m​e​ ​o​r​g​a​n​i​z​a​t​i​o​n​.
-	 */
-	admin_policies_type_desc_same_organization: string;
 	/**
 	 * M​a​t​c​h​e​s​ ​w​h​e​n​ ​a​ ​s​u​b​j​e​c​t​ ​o​r​ ​r​e​s​o​u​r​c​e​ ​a​t​t​r​i​b​u​t​e​ ​e​q​u​a​l​s​ ​a​ ​v​a​l​u​e​.
 	 */
@@ -11441,10 +11011,6 @@ type RootTranslation = {
 	 * I​s​ ​r​e​s​o​u​r​c​e​ ​o​w​n​e​r
 	 */
 	admin_policies_condition_is_resource_owner: string;
-	/**
-	 * I​n​ ​s​a​m​e​ ​o​r​g​a​n​i​z​a​t​i​o​n
-	 */
-	admin_policies_condition_same_organization: string;
 	/**
 	 * {​a​t​t​r​i​b​u​t​e​}​ ​=​ ​"​{​v​a​l​u​e​}​"
 	 * @param {string} attribute
@@ -14999,7 +14565,7 @@ type RootTranslation = {
 	/**
 	 * O​r​g
 	 */
-	admin_tenants_org: string;
+	admin_tenants_group: string;
 	/**
 	 * U​s​e​s
 	 */
@@ -15047,7 +14613,7 @@ type RootTranslation = {
 	/**
 	 * A​u​t​o​-​a​s​s​i​g​n​ ​O​r​g​ ​I​D​ ​(​o​p​t​i​o​n​a​l​)
 	 */
-	admin_tenants_auto_org: string;
+	admin_tenants_auto_group: string;
 	/**
 	 * M​a​x​ ​U​s​e​s
 	 */
@@ -20298,7 +19864,7 @@ type RootTranslation = {
 	/**
 	 * M​e​m​b​e​r​s​ ​o​f​ ​a​n​ ​o​r​g​a​n​i​z​a​t​i​o​n
 	 */
-	admin_compliance_scope_organization: string;
+	admin_compliance_scope_group: string;
 	/**
 	 * U​s​e​r​s​ ​w​h​o​ ​h​a​v​e​ ​n​o​t​ ​s​i​g​n​e​d​ ​i​n
 	 */
@@ -20310,7 +19876,7 @@ type RootTranslation = {
 	/**
 	 * O​r​g​a​n​i​z​a​t​i​o​n​ ​I​D
 	 */
-	admin_compliance_scope_value_organization: string;
+	admin_compliance_scope_value_group: string;
 	/**
 	 * N​o​t​ ​s​i​g​n​e​d​ ​i​n​ ​f​o​r​ ​(​d​a​y​s​)
 	 */
@@ -20415,7 +19981,7 @@ type RootTranslation = {
 	 * O​r​g​a​n​i​z​a​t​i​o​n​ ​{​v​a​l​u​e​}
 	 * @param {string} value
 	 */
-	admin_compliance_access_organization: RequiredParams<'value'>;
+	admin_compliance_access_group: RequiredParams<'value'>;
 	/**
 	 * A​c​c​o​u​n​t
 	 */
@@ -23322,10 +22888,6 @@ type RootTranslation = {
 	 * R​e​p​o​r​t​ ​G​e​n​e​r​a​t​i​o​n
 	 */
 	admin_jobs_type_report_generation: string;
-	/**
-	 * O​r​g​a​n​i​z​a​t​i​o​n​ ​B​u​l​k​ ​M​e​m​b​e​r​s
-	 */
-	admin_jobs_type_org_bulk_members: string;
 	/**
 	 * T​e​n​a​n​t​ ​D​e​l​e​t​i​o​n
 	 */
@@ -30731,10 +30293,6 @@ type RootTranslation = {
 	 */
 	admin_info_schema_settings: string;
 	/**
-	 * O​r​g​a​n​i​z​a​t​i​o​n​s
-	 */
-	admin_info_organizations: string;
-	/**
 	 * R​o​l​e​s
 	 */
 	admin_info_roles: string;
@@ -33002,10 +32560,6 @@ export type TranslationFunctions = {
 	 */
 	admin_nav_user_sessions: () => LocalizedString;
 	/**
-	 * Organizations
-	 */
-	admin_nav_organizations: () => LocalizedString;
-	/**
 	 * Access Control
 	 */
 	admin_nav_access_control: () => LocalizedString;
@@ -34194,14 +33748,6 @@ export type TranslationFunctions = {
 	 */
 	admin_user_detail_error_withdraw_consent: () => LocalizedString;
 	/**
-	 * Please select an organization for org-scoped role
-	 */
-	admin_user_detail_error_select_org: () => LocalizedString;
-	/**
-	 * Invalid organization ID format
-	 */
-	admin_user_detail_error_invalid_org: () => LocalizedString;
-	/**
 	 * Unknown User
 	 */
 	admin_user_detail_unknown_user: () => LocalizedString;
@@ -34541,14 +34087,6 @@ export type TranslationFunctions = {
 	 */
 	admin_user_detail_sessions_expire_naturally: () => LocalizedString;
 	/**
-	 * Step 1 of 2: Select Role
-	 */
-	admin_user_detail_assign_step_role: () => LocalizedString;
-	/**
-	 * Step 2 of 2: Select Scope
-	 */
-	admin_user_detail_assign_step_scope: () => LocalizedString;
-	/**
 	 * Select a role to assign
 	 */
 	admin_user_detail_select_role_label: () => LocalizedString;
@@ -34557,41 +34095,9 @@ export type TranslationFunctions = {
 	 */
 	admin_user_detail_select_role_placeholder: () => LocalizedString;
 	/**
-	 * Select scope for this role
-	 */
-	admin_user_detail_scope_label: () => LocalizedString;
-	/**
 	 * Global
 	 */
 	admin_user_detail_scope_global: () => LocalizedString;
-	/**
-	 * Role applies across all organizations
-	 */
-	admin_user_detail_scope_global_desc: () => LocalizedString;
-	/**
-	 * Organization
-	 */
-	admin_user_detail_scope_org: () => LocalizedString;
-	/**
-	 * Role applies only within a specific organization
-	 */
-	admin_user_detail_scope_org_desc: () => LocalizedString;
-	/**
-	 * Select Organization
-	 */
-	admin_user_detail_select_organization: () => LocalizedString;
-	/**
-	 * No organization selected
-	 */
-	admin_user_detail_no_organization_selected: () => LocalizedString;
-	/**
-	 * Change
-	 */
-	admin_user_detail_change: () => LocalizedString;
-	/**
-	 * Select
-	 */
-	admin_user_detail_select: () => LocalizedString;
 	/**
 	 * Assigning...
 	 */
@@ -34612,10 +34118,6 @@ export type TranslationFunctions = {
 	 * Removing...
 	 */
 	admin_user_detail_removing: () => LocalizedString;
-	/**
-	 * Select Organization for Role Scope
-	 */
-	admin_user_detail_select_org_title: () => LocalizedString;
 	/**
 	 * Consent History
 	 */
@@ -41418,330 +40920,6 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 */
 	admin_audit_logs_action_email_queued: () => LocalizedString;
 	/**
-	 * Organizations - Admin Dashboard - Authrim
-	 */
-	admin_org_head_title: () => LocalizedString;
-	/**
-	 * Organizations
-	 */
-	admin_org_title: () => LocalizedString;
-	/**
-	 * Manage organization hierarchy and domain mappings for JIT provisioning.
-	 */
-	admin_org_description: () => LocalizedString;
-	/**
-	 * Hierarchy
-	 */
-	admin_org_hierarchy: () => LocalizedString;
-	/**
-	 * Domain Mappings
-	 */
-	admin_org_domain_mappings: () => LocalizedString;
-	/**
-	 * Search organizations...
-	 */
-	admin_org_search_placeholder: () => LocalizedString;
-	/**
-	 * Search
-	 */
-	admin_org_search: () => LocalizedString;
-	/**
-	 * Expand All
-	 */
-	admin_org_expand_all: () => LocalizedString;
-	/**
-	 * Collapse All
-	 */
-	admin_org_collapse_all: () => LocalizedString;
-	/**
-	 * Retry
-	 */
-	admin_org_retry: () => LocalizedString;
-	/**
-	 * Loading organizations...
-	 */
-	admin_org_loading_organizations: () => LocalizedString;
-	/**
-	 * Failed to load organizations
-	 */
-	admin_org_load_failed: () => LocalizedString;
-	/**
-	 * Failed to load hierarchy
-	 */
-	admin_org_hierarchy_load_failed: () => LocalizedString;
-	/**
-	 * {count} organizations
-	 */
-	admin_org_summary_organizations: (arg: { count: number }) => LocalizedString;
-	/**
-	 * {count} total members
-	 */
-	admin_org_summary_members: (arg: { count: number }) => LocalizedString;
-	/**
-	 * Max depth: {depth}
-	 */
-	admin_org_summary_max_depth: (arg: { depth: number }) => LocalizedString;
-	/**
-	 * {count} matches
-	 */
-	admin_org_summary_matches: (arg: { count: number }) => LocalizedString;
-	/**
-	 * No organizations found.
-	 */
-	admin_org_empty: () => LocalizedString;
-	/**
-	 * Configure domain-to-organization mappings for automatic user provisioning via JIT (Just-In-Time) provisioning. Users with email addresses matching a verified domain will be automatically added to the mapped organization.
-	 */
-	admin_org_mappings_description: () => LocalizedString;
-	/**
-	 * Add Mapping
-	 */
-	admin_org_add_mapping: () => LocalizedString;
-	/**
-	 * Loading...
-	 */
-	admin_org_loading: () => LocalizedString;
-	/**
-	 * Failed to load domain mappings
-	 */
-	admin_org_mappings_load_failed: () => LocalizedString;
-	/**
-	 * No domain mappings configured.
-	 */
-	admin_org_mappings_empty: () => LocalizedString;
-	/**
-	 * Add a domain mapping to enable automatic organization assignment for users.
-	 */
-	admin_org_mappings_empty_hint: () => LocalizedString;
-	/**
-	 * Add Your First Mapping
-	 */
-	admin_org_add_first_mapping: () => LocalizedString;
-	/**
-	 * Showing {shown} of {total} mappings
-	 */
-	admin_org_result_count: (arg: { shown: number; total: number }) => LocalizedString;
-	/**
-	 * Organization ID
-	 */
-	admin_org_organization_id: () => LocalizedString;
-	/**
-	 * Verification
-	 */
-	admin_org_verification: () => LocalizedString;
-	/**
-	 * Status
-	 */
-	admin_org_status: () => LocalizedString;
-	/**
-	 * Auto Join
-	 */
-	admin_org_auto_join: () => LocalizedString;
-	/**
-	 * Membership
-	 */
-	admin_org_membership: () => LocalizedString;
-	/**
-	 * Actions
-	 */
-	admin_org_actions: () => LocalizedString;
-	/**
-	 * Hash:
-	 */
-	admin_org_hash: () => LocalizedString;
-	/**
-	 * Verified
-	 */
-	admin_org_verified: () => LocalizedString;
-	/**
-	 * Pending
-	 */
-	admin_org_pending: () => LocalizedString;
-	/**
-	 * Pending Verification
-	 */
-	admin_org_pending_verification: () => LocalizedString;
-	/**
-	 * Active
-	 */
-	admin_org_active: () => LocalizedString;
-	/**
-	 * Inactive
-	 */
-	admin_org_inactive: () => LocalizedString;
-	/**
-	 * Yes
-	 */
-	admin_org_yes: () => LocalizedString;
-	/**
-	 * No
-	 */
-	admin_org_no: () => LocalizedString;
-	/**
-	 * Verify
-	 */
-	admin_org_verify: () => LocalizedString;
-	/**
-	 * Disable
-	 */
-	admin_org_disable: () => LocalizedString;
-	/**
-	 * Enable
-	 */
-	admin_org_enable: () => LocalizedString;
-	/**
-	 * Delete
-	 */
-	admin_org_delete: () => LocalizedString;
-	/**
-	 * Domain and Organization ID are required
-	 */
-	admin_org_domain_required: () => LocalizedString;
-	/**
-	 * Failed to create mapping
-	 */
-	admin_org_create_failed: () => LocalizedString;
-	/**
-	 * Failed to delete mapping
-	 */
-	admin_org_delete_failed: () => LocalizedString;
-	/**
-	 * Failed to start verification
-	 */
-	admin_org_start_verification_failed: () => LocalizedString;
-	/**
-	 * DNS record not found. Please wait for DNS propagation.
-	 */
-	admin_org_dns_record_not_found: () => LocalizedString;
-	/**
-	 * Failed to verify domain
-	 */
-	admin_org_verify_failed: () => LocalizedString;
-	/**
-	 * Failed to update mapping
-	 */
-	admin_org_update_failed: () => LocalizedString;
-	/**
-	 * Add Domain Mapping
-	 */
-	admin_org_add_mapping_title: () => LocalizedString;
-	/**
-	 * Email Domain
-	 */
-	admin_org_email_domain: () => LocalizedString;
-	/**
-	 * Users with email addresses from this domain will be mapped to the organization.
-	 */
-	admin_org_email_domain_hint: () => LocalizedString;
-	/**
-	 * Enable auto-join for new users with this domain
-	 */
-	admin_org_auto_join_description: () => LocalizedString;
-	/**
-	 * Default Membership Type
-	 */
-	admin_org_default_membership_type: () => LocalizedString;
-	/**
-	 * Member
-	 */
-	admin_org_membership_member: () => LocalizedString;
-	/**
-	 * Admin
-	 */
-	admin_org_membership_admin: () => LocalizedString;
-	/**
-	 * Owner
-	 */
-	admin_org_membership_owner: () => LocalizedString;
-	/**
-	 * Cancel
-	 */
-	admin_org_cancel: () => LocalizedString;
-	/**
-	 * Creating...
-	 */
-	admin_org_creating: () => LocalizedString;
-	/**
-	 * Create Mapping
-	 */
-	admin_org_create_mapping: () => LocalizedString;
-	/**
-	 * Verify Domain Ownership
-	 */
-	admin_org_verify_domain_title: () => LocalizedString;
-	/**
-	 * To verify domain ownership, you will need to add a DNS TXT record. Click "Get DNS Record" to generate the verification record.
-	 */
-	admin_org_verify_intro: () => LocalizedString;
-	/**
-	 * Get DNS Record
-	 */
-	admin_org_get_dns_record: () => LocalizedString;
-	/**
-	 * Add the following TXT record to your domain's DNS settings:
-	 */
-	admin_org_add_txt_record: () => LocalizedString;
-	/**
-	 * Record Name (Host)
-	 */
-	admin_org_record_name: () => LocalizedString;
-	/**
-	 * Record Type
-	 */
-	admin_org_record_type: () => LocalizedString;
-	/**
-	 * Record Value
-	 */
-	admin_org_record_value: () => LocalizedString;
-	/**
-	 * Note: DNS changes may take up to 48 hours to propagate. Once the record is set, click "Verify Domain" to confirm.
-	 */
-	admin_org_dns_note: () => LocalizedString;
-	/**
-	 * Verifying...
-	 */
-	admin_org_verifying: () => LocalizedString;
-	/**
-	 * Verify Domain
-	 */
-	admin_org_verify_domain: () => LocalizedString;
-	/**
-	 * Delete Domain Mapping
-	 */
-	admin_org_delete_mapping_title: () => LocalizedString;
-	/**
-	 * Are you sure you want to delete this domain mapping? New users from this domain will no longer be automatically assigned to the organization.
-	 */
-	admin_org_delete_description: () => LocalizedString;
-	/**
-	 * Organization:
-	 */
-	admin_org_organization_label: () => LocalizedString;
-	/**
-	 * Status:
-	 */
-	admin_org_status_label: () => LocalizedString;
-	/**
-	 * Deleting...
-	 */
-	admin_org_deleting: () => LocalizedString;
-	/**
-	 * Delete Mapping
-	 */
-	admin_org_delete_mapping: () => LocalizedString;
-	/**
-	 * Collapse
-	 */
-	admin_org_tree_collapse: () => LocalizedString;
-	/**
-	 * Expand
-	 */
-	admin_org_tree_expand: () => LocalizedString;
-	/**
-	 * Members
-	 */
-	admin_org_tree_members: () => LocalizedString;
-	/**
 	 * Role-Based Access Control - Admin Dashboard - Authrim
 	 */
 	admin_roles_head_title: () => LocalizedString;
@@ -42006,6 +41184,10 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 */
 	admin_roles_assigned_users: () => LocalizedString;
 	/**
+	 * G​r​a​n​t​ ​t​i​e​r
+	 */
+	admin_roles_grant_tier: () => LocalizedString;
+	/**
 	 * This role has no permissions assigned.
 	 */
 	admin_roles_no_permissions: () => LocalizedString;
@@ -42118,17 +41300,13 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 */
 	admin_roles_scope_global: () => LocalizedString;
 	/**
-	 * org
-	 */
-	admin_roles_scope_org: () => LocalizedString;
-	/**
 	 * resource
 	 */
 	admin_roles_scope_resource: () => LocalizedString;
 	/**
 	 * organization
 	 */
-	admin_roles_scope_organization: () => LocalizedString;
+	admin_roles_scope_group: () => LocalizedString;
 	/**
 	 * client
 	 */
@@ -42149,10 +41327,6 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 * Sessions
 	 */
 	admin_roles_perm_category_sessions: () => LocalizedString;
-	/**
-	 * Organizations
-	 */
-	admin_roles_perm_category_organizations: () => LocalizedString;
 	/**
 	 * Statistics
 	 */
@@ -42265,38 +41439,6 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 * Revoke user sessions
 	 */
 	admin_roles_perm_sessions_revoke_desc: () => LocalizedString;
-	/**
-	 * Read Organizations
-	 */
-	admin_roles_perm_organizations_read_label: () => LocalizedString;
-	/**
-	 * View organization list and details
-	 */
-	admin_roles_perm_organizations_read_desc: () => LocalizedString;
-	/**
-	 * Create Organizations
-	 */
-	admin_roles_perm_organizations_create_label: () => LocalizedString;
-	/**
-	 * Create new organizations
-	 */
-	admin_roles_perm_organizations_create_desc: () => LocalizedString;
-	/**
-	 * Update Organizations
-	 */
-	admin_roles_perm_organizations_update_label: () => LocalizedString;
-	/**
-	 * Update organization details
-	 */
-	admin_roles_perm_organizations_update_desc: () => LocalizedString;
-	/**
-	 * Delete Organizations
-	 */
-	admin_roles_perm_organizations_delete_label: () => LocalizedString;
-	/**
-	 * Delete organizations
-	 */
-	admin_roles_perm_organizations_delete_desc: () => LocalizedString;
 	/**
 	 * Read Statistics
 	 */
@@ -43534,7 +42676,7 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	/**
 	 * Organization ID
 	 */
-	admin_policies_organization_id: () => LocalizedString;
+	admin_policies_resource_group_ids: () => LocalizedString;
 	/**
 	 * Resource
 	 */
@@ -43684,10 +42826,6 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 */
 	admin_policies_type_is_resource_owner: () => LocalizedString;
 	/**
-	 * Same organization
-	 */
-	admin_policies_type_same_organization: () => LocalizedString;
-	/**
 	 * Attribute equals
 	 */
 	admin_policies_type_attribute_equals: () => LocalizedString;
@@ -43775,10 +42913,6 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 * Allows access when the subject owns the resource.
 	 */
 	admin_policies_type_desc_is_resource_owner: () => LocalizedString;
-	/**
-	 * Allows access when the subject and resource are in the same organization.
-	 */
-	admin_policies_type_desc_same_organization: () => LocalizedString;
 	/**
 	 * Matches when a subject or resource attribute equals a value.
 	 */
@@ -43935,10 +43069,6 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 * Is resource owner
 	 */
 	admin_policies_condition_is_resource_owner: () => LocalizedString;
-	/**
-	 * In same organization
-	 */
-	admin_policies_condition_same_organization: () => LocalizedString;
 	/**
 	 * {attribute} = "{value}"
 	 */
@@ -47455,7 +46585,7 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	/**
 	 * Org
 	 */
-	admin_tenants_org: () => LocalizedString;
+	admin_tenants_group: () => LocalizedString;
 	/**
 	 * Uses
 	 */
@@ -47503,7 +46633,7 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	/**
 	 * Auto-assign Org ID (optional)
 	 */
-	admin_tenants_auto_org: () => LocalizedString;
+	admin_tenants_auto_group: () => LocalizedString;
 	/**
 	 * Max Uses
 	 */
@@ -52707,7 +51837,7 @@ Remove this role from {email}?
 	/**
 	 * Members of an organization
 	 */
-	admin_compliance_scope_organization: () => LocalizedString;
+	admin_compliance_scope_group: () => LocalizedString;
 	/**
 	 * Users who have not signed in
 	 */
@@ -52719,7 +51849,7 @@ Remove this role from {email}?
 	/**
 	 * Organization ID
 	 */
-	admin_compliance_scope_value_organization: () => LocalizedString;
+	admin_compliance_scope_value_group: () => LocalizedString;
 	/**
 	 * Not signed in for (days)
 	 */
@@ -52824,7 +51954,7 @@ Remove this role from {email}?
 	/**
 	 * Organization {value}
 	 */
-	admin_compliance_access_organization: (arg: { value: string }) => LocalizedString;
+	admin_compliance_access_group: (arg: { value: string }) => LocalizedString;
 	/**
 	 * Account
 	 */
@@ -55687,10 +54817,6 @@ Remove this role from {email}?
 	 * Report Generation
 	 */
 	admin_jobs_type_report_generation: () => LocalizedString;
-	/**
-	 * Organization Bulk Members
-	 */
-	admin_jobs_type_org_bulk_members: () => LocalizedString;
 	/**
 	 * Tenant Deletion
 	 */
@@ -63023,10 +62149,6 @@ Remove this role from {email}?
 	 * Schema Settings
 	 */
 	admin_info_schema_settings: () => LocalizedString;
-	/**
-	 * Organizations
-	 */
-	admin_info_organizations: () => LocalizedString;
 	/**
 	 * Roles
 	 */

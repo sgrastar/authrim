@@ -45,9 +45,6 @@ const jit = (extra: Record<string, unknown> = {}) => ({
   'external_idp.jit_require_verified_email': false,
   'external_idp.jit_allowed_provider_ids': '',
   'external_idp.jit_default_role_id': '',
-  'external_idp.jit_join_all_matching_orgs': false,
-  'external_idp.jit_allow_user_without_org': true,
-  'external_idp.jit_allow_unverified_domain_mappings': false,
   ...extra,
 });
 const sha256 = (value: string) => createHash('sha256').update(value).digest('hex');
@@ -176,20 +173,6 @@ describe('the answers of a sign-in', () => {
   });
 });
 
-describe('organizations of a sign-up', () => {
-  it('lets a user with an organization through when standalone users are not allowed', async () => {
-    m.settings.mockResolvedValue(jit({ 'external_idp.jit_allow_user_without_org': false }));
-    m.ruleEvaluate.mockResolvedValue({
-      denied: false,
-      matched_rules: [],
-      roles_to_assign: [],
-      orgs_to_join: ['org-1'],
-      attributes_to_set: [],
-    });
-    await expect(run()).resolves.toMatchObject({ status: 'pending' });
-  });
-});
-
 describe('custom claim mapping through nested values', () => {
   const submitted = () => rec(argRec(m.validateClaims).submitted);
   const mapped = (attributeMapping: Record<string, string>, info: Record<string, unknown>) =>
@@ -252,10 +235,13 @@ describe('the sealed plan and the idempotency key', () => {
   });
 
   it('accepts a plan of exactly 20 KiB and refuses one a byte longer', async () => {
-    const base = { denied: false, roles_to_assign: [], orgs_to_join: [], attributes_to_set: [] };
+    const base = { denied: false, roles_to_assign: [], groups_to_join: [], attributes_to_set: [] };
     const sizeFor = async (pad: number) => {
       m.provision.mockClear();
-      m.ruleEvaluate.mockResolvedValue({ ...base, matched_rules: [planBytes(pad)] });
+      // Rule ids within the stored plan's limits (at most 256 characters each, 128 of them).
+      const chunks: string[] = [];
+      for (let left = pad; left > 0; left -= 200) chunks.push(planBytes(Math.min(200, left)));
+      m.ruleEvaluate.mockResolvedValue({ ...base, matched_rules: chunks });
       try {
         await run();
       } catch {
@@ -268,14 +254,17 @@ describe('the sealed plan and the idempotency key', () => {
     };
     const small = await sizeFor(10);
     if (small === null) throw new Error('baseline plan refused');
-    const exact = 20 * 1024 - small + 10;
-    expect(await sizeFor(exact)).toBe(20 * 1024);
+    // The padding that fills 20 KiB exactly (each further rule id adds its quotes and comma).
+    let exact = 20 * 1024 - small + 10 - 3 * Math.ceil((20 * 1024) / 200);
+    let size = await sizeFor(exact);
+    while (size !== null && size < 20 * 1024) size = await sizeFor(++exact);
+    expect(size).toBe(20 * 1024);
     expect(await sizeFor(exact + 1)).toBeNull();
   });
 
   describe('when a stored plan is read back', () => {
     const plan = (extra: Record<string, unknown> = {}) => ({
-      schemaVersion: 1,
+      schemaVersion: 2,
       customClaimValidation: {
         ok: true,
         schemas: [],
@@ -284,7 +273,7 @@ describe('the sealed plan and the idempotency key', () => {
         nonPiiKeysToDelete: [],
         piiKeysToDelete: [],
       },
-      organizationIds: [],
+      groupJoins: [],
       roleAssignments: [],
       defaultRoleId: null,
       matchedRules: [],

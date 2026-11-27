@@ -24,7 +24,6 @@ export type ConditionType =
 	| 'has_all_roles'
 	// Ownership
 	| 'is_resource_owner'
-	| 'same_organization'
 	// ABAC
 	| 'attribute_equals'
 	| 'attribute_exists'
@@ -87,9 +86,6 @@ export interface PolicySubject {
 		scope: string;
 		scopeTarget?: string;
 	}>;
-	orgId?: string;
-	plan?: string;
-	orgType?: string;
 }
 
 /**
@@ -99,7 +95,8 @@ export interface PolicyResource {
 	type: string;
 	id: string;
 	ownerId?: string;
-	orgId?: string;
+	/** The groups the resource belongs to (what group conditions read). */
+	groupIds?: string[];
 	attributes?: Record<string, unknown>;
 }
 
@@ -462,8 +459,6 @@ export function formatCondition(condition: PolicyCondition): string {
 			return `Has all roles: ${(params.roles as string[]).join(', ')}`;
 		case 'is_resource_owner':
 			return 'Is resource owner';
-		case 'same_organization':
-			return 'In same organization';
 		case 'attribute_equals':
 			return `${params.name} = "${params.value}"`;
 		case 'attribute_exists':

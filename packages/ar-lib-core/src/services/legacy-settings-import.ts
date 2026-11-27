@@ -84,7 +84,7 @@ async function envAndDefaults(
  * under an earlier version runs again for what was added (values already in the Settings API are
  * kept, as in every run).
  */
-export const LEGACY_IMPORT_CONTRACT = 11;
+export const LEGACY_IMPORT_CONTRACT = 12;
 
 /**
  * The platform values that reproduce the platform-wide older stores. Throws when any store

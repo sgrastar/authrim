@@ -2,13 +2,13 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import type { DatabaseSync } from 'node:sqlite';
 import type { DatabaseAdapter } from '../../db/adapter';
 import { sqliteAdapter } from '../../repositories/__tests__/sqlite-core-schema';
-import { assignRoleToUser, assignScopedRoleToUser } from '../org-domain-resolver';
+import { assignScopedRoleToUser } from '../jit-role-assignment';
 import { singleDatabaseRBAC } from '../tenant-rbac';
 
 const NOW = 1_800_000_000;
 
 /**
- * The role a JIT rule gives (external IdP role rules, domain mappings), written where token
+ * The role a JIT rule gives (external IdP role rules, the default role), written where token
  * issuance reads it (role_assignments.subject_id), in the real D1 schema.
  */
 describe('JIT role assignments in the real schema', () => {
@@ -40,37 +40,7 @@ describe('JIT role assignments in the real schema', () => {
     ).run(NOW);
   });
 
-  it('gives an organisation-scoped role to the user, once', async () => {
-    const first = await assignRoleToUser(
-      singleDatabaseRBAC(adapter),
-      'user-1',
-      'role-1',
-      'org-1',
-      'tenant-a'
-    );
-    const second = await assignRoleToUser(
-      singleDatabaseRBAC(adapter),
-      'user-1',
-      'role-1',
-      'org-1',
-      'tenant-a'
-    );
-
-    expect(first).toMatchObject({ success: true });
-    expect(second).toMatchObject({ success: true, error: 'Already assigned' });
-    expect(
-      db
-        .prepare(
-          `SELECT subject_id, role_id, scope_type, scope_target FROM role_assignments
-           WHERE tenant_id = 'tenant-a'`
-        )
-        .all()
-    ).toEqual([
-      { subject_id: 'user-1', role_id: 'role-1', scope_type: 'org', scope_target: 'org:org-1' },
-    ]);
-  });
-
-  it('gives a role at the scope a JIT rule or the default role names', async () => {
+  it('gives a role at the scope a JIT rule or the default role names, once', async () => {
     const result = await assignScopedRoleToUser(
       singleDatabaseRBAC(adapter),
       'user-1',
@@ -80,7 +50,17 @@ describe('JIT role assignments in the real schema', () => {
       'tenant-a'
     );
 
+    const again = await assignScopedRoleToUser(
+      singleDatabaseRBAC(adapter),
+      'user-1',
+      'role-1',
+      'global',
+      '',
+      'tenant-a'
+    );
+
     expect(result).toMatchObject({ success: true });
+    expect(again).toMatchObject({ success: true, error: 'Already assigned' });
     expect(
       db.prepare('SELECT subject_id, scope_type, scope_target FROM role_assignments').all()
     ).toEqual([{ subject_id: 'user-1', scope_type: 'global', scope_target: '' }]);
@@ -102,11 +82,12 @@ describe('JIT role assignments in the real schema', () => {
   });
 
   it("gives nothing from another tenant's role", async () => {
-    const result = await assignRoleToUser(
+    const result = await assignScopedRoleToUser(
       singleDatabaseRBAC(adapter),
       'user-1',
       'role-1',
-      'org-1',
+      'global',
+      '',
       'tenant-b'
     );
 

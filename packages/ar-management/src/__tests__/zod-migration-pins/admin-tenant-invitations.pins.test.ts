@@ -36,7 +36,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
 vi.mock('../../single-tenant-guard', () => ({ ensureSupportedTenantId: vi.fn(async () => null) }));
 vi.mock('../../admin-tenant-access', () => ({
   requireTenantResourceAccess: vi.fn(async () => null),
-  getAdminAuth: () => ({ hierarchyLevel: 80 }),
+  getAdminAuth: () => ({ maxGrantTier: 2 }),
 }));
 vi.mock('../../request-issuer', () => ({
   getCanonicalTenantBaseUrl: (_env: unknown, tenantId: string) =>
@@ -95,7 +95,7 @@ describe('zod pins: CreateInvitationSchema (flatten body)', () => {
     mocks.execute.mockResolvedValue({ rowsAffected: 1 });
     mocks.queryOne.mockImplementation(async (sql: string) => {
       if (sql.includes('FROM tenants')) return { id: 'tenant-a', name: 'Tenant A' };
-      if (sql.includes('FROM roles')) return { id: 'role-a', grant_tier: 1, hierarchy_level: 10 };
+      if (sql.includes('FROM roles')) return { id: 'role-a', grant_tier: 1 };
       if (sql.includes('FROM organizations')) return { id: 'org-a' };
       return null;
     });
@@ -130,9 +130,9 @@ describe('zod pins: CreateInvitationSchema (flatten body)', () => {
       formErrors: [],
       fieldErrors: { role_id: ['String must contain at least 1 character(s)'] },
     });
-    expect(await details({ org_id: 'x'.repeat(64) })).toEqual({
+    expect(await details({ group_id: 'x'.repeat(64) })).toEqual({
       formErrors: [],
-      fieldErrors: { org_id: ['String must contain at most 63 character(s)'] },
+      fieldErrors: { group_id: ['String must contain at most 63 character(s)'] },
     });
     expect(await details({ role_id: 1 })).toEqual({
       formErrors: [],
@@ -183,7 +183,7 @@ describe('zod pins: CreateInvitationSchema (flatten body)', () => {
         max_uses: 5000.5,
         invited_email: 'bad',
         role_id: '',
-        org_id: 7,
+        group_id: 7,
       })
     ).toEqual({
       formErrors: [],
@@ -193,16 +193,16 @@ describe('zod pins: CreateInvitationSchema (flatten body)', () => {
         max_uses: ['Expected integer, received float'],
         invited_email: ['Invalid email'],
         role_id: ['String must contain at least 1 character(s)'],
-        org_id: ['Expected string, received number'],
+        group_id: ['Expected string, received number'],
       },
     });
     // key order of fieldErrors follows the schema/issue order, not the input order
     const d = (await details({
-      org_id: 7,
+      group_id: 7,
       invited_email: 'bad',
       max_uses: 'x',
     })) as { fieldErrors: Record<string, string[]> };
-    expect(Object.keys(d.fieldErrors)).toEqual(['invited_email', 'org_id', 'max_uses']);
+    expect(Object.keys(d.fieldErrors)).toEqual(['invited_email', 'group_id', 'max_uses']);
   });
 
   it('non-integer AND out-of-range number reports only the integer check', async () => {
@@ -274,13 +274,12 @@ describe('zod pins: CreateInvitationSchema (flatten body)', () => {
       email_sent: false,
     });
     const params = mocks.execute.mock.calls[0]?.[1] as unknown[];
-    // [id, token, tenant, invited_email, invited_by, role_id, org_id, group_id, max_uses,
+    // [id, token, tenant, invited_email, invited_by, role_id, group_id, max_uses,
     //  expires_at, now, now]
     expect(params.slice(2)).toEqual([
       'tenant-a',
       null,
       'unknown',
-      null,
       null,
       null,
       1,
@@ -294,7 +293,8 @@ describe('zod pins: CreateInvitationSchema (flatten body)', () => {
     const result = await postJson({
       invited_email: null,
       role_id: null,
-      org_id: null,
+      // No longer a field of an invitation: stripped as an unknown key.
+      org_id: 'org-a',
       group_id: null,
       max_uses: -1,
       expires_in_hours: 720,
@@ -307,7 +307,6 @@ describe('zod pins: CreateInvitationSchema (flatten body)', () => {
       'unknown',
       null,
       null,
-      null,
       -1,
       NOW + 720 * 3600,
       NOW,
@@ -318,8 +317,6 @@ describe('zod pins: CreateInvitationSchema (flatten body)', () => {
     expect(
       (await postJson({ max_uses: 0, expires_in_hours: 1, invited_email: 'a@b.co' })).status
     ).toBe(201);
-    expect((await postJson({ max_uses: 1000, role_id: 'r'.repeat(63), org_id: 'o' })).status).toBe(
-      201
-    );
+    expect((await postJson({ max_uses: 1000, role_id: 'r'.repeat(63) })).status).toBe(201);
   });
 });

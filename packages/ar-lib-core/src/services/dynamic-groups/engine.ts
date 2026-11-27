@@ -246,6 +246,8 @@ function membership(
     manual: false,
     scim: group.scimRoleId ? 'unknown' : false,
   };
+  // A manual member is a member (member(<group>) is true for them), but only the rule's own
+  // result is published (`dynamic`): the manual row already exists.
   const sources = [
     ...(external.manual ? ['manual'] : []),
     ...(external.scim === true ? ['scim'] : []),

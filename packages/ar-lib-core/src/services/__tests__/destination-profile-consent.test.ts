@@ -1023,7 +1023,7 @@ describe('destination profile field consent', () => {
 
 describe('the claims the person is asked to release', () => {
   it('does not let a mapping produce the claims the server computes (RBAC, lifecycle)', () => {
-    for (const claim of ['authrim_roles', 'authrim_org_name', 'authrim_account_lifecycle']) {
+    for (const claim of ['authrim_roles', 'authrim_groups', 'authrim_account_lifecycle']) {
       expect(isProtectedIdentityMappingDestinationClaim('oidc.claim', claim)).toBe(true);
     }
   });

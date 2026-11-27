@@ -36,8 +36,6 @@ export type {
   IPasskeyStore,
   Passkey,
   // RBAC Store Interfaces
-  IOrganizationStore,
-  Organization,
   IRoleStore,
   Role,
   IRoleAssignmentStore,

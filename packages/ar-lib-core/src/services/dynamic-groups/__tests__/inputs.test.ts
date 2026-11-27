@@ -286,10 +286,10 @@ describe('SavedGroupInputReader attribute loading', () => {
     const { instance, metadata, core } = reader();
     core.queryOne.mockResolvedValue(account);
     core.query.mockResolvedValue([]);
-    metadata.query.mockImplementation(async (sql: string) => {
-      if (sql.includes('service_group_manual')) return [{ group_id: 'manual-group' }];
-      return [];
-    });
+    core.query.mockImplementation(async (sql: string) =>
+      sql.includes("assignment_source = 'manual'") ? [{ group_id: 'manual-group' }] : []
+    );
+    metadata.query.mockResolvedValue([]);
     const groups = [
       { id: 'manual-group', scimRoleId: undefined },
       { id: 'scim-group', scimRoleId: 'missing-role' },
@@ -301,6 +301,10 @@ describe('SavedGroupInputReader attribute loading', () => {
       'manual-group': { manual: true, scim: false },
       'scim-group': { manual: false, scim: 'unknown' },
     });
+    // Manual members are read from the subject's own group memberships, not service_group_manual.
+    expect(
+      metadata.query.mock.calls.some((call) => String(call[0]).includes('service_group_manual'))
+    ).toBe(false);
   });
 });
 

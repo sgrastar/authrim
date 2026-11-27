@@ -10,12 +10,10 @@ import {
   getIDTokenRBACClaims,
   getIDTokenRBACClaimsConfigurable,
   getUserRBACClaims,
-  resolveAllOrganizations,
   resolveEffectiveRoles,
-  resolveOrganizationInfo,
-  resolveOrganizationName,
   resolvePermissions,
   resolveScopedRoles,
+  resolveSubjectGroupClaims,
 } from '../rbac-claims';
 import { evaluatePermissionEmbeddingForScope } from '../policy-embedding';
 import { evaluateIdLevelPermissions, hasIdLevelPermission } from '../resource-permissions';
@@ -45,7 +43,7 @@ function openDatabase(): { db: DatabaseSync; adapter: DatabaseAdapter } {
 }
 
 /**
- * Token RBAC claims under routed account storage: roles and organisations are defined in the
+ * Token RBAC claims under routed account storage: roles and groups are defined in the
  * tenant metadata database and assigned in the account's database. Two separate SQLite databases
  * stand in for the two D1 databases, so a claim built from the wrong one comes out empty.
  */
@@ -63,14 +61,14 @@ describe('RBAC claims across the metadata and account databases', () => {
       .run(id, tenantId, name, JSON.stringify(permissions), NOW);
   }
 
-  function organization(id: string, name: string, active = 1) {
+  function group(id: string, key: string, name: string, state = 'active') {
     metadata.db
       .prepare(
-        `INSERT INTO organizations (id, tenant_id, name, org_type, plan, is_active, created_at,
-           updated_at)
-         VALUES (?, 'tenant-a', ?, 'enterprise', 'professional', ?, ?, ?)`
+        `INSERT INTO "groups" (id, tenant_id, group_key, display_name, lifecycle_state,
+           created_at, updated_at)
+         VALUES (?, 'tenant-a', ?, ?, ?, ?, ?)`
       )
-      .run(id, name, active, NOW, NOW);
+      .run(id, key, name, state, NOW, NOW);
   }
 
   function assign(
@@ -89,14 +87,14 @@ describe('RBAC claims across the metadata and account databases', () => {
       .run(id, roleId, scope.type, scope.target, expiresAt, NOW, NOW);
   }
 
-  function join(id: string, orgId: string, primary: number) {
+  function join(id: string, groupId: string) {
     account.db
       .prepare(
-        `INSERT INTO subject_org_membership (id, tenant_id, subject_id, org_id, membership_type,
-           is_primary, created_at, updated_at)
-         VALUES (?, 'tenant-a', 'user-1', ?, 'member', ?, ?, ?)`
+        `INSERT INTO group_memberships (id, tenant_id, group_id, subject_id, assignment_source,
+           source_ref, created_at, updated_at)
+         VALUES (?, 'tenant-a', ?, 'user-1', 'manual', '', ?, ?)`
       )
-      .run(id, orgId, primary, NOW, NOW);
+      .run(id, groupId, NOW, NOW);
   }
 
   beforeEach(() => {
@@ -118,13 +116,13 @@ describe('RBAC claims across the metadata and account databases', () => {
     role('role-viewer', 'tenant-a', 'viewer', ['users:read', 'documents:read']);
     role('role-editor', 'tenant-a', 'editor', ['documents:write']);
     role('role-other-tenant', 'tenant-b', 'intruder', ['*:*']);
-    organization('org-1', 'Acme');
-    organization('org-2', 'Beta');
-    organization('org-3', 'Closed', 0);
+    group('grp-1', 'acme', 'Acme');
+    group('grp-2', 'beta', 'Beta');
+    group('grp-3', 'closed', 'Closed', 'suspended');
 
     assign(account.db, 'ra-1', 'role-viewer');
     assign(account.db, 'ra-2', 'role-admin');
-    assign(account.db, 'ra-3', 'role-editor', { type: 'org', target: 'org:org-1' });
+    assign(account.db, 'ra-3', 'role-editor', { type: 'group', target: 'group:grp-1' });
     // Expired, of another tenant's role, and of a role the tenant has deleted: none grants.
     assign(account.db, 'ra-4', 'role-editor', { type: 'global', target: '' }, NOW - 1);
     assign(account.db, 'ra-5', 'role-other-tenant');
@@ -132,10 +130,10 @@ describe('RBAC claims across the metadata and account databases', () => {
     // An assignment found in the metadata database is not the account's.
     assign(metadata.db, 'ra-7', 'role-editor');
 
-    join('m-1', 'org-2', 0);
-    join('m-2', 'org-1', 1);
-    join('m-3', 'org-3', 0);
-    join('m-4', 'org-deleted', 0);
+    join('m-1', 'grp-2');
+    join('m-2', 'grp-1');
+    join('m-3', 'grp-3');
+    join('m-4', 'grp-deleted');
   });
 
   afterEach(() => {
@@ -150,10 +148,10 @@ describe('RBAC claims across the metadata and account databases', () => {
     ]);
     await expect(resolveScopedRoles(dbs, 'user-1', 'tenant-a')).resolves.toEqual([
       { name: 'admin', scope: 'global' },
-      { name: 'editor', scope: 'org', scopeTarget: 'org:org-1' },
+      { name: 'editor', scope: 'group', scopeTarget: 'group:grp-1' },
       { name: 'viewer', scope: 'global' },
     ]);
-    // Tenant-wide permissions only: editor is assigned in org-1 alone (its global one expired).
+    // Tenant-wide permissions only: editor is assigned for grp-1 alone (its global one expired).
     await expect(resolvePermissions(dbs, 'user-1', 'tenant-a')).resolves.toEqual([
       'documents:read',
       'users:read',
@@ -161,37 +159,36 @@ describe('RBAC claims across the metadata and account databases', () => {
     ]);
   });
 
-  it('gives the active organisations of the account database, primary first', async () => {
-    await expect(resolveOrganizationInfo(dbs, 'user-1', 'tenant-a')).resolves.toEqual({
-      org_id: 'org-1',
-      plan: 'professional',
-      org_type: 'enterprise',
-    });
-    await expect(resolveOrganizationName(dbs, 'user-1', 'tenant-a')).resolves.toBe('Acme');
-    await expect(resolveAllOrganizations(dbs, 'user-1', 'tenant-a')).resolves.toEqual([
-      { id: 'org-1', name: 'Acme', type: 'enterprise', is_primary: true },
-      { id: 'org-2', name: 'Beta', type: 'enterprise', is_primary: false },
+  it('leaves out of the scoped role claim an assignment of the removed organisation scope', async () => {
+    assign(account.db, 'ra-org', 'role-admin', { type: 'org', target: 'org:o1' });
+    assign(account.db, 'ra-bare', 'role-viewer', { type: 'group', target: 'grp-2' });
+    await expect(resolveScopedRoles(dbs, 'user-1', 'tenant-a')).resolves.toEqual([
+      { name: 'admin', scope: 'global' },
+      { name: 'editor', scope: 'group', scopeTarget: 'group:grp-1' },
+      { name: 'viewer', scope: 'global' },
+    ]);
+  });
+
+  it('gives the active groups of the account database, by key', async () => {
+    await expect(resolveSubjectGroupClaims(dbs, 'tenant-a', 'user-1')).resolves.toEqual([
+      { id: 'grp-1', key: 'acme', name: 'Acme', kind: 'static' },
+      { id: 'grp-2', key: 'beta', name: 'Beta', kind: 'static' },
     ]);
   });
 
   it('builds the token claims from both databases', async () => {
     await expect(getUserRBACClaims(dbs, 'user-1', 'tenant-a')).resolves.toEqual({
       authrim_roles: ['admin', 'viewer'],
+      authrim_groups: [
+        { id: 'grp-1', key: 'acme', name: 'Acme', kind: 'static' },
+        { id: 'grp-2', key: 'beta', name: 'Beta', kind: 'static' },
+      ],
       authrim_user_type: 'end_user',
-      authrim_org_id: 'org-1',
-      authrim_plan: 'professional',
-      authrim_org_type: 'enterprise',
     });
+    // An organisation claim name is no longer one: it gives nothing.
     await expect(
       getIDTokenRBACClaimsConfigurable(dbs, 'user-1', 'roles,org_name,orgs', 'tenant-a')
-    ).resolves.toEqual({
-      authrim_roles: ['admin', 'viewer'],
-      authrim_org_name: 'Acme',
-      authrim_orgs: [
-        { id: 'org-1', name: 'Acme', type: 'enterprise', is_primary: true },
-        { id: 'org-2', name: 'Beta', type: 'enterprise', is_primary: false },
-      ],
-    });
+    ).resolves.toEqual({ authrim_roles: ['admin', 'viewer'] });
     await expect(
       getAccessTokenRBACClaims(dbs, 'user-1', {
         tenantId: 'tenant-a',
@@ -199,15 +196,12 @@ describe('RBAC claims across the metadata and account databases', () => {
       })
     ).resolves.toEqual({
       authrim_roles: ['admin', 'viewer'],
-      authrim_org_id: 'org-1',
       authrim_permissions: ['documents:read', 'users:read', 'users:write'],
     });
-    await expect(getCompositeRBACCache(dbs, 'user-1', { tenantId: 'tenant-a' })).resolves.toEqual(
-      expect.objectContaining({
-        roles: ['admin', 'viewer'],
-        org_id: 'org-1',
-        org_name: 'Acme',
-      })
+    const composite = await getCompositeRBACCache(dbs, 'user-1', { tenantId: 'tenant-a' });
+    expect(composite).toEqual(expect.objectContaining({ roles: ['admin', 'viewer'] }));
+    expect(Object.keys(composite).filter((key) => key.startsWith('org') || key === 'plan')).toEqual(
+      []
     );
   });
 
@@ -227,7 +221,9 @@ describe('RBAC claims across the metadata and account databases', () => {
     await expect(resolveEffectiveRoles(metadataOnly, 'user-1', 'tenant-a')).resolves.toEqual([
       'editor',
     ]);
-    await expect(resolveAllOrganizations(metadataOnly, 'user-1', 'tenant-a')).resolves.toEqual([]);
+    await expect(resolveSubjectGroupClaims(metadataOnly, 'tenant-a', 'user-1')).resolves.toEqual(
+      []
+    );
   });
 
   it('embeds the permissions of the account roles for the requested scope', async () => {
@@ -247,7 +243,9 @@ describe('RBAC claims across the metadata and account databases', () => {
     role('role-billing', 'tenant-a', 'billing', ['billing:read']);
     assign(account.db, 'ra-blank', 'role-billing', { type: '', target: '' });
     assign(account.db, 'ra-region', 'role-billing', { type: 'region', target: '' });
-    assign(account.db, 'ra-org-blank', 'role-billing', { type: 'org', target: '' });
+    assign(account.db, 'ra-group-blank', 'role-billing', { type: 'group', target: '' });
+    // The organisation scope is gone: an assignment that still names it grants nothing.
+    assign(account.db, 'ra-org', 'role-billing', { type: 'org', target: 'org:org-1' });
 
     const embedding = await evaluatePermissionEmbeddingForScope(dbs, 'user-1', 'billing:read', {
       tenantId: 'tenant-a',
@@ -277,10 +275,16 @@ describe('RBAC claims across the metadata and account databases', () => {
     grant('rp-1', 'role', 'role-viewer', 'doc-1');
     grant('rp-2', 'user', 'user-1', 'doc-2');
     grant('rp-3', 'role', 'role-other-tenant', 'doc-3');
+    // A grant to one of the subject's groups counts; one to a suspended group or another group
+    // does not.
+    grant('rp-4', 'group', 'grp-2', 'doc-4');
+    grant('rp-5', 'group', 'grp-3', 'doc-5');
+    grant('rp-6', 'group', 'grp-other', 'doc-6');
 
     await expect(evaluateIdLevelPermissions(dbs, 'user-1', 'tenant-a')).resolves.toEqual([
       'documents:doc-1:read',
       'documents:doc-2:read',
+      'documents:doc-4:read',
     ]);
     await expect(
       hasIdLevelPermission(dbs, 'user-1', 'documents', 'doc-1', 'read', 'tenant-a')
@@ -291,7 +295,7 @@ describe('RBAC claims across the metadata and account databases', () => {
   });
 
   it('grants resource permissions of a scoped role only where the role is assigned', async () => {
-    // role-editor is assigned in org-1 only (ra-3); its global assignment expired (ra-4).
+    // role-editor is assigned for grp-1 only (ra-3); its global assignment expired (ra-4).
     metadata.db
       .prepare(
         `INSERT INTO resource_permissions (id, tenant_id, subject_type, subject_id,
@@ -300,13 +304,15 @@ describe('RBAC claims across the metadata and account databases', () => {
            ?, ?)`
       )
       .run(NOW, NOW);
-    const writes = (orgId?: string) =>
-      hasIdLevelPermission(dbs, 'user-1', 'documents', 'doc-9', 'write', 'tenant-a', { orgId });
+    const writes = (groupId?: string) =>
+      hasIdLevelPermission(dbs, 'user-1', 'documents', 'doc-9', 'write', 'tenant-a', {
+        groupIds: groupId ? [groupId] : [],
+      });
 
-    await expect(writes('org-1')).resolves.toBe(true);
-    await expect(writes('org-2')).resolves.toBe(false);
-    // Where the resource's organisation is not known (token embedding), an organisation-scoped
-    // role grants nothing.
+    await expect(writes('grp-1')).resolves.toBe(true);
+    await expect(writes('grp-2')).resolves.toBe(false);
+    // Where the resource's groups are not known (token embedding), a group-scoped role grants
+    // nothing.
     await expect(writes()).resolves.toBe(false);
     await expect(evaluateIdLevelPermissions(dbs, 'user-1', 'tenant-a')).resolves.not.toContain(
       'documents:doc-9:write'

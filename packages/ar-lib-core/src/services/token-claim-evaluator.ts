@@ -38,6 +38,75 @@ import { createLogger } from '../utils/logger';
 
 const log = createLogger().module('TOKEN-CLAIM-EVALUATOR');
 
+/**
+ * Context fields that no longer exist (organisations were removed). A rule naming one in a
+ * condition, a conditional value, a template or a context copy is not a rule any more: the field
+ * reads as absent, so a `ne` or `not_exists` condition would match every token.
+ */
+export const REMOVED_TOKEN_CLAIM_FIELDS: readonly string[] = [
+  'org_id',
+  'org_type',
+  'plan',
+  'org_context',
+];
+const REMOVED_FIELDS = new Set(REMOVED_TOKEN_CLAIM_FIELDS);
+
+function collectRemovedConditionFields(condition: unknown, found: Set<string>): void {
+  // Iterative, without a depth limit: a deeply nested rule is read whole, never skipped half-way.
+  const pending: unknown[] = [condition];
+  const seen = new Set<object>();
+  while (pending.length > 0) {
+    const entry = pending.pop();
+    if (!entry || typeof entry !== 'object' || seen.has(entry)) continue;
+    seen.add(entry);
+    const node = entry as { field?: unknown; conditions?: unknown };
+    if (typeof node.field === 'string' && REMOVED_FIELDS.has(node.field)) found.add(node.field);
+    if (Array.isArray(node.conditions)) pending.push(...(node.conditions as unknown[]));
+  }
+}
+
+/**
+ * The removed fields a token claim rule references (REMOVED_TOKEN_CLAIM_FIELDS), sorted; empty
+ * for a rule that names none. Read from the condition, and from what each action reads by its
+ * type: the condition of conditional_value, the template placeholders of add_claim_template, the
+ * context field of copy_from_context (a field an action does not use is not read).
+ */
+export function tokenClaimRuleRemovedFields(rule: {
+  condition?: unknown;
+  actions?: unknown;
+}): string[] {
+  const found = new Set<string>();
+  collectRemovedConditionFields(rule.condition, found);
+  if (Array.isArray(rule.actions)) {
+    for (const action of rule.actions as unknown[]) {
+      if (!action || typeof action !== 'object') continue;
+      const entry = action as {
+        type?: unknown;
+        condition?: unknown;
+        template?: unknown;
+        context_field?: unknown;
+      };
+      if (entry.type === 'conditional_value') collectRemovedConditionFields(entry.condition, found);
+      if (entry.type === 'add_claim_template' && typeof entry.template === 'string') {
+        for (const match of entry.template.matchAll(/\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g)) {
+          if (REMOVED_FIELDS.has(match[1])) found.add(match[1]);
+        }
+      }
+      if (
+        entry.type === 'copy_from_context' &&
+        typeof entry.context_field === 'string' &&
+        REMOVED_FIELDS.has(entry.context_field)
+      ) {
+        found.add(entry.context_field);
+      }
+    }
+  }
+  return [...found].sort();
+}
+
+/** Rules already logged as skipped (once per isolate, per tenant and rule). */
+const loggedRemovedFieldRules = new Set<string>();
+
 // =============================================================================
 // Constants
 // =============================================================================
@@ -125,6 +194,22 @@ export class TokenClaimEvaluator {
       // Check validity period
       if (rule.valid_from && rule.valid_from > now) continue;
       if (rule.valid_until && rule.valid_until < now) continue;
+
+      // A rule naming a removed field is skipped whole: its condition or its values would read
+      // that field as absent.
+      const removedFields = tokenClaimRuleRemovedFields(rule);
+      if (removedFields.length > 0) {
+        const key = `${context.tenant_id}\u0000${rule.id}`;
+        if (!loggedRemovedFieldRules.has(key)) {
+          loggedRemovedFieldRules.add(key);
+          log.warn('Token claim rule skipped: it references removed fields', {
+            tenantId: context.tenant_id,
+            ruleId: rule.id,
+            fields: removedFields.join(','),
+          });
+        }
+        continue;
+      }
 
       // Evaluate condition
       const matches = this.evaluateCondition(rule.condition, context);
@@ -329,12 +414,6 @@ export class TokenClaimEvaluator {
         // For has_permission, return the permissions array for contains check
         return context.permissions;
 
-      case 'org_type':
-        return context.org_type;
-
-      case 'org_id':
-        return context.org_id;
-
       case 'user_type':
         return context.user_type;
 
@@ -466,13 +545,11 @@ export class TokenClaimEvaluator {
   /**
    * Substitute template variables
    *
-   * Available variables: user_type, org_id, org_type, client_id, subject_id
+   * Available variables: user_type, client_id, subject_id
    */
   private substituteTemplate(template: string, context: TokenClaimEvaluationContext): string {
     return template
       .replace(/\{\{user_type\}\}/g, context.user_type ?? '')
-      .replace(/\{\{org_id\}\}/g, context.org_id ?? '')
-      .replace(/\{\{org_type\}\}/g, context.org_type ?? '')
       .replace(/\{\{client_id\}\}/g, context.client_id)
       .replace(/\{\{subject_id\}\}/g, context.issued_subject_id ?? context.subject_id);
   }
@@ -520,10 +597,6 @@ export class TokenClaimEvaluator {
    */
   private copyFromContext(field: string, context: TokenClaimEvaluationContext): unknown {
     switch (field) {
-      case 'org_id':
-        return context.org_id;
-      case 'org_type':
-        return context.org_type;
       case 'user_type':
         return context.user_type;
       case 'roles':
@@ -601,6 +674,8 @@ export function testTokenClaimRule(
   context: TokenClaimEvaluationContext
 ): {
   matched: boolean;
+  /** The removed fields the rule references: such a rule never matches (it is skipped). */
+  removed_fields?: string[];
   condition_results: Array<{
     field: string;
     claim_path?: string;
@@ -641,6 +716,17 @@ export function testTokenClaimRule(
       return compareNormalized(normalized, single.operator, single.value);
     },
   };
+
+  // A rule naming a removed field is skipped by the evaluator: the preview says so.
+  const removedFields = tokenClaimRuleRemovedFields(rule);
+  if (removedFields.length > 0) {
+    return {
+      matched: false,
+      removed_fields: removedFields,
+      condition_results: [],
+      would_add_claims: {},
+    };
+  }
 
   // Collect condition results
   collectConditionResults(rule.condition, context, conditionResults);
@@ -696,10 +782,6 @@ function getFieldValueStandalone(
       return context.roles;
     case 'has_permission':
       return context.permissions;
-    case 'org_type':
-      return context.org_type;
-    case 'org_id':
-      return context.org_id;
     case 'user_type':
       return context.user_type;
     case 'scope_contains':
@@ -723,8 +805,6 @@ function substituteTemplateStandalone(
 ): string {
   return template
     .replace(/\{\{user_type\}\}/g, context.user_type ?? '')
-    .replace(/\{\{org_id\}\}/g, context.org_id ?? '')
-    .replace(/\{\{org_type\}\}/g, context.org_type ?? '')
     .replace(/\{\{client_id\}\}/g, context.client_id)
     .replace(/\{\{subject_id\}\}/g, context.issued_subject_id ?? context.subject_id);
 }
@@ -734,10 +814,6 @@ function substituteTemplateStandalone(
  */
 function copyFromContextStandalone(field: string, context: TokenClaimEvaluationContext): unknown {
   switch (field) {
-    case 'org_id':
-      return context.org_id;
-    case 'org_type':
-      return context.org_type;
     case 'user_type':
       return context.user_type;
     case 'roles':

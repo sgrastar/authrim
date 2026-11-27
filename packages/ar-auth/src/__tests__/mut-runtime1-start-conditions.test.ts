@@ -304,14 +304,11 @@ describe('the signed-in user a condition reads', () => {
     ).toBe('yes:step');
   });
 
-  it('reads the roles and organisations of the account, each once', async () => {
+  it('reads the roles and groups of the account, each once', async () => {
     const account = { coreDb: { name: 'account-db' } };
     mocks.resolveAccountCoreDataContext.mockReset().mockResolvedValue(account);
     mocks.resolveSubjectRoles.mockResolvedValue([held('admin'), held('admin'), held('')]);
-    mocks.resolveSubjectOrganizations.mockResolvedValue([
-      { organization: { id: 'org_1' } },
-      { organization: { id: 'org_1' } },
-    ]);
+    mocks.resolveSubjectGroups.mockResolvedValue({ effectiveGroupIds: new Set(['grp_1']) });
     const conditions = {
       rows: [
         {
@@ -320,7 +317,7 @@ describe('the signed-in user a condition reads', () => {
             type: 'all',
             all: [
               { type: 'user.role', value: 'admin' },
-              { type: 'organization_membership', org_ref: { id: 'org_1' } },
+              { type: 'group_membership', group_ref: { id: 'grp_1' } },
             ],
           },
           output_handle: 'yes',
@@ -335,9 +332,13 @@ describe('the signed-in user a condition reads', () => {
       accountId: 'user_1',
     });
     expect(mocks.resolveSubjectRoles).toHaveBeenCalledWith(rbac, 'tenant_test', 'user_1');
-    expect(mocks.resolveSubjectOrganizations).toHaveBeenCalledWith(rbac, 'tenant_test', 'user_1', {
-      activeOnly: true,
-    });
+    expect(mocks.resolveSubjectGroups).toHaveBeenCalledTimes(1);
+    expect(mocks.resolveSubjectGroups).toHaveBeenCalledWith(
+      rbac,
+      'tenant_test',
+      'user_1',
+      expect.any(Number)
+    );
     // Nothing reads an attribute: none is asked for.
     expect(mocks.readConditionAttributes).not.toHaveBeenCalled();
   });

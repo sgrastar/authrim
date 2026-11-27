@@ -345,9 +345,6 @@ function readRateLimitConfig(kv: KVNamespace | undefined) {
 /** The on/off fields of the older JIT document the bridge tested for truth, by Settings API key. */
 const JIT_SWITCHES: Record<string, string> = {
   require_verified_email: 'external_idp.jit_require_verified_email',
-  join_all_matching_orgs: 'external_idp.jit_join_all_matching_orgs',
-  allow_user_without_org: 'external_idp.jit_allow_user_without_org',
-  allow_unverified_domain_mappings: 'external_idp.jit_allow_unverified_domain_mappings',
 };
 
 /** Every Settings API key the older JIT document holds. */

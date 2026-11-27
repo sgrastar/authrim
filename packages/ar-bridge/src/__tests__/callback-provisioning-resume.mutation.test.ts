@@ -83,7 +83,7 @@ beforeEach(() => {
   mocks.completeJit.mockReset().mockResolvedValue({
     linkedIdentityId: 'external-link-a',
     roles_assigned: [{ role_id: 'r' }],
-    orgs_joined: ['o1'],
+    groups_joined: ['g1'],
   });
 });
 afterEach(() => {

@@ -259,8 +259,7 @@ describe('tenant deletion authoritative purge', () => {
           INSERT INTO role_assignments(id, tenant_id, subject_id, role_id, created_at, updated_at)
           VALUES ('ra-${tenant}-${subject}', '${tenant}', '${subject}', 'reader', 1, 1);
           INSERT INTO group_memberships(id, tenant_id, group_id, subject_id, assignment_source, source_ref, created_at, updated_at)
-          VALUES ('s-${tenant}-${subject}', '${tenant}', 'g-${tenant}', '${subject}', 'scim', 'scim', 1, 1);
-          INSERT INTO service_group_manual(tenant_id, user_id, group_id) VALUES ('${tenant}', '${subject}', 'g-${tenant}')`);
+          VALUES ('s-${tenant}-${subject}', '${tenant}', 'g-${tenant}', '${subject}', 'scim', 'scim', 1, 1)`);
     }
     const shards = [
       { ...tenantShards[0], shardId: 'meta-1', bindingRef: 'TDB_META' },
@@ -316,7 +315,6 @@ describe('tenant deletion authoritative purge', () => {
         'group_memberships',
         'group_role_assignments',
         'role_assignments',
-        'service_group_manual',
         // Written by the delete triggers of the rows above: purged after them.
         'service_group_inputs',
       ]) {
@@ -327,7 +325,6 @@ describe('tenant deletion authoritative purge', () => {
     expect(count(metadata.db, 'group_role_assignments', 'tenant-b')).toBe(1);
     expect(count(usersA.db, 'group_memberships', 'tenant-b')).toBe(2);
     expect(count(usersB.db, 'group_memberships', 'tenant-b')).toBe(2);
-    expect(count(usersA.db, 'service_group_manual', 'tenant-b')).toBe(1);
     for (const db of [metadata.db, usersA.db, usersB.db]) db.close();
   });
 });

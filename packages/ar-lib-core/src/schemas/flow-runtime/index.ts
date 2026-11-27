@@ -487,7 +487,8 @@ export type FlowConditionType =
   | 'authentication_method'
   | 'policy_rule'
   | 'policy_evaluation'
-  | 'organization_membership'
+  /** The user is a member of the group `group_ref` names (directly or through a subgroup). */
+  | 'group_membership'
   /** A choice a screen step sent to the Flow (`attribute` is its answer key). */
   | 'screen.answer'
   /** The user's age in whole years, from their `birthdate` attribute. */
@@ -503,7 +504,7 @@ export interface FlowConditionExpression {
   values?: Array<string | boolean | number>;
   attribute?: string;
   policy_ref?: FlowReference;
-  org_ref?: FlowReference;
+  group_ref?: FlowReference;
   match?: 'allow' | 'deny' | 'any';
   membership?: string[];
   /** How the value is compared (see `condition-operators.ts`). None: equal to one of the values. */
@@ -543,9 +544,12 @@ export interface FlowConditionConfig {
 
 export interface FlowConditionEvaluationUser {
   attributes?: Record<string, string | number | boolean | string[] | null | undefined>;
-  groups?: string[];
   roles?: string[];
-  org_ids?: string[];
+  /**
+   * The user's effective group ids (direct memberships and their ancestors). Both `user.group`
+   * and `group_membership` read this one set.
+   */
+  group_ids?: string[];
 }
 
 export interface FlowConditionEvaluationContext {
@@ -614,10 +618,6 @@ export interface FlowConditionResolvers {
     condition: FlowConditionExpression,
     context: FlowConditionEvaluationContext
   ) => Promise<boolean> | boolean;
-  is_organization_member?: (
-    condition: FlowConditionExpression,
-    context: FlowConditionEvaluationContext
-  ) => Promise<boolean> | boolean;
 }
 
 export type FlowConditionEvaluationResult =
@@ -679,7 +679,8 @@ export async function evaluateFlowCondition(
     case 'user.attribute':
       return matchUserAttribute(context.user, condition);
     case 'user.group':
-      return matchArray(context.user?.groups ?? [], condition);
+      // The same effective membership as group_membership (group ids).
+      return matchArray(context.user?.group_ids ?? [], condition);
     case 'user.role':
       return matchArray(context.user?.roles ?? [], condition);
     case 'authentication_method':
@@ -714,16 +715,9 @@ export async function evaluateFlowCondition(
       } catch {
         return false;
       }
-    case 'organization_membership':
-      if (resolvers.is_organization_member) {
-        try {
-          return await resolvers.is_organization_member(condition, context);
-        } catch {
-          return false;
-        }
-      }
-      return condition.org_ref?.id
-        ? (context.user?.org_ids ?? []).includes(condition.org_ref.id)
+    case 'group_membership':
+      return condition.group_ref?.id
+        ? (context.user?.group_ids ?? []).includes(condition.group_ref.id)
         : false;
   }
 }
@@ -1395,7 +1389,7 @@ const FLOW_CONDITION_TYPES = new Set<FlowConditionType>([
   'authentication_method',
   'policy_rule',
   'policy_evaluation',
-  'organization_membership',
+  'group_membership',
   'screen.answer',
   'user.age',
   'locale',
@@ -1616,13 +1610,13 @@ export function conditionUserAttributeKeys(conditions: readonly unknown[]): stri
   return [...keys];
 }
 
-/** Condition types that read the person signed in (their account, roles, groups, organisations). */
+/** Condition types that read the person signed in (their account, roles, groups). */
 const SIGNED_IN_USER_CONDITION_TYPES: ReadonlySet<string> = new Set([
   'user.attribute',
   'user.group',
   'user.role',
   'user.age',
-  'organization_membership',
+  'group_membership',
   'policy_rule',
   'policy_evaluation',
 ]);

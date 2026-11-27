@@ -92,47 +92,61 @@ describe('tenant custom rules', () => {
     expect(evaluator.evaluate({ ...context, subjectRoles: [role('viewer')] }).allowed).toBe(false);
   });
 
-  it('does not match a role limited to another organization, or one that ended', () => {
+  it('does not match a role limited to another group, or one that ended', () => {
     const evaluator = createTenantRuleEvaluator([
       toTenantPolicyRule({
         ...baseRow,
         conditions: JSON.stringify([
-          { type: 'has_role', params: { role: 'auditor', scope: 'org', scopeTarget: 'org:b' } },
+          { type: 'has_role', params: { role: 'auditor', scope: 'group', scopeTarget: 'group:b' } },
         ]),
       })!,
     ]);
     const auditor = (scopeTarget: string, expiresAt?: number) => ({
       name: 'auditor',
-      scope: 'org' as const,
+      scope: 'group' as const,
       scopeTarget,
       expiresAt,
     });
-    const inOrgB = { ...context, resourceOrgId: 'b' };
-    expect(evaluator.evaluate({ ...inOrgB, subjectRoles: [auditor('org:b')] }).allowed).toBe(true);
-    expect(evaluator.evaluate({ ...inOrgB, subjectRoles: [auditor('org:a')] }).allowed).toBe(false);
+    const inGroupB = { ...context, resourceGroupIds: ['b'] };
+    expect(evaluator.evaluate({ ...inGroupB, subjectRoles: [auditor('group:b')] }).allowed).toBe(
+      true
+    );
+    expect(evaluator.evaluate({ ...inGroupB, subjectRoles: [auditor('group:a')] }).allowed).toBe(
+      false
+    );
     expect(
-      evaluator.evaluate({ ...inOrgB, subjectRoles: [auditor('org:b', Date.now() - 1000)] }).allowed
+      evaluator.evaluate({ ...inGroupB, subjectRoles: [auditor('group:b', Date.now() - 1000)] })
+        .allowed
     ).toBe(false);
   });
 
-  it('counts a scoped role only for its own organization or resource', () => {
+  it('counts a scoped role only for its own group or resource', () => {
     // The rule names no target: the assignment must hold for the checked resource itself.
-    const byOrg = createTenantRuleEvaluator([
+    const byGroup = createTenantRuleEvaluator([
+      toTenantPolicyRule({
+        ...baseRow,
+        conditions: JSON.stringify([
+          { type: 'has_role', params: { role: 'auditor', scope: 'group' } },
+        ]),
+      })!,
+    ]);
+    const groupA = [{ name: 'auditor', scope: 'group' as const, scopeTarget: 'group:a' }];
+    expect(
+      byGroup.evaluate({ ...context, resourceGroupIds: ['a'], subjectRoles: groupA }).allowed
+    ).toBe(true);
+    expect(
+      byGroup.evaluate({ ...context, resourceGroupIds: ['b'], subjectRoles: groupA }).allowed
+    ).toBe(false);
+    expect(byGroup.evaluate({ ...context, subjectRoles: groupA }).allowed).toBe(false);
+    // A rule naming the removed organisation scope is not a rule any more.
+    expect(
       toTenantPolicyRule({
         ...baseRow,
         conditions: JSON.stringify([
           { type: 'has_role', params: { role: 'auditor', scope: 'org' } },
         ]),
-      })!,
-    ]);
-    const orgA = [{ name: 'auditor', scope: 'org' as const, scopeTarget: 'org:a' }];
-    expect(byOrg.evaluate({ ...context, resourceOrgId: 'a', subjectRoles: orgA }).allowed).toBe(
-      true
-    );
-    expect(byOrg.evaluate({ ...context, resourceOrgId: 'b', subjectRoles: orgA }).allowed).toBe(
-      false
-    );
-    expect(byOrg.evaluate({ ...context, subjectRoles: orgA }).allowed).toBe(false);
+      })
+    ).toBeNull();
 
     const byResource = createTenantRuleEvaluator([
       toTenantPolicyRule({
@@ -157,17 +171,17 @@ describe('tenant custom rules', () => {
     const evaluator = createTenantRuleEvaluator([
       toTenantPolicyRule({
         ...baseRow,
-        id: 'deny_org_auditors',
+        id: 'deny_group_auditors',
         priority: 1000,
         effect: 'deny',
         conditions: JSON.stringify([
-          { type: 'has_role', params: { role: 'auditor', scope: 'org' } },
+          { type: 'has_role', params: { role: 'auditor', scope: 'group' } },
         ]),
       })!,
       toTenantPolicyRule({ ...baseRow, conditions: '[]' })!,
     ]);
     expect(evaluator.evaluate(context).allowed).toBe(false);
-    expect(evaluator.evaluate({ ...context, resourceOrgId: 'a' }).allowed).toBe(true);
+    expect(evaluator.evaluate({ ...context, resourceGroupIds: ['a'] }).allowed).toBe(true);
   });
 
   it('grants nothing when a deny on the owner meets a check without one', () => {

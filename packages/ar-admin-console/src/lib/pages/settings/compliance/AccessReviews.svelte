@@ -90,7 +90,7 @@
 			createError = t('cmp.review.nameRequired');
 			return;
 		}
-		if ((scope === 'role' || scope === 'organization') && !scopeValue.trim()) {
+		if ((scope === 'role' || scope === 'group') && !scopeValue.trim()) {
 			createError = t('cmp.review.scopeValueRequired');
 			return;
 		}
@@ -101,7 +101,7 @@
 				name: name.trim(),
 				...(description.trim() ? { description: description.trim() } : {}),
 				scope,
-				...(scope === 'role' || scope === 'organization' ? { scope_value: scopeValue.trim() } : {}),
+				...(scope === 'role' || scope === 'group' ? { scope_value: scopeValue.trim() } : {}),
 				...(scope === 'inactive_users' && inactiveDays ? { inactive_days: inactiveDays } : {}),
 				...(dueDate ? { due_date: dueDate } : {})
 			});
@@ -121,7 +121,7 @@
 
 	function scopeText(review: AccessReview): string {
 		const base = label('cmp.scope.', review.scope);
-		if (review.scope === 'role' || review.scope === 'organization') {
+		if (review.scope === 'role' || review.scope === 'group') {
 			return `${base}: ${review.scope_value ?? ''}`;
 		}
 		if (review.scope === 'inactive_users' && review.inactive_days) {
@@ -136,7 +136,7 @@
 	}
 
 	const scopes = $derived(
-		(['all_users', 'role', 'organization', 'inactive_users'] as const).map((value) => ({
+		(['all_users', 'role', 'group', 'inactive_users'] as const).map((value) => ({
 			value,
 			label: t(`cmp.scope.${value}`)
 		}))
@@ -230,9 +230,9 @@
 		bind:value={description}
 	/>
 	<Select label={t('cmp.review.scope')} options={scopes} bind:value={scope} />
-	{#if scope === 'role' || scope === 'organization'}
+	{#if scope === 'role' || scope === 'group'}
 		<TextField
-			label={scope === 'role' ? t('cmp.scope.roleId') : t('cmp.scope.organizationId')}
+			label={scope === 'role' ? t('cmp.scope.roleId') : t('cmp.scope.groupId')}
 			maxlength={255}
 			required
 			bind:value={scopeValue}

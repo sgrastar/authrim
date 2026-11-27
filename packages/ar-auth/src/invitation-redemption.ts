@@ -2,7 +2,7 @@
  * Sign-up invitations
  *
  * An invitation is used only by the sign-up that creates an account, never by an existing one,
- * and its role and organisation go only to that account:
+ * and its role and group go only to that account:
  *
  * - When the sign-up starts (before the account exists), the invitation is checked and one use is
  *   reserved for the sign-up (counted at once, so a concurrent sign-up cannot take the last use
@@ -11,8 +11,8 @@
  *   request names the user.
  *
  * With routed account storage the two live apart: invitations and reservations in the tenant
- * metadata database (where the Admin API creates invitations), role and organisation assignments
- * in the account's database (where token issuance reads them).
+ * metadata database (where the Admin API creates invitations), role assignments and group
+ * memberships in the account's database (where token issuance reads them).
  *
  * @packageDocumentation
  */
@@ -217,7 +217,7 @@ export function signupInvitationFromMetadata(
 
 /**
  * Applies the use a sign-up reserved to the account it created, and gives that account the
- * invitation's role and organisation. `userId` must be the user the sign-up challenge is bound
+ * invitation's role and group. `userId` must be the user the sign-up challenge is bound
  * to, never a value from the request. The reservation already counted the use, so this cannot
  * lose it to another sign-up; it only finds nothing to apply when the reservation was released
  * (it expired unapplied) or the invitation was deleted.
@@ -272,7 +272,7 @@ export async function completeSignupInvitation(
       return false;
     }
 
-    // The role, organisation and group are defined in the metadata database, with the
+    // The role and group are defined in the metadata database, with the
     // invitation; the assignment and the group membership are the account's data.
     const assignments = await applyInvitationAssignments(
       { metadata: invitationDb, account: db.assignments },
@@ -280,7 +280,6 @@ export async function completeSignupInvitation(
         userId,
         tenantId,
         roleId: invitation.role_id,
-        orgId: invitation.org_id,
         groupId: invitation.group_id,
         invitationId: invitation.id,
         cache: db.cache,
@@ -291,13 +290,6 @@ export async function completeSignupInvitation(
         invite_id: inviteId,
         tenant_id: tenantId,
         error: assignments.roleAssignment?.error,
-      });
-    }
-    if (invitation.org_id && !assignments.orgMembership?.success) {
-      log.warn('Failed to assign organization from invitation', {
-        invite_id: inviteId,
-        tenant_id: tenantId,
-        error: assignments.orgMembership?.error,
       });
     }
     if (invitation.group_id && !assignments.groupMembership?.success) {

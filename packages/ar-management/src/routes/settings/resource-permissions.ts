@@ -24,6 +24,9 @@ import {
   hasIdLevelPermission,
   invalidateIdPermissionCache,
   resolveAccountCoreDataContext,
+  subtreeHasSelfWritableDynamicGroup,
+  lockGroupCatalog,
+  type DatabaseAdapter,
 } from '@authrim/ar-lib-core';
 import { resolveSettingsCoreAdapter, resolveSettingsTenantId } from './tenant-resolver';
 
@@ -60,8 +63,8 @@ function validatePermissionInput(input: ResourcePermissionInput): string[] {
 
   if (!input.subject_type) {
     errors.push('subject_type is required');
-  } else if (!['user', 'role', 'org'].includes(input.subject_type)) {
-    errors.push('subject_type must be "user", "role", or "org"');
+  } else if (!['user', 'role', 'group'].includes(input.subject_type)) {
+    errors.push('subject_type must be "user", "role", or "group"');
   }
 
   if (!input.subject_id || input.subject_id.trim().length === 0) {
@@ -133,29 +136,71 @@ export async function createResourcePermission(c: Context) {
       );
     }
 
-    // Insert permission
-    await coreAdapter.execute(
-      `INSERT INTO resource_permissions (
-        id, tenant_id, subject_type, subject_id,
-        resource_type, resource_id, actions_json, condition_json,
-        expires_at, is_active, granted_by, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        id,
-        tenantId,
-        body.subject_type,
-        body.subject_id,
-        body.resource_type,
-        body.resource_id,
-        JSON.stringify(body.actions),
-        body.condition ? JSON.stringify(body.condition) : null,
-        body.expires_at || null,
-        body.is_active !== false ? 1 : 0,
-        null, // granted_by - TODO: get from context
-        now,
-        now,
-      ]
-    );
+    const insert = (db: Pick<DatabaseAdapter, 'execute'>) =>
+      db.execute(
+        `INSERT INTO resource_permissions (
+          id, tenant_id, subject_type, subject_id,
+          resource_type, resource_id, actions_json, condition_json,
+          expires_at, is_active, granted_by, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          id,
+          tenantId,
+          body.subject_type,
+          body.subject_id,
+          body.resource_type,
+          body.resource_id,
+          JSON.stringify(body.actions),
+          body.condition ? JSON.stringify(body.condition) : null,
+          body.expires_at || null,
+          body.is_active !== false ? 1 : 0,
+          null, // granted_by - TODO: get from context
+          now,
+          now,
+        ]
+      );
+
+    if (body.subject_type === 'group') {
+      // A permission granted to a group reaches every member of it and of the groups below it, as
+      // a role granted to the group does: the group must be the tenant's, and no service group
+      // below it may be decided by an attribute users set themselves. The lock, the checks and the
+      // insert are one transaction, so on PostgreSQL the grant serialises with a reparent or a
+      // service-group save (as a group role grant does). On D1 the statements still run one by
+      // one: this narrows the window between the checks and the write, it does not close it.
+      const outcome = await coreAdapter.transaction(async (tx) => {
+        await lockGroupCatalog(tx, tenantId, coreAdapter.getType());
+        const group = await tx.queryOne<{ id: string }>(
+          'SELECT id FROM "groups" WHERE tenant_id = ? AND id = ?',
+          [tenantId, body.subject_id]
+        );
+        if (!group) return 'not_found' as const;
+        if (await subtreeHasSelfWritableDynamicGroup(tx, tenantId, body.subject_id))
+          return 'self_writable' as const;
+        await insert(tx);
+        return 'ok' as const;
+      });
+      if (outcome === 'not_found') {
+        return c.json(
+          {
+            error: 'invalid_request',
+            error_description: 'subject_id is not a group of the tenant',
+          },
+          400
+        );
+      }
+      if (outcome === 'self_writable') {
+        return c.json(
+          {
+            error: 'group_self_writable_attribute',
+            error_description:
+              'A service group below this group is decided by an attribute users can set themselves: it cannot carry permissions',
+          },
+          400
+        );
+      }
+    } else {
+      await insert(coreAdapter);
+    }
 
     // Invalidate cache for subject
     if (c.env.REBAC_CACHE) {

@@ -50,10 +50,7 @@ const DIRECT_END_USER_WRITERS: Readonly<Record<string, string>> = {
  * Admin operations still written directly to the end-user audit log, for the same reason as
  * STILL_ON_THE_END_USER_LOG: they retry with a stable audit ID.
  */
-const DIRECT_WRITES_STILL_TO_MOVE = new Set([
-  // A member removed from an organization by a bulk admin job.
-  'admin-job-executor.ts',
-]);
+const DIRECT_WRITES_STILL_TO_MOVE = new Set<string>([]);
 
 const sourceRoot = fileURLToPath(new URL('..', import.meta.url));
 

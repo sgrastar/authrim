@@ -96,7 +96,7 @@ export function createTenantRuleEvaluator(rules: TenantPolicyRule[]): PolicyEval
           type: context.resourceType,
           id: context.resourceId ?? '',
           ownerId: context.resourceOwnerId,
-          orgId: context.resourceOrgId,
+          groupIds: context.resourceGroupIds,
           attributes: context.resourceAttributes,
         },
         action: { name: context.action },

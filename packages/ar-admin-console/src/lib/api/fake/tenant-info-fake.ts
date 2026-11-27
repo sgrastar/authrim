@@ -100,7 +100,6 @@ export function wireRow(options: FakeTenantInfoOptions = {}): Record<string, unk
 			settings: `${issuer}/api/admin/settings/meta`,
 			tenants: `${issuer}/api/admin/tenants`,
 			custom_claims: `${issuer}/api/admin/custom-claims`,
-			organizations: `${issuer}/api/admin/organizations`,
 			roles: `${issuer}/api/admin/roles`,
 			webhooks: `${issuer}/api/admin/webhooks`
 		}

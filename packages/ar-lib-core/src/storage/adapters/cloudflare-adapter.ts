@@ -24,7 +24,6 @@ import type {
   IClientStore,
   ISessionStore,
   IPasskeyStore,
-  IOrganizationStore,
   IRoleStore,
   IRoleAssignmentStore,
   IRelationshipStore,
@@ -33,12 +32,7 @@ import type {
   Session,
   Passkey,
 } from '../interfaces';
-import {
-  OrganizationStore,
-  RoleStore,
-  RoleAssignmentStore,
-  RelationshipStore,
-} from '../repositories';
+import { RoleStore, RoleAssignmentStore, RelationshipStore } from '../repositories';
 import type { Env } from '../../types/env';
 import type { D1Result } from '../../utils/d1-retry';
 import { buildDOInstanceName } from '../../utils/tenant-context';
@@ -1146,7 +1140,6 @@ export function createStorageAdapter(
   sessionStore: ISessionStore;
   passkeyStore: IPasskeyStore;
   // RBAC stores (Phase 1)
-  organizationStore: IOrganizationStore;
   roleStore: IRoleStore;
   roleAssignmentStore: IRoleAssignmentStore;
   relationshipStore: IRelationshipStore;
@@ -1160,7 +1153,6 @@ export function createStorageAdapter(
     sessionStore: new SessionStore(adapter, env),
     passkeyStore: new PasskeyStore(adapter),
     // RBAC stores (Phase 1)
-    organizationStore: new OrganizationStore(adapter),
     roleStore: new RoleStore(adapter),
     roleAssignmentStore: new RoleAssignmentStore(adapter),
     relationshipStore: new RelationshipStore(adapter),

@@ -56,7 +56,6 @@ import {
   isDatabaseSource,
   LinkedIdentityRepository,
   PasskeyRepository,
-  RoleRepository,
   SubjectIdentifierRepository,
   getTenantMetadataContextFromHono,
   resolveTenantAssignedDatabaseSourcesFromRegistry,
@@ -1245,20 +1244,8 @@ export async function adminUserAnonymizeHandler(c: Context<{ Bindings: Env }>) {
             userId,
           ]),
           new PasskeyRepository(target.core, tenantId).deleteByUserId(userId),
-          // The user's roles and memberships, in its account database; and the roles SCIM gave
-          // it, which SCIM keeps in the tenant metadata database.
-          new RoleRepository(target.core, tenantId).removeAllRolesFromUser(userId),
-          target.routed
-            ? createAuthContextFromHono(c, tenantId).repositories.role.removeAllRolesFromUser(
-                userId
-              )
-            : null,
           // Direct role assignments and every group membership row of the subject.
           deleteAccountAuthorizationRows(target.core, { tenantId, userId }, c.env.REBAC_CACHE),
-          target.core.execute(
-            'DELETE FROM subject_org_membership WHERE tenant_id = ? AND subject_id = ?',
-            [tenantId, userId]
-          ),
         ]);
 
         await runtimeUsers.deleteUser(userId);

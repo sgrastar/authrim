@@ -80,8 +80,8 @@ function adminAuthOf(c: Ctx): AdminAuthContext | null {
   return (c.get('adminAuth') as AdminAuthContext | undefined) ?? null;
 }
 /**
- * Delegation: a change to a rule (its condition, SCIM link, on/off, its removal) or to a manual
- * input changes who is a member of that group and of every group whose rule references it,
+ * Delegation: a change to a rule (its condition, SCIM link, on/off, its removal) changes who is
+ * a member of that group and of every group whose rule references it,
  * transitively. Each of those groups that carries roles (on it or an ancestor) needs the same
  * permission and grant ceiling as granting those roles (canManageGroupMembership).
  */
@@ -365,31 +365,6 @@ export async function serviceGroupSubject(c: Ctx) {
       unsettledWrites = undefined;
     }
     return c.json({ ...result, ...(unsettledWrites ? { unsettledWrites } : {}) });
-  } catch (error) {
-    return failure(c, error);
-  }
-}
-export async function serviceGroupManual(c: Ctx) {
-  try {
-    const id = userId(c);
-    const { store, reader } = await serviceGroupRuntime(c.env, getTenantIdFromContext(c), id);
-    if (!reader) throw new Error('group_subject_unavailable');
-    const input = await body(c);
-    if (typeof input.present !== 'boolean') throw new Error('group_request_invalid');
-    const catalog = await store.catalog();
-    if (!catalog) throw new Error('group_catalog_missing');
-    await reader.load(catalog.plan); // Resolve and validate the actual service account before writing.
-    const groupId = c.req.param('id')!;
-    // A manual membership is an input of the group and of every group referencing it.
-    const affected = dependentGroups(catalog.plan, [groupId]);
-    const auth = adminAuthOf(c);
-    await assertMayAffectGroups(store.db, store.tenantId, auth, affected);
-    // As for the groups API: no administrator changes their own role-carrying memberships.
-    if (auth?.userId === id && (await groupsCarryingRoles(store.db, store.tenantId, affected)).size)
-      throw new Error('role_delegation_denied');
-    // Written only for the catalog revision the checks above read (else 409).
-    await store.setManual(id, groupId, input.present, actor(c), catalog.revision);
-    return c.json(await evaluateAndPublish(c, store, reader));
   } catch (error) {
     return failure(c, error);
   }

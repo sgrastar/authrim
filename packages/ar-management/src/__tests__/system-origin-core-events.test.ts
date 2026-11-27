@@ -95,7 +95,6 @@ const KEPT: Readonly<Record<string, [Reason, number]>> = {
   'packages/ar-saml/src/scheduled.ts saml.logout_fanout.timeout': ['user_target', 1],
   // Administrators' operations, recorded by older code in the end-user log.
   'packages/ar-lib-core/src/vc/wallet-allowlist.ts dynamic:action': ['admin_operation', 1],
-  'packages/ar-management/src/admin-job-executor.ts dynamic:action': ['admin_operation', 1],
   'packages/ar-saml/src/admin/providers.ts dynamic:input.action': ['admin_operation', 1],
   // A client changing or deleting its own registration with its registration access token.
   'packages/ar-management/src/client-config.ts client.config.updated': ['client_operation', 1],

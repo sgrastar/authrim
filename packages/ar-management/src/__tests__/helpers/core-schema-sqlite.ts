@@ -23,7 +23,9 @@ export function openCoreStore(tenantId = 'tenant-a'): {
     '012_oauth_client_enabled.sql',
     '011_saml_sp_release_consent.sql',
     '015_end_user_groups.sql',
+    '016_invitation_group.sql',
     '017_service_group_scim_membership_inputs.sql',
+    '018_remove_organizations.sql',
   ]) {
     db.exec(
       renderPortableMigrationSql(readFileSync(new URL(file, CORE_MIGRATIONS), 'utf8'), 'sqlite')

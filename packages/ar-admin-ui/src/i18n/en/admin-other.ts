@@ -300,7 +300,6 @@ const adminOther = {
 	admin_info_settings: 'Settings',
 	admin_info_tenants: 'Tenants',
 	admin_info_schema_settings: 'Schema Settings',
-	admin_info_organizations: 'Organizations',
 	admin_info_roles: 'Roles',
 	admin_info_webhooks: 'Webhooks',
 	admin_theme_accent_not_applied:

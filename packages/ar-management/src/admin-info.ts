@@ -344,7 +344,6 @@ function buildEndpoints(issuer: string, apiBaseUrl: string) {
       settings: `${apiBaseUrl}/api/admin/settings/meta`,
       tenants: `${apiBaseUrl}/api/admin/tenants`,
       custom_claims: `${apiBaseUrl}/api/admin/custom-claims`,
-      organizations: `${apiBaseUrl}/api/admin/organizations`,
       roles: `${apiBaseUrl}/api/admin/roles`,
       webhooks: `${apiBaseUrl}/api/admin/webhooks`,
     },

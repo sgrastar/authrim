@@ -6,8 +6,8 @@
  * account for another email than the invitation names, and the use is applied only to an account
  * that handler created; a sign-in that finds an existing account, or fails, gives it back.
  *
- * Invitations and reservations live in the tenant metadata database (`db`); role and
- * organisation assignments and group memberships in the account's database, where token
+ * Invitations and reservations live in the tenant metadata database (`db`); role
+ * assignments and group memberships in the account's database, where token
  * issuance reads them.
  */
 
@@ -100,8 +100,8 @@ export function externalSignupInvitationEmailCheck(
 }
 
 /**
- * Applies the reserved use to the account the sign-in created and assigns the invitation's role,
- * organisation and group there (the group membership on the account's database, `accountDb`;
+ * Applies the reserved use to the account the sign-in created and assigns the invitation's role
+ * and group there (the group membership on the account's database, `accountDb`;
  * `cache`, the RBAC claims cache, has the account's cached claims dropped). The sign-in has
  * succeeded, so a failure is logged, not thrown.
  */
@@ -144,7 +144,6 @@ export async function applyExternalSignupInvitation(
         userId,
         tenantId,
         roleId: invitation.role_id,
-        orgId: invitation.org_id,
         groupId: invitation.group_id,
         invitationId: invitation.id,
         cache: input.cache,
@@ -155,13 +154,6 @@ export async function applyExternalSignupInvitation(
         invite_id: inviteId,
         tenant_id: tenantId,
         error: assignments.roleAssignment?.error,
-      });
-    }
-    if (invitation.org_id && !assignments.orgMembership?.success) {
-      log.warn('Failed to assign organization from invitation', {
-        invite_id: inviteId,
-        tenant_id: tenantId,
-        error: assignments.orgMembership?.error,
       });
     }
     if (invitation.group_id && !assignments.groupMembership?.success) {

@@ -31,9 +31,9 @@ function openDatabase(): { db: DatabaseSync; adapter: DatabaseAdapter } {
 }
 
 /**
- * Routed account storage keeps tenant settings (roles, organisations, invitations) in the tenant
+ * Routed account storage keeps tenant settings (roles, groups, invitations) in the tenant
  * metadata database (`tenant_core/default`) and the account's rows (identity_accounts, role_assignments,
- * subject_org_membership) in its account database (`tenant_core/users`). Two separate SQLite
+ * group_memberships) in its account database (`tenant_core/users`). Two separate SQLite
  * databases stand in for the two D1 databases, so nothing can be found by reading the wrong one.
  */
 describe('invitation assignments under routed account storage', () => {
@@ -53,16 +53,10 @@ describe('invitation assignments under routed account storage', () => {
       .run(NOW);
     metadata.db
       .prepare(
-        `INSERT INTO organizations (id, tenant_id, name, created_at, updated_at)
-         VALUES ('org-1', 'tenant-a', 'Org One', ?, ?)`
-      )
-      .run(NOW, NOW);
-    metadata.db
-      .prepare(
         `INSERT INTO tenant_invitations
-         (id, token, tenant_id, invited_email, invited_by, role_id, org_id, max_uses, use_count,
+         (id, token, tenant_id, invited_email, invited_by, role_id, max_uses, use_count,
           expires_at, created_at, updated_at)
-         VALUES ('inv-1', 'token-1', 'tenant-a', NULL, 'admin-1', 'role-1', 'org-1', 1, 0, ?, ?, ?)`
+         VALUES ('inv-1', 'token-1', 'tenant-a', NULL, 'admin-1', 'role-1', 1, 0, ?, ?, ?)`
       )
       .run(NOW + 86_400, NOW, NOW);
     account.db
@@ -73,7 +67,7 @@ describe('invitation assignments under routed account storage', () => {
       .run(NOW, NOW);
   });
 
-  it("gives the invited role and organisation to the new account, in the account's database", async () => {
+  it("gives the invited role to the new account, in the account's database", async () => {
     const reserved = await reserveExternalSignupInvitation(metadata.adapter, {
       token: 'token-1',
       tenantId: 'tenant-a',
@@ -101,14 +95,6 @@ describe('invitation assignments under routed account storage', () => {
     ).toEqual([
       { subject_id: 'user-new', role_id: 'role-1', scope_type: 'global', scope_target: '' },
     ]);
-    expect(
-      account.db
-        .prepare(
-          `SELECT subject_id, org_id, membership_type FROM subject_org_membership
-           WHERE tenant_id = 'tenant-a'`
-        )
-        .all()
-    ).toEqual([{ subject_id: 'user-new', org_id: 'org-1', membership_type: 'member' }]);
   });
 
   it("joins the invited group on the account's database and drops the account's cached claims", async () => {

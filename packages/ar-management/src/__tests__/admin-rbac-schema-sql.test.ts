@@ -1,5 +1,5 @@
 /**
- * The user-relationship and organisation-hierarchy handlers against the real core schema
+ * The user-relationship handlers against the real core schema
  * (every core migration, in order), so a column the schema does not have fails here.
  */
 import { readFileSync } from 'node:fs';
@@ -56,8 +56,6 @@ vi.mock('@authrim/ar-lib-core', async () => {
 });
 
 import {
-  adminOrganizationCreateHandler,
-  adminOrganizationHierarchyHandler,
   adminUserRelationshipCreateHandler,
   adminUserRelationshipDeleteHandler,
   adminUserRelationshipsListHandler,
@@ -81,7 +79,9 @@ function coreDatabase(): SQLiteDatabase {
   for (const file of [
     '001_0_5_0_core_baseline.sql',
     '015_end_user_groups.sql',
+    '016_invitation_group.sql',
     '017_service_group_scim_membership_inputs.sql',
+    '018_remove_organizations.sql',
   ]) {
     db.exec(renderSqliteMigration(readFileSync(`${directory}/${file}`, 'utf8')));
   }
@@ -134,8 +134,6 @@ function context(input: {
 
 type Body = Record<string, unknown>;
 type Relationship = { id: string; expires_at: number | null };
-type Organization = { id: string; parent_org_id: string | null };
-type Tree = { organization: { children: unknown[] } };
 
 const json = async <T = Body>(response: Response) => (await response.json()) as T;
 
@@ -166,16 +164,6 @@ function insertRelationship(
     row.toId,
     row.expiresAt ?? null
   );
-}
-
-function insertOrganization(
-  db: SQLiteDatabase,
-  row: { id: string; name: string; parentId?: string | null; tenantId?: string }
-) {
-  db.prepare(
-    `INSERT INTO organizations (id, tenant_id, name, display_name, parent_org_id, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, 100, 100)`
-  ).run(row.id, row.tenantId ?? 'tenant-a', row.name, row.name, row.parentId ?? null);
 }
 
 describe('admin user relationships on the core schema', () => {
@@ -467,88 +455,5 @@ describe('admin user relationships on the core schema', () => {
       { id: 'rel-2' },
       { id: 'rel-org' },
     ]);
-  });
-});
-
-describe('admin organisation hierarchy on the core schema', () => {
-  let db: SQLiteDatabase;
-
-  beforeEach(() => {
-    db = coreDatabase();
-    mocked.defaultAdapter = sqliteAdapter(db);
-  });
-
-  it('builds the tree from parent_org_id within the tenant', async () => {
-    insertOrganization(db, { id: 'org-root', name: 'Root' });
-    insertOrganization(db, { id: 'org-child', name: 'Child', parentId: 'org-root' });
-    insertOrganization(db, { id: 'org-grandchild', name: 'Grandchild', parentId: 'org-child' });
-    insertOrganization(db, {
-      id: 'org-foreign',
-      name: 'Foreign',
-      parentId: 'org-root',
-      tenantId: 'tenant-b',
-    });
-
-    const response = await adminOrganizationHierarchyHandler(
-      context({ params: { id: 'org-root' } })
-    );
-
-    expect(response.status).toBe(200);
-    const body = await json(response);
-    expect(body.summary).toEqual({ total_organizations: 3, total_members: 0, max_depth: 2 });
-    expect(body.organization).toMatchObject({
-      id: 'org-root',
-      parent_id: null,
-      depth: 0,
-      children: [
-        {
-          id: 'org-child',
-          parent_id: 'org-root',
-          depth: 1,
-          children: [{ id: 'org-grandchild', parent_id: 'org-child', depth: 2, children: [] }],
-        },
-      ],
-    });
-  });
-
-  it('creates an organisation under a parent of the same tenant', async () => {
-    insertOrganization(db, { id: 'org-root', name: 'Root' });
-
-    const created = await adminOrganizationCreateHandler(
-      context({ body: { name: 'Child', parent_org_id: 'org-root' } })
-    );
-
-    expect(created.status).toBe(201);
-    const { organization } = await json<{ organization: Organization }>(created);
-    expect(organization.parent_org_id).toBe('org-root');
-
-    const tree = await json<Tree>(
-      await adminOrganizationHierarchyHandler(context({ params: { id: 'org-root' } }))
-    );
-    expect(tree.organization.children).toEqual([
-      expect.objectContaining({ id: organization.id, parent_id: 'org-root' }),
-    ]);
-  });
-
-  it('creates a root organisation when no parent is given', async () => {
-    const created = await adminOrganizationCreateHandler(context({ body: { name: 'Root' } }));
-    expect(created.status).toBe(201);
-    expect(
-      (await json<{ organization: Organization }>(created)).organization.parent_org_id
-    ).toBeNull();
-  });
-
-  it('refuses a parent that is missing or belongs to another tenant', async () => {
-    insertOrganization(db, { id: 'org-foreign', name: 'Foreign', tenantId: 'tenant-b' });
-
-    for (const parent_org_id of ['org-missing', 'org-foreign']) {
-      const response = await adminOrganizationCreateHandler(
-        context({ body: { name: `Child of ${parent_org_id}`, parent_org_id } })
-      );
-      expect(response.status).toBe(400);
-    }
-    expect(
-      db.prepare("SELECT COUNT(*) AS n FROM organizations WHERE tenant_id = 'tenant-a'").get()
-    ).toEqual({ n: 0 });
   });
 });

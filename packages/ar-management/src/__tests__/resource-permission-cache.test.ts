@@ -7,7 +7,10 @@ vi.mock('../routes/settings/tenant-resolver', () => ({
   resolveSettingsCoreAdapter: () => store.adapter,
 }));
 
-import { deleteResourcePermission } from '../routes/settings/resource-permissions';
+import {
+  createResourcePermission,
+  deleteResourcePermission,
+} from '../routes/settings/resource-permissions';
 
 function kv() {
   const values = new Map<string, string>();
@@ -73,5 +76,47 @@ describe('resource permission cache', () => {
     await expect(
       evaluateIdLevelPermissions(dbs, 'user-1', 'tenant-a', { cache: cache as never })
     ).resolves.toEqual([]);
+  });
+
+  it('grants a permission to a group of the tenant only, checked like a role grant to a group', async () => {
+    const execute = vi.fn(async () => ({ success: true, rowsAffected: 1 }));
+    const known = new Set(['grp-1']);
+    const transaction = vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn(adapter));
+    const adapter = {
+      query: vi.fn(async () => []),
+      queryOne: vi.fn(async (sql: string, params: unknown[] = []) =>
+        sql.includes('FROM "groups"') && known.has(String(params[1])) ? { id: params[1] } : null
+      ),
+      execute,
+      transaction,
+      getType: () => 'mock',
+    };
+    store.adapter = adapter;
+    const create = (subjectId: string) =>
+      createResourcePermission({
+        req: {
+          json: async () => ({
+            subject_type: 'group',
+            subject_id: subjectId,
+            resource_type: 'documents',
+            resource_id: 'doc-1',
+            actions: ['read'],
+          }),
+        },
+        env: {},
+        get: () => undefined,
+        json: (body: unknown, status = 200) => Response.json(body, { status }),
+      } as never);
+
+    const refused = await create('grp-other');
+    expect(refused.status).toBe(400);
+    expect(execute).not.toHaveBeenCalled();
+    expect((await create('grp-1')).status).toBe(201);
+    // The group's check and the insert ran in one transaction (under the catalog lock on PG).
+    expect(transaction).toHaveBeenCalledTimes(2);
+    expect(execute).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO resource_permissions'),
+      expect.arrayContaining(['group', 'grp-1'])
+    );
   });
 });

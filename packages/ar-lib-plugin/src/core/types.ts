@@ -17,7 +17,6 @@ import type {
   IClientStore as _IClientStore,
   ISessionStore as _ISessionStore,
   IPasskeyStore as _IPasskeyStore,
-  IOrganizationStore as _IOrganizationStore,
   IRoleStore as _IRoleStore,
   IRoleAssignmentStore as _IRoleAssignmentStore,
   IRelationshipStore as _IRelationshipStore,
@@ -25,7 +24,6 @@ import type {
   OAuthClient as _OAuthClient,
   Session as _Session,
   Passkey as _Passkey,
-  Organization as _Organization,
   Role as _Role,
   RoleAssignment as _RoleAssignment,
   Relationship as _Relationship,
@@ -38,7 +36,6 @@ type IUserStore = _IUserStore;
 type IClientStore = _IClientStore;
 type ISessionStore = _ISessionStore;
 type IPasskeyStore = _IPasskeyStore;
-type IOrganizationStore = _IOrganizationStore;
 type IRoleStore = _IRoleStore;
 type IRoleAssignmentStore = _IRoleAssignmentStore;
 type IRelationshipStore = _IRelationshipStore;
@@ -691,7 +688,6 @@ export interface IStorageInfra {
   readonly client: IClientStore;
   readonly session: ISessionStore;
   readonly passkey: IPasskeyStore;
-  readonly organization: IOrganizationStore;
   readonly role: IRoleStore;
   readonly roleAssignment: IRoleAssignmentStore;
   readonly relationship: IRelationshipStore;
@@ -720,9 +716,6 @@ export interface PluginStorageAccess {
 
   /** Passkey credential store (@non-pii) */
   readonly passkey: IPasskeyStore;
-
-  /** Organization store (@non-pii) */
-  readonly organization: IOrganizationStore;
 
   /** Role store (@non-pii) */
   readonly role: IRoleStore;
@@ -753,7 +746,6 @@ export type {
   _IClientStore as IClientStore,
   _ISessionStore as ISessionStore,
   _IPasskeyStore as IPasskeyStore,
-  _IOrganizationStore as IOrganizationStore,
   _IRoleStore as IRoleStore,
   _IRoleAssignmentStore as IRoleAssignmentStore,
   _IRelationshipStore as IRelationshipStore,
@@ -762,7 +754,6 @@ export type {
   _OAuthClient as OAuthClient,
   _Session as Session,
   _Passkey as Passkey,
-  _Organization as Organization,
   _Role as Role,
   _RoleAssignment as RoleAssignment,
   _Relationship as Relationship,

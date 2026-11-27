@@ -26,9 +26,15 @@ import {
   testRuleAgainstContext,
   generateEmailDomainHash,
   getEmailDomainHashSecret,
+  roleScopeTargetError,
 } from '@authrim/ar-lib-core';
 import { resolveSettingsCoreAdapter, resolveSettingsTenantId } from './tenant-resolver';
-import { actionRoleIds, refuseUndelegableRoles } from './role-grant-guard';
+import {
+  actionGroupIds,
+  actionRoleIds,
+  refuseUndelegableGroupJoins,
+  refuseUndelegableRoles,
+} from './role-grant-guard';
 
 // =============================================================================
 // Constants
@@ -84,6 +90,37 @@ function validateRuleInput(input: RoleAssignmentRuleInput): string[] {
   return errors;
 }
 
+/**
+ * The scope errors of a rule as it will be: its own scope and target, and those of each
+ * assign_role action (its own, or the rule's when it names none), checked as the readers read
+ * them (roleScopeTargetError). A removed scope (`org`) is refused.
+ */
+function ruleScopeErrors(
+  rule: { scope_type?: unknown; scope_target?: unknown },
+  actions: unknown,
+  tenantId: string
+): string[] {
+  const scopeType = rule.scope_type || 'global';
+  const scopeTarget = rule.scope_target || '';
+  const errors: string[] = [];
+  const own = roleScopeTargetError(scopeType, scopeTarget, tenantId);
+  if (own) errors.push(own);
+  if (Array.isArray(actions)) {
+    actions.forEach((action: unknown, index) => {
+      if (!action || typeof action !== 'object') return;
+      const entry = action as { type?: unknown; scope_type?: unknown; scope_target?: unknown };
+      if (entry.type !== 'assign_role') return;
+      const error = roleScopeTargetError(
+        entry.scope_type ?? scopeType,
+        entry.scope_target ?? scopeTarget,
+        tenantId
+      );
+      if (error) errors.push(`actions[${index}]: ${error}`);
+    });
+  }
+  return errors;
+}
+
 // =============================================================================
 // Handlers
 // =============================================================================
@@ -99,6 +136,7 @@ export async function createRoleAssignmentRule(c: Context) {
 
   // Validate input
   const errors = validateRuleInput(body);
+  if (errors.length === 0) errors.push(...ruleScopeErrors(body, body.actions, tenantId));
   if (errors.length > 0) {
     return c.json(
       {
@@ -122,6 +160,13 @@ export async function createRoleAssignmentRule(c: Context) {
       ...actionRoleIds(body.actions),
     ]);
     if (refused) return refused;
+    const refusedJoin = await refuseUndelegableGroupJoins(
+      c,
+      coreAdapter,
+      tenantId,
+      actionGroupIds(body.actions)
+    );
+    if (refusedJoin) return refusedJoin;
 
     // Check if name already exists
     const existing = await coreAdapter.queryOne<{ id: string }>(
@@ -389,15 +434,36 @@ export async function updateRoleAssignmentRule(c: Context) {
       return c.json(rowToRule(existing));
     }
 
+    // The rule's scopes as they will be after the change.
+    const scopeErrors = ruleScopeErrors(
+      {
+        scope_type: body.scope_type ?? existing.scope_type,
+        scope_target: body.scope_target ?? existing.scope_target,
+      },
+      body.actions ?? (JSON.parse(existing.actions_json) as unknown),
+      tenantId
+    );
+    if (scopeErrors.length > 0) {
+      return c.json({ error: 'invalid_request', error_description: scopeErrors.join(', ') }, 400);
+    }
+
     // Any change of a rule that stays (or becomes) active needs the standing to grant every role
     // the rule will grant: its role and those of its actions, as they are after the change.
     const active = body.is_active !== undefined ? body.is_active : existing.is_active === 1;
     if (active) {
+      const actions = body.actions ?? (JSON.parse(existing.actions_json) as unknown);
       const refused = await refuseUndelegableRoles(c, coreAdapter, tenantId, [
         body.role_id ?? existing.role_id,
-        ...actionRoleIds(body.actions ?? (JSON.parse(existing.actions_json) as unknown)),
+        ...actionRoleIds(actions),
       ]);
       if (refused) return refused;
+      const refusedJoin = await refuseUndelegableGroupJoins(
+        c,
+        coreAdapter,
+        tenantId,
+        actionGroupIds(actions)
+      );
+      if (refusedJoin) return refusedJoin;
     }
 
     const now = Math.floor(Date.now() / 1000);
@@ -619,7 +685,7 @@ export async function evaluateRoleAssignmentRules(c: Context) {
     return c.json({
       matched_rules: result.matched_rules,
       final_roles: result.roles_to_assign,
-      final_orgs: result.orgs_to_join,
+      final_groups: result.groups_to_join.map((join) => join.group_id),
       attributes_to_set: result.attributes_to_set,
       denied: result.denied,
       deny_code: result.deny_code,

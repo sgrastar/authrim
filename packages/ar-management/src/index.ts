@@ -32,7 +32,6 @@ import {
   serviceGroupWrite,
   serviceGroupValidate,
   serviceGroupSubject,
-  serviceGroupManual,
   serviceGroupMembers,
 } from './service-groups';
 import { processScheduledServiceGroups } from './dynamic-groups-runtime';
@@ -456,14 +455,6 @@ import {
 } from './external-providers';
 import { adminSessionStatusHandler, adminLogoutHandler } from './admin-session';
 import {
-  adminOrganizationsListHandler,
-  adminOrganizationGetHandler,
-  adminOrganizationCreateHandler,
-  adminOrganizationUpdateHandler,
-  adminOrganizationDeleteHandler,
-  adminOrganizationMembersListHandler,
-  adminOrganizationMemberAddHandler,
-  adminOrganizationMemberRemoveHandler,
   adminRolesListHandler,
   adminRoleGetHandler,
   adminRoleAssignmentsListHandler,
@@ -473,7 +464,6 @@ import {
   adminUserRelationshipsListHandler,
   adminUserRelationshipCreateHandler,
   adminUserRelationshipDeleteHandler,
-  adminOrganizationHierarchyHandler,
   adminUserEffectivePermissionsHandler,
   adminRoleCreateHandler,
   adminRoleUpdateHandler,
@@ -634,7 +624,6 @@ import {
   adminJobsUsersImportHandler,
   adminJobsUsersBulkUpdateHandler,
   adminJobsReportsGenerateHandler,
-  adminJobsOrgBulkMembersHandler,
   adminJobTypesHandler,
   registerAdminJobPermissionMiddleware,
 } from './admin-jobs';
@@ -851,16 +840,6 @@ import {
   evaluateRoleAssignmentRules,
 } from './routes/settings/role-assignment-rules';
 import { supportOpsRouter } from './support-ops';
-import {
-  createOrgDomainMapping,
-  listOrgDomainMappings,
-  getOrgDomainMapping,
-  updateOrgDomainMapping,
-  deleteOrgDomainMapping,
-  listOrgDomainMappingsByOrg,
-  verifyDomainOwnership,
-  confirmDomainVerification,
-} from './routes/settings/org-domain-mappings';
 import {
   getDomainHashKeysConfig,
   rotateDomainHashKey,
@@ -2501,21 +2480,6 @@ app.post('/api/admin/external-token-refresh/run', adminExternalTokenRefreshRunHa
 // Admin RBAC endpoints - Phase 1
 registerAdminRbacPermissionMiddleware(app);
 
-// Organization management
-app.get('/api/admin/organizations', adminOrganizationsListHandler);
-app.get('/api/admin/organizations/:id', adminOrganizationGetHandler);
-app.post('/api/admin/organizations', adminOrganizationCreateHandler);
-app.put('/api/admin/organizations/:id', adminOrganizationUpdateHandler);
-app.delete('/api/admin/organizations/:id', adminOrganizationDeleteHandler);
-
-// Organization membership management
-app.get('/api/admin/organizations/:id/members', adminOrganizationMembersListHandler);
-app.post('/api/admin/organizations/:id/members', adminOrganizationMemberAddHandler);
-app.delete('/api/admin/organizations/:id/members/:subjectId', adminOrganizationMemberRemoveHandler);
-
-// Organization hierarchy
-app.get('/api/admin/organizations/:id/hierarchy', adminOrganizationHierarchyHandler);
-
 // Role management (read-only for system roles, custom roles can be created/edited/deleted)
 app.use('/api/admin/service-groups', async (c, next) =>
   requireAdminPermissions([
@@ -2537,7 +2501,6 @@ app.post('/api/admin/service-groups/subjects/:userId/recover', serviceGroupRecov
 app.put('/api/admin/service-groups/:id', serviceGroupWrite);
 app.delete('/api/admin/service-groups/:id', serviceGroupWrite);
 app.get('/api/admin/service-groups/:id/members', serviceGroupMembers);
-app.put('/api/admin/service-groups/:id/members/:userId', serviceGroupManual);
 
 app.get('/api/admin/roles', adminRolesListHandler);
 app.get('/api/admin/roles/:id', adminRoleGetHandler);
@@ -2847,16 +2810,6 @@ app.get('/api/admin/role-assignment-rules/:id', getRoleAssignmentRule);
 app.put('/api/admin/role-assignment-rules/:id', updateRoleAssignmentRule);
 app.delete('/api/admin/role-assignment-rules/:id', deleteRoleAssignmentRule);
 app.post('/api/admin/role-assignment-rules/:id/test', testRoleAssignmentRule);
-
-// Organization Domain Mappings endpoints
-app.post('/api/admin/org-domain-mappings', createOrgDomainMapping);
-app.get('/api/admin/org-domain-mappings', listOrgDomainMappings);
-app.post('/api/admin/org-domain-mappings/verify', verifyDomainOwnership);
-app.post('/api/admin/org-domain-mappings/verify/confirm', confirmDomainVerification);
-app.get('/api/admin/org-domain-mappings/:id', getOrgDomainMapping);
-app.put('/api/admin/org-domain-mappings/:id', updateOrgDomainMapping);
-app.delete('/api/admin/org-domain-mappings/:id', deleteOrgDomainMapping);
-app.get('/api/admin/organizations/:org_id/domain-mappings', listOrgDomainMappingsByOrg);
 
 // [DEPRECATED] Domain Hash Key Rotation
 // → Migrate to: /api/admin/platform/settings/encryption
@@ -3810,7 +3763,6 @@ app.put('/api/admin/jobs/users/import/upload/:upload_id', adminJobsImportUploadH
 app.post('/api/admin/jobs/users/import', adminJobsUsersImportHandler);
 app.post('/api/admin/jobs/users/bulk-update', adminJobsUsersBulkUpdateHandler);
 app.post('/api/admin/jobs/reports/generate', adminJobsReportsGenerateHandler);
-app.post('/api/admin/jobs/organizations/:id/bulk-members', adminJobsOrgBulkMembersHandler);
 // Job status endpoints
 app.get('/api/admin/jobs/types', adminJobTypesHandler);
 app.get('/api/admin/jobs/schedules', async (c) => c.json(await getR2MaintenanceDashboard(c.env)));

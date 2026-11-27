@@ -1,12 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   getConsentRBACData,
-  validateConsentOrgAccess,
   validateActingAsRelationship,
   getActingAsUserInfo,
   getConsentUserInfo,
   parseConsentFeatureFlags,
-  getRolesInOrganization,
 } from '../consent-rbac';
 import type { D1Database } from '@cloudflare/workers-types';
 
@@ -16,19 +14,17 @@ import type { D1Database } from '@cloudflare/workers-types';
  * Phase 2-B: Consent Screen Enhancement
  *
  * Tests for:
- * - Organization membership retrieval
- * - Organization access validation
+ * - Role retrieval
  * - Acting-as relationship validation
  * - User info retrieval
  * - Feature flag parsing
- * - Role retrieval by organization
  */
 
 /**
  * Helper to create mock D1 database with configurable query results
  *
- * Role and organisation definitions (`roles`, `organizations`) live in the metadata database and
- * assignments (`role_assignments`, `subject_org_membership`) in the account database, so a test
+ * Role definitions (`roles`) live in the metadata database and assignments (`role_assignments`,
+ * `group_memberships`) in the account database, so a test
  * gives each of the two databases only the tables it holds. Every bound statement is recorded in
  * `calls`.
  */
@@ -39,11 +35,7 @@ function createMockDB(queryResults: Record<string, unknown>) {
       // Determine which result to return based on SQL pattern
       let result: unknown = null;
 
-      if (sql.includes('FROM organizations')) {
-        result = queryResults['organizations'] ?? { results: [] };
-      } else if (sql.includes('FROM subject_org_membership')) {
-        result = queryResults['memberships'] ?? { results: [] };
-      } else if (sql.includes('FROM group_memberships')) {
+      if (sql.includes('FROM group_memberships')) {
         result = { results: [] };
       } else if (sql.includes('FROM role_assignments')) {
         result = queryResults['roleAssignments'] ?? { results: [] };
@@ -182,7 +174,7 @@ function createMockDB(queryResults: Record<string, unknown>) {
   return Object.assign(db as unknown as D1Database, { calls });
 }
 
-/** Rows of the `roles` / `organizations` / assignment tables the tests below share */
+/** Rows of the `roles` / assignment tables the tests below share */
 const role = (id: string, name: string) => ({
   id,
   name,
@@ -190,10 +182,9 @@ const role = (id: string, name: string) => ({
   description: null,
   permissions_json: '[]',
   role_type: 'custom',
-  hierarchy_level: null,
+  grant_tier: 1,
   is_assignable: 1,
   is_system: 0,
-  parent_role_id: null,
 });
 const assignment = (roleId: string, scopeType = 'global', scopeTarget = '') => ({
   id: `ra-${roleId}-${scopeTarget}`,
@@ -202,22 +193,6 @@ const assignment = (roleId: string, scopeType = 'global', scopeTarget = '') => (
   scope_target: scopeTarget,
   expires_at: null,
   assigned_by: null,
-  created_at: 1,
-});
-const organization = (id: string, name: string, orgType: string, plan: string, isActive = 1) => ({
-  id,
-  name,
-  display_name: null,
-  org_type: orgType,
-  plan,
-  parent_org_id: null,
-  is_active: isActive,
-});
-const membership = (orgId: string, isPrimary: number) => ({
-  id: `m-${orgId}`,
-  org_id: orgId,
-  membership_type: 'member',
-  is_primary: isPrimary,
   created_at: 1,
 });
 
@@ -292,193 +267,44 @@ describe('Consent RBAC Utilities', () => {
   // ===========================================================================
 
   describe('getConsentRBACData', () => {
-    it('should return organizations and roles for a user', async () => {
+    it('should return the roles of a user', async () => {
       // Definitions come from the metadata database, assignments from the account database
       const metadata = createMockDB({
-        organizations: {
-          results: [
-            organization('org-1', 'Primary Org', 'company', 'enterprise'),
-            organization('org-2', 'Secondary Org', 'department', 'free'),
-          ],
-        },
         roles: { results: [role('role-admin', 'admin'), role('role-user', 'user')] },
       });
       const account = createMockDB({
-        memberships: { results: [membership('org-2', 0), membership('org-1', 1)] },
         roleAssignments: { results: [assignment('role-user'), assignment('role-admin')] },
       });
 
       const result = await getConsentRBACData({ metadata, account }, 'user-123', 'default');
 
-      expect(result.organizations).toHaveLength(2);
-      expect(result.organizations[0]).toEqual({
-        id: 'org-1',
-        name: 'Primary Org',
-        type: 'company',
-        plan: 'enterprise',
-        is_primary: true,
-      });
-      expect(result.organizations[1]).toEqual({
-        id: 'org-2',
-        name: 'Secondary Org',
-        type: 'department',
-        plan: 'free',
-        is_primary: false,
-      });
-      expect(result.primary_org).toEqual(result.organizations[0]);
-      expect(result.roles).toEqual(['admin', 'user']);
-
+      expect(result).toEqual({ roles: ['admin', 'user'] });
       // The subject's assignments are read from the account database only, definitions from metadata
-      expect(account.calls.map(({ sql }) => sql).join('\n')).not.toMatch(
-        /FROM (roles|organizations)/
-      );
+      expect(account.calls.map(({ sql }) => sql).join('\n')).not.toMatch(/FROM roles/);
       expect(metadata.calls.map(({ sql }) => sql).join('\n')).not.toMatch(
-        /FROM (role_assignments|subject_org_membership)/
+        /FROM (role_assignments|group_memberships)/
       );
     });
 
-    it('should return null primary_org when user has no primary organization', async () => {
-      const metadata = createMockDB({
-        organizations: { results: [organization('org-1', 'Org A', 'company', 'free')] },
-      });
-      const account = createMockDB({
-        memberships: { results: [membership('org-1', 0)] },
-      });
+    it('should return no roles when the user has none', async () => {
+      const result = await getConsentRBACData(
+        { metadata: createMockDB({}), account: createMockDB({}) },
+        'user-123',
+        'default'
+      );
 
-      const result = await getConsentRBACData({ metadata, account }, 'user-123', 'default');
-
-      expect(result.primary_org).toBeNull();
-      expect(result.organizations).toHaveLength(1);
+      expect(result).toEqual({ roles: [] });
     });
 
-    it('should return empty arrays when user has no memberships or roles', async () => {
-      const metadata = createMockDB({});
-      const account = createMockDB({});
-
-      const result = await getConsentRBACData({ metadata, account }, 'user-123', 'default');
-
-      expect(result.organizations).toEqual([]);
-      expect(result.primary_org).toBeNull();
-      expect(result.roles).toEqual([]);
-    });
-
-    it('should leave out deactivated organizations and assignments of roles that no longer exist', async () => {
-      const metadata = createMockDB({
-        organizations: {
-          results: [
-            organization('org-1', 'Active Org', 'company', 'free'),
-            organization('org-2', 'Closed Org', 'company', 'free', 0),
-          ],
-        },
-        roles: { results: [role('role-user', 'user')] },
-      });
+    it('should leave out assignments of roles that no longer exist', async () => {
+      const metadata = createMockDB({ roles: { results: [role('role-user', 'user')] } });
       const account = createMockDB({
-        memberships: { results: [membership('org-1', 1), membership('org-2', 0)] },
         roleAssignments: { results: [assignment('role-user'), assignment('role-deleted')] },
       });
 
       const result = await getConsentRBACData({ metadata, account }, 'user-123', 'default');
 
-      expect(result.organizations.map((org) => org.id)).toEqual(['org-1']);
       expect(result.roles).toEqual(['user']);
-    });
-  });
-
-  // ===========================================================================
-  // validateConsentOrgAccess
-  // ===========================================================================
-
-  describe('validateConsentOrgAccess', () => {
-    it('should return valid result when user is member of organization', async () => {
-      const metadata = createMockDB({
-        organizations: {
-          results: [organization('org-1', 'Test Org', 'company', 'enterprise')],
-        },
-      });
-      const account = createMockDB({
-        memberships: { results: [membership('org-1', 1)] },
-      });
-
-      const result = await validateConsentOrgAccess(
-        { metadata, account },
-        'user-123',
-        'org-1',
-        'default'
-      );
-
-      expect(result.valid).toBe(true);
-      expect(result.organization).toEqual({
-        id: 'org-1',
-        name: 'Test Org',
-        type: 'company',
-        plan: 'enterprise',
-        is_primary: true,
-      });
-      expect(result.error).toBeUndefined();
-    });
-
-    it('should return invalid result when user is not member', async () => {
-      // The organization exists, but the user has no membership of it
-      const metadata = createMockDB({
-        organizations: {
-          results: [organization('org-not-member', 'Other Org', 'company', 'free')],
-        },
-      });
-      const account = createMockDB({
-        memberships: { results: [] },
-      });
-
-      const result = await validateConsentOrgAccess(
-        { metadata, account },
-        'user-123',
-        'org-not-member',
-        'default'
-      );
-
-      expect(result.valid).toBe(false);
-      expect(result.error).toBe('User is not a member of the specified organization');
-      expect(result.organization).toBeUndefined();
-    });
-
-    it('should handle non-primary organization', async () => {
-      const metadata = createMockDB({
-        organizations: {
-          results: [organization('org-2', 'Secondary Org', 'department', 'free')],
-        },
-      });
-      const account = createMockDB({
-        memberships: { results: [membership('org-2', 0)] },
-      });
-
-      const result = await validateConsentOrgAccess(
-        { metadata, account },
-        'user-123',
-        'org-2',
-        'default'
-      );
-
-      expect(result.valid).toBe(true);
-      expect(result.organization?.is_primary).toBe(false);
-    });
-
-    it('should return invalid result when the organization is deactivated', async () => {
-      const metadata = createMockDB({
-        organizations: {
-          results: [organization('org-1', 'Closed Org', 'company', 'free', 0)],
-        },
-      });
-      const account = createMockDB({
-        memberships: { results: [membership('org-1', 1)] },
-      });
-
-      const result = await validateConsentOrgAccess(
-        { metadata, account },
-        'user-123',
-        'org-1',
-        'default'
-      );
-
-      expect(result.valid).toBe(false);
     });
   });
 
@@ -729,125 +555,38 @@ describe('Consent RBAC Utilities', () => {
 
   describe('parseConsentFeatureFlags', () => {
     it('should parse all flags enabled', () => {
-      const result = parseConsentFeatureFlags('true', 'true', 'true');
-
-      expect(result).toEqual({
-        org_selector_enabled: true,
+      expect(parseConsentFeatureFlags('true', 'true')).toEqual({
         acting_as_enabled: true,
         show_roles: true,
       });
     });
 
     it('should parse all flags disabled', () => {
-      const result = parseConsentFeatureFlags('false', 'false', 'false');
-
-      expect(result).toEqual({
-        org_selector_enabled: false,
+      expect(parseConsentFeatureFlags('false', 'false')).toEqual({
         acting_as_enabled: false,
         show_roles: false,
       });
     });
 
     it('should parse undefined flags as false', () => {
-      const result = parseConsentFeatureFlags(undefined, undefined, undefined);
-
-      expect(result).toEqual({
-        org_selector_enabled: false,
+      expect(parseConsentFeatureFlags(undefined, undefined)).toEqual({
         acting_as_enabled: false,
         show_roles: false,
       });
     });
 
     it('should parse mixed flags', () => {
-      const result = parseConsentFeatureFlags('true', undefined, 'false');
-
-      expect(result).toEqual({
-        org_selector_enabled: true,
-        acting_as_enabled: false,
+      expect(parseConsentFeatureFlags('true', undefined)).toEqual({
+        acting_as_enabled: true,
         show_roles: false,
       });
     });
 
     it('should treat non-"true" values as false', () => {
-      const result = parseConsentFeatureFlags('TRUE', '1', 'yes');
-
-      expect(result).toEqual({
-        org_selector_enabled: false,
+      expect(parseConsentFeatureFlags('1', 'yes')).toEqual({
         acting_as_enabled: false,
         show_roles: false,
       });
-    });
-  });
-
-  // ===========================================================================
-  // getRolesInOrganization
-  // ===========================================================================
-
-  describe('getRolesInOrganization', () => {
-    it('should return roles for specific organization', async () => {
-      // Global and org-1 assignments count; an assignment scoped to org-2 does not
-      const metadata = createMockDB({
-        roles: {
-          results: [
-            role('role-org-admin', 'org_admin'),
-            role('role-member', 'member'),
-            role('role-other', 'other_org_role'),
-          ],
-        },
-      });
-      const account = createMockDB({
-        roleAssignments: {
-          results: [
-            assignment('role-org-admin', 'org', 'org:org-1'),
-            assignment('role-member'),
-            assignment('role-other', 'org', 'org:org-2'),
-          ],
-        },
-      });
-
-      const result = await getRolesInOrganization(
-        { metadata, account },
-        'user-123',
-        'org-1',
-        'default'
-      );
-
-      expect(result).toEqual(['member', 'org_admin']);
-    });
-
-    it('should return empty array when no roles found', async () => {
-      const metadata = createMockDB({});
-      const account = createMockDB({ roleAssignments: { results: [] } });
-
-      const result = await getRolesInOrganization(
-        { metadata, account },
-        'user-123',
-        'org-1',
-        'default'
-      );
-
-      expect(result).toEqual([]);
-    });
-
-    it('should call DB with correct parameters', async () => {
-      const metadata = createMockDB({ roles: { results: [role('role-1', 'org_admin')] } });
-      const account = createMockDB({
-        roleAssignments: { results: [assignment('role-1', 'org', 'org:org-456')] },
-      });
-
-      await getRolesInOrganization({ metadata, account }, 'user-123', 'org-456', 'default');
-
-      // Assignments: tenant and subject on the account database
-      const assignmentQuery = account.calls.find(({ sql }) =>
-        sql.includes('FROM role_assignments')
-      );
-      expect(assignmentQuery?.params.slice(0, 2)).toEqual(['default', 'user-123']);
-      // Role definitions: tenant and the assigned role ids on the metadata database
-      const roleQuery = metadata.calls.find(({ sql }) => sql.includes('FROM roles'));
-      expect(roleQuery?.params).toEqual(['default', 'role-1']);
-      // Neither database is asked for the other's tables
-      expect(account.calls.some(({ sql }) => sql.includes('FROM roles'))).toBe(false);
-      expect(metadata.calls.some(({ sql }) => sql.includes('FROM role_assignments'))).toBe(false);
     });
   });
 });

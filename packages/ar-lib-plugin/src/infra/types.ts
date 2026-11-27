@@ -47,9 +47,6 @@ export interface IStorageInfra {
   // RBAC Stores
   // --------------------------------------------------------------------------
 
-  /** Organization store */
-  readonly organization: IOrganizationStore;
-
   /** Role store */
   readonly role: IRoleStore;
 
@@ -404,32 +401,6 @@ export interface Passkey {
 // =============================================================================
 
 /**
- * Organization store
- *
- * @non-pii - Contains organizational hierarchy, no user PII
- */
-export interface IOrganizationStore extends NonPIIStore {
-  get(tenantId: string, orgId: string): Promise<Organization | null>;
-  getByName(tenantId: string, name: string): Promise<Organization | null>;
-  create(org: Partial<Organization>): Promise<Organization>;
-  update(tenantId: string, orgId: string, updates: Partial<Organization>): Promise<Organization>;
-  delete(tenantId: string, orgId: string): Promise<void>;
-  list(tenantId: string, options?: { limit?: number; offset?: number }): Promise<Organization[]>;
-}
-
-export interface Organization {
-  id: string;
-  tenant_id: string;
-  name: string;
-  display_name?: string;
-  parent_org_id?: string;
-  metadata?: Record<string, unknown>;
-  is_active: boolean;
-  created_at: number;
-  updated_at: number;
-}
-
-/**
  * Role store
  *
  * @non-pii - Contains role definitions, no user PII
@@ -450,7 +421,6 @@ export interface Role {
   display_name?: string;
   description?: string;
   permissions?: string[];
-  parent_role_id?: string;
   is_active: boolean;
   created_at: number;
 }
@@ -479,7 +449,7 @@ export interface RoleAssignment {
   id: string;
   subject_id: string;
   role_id: string;
-  scope_type?: 'global' | 'organization' | 'resource';
+  scope_type?: 'global' | 'tenant' | 'group' | 'resource';
   scope_target?: string;
   granted_by?: string;
   expires_at?: number;
@@ -592,7 +562,7 @@ export interface RuleEvaluationContext {
 export interface RuleEvaluationResult {
   matched_rules: string[];
   roles_to_assign: string[];
-  orgs_to_join: string[];
+  groups_to_join: string[];
   attributes_to_set: Array<{ key: string; value: unknown }>;
   denied: boolean;
   deny_reason?: string;

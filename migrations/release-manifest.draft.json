@@ -76,6 +76,10 @@
             {
               "path": "017_service_group_scim_membership_inputs.sql",
               "checksum": "6c5ed4504c2b296ad39bd321de4f95c83bfb46c75d53bc8d00989e04a0d8651e"
+            },
+            {
+              "path": "018_remove_organizations.sql",
+              "checksum": "e11a61fb2d72569f77b37aefeab652b61a3aedf4f8fbe01b1d81db8ca4d351d5"
             }
           ]
         },
@@ -296,6 +300,10 @@
             {
               "path": "017_service_group_scim_membership_inputs.sql",
               "checksum": "fb87ac29a4792935616706c2b5ec7ad3773ee3eb0cef29ff978b358f0fe8c636"
+            },
+            {
+              "path": "018_remove_organizations.sql",
+              "checksum": "d86c9d5ff7310dd405cace45f49efcc606205863425df1212125567580eb78de"
             }
           ]
         },
@@ -395,6 +403,10 @@
         {
           "path": "017_service_group_scim_membership_inputs.sql",
           "checksum": "6c5ed4504c2b296ad39bd321de4f95c83bfb46c75d53bc8d00989e04a0d8651e"
+        },
+        {
+          "path": "018_remove_organizations.sql",
+          "checksum": "e11a61fb2d72569f77b37aefeab652b61a3aedf4f8fbe01b1d81db8ca4d351d5"
         }
       ]
     },
@@ -641,6 +653,10 @@
         {
           "path": "017_service_group_scim_membership_inputs.sql",
           "checksum": "fb87ac29a4792935616706c2b5ec7ad3773ee3eb0cef29ff978b358f0fe8c636"
+        },
+        {
+          "path": "018_remove_organizations.sql",
+          "checksum": "d86c9d5ff7310dd405cace45f49efcc606205863425df1212125567580eb78de"
         }
       ]
     },

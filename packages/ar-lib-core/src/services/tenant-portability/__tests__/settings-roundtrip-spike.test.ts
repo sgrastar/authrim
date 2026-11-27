@@ -235,8 +235,8 @@ describe('settings offline roundtrip on real schemas', () => {
           );
         source.exec(`INSERT INTO roles (id,tenant_id,name,permissions_json,created_at)
         VALUES ('fixture-parent','tenant-a','Parent','["profile:read"]',1);
-        INSERT INTO roles (id,tenant_id,name,permissions_json,created_at,parent_role_id)
-        VALUES ('fixture-child','tenant-a','Child','[]',1,'fixture-parent');
+        INSERT INTO roles (id,tenant_id,name,permissions_json,created_at)
+        VALUES ('fixture-child','tenant-a','Child','[]',1);
         INSERT INTO branding_settings (id,tenant_id,logo_url,updated_at)
         VALUES ('fixture-branding','tenant-a','https://issuer.example/branding/logo.svg',1);
         INSERT INTO roles (id,tenant_id,name,permissions_json,created_at)
@@ -308,18 +308,9 @@ describe('settings offline roundtrip on real schemas', () => {
         const restored = await open(passphrase);
         expect(restored.tenantId).toBe('tenant-a');
         const targetAssets = new Map(restored.assets.map((asset) => [asset.key, asset.body]));
-        // Dependencies, not arbitrary archive order: restore the parent before its child.
         for (const entry of restored.records) {
           const schema = schemas.find((candidate) => candidate.table === entry.table)!;
-          const rows =
-            entry.table === 'roles'
-              ? [...entry.rows].sort(
-                  (a, b) =>
-                    Number(JSON.parse(a).parent_role_id[0] !== 'null') -
-                    Number(JSON.parse(b).parent_role_id[0] !== 'null')
-                )
-              : entry.rows;
-          for (const encoded of rows) {
+          for (const encoded of entry.rows) {
             const fields = JSON.parse(encoded);
             if (fields.tenant_id[1] !== restored.tenantId) throw new Error('cross_tenant_fixture');
             if (entry.table === 'oauth_clients') {
@@ -347,8 +338,11 @@ describe('settings offline roundtrip on real schemas', () => {
           target.prepare("SELECT client_name FROM oauth_clients WHERE tenant_id = 'tenant-a'").get()
         ).toEqual({ client_name: 'Original client' });
         expect(
-          target.prepare("SELECT parent_role_id FROM roles WHERE id = 'fixture-child'").get()
-        ).toEqual({ parent_role_id: 'fixture-parent' });
+          target
+            .prepare("SELECT id FROM roles WHERE tenant_id = 'tenant-a' ORDER BY id")
+            .all()
+            .map((row) => (row as { id: string }).id)
+        ).toEqual(['fixture-child', 'fixture-parent']);
         expect(
           target.prepare("SELECT count(*) AS n FROM roles WHERE tenant_id = 'tenant-b'").get()
         ).toEqual({ n: 0 });

@@ -73,7 +73,6 @@ export const arTenantGeneral: Record<keyof typeof jaTenantGeneral, string> = {
 	'tg.ep.admin_api.settings': 'Settings catalog',
 	'tg.ep.admin_api.tenants': 'Tenants',
 	'tg.ep.admin_api.custom_claims': 'Attribute schema',
-	'tg.ep.admin_api.organizations': 'Organizations',
 	'tg.ep.admin_api.roles': 'Roles',
 	'tg.ep.admin_api.webhooks': 'Webhooks',
 	'tg.copy': 'Copy {name}',

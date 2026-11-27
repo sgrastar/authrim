@@ -7,6 +7,8 @@
   </a>
   <br>
   <strong><a href="https://authrim.com/">authrim.com</a></strong>
+  <br>
+  <strong><a href="https://start.authrim-demo.com/">Try the demo!</a></strong>
 </p>
 
 > **Identity, unbound.**

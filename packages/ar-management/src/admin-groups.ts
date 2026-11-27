@@ -885,6 +885,11 @@ async function removeGroupRows(stores: TenantRBACStores, tenantId: string, group
     'DELETE FROM group_role_assignments WHERE tenant_id = ? AND group_id = ?',
     [tenantId, groupId]
   );
+  // Resource permissions granted to the group go with it (a retry deletes what is left).
+  await stores.metadata.execute(
+    "DELETE FROM resource_permissions WHERE tenant_id = ? AND subject_type = 'group' AND subject_id = ?",
+    [tenantId, groupId]
+  );
 }
 
 // =============================================================================
@@ -1191,12 +1196,11 @@ export async function adminGroupRoleAssignHandler(c: GroupContext) {
         id: string;
         name: string;
         grant_tier: number;
-        hierarchy_level: number | null;
         is_assignable: number | boolean | null;
-      }>(
-        'SELECT id, name, grant_tier, hierarchy_level, is_assignable FROM roles WHERE tenant_id = ? AND id = ?',
-        [tenantId, body.role_id]
-      );
+      }>('SELECT id, name, grant_tier, is_assignable FROM roles WHERE tenant_id = ? AND id = ?', [
+        tenantId,
+        body.role_id,
+      ]);
       if (!role) return { kind: 'not_found' as const };
       // An operator cannot grant roles to a group they are part of (or sit under or above).
       if (await touchesGroup(tx, tenantId, operatorDirect, group))

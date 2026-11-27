@@ -97,7 +97,7 @@ export const TENANT_CAPABILITIES_SETTINGS_META: Record<
     envKey: 'TENANT_CAPABILITIES_BULK_JOBS',
     label: 'Tenants may run bulk jobs',
     description:
-      'Off: tenants cannot create bulk jobs (user import, bulk update, report generation, bulk organization members), nor can platform administrators. Queued jobs do not start: they end as blocked and must be created again once it is back on. Existing jobs and results stay readable.',
+      'Off: tenants cannot create bulk jobs (user import, bulk update, report generation), nor can platform administrators. Queued jobs do not start: they end as blocked and must be created again once it is back on. Existing jobs and results stay readable.',
     scopes: ['platform'],
     visibility: 'admin',
   },

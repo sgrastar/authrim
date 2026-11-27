@@ -391,9 +391,6 @@ const translation = {
 	consent_scope_address: 'আপনার ঠিকানা দেখুন',
 	consent_scope_offline_access:
 		'আপনি যখন অ্যাপটি ব্যবহার করছেন না তখন আপনার অ্যাকাউন্টে অ্যাক্সেস করুন',
-	consent_organizationSelect: 'সংগঠন নির্বাচন করুন',
-	consent_primaryOrg: 'প্রাথমিক',
-	consent_currentOrganization: 'বর্তমান সংগঠন',
 	consent_actingOnBehalfOf: '{name} এর পক্ষ থেকে কাজ করা',
 	consent_delegatedAccess: 'ডেলেগ্রেটেড অ্যাক্সেস',
 	consent_delegatedAccessWarning:

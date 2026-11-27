@@ -3,14 +3,12 @@ const mocks = vi.hoisted(() => ({
   adapter: { query: vi.fn() },
   config: vi.fn(),
   validate: vi.fn(),
-  mappingCounts: vi.fn(),
   logger: { warn: vi.fn(), error: vi.fn() },
 }));
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@authrim/ar-lib-core')>()),
   getEmailDomainHashConfig: mocks.config,
   validateDomainHashConfig: mocks.validate,
-  getMappingCountByVersion: mocks.mappingCounts,
   ensureDatabaseAdapter: vi.fn((db) => db),
   createAuthContextFromHono: vi.fn(() => ({ coreAdapter: mocks.adapter })),
   getTenantIdFromContext: vi.fn(() => 'tenant-a'),
@@ -58,7 +56,6 @@ describe('domain hash key rotation', () => {
     mocks.config.mockReset();
     mocks.config.mockResolvedValue(config());
     mocks.validate.mockReturnValue([]);
-    mocks.mappingCounts.mockResolvedValue({ 1: 2, 2: 3 });
   });
   it('masks secrets and reports source', async () => {
     const b = (await (await getDomainHashKeysConfig(context({ store: kv() }))).json()) as any;
@@ -164,7 +161,7 @@ describe('domain hash key rotation', () => {
     const b = (await (await getDomainHashKeyStatus(context())).json()) as any;
     expect(b.users_by_version).toEqual({ 1: 4, 2: 6 });
     expect(b.estimated_completion).toEqual(expect.any(String));
-    expect(b.org_mappings_by_version).toEqual({ 1: 2, 2: 3 });
+    expect(b).not.toHaveProperty('org_mappings_by_version');
   });
   it.each([
     config({ migration_in_progress: false }),

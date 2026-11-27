@@ -37,15 +37,13 @@ const projectionTriggers: readonly {
   },
   {
     output: 'core.service_group_inputs',
-    triggers: [
-      'identity_accounts',
-      'user_custom_fields',
-      'user_roles',
-      'service_group_manual',
-      'contact_points',
-    ]
+    triggers: ['identity_accounts', 'user_custom_fields', 'contact_points']
       .map((table) => ({ table, trigger: `sg_${table}_insert` }))
-      .concat([{ table: 'service_group_write_boundaries', trigger: 'sg_write_boundary_insert' }]),
+      .concat([
+        { table: 'service_group_write_boundaries', trigger: 'sg_write_boundary_insert' },
+        // SCIM and manual group memberships are service group inputs (migrations 017 and 018).
+        { table: 'group_memberships', trigger: 'sg_group_memberships_scim_insert' },
+      ]),
   },
   {
     output: 'pii.service_group_inputs',

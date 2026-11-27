@@ -254,7 +254,7 @@ export class BuiltinPolicyInfra implements IPolicyInfra {
     const result: RuleEvaluationResult = {
       matched_rules: [],
       roles_to_assign: [],
-      orgs_to_join: [],
+      groups_to_join: [],
       attributes_to_set: [],
       denied: false,
     };
@@ -277,8 +277,8 @@ export class BuiltinPolicyInfra implements IPolicyInfra {
           result.roles_to_assign.push(...rule.roles_to_assign);
         }
 
-        if (rule.orgs_to_join) {
-          result.orgs_to_join.push(...rule.orgs_to_join);
+        if (rule.groups_to_join) {
+          result.groups_to_join.push(...rule.groups_to_join);
         }
 
         if (rule.attributes_to_set) {
@@ -383,40 +383,26 @@ export class BuiltinPolicyInfra implements IPolicyInfra {
   }
 
   private async checkInheritedRelationship(
-    subjectType: string,
+    _subjectType: string,
     subjectId: string,
     relation: string,
     objectType: string,
     objectId: string
   ): Promise<boolean> {
-    // Use recursive CTE to traverse role hierarchy
+    // Roles do not inherit (no role hierarchy): the subject's direct role assignments only
     const result = await this.getStorage().adapter.queryOne<{ found: number }>(
       `
-      WITH RECURSIVE role_chain AS (
-        -- Base case: direct role assignments
-        SELECT ra.role_id, r.parent_role_id, 1 as depth
-        FROM role_assignments ra
-        JOIN roles r ON ra.role_id = r.id
-        WHERE ra.subject_id = ?
-        AND (ra.expires_at IS NULL OR ra.expires_at > ?)
-
-        UNION ALL
-
-        -- Recursive case: parent roles
-        SELECT r.id, r.parent_role_id, rc.depth + 1
-        FROM roles r
-        JOIN role_chain rc ON r.id = rc.parent_role_id
-        WHERE rc.depth < 10  -- Prevent infinite loops
-      )
-      SELECT 1 as found FROM role_chain rc
+      SELECT 1 as found FROM role_assignments ra
       JOIN relationships rel ON (
-        rel.from_type = 'role' AND rel.from_id = rc.role_id
+        rel.from_type = 'role' AND rel.from_id = ra.role_id
         AND rel.relationship_type = ?
         AND rel.to_type = ? AND rel.to_id = ?
       )
+      WHERE ra.subject_id = ?
+      AND (ra.expires_at IS NULL OR ra.expires_at > ?)
       LIMIT 1
     `,
-      [subjectId, Date.now(), relation, objectType, objectId]
+      [relation, objectType, objectId, subjectId, Date.now()]
     );
 
     return result !== null;
@@ -483,7 +469,7 @@ export class BuiltinPolicyInfra implements IPolicyInfra {
         conditions: [],
         action: 'deny',
         roles_to_assign: [],
-        orgs_to_join: [],
+        groups_to_join: [],
         attributes_to_set: [],
         deny_reason: row.deny_reason ?? undefined,
       };
@@ -495,7 +481,7 @@ export class BuiltinPolicyInfra implements IPolicyInfra {
       conditions,
       action: row.action === 'allow' ? 'allow' : 'deny',
       roles_to_assign: parseJsonArray(row.roles_to_assign, isString) ?? [],
-      orgs_to_join: parseJsonArray(row.orgs_to_join, isString) ?? [],
+      groups_to_join: parseJsonArray(row.groups_to_join, isString) ?? [],
       attributes_to_set: parseJsonArray(row.attributes_to_set, isAttributeAssignment) ?? [],
       deny_reason: row.deny_reason ?? undefined,
     };
@@ -637,7 +623,7 @@ interface RuleRow {
   conditions: string | null;
   action: string;
   roles_to_assign: string | null;
-  orgs_to_join: string | null;
+  groups_to_join: string | null;
   attributes_to_set: string | null;
   deny_reason: string | null;
 }
@@ -649,7 +635,7 @@ interface Rule {
   conditions: RuleCondition[];
   action: 'allow' | 'deny';
   roles_to_assign: string[];
-  orgs_to_join: string[];
+  groups_to_join: string[];
   attributes_to_set: Array<{ key: string; value: unknown }>;
   deny_reason?: string;
 }
@@ -718,8 +704,8 @@ function isCachedRule(value: unknown): value is Rule {
     value.conditions.every(isRuleCondition) &&
     Array.isArray(value.roles_to_assign) &&
     value.roles_to_assign.every(isString) &&
-    Array.isArray(value.orgs_to_join) &&
-    value.orgs_to_join.every(isString) &&
+    Array.isArray(value.groups_to_join) &&
+    value.groups_to_join.every(isString) &&
     Array.isArray(value.attributes_to_set) &&
     value.attributes_to_set.every(isAttributeAssignment)
   );

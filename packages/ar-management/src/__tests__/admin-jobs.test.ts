@@ -79,7 +79,6 @@ import {
   adminJobsUsersImportHandler,
   adminJobsUsersBulkUpdateHandler,
   adminJobsReportsGenerateHandler,
-  adminJobsOrgBulkMembersHandler,
 } from '../admin-jobs';
 import { ADMIN_JOB_TYPE_REGISTRY } from '../admin-job-types';
 import { buildUserImportResultKey, buildUserImportUploadKey } from '../user-import-jobs';
@@ -196,7 +195,6 @@ function createTestApp(envOverrides: Partial<Env> = {}) {
   app.post('/api/admin/jobs/users/import', adminJobsUsersImportHandler);
   app.post('/api/admin/jobs/users/bulk-update', adminJobsUsersBulkUpdateHandler);
   app.post('/api/admin/jobs/reports/generate', adminJobsReportsGenerateHandler);
-  app.post('/api/admin/jobs/organizations/:id/bulk-members', adminJobsOrgBulkMembersHandler);
   app.get('/api/admin/jobs', adminJobsListHandler);
   app.get('/api/admin/jobs/types', adminJobTypesHandler);
   app.get('/api/admin/jobs/artifacts/:artifactId', adminJobResultArtifactManifestHandler);
@@ -324,10 +322,6 @@ describe('admin-jobs handlers', () => {
       processorStatus: 'scheduled',
       creatableFromAdminApi: true,
     });
-    expect(ADMIN_JOB_TYPE_REGISTRY['organizations/bulk-members']).toMatchObject({
-      processorStatus: 'scheduled',
-      creatableFromAdminApi: true,
-    });
     expect(ADMIN_JOB_TYPE_REGISTRY['tenant-database/export']).toMatchObject({
       processorStatus: 'scheduled',
       creatableFromAdminApi: false,
@@ -430,85 +424,6 @@ describe('admin-jobs handlers', () => {
 
     expect(res.status).toBe(400);
     expect(mockAdapter.execute).not.toHaveBeenCalled();
-  });
-
-  it('creates an organization bulk members job after tenant-scoped validation', async () => {
-    mockAdapter.queryOne.mockResolvedValue({
-      id: '00000000-0000-4000-8000-000000000001',
-      tenant_id: 'tenant-a',
-      name: 'Example Org',
-    });
-    mockAdapter.query.mockResolvedValue([{ id: '00000000-0000-4000-8000-000000000002' }]);
-    const { app, env } = createTestApp();
-
-    const res = await app.request(
-      '/api/admin/jobs/organizations/00000000-0000-4000-8000-000000000001/bulk-members',
-      {
-        method: 'POST',
-        headers: buildHeaders(),
-        body: JSON.stringify({
-          user_ids: ['00000000-0000-4000-8000-000000000002'],
-          action: 'add',
-          role: 'member',
-        }),
-      },
-      env
-    );
-
-    expect(res.status).toBe(202);
-    expect(mockAdapter.execute).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO admin_jobs'),
-      expect.arrayContaining(['job-123', 'tenant-a', 'organizations/bulk-members'])
-    );
-  });
-
-  it.each([
-    ['add', "lifecycle_state = 'active'"],
-    ['remove', "lifecycle_state <> 'deleted'"],
-  ] as const)(
-    'checks the members of an organization bulk %s job as the job does',
-    async (action, state) => {
-      routedStorage.routed = false;
-      mockAdapter.queryOne.mockResolvedValue({ id: 'org', tenant_id: 'tenant-a', name: 'Org' });
-      mockAdapter.query.mockResolvedValue([{ id: '00000000-0000-4000-8000-000000000002' }]);
-      const { app, env } = createTestApp();
-
-      const res = await app.request(
-        '/api/admin/jobs/organizations/00000000-0000-4000-8000-000000000001/bulk-members',
-        {
-          method: 'POST',
-          headers: buildHeaders(),
-          body: JSON.stringify({ user_ids: ['00000000-0000-4000-8000-000000000002'], action }),
-        },
-        env
-      );
-
-      expect(res.status).toBe(202);
-      expect(String(mockAdapter.query.mock.calls[0]?.[0])).toContain(state);
-    }
-  );
-
-  it("leaves a routed tenant's members to the job, which reads each in its own store", async () => {
-    routedStorage.routed = true;
-    mockAdapter.queryOne.mockResolvedValue({ id: 'org', tenant_id: 'tenant-a', name: 'Org' });
-    const { app, env } = createTestApp();
-
-    const res = await app.request(
-      '/api/admin/jobs/organizations/00000000-0000-4000-8000-000000000001/bulk-members',
-      {
-        method: 'POST',
-        headers: buildHeaders(),
-        body: JSON.stringify({ user_ids: ['00000000-0000-4000-8000-000000000002'] }),
-      },
-      env
-    );
-    routedStorage.routed = false;
-
-    expect(res.status).toBe(202);
-    expect(mockAdapter.query).not.toHaveBeenCalledWith(
-      expect.stringContaining('FROM identity_accounts'),
-      expect.anything()
-    );
   });
 
   it('returns a tenant-scoped upload URL for CSV imports', async () => {
