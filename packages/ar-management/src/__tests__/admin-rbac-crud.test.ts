@@ -91,6 +91,7 @@ function role(overrides: Record<string, unknown> = {}) {
     role_type: 'custom',
     parent_role_id: null,
     hierarchy_level: 1,
+    grant_tier: 1,
     created_at: 100,
     updated_at: 1_700_000_000_000,
     ...overrides,
@@ -346,7 +347,7 @@ describe('admin RBAC organization and role CRUD', () => {
   it('creates and audits a custom child role', async () => {
     mocks.adapter.queryOne
       .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce({ id: 'parent', hierarchy_level: 1 });
+      .mockResolvedValueOnce({ id: 'parent', hierarchy_level: 1, grant_tier: 1 });
     const response = await adminRoleCreateHandler(
       context({
         body: {

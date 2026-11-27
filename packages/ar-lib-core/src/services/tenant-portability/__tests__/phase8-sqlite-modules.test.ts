@@ -20,12 +20,12 @@ const selection = {
 describe('Phase 8 SQLite modules', () => {
   it('pins the reviewed selectable SQL inventory without duplicates', () => {
     expect(PHASE8_SQLITE_DATASET_REGISTRATIONS).toHaveLength(206);
-    expect(PHASE8_CUMULATIVE_SQLITE_DATASET_REGISTRATIONS).toHaveLength(327);
+    expect(PHASE8_CUMULATIVE_SQLITE_DATASET_REGISTRATIONS).toHaveLength(328);
     expect(
       createHash('sha256')
         .update(JSON.stringify(PHASE8_CUMULATIVE_SQLITE_DATASET_REGISTRATIONS))
         .digest('hex')
-    ).toBe('df3a31a3b1f8181da9d498cdaaeb5986457bdadc4265ff63564da033ff3ca329');
+    ).toBe('28a0862f8e00f91bd9c3a24695ab493b21e76ca331eba9f57c1fe608f3c3204a');
     expect(
       new Set(PHASE8_CUMULATIVE_SQLITE_DATASET_REGISTRATIONS.map(({ dataset }) => dataset.id)).size
     ).toBe(PHASE8_CUMULATIVE_SQLITE_DATASET_REGISTRATIONS.length);

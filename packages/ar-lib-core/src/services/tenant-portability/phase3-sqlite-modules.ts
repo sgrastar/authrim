@@ -51,6 +51,7 @@ export const PHASE3_SQLITE_TABLE_GROUPS: readonly Phase3TableGroup[] = [
     tables: [
       'custom_claim_schemas',
       'field_usage_bindings',
+      'group_role_assignments',
       'groups',
       'oidc_scopes',
       'org_domain_mappings',

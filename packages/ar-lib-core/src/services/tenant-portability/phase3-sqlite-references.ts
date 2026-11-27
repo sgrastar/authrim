@@ -72,6 +72,9 @@ const tenantReferences = PHASE3_SQLITE_DATASET_REGISTRATIONS.filter(
  */
 export const PHASE3_SQLITE_REFERENCE_RULES: readonly Phase3SqliteReferenceRule[] = [
   ...tenantReferences,
+  relation('core', 'groups', ['parent_group_id'], 'core', 'groups', { nullable: true }),
+  relation('core', 'group_role_assignments', ['group_id'], 'core', 'groups'),
+  relation('core', 'group_role_assignments', ['role_id'], 'core', 'roles'),
   relation(
     'core',
     'consent_statement_localizations',

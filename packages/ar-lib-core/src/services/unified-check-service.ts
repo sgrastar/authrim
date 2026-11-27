@@ -61,16 +61,6 @@ const log = createLogger().module('UNIFIED-CHECK-SERVICE');
  */
 const URL_SAFE_PATTERN = /^[a-zA-Z0-9_-]+$/;
 
-/**
- * Default cache TTL in seconds
- */
-const DEFAULT_CACHE_TTL = 60;
-
-/**
- * Cache key prefix for check results
- */
-const CHECK_CACHE_PREFIX = 'check:result:';
-
 // =============================================================================
 // Permission Parser
 // =============================================================================
@@ -237,11 +227,11 @@ export interface UnifiedCheckServiceConfig {
    * subject's assignments are read from `db` (a single-database deployment).
    */
   subjectAccountDb?: (tenantId: string, subjectId: string) => Promise<DatabaseSource>;
-  /** KV namespace for caching (optional) */
+  /** @deprecated Shared decisions are evaluated against the current database. */
   cache?: KVNamespace;
   /** ReBAC service for relationship checks (optional) */
   rebacService?: ReBACService;
-  /** Cache TTL in seconds (default: 60) */
+  /** @deprecated Check responses always return cache_ttl=0. */
   cacheTTL?: number;
   /** Enable debug mode */
   debugMode?: boolean;
@@ -300,6 +290,7 @@ function checkTarget(context: CheckContext): RoleAssignmentTarget {
   return {
     tenantId: context.tenantId,
     orgId: context.resourceContext?.org_id,
+    groupIds: context.resourceContext?.group_id ? [context.resourceContext.group_id] : [],
     resourceType: context.parsed.resource,
     resourceId: context.parsed.id,
   };
@@ -315,9 +306,7 @@ export class UnifiedCheckService {
   private subjectAccountDb?: (tenantId: string, subjectId: string) => Promise<DatabaseSource>;
   /** Subject account databases resolved during this service's lifetime (one request). */
   private subjectAccountDbs = new Map<string, Promise<DatabaseSource>>();
-  private cache?: KVNamespace;
   private rebacService?: ReBACService;
-  private cacheTTL: number;
   private debugMode: boolean;
   private auditConfig: AuditLogConfig;
   private attributeRepository?: AttributeRepository;
@@ -331,9 +320,7 @@ export class UnifiedCheckService {
   constructor(config: UnifiedCheckServiceConfig) {
     this.db = ensureDatabaseAdapter(config.db, 'policy-check');
     this.subjectAccountDb = config.subjectAccountDb;
-    this.cache = config.cache;
     this.rebacService = config.rebacService;
-    this.cacheTTL = config.cacheTTL ?? DEFAULT_CACHE_TTL;
     this.debugMode = config.debugMode ?? false;
     this.auditConfig = config.auditConfig ?? {
       log_deny: 'always',
@@ -412,28 +399,11 @@ export class UnifiedCheckService {
         policy: await this.policyFor(tenantId),
       };
 
-      // Try cache first
-      const cacheKey = this.buildCacheKey(context);
-      if (this.cache && cacheKey) {
-        const cached = await this.getCachedResult(cacheKey);
-        if (cached) {
-          // Log audit for cached result too
-          this.logDecision(context, request, cached);
-          await this.logAudit(request, cached, parsed, tenantId, options);
-          return cached;
-        }
-      }
-
       // Evaluate permission (order matters - first match wins)
       const result = await this.evaluate(context);
 
       // Build response
-      const response = this.buildResponse(result, startTime, cacheKey ? this.cacheTTL : 0);
-
-      // Cache result
-      if (this.cache && cacheKey) {
-        await this.cacheResult(cacheKey, response);
-      }
+      const response = this.buildResponse(result, startTime);
 
       this.logDecision(context, request, response);
 
@@ -708,7 +678,7 @@ export class UnifiedCheckService {
         context.parsed.id,
         context.parsed.action,
         context.tenantId,
-        { orgId: context.resourceContext?.org_id }
+        checkTarget(context)
       );
 
       return { allowed: hasPermission };
@@ -888,73 +858,16 @@ export class UnifiedCheckService {
   }
 
   /**
-   * Build cache key for check result
-   */
-  private buildCacheKey(context: CheckContext): string | null {
-    // resource_context and ReBAC parameters are request-specific authorization inputs. Keeping
-    // them out of the shared cache is safer than attempting to normalize attacker-controlled
-    // nested objects and prevents a contextual allow from being reused by a different request.
-    if (context.resourceContext !== undefined || context.rebacParams !== undefined) {
-      return null;
-    }
-    // Attribute-based rules can depend on time and on the tenant's rules and settings, which the
-    // key does not carry; a result decided while those could not be read must not be reused.
-    if (context.policy.unavailable || (context.policy.abac && context.policy.evaluator)) {
-      return null;
-    }
-
-    const permStr = formatPermission(context.parsed);
-    return `${CHECK_CACHE_PREFIX}${context.tenantId}:${context.subjectId}:${permStr}`;
-  }
-
-  /**
-   * Get cached result
-   */
-  private async getCachedResult(key: string): Promise<CheckApiResponse | null> {
-    if (!this.cache) return null;
-
-    try {
-      const cached = await this.cache.get(key);
-      if (cached) {
-        return JSON.parse(cached) as CheckApiResponse;
-      }
-    } catch {
-      // Cache read error - continue without cache
-    }
-
-    return null;
-  }
-
-  /**
-   * Cache check result
-   */
-  private async cacheResult(key: string, response: CheckApiResponse): Promise<void> {
-    if (!this.cache) return;
-
-    try {
-      await this.cache.put(key, JSON.stringify(response), {
-        expirationTtl: this.cacheTTL,
-      });
-    } catch {
-      // Cache write error - ignore
-    }
-  }
-
-  /**
    * Build final response
    */
-  private buildResponse(
-    result: InternalCheckResult,
-    startTime: number,
-    cacheTTL: number
-  ): CheckApiResponse {
+  private buildResponse(result: InternalCheckResult, startTime: number): CheckApiResponse {
     const evaluationTime = performance.now() - startTime;
 
     const response: CheckApiResponse = {
       allowed: result.allowed,
       resolved_via: result.resolvedVia,
       final_decision: result.allowed ? 'allow' : 'deny',
-      cache_ttl: cacheTTL,
+      cache_ttl: 0,
     };
 
     if (!result.allowed && result.reason) {
@@ -969,18 +882,6 @@ export class UnifiedCheckService {
     }
 
     return response;
-  }
-
-  /**
-   * Invalidate cache for a subject
-   */
-  async invalidateCache(tenantId: string, subjectId: string): Promise<void> {
-    if (!this.cache) return;
-
-    // Note: KV doesn't support prefix deletion, so we need to track keys
-    // For now, we rely on TTL expiration
-    // In production, consider using a secondary index or different cache strategy
-    log.debug('Cache invalidation requested', { tenantId, subjectId });
   }
 }
 

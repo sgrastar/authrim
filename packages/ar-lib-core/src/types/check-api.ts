@@ -72,6 +72,7 @@ export interface ResourceContext {
   owner_id?: string;
   /** Organization ID */
   org_id?: string;
+  group_id?: string;
   /** Additional attributes for ABAC */
   attributes?: Record<string, unknown>;
 }

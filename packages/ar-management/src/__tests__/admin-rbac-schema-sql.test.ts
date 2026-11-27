@@ -78,7 +78,7 @@ function renderSqliteMigration(sql: string): string {
 function coreDatabase(): SQLiteDatabase {
   const db = new DatabaseSync(':memory:');
   const directory = `${REPO_ROOT}migrations/core/d1`;
-  for (const file of ['001_0_5_0_core_baseline.sql']) {
+  for (const file of ['001_0_5_0_core_baseline.sql', '015_end_user_groups.sql']) {
     db.exec(renderSqliteMigration(readFileSync(`${directory}/${file}`, 'utf8')));
   }
   // Users live in users_core / PII; the rows here stand alone.

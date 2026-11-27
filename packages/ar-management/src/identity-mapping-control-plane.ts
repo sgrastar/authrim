@@ -1,3 +1,13 @@
+import { canManageGroupMembership } from './group-role-management';
+import {
+  bumpTenantRBACCacheVersion,
+  invalidateSubjectRBACCache,
+} from '@authrim/ar-lib-core/utils/rbac-cache';
+import { getAdminAuth } from './admin-tenant-access';
+import {
+  groupParentCondition,
+  lockGroupCatalog,
+} from '@authrim/ar-lib-core/services/group-catalog';
 import { provisionMappingHashKey } from '@authrim/ar-lib-core/services/mapping-hash';
 import { mappingGraphMaterialSql } from '@authrim/ar-lib-core/services/mapping-graph-snapshot';
 import { readMappingReference } from '@authrim/ar-lib-field-mapping/authoring';
@@ -26,6 +36,8 @@ import { requireAdminStepUp } from './admin-step-up-gate';
 import { capabilityRefusal } from './capability-authorization';
 import type {
   Env,
+  AdminAuthContext,
+  TransactionContext,
   DatabaseAdapter,
   InternalNotificationEventCategory,
   InternalNotificationEventSeverity,
@@ -1162,6 +1174,7 @@ interface CreateGroupMembershipRequest {
   accountId?: string;
   membershipType?: string;
   assignmentSource?: string;
+  sourceRef?: string;
   ownershipPolicy?: 'source_owned' | 'manual' | 'protected';
   revokePolicy?: 'auto' | 'review' | 'keep';
   protectedUntil?: number | null;
@@ -1473,7 +1486,7 @@ interface SqlExecutor {
   execute(sql: string, params?: unknown[]): Promise<unknown>;
 }
 
-interface SqlQueryExecutor extends SqlExecutor {
+interface SqlQueryExecutor extends SqlExecutor, Pick<TransactionContext, 'query'> {
   queryOne<T>(sql: string, params?: unknown[]): Promise<T | null>;
 }
 
@@ -2229,7 +2242,8 @@ export class IdentityMappingControlPlaneRepository {
     private readonly logEnvironment?: Env,
     private readonly corePublicationSource?:
       | CoreLogPublicationSource
-      | (() => CoreLogPublicationSource)
+      | (() => CoreLogPublicationSource),
+    private readonly adminAuth: AdminAuthContext | null = null
   ) {}
 
   private requireLogEnvironment(): Env {
@@ -2270,6 +2284,8 @@ export class IdentityMappingControlPlaneRepository {
     return {
       statements,
       executor: {
+        query: <T>(sql: string, params?: unknown[]) =>
+          this.requireCore().query<T>(sql, params, { consistencyClass: 'primary_required' }),
         queryOne: <T>(sql: string, params?: unknown[]) =>
           this.requireCore().queryOne<T>(sql, params, { consistencyClass: 'primary_required' }),
         execute: async (sql, params) => {
@@ -6563,25 +6579,50 @@ export class IdentityMappingControlPlaneRepository {
     if (input.metadata) {
       assertNoSensitiveMetadata(input.metadata, 'metadata');
     }
-    return this.requireCore().transaction((tx) => this.upsertGroup(tenantId, input, tx));
+    const group = await this.requireCore().transaction((tx) =>
+      this.upsertGroup(tenantId, input, tx)
+    );
+    // The upsert may have rewritten an existing group's parent (on D1 the statements of this
+    // transaction run one by one, so even a concurrent change can have been overwritten): the
+    // tenant's cached claims are invalidated after every committed group write.
+    await this.bumpTenantClaims(tenantId);
+    return group;
   }
 
   private async upsertGroup(
     tenantId: string,
     input: CreateGroupRequest,
-    executor: SqlQueryExecutor
+    executor: TransactionContext
   ) {
     const now = this.now();
     const id = createId('group');
-    await executor.execute(
+    await lockGroupCatalog(executor, tenantId, this.requireCore().getType());
+    const current = await executor.queryOne<{ id: string; parent_group_id: string | null }>(
+      'SELECT id, parent_group_id FROM "groups" WHERE tenant_id=? AND group_key=?',
+      [tenantId, input.groupKey]
+    );
+    const parentChanged = (current?.parent_group_id ?? null) !== (input.parentGroupId ?? null);
+    if (parentChanged) {
+      if (current) await this.requireGroupDelegation(tenantId, current.id, executor);
+      if (input.parentGroupId)
+        await this.requireGroupDelegation(tenantId, input.parentGroupId, executor);
+    }
+    const parent = groupParentCondition(tenantId, input.parentGroupId ?? null, {
+      key: input.groupKey,
+    });
+    const saved = await executor.execute(
       `INSERT INTO "groups" (
         id, tenant_id, group_key, display_name, description, parent_group_id,
         lifecycle_state, metadata_json, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE ${parent.sql}
       ON CONFLICT(tenant_id, group_key) DO UPDATE SET
         display_name = excluded.display_name,
         description = excluded.description,
-        parent_group_id = excluded.parent_group_id,
+        ${
+          // Only a request that passed the delegation check above may move the group; an
+          // "unchanged" parent is left alone so a concurrent detach is not written back.
+          parentChanged ? 'parent_group_id = excluded.parent_group_id,' : ''
+        }
         metadata_json = excluded.metadata_json,
         updated_at = excluded.updated_at`,
       [
@@ -6595,8 +6636,10 @@ export class IdentityMappingControlPlaneRepository {
         input.metadata ? stableJson(input.metadata) : null,
         now,
         now,
+        ...parent.params,
       ]
     );
+    if (!saved.rowsAffected) throw badRequest('invalid parent group');
     const group = await executor.queryOne<{
       id: string;
       group_key: string;
@@ -6613,12 +6656,41 @@ export class IdentityMappingControlPlaneRepository {
     };
   }
 
+  private async requireGroupDelegation(
+    tenantId: string,
+    groupId: string,
+    executor: Pick<TransactionContext, 'query'> = this.requireCore()
+  ) {
+    if (!(await canManageGroupMembership(executor, tenantId, this.adminAuth, groupId)))
+      throw forbidden('role delegation denied');
+  }
+
+  /** Cached RBAC claims of the subject are left behind by a membership change. */
+  private async invalidateSubjectClaims(tenantId: string, subjectId: string) {
+    const cache = this.logEnvironment?.REBAC_CACHE;
+    if (cache) await invalidateSubjectRBACCache(cache, tenantId, subjectId);
+  }
+
+  /** Cached RBAC claims of every member change when a group's place in the tree changes. */
+  private async bumpTenantClaims(tenantId: string) {
+    const cache = this.logEnvironment?.REBAC_CACHE;
+    if (cache) await bumpTenantRBACCacheVersion(cache, tenantId);
+  }
+
   async createGroupMembership(tenantId: string, input: CreateGroupMembershipRequest) {
     validateRequiredString(input.groupId, 'groupId');
     if (!input.subjectId && !input.accountId) {
       throw badRequest('subjectId or accountId is required');
     }
-    return this.requireCore().transaction((tx) => this.upsertGroupMembership(tenantId, input, tx));
+    // The admin adding a member must be allowed to delegate every role the group carries. A
+    // provisioning rule writes memberships without an admin; its author passed this check when
+    // the rule was created (createProvisioningAssignmentRule).
+    const membership = await this.requireCore().transaction(async (tx) => {
+      await this.requireGroupDelegation(tenantId, input.groupId, tx);
+      return this.upsertGroupMembership(tenantId, input, tx);
+    });
+    await this.invalidateSubjectClaims(tenantId, membership.subjectId);
+    return membership;
   }
 
   private async upsertGroupMembership(
@@ -6626,54 +6698,46 @@ export class IdentityMappingControlPlaneRepository {
     input: CreateGroupMembershipRequest,
     executor: SqlQueryExecutor
   ) {
-    const now = this.now();
+    const now = Math.floor(this.now() / 1000);
     const id = createId('group_membership');
+    const group = await executor.queryOne<{ id: string }>(
+      'SELECT id FROM "groups" WHERE tenant_id=? AND id=?',
+      [tenantId, input.groupId]
+    );
+    if (!group) throw notFound('group not found');
+    const subjectId =
+      input.subjectId ??
+      (
+        await executor.queryOne<{ legacy_user_id: string | null }>(
+          `SELECT legacy_user_id FROM identity_accounts WHERE tenant_id=? AND (id=? OR legacy_user_id=?)
+           ORDER BY CASE WHEN id=? THEN 0 ELSE 1 END LIMIT 1`,
+          [tenantId, input.accountId, input.accountId, input.accountId]
+        )
+      )?.legacy_user_id;
+    if (subjectId && this.adminAuth?.userId === subjectId)
+      throw forbidden('an administrator cannot add themself to a group');
+    if (!subjectId) throw badRequest('account has no routable subject');
+    const sourceId = input.assignmentSource ?? 'manual';
+    const separator = sourceId.indexOf(':');
+    const source = separator < 0 ? sourceId : sourceId.slice(0, separator);
+    const sourceRef = input.sourceRef ?? (separator < 0 ? '' : sourceId.slice(separator + 1));
+    if (!['manual', 'scim', 'rule', 'dynamic', 'invitation'].includes(source))
+      throw badRequest('invalid membership source');
     const existing = await executor.queryOne<{ id: string }>(
-      `SELECT id
-         FROM group_memberships
-        WHERE tenant_id = ?
-          AND group_id = ?
-          AND subject_id IS ?
-          AND account_id IS ?
-          AND membership_type = ?
-        LIMIT 1`,
-      [
-        tenantId,
-        input.groupId,
-        input.subjectId ?? null,
-        input.accountId ?? null,
-        input.membershipType ?? 'member',
-      ]
+      `SELECT id FROM group_memberships WHERE tenant_id=? AND group_id=? AND subject_id=?
+        AND assignment_source=? AND source_ref=?`,
+      [tenantId, input.groupId, subjectId, source, sourceRef]
     );
     if (existing) {
       await executor.execute(
-        `UPDATE group_memberships
-            SET assignment_source = ?,
-                lifecycle_state = ?,
-                updated_at = ?
-          WHERE tenant_id = ? AND id = ?`,
-        [input.assignmentSource ?? 'manual', 'active', now, tenantId, existing.id]
+        `UPDATE group_memberships SET lifecycle_state='active', updated_at=? WHERE tenant_id=? AND id=?`,
+        [now, tenantId, existing.id]
       );
     } else {
       await executor.execute(
-        `INSERT INTO group_memberships (
-          id, tenant_id, group_id, subject_id, account_id, membership_type,
-          assignment_source, lifecycle_state, starts_at, expires_at, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          id,
-          tenantId,
-          input.groupId,
-          input.subjectId ?? null,
-          input.accountId ?? null,
-          input.membershipType ?? 'member',
-          input.assignmentSource ?? 'manual',
-          'active',
-          null,
-          null,
-          now,
-          now,
-        ]
+        `INSERT INTO group_memberships (id, tenant_id, group_id, subject_id, assignment_source,
+          source_ref, lifecycle_state, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [id, tenantId, input.groupId, subjectId, source, sourceRef, 'active', now, now]
       );
     }
     const assignmentId = existing?.id ?? id;
@@ -6693,7 +6757,7 @@ export class IdentityMappingControlPlaneRepository {
       id: assignmentId,
       tenantId,
       groupId: input.groupId,
-      subjectId: input.subjectId ?? null,
+      subjectId,
       accountId: input.accountId ?? null,
       lifecycleState: 'active',
     };
@@ -6809,6 +6873,7 @@ export class IdentityMappingControlPlaneRepository {
       throw badRequest('condition must be an object');
     }
     assertNoReviewPayloadRawIdentifiers(input.condition, 'condition');
+    if (input.targetType === 'group') await this.requireGroupDelegation(tenantId, input.targetId);
     return this.insertProvisioningAssignmentRule(tenantId, input, this.requireCore());
   }
 
@@ -6888,6 +6953,10 @@ export class IdentityMappingControlPlaneRepository {
       traceRef: input.dryRun ? `dry-run:${ruleId}` : `rule:${ruleId}`,
     });
     if (evaluation.matched && !input.dryRun) {
+      // The author of the rule passed this check when creating it; an admin applying it by hand
+      // must pass it too (an internal run has no admin and relies on the author's check).
+      if (rule.target_type === 'group' && this.adminAuth)
+        await this.requireGroupDelegation(tenantId, rule.target_id);
       const plan = this.corePlan();
       const assignment = await this.applyProvisioningAssignment(
         tenantId,
@@ -6914,7 +6983,12 @@ export class IdentityMappingControlPlaneRepository {
         params: [tenantId, assignment.id],
       };
       const prepared = await this.prepareCoreEvent(tenantId, event);
+      const invalidate = async () => {
+        if (rule.target_type === 'group' && 'subjectId' in assignment)
+          await this.invalidateSubjectClaims(tenantId, assignment.subjectId);
+      };
       if (prepared.state === 'committed' || prepared.state === 'published') {
+        await invalidate();
         await prepared.dispatch();
       } else {
         const statements = plan.statements.map((statement) =>
@@ -6940,6 +7014,8 @@ export class IdentityMappingControlPlaneRepository {
           ],
         };
         await this.requireCore().batch(prepared.wrapBusinessBatch(statements, predicate));
+        // After the commit and before the log dispatch, whose failure must not leave old claims.
+        await invalidate();
         await this.finishCoreEvent(prepared);
       }
     } else {
@@ -7018,6 +7094,14 @@ export class IdentityMappingControlPlaneRepository {
         [tenantId, existingEvent.id]
       );
       if (existingDecision) {
+        // The first attempt may have stopped between the commit and the cache invalidation.
+        if (existingDecision.decision === 'revoke' && input.targetType === 'group_membership') {
+          const membership = await this.requireCore().queryOne<{ subject_id: string }>(
+            'SELECT subject_id FROM group_memberships WHERE tenant_id=? AND id=?',
+            [tenantId, input.targetId]
+          );
+          if (membership) await this.invalidateSubjectClaims(tenantId, membership.subject_id);
+        }
         return {
           signalEventId: existingEvent.id,
           decision: existingDecision.decision,
@@ -7079,7 +7163,13 @@ export class IdentityMappingControlPlaneRepository {
         now,
       ]
     );
-    await this.applyLifecycleSignalDecision(tenantId, input, decision, plan.executor, now);
+    const applied = await this.applyLifecycleSignalDecision(
+      tenantId,
+      input,
+      decision,
+      plan.executor,
+      now
+    );
     await plan.executor.execute(
       `UPDATE external_lifecycle_signal_events SET processing_state=?,updated_at=? WHERE tenant_id=? AND id=?`,
       ['processed', now, tenantId, signalEventId]
@@ -7107,8 +7197,12 @@ export class IdentityMappingControlPlaneRepository {
         created_at: now,
       },
     });
-    if (prepared.state === 'committed' || prepared.state === 'published') await prepared.dispatch();
-    else {
+    if (prepared.state === 'committed' || prepared.state === 'published') {
+      // Already committed by an earlier attempt: the invalidation may still be owed.
+      if (applied.revokedSubjectId)
+        await this.invalidateSubjectClaims(tenantId, applied.revokedSubjectId);
+      await prepared.dispatch();
+    } else {
       const firstGuard = {
         where: `(${ownershipGuard.where}) AND NOT EXISTS(SELECT 1 FROM external_lifecycle_signal_events WHERE tenant_id=? AND source_type=? AND source_id=? AND dedupe_key=?)`,
         params: [...ownershipGuard.params, tenantId, input.sourceType, input.sourceId, dedupeKey],
@@ -7131,6 +7225,10 @@ export class IdentityMappingControlPlaneRepository {
           }
         )
       );
+      // After the commit (a generation moved earlier could be stamped onto pre-commit data) and
+      // before the log dispatch, whose failure must not leave the revoked roles cached.
+      if (applied.revokedSubjectId)
+        await this.invalidateSubjectClaims(tenantId, applied.revokedSubjectId);
       await this.finishCoreEvent(prepared);
     }
     return { signalEventId, decision: decision.decision, reasonCodes: decision.reasonCodes };
@@ -8748,16 +8846,37 @@ export class IdentityMappingControlPlaneRepository {
     decision: { decision: string; reasonCodes: string[] },
     executor: SqlExecutor,
     at: number
-  ) {
+  ): Promise<{ revokedSubjectId: string | null }> {
     if (decision.decision === 'suspend_account')
       throw new Error('lifecycle_signal_account_service_required');
+    let revokedSubjectId: string | null = null;
     if (decision.decision === 'revoke') {
       const table = input.targetType === 'group_membership' ? 'group_memberships' : 'entitlements';
+      if (input.targetType === 'group_membership') {
+        const membership = await this.requireCore().queryOne<{
+          subject_id: string;
+          group_id: string;
+        }>('SELECT subject_id, group_id FROM group_memberships WHERE tenant_id=? AND id=?', [
+          tenantId,
+          input.targetId,
+        ]);
+        // The row must be here: a membership this database does not hold cannot be revoked here.
+        if (!membership) throw notFound('group membership not found');
+        // An admin revoking by hand needs the delegation the membership's group requires.
+        if (this.adminAuth) await this.requireGroupDelegation(tenantId, membership.group_id);
+        revokedSubjectId = membership.subject_id;
+      }
       await executor.execute(
         `UPDATE ${table} SET lifecycle_state=?,updated_at=? WHERE tenant_id=? AND id=?`,
-        ['revoked', at, tenantId, input.targetId]
+        [
+          'revoked',
+          input.targetType === 'group_membership' ? Math.floor(at / 1000) : at,
+          tenantId,
+          input.targetId,
+        ]
       );
     }
+    return { revokedSubjectId };
   }
 
   async runIdempotent<T>(
@@ -10378,7 +10497,8 @@ export function createRepository(c: AdminContext): IdentityMappingControlPlaneRe
     coreAdapter,
     createAccountSuspensionSignalService(c, coreAdapter),
     c.env,
-    metadata ? () => coreLogPublicationSource(c.env, metadata.route) : undefined
+    metadata ? () => coreLogPublicationSource(c.env, metadata.route) : undefined,
+    getAdminAuth(c) ?? null
   );
 }
 

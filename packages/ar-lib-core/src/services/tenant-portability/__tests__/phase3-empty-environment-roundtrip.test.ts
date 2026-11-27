@@ -185,6 +185,10 @@ describe('Phase 3 empty-environment roundtrip', () => {
         VALUES('role-0-parent','tenant-a','Parent','[]',1);
         INSERT INTO roles(id,tenant_id,name,permissions_json,created_at,parent_role_id)
         VALUES('role-1-child','tenant-a','Child','[]',1,'role-0-parent');
+        INSERT INTO "groups"(id,tenant_id,group_key,display_name,created_at,updated_at)
+        VALUES('staff','tenant-a','staff','Staff',1,1);
+        INSERT INTO group_role_assignments(id,tenant_id,group_id,role_id,created_at,updated_at)
+        VALUES('staff-role','tenant-a','staff','role-1-child',1,1);
         INSERT INTO consent_statements(id,tenant_id,slug,created_at,updated_at)
         VALUES('statement-a','tenant-a','terms',1,1);
         INSERT INTO consent_statement_versions(
@@ -431,6 +435,11 @@ describe('Phase 3 empty-environment roundtrip', () => {
             }),
           });
 
+        expect(
+          targetCore
+            .prepare("SELECT group_id,role_id FROM group_role_assignments WHERE id='staff-role'")
+            .get()
+        ).toEqual({ group_id: 'staff', role_id: 'role-1-child' });
         expect(restored.size).toBe(PHASE3_SQLITE_DATASET_REGISTRATIONS.length);
         expect(targetCore.prepare("SELECT name FROM tenants WHERE id='tenant-a'").get()).toEqual({
           name: 'Tenant A',

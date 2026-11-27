@@ -92,7 +92,7 @@ describe('access token permissions', () => {
       expect.anything(),
       'user-001',
       'default',
-      { cache: (env as unknown as { REBAC_CACHE?: unknown }).REBAC_CACHE }
+      { cache: (env as unknown as { REBAC_CACHE?: unknown }).REBAC_CACHE, env }
     );
     expect(accessTokenClaims().authrim_resource_permissions).toEqual(['doc:1:read', 'doc:2:read']);
   });

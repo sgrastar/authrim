@@ -54,6 +54,11 @@ export function sqliteAdapter(
     return { success: true, rowsAffected: changes };
   };
   const adapter = {
+    async transaction<T>(fn: (tx: DatabaseAdapter) => Promise<T>) {
+      return fn(adapter);
+    },
+    isHealthy: async () => ({ healthy: true, latencyMs: 0, type: 'd1' }),
+    close: async () => db.close(),
     getType: () => 'd1' as const,
     async query(sql: string, params?: unknown[]) {
       return db.prepare(sql).all(...values(params));

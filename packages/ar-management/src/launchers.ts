@@ -1152,15 +1152,16 @@ async function resolveAccountAudience(
     ...customClaimSources,
     cache: null,
   });
-  const now = Date.now();
+  const now = Math.floor(Date.now() / 1000);
   const [user, groups, customClaims, verifiedAttributes] = await Promise.all([
     runtimeUsers.findById(userId),
     authCtx.coreAdapter.query<{ group_id: string }>(
       `SELECT group_id FROM group_memberships
-        WHERE tenant_id = ? AND (subject_id = ? OR account_id = ?) AND lifecycle_state = 'active'
+        WHERE tenant_id = ? AND subject_id = ? AND lifecycle_state = 'active'
           AND (starts_at IS NULL OR starts_at <= ?)
-          AND (expires_at IS NULL OR expires_at > ?)`,
-      [tenantId, userId, userId, now, now]
+          AND (expires_at IS NULL OR expires_at > ?)
+          AND (stale_after IS NULL OR stale_after > ?)`,
+      [tenantId, userId, now, now, now]
     ),
     customClaimResolver.resolveFieldValues(tenantId, userId, customFieldKeys),
     authCtx.coreAdapter.query<{ attribute_name: string; attribute_value: string }>(

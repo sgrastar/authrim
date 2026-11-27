@@ -113,6 +113,7 @@ function freshDatabase(family: Family) {
           '009_consent_policies_removed.sql',
           '011_saml_sp_release_consent.sql',
           '014_shared_launcher_states.sql',
+          '015_end_user_groups.sql',
         ]
       : []),
     ...(family === 'pii'

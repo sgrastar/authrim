@@ -297,7 +297,7 @@ describe('UnifiedCheckService', () => {
       expect(result.reason).toContain('evaluation_error');
     });
 
-    it('should use cache when available', async () => {
+    it('ignores a previously cached allow', async () => {
       const cachedResponse = {
         allowed: true,
         resolved_via: ['role'],
@@ -314,12 +314,12 @@ describe('UnifiedCheckService', () => {
 
       const result = await service.check(request);
 
-      expect(result.allowed).toBe(true);
-      expect(result.resolved_via).toEqual(['role']);
-      expect(mockD1.prepare).not.toHaveBeenCalled(); // DB should not be queried
+      expect(result.allowed).toBe(false);
+      expect(result.cache_ttl).toBe(0);
+      expect(mockD1.prepare).toHaveBeenCalled();
     });
 
-    it('should cache result after evaluation', async () => {
+    it('does not share decisions after evaluation', async () => {
       const request: CheckApiRequest = {
         subject_id: 'user_123',
         permission: 'documents:read',
@@ -328,7 +328,7 @@ describe('UnifiedCheckService', () => {
 
       await service.check(request);
 
-      expect(mockKV.put).toHaveBeenCalled();
+      expect(mockKV.put).not.toHaveBeenCalled();
     });
 
     it('does not let resource context poison the cache for a later request', async () => {
@@ -793,10 +793,10 @@ describe('UnifiedCheckService', () => {
       expect(cache.get).not.toHaveBeenCalled();
       expect(cache.put).not.toHaveBeenCalled();
 
-      // Without tenant rules, results are cached as before.
+      // Decisions without tenant rules use the same authoritative read.
       await withPolicy({}).check(request);
-      expect(cache.get).toHaveBeenCalled();
-      expect(cache.put).toHaveBeenCalled();
+      expect(cache.get).not.toHaveBeenCalled();
+      expect(cache.put).not.toHaveBeenCalled();
     });
 
     it('resolves the settings of each check tenant once', async () => {

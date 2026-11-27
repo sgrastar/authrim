@@ -93,6 +93,14 @@ describe('Phase 8 SQL references', () => {
       restoreHold: restoreHold(),
     });
     expect(policies).toHaveLength(PHASE8_CUMULATIVE_SQLITE_DATASET_REGISTRATIONS.length);
+    expect(phase8SqliteRestoreDependencies('core.group_memberships')).toContain('core.groups');
+    expect(
+      inspectPhase8SqliteReferences(
+        'core.group_memberships',
+        { group_id: text('staff') },
+        { ...identity, collection: 'core.group_memberships' }
+      )
+    ).toMatchObject([{ to: { collection: 'core.groups' } }]);
     expect(
       policies.find(({ dataset }) => dataset.id === 'core.contact_points')?.restoreAfter
     ).toEqual(['core.identity_accounts', 'core.identity_subjects']);

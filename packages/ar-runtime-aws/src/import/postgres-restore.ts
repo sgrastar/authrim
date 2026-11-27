@@ -184,7 +184,7 @@ function invalid(): never {
   throw new Error('aws_postgres_restore_invalid');
 }
 
-function parentFirstRoles(
+function parentFirstRows(
   rows: readonly string[],
   spec: PostgresRestoreTableContract,
   tenantId: string
@@ -197,7 +197,7 @@ function parentFirstRoles(
     sourceRow(json, spec, tenantId);
     const row = JSON.parse(json) as PortableSqliteRow;
     const id = row.id[1];
-    const parent = row.parent_role_id[1];
+    const parent = row[spec.table === 'groups' ? 'parent_group_id' : 'parent_role_id'][1];
     if (!id || byId.has(id)) invalid();
     byId.set(id, { json, parent });
   }
@@ -250,6 +250,9 @@ function sourceRow(rowJson: string, spec: PostgresRestoreTableContract, tenantId
   } catch {
     return invalid();
   }
+  // Backups from before grant tiers use the same default as an in-place upgrade.
+  if (spec.table === 'roles' && row && typeof row === 'object' && !('grant_tier' in row))
+    row = { ...row, grant_tier: ['integer', '1'] };
   if (
     !row ||
     Array.isArray(row) ||
@@ -570,19 +573,19 @@ export async function restoreVerifiedPostgresFamily(
         if (JSON.stringify(observed) !== JSON.stringify(decoded.normalized)) invalid();
         expected.set(decoded.key, decoded.normalized);
       };
-      const roleRows: string[] = [];
+      const hierarchyRows: string[] = [];
       for (let count = 0; source && count < source.rows; count++) {
         const next = await source.readNextRow(cursor);
         if (!next || next.nextCursor === cursor) invalid();
         cursor = next.nextCursor;
-        if (spec.datasetId === 'core.roles') {
+        if (spec.table === 'roles' || spec.table === 'groups') {
           recordSourceRow(next.rowJson);
-          roleRows.push(next.rowJson);
+          hierarchyRows.push(next.rowJson);
         } else await insertRow(next.rowJson, false);
       }
       if (source && (await source.readNextRow(cursor)) !== null) invalid();
-      if (roleRows.length)
-        for (const role of parentFirstRoles(roleRows, spec, tenantId))
+      if (hierarchyRows.length)
+        for (const role of parentFirstRows(hierarchyRows, spec, tenantId))
           await insertRow(role, false, true);
       for (const row of supplements) {
         let rowJson: string;

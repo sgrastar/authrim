@@ -231,7 +231,13 @@ function inspectMappedAdminReferences(
     : [];
 }
 
-/** Validate physical foreign keys before any restore target is mutated. */
+// A membership's group lives in metadata, often a different physical database.
+const phase8RowReferences = [
+  ...PHASE8_SQLITE_FOREIGN_KEY_RULES,
+  { from: 'core.group_memberships', columns: ['group_id'], to: 'core.groups' },
+];
+
+/** Validate logical references and physical foreign keys before any restore target is mutated. */
 export function inspectPhase8SqliteReferences(
   datasetId: string,
   row: PortableSqliteRow,
@@ -239,15 +245,15 @@ export function inspectPhase8SqliteReferences(
 ): readonly TenantPortableDependency[] {
   if (phase5Ids.has(datasetId)) return inspectPhase5SqliteReferences(datasetId, row, identity);
   if (!phase8Ids.has(datasetId)) invalid();
-  const physical = PHASE8_SQLITE_FOREIGN_KEY_RULES.filter(({ from }) => from === datasetId).flatMap(
-    ({ columns, to }) => {
+  const physical = phase8RowReferences
+    .filter(({ from }) => from === datasetId)
+    .flatMap(({ columns, to }) => {
       const values = columns.map((column) => field(row, column));
       // SQLite does not enforce a composite FK when any child column is NULL.
       if (values.some(([type, value]) => type === 'null' && value === null)) return [];
       if (values.some(([type, value]) => type === 'null' || value === null)) invalid();
       return [reference(identity, to, values)];
-    }
-  );
+    });
   const mapped = inspectMappedAdminReferences(datasetId, row, identity);
   return [...physical, ...mapped].filter(
     (dependency, index, values) =>
@@ -265,9 +271,9 @@ export function phase8SqliteRestoreDependencies(datasetId: string): readonly str
   if (!phase8Ids.has(datasetId)) invalid();
   return [
     ...new Set(
-      PHASE8_SQLITE_FOREIGN_KEY_RULES.filter(
-        ({ from, to }) => from === datasetId && to !== from
-      ).map(({ to }) => to)
+      phase8RowReferences
+        .filter(({ from, to }) => from === datasetId && to !== from)
+        .map(({ to }) => to)
     ),
   ].sort();
 }

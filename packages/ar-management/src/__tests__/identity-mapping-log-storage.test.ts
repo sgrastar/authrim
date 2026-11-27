@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { logProducerFixture } from '../../../../test/helpers/log-iceberg-producer-fixture.mjs';
 import { IdentityMappingControlPlaneRepository } from '../identity-mapping-control-plane';
@@ -10,6 +11,12 @@ afterEach(() => {
 async function fixture(mode: 'scheduled' | 'pipeline') {
   const f = await logProducerFixture(mode, { separateAdmin: true });
   close.push(f.close);
+  f.db.exec(
+    readFileSync(
+      new URL('../../../../migrations/core/d1/015_end_user_groups.sql', import.meta.url),
+      'utf8'
+    )
+  );
   f.db
     .exec(`INSERT INTO identity_subjects(id,tenant_id,subject_type,lifecycle_state,created_at,updated_at) VALUES('subject','tenant-a','person','active',1,1);
  INSERT INTO "groups"(id,tenant_id,group_key,display_name,lifecycle_state,created_at,updated_at) VALUES('group','tenant-a','group','Group','active',1,1);`);
@@ -31,6 +38,24 @@ async function fixture(mode: 'scheduled' | 'pipeline') {
 }
 const input = { eventType: 'jit', subjectId: 'subject' } as const;
 describe.each(['scheduled', 'pipeline'] as const)('Mapping producer storage (%s)', (mode) => {
+  it('resolves an account-only provisioning input to the routable subject and keeps its rule ID', async () => {
+    const f = await fixture(mode);
+    f.db
+      .exec(`INSERT INTO identity_accounts(id,tenant_id,account_type,legacy_user_id,created_at,updated_at)
+      VALUES('account:one','tenant-a','user','routable-user',1,1)`);
+    await f.repo.evaluateProvisioningAssignmentRule('tenant-a', f.rule.id, {
+      eventType: 'jit',
+      accountId: 'account:one',
+    });
+    expect(
+      f.db.prepare('SELECT subject_id,assignment_source,source_ref FROM group_memberships').get()
+    ).toEqual({
+      subject_id: 'routable-user',
+      assignment_source: 'rule',
+      source_ref: f.rule.id,
+    });
+  });
+
   it('commits assignment and ownership in tenant Core with only its browsing log in Admin', async () => {
     const f = await fixture(mode);
     await expect(

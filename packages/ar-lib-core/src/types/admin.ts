@@ -137,6 +137,8 @@ export interface AdminAuthContext {
   permissions?: string[];
   /** Highest hierarchy level among assigned roles */
   hierarchyLevel?: number;
+  /** Highest end-user role tier this administrator may delegate. */
+  maxGrantTier?: number;
   /** Whether MFA has been verified for this session */
   mfaVerified?: boolean;
   /** Most recent primary/MFA authentication instant in epoch milliseconds. */

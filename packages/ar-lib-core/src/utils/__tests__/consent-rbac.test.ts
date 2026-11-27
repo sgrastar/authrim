@@ -43,6 +43,8 @@ function createMockDB(queryResults: Record<string, unknown>) {
         result = queryResults['organizations'] ?? { results: [] };
       } else if (sql.includes('FROM subject_org_membership')) {
         result = queryResults['memberships'] ?? { results: [] };
+      } else if (sql.includes('FROM group_memberships')) {
+        result = { results: [] };
       } else if (sql.includes('FROM role_assignments')) {
         result = queryResults['roleAssignments'] ?? { results: [] };
       } else if (sql.includes('FROM roles')) {

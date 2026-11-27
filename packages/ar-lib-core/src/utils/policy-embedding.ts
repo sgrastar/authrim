@@ -20,6 +20,8 @@
 
 import type { KVNamespace } from '@cloudflare/workers-types';
 import type { ScopeType } from '../types/rbac';
+import type { Env } from '../types/env';
+import { cachedRoleData } from './rbac-cache';
 import { createLogger } from './logger';
 import {
   resolveEffectiveSettingsWithSources,
@@ -84,6 +86,8 @@ export interface PolicyEmbeddingOptions {
   cache?: KVNamespace;
   /** Cache TTL in seconds (default: 300 = 5 minutes) */
   cacheTTL?: number;
+  /** Environment bindings: the configured RBAC cache version applies to this cache too */
+  env?: Env;
   /** Tenant ID for multi-tenant isolation */
   tenantId: string;
   /**
@@ -253,30 +257,16 @@ export async function evaluatePermissionEmbeddingForScope(
     return { permissions: [], scopedPermissions: [] };
   }
 
-  // Try cache first
+  // Cached under the RBAC generations, so a revoked membership or group role is not re-added here.
   const tenantId = options.tenantId;
-  const cacheKey = options.cache ? `${PERMISSION_CACHE_PREFIX}${tenantId}:${subjectId}` : null;
-  let userGrants: UserPermissionGrant[];
-
-  if (cacheKey && options.cache) {
-    const cached = await options.cache.get(cacheKey);
-    if (cached) {
-      try {
-        userGrants = JSON.parse(cached) as UserPermissionGrant[];
-      } catch {
-        userGrants = await getUserPermissionGrantsFromRoles(dbs, subjectId, tenantId);
-      }
-    } else {
-      userGrants = await getUserPermissionGrantsFromRoles(dbs, subjectId, tenantId);
-      // Cache for next time
-      const ttl = options.cacheTTL ?? 300;
-      await options.cache.put(cacheKey, JSON.stringify(userGrants), {
-        expirationTtl: ttl,
-      });
-    }
-  } else {
-    userGrants = await getUserPermissionGrantsFromRoles(dbs, subjectId, tenantId);
-  }
+  const userGrants = await cachedRoleData(
+    dbs,
+    tenantId,
+    subjectId,
+    `${PERMISSION_CACHE_PREFIX}${tenantId}:${subjectId}`,
+    { cache: options.cache, env: options.env, cacheTTL: options.cacheTTL ?? 300 },
+    () => getUserPermissionGrantsFromRoles(dbs, subjectId, tenantId)
+  );
 
   // Filter requested scopes to only those the user has permission for
   const grantedPermissions: string[] = [];
@@ -300,7 +290,12 @@ export async function evaluatePermissionEmbeddingForScope(
 
       // Only an organisation or resource assignment with its target is a scoped grant; any
       // other (an unknown scope, or one without its target) grants nothing.
-      if ((grant.scopeType !== 'org' && grant.scopeType !== 'resource') || !grant.scopeTarget) {
+      if (
+        (grant.scopeType !== 'org' &&
+          grant.scopeType !== 'resource' &&
+          grant.scopeType !== 'group') ||
+        !grant.scopeTarget
+      ) {
         continue;
       }
       const scopedPermission: ScopedPolicyPermission = {

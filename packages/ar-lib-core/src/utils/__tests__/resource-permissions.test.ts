@@ -300,7 +300,15 @@ describe('Resource Permissions Utilities', () => {
     });
 
     it('should use cache when available', async () => {
-      mockKV.get.mockResolvedValue(JSON.stringify(['cached:perm:read']));
+      mockKV.get.mockImplementation(async (key: string) =>
+        key.includes('-version:')
+          ? null
+          : JSON.stringify({
+              generation: '1:0:0',
+              validUntil: Math.floor(Date.now() / 1000) + 60,
+              claims: ['cached:perm:read'],
+            })
+      );
       const dbs = createMockDatabases({});
 
       const result = await evaluateIdLevelPermissions(dbs, 'user_123', 'default', {
@@ -322,10 +330,13 @@ describe('Resource Permissions Utilities', () => {
         cache: mockKV as unknown as KVNamespace,
       });
 
-      expect(mockKV.put).toHaveBeenCalledWith(
-        'policy:idperms:v2:default:user_123',
-        '["documents:doc_123:read"]',
-        { expirationTtl: 300 }
+      // The write is fire-and-forget: it lands after the validity boundary has been read.
+      await vi.waitFor(() =>
+        expect(mockKV.put).toHaveBeenCalledWith(
+          'policy:idperms:v2:default:user_123',
+          expect.stringContaining('"claims":["documents:doc_123:read"]'),
+          { expirationTtl: 300 }
+        )
       );
     });
   });
