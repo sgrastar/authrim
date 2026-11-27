@@ -1034,6 +1034,14 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
   `,
     ],
     [
+      'groups',
+      'number',
+      'value',
+      `
+    groups.dynamic_freshness_seconds
+  `,
+    ],
+    [
       'oauth',
       'enum',
       'value',

@@ -8,6 +8,8 @@ export interface Field {
   schemaId?: string;
   schemaVersion?: number;
   pii?: boolean;
+  /** The person can write it themselves (registration form): never decides a role grant. */
+  selfWritable?: boolean;
 }
 export type Expression =
   | { op: 'all' | 'any'; args: Expression[] }

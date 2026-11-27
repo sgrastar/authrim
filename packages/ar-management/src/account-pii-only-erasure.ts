@@ -30,8 +30,52 @@
  *
  * No erasure marker is written: unlike a full deletion, the person may enter a profile again
  * afterwards (or bring one from an identity provider).
+ *
+ * Dynamic group memberships (`stopDynamicMembershipsForErasure`, before and after the erasure):
+ * the account stays, but a membership a service-group rule derived from an erased attribute must
+ * not keep granting. Its published `dynamic` rows are made stale at once (they stop counting in
+ * effective roles and claims) and the subject is evaluated again on the erased inputs; until a
+ * fresh result is published, no dynamic membership counts. Done again after the erasure, so a
+ * publication racing it (from a result still fresh before the values changed) is made stale too.
  */
-import type { DatabaseAdapter } from '@authrim/ar-lib-core';
+import type { KVNamespace } from '@cloudflare/workers-types';
+import {
+  evaluateAndPublishDynamicMemberships,
+  markDynamicMembershipsStale,
+  resolveDynamicFreshnessSeconds,
+  type DatabaseAdapter,
+  type Env,
+} from '@authrim/ar-lib-core';
+import { serviceGroupRuntime } from './dynamic-groups-runtime';
+
+export async function stopDynamicMembershipsForErasure(
+  core: DatabaseAdapter,
+  input: { tenantId: string; userId: string },
+  cache?: KVNamespace
+): Promise<void> {
+  await markDynamicMembershipsStale(core, input.tenantId, input.userId, cache);
+}
+
+/**
+ * Evaluates the subject's service groups on its erased inputs and publishes the result. Best
+ * effort: a failure leaves the rows stale (no dynamic membership), and the reconcile path evaluates
+ * the subject again later.
+ */
+export async function reevaluateDynamicMembershipsAfterErasure(
+  env: Env,
+  input: { tenantId: string; userId: string }
+): Promise<void> {
+  try {
+    const { store, reader } = await serviceGroupRuntime(env, input.tenantId, input.userId);
+    if (!reader || !(await store.catalog())) return;
+    await evaluateAndPublishDynamicMemberships(store, reader, {
+      cache: env.REBAC_CACHE,
+      freshnessSeconds: await resolveDynamicFreshnessSeconds(env, input.tenantId),
+    });
+  } catch {
+    // Left stale; retried by the service-group reconcile.
+  }
+}
 
 export type PiiOnlyErasureBlocker =
   | 'identifier_change_in_progress'

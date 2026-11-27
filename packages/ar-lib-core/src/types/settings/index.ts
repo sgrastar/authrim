@@ -46,6 +46,7 @@ export * from './tenant-discovery-ui';
 export * from './support-ops';
 export * from './self-service';
 export * from './service-site';
+export * from './groups';
 export * from './identity-mapping';
 export * from './bulk-apply';
 export * from './tenant-capabilities';

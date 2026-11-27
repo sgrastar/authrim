@@ -72,6 +72,10 @@
             {
               "path": "016_invitation_group.sql",
               "checksum": "37782607f62cd33c49e4c2a17c51f3992351e1972a079cc3dd5758c77327e500"
+            },
+            {
+              "path": "017_service_group_scim_membership_inputs.sql",
+              "checksum": "6c5ed4504c2b296ad39bd321de4f95c83bfb46c75d53bc8d00989e04a0d8651e"
             }
           ]
         },
@@ -288,6 +292,10 @@
             {
               "path": "016_invitation_group.sql",
               "checksum": "61335a1530d612bf7da6227cf7eabad700f1728e68927d96c0743d5faa24a739"
+            },
+            {
+              "path": "017_service_group_scim_membership_inputs.sql",
+              "checksum": "fb87ac29a4792935616706c2b5ec7ad3773ee3eb0cef29ff978b358f0fe8c636"
             }
           ]
         },
@@ -383,6 +391,10 @@
         {
           "path": "016_invitation_group.sql",
           "checksum": "37782607f62cd33c49e4c2a17c51f3992351e1972a079cc3dd5758c77327e500"
+        },
+        {
+          "path": "017_service_group_scim_membership_inputs.sql",
+          "checksum": "6c5ed4504c2b296ad39bd321de4f95c83bfb46c75d53bc8d00989e04a0d8651e"
         }
       ]
     },
@@ -625,6 +637,10 @@
         {
           "path": "016_invitation_group.sql",
           "checksum": "61335a1530d612bf7da6227cf7eabad700f1728e68927d96c0743d5faa24a739"
+        },
+        {
+          "path": "017_service_group_scim_membership_inputs.sql",
+          "checksum": "fb87ac29a4792935616706c2b5ec7ad3773ee3eb0cef29ff978b358f0fe8c636"
         }
       ]
     },

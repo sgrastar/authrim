@@ -64,6 +64,7 @@ export function makeDb(over: Partial<FakeState> = {}) {
     ...over,
   };
   const db = {
+    getType: () => 'd1',
     queryOne: vi.fn(async (sql: string, params?: unknown[], options?: unknown) => {
       state.calls.push({ kind: 'queryOne', sql, params, options });
       if (sql.startsWith('SELECT revision, plan_json')) return state.catalogRow;
@@ -84,9 +85,14 @@ export function makeDb(over: Partial<FakeState> = {}) {
       }
       return { rowsAffected: 1 };
     }),
-    batch: vi.fn(async (statements: Array<{ params?: unknown[] }>) => {
+    batch: vi.fn(async (statements: Array<{ sql?: string; params?: unknown[] }>) => {
       state.calls.push({ kind: 'batch', statements });
-      const saveBatch = statements.length === 3 && Array.isArray(statements[1].params);
+      // The catalog save: its second statement is the catalog update (the canonical group rows
+      // follow the first three).
+      const saveBatch =
+        statements.length >= 3 &&
+        Array.isArray(statements[1].params) &&
+        !!statements[1].sql?.startsWith('UPDATE service_group_catalog SET revision');
       if (saveBatch) state.lastToken = String(statements[1].params?.[3]);
       return statements.map(() => ({ rowsAffected: state.batchRows }));
     }),
