@@ -4,6 +4,7 @@ import {
   createGroup,
   assignGroupRole,
   groupsCarryingRoles,
+  TENANT_POLICY_RULES_CACHE_TTL_MS,
   type AdminAuthContext,
 } from '@authrim/ar-lib-core';
 import {
@@ -184,6 +185,118 @@ it('treats a resource permission granted to a group or its ancestor as authoriza
     expect([...(await groupsCarryingRoles(adapter, tenant, [child, root]))].sort()).toEqual(
       [child, root].sort()
     );
+  } finally {
+    db.close();
+  }
+});
+
+it('treats a group named only by an enabled policy rule as carrying authorization', async () => {
+  const { db, adapter } = openCoreStore('test');
+  try {
+    const tenant = 'test';
+    const root = await createGroup(adapter, tenant, { groupKey: 'root', displayName: 'Root' });
+    const child = await createGroup(adapter, tenant, {
+      groupKey: 'child',
+      displayName: 'Child',
+      parentGroupId: root,
+    });
+    const settingsOnly = {
+      maxGrantTier: 3,
+      permissions: ['admin:settings:write'],
+    } as AdminAuthContext;
+    const roleWriter = { maxGrantTier: 1, permissions: ['admin:roles:write'] } as AdminAuthContext;
+    const stores = { metadata: adapter, account: adapter };
+    expect(await canManageGroupMembership(adapter, tenant, settingsOnly, child)).toBe(true);
+    // A deny on non-members: removing a member changes what the rule decides as much as adding.
+    db.prepare(
+      `INSERT INTO policy_rules (id, tenant_id, name, effect, conditions, enabled, created_at,
+         updated_at) VALUES ('rule', 'test', 'Outsiders', 'deny', ?, 1, 0, 0)`
+    ).run(JSON.stringify([{ type: 'not_in_any_group', params: { group_ids: [root] } }]));
+    // Named on the parent: membership of the child counts as membership of the parent.
+    expect(await canManageGroupMembership(adapter, tenant, settingsOnly, root)).toBe(false);
+    expect(await canManageGroupMembership(adapter, tenant, settingsOnly, child)).toBe(false);
+    await expect(
+      adminUpsertGroupMembership(settingsOnly, stores, tenant, 'subject', {
+        groupId: child,
+        source: 'manual',
+      })
+    ).rejects.toThrow('role_delegation_denied');
+    await expect(adminReparentGroup(adapter, tenant, settingsOnly, child, null)).rejects.toThrow(
+      'role_delegation_denied'
+    );
+    // Editing the rule needs the role-write permission; so does changing whom it matches.
+    expect(await canManageGroupMembership(adapter, tenant, roleWriter, child)).toBe(true);
+    // Disabled just now: the policy service may still evaluate it from its rule cache.
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    db.prepare("UPDATE policy_rules SET enabled = 0, updated_at = ? WHERE id = 'rule'").run(
+      nowSeconds
+    );
+    expect(await canManageGroupMembership(adapter, tenant, settingsOnly, child)).toBe(false);
+    // Disabled longer ago than that cache lives, it decides nothing.
+    db.prepare("UPDATE policy_rules SET updated_at = ? WHERE id = 'rule'").run(
+      nowSeconds - Math.ceil(TENANT_POLICY_RULES_CACHE_TTL_MS / 1000) - 1
+    );
+    expect(await canManageGroupMembership(adapter, tenant, settingsOnly, child)).toBe(true);
+  } finally {
+    db.close();
+  }
+});
+
+it('treats every group as carrying authorization while an enabled rule uses same_group', async () => {
+  const { db, adapter } = openCoreStore('test');
+  try {
+    const tenant = 'test';
+    const group = await createGroup(adapter, tenant, { groupKey: 'any', displayName: 'Any' });
+    const settingsOnly = {
+      maxGrantTier: 3,
+      permissions: ['admin:settings:write'],
+    } as AdminAuthContext;
+    expect(await canManageGroupMembership(adapter, tenant, settingsOnly, group)).toBe(true);
+    // same_group compares with the resource's groups at run time: any group may decide it.
+    db.prepare(
+      `INSERT INTO policy_rules (id, tenant_id, name, effect, conditions, enabled, created_at,
+         updated_at) VALUES ('rule', 'test', 'Same group', 'allow', ?, 1, 0, 0)`
+    ).run(JSON.stringify([{ type: 'same_group', params: {} }]));
+    expect(await canManageGroupMembership(adapter, tenant, settingsOnly, group)).toBe(false);
+    expect([...(await groupsCarryingRoles(adapter, tenant, [group]))]).toEqual([group]);
+  } finally {
+    db.close();
+  }
+});
+
+it('refuses granting a role a deny rule names to a service group or a group above one', async () => {
+  const { db, adapter } = openCoreStore('test');
+  try {
+    const tenant = 'test';
+    db.exec(
+      "INSERT INTO roles (id,name,tenant_id,grant_tier,permissions_json,created_at) VALUES('blocked','Blocked','test',1,'[]',1)"
+    );
+    const parent = await createGroup(adapter, tenant, { groupKey: 'parent', displayName: 'P' });
+    const service = await createGroup(adapter, tenant, {
+      groupKey: 'svc',
+      displayName: 'S',
+      parentGroupId: parent,
+    });
+    const other = await createGroup(adapter, tenant, { groupKey: 'other', displayName: 'O' });
+    // A catalog-owned service group (canonical.ts).
+    db.prepare(
+      `UPDATE "groups" SET kind = 'dynamic', group_key = 'dynamic:' || id WHERE id = ?`
+    ).run(service);
+    const admin = { maxGrantTier: 3, permissions: ['admin:roles:write'] } as AdminAuthContext;
+    // A deny rule on the role, saved first.
+    db.prepare(
+      `INSERT INTO policy_rules (id, tenant_id, name, effect, conditions, enabled, created_at,
+         updated_at) VALUES ('deny', 'test', 'Deny blocked', 'deny', ?, 1, 0, 0)`
+    ).run(JSON.stringify([{ type: 'has_role', params: { role: 'Blocked' } }]));
+    for (const groupId of [service, parent])
+      await expect(
+        adminAssignGroupRole(adapter, tenant, admin, { groupId, roleId: 'blocked' })
+      ).rejects.toThrow('dynamic_group_negative_condition');
+    // A group no service group decides: granted.
+    await adminAssignGroupRole(adapter, tenant, admin, { groupId: other, roleId: 'blocked' });
+    expect(db.prepare('SELECT group_id FROM group_role_assignments').all()).toEqual([
+      { group_id: other },
+    ]);
   } finally {
     db.close();
   }

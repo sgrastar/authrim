@@ -83,6 +83,10 @@
             {
               "path": "018_remove_organizations.sql",
               "checksum": "e11a61fb2d72569f77b37aefeab652b61a3aedf4f8fbe01b1d81db8ca4d351d5"
+            },
+            {
+              "path": "019_dynamic_publication_unknown_groups.sql",
+              "checksum": "a7c92dbfac01e6ce49afd5501a7769f040156aaac266f6a8c10b415478012cdc"
             }
           ]
         },
@@ -326,6 +330,10 @@
             {
               "path": "018_remove_organizations.sql",
               "checksum": "d86c9d5ff7310dd405cace45f49efcc606205863425df1212125567580eb78de"
+            },
+            {
+              "path": "019_dynamic_publication_unknown_groups.sql",
+              "checksum": "a7c92dbfac01e6ce49afd5501a7769f040156aaac266f6a8c10b415478012cdc"
             }
           ]
         },
@@ -434,6 +442,10 @@
         {
           "path": "018_remove_organizations.sql",
           "checksum": "e11a61fb2d72569f77b37aefeab652b61a3aedf4f8fbe01b1d81db8ca4d351d5"
+        },
+        {
+          "path": "019_dynamic_publication_unknown_groups.sql",
+          "checksum": "a7c92dbfac01e6ce49afd5501a7769f040156aaac266f6a8c10b415478012cdc"
         }
       ]
     },
@@ -703,6 +715,10 @@
         {
           "path": "018_remove_organizations.sql",
           "checksum": "d86c9d5ff7310dd405cace45f49efcc606205863425df1212125567580eb78de"
+        },
+        {
+          "path": "019_dynamic_publication_unknown_groups.sql",
+          "checksum": "a7c92dbfac01e6ce49afd5501a7769f040156aaac266f6a8c10b415478012cdc"
         }
       ]
     },

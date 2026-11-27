@@ -35,7 +35,7 @@ function createMockDB(queryResults: Record<string, unknown>) {
       // Determine which result to return based on SQL pattern
       let result: unknown = null;
 
-      if (sql.includes('FROM group_memberships')) {
+      if (sql.includes('FROM group_memberships') || sql.includes('FROM "groups"')) {
         result = { results: [] };
       } else if (sql.includes('FROM role_assignments')) {
         result = queryResults['roleAssignments'] ?? { results: [] };

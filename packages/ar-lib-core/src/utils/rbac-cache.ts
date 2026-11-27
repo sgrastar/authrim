@@ -23,7 +23,7 @@ const DEFAULT_RBAC_CACHE_TTL = 600; // 10 minutes in seconds (default)
 // v2: roles named by the tenant metadata database, tenant-wide permissions from tenant-wide
 // assignments only. Entries computed before are not read (they expire on their own).
 // v4: organisations removed (no authrim_org_* claims, no organisation fields in the composite entry).
-const RBAC_CACHE_PREFIX = 'rbac:v4:';
+const RBAC_CACHE_PREFIX = 'rbac:v5:';
 const DEFAULT_RBAC_CACHE_VERSION = 1; // Increment when CompositeRBACCache structure changes
 
 // In-memory cache for TTL value (avoid repeated KV reads)
@@ -258,7 +258,11 @@ export async function cachedRoleData<T>(
   tenantId: string,
   subjectId: string,
   key: string,
-  options: Partial<RBACClaimsOptions> & { cacheTTL?: number },
+  options: Partial<RBACClaimsOptions> & {
+    cacheTTL?: number;
+    /** Whether the computed payload may be stored (false: a partial answer, served once). */
+    shouldCache?: () => boolean;
+  },
   compute: (version: number) => Promise<T>
 ): Promise<T> {
   const { cache, env } = options;
@@ -294,7 +298,7 @@ export async function cachedRoleData<T>(
   }
 
   const claims = await compute(version);
-  if (!cache || generation === null) return claims;
+  if (!cache || generation === null || options.shouldCache?.() === false) return claims;
   const stamp = generation;
   const storeCacheAsync = async () => {
     try {

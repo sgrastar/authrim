@@ -30,7 +30,8 @@ const BY_CODE: Readonly<Record<string, MessageKey>> = {
 	group_scim_reference_invalid: 'grp.error.scimReference',
 	group_not_found: 'az.error.notFound',
 	role_delegation_denied: 'az.error.beyondCeiling',
-	capability_disabled: 'az.error.capability'
+	capability_disabled: 'az.error.capability',
+	dynamic_group_negative_condition: 'pol.error.dynamicNegative'
 };
 
 /** Wording of the API's descriptions, for the refusals without a code of their own. */

@@ -28,9 +28,6 @@ export interface PolicyFeatureFlags {
   /** Enable verified attributes checking from the canonical attribute repository */
   ENABLE_VERIFIED_ATTRIBUTES: boolean;
 
-  /** Enable custom policy rules (beyond default rules) */
-  ENABLE_CUSTOM_RULES: boolean;
-
   /** Enable SD-JWT (Selective Disclosure JWT) for ID Token issuance */
   ENABLE_SD_JWT: boolean;
 
@@ -47,7 +44,6 @@ export const DEFAULT_FLAGS: PolicyFeatureFlags = {
   ENABLE_REBAC: false,
   ENABLE_POLICY_LOGGING: false,
   ENABLE_VERIFIED_ATTRIBUTES: false,
-  ENABLE_CUSTOM_RULES: true,
   ENABLE_SD_JWT: false,
   ENABLE_POLICY_EMBEDDING: false,
 };
@@ -65,7 +61,6 @@ export const FLAG_NAMES = [
   'ENABLE_REBAC',
   'ENABLE_POLICY_LOGGING',
   'ENABLE_VERIFIED_ATTRIBUTES',
-  'ENABLE_CUSTOM_RULES',
   'ENABLE_SD_JWT',
   'ENABLE_POLICY_EMBEDDING',
 ] as const;
@@ -98,7 +93,6 @@ export function getFlagsFromEnv(env: Record<string, string | undefined>): Policy
       env.ENABLE_VERIFIED_ATTRIBUTES,
       DEFAULT_FLAGS.ENABLE_VERIFIED_ATTRIBUTES
     ),
-    ENABLE_CUSTOM_RULES: parseBool(env.ENABLE_CUSTOM_RULES, DEFAULT_FLAGS.ENABLE_CUSTOM_RULES),
     ENABLE_SD_JWT: parseBool(env.ENABLE_SD_JWT, DEFAULT_FLAGS.ENABLE_SD_JWT),
     ENABLE_POLICY_EMBEDDING: parseBool(
       env.ENABLE_POLICY_EMBEDDING,

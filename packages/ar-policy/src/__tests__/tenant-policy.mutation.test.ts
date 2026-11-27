@@ -25,7 +25,9 @@ function must<T>(value: T | null | undefined): T {
 
 function database(rows: unknown[] = [row]) {
   const query = vi.fn(async (_sql: string, _params?: unknown[]) => rows);
-  return { adapter: { query } as unknown as DatabaseAdapter, query };
+  // No rules version row yet (version 0).
+  const queryOne = vi.fn(async () => null);
+  return { adapter: { query, queryOne } as unknown as DatabaseAdapter, query };
 }
 
 describe('loadTenantPolicyRules', () => {
@@ -84,7 +86,7 @@ describe('loadTenantPolicyRules', () => {
       globex: [{ ...row, id: 'globex_rule' }],
     };
     const query = vi.fn(async (_sql: string, params?: unknown[]) => byTenant[String(params?.[0])]);
-    const adapter = { query } as unknown as DatabaseAdapter;
+    const adapter = { query, queryOne: vi.fn(async () => null) } as unknown as DatabaseAdapter;
 
     const acme = await loadTenantPolicyRules(adapter, 'acme');
     const globex = await loadTenantPolicyRules(adapter, 'globex');
@@ -101,7 +103,7 @@ describe('loadTenantPolicyRules', () => {
   it('returns the changed rules once the cached ones expire', async () => {
     let stored = [{ ...row, id: 'rule_v1' }];
     const query = vi.fn(async (_sql: string, _params?: unknown[]) => stored);
-    const adapter = { query } as unknown as DatabaseAdapter;
+    const adapter = { query, queryOne: vi.fn(async () => null) } as unknown as DatabaseAdapter;
 
     expect((await loadTenantPolicyRules(adapter, 'acme')).map((rule) => rule.id)).toEqual([
       'rule_v1',

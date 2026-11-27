@@ -29,8 +29,16 @@ const context = {
   timestamp: Date.now(),
 };
 
-function db(rows: unknown[]): DatabaseAdapter {
-  return { query: vi.fn(async () => rows) } as unknown as DatabaseAdapter;
+/** The tenant's rules, and its rules version (`policy_rules_version`; none: no row). */
+function db(rows: unknown[], version: { value?: number } = {}): DatabaseAdapter {
+  return {
+    query: vi.fn(async () => rows),
+    queryOne: vi.fn(async (sql: string) =>
+      sql.includes('FROM policy_rules_version') && version.value !== undefined
+        ? { version: version.value }
+        : null
+    ),
+  } as unknown as DatabaseAdapter;
 }
 
 describe('tenant custom rules', () => {
@@ -208,6 +216,27 @@ describe('tenant custom rules', () => {
     await loadTenantPolicyRules(database, 'acme');
     expect(database.query).toHaveBeenCalledTimes(1);
   });
+
+  it('reloads the cached rules once the rules version changed (any isolate saw an edit)', async () => {
+    const version: { value?: number } = {};
+    const database = db([baseRow], version);
+    await loadTenantPolicyRules(database, 'acme');
+    await loadTenantPolicyRules(database, 'acme');
+    expect(database.query).toHaveBeenCalledTimes(1);
+    // A rule change raises the version in its own batch: the next check reads the rules again.
+    version.value = 1;
+    await loadTenantPolicyRules(database, 'acme');
+    expect(database.query).toHaveBeenCalledTimes(2);
+    await loadTenantPolicyRules(database, 'acme');
+    expect(database.query).toHaveBeenCalledTimes(2);
+    expect(database.queryOne).toHaveBeenCalledWith(
+      'SELECT version FROM policy_rules_version WHERE tenant_id = ?',
+      ['acme']
+    );
+    // The version cannot be read: the check fails (no rules served on a guess).
+    vi.mocked(database.queryOne).mockRejectedValueOnce(new Error('db down'));
+    await expect(loadTenantPolicyRules(database, 'acme')).rejects.toThrow('db down');
+  });
 });
 
 describe('resolveTenantPolicy', () => {
@@ -235,7 +264,7 @@ describe('resolveTenantPolicy', () => {
     ).resolves.toMatchObject({ abac: false, rebac: true });
   });
 
-  it("uses the tenant's rules when attribute-based policy and custom rules are on", async () => {
+  it("uses the tenant's rules when attribute-based policy is on", async () => {
     const policy = await resolveTenantPolicy(
       settings({
         'feature.enable_abac': true,
@@ -248,12 +277,42 @@ describe('resolveTenantPolicy', () => {
     expect(policy).toMatchObject({ abac: true, verifiedAttributes: true, logDecisions: true });
     expect(policy.evaluator?.evaluate(context).allowed).toBe(true);
 
-    const withoutRules = await resolveTenantPolicy(
+    // feature.enable_abac alone turns the rules on: a value stored under the removed
+    // feature.enable_custom_rules is ignored.
+    clearTenantPolicyRulesCache();
+    const withStaleSwitch = await resolveTenantPolicy(
       settings({ 'feature.enable_abac': true, 'feature.enable_custom_rules': false }),
       db([baseRow]),
       'acme'
     );
+    expect(withStaleSwitch.evaluator).toBeDefined();
+
+    const withoutRules = await resolveTenantPolicy(
+      settings({ 'feature.enable_abac': false }),
+      db([baseRow]),
+      'acme'
+    );
     expect(withoutRules.evaluator).toBeUndefined();
+  });
+
+  it("evaluates group conditions against the subject's groups, and says the rules read them", async () => {
+    const policy = await resolveTenantPolicy(
+      settings({ 'feature.enable_abac': true }),
+      db([
+        {
+          ...baseRow,
+          id: 'rule_staff',
+          conditions: JSON.stringify([{ type: 'in_group', params: { group_id: 'grp_staff' } }]),
+        },
+      ]),
+      'acme'
+    );
+    expect(policy.evaluator?.usesSubjectGroups).toBe(true);
+    expect(
+      policy.evaluator?.evaluate({ ...context, subjectGroupIds: ['grp_staff'] })
+    ).toMatchObject({ allowed: true, decidedBy: 'rule_staff' });
+    expect(policy.evaluator?.evaluate({ ...context, subjectGroupIds: [] }).allowed).toBe(false);
+    expect(policy.evaluator?.evaluate(context).allowed).toBe(false);
   });
 
   it('grants nothing from the rules while one of them cannot be evaluated', async () => {

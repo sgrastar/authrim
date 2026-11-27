@@ -20,3 +20,15 @@ export function duplicateIndexes(values: readonly string[]): Set<number> {
 	});
 	return repeated;
 }
+
+/** Indexes of entries equal, character for character, to an earlier one; empty ones never count. */
+export function exactDuplicateIndexes(values: readonly string[]): Set<number> {
+	const seen = new Set<string>();
+	const repeated = new Set<number>();
+	values.forEach((value, index) => {
+		if (value === '') return;
+		if (seen.has(value)) repeated.add(index);
+		seen.add(value);
+	});
+	return repeated;
+}

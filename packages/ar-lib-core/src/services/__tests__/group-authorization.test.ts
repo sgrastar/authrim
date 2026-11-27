@@ -14,10 +14,18 @@ import {
   revokeGroupMembership,
   revokeManualGroupMemberships,
   upsertGroupMembership,
+  clearChangedServiceGroupsCache,
 } from '../group-membership';
 import { assignGroupRole, removeGroupRole } from '../group-role-assignments';
 import {
+  groupReferencedByPolicyRules,
+  groupsCarryingRoles,
+  policyConditionGroupIds,
+  serviceGroupDecidedGroups,
+} from '../dynamic-groups/role-guard';
+import {
   resolveSubjectRoles,
+  resolveSubjectRolesAndGroups,
   roleAssignmentHolds,
   resolveEffectiveRoleAssignments,
 } from '../tenant-rbac';
@@ -333,12 +341,257 @@ describe('end-user group authorization across two databases', () => {
     expect(await effective(now)).toEqual(new Set([leaf, root]));
   });
 
+  /** A plan of service groups (custom.team = value), as the store saves it. */
+  const serviceGroup = (id: string, value: string, extra: Record<string, unknown> = {}) => ({
+    id,
+    tenantId: tenant,
+    key: id,
+    displayName: id,
+    description: '',
+    enabled: true,
+    condition: { op: 'attribute', field: 'custom.team', compare: 'eq', value },
+    ...extra,
+  });
+  const planJson = (groups: unknown[]) =>
+    JSON.stringify({
+      tenantId: tenant,
+      groups,
+      fields: { 'custom.team': { type: 'string' } },
+      nodes: {},
+      order: [],
+      roots: {},
+      attributes: {},
+      dependents: {},
+      dependencies: {},
+    });
+  /** Service groups `ids` as canonical groups (kind dynamic) and a catalog of them. */
+  const dynamicGroups = async (ids: string[], revision: number) => {
+    const created: Record<string, string> = {};
+    for (const id of ids) {
+      created[id] = await create(id);
+      // A catalog-owned canonical group (canonical.ts): kind dynamic, key `dynamic:<id>`.
+      meta.db
+        .prepare(`UPDATE "groups" SET kind = 'dynamic', group_key = 'dynamic:' || id WHERE id = ?`)
+        .run(created[id]);
+    }
+    const plan = planJson(ids.map((id) => serviceGroup(created[id], 'x')));
+    meta.db
+      .prepare(
+        `INSERT INTO service_group_revisions (tenant_id, revision, plan_json, actor_id, created_at)
+         VALUES ('tenant-a', ?, ?, 'actor', 1)`
+      )
+      .run(revision, plan);
+    meta.db
+      .prepare(
+        `INSERT INTO service_group_catalog (tenant_id, revision, plan_json, updated_at, write_token)
+         VALUES ('tenant-a', ?, ?, 1, '')`
+      )
+      .run(revision, plan);
+    return created;
+  };
+  const dynamicRow = (subject: string, groupId: string, ref: string, staleAfter = now + 3600) =>
+    account.db
+      .prepare(
+        `INSERT INTO group_memberships (id, tenant_id, group_id, subject_id, assignment_source,
+           source_ref, stale_after, created_at, updated_at)
+         VALUES (?, 'tenant-a', ?, ?, 'dynamic', ?, ?, 1, 1)`
+      )
+      .run(`d-${subject}-${groupId}`, groupId, subject, ref, staleAfter);
+  const record = (subject: string, ref: string) =>
+    account.db
+      .prepare(
+        `INSERT INTO dynamic_membership_publications (tenant_id, subject_id, generation,
+           published_at, unknown_groups_json) VALUES ('tenant-a', ?, ?, 1, '[]')`
+      )
+      .run(subject, ref);
+  const state = async (subject: string) => {
+    const groups = await resolveSubjectGroups(stores(), tenant, subject, now);
+    return {
+      ids: [...groups.effectiveGroupIds].sort(),
+      unknown: [...groups.unknownGroupIds].sort(),
+    };
+  };
+  const saveCatalog = (revision: number, groups: unknown[]) =>
+    meta.db
+      .prepare(
+        "UPDATE service_group_catalog SET revision = ?, plan_json = ? WHERE tenant_id = 'tenant-a'"
+      )
+      .run(revision, planJson(groups));
+
+  it('leaves the service groups unknown for a subject never evaluated, other memberships known', async () => {
+    clearChangedServiceGroupsCache();
+    const manual = await create('manual');
+    await join(manual);
+    const { A, B } = await dynamicGroups(['A', 'B'], 3);
+    // No publication on record (a new user): every enabled service group is unknown.
+    await expect(state(user)).resolves.toEqual({ ids: [manual], unknown: [A, B].sort() });
+    // A row of another generation than the record: the same.
+    record(user, '0000000000000002:3');
+    dynamicRow(user, A, '0000000000000001:3');
+    await expect(state(user)).resolves.toEqual({ ids: [manual], unknown: [A, B].sort() });
+    // Rows of the record: members of A, known not to be in B.
+    account.db.exec("DELETE FROM group_memberships WHERE assignment_source = 'dynamic'");
+    dynamicRow(user, A, '0000000000000002:3');
+    await expect(state(user)).resolves.toEqual({ ids: [A, manual].sort(), unknown: [] });
+    await expect(resolveSubjectRolesAndGroups(stores(), tenant, user, now)).resolves.toMatchObject({
+      rolesComplete: true,
+      unknownGroupIds: [],
+    });
+    // The current catalog cannot be read: the service groups are unknown, the manual one is not.
+    const queryOne = meta.adapter.queryOne.bind(meta.adapter);
+    vi.spyOn(meta.adapter, 'queryOne').mockImplementation((sql: string, params?: unknown[]) =>
+      sql.includes('service_group_catalog')
+        ? Promise.reject(new Error('metadata unavailable'))
+        : queryOne(sql, params)
+    );
+    await expect(state(user)).resolves.toEqual({ ids: [manual], unknown: [A, B].sort() });
+  });
+
+  it('makes only the groups whose rule changed since the publication unknown', async () => {
+    clearChangedServiceGroupsCache();
+    const { A, B } = await dynamicGroups(['A', 'B'], 3);
+    const other = 'user-2';
+    const outsider = 'user-3';
+    // user: rows in A and B; other: B only; outsider: a record and no row (in neither).
+    for (const id of [A, B]) dynamicRow(user, id, '0000000000000001:3');
+    dynamicRow(other, B, '0000000000000001:3');
+    for (const subject of [user, other, outsider]) record(subject, '0000000000000001:3');
+
+    // A rename only (revision 4): every membership kept.
+    saveCatalog(4, [serviceGroup(A, 'x', { displayName: 'Renamed' }), serviceGroup(B, 'x')]);
+    await expect(state(user)).resolves.toEqual({ ids: [A, B].sort(), unknown: [] });
+    await expect(state(outsider)).resolves.toEqual({ ids: [], unknown: [] });
+
+    // A's condition changed (revision 5), its rows expired at the save: A is unknown for everyone
+    // (an older non-member may be one now), B stays known (B kept for the subject in both).
+    saveCatalog(5, [serviceGroup(A, 'changed'), serviceGroup(B, 'x')]);
+    account.db
+      .prepare('UPDATE group_memberships SET stale_after = ? WHERE group_id = ?')
+      .run(now, A);
+    await expect(state(user)).resolves.toEqual({ ids: [B], unknown: [A] });
+    await expect(state(other)).resolves.toEqual({ ids: [B], unknown: [A] });
+    await expect(state(outsider)).resolves.toEqual({ ids: [], unknown: [A] });
+
+    // A group added since (C) is unknown too; B removed is unknown.
+    const C = await create('C');
+    saveCatalog(6, [serviceGroup(A, 'x'), serviceGroup(C, 'x')]);
+    await expect(state(other)).resolves.toEqual({ ids: [], unknown: [B, C].sort() });
+
+    // The published revision's plan is not on record: every enabled service group is unknown.
+    meta.db.exec('DELETE FROM service_group_revisions');
+    clearChangedServiceGroupsCache();
+    saveCatalog(7, [serviceGroup(A, 'x'), serviceGroup(B, 'x')]);
+    await expect(state(other)).resolves.toEqual({ ids: [], unknown: [A, B].sort() });
+  });
+
+  it('treats groups the publication left undecided, and stale rows, as unknown', async () => {
+    clearChangedServiceGroupsCache();
+    const { A, B, C } = await dynamicGroups(['A', 'B', 'C'], 3);
+    dynamicRow(user, B, '0000000000000001:3');
+    dynamicRow(user, C, '0000000000000001:3', now - 1);
+    // A evaluated as unknown (or left out for a self-writable field), recorded with the
+    // publication; C's row went stale without a republication.
+    account.db
+      .prepare(
+        `INSERT INTO dynamic_membership_publications (tenant_id, subject_id, generation,
+           published_at, unknown_groups_json) VALUES ('tenant-a', ?, ?, 1, ?)`
+      )
+      .run(user, '0000000000000001:3', JSON.stringify([A]));
+    await expect(state(user)).resolves.toEqual({ ids: [B], unknown: [A, C].sort() });
+    // So a rule's not_in_any_group(A) does not pass for this subject (see ar-lib-policy).
+
+    // An unreadable record: every service group is unknown.
+    account.db.exec("UPDATE dynamic_membership_publications SET unknown_groups_json = '{'");
+    await expect(state(user)).resolves.toEqual({ ids: [], unknown: [A, B, C].sort() });
+  });
+
+  it('keeps the shared revision difference intact across subjects', async () => {
+    clearChangedServiceGroupsCache();
+    const { A, B } = await dynamicGroups(['A', 'B'], 3);
+    const other = 'user-2';
+    const recordWith = (subject: string, undecided: string[]) =>
+      account.db
+        .prepare(
+          `INSERT INTO dynamic_membership_publications (tenant_id, subject_id, generation,
+             published_at, unknown_groups_json) VALUES ('tenant-a', ?, '0000000000000001:3', 1, ?)`
+        )
+        .run(subject, JSON.stringify(undecided));
+    recordWith(user, [B]);
+    recordWith(other, []);
+    saveCatalog(4, [serviceGroup(A, 'changed'), serviceGroup(B, 'x')]);
+    // The same (tenant, published, current) revisions, read one after the other.
+    await expect(state(user)).resolves.toEqual({ ids: [], unknown: [A, B].sort() });
+    await expect(state(other)).resolves.toEqual({ ids: [], unknown: [A] });
+  });
+
+  it('treats a record written before unknown_groups_json as every service group unknown', async () => {
+    clearChangedServiceGroupsCache();
+    const { A, B } = await dynamicGroups(['A', 'B'], 3);
+    dynamicRow(user, A, '0000000000000001:3');
+    account.db.exec(`INSERT INTO dynamic_membership_publications (tenant_id, subject_id,
+      generation, published_at) VALUES ('tenant-a', 'user-1', '0000000000000001:3', 1)`);
+    await expect(state(user)).resolves.toEqual({ ids: [], unknown: [A, B].sort() });
+  });
+
+  it('keeps a group known through another membership out of the unknown set', async () => {
+    clearChangedServiceGroupsCache();
+    const parent = await create('parent');
+    const child = (await dynamicGroups(['child'], 3)).child;
+    meta.db.prepare('UPDATE "groups" SET parent_group_id = ? WHERE id = ?').run(parent, child);
+    await join(parent);
+    await assignGroupRole(meta.adapter, tenant, { groupId: parent, roleId: 'reader' });
+    // The child (a service group) was never evaluated for the subject: unknown, and so would its
+    // ancestors be, but the parent is known through the manual membership.
+    await expect(state(user)).resolves.toEqual({ ids: [parent], unknown: [child] });
+    await expect(resolveSubjectRolesAndGroups(stores(), tenant, user, now)).resolves.toMatchObject({
+      unknownGroupIds: [child],
+      rolesComplete: true,
+    });
+  });
+
+  it('counts only catalog-owned service groups, not an administrator group of the dynamic kind', async () => {
+    clearChangedServiceGroupsCache();
+    const adminGroup = await create('admin-dynamic');
+    meta.db.prepare(`UPDATE "groups" SET kind = 'dynamic' WHERE id = ?`).run(adminGroup);
+    // No publication on record, but no service group either: nothing unknown.
+    await expect(state(user)).resolves.toEqual({ ids: [], unknown: [] });
+  });
+
+  it('names only the roles granted in force through service groups to deny-rule checks', async () => {
+    const { A } = await dynamicGroups(['A'], 3);
+    meta.db.exec(`INSERT INTO roles (id,tenant_id,name,permissions_json,created_at)
+      VALUES ('expired-role','tenant-a','Expired','[]',1)`);
+    await assignGroupRole(meta.adapter, tenant, { groupId: A, roleId: 'reader' });
+    await assignGroupRole(meta.adapter, tenant, {
+      groupId: A,
+      roleId: 'expired-role',
+      expiresAt: now - 1,
+    });
+    const decided = await serviceGroupDecidedGroups(meta.adapter, tenant, now);
+    expect([...decided.roles]).toEqual(['Reader']);
+    expect(decided.affected.has(A)).toBe(true);
+  });
+
+  it('counts roles as incomplete only when an unknown group carries a role grant', async () => {
+    clearChangedServiceGroupsCache();
+    const { A } = await dynamicGroups(['A'], 3);
+    await expect(resolveSubjectRolesAndGroups(stores(), tenant, user, now)).resolves.toMatchObject({
+      unknownGroupIds: [A],
+      rolesComplete: true,
+    });
+    await assignGroupRole(meta.adapter, tenant, { groupId: A, roleId: 'reader' });
+    await expect(resolveSubjectRolesAndGroups(stores(), tenant, user, now)).resolves.toMatchObject({
+      unknownGroupIds: [A],
+      rolesComplete: false,
+    });
+  });
+
   it('limits depth per direct membership and binds no more than 90 IDs per lookup', async () => {
     const chain = [await create('root')];
     for (let i = 1; i <= 18; i++) chain.push(await create('level-' + i, chain[i - 1]));
     const siblings = [];
     for (let i = 0; i < 95; i++) siblings.push(await create('sibling-' + i));
-    await replaceSourceMemberships(stores(), tenant, user, 'dynamic', 'rule-1', [
+    await replaceSourceMemberships(stores(), tenant, user, 'rule', 'rule-1', [
       chain[18],
       ...siblings,
     ]);
@@ -432,5 +685,100 @@ describe('end-user group authorization across two databases', () => {
     // Removing the group's role bumps the tenant version: every cached entry is bypassed.
     await removeGroupRole(meta.adapter, tenant, { groupId: g, roleId: 'reader' }, options.cache);
     expect(await read()).toEqual([[], [], []]);
+  });
+
+  it('lists the confirmed groups, caches nothing, while some memberships are unknown', async () => {
+    const manual = await create('manual');
+    const dynamic = await create('dynamic');
+    await join(manual);
+    // A dynamic row with no publication on record: that membership is not known.
+    const dynamicRow = (subject: string) =>
+      account.db
+        .prepare(
+          `INSERT INTO group_memberships (id, tenant_id, group_id, subject_id, assignment_source,
+             source_ref, stale_after, created_at, updated_at)
+           VALUES (?, 'tenant-a', ?, ?, 'dynamic', '0000000000000001:1', ?, 1, 1)`
+        )
+        .run(`d-${subject}`, dynamic, subject, now + 3600);
+    dynamicRow(user);
+    const cache = { get: vi.fn(async () => null), put: vi.fn(async () => undefined) };
+    const options = {
+      cache: cache as unknown as KVNamespace,
+      tenantId: tenant,
+      claimsConfig: 'roles,groups',
+    };
+    const { resolveSubjectGroupClaims } = await import('../../utils/rbac-claims');
+
+    const id = await getIDTokenRBACClaims(stores(), user, options);
+    const access = await getAccessTokenRBACClaims(stores(), user, options);
+    const composite = await getCompositeRBACCache(stores(), user, options);
+    // Only the roles asked for: still read with the groups once, and not cached either.
+    await getAccessTokenRBACClaims(stores(), user, { ...options, claimsConfig: 'roles' });
+    // The confirmed membership (manual) is listed; the unknown one is not (nor "not a member").
+    expect(id.authrim_groups?.map((group) => group.id)).toEqual([manual]);
+    expect(access.authrim_groups?.map((group) => group.id)).toEqual([manual]);
+    expect(composite.groups.map((group) => group.id)).toEqual([manual]);
+    await expect(resolveSubjectGroupClaims(stores(), tenant, user)).resolves.toMatchObject([
+      { id: manual },
+    ]);
+
+    // Nothing confirmed and something unknown: no list at all (an empty one would say "none").
+    const other = 'user-2';
+    dynamicRow(other);
+    expect((await getIDTokenRBACClaims(stores(), other, options)).authrim_groups).toBeUndefined();
+    await expect(resolveSubjectGroupClaims(stores(), tenant, other)).rejects.toThrow(
+      'subject_groups_uncertain'
+    );
+    // Give a (fire-and-forget) cache write the time to land: none does.
+    vi.useRealTimers();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    vi.useFakeTimers();
+    vi.setSystemTime(now * 1000);
+    expect(cache.put).not.toHaveBeenCalled();
+
+    // Known again (the row gone): the list is in the claims, and cached.
+    account.db.exec("DELETE FROM group_memberships WHERE id = 'd-user-1'");
+    const known = await getIDTokenRBACClaims(stores(), user, options);
+    expect(known.authrim_groups?.map((group) => group.id)).toEqual([manual]);
+    await vi.waitFor(() => expect(cache.put).toHaveBeenCalled());
+  });
+
+  it('counts a group named by an enabled policy rule (or below one) as carrying authorization', async () => {
+    const parent = await create('parent');
+    const child = await create('child', parent);
+    const unrelated = await create('unrelated');
+    const rule = (id: string, conditions: unknown, enabled = 1) =>
+      meta.db
+        .prepare(
+          `INSERT INTO policy_rules (id, tenant_id, name, effect, conditions, enabled, created_at,
+             updated_at) VALUES (?, 'tenant-a', ?, 'deny', ?, ?, 1, 1)`
+        )
+        .run(id, id, JSON.stringify(conditions), enabled);
+
+    expect([...(await groupsCarryingRoles(meta.adapter, tenant, [parent, child]))]).toEqual([]);
+    // A disabled rule, and one whose conditions name no group, carry nothing.
+    rule('disabled', [{ type: 'in_group', params: { group_id: parent } }], 0);
+    rule('no-group', [{ type: 'attribute_exists', params: { name: 'x' } }]);
+    expect(await groupReferencedByPolicyRules(meta.adapter, tenant, parent)).toBe(false);
+
+    // A removal counts as much as an addition: not_in_any_group names the group too.
+    rule('negative', [{ type: 'not_in_any_group', params: { group_ids: [parent] } }]);
+    expect(await groupReferencedByPolicyRules(meta.adapter, tenant, parent)).toBe(true);
+    // A member of the child is a member of the parent: the child carries it as well.
+    expect(await groupReferencedByPolicyRules(meta.adapter, tenant, child)).toBe(true);
+    expect(await groupReferencedByPolicyRules(meta.adapter, tenant, unrelated)).toBe(false);
+    expect(
+      [...(await groupsCarryingRoles(meta.adapter, tenant, [parent, child, unrelated]))].sort()
+    ).toEqual([child, parent].sort());
+
+    expect(
+      policyConditionGroupIds([
+        { type: 'in_group', params: { group_id: 'a' } },
+        { type: 'in_any_group', params: { group_ids: ['b', 'c'] } },
+        { type: 'in_all_groups', params: { group_ids: ['d'] } },
+        { type: 'same_group', params: {} },
+        { type: 'has_role', params: { role: 'r' } },
+      ])
+    ).toEqual(['a', 'b', 'c', 'd']);
   });
 });

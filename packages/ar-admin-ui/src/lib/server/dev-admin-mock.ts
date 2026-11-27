@@ -3844,8 +3844,8 @@ const settings = new Map<string, DevSettings>([
 		{
 			category: 'feature-flags',
 			version: 'dev-1',
-			values: { 'feature.enable_flow_engine': true, 'feature.enable_custom_rules': true },
-			sources: { 'feature.enable_flow_engine': 'kv', 'feature.enable_custom_rules': 'kv' }
+			values: { 'feature.enable_flow_engine': true, 'feature.enable_abac': true },
+			sources: { 'feature.enable_flow_engine': 'kv', 'feature.enable_abac': 'kv' }
 		}
 	]
 ]);

@@ -602,3 +602,173 @@ describe('flow references', () => {
     expect(usages.usages.get('screen-1')).toEqual([]);
   });
 });
+
+describe('screens that let people write an attribute a policy rule depends on', () => {
+  /** custom.team decides service group T, which an enabled policy rule names. */
+  function ruleOnTeamGroup() {
+    db.exec(`INSERT INTO custom_claim_schemas (id, tenant_id, field_key, display_label, field_type,
+      is_active, operation_status, schema_version, show_on_registration, created_at, updated_at)
+      VALUES ('tenant-a:team', 'tenant-a', 'team', 'Team', 'string', 1, 'active', 1, 0, 1, 1)`);
+    db.prepare(
+      `INSERT INTO service_group_catalog (tenant_id, revision, plan_json, updated_at, write_token)
+       VALUES ('tenant-a', 1, ?, 1, '')`
+    ).run(JSON.stringify({ attributes: { 'custom.team': ['T'] }, dependents: {} }));
+    db.prepare(
+      `INSERT INTO policy_rules (id, tenant_id, name, effect, conditions, enabled, created_at,
+         updated_at) VALUES ('rule', 'tenant-a', 'Team T', 'allow', ?, 1, 1, 1)`
+    ).run(JSON.stringify([{ type: 'in_group', params: { group_id: 'T' } }]));
+  }
+  const teamPart = { field: 'team', label: 'Team', required: false };
+
+  it('refuses a new active screen that saves the attribute, and allows one that does not', async () => {
+    ruleOnTeamGroup();
+    const refused = await call(adminScreenCreateHandler, {
+      body: {
+        screen_key: 'team_form',
+        display_name: 'Team form',
+        screen_kind: 'profile_completion',
+        fields: [teamPart],
+      },
+    });
+    expect(refused.status).toBe(409);
+    expect(refused.body.error).toBe('attribute_decides_policy_rule_group');
+    // Kept off the profile, or inactive: it saves nothing to the attribute.
+    const inactive = await call(adminScreenCreateHandler, {
+      body: {
+        screen_key: 'team_draft',
+        display_name: 'Team draft',
+        screen_kind: 'profile_completion',
+        fields: [teamPart],
+        is_active: false,
+      },
+    });
+    expect(inactive.status).toBe(201);
+    const id = (inactive.body.screen as { id: string }).id;
+    // Activating it would make the attribute self-writable: refused.
+    const activated = await call(adminScreenUpdateHandler, {
+      id,
+      ifMatch: '1',
+      body: { is_active: true },
+    });
+    expect(activated.status).toBe(409);
+    expect(activated.body.error).toBe('attribute_decides_policy_rule_group');
+  });
+
+  it('refuses a screen saving an attribute that decides a group carrying only a role', async () => {
+    db.exec(`INSERT INTO custom_claim_schemas (id, tenant_id, field_key, display_label, field_type,
+      is_active, operation_status, schema_version, show_on_registration, created_at, updated_at)
+      VALUES ('tenant-a:team', 'tenant-a', 'team', 'Team', 'string', 1, 'active', 1, 0, 1, 1)`);
+    db.prepare(
+      `INSERT INTO service_group_catalog (tenant_id, revision, plan_json, updated_at, write_token)
+       VALUES ('tenant-a', 1, ?, 1, '')`
+    ).run(JSON.stringify({ attributes: { 'custom.team': ['T'] }, dependents: {} }));
+    db.exec(`INSERT INTO "groups" (id, tenant_id, group_key, display_name, kind, lifecycle_state,
+      created_at, updated_at) VALUES ('T', 'tenant-a', 'dynamic:T', 'T', 'dynamic', 'active', 1, 1)`);
+    db.exec(`INSERT INTO roles (id, tenant_id, name, permissions_json, created_at)
+      VALUES ('role-r', 'tenant-a', 'Reader', '[]', 1)`);
+    db.exec(`INSERT INTO group_role_assignments (id, tenant_id, group_id, role_id, created_at,
+      updated_at) VALUES ('gra', 'tenant-a', 'T', 'role-r', 1, 1)`);
+    const refused = await call(adminScreenCreateHandler, {
+      body: {
+        screen_key: 'team_role',
+        display_name: 'Team role',
+        screen_kind: 'profile_completion',
+        fields: [teamPart],
+      },
+    });
+    expect(refused.status).toBe(409);
+    expect(refused.body.error).toBe('attribute_decides_policy_rule_group');
+  });
+
+  it('refuses adding the part to an active screen', async () => {
+    const screen = await createScreen('profile_a');
+    ruleOnTeamGroup();
+    const updated = await call(adminScreenUpdateHandler, {
+      id: screen.id,
+      ifMatch: String(screen.version),
+      body: { fields: [field, teamPart] },
+    });
+    expect(updated.status).toBe(409);
+    // Without the rule, the same change is accepted.
+    db.exec("UPDATE policy_rules SET enabled = 0, updated_at = 1 WHERE id = 'rule'");
+    const accepted = await call(adminScreenUpdateHandler, {
+      id: screen.id,
+      ifMatch: String(screen.version),
+      body: { fields: [field, teamPart] },
+    });
+    expect(accepted.status).toBe(200);
+  });
+});
+
+describe('save-time checks read the screens fresh', () => {
+  it('refuses an allow rule naming a group decided by the built-in country', async () => {
+    const { adminPolicyCreateHandler } = await import('../admin-policies');
+    db.prepare(
+      `INSERT INTO service_group_catalog (tenant_id, revision, plan_json, updated_at, write_token)
+       VALUES ('tenant-a', 1, ?, 1, '')`
+    ).run(JSON.stringify({ attributes: { country: ['C'] }, dependents: {}, groups: [] }));
+    db.exec(`INSERT INTO "groups" (id, tenant_id, group_key, display_name, kind, lifecycle_state,
+      created_at, updated_at) VALUES ('C', 'tenant-a', 'dynamic:C', 'C', 'dynamic', 'active', 1, 1)`);
+    // The person edits their own address (country): no screen needed.
+    const c = {
+      ...context({
+        body: {
+          name: 'Country C',
+          effect: 'allow',
+          conditions: [{ type: 'in_group', params: { group_id: 'C' } }],
+        },
+      }),
+      get: vi.fn(() => undefined),
+    };
+    const response = await adminPolicyCreateHandler(c as never);
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'group_self_writable_attribute',
+    });
+  });
+
+  it('refuses a rule saved right after a screen made its attribute self-writable', async () => {
+    const { loadGroupFields } = await import('@authrim/ar-lib-core');
+    const { adminPolicyCreateHandler } = await import('../admin-policies');
+    db.exec(`INSERT INTO custom_claim_schemas (id, tenant_id, field_key, display_label, field_type,
+      is_active, operation_status, schema_version, show_on_registration, created_at, updated_at)
+      VALUES ('tenant-a:dept', 'tenant-a', 'dept', 'Dept', 'string', 1, 'active', 1, 0, 1, 1)`);
+    db.prepare(
+      `INSERT INTO service_group_catalog (tenant_id, revision, plan_json, updated_at, write_token)
+       VALUES ('tenant-a', 1, ?, 1, '')`
+    ).run(JSON.stringify({ attributes: { 'custom.dept': ['D'] }, dependents: {}, groups: [] }));
+    db.exec(`INSERT INTO "groups" (id, tenant_id, group_key, display_name, kind, lifecycle_state,
+      created_at, updated_at) VALUES ('D', 'tenant-a', 'dynamic:D', 'D', 'dynamic', 'active', 1, 1)`);
+    // A publication in this isolate reads (and caches) the screens: none saves dept yet.
+    expect(
+      (await loadGroupFields(state.adapter, 'tenant-a', { cachedScreens: true }))['custom.dept']
+        ?.selfWritable
+    ).toBeUndefined();
+    // A screen then lets people write dept themselves (no rule names D yet: accepted).
+    const screen = await call(adminScreenCreateHandler, {
+      body: {
+        screen_key: 'dept_form',
+        display_name: 'Dept form',
+        screen_kind: 'profile_completion',
+        fields: [{ field: 'dept', label: 'Dept', required: false }],
+      },
+    });
+    expect(screen.status).toBe(201);
+    // Within the cache's lifetime, a rule naming D is checked against the screens as saved.
+    const c = {
+      ...context({
+        body: {
+          name: 'Dept D',
+          effect: 'allow',
+          conditions: [{ type: 'in_group', params: { group_id: 'D' } }],
+        },
+      }),
+      get: vi.fn(() => undefined),
+    };
+    const response = await adminPolicyCreateHandler(c as never);
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'group_self_writable_attribute',
+    });
+  });
+});

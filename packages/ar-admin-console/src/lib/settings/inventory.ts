@@ -68,7 +68,6 @@ export const DRAFT_PAGES: readonly DraftPage[] = [
 		scope: 'client',
 		note: 'One app’s own settings, in the app (RP) step of its service flow. Its defaults come from App defaults.'
 	},
-	{ id: 'access/attributes', scope: 'tenant' },
 	{ id: 'access/relationships', scope: 'tenant' },
 	{ id: 'access/policies', scope: 'tenant' },
 	{ id: 'access/roles', scope: 'tenant' },
@@ -479,14 +478,11 @@ place(
 // ---------------------------------------------------------------------------------------------
 // Access control
 
-// The ABAC and ReBAC switches, the Check API's audience and switch, the dynamic group freshness,
-// the RBAC claims and the per-resource (ID-level) permissions switch are on Settings → Authorization
-// (placement.ts, AUTHORIZATION).
-place('access/attributes', 'Attribute-based access (ABAC)', {
-	advanced: ['feature.enable_verified_attributes']
-});
+// The ABAC and ReBAC switches, the verified-attributes switch, the Check API's audience and switch,
+// the dynamic group freshness, the RBAC claims and the per-resource (ID-level) permissions switch
+// are on Settings → Authorization (placement.ts, AUTHORIZATION). `feature.enable_abac` alone turns
+// the tenant's policy rules on (there is no separate custom-rules switch).
 place('access/policies', 'Policies', {
-	primary: ['feature.enable_custom_rules'],
 	advanced: ['feature.enable_policy_logging', 'feature.enable_policy_embedding'],
 	search: [
 		'limits.max_embedded_permissions',

@@ -108,6 +108,10 @@ const CORE_SCHEMA = [
     resolve(REPO_ROOT, 'migrations/core/d1'),
     '018_remove_organizations.sql'
   ),
+  readRenderedMigrationSql(
+    resolve(REPO_ROOT, 'migrations/core/d1'),
+    '019_dynamic_publication_unknown_groups.sql'
+  ),
 ];
 
 type SqlValue = string | number | null;

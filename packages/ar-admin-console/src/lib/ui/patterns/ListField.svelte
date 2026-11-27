@@ -5,7 +5,7 @@
 	import Button from '../primitives/Button.svelte';
 	import IconButton from '../primitives/IconButton.svelte';
 	import { useChangeMark, useInvalidReport } from '../save/save-scope';
-	import { duplicateIndexes, splitLines } from './list-input';
+	import { duplicateIndexes, exactDuplicateIndexes, splitLines } from './list-input';
 
 	/**
 	 * A list of single values: redirect URIs, allowed origins, IP ranges, domains.
@@ -27,6 +27,11 @@
 		addLabel?: string;
 		/** Monospace entries (URIs, CIDRs, keys). */
 		mono?: boolean;
+		/**
+		 * Keep every value exactly as typed, spaces included: nothing is trimmed on blur or on
+		 * paste, and `validate` sees the raw value. For values a system compares exactly.
+		 */
+		raw?: boolean;
 		/** Returns a problem with one entry, or nothing. */
 		validate?: (value: string) => string | undefined;
 		max?: number;
@@ -44,6 +49,7 @@
 		hint,
 		addLabel = t('list.add'),
 		mono = false,
+		raw = false,
 		validate,
 		max,
 		required = false,
@@ -62,13 +68,13 @@
 	const off = $derived(disabled || busy());
 	let list = $state<HTMLOListElement>();
 
-	const repeated = $derived(duplicateIndexes(values));
+	const repeated = $derived(raw ? exactDuplicateIndexes(values) : duplicateIndexes(values));
 	const problems = $derived(
 		values.map((value, index) =>
 			repeated.has(index)
 				? t('list.duplicate')
 				: value.trim()
-					? validate?.(value.trim())
+					? validate?.(raw ? value : value.trim())
 					: undefined
 		)
 	);
@@ -96,7 +102,8 @@
 	}
 
 	function paste(event: ClipboardEvent, index: number) {
-		const lines = splitLines(event.clipboardData?.getData('text') ?? '');
+		const text = event.clipboardData?.getData('text') ?? '';
+		const lines = raw ? text.split(/\r?\n/).filter((line) => line !== '') : splitLines(text);
 		if (lines.length < 2) return;
 		event.preventDefault();
 		const room = max === undefined ? lines.length : Math.max(1, max - values.length + 1);
@@ -106,9 +113,9 @@
 
 	/** An emptied box goes away when focus leaves it (unless it is the only one). */
 	function tidy(index: number) {
-		if (values[index]?.trim() === '' && values.length > 1) {
+		if ((raw ? values[index] === '' : values[index]?.trim() === '') && values.length > 1) {
 			values = values.filter((_, i) => i !== index);
-		} else if (values[index] !== undefined && values[index] !== values[index].trim()) {
+		} else if (!raw && values[index] !== undefined && values[index] !== values[index].trim()) {
 			values = values.map((value, i) => (i === index ? value.trim() : value));
 		}
 	}

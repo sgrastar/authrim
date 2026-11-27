@@ -228,7 +228,7 @@ export interface ServiceConfig {
   debugMode: boolean;
   auditService: unknown;
   attributeRepository: unknown;
-  subjectAccountDb(tenantId: string, subjectId: string): Promise<unknown>;
+  subjectAccount(tenantId: string, subjectId: string): Promise<{ db: unknown; subjectId: string }>;
   tenantPolicy(tenantId: string): Promise<unknown>;
 }
 

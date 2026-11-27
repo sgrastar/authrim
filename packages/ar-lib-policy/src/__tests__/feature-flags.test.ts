@@ -35,21 +35,21 @@ describe('Feature Flags', () => {
         ENABLE_ABAC: 'false',
         ENABLE_REBAC: 'FALSE',
         ENABLE_POLICY_LOGGING: '0',
-        ENABLE_CUSTOM_RULES: 'no', // anything not true/1 is false
+        ENABLE_VERIFIED_ATTRIBUTES: 'no', // anything not true/1 is false
       });
       expect(flags.ENABLE_ABAC).toBe(false);
       expect(flags.ENABLE_REBAC).toBe(false);
       expect(flags.ENABLE_POLICY_LOGGING).toBe(false);
-      expect(flags.ENABLE_CUSTOM_RULES).toBe(false);
+      expect(flags.ENABLE_VERIFIED_ATTRIBUTES).toBe(false);
     });
 
     it('should use defaults for undefined values', () => {
       const flags = getFlagsFromEnv({
         ENABLE_ABAC: undefined,
-        ENABLE_CUSTOM_RULES: '', // empty string also uses default
+        ENABLE_VERIFIED_ATTRIBUTES: '', // empty string also uses default
       });
       expect(flags.ENABLE_ABAC).toBe(DEFAULT_FLAGS.ENABLE_ABAC);
-      expect(flags.ENABLE_CUSTOM_RULES).toBe(DEFAULT_FLAGS.ENABLE_CUSTOM_RULES);
+      expect(flags.ENABLE_VERIFIED_ATTRIBUTES).toBe(DEFAULT_FLAGS.ENABLE_VERIFIED_ATTRIBUTES);
     });
   });
 
@@ -72,7 +72,7 @@ describe('Feature Flags', () => {
       const flags = await manager.getAllFlags();
       expect(flags.ENABLE_ABAC).toBe(true);
       expect(flags.ENABLE_REBAC).toBe(false);
-      expect(flags.ENABLE_CUSTOM_RULES).toBe(true); // default
+      expect(flags).not.toHaveProperty('ENABLE_CUSTOM_RULES');
     });
 
     it('should return flags synchronously', () => {

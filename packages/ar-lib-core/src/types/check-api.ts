@@ -548,6 +548,16 @@ export interface PolicyEvaluationContext {
   subjectId: string;
   /** The subject's active role assignments in the tenant, with their scope (for role conditions) */
   subjectRoles?: PolicySubjectRole[];
+  /**
+   * Ids of the subject's effective groups (direct memberships and their ancestors), for group
+   * conditions. Undefined: the memberships are unknown (not "none"), so no group condition is met.
+   */
+  subjectGroupIds?: string[];
+  /**
+   * Groups whose membership is not known (neither in `subjectGroupIds` nor known not to be): a
+   * group condition naming one is not met, and rules that name one are not used.
+   */
+  subjectUnknownGroupIds?: string[];
   /** Subject's verified attributes */
   verifiedAttributes: VerifiedAttributeForCheck[];
   /** Resource type */
@@ -592,11 +602,22 @@ export interface PolicyEvaluationResult {
 export interface PolicyEvaluator {
   /** Evaluate policy for the given context */
   evaluate(context: PolicyEvaluationContext): PolicyEvaluationResult;
+  /**
+   * The rules read the subject's groups (a group condition): they are not evaluated when the
+   * subject's groups could not be read.
+   */
+  usesSubjectGroups?: boolean;
 }
 
 /**
+ * How long the policy service may keep evaluating a tenant's rules as it read them (its per-isolate
+ * rule cache): a rule disabled less than this ago may still decide checks.
+ */
+export const TENANT_POLICY_RULES_CACHE_TTL_MS = 60_000;
+
+/**
  * How a tenant's permission checks use attribute-based policy, as its settings decide
- * (`feature.enable_abac`, `enable_verified_attributes`, `enable_custom_rules`,
+ * (`feature.enable_abac` turns the tenant's custom rules on; `enable_verified_attributes`,
  * `enable_policy_logging`).
  */
 export interface TenantPolicySettings {

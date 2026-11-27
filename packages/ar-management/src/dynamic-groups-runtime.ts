@@ -203,7 +203,7 @@ async function reportSelfWritableRoleGroups(
     store.db,
     store.tenantId,
     catalog.plan,
-    await loadGroupFields(store.db, store.tenantId)
+    await loadGroupFields(store.db, store.tenantId, { cachedScreens: true })
   );
   if (!offending.size) return;
   const key = `jobs:service-groups:self-writable-check:${store.tenantId}:${catalog.revision}`;

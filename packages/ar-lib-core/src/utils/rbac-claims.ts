@@ -65,6 +65,7 @@ import type {
 import { DEFAULT_ID_TOKEN_CLAIMS, DEFAULT_ACCESS_TOKEN_CLAIMS } from '../types/rbac';
 import {
   resolveSubjectRoles,
+  resolveSubjectRolesAndGroups,
   roleAssignmentHolds,
   roleScopeTargetError,
   rolePermissions,
@@ -98,14 +99,14 @@ export async function getCompositeRBACCache(
   options: Partial<RBACClaimsOptions> = {}
 ): Promise<CompositeRBACCache> {
   const tenantId = requireTenantId(options.tenantId, 'RBAC claims');
+  const data = subjectRBACData(dbs, subjectId, tenantId);
   return cachedRoleData(
     dbs,
     tenantId,
     subjectId,
     buildCompositeRBACCacheKey(subjectId, tenantId),
-    options,
+    { ...options, shouldCache: () => data.cacheable() },
     async (version) => {
-      const data = subjectRBACData(dbs, subjectId, tenantId);
       const [subjectRoles, subjectGroups, userType, relationships] = await Promise.all([
         data.roles(),
         data.groups(),
@@ -118,7 +119,8 @@ export async function getCompositeRBACCache(
         roles: claimRoleNames(subjectRoles, tenantId),
         scoped_roles: scopedRoles(subjectRoles, tenantId),
         permissions: grantedPermissions(subjectRoles, tenantId),
-        groups: subjectGroups,
+        // Unknown memberships: no group list at all (a partial one would read as complete).
+        groups: subjectGroups ?? [],
         user_type: userType,
         relationships_summary: relationships,
         cached_at: Math.floor(Date.now() / 1000),
@@ -226,7 +228,13 @@ export function extractAccessTokenClaimsFromCache(
  */
 interface SubjectRBACData {
   roles(): Promise<ResolvedSubjectRole[]>;
-  groups(): Promise<TokenGroup[]>;
+  /** The group claims; null when the memberships are not known (the claim is left out). */
+  groups(): Promise<TokenGroup[] | null>;
+  /**
+   * Whether claims built from what was read may be cached: not while a membership is unknown or
+   * the roles are incomplete (resolveSubjectRolesAndGroups), whichever claims were asked for.
+   */
+  cacheable(): boolean;
 }
 
 function subjectRBACData(
@@ -234,11 +242,22 @@ function subjectRBACData(
   subjectId: string,
   tenantId: string
 ): SubjectRBACData {
-  let roles: Promise<ResolvedSubjectRole[]> | undefined;
-  let groups: Promise<TokenGroup[]> | undefined;
+  // Roles and groups are read once, together (one membership read).
+  let read: ReturnType<typeof resolveSubjectRolesAndGroups> | undefined;
+  let groups: Promise<TokenGroup[] | null> | undefined;
+  let cacheable = true;
+  const both = () =>
+    (read ??= resolveSubjectRolesAndGroups(dbs, tenantId, subjectId).then((result) => {
+      if (!result.rolesComplete || result.unknownGroupIds.length > 0) cacheable = false;
+      return result;
+    }));
   return {
-    roles: () => (roles ??= resolveSubjectRoles(dbs, tenantId, subjectId)),
-    groups: () => (groups ??= resolveSubjectGroupClaims(dbs, tenantId, subjectId)),
+    roles: async () => (await both()).roles,
+    groups: () =>
+      (groups ??= both().then((result) =>
+        knownGroupClaims(dbs, tenantId, result.effectiveGroupIds, result.unknownGroupIds.length > 0)
+      )),
+    cacheable: () => cacheable,
   };
 }
 
@@ -264,23 +283,52 @@ function claimRoleNames(roles: ResolvedSubjectRole[], tenantId: string): string[
 
 /**
  * The subject's effective groups (direct memberships and their ancestors, active only) as the
- * authrim_groups claim, ordered by key.
+ * authrim_groups claim (and SAML memberOf), ordered by key: the memberships that could be
+ * confirmed. While some are unknown (resolveSubjectGroups' `unknownGroupIds`) the known ones are
+ * still listed, so the list must not be read as "not a member" of the others; with none known
+ * and some unknown, it throws (an empty list would assert "no groups").
  */
 export async function resolveSubjectGroupClaims(
   dbs: TenantRBACDatabases,
   tenantId: string,
   subjectId: string
 ): Promise<TokenGroup[]> {
-  const { effectiveGroupIds } = await resolveSubjectGroups(
+  const { effectiveGroupIds, uncertain } = await resolveSubjectGroups(
     dbs,
     tenantId,
     subjectId,
     Math.floor(Date.now() / 1000)
   );
-  if (effectiveGroupIds.size === 0) return [];
+  const groups = await knownGroupClaims(dbs, tenantId, effectiveGroupIds, uncertain);
+  if (groups === null) throw new Error('subject_groups_uncertain');
+  return groups;
+}
+
+/**
+ * The claims of the known groups; null (the claim is left out) when none is known while some
+ * are unknown, since an empty list would assert "no groups".
+ */
+async function knownGroupClaims(
+  dbs: TenantRBACDatabases,
+  tenantId: string,
+  effectiveGroupIds: Iterable<string>,
+  someUnknown: boolean
+): Promise<TokenGroup[] | null> {
+  const claims = await groupClaimsOf(dbs, tenantId, effectiveGroupIds);
+  return claims.length === 0 && someUnknown ? null : claims;
+}
+
+/** The claims of the groups `effectiveGroupIds`, ordered by key. */
+async function groupClaimsOf(
+  dbs: TenantRBACDatabases,
+  tenantId: string,
+  effectiveGroupIds: Iterable<string>
+): Promise<TokenGroup[]> {
+  const ids = [...effectiveGroupIds];
+  if (ids.length === 0) return [];
   const db = getRBACDatabaseAdapter(dbs.metadata);
   const groups: TokenGroup[] = [];
-  for (const batch of rbacIdBatches(effectiveGroupIds)) {
+  for (const batch of rbacIdBatches(ids)) {
     const rows = await db.query<{
       id: string;
       group_key: string;
@@ -419,7 +467,7 @@ export async function getUserRBACClaims(
     claims.authrim_roles = names;
   }
 
-  if (groups.length > 0) {
+  if (groups && groups.length > 0) {
     claims.authrim_groups = groups;
   }
 
@@ -461,14 +509,15 @@ export async function getIDTokenRBACClaims(
 
   const { claimsConfig } = options;
   const tenantId = requireTenantId(options.tenantId, 'RBAC claims');
+  const data = subjectRBACData(dbs, subjectId, tenantId);
   return cachedRoleData(
     dbs,
     tenantId,
     subjectId,
     buildRBACCacheKey(subjectId, 'id', claimsConfig, tenantId),
-    options,
+    { ...options, shouldCache: () => data.cacheable() },
     // One definition of the defaults: an unset config is the default claim list.
-    () => getIDTokenRBACClaimsConfigurable(dbs, subjectId, claimsConfig, tenantId)
+    () => idTokenClaims(data, dbs, subjectId, claimsConfig, tenantId)
   );
 }
 
@@ -502,13 +551,14 @@ export async function getAccessTokenRBACClaims(
 
   const { claimsConfig } = options;
   const tenantId = requireTenantId(options.tenantId, 'RBAC claims');
+  const data = subjectRBACData(dbs, subjectId, tenantId);
   return cachedRoleData(
     dbs,
     tenantId,
     subjectId,
     buildRBACCacheKey(subjectId, 'access', claimsConfig, tenantId),
-    options,
-    () => getAccessTokenRBACClaimsInternal(dbs, subjectId, claimsConfig, tenantId)
+    { ...options, shouldCache: () => data.cacheable() },
+    () => getAccessTokenRBACClaimsInternal(data, claimsConfig, tenantId)
   );
 }
 
@@ -516,8 +566,7 @@ export async function getAccessTokenRBACClaims(
  * Internal function to fetch access token RBAC claims from D1 (no caching)
  */
 async function getAccessTokenRBACClaimsInternal(
-  dbs: TenantRBACDatabases,
-  subjectId: string,
+  data: SubjectRBACData,
   claimsConfig: string | undefined,
   tenantId: string
 ): Promise<Partial<RBACTokenClaims>> {
@@ -535,7 +584,6 @@ async function getAccessTokenRBACClaimsInternal(
   const needsPermissions = enabledClaims.includes('permissions');
 
   // Fetch required data in parallel
-  const data = subjectRBACData(dbs, subjectId, tenantId);
   const [roles, groups] = await Promise.all([
     needsRoles || needsScopedRoles || needsPermissions ? data.roles() : Promise.resolve([]),
     needsGroups ? data.groups() : Promise.resolve([]),
@@ -549,7 +597,7 @@ async function getAccessTokenRBACClaimsInternal(
     claims.authrim_roles = names;
   }
 
-  if (needsGroups && groups.length > 0) {
+  if (needsGroups && groups && groups.length > 0) {
     claims.authrim_groups = groups;
   }
 
@@ -691,6 +739,22 @@ export async function getIDTokenRBACClaimsConfigurable(
   claimsConfig: string | undefined,
   tenantId: string
 ): Promise<Partial<RBACTokenClaims>> {
+  return idTokenClaims(
+    subjectRBACData(dbs, subjectId, tenantId),
+    dbs,
+    subjectId,
+    claimsConfig,
+    tenantId
+  );
+}
+
+async function idTokenClaims(
+  data: SubjectRBACData,
+  dbs: TenantRBACDatabases,
+  subjectId: string,
+  claimsConfig: string | undefined,
+  tenantId: string
+): Promise<Partial<RBACTokenClaims>> {
   const enabledClaims = parseClaimsConfig<IDTokenClaimKey>(claimsConfig, DEFAULT_ID_TOKEN_CLAIMS);
 
   const claims: Partial<RBACTokenClaims> = {};
@@ -704,7 +768,6 @@ export async function getIDTokenRBACClaimsConfigurable(
   const needsRelationships = enabledClaims.includes('relationships_summary');
 
   // Fetch required data in parallel
-  const data = subjectRBACData(dbs, subjectId, tenantId);
   const [roles, groups, userType, relationships] = await Promise.all([
     needsRoles || needsScopedRoles || needsPermissions ? data.roles() : Promise.resolve([]),
     needsGroups ? data.groups() : Promise.resolve([]),
@@ -724,7 +787,7 @@ export async function getIDTokenRBACClaimsConfigurable(
     claims.authrim_roles = names;
   }
 
-  if (needsGroups && groups.length > 0) {
+  if (needsGroups && groups && groups.length > 0) {
     claims.authrim_groups = groups;
   }
 

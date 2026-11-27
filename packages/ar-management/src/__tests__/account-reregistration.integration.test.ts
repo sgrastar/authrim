@@ -171,6 +171,7 @@ function openCore(): { database: SQLiteDatabase; adapter: DatabaseAdapter } {
     '016_invitation_group.sql',
     '017_service_group_scim_membership_inputs.sql',
     '018_remove_organizations.sql',
+    '019_dynamic_publication_unknown_groups.sql',
   ])
     db.exec(
       renderPortableMigrationSql(

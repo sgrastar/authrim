@@ -5,14 +5,14 @@ const adminPolicies = {
 		'RBAC、ABAC、ReBACの条件を組み合わせて、細かなアクセス制御ルールを作成します。',
 	admin_policies_simulate: 'シミュレート',
 	admin_policies_create_policy: 'Policyを作成',
-	admin_policies_custom_rules: 'Custom Policy Rules',
+	admin_policies_custom_rules: '属性ベースのポリシー（ABAC）',
 	admin_policies_custom_rules_description:
-		'RBAC role、ABAC属性、ReBAC関係を組み合わせたcustom policy rulesを有効にします。',
+		'属性ベースのポリシーを有効にします。テナントのカスタムルール（ロール、グループ、属性）が権限確認で評価されます。設定 → 認可 と同じスイッチです。',
 	admin_policies_loading: '読み込み中...',
 	admin_policies_saving: '保存中...',
-	admin_policies_custom_rules_disabled_title: 'Custom Rulesは無効です。',
+	admin_policies_custom_rules_disabled_title: '属性ベースのポリシーは無効です。',
 	admin_policies_custom_rules_disabled_description:
-		'有効にするとcustom policy rulesを作成できます。roleに基づく既定のpolicyは引き続き適用されます。',
+		'上で有効にするとルールが権限確認に参加します。ロールによる付与は常に適用されます。',
 	admin_policies_retry: '再試行',
 	admin_policies_search: '検索',
 	admin_policies_search_placeholder: 'Policyを検索...',

@@ -452,3 +452,60 @@ describe('custom claim update: stored form of each updatable field', () => {
     expect(libCore.audit).not.toHaveBeenCalled();
   });
 });
+
+describe('custom claim update: an attribute a policy rule depends on', () => {
+  beforeEach(() => resetLibCore());
+
+  /** A service group T decided by the attribute, and (optionally) a rule naming T. */
+  function withRuleOnGroup(ruleNamesGroup: boolean): Db {
+    const db = setup(schemaRow({ show_on_registration: 0, registration_required: 0 }));
+    db.state.rowsFor = [
+      {
+        includes: 'FROM service_group_catalog',
+        rows: [
+          {
+            plan_json: JSON.stringify({
+              attributes: { 'custom.employee_id': ['T'] },
+              dependents: {},
+            }),
+          },
+        ],
+      },
+      {
+        includes: 'FROM policy_rules',
+        rows: ruleNamesGroup
+          ? [{ conditions: JSON.stringify([{ type: 'in_group', params: { group_id: 'T' } }]) }]
+          : [],
+      },
+      // T's ancestors (itself); no role or resource permission on them.
+      { includes: ') SELECT id FROM ancestors', rows: [{ id: 'T' }] },
+    ];
+    return db;
+  }
+
+  it('refuses showing it on the registration screen with 409, and writes nothing', async () => {
+    for (const body of [{ show_on_registration: true }, { registration_required: true }]) {
+      const result = await update(body, withRuleOnGroup(true));
+      expect(result.status, JSON.stringify(body)).toBe(409);
+      expect(result.body.error).toBe('attribute_decides_policy_rule_group');
+      expect(result.db.state.executes).toHaveLength(0);
+    }
+  });
+
+  it('refuses it too when the group carries only a role grant', async () => {
+    const db = withRuleOnGroup(false);
+    db.state.rowsFor.push({
+      includes: 'JOIN group_role_assignments',
+      rows: [{ id: 'grant-on-T' }],
+    });
+    const result = await update({ show_on_registration: true }, db);
+    expect(result.status).toBe(409);
+    expect(result.body.error).toBe('attribute_decides_policy_rule_group');
+  });
+
+  it('allows it when no enabled rule names a group the attribute decides', async () => {
+    const result = await update({ show_on_registration: true }, withRuleOnGroup(false));
+    expect(result.status).toBe(200);
+    expect(applied(result.db).set.show_on_registration).toBe(1);
+  });
+});

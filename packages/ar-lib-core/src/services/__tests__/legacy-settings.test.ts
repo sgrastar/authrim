@@ -255,7 +255,7 @@ describe('the older stores, read for the import', () => {
 });
 
 describe('the import contract', () => {
-  it('is raised whenever the set of import targets changes (12: the JIT organization settings left)', () => {
-    expect(LEGACY_IMPORT_CONTRACT).toBe(12);
+  it('is raised whenever the set of import targets changes (13: feature.enable_custom_rules left)', () => {
+    expect(LEGACY_IMPORT_CONTRACT).toBe(13);
   });
 });

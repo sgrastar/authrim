@@ -347,8 +347,8 @@ export function tenantsAccess(access: AdminAccess): TenantsAccess {
 }
 
 /**
- * What the admin can do on the end-user authorization pages (Users → Groups, Access → Roles,
- * Access check), as the Admin API checks it. A change to a group that carries roles also takes
+ * What the admin can do on the end-user authorization pages (Users → Groups, Access → Roles and
+ * Policies, Access check), as the Admin API checks it. A change to a group that carries roles also takes
  * the roles' write permission and a grant ceiling that covers each of its roles (the API checks
  * that per group): the console shows the ceiling, the API decides.
  */
@@ -372,6 +372,11 @@ export interface AuthzAccess {
 	/** Run the access check (`admin:roles:read` or `admin:groups:read`). */
 	check: boolean;
 	/**
+	 * Try the policy rules on one question (Access → Policies): the simulation is a POST, which the
+	 * policy routes gate with the roles' write permission, besides `admin:policy:simulate`.
+	 */
+	policiesSimulate: boolean;
+	/**
 	 * The highest role grant tier the admin may create, change, give or take away (0: none): the
 	 * session's `max_grant_tier`, else the highest `maxGrantTier` of their admin roles.
 	 */
@@ -392,6 +397,10 @@ export function authzAccess(access: AdminAccess): AuthzAccess {
 		rulesWrite: usersRead && hasPermission(access, 'admin:users:write'),
 		usersRead,
 		check: groupsRead || rolesRead,
+		policiesSimulate:
+			rolesRead &&
+			hasPermission(access, 'admin:roles:write') &&
+			hasPermission(access, 'admin:policy:simulate'),
 		grantCeiling: access.maxGrantTier ?? adminMaxGrantTier(access.roles)
 	};
 }

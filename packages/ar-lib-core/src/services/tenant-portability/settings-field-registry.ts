@@ -356,7 +356,6 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
     feature.enable_rebac
     feature.enable_policy_logging
     feature.enable_verified_attributes
-    feature.enable_custom_rules
     feature.enable_policy_embedding
     feature.enable_id_level_permissions
     feature.enable_sd_jwt

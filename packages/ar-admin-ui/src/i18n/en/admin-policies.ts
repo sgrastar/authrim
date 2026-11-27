@@ -5,14 +5,14 @@ const adminPolicies = {
 		'Combine RBAC, ABAC, and ReBAC conditions to create fine-grained access control rules.',
 	admin_policies_simulate: 'Simulate',
 	admin_policies_create_policy: 'Create Policy',
-	admin_policies_custom_rules: 'Custom Policy Rules',
+	admin_policies_custom_rules: 'Attribute-based policy (ABAC)',
 	admin_policies_custom_rules_description:
-		'Enable custom policy rules that combine RBAC roles, ABAC attributes, and ReBAC relationships for fine-grained access control.',
+		"Turns on attribute-based policy: the tenant's custom rules (roles, groups, attributes) are evaluated in permission checks. Same switch as Settings → Authorization.",
 	admin_policies_loading: 'Loading...',
 	admin_policies_saving: 'Saving...',
-	admin_policies_custom_rules_disabled_title: 'Custom Rules are disabled.',
+	admin_policies_custom_rules_disabled_title: 'Attribute-based policy is off.',
 	admin_policies_custom_rules_disabled_description:
-		'Enable above to create custom policy rules. Default policies based on roles will still apply.',
+		'Turn it on above for the rules to take part in checks. Role-based grants apply regardless.',
 	admin_policies_retry: 'Retry',
 	admin_policies_search: 'Search',
 	admin_policies_search_placeholder: 'Search policies...',

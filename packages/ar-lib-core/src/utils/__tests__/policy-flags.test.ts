@@ -7,10 +7,24 @@ function kv(values: Record<string, string>): KVNamespace {
 
 describe('resolvePolicyFlags', () => {
   it('keeps the defaults with nothing set', async () => {
-    await expect(resolvePolicyFlags({ SETTINGS: kv({}) }, 'acme')).resolves.toEqual({
-      ...POLICY_FLAGS_OFF,
-      customRules: true,
-    });
+    await expect(resolvePolicyFlags({ SETTINGS: kv({}) }, 'acme')).resolves.toEqual(
+      POLICY_FLAGS_OFF
+    );
+  });
+
+  it('ignores a value stored under the removed feature.enable_custom_rules', async () => {
+    const env = {
+      SETTINGS: kv({
+        'settings:tenant:acme:feature-flags': JSON.stringify({
+          'feature.enable_abac': true,
+          'feature.enable_custom_rules': false,
+        }),
+        'policy:flags:ENABLE_CUSTOM_RULES': 'false',
+      }),
+    };
+    const flags = await resolvePolicyFlags(env, 'acme');
+    expect(flags).toEqual({ ...POLICY_FLAGS_OFF, abac: true });
+    expect(flags).not.toHaveProperty('customRules');
   });
 
   it("reads the platform's flags, env, and the tenant value over them", async () => {
@@ -18,7 +32,6 @@ describe('resolvePolicyFlags', () => {
       SETTINGS: kv({
         'settings:platform:feature-flags': JSON.stringify({
           'feature.enable_abac': true,
-          'feature.enable_custom_rules': false,
         }),
         'settings:tenant:acme:feature-flags': JSON.stringify({
           'feature.enable_abac': false,
@@ -32,7 +45,6 @@ describe('resolvePolicyFlags', () => {
     await expect(resolvePolicyFlags(env, 'acme')).resolves.toMatchObject({
       abac: false,
       rebac: true,
-      customRules: false,
       sdJwt: true,
     });
     // SD-JWT from env is on only for exactly 'true', as token issuance has always read it.

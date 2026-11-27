@@ -91,7 +91,7 @@ describe('Policy service branch and failure behavior', () => {
         flags: Record<string, { value: boolean; source: string }>;
       };
       expect(body.flags.ENABLE_ABAC).toEqual({ value: true, source: 'env' });
-      expect(body.flags.ENABLE_CUSTOM_RULES).toEqual({ value: true, source: 'default' });
+      expect(body.flags).not.toHaveProperty('ENABLE_CUSTOM_RULES');
     });
 
     it('answers 503 when the flags cannot be read', async () => {

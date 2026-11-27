@@ -50,7 +50,7 @@ import { hasIdLevelPermission } from '../utils/resource-permissions';
 import { NO_RESOURCE_CONTEXT_RESOLVER } from './resource-context-resolver';
 import { createLogger } from '../utils/logger';
 import {
-  resolveSubjectRoles,
+  resolveSubjectRolesAndGroups,
   roleAssignmentHolds,
   rolePermissions,
   type RoleAssignmentTarget,
@@ -235,6 +235,16 @@ export interface UnifiedCheckServiceConfig {
    * subject's assignments are read from `db` (a single-database deployment).
    */
   subjectAccountDb?: (tenantId: string, subjectId: string) => Promise<DatabaseSource>;
+  /**
+   * The subject's account database and the id its rows are stored under (the account router's
+   * canonical id: a request may name the account in another form, such as with `account:` or
+   * surrounding spaces). Takes precedence over `subjectAccountDb`. It throws when the subject has
+   * no account.
+   */
+  subjectAccount?: (
+    tenantId: string,
+    subjectId: string
+  ) => Promise<{ db: DatabaseSource; subjectId: string }>;
   /** @deprecated Shared decisions are evaluated against the current database. */
   cache?: KVNamespace;
   /** ReBAC service for relationship checks (optional) */
@@ -291,7 +301,13 @@ export interface CheckOptions {
 interface CheckContext {
   /** The contract of the request (see CheckContract) */
   contract: CheckContract;
+  /**
+   * The subject: the account router's canonical id once the evaluation resolved it (every lookup
+   * and comparison of the check uses it), the request's id until then or when it does not resolve.
+   */
   subjectId: string;
+  /** The subject as the request named it (the key the account is resolved by). */
+  requestSubjectId: string;
   subjectType: 'user' | 'service';
   tenantId: string;
   parsed: ParsedPermission;
@@ -307,6 +323,10 @@ interface CheckContext {
   /** The subject's active role assignments with their scope (from the role check; unset when
    * they could not be read) */
   subjectRoles?: PolicySubjectRole[];
+  /** The subject's effective group ids (read with its roles; unset when they could not be read) */
+  subjectGroupIds?: string[];
+  /** Groups whose membership is not known (see resolveSubjectGroups) */
+  subjectUnknownGroupIds?: string[];
   /** The verified attributes were wanted but could not be read */
   attributesUnavailable?: boolean;
 }
@@ -338,9 +358,12 @@ function checkTarget(context: CheckContext): RoleAssignmentTarget {
  */
 export class UnifiedCheckService {
   private db: DatabaseAdapter;
-  private subjectAccountDb?: (tenantId: string, subjectId: string) => Promise<DatabaseSource>;
-  /** Subject account databases resolved during this service's lifetime (one request). */
-  private subjectAccountDbs = new Map<string, Promise<DatabaseSource>>();
+  private subjectAccount?: (
+    tenantId: string,
+    subjectId: string
+  ) => Promise<{ db: DatabaseSource; subjectId: string }>;
+  /** Subject accounts resolved during this service's lifetime (one request). */
+  private subjectAccounts = new Map<string, Promise<{ db: DatabaseSource; subjectId: string }>>();
   private rebacService?: ReBACService;
   private debugMode: boolean;
   private auditConfig: AuditLogConfig;
@@ -356,7 +379,12 @@ export class UnifiedCheckService {
 
   constructor(config: UnifiedCheckServiceConfig) {
     this.db = ensureDatabaseAdapter(config.db, 'policy-check');
-    this.subjectAccountDb = config.subjectAccountDb;
+    const accountDb = config.subjectAccountDb;
+    this.subjectAccount =
+      config.subjectAccount ??
+      (accountDb
+        ? async (tenantId, subjectId) => ({ db: await accountDb(tenantId, subjectId), subjectId })
+        : undefined);
     this.rebacService = config.rebacService;
     this.debugMode = config.debugMode ?? false;
     this.auditConfig = config.auditConfig ?? {
@@ -446,6 +474,7 @@ export class UnifiedCheckService {
       const context: CheckContext = {
         contract,
         subjectId: request.subject_id,
+        requestSubjectId: request.subject_id,
         subjectType: request.subject_type ?? 'user',
         tenantId,
         parsed,
@@ -667,6 +696,17 @@ export class UnifiedCheckService {
   private async evaluate(context: CheckContext): Promise<InternalCheckResult> {
     const matchedRules: string[] = [];
 
+    // The subject under the account router's canonical id, for every lookup and comparison
+    // below (attributes, roles, memberships, relationships, the resource owner). One that does not
+    // resolve keeps the request's id; its roles then cannot be read (the role check fails).
+    if (this.subjectAccount) {
+      try {
+        context.subjectId = (await this.subjectRBACDatabases(context)).subjectId;
+      } catch {
+        // Resolved again (and refused) by the role check.
+      }
+    }
+
     // Pre-load user verified attributes for ABAC evaluation
     if (
       context.policy.abac &&
@@ -777,17 +817,25 @@ export class UnifiedCheckService {
     };
   }
 
-  /** The tenant metadata database and the subject's account database. */
-  private subjectRBACDatabases(context: CheckContext): Promise<TenantRBACDatabases> {
-    const resolve = this.subjectAccountDb;
-    if (!resolve) return Promise.resolve({ metadata: this.db, account: this.db });
-    const key = `${context.tenantId}\u0000${context.subjectId}`;
-    let account = this.subjectAccountDbs.get(key);
-    if (!account) {
-      account = resolve(context.tenantId, context.subjectId);
-      this.subjectAccountDbs.set(key, account);
+  /**
+   * The tenant metadata database, the subject's account database, and the id the subject's rows
+   * are stored under there (the account router's canonical id).
+   */
+  private async subjectRBACDatabases(
+    context: CheckContext
+  ): Promise<{ dbs: TenantRBACDatabases; subjectId: string }> {
+    const resolve = this.subjectAccount;
+    if (!resolve) {
+      return { dbs: { metadata: this.db, account: this.db }, subjectId: context.subjectId };
     }
-    return account.then((db) => ({ metadata: this.db, account: db }));
+    const key = `${context.tenantId}\u0000${context.requestSubjectId}`;
+    let account = this.subjectAccounts.get(key);
+    if (!account) {
+      account = resolve(context.tenantId, context.requestSubjectId);
+      this.subjectAccounts.set(key, account);
+    }
+    const resolved = await account;
+    return { dbs: { metadata: this.db, account: resolved.db }, subjectId: resolved.subjectId };
   }
 
   /**
@@ -801,9 +849,10 @@ export class UnifiedCheckService {
     }
 
     try {
+      const { dbs, subjectId } = await this.subjectRBACDatabases(context);
       const hasPermission = await hasIdLevelPermission(
-        await this.subjectRBACDatabases(context),
-        context.subjectId,
+        dbs,
+        subjectId,
         context.parsed.resource,
         context.parsed.id,
         context.parsed.action,
@@ -825,14 +874,14 @@ export class UnifiedCheckService {
     context: CheckContext
   ): Promise<{ allowed: boolean; roleName?: string; viaGroup?: string }> {
     try {
-      // Query user's roles
-      const rolesResult = (
-        await resolveSubjectRoles(
-          await this.subjectRBACDatabases(context),
-          context.tenantId,
-          context.subjectId
-        )
-      ).map(({ role, assignment }) => ({
+      // Query user's roles (and the effective groups they were read through, for group
+      // conditions of the tenant's rules)
+      const { dbs, subjectId } = await this.subjectRBACDatabases(context);
+      const { roles, effectiveGroupIds, unknownGroupIds, rolesComplete } =
+        await resolveSubjectRolesAndGroups(dbs, context.tenantId, subjectId);
+      context.subjectGroupIds = effectiveGroupIds;
+      context.subjectUnknownGroupIds = unknownGroupIds;
+      const rolesResult = roles.map(({ role, assignment }) => ({
         name: role.name,
         permissions: rolePermissions(role),
         scope_type: assignment.scope_type,
@@ -846,7 +895,7 @@ export class UnifiedCheckService {
       // One with a scope the rules cannot express is left out (it only grants less).
       // A tenant-scoped assignment in its own tenant (as invitations once wrote) is tenant-wide, as a
       // global one.
-      context.subjectRoles = rolesResult.flatMap((role): PolicySubjectRole[] => {
+      const known = rolesResult.flatMap((role): PolicySubjectRole[] => {
         const assigned = role.scope_type ?? 'global';
         const ownTenant =
           assigned === 'tenant' && (!role.scope_target || role.scope_target === context.tenantId);
@@ -861,6 +910,10 @@ export class UnifiedCheckService {
           },
         ];
       });
+      // A group with a role grant whose membership is unknown: the roles through it are unknown
+      // too, so the rules (which may deny on a role the subject lacks) see the roles as unread.
+      // The known ones below still grant.
+      context.subjectRoles = rolesComplete ? known : undefined;
 
       const permissionToCheck =
         context.parsed.type === 'type_level'
@@ -1000,14 +1053,22 @@ export class UnifiedCheckService {
       const evaluator = context.policy.abac ? context.policy.evaluator : undefined;
       // Rules see roles and attributes: without them, a rule that denies on one of them would not
       // match and a later rule could grant. No grant from the rules then.
-      if (evaluator && (context.subjectRoles === undefined || context.attributesUnavailable)) {
-        log.warn('Tenant rules not evaluated: roles or attributes could not be read', {
+      // Likewise the subject's groups, when the rules read them (unknown is not "no groups").
+      if (
+        evaluator &&
+        (context.subjectRoles === undefined ||
+          context.attributesUnavailable ||
+          (evaluator.usesSubjectGroups === true && context.subjectGroupIds === undefined))
+      ) {
+        log.warn('Tenant rules not evaluated: roles, groups or attributes could not be read', {
           subjectId: context.subjectId,
         });
       } else if (evaluator) {
         const policyContext: PolicyEvaluationContext = {
           subjectId: context.subjectId,
           subjectRoles: context.subjectRoles,
+          subjectGroupIds: context.subjectGroupIds,
+          subjectUnknownGroupIds: context.subjectUnknownGroupIds,
           verifiedAttributes: context.verifiedAttributes ?? [],
           resourceType: context.parsed.resource,
           resourceId: context.parsed.id,

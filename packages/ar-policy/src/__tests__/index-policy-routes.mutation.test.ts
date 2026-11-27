@@ -175,7 +175,6 @@ describe('GET /policy/health', () => {
         ENABLE_REBAC: 'false',
         ENABLE_POLICY_LOGGING: 'true',
         ENABLE_VERIFIED_ATTRIBUTES: 'false',
-        ENABLE_CUSTOM_RULES: 'false',
       })
     );
     expect(result.status).toBe(200);
@@ -189,7 +188,6 @@ describe('GET /policy/health', () => {
         rebac: false,
         logging: true,
         verifiedAttributes: false,
-        customRules: false,
       },
     });
     expect(probe.flagCalls).toEqual([[undefined]]);
@@ -223,7 +221,6 @@ describe('GET /policy/flags', () => {
     'feature.enable_rebac': false,
     'feature.enable_policy_logging': true,
     'feature.enable_verified_attributes': true,
-    'feature.enable_custom_rules': false,
   };
 
   it('requires internal authentication', async () => {
@@ -251,7 +248,6 @@ describe('GET /policy/flags', () => {
         ENABLE_REBAC: { value: false, source: 'platform' },
         ENABLE_POLICY_LOGGING: { value: true, source: 'env' },
         ENABLE_VERIFIED_ATTRIBUTES: { value: true, source: 'default' },
-        ENABLE_CUSTOM_RULES: { value: false, source: 'default' },
       },
     });
     expect(probe.settingsCalls).toEqual([

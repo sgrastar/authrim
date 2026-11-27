@@ -29,6 +29,7 @@ import {
   groupParentCondition,
   groupsCarryingRoles,
   subtreeHasSelfWritableDynamicGroup,
+  groupRoleGrantConflictsWithDenyRules,
   invalidateSubjectRBACCache,
   isUniqueConstraintError,
   listGroupMembersPage,
@@ -1235,6 +1236,9 @@ export async function adminGroupRoleAssignHandler(c: GroupContext) {
       assertDelegableRole(auth, role);
       // 0 in SQLite/D1, false in PostgreSQL
       if (!isRoleAssignable(role)) return { kind: 'not_assignable' as const };
+      // A deny rule naming the role would rely on a service group's "not a member".
+      if (await groupRoleGrantConflictsWithDenyRules(tx, tenantId, groupId, role.name))
+        return { kind: 'deny_rule_conflict' as const };
       await writeGroupRoleGrant(tx, tenantId, {
         groupId,
         roleId: role.id,
@@ -1250,6 +1254,15 @@ export async function adminGroupRoleAssignHandler(c: GroupContext) {
     if (outcome.kind === 'invalid_scope')
       return invalid(c, 'scope_target names a group the tenant does not have');
     if (outcome.kind === 'not_assignable') return invalid(c, 'The role cannot be assigned');
+    if (outcome.kind === 'deny_rule_conflict')
+      return c.json(
+        {
+          error: 'dynamic_group_negative_condition',
+          error_description:
+            'An enabled deny rule names this role and a service group decides membership of this group: the rule would rely on a possibly stale "not a member"',
+        },
+        409
+      );
     const role = outcome.role;
     // A role granted to a group reaches every member: the tenant's cached claims are all stale.
     if (c.env.REBAC_CACHE) await bumpTenantRBACCacheVersion(c.env.REBAC_CACHE, tenantId);

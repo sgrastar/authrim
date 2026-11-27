@@ -272,7 +272,6 @@ export const POLICY_FLAG_KEYS: Record<string, string> = {
   'policy:flags:ENABLE_REBAC': 'feature.enable_rebac',
   'policy:flags:ENABLE_POLICY_LOGGING': 'feature.enable_policy_logging',
   'policy:flags:ENABLE_VERIFIED_ATTRIBUTES': 'feature.enable_verified_attributes',
-  'policy:flags:ENABLE_CUSTOM_RULES': 'feature.enable_custom_rules',
   'policy:flags:ENABLE_SD_JWT': 'feature.enable_sd_jwt',
   'policy:flags:ENABLE_POLICY_EMBEDDING': 'feature.enable_policy_embedding',
   // The token-embedding API's switches, read by token issuance from SETTINGS.

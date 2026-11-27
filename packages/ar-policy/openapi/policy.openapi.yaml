@@ -621,7 +621,6 @@ components:
               rebac: true
               logging: true
               verifiedAttributes: false
-              customRules: false
     PolicyFlagUpdate:
       description: Successful JSON response.
       content:
@@ -856,8 +855,6 @@ components:
                 logging:
                   type: boolean
                 verifiedAttributes:
-                  type: boolean
-                customRules:
                   type: boolean
     PolicyFlagUpdateRequest:
       type: object

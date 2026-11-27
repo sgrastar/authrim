@@ -9,6 +9,8 @@ import {
   updateGroup,
   upsertGroupMembership,
   dependentGroups,
+  groupReferencedByPolicyRules,
+  groupRoleGrantConflictsWithDenyRules,
   type AdminAuthContext,
   type GroupPlan,
   type DatabaseSource,
@@ -57,6 +59,15 @@ export async function adminAssignGroupRole(
 ) {
   const role = await requireDelegableRole(metadata, tenant, auth, grant.roleId);
   if (!isRoleAssignable(role)) throw new Error('role_not_assignable');
+  if (
+    await groupRoleGrantConflictsWithDenyRules(
+      ensureDatabaseAdapter(metadata),
+      tenant,
+      grant.groupId,
+      role.name
+    )
+  )
+    throw new Error('dynamic_group_negative_condition');
   await assignGroupRole(metadata, tenant, grant, cache);
 }
 
@@ -83,9 +94,11 @@ export async function adminRemoveGroupRole(
 /**
  * Whether the admin may change who is a member of the group. A group carries authorization when
  * it or an ancestor has an unexpired role grant or an active, unexpired resource permission
- * granted to it (`subject_type = 'group'`): a member gets that authorization, so changing the
- * membership needs what granting it directly needs (the role-write permission, which the resource
- * permissions API also requires, and the grant ceiling of every role).
+ * granted to it (`subject_type = 'group'`), or is named by a group condition of an enabled policy
+ * rule (role-guard's groupReferencedByPolicyRules): a member gets that authorization (or, for
+ * `not_in_any_group`, a non-member does), so changing the membership, adding or removing, needs
+ * what granting it directly needs (the role-write permission, which the resource permissions and
+ * policy rule APIs also require, and the grant ceiling of every role).
  *
  * Include dormant groups: restoring their active state could expose an already delegated role.
  */
@@ -156,7 +169,10 @@ async function canManageOneGroupMembership(
       WHERE p.is_active=1 AND (p.expires_at IS NULL OR p.expires_at>?)`,
     [tenant, groupId, tenant, tenant, now, tenant, now]
   );
-  if (!grants.length) return true;
+  // A policy rule carries no grant tier: the role-write permission, which editing it needs, is
+  // what changing who it matches needs.
+  const referenced = await groupReferencedByPolicyRules(metadata, tenant, groupId);
+  if (!grants.length && !referenced) return true;
   // Adding a member to a group that carries authorization grants it: the same operation
   // permission as a direct grant is required, on top of the grant ceiling of every role.
   if (!auth || !hasAdminPermission(auth.permissions ?? [], ADMIN_PERMISSIONS.ROLES_WRITE))

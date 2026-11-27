@@ -1,6 +1,6 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DatabaseAdapter } from '../../../db';
-import { SavedGroupInputReader, loadGroupFields } from '../inputs';
+import { SavedGroupInputReader, clearScreenWritableKeysCache, loadGroupFields } from '../inputs';
 import { BUILTIN_GROUP_FIELDS, type GroupPlan } from '../model';
 
 const account = {
@@ -112,6 +112,72 @@ describe('dynamic group field catalog', () => {
     expect(fields).not.toHaveProperty('custom.untrusted');
     expect(metadata.query).toHaveBeenCalledWith(
       expect.stringContaining("operation_status = 'active' ORDER BY field_key LIMIT 1000"),
+      ['tenant-a'],
+      { consistencyClass: 'primary_required' }
+    );
+  });
+});
+
+describe('dynamic group field catalog: who writes a field', () => {
+  beforeEach(() => clearScreenWritableKeysCache());
+
+  const schema = (field_key: string, extra: Record<string, unknown> = {}) => ({
+    id: `schema-${field_key}`,
+    field_key,
+    field_type: 'string',
+    cardinality: 'single',
+    is_pii: 0,
+    schema_version: 1,
+    ...extra,
+  });
+
+  it('marks a field self-writable when the registration form or a login screen saves it', async () => {
+    const metadata = database();
+    metadata.query.mockImplementation(async (sql: string) => {
+      if (sql.includes('FROM custom_claim_schemas'))
+        return [
+          schema('registered', { show_on_registration: 1 }),
+          schema('required', { registration_required: 1 }),
+          schema('answered'),
+          schema('kept_off'),
+          schema('scim_only'),
+          // PostgreSQL booleans.
+          schema('from_pg', { show_on_registration: false, registration_required: false }),
+        ];
+      if (sql.includes('FROM screens'))
+        return [
+          {
+            fields_json: JSON.stringify([
+              { block_type: 'identity_field', field: 'Answered' },
+              // Kept off the profile: its answer is never saved to the attribute.
+              { block_type: 'select', field: 'kept_off', store_to_profile: false },
+              { block_type: 'paragraph', field: 'scim_only' },
+            ]),
+          },
+          { fields_json: '{not json' },
+          // PostgreSQL (jsonb): already parsed.
+          { fields_json: [{ block_type: 'radio', field: 'field.canonical.from_pg' }] },
+        ];
+      return [];
+    });
+
+    const fields = await loadGroupFields(metadata.adapter, 'tenant-a');
+
+    expect(fields['custom.registered']?.selfWritable).toBe(true);
+    expect(fields['custom.required']?.selfWritable).toBe(true);
+    expect(fields['custom.answered']?.selfWritable).toBe(true);
+    expect(fields['custom.from_pg']?.selfWritable).toBe(true);
+    expect(fields['custom.kept_off']?.selfWritable).toBeUndefined();
+    // Written by SCIM (an administrator's provisioning) or by no screen: trusted.
+    expect(fields['custom.scim_only']?.selfWritable).toBeUndefined();
+    // Built-ins: the person edits their own address (country); not their email or its state.
+    expect(fields.country?.selfWritable).toBe(true);
+    expect(fields.email?.selfWritable).toBeUndefined();
+    expect(fields.email_domain?.selfWritable).toBeUndefined();
+    expect(fields.email_verified?.selfWritable).toBeUndefined();
+    // The tenant's screens and the built-in ones it falls back to.
+    expect(metadata.query).toHaveBeenCalledWith(
+      expect.stringContaining("tenant_id = 'default' AND is_system = TRUE"),
       ['tenant-a'],
       { consistencyClass: 'primary_required' }
     );

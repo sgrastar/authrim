@@ -178,6 +178,11 @@ const CONDITION_PARAMS: Record<ConditionType, Record<string, ParamCheck>> = {
   has_any_role: { roles: texts, ...ROLE_PARAMS },
   has_all_roles: { roles: texts, ...ROLE_PARAMS },
   is_resource_owner: {},
+  in_group: { group_id: text },
+  in_any_group: { group_ids: texts },
+  in_all_groups: { group_ids: texts },
+  not_in_any_group: { group_ids: texts },
+  same_group: {},
   has_relationship: { types: texts },
   user_type_is: { types: texts },
   attribute_equals: {
@@ -222,9 +227,18 @@ export const ATTRIBUTE_CONDITION_TYPES: ReadonlySet<string> = new Set<ConditionT
   'numeric_between',
 ]);
 
+/** Condition types that read the subject's effective groups. */
+export const GROUP_CONDITION_TYPES: ReadonlySet<string> = new Set<ConditionType>([
+  'in_group',
+  'in_any_group',
+  'in_all_groups',
+  'not_in_any_group',
+  'same_group',
+]);
+
 /**
- * Condition types the Check API can evaluate: it knows the subject's roles and verified
- * attributes, the resource and the time, but not the subject's user type or
+ * Condition types the Check API can evaluate: it knows the subject's roles, effective groups and
+ * verified attributes, the resource and the time, but not the subject's user type or
  * relationships, nor the request's country, IP or rate counts.
  */
 export const CHECK_API_CONDITION_TYPES: ReadonlySet<string> = new Set<ConditionType>([
@@ -232,6 +246,11 @@ export const CHECK_API_CONDITION_TYPES: ReadonlySet<string> = new Set<ConditionT
   'has_any_role',
   'has_all_roles',
   'is_resource_owner',
+  'in_group',
+  'in_any_group',
+  'in_all_groups',
+  'not_in_any_group',
+  'same_group',
   'attribute_equals',
   'attribute_exists',
   'attribute_in',
@@ -322,6 +341,19 @@ function evaluatedAt(context: PolicyContext): number {
 }
 
 /**
+ * The subject's known groups, or null when they are unknown or one of `named` that the subject is
+ * not known to be in has an unknown membership (the condition is then not met).
+ */
+function knownGroups(context: PolicyContext, named: readonly string[]): string[] | null {
+  const groups = context.subject.groupIds;
+  if (groups === undefined) return null;
+  const unknown = context.subject.unknownGroupIds;
+  if (unknown?.length && named.some((id) => unknown.includes(id) && !groups.includes(id)))
+    return null;
+  return groups;
+}
+
+/**
  * Condition evaluator functions
  */
 type ConditionEvaluator = (params: Record<string, unknown>, context: PolicyContext) => boolean;
@@ -369,6 +401,55 @@ const conditionEvaluators: Record<ConditionType, ConditionEvaluator> = {
    */
   is_resource_owner: (_params, context) => {
     return context.subject.id === context.resource.ownerId;
+  },
+
+  // ==========================================================================
+  // Group conditions: the subject's effective groups (direct memberships and their ancestors).
+  // Unknown memberships (groupIds undefined, or a named group in unknownGroupIds and not in
+  // groupIds) meet none of them, the negative one included.
+  // ==========================================================================
+
+  /** Subject is in the group. Params: group_id */
+  in_group: (params, context) => {
+    const groups = knownGroups(context, [params.group_id as string]);
+    return groups !== null && groups.includes(params.group_id as string);
+  },
+
+  /** Subject is in any of the groups. Params: group_ids */
+  in_any_group: (params, context) => {
+    const ids = params.group_ids as string[];
+    const groups = knownGroups(context, ids);
+    return groups !== null && ids.some((id) => groups.includes(id));
+  },
+
+  /** Subject is in all of the groups. Params: group_ids */
+  in_all_groups: (params, context) => {
+    const ids = params.group_ids as string[];
+    const groups = knownGroups(context, ids);
+    return groups !== null && ids.every((id) => groups.includes(id));
+  },
+
+  /** Subject is in none of the groups (unmet when a membership is unknown). Params: group_ids */
+  not_in_any_group: (params, context) => {
+    const ids = params.group_ids as string[];
+    const groups = context.subject.groupIds;
+    const unknown = new Set(context.subject.unknownGroupIds ?? []);
+    return (
+      groups !== undefined &&
+      !ids.some((id) => unknown.has(id)) &&
+      !ids.some((id) => groups.includes(id))
+    );
+  },
+
+  /** Subject shares at least one group with the resource (unmet when it has none). No params. */
+  same_group: (_params, context) => {
+    const resourceGroups = context.resource.groupIds;
+    const groups = resourceGroups ? knownGroups(context, resourceGroups) : null;
+    return (
+      groups !== null &&
+      resourceGroups !== undefined &&
+      resourceGroups.some((id) => groups.includes(id))
+    );
   },
 
   /**

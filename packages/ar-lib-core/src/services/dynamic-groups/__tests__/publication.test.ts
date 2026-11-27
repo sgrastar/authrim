@@ -512,6 +512,99 @@ describe('dynamic membership publication', () => {
         .filter((r) => r.lifecycle_state === 'active')
         .map((r) => r.group_id)
     ).toEqual(['A', 'T']);
+    // The group left out on purpose is recorded as undecided (a reader treats it as unknown).
+    expect(
+      account.db.prepare('SELECT unknown_groups_json FROM dynamic_membership_publications').get()
+    ).toEqual({ unknown_groups_json: JSON.stringify(['R']) });
+  });
+
+  it('records the groups evaluated as unknown with the publication', async () => {
+    commit(1, { A: { member: true, dynamic: true }, B: { member: 'unknown', dynamic: 'unknown' } });
+    const result = await publishDynamicMemberships(store, reader, account.adapter);
+    expect(result.groupIds).toEqual(['A']);
+    expect(
+      account.db.prepare('SELECT unknown_groups_json FROM dynamic_membership_publications').get()
+    ).toEqual({ unknown_groups_json: JSON.stringify(['B']) });
+    // The same result again: current (nothing rewritten).
+    await expect(publishDynamicMemberships(store, reader, account.adapter)).resolves.toMatchObject({
+      status: 'current',
+    });
+  });
+
+  it.each([
+    ['names it', [{ type: 'in_group', params: { group_id: 'R' } }]],
+    ['uses same_group (any group may decide it)', [{ type: 'same_group', params: {} }]],
+  ])(
+    'leaves out a self-writable group while an enabled policy rule %s',
+    async (_label, conditions) => {
+      meta.db.exec(`INSERT INTO custom_claim_schemas(id, tenant_id, field_key, display_label,
+      field_type, is_active, operation_status, schema_version, show_on_registration, created_at,
+      updated_at) VALUES ('${TENANT}:team', '${TENANT}', 'team', 'Team', 'string', 1, 'active', 1,
+      1, 1, 1)`);
+      const fields = {
+        ...BUILTIN_GROUP_FIELDS,
+        'custom.team': { type: 'string' as const, schemaId: `${TENANT}:team`, schemaVersion: 1 },
+      };
+      const teamGroup = group('T', {
+        condition: { op: 'attribute', field: 'custom.team', compare: 'eq', value: 'x' },
+      });
+      const referencing = group('R', { condition: { op: 'member', groupId: 'T' } });
+      await store.save([...groups, teamGroup, referencing], fields, 1, 'actor');
+      const result = {
+        A: { member: true, dynamic: true },
+        T: { member: true, dynamic: true },
+        R: { member: true, dynamic: true },
+      };
+      commit(1, result, 2);
+      expect((await publishDynamicMemberships(store, reader, account.adapter)).groupIds).toEqual([
+        'A',
+        'R',
+        'T',
+      ]);
+      // A rule disabled long ago decides nothing.
+      meta.db
+        .prepare(
+          `INSERT INTO policy_rules (id, tenant_id, name, effect, conditions, enabled, created_at,
+             updated_at) VALUES ('rule', '${TENANT}', 'Rule', 'allow', ?, 0, 1, 1)`
+        )
+        .run(JSON.stringify(conditions));
+      commit(2, result, 2);
+      expect((await publishDynamicMemberships(store, reader, account.adapter)).groupIds).toEqual([
+        'A',
+        'R',
+        'T',
+      ]);
+      // Enabled: membership of R (decided through T by a self-writable field) decides the rule.
+      meta.db.exec("UPDATE policy_rules SET enabled = 1 WHERE id = 'rule'");
+      commit(3, result, 2);
+      const published = (await publishDynamicMemberships(store, reader, account.adapter)).groupIds;
+      expect(published).not.toContain('R');
+      expect(published).toContain('A');
+    }
+  );
+
+  it('leaves out a group decided by the built-in country while an allow rule names it', async () => {
+    const countryGroup = group('K', {
+      condition: { op: 'attribute', field: 'country', compare: 'eq', value: 'JP' },
+    });
+    await store.save([...groups, countryGroup], BUILTIN_GROUP_FIELDS, 1, 'actor');
+    const result = { A: { member: true, dynamic: true }, K: { member: true, dynamic: true } };
+    commit(1, result, 2);
+    expect((await publishDynamicMemberships(store, reader, account.adapter)).groupIds).toEqual([
+      'A',
+      'K',
+    ]);
+    // The person edits their own address: the rule may not rely on it.
+    meta.db
+      .prepare(
+        `INSERT INTO policy_rules (id, tenant_id, name, effect, conditions, enabled, created_at,
+           updated_at) VALUES ('rule', '${TENANT}', 'Rule', 'allow', ?, 1, 1, 1)`
+      )
+      .run(JSON.stringify([{ type: 'in_group', params: { group_id: 'K' } }]));
+    commit(2, result, 2);
+    const published = (await publishDynamicMemberships(store, reader, account.adapter)).groupIds;
+    expect(published).not.toContain('K');
+    expect(published).toContain('A');
   });
 
   it('makes the rows stale when the re-read after writing fails', async () => {

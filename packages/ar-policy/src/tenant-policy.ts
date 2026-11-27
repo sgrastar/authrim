@@ -1,9 +1,9 @@
 /**
  * A tenant's attribute-based policy for the Check API.
  *
- * The tenant's settings decide whether attribute-based policy applies (`feature.enable_abac`),
- * whether its custom rules (`policy_rules`) take part (`feature.enable_custom_rules`), whether the
- * subject's verified attributes are loaded (`feature.enable_verified_attributes`), whether a
+ * The tenant's settings decide whether attribute-based policy, and with it the tenant's custom
+ * rules (`policy_rules`), applies (`feature.enable_abac`), whether the subject's verified
+ * attributes are loaded (`feature.enable_verified_attributes`), whether a
  * request's relationship check is evaluated (`feature.enable_rebac`) and whether each decision is
  * logged (`feature.enable_policy_logging`).
  *
@@ -15,98 +15,67 @@ import {
   createLogger,
   readPolicyFlags,
   POLICY_FLAGS_OFF,
+  TENANT_POLICY_RULES_CACHE_TTL_MS,
+  serviceGroupDecidedGroups,
   type DatabaseAdapter,
-  type PolicyEvaluationContext,
-  type PolicyEvaluationResult,
-  type PolicyEvaluator,
   type TenantPolicySettings,
 } from '@authrim/ar-lib-core';
 import {
-  evaluateTenantRules,
+  createTenantRuleEvaluator,
+  readTenantPolicyRules,
   tenantRulesUnusableReason,
+  tenantRulesNeedServiceGroups,
   toTenantPolicyRule,
-  type PolicyContext,
   type TenantPolicyRule,
-  type TenantPolicyRuleRow,
 } from '@authrim/ar-lib-policy';
 
-export { toTenantPolicyRule };
+export { createTenantRuleEvaluator, toTenantPolicyRule };
 export type { TenantPolicyRule };
 
 const log = createLogger().module('TENANT-POLICY');
-const RULES_CACHE_TTL_MS = 60_000;
+// The group delegation guard (ar-lib-core role-guard) counts a rule disabled within this lifetime.
+const RULES_CACHE_TTL_MS = TENANT_POLICY_RULES_CACHE_TTL_MS;
 const RULES_CACHE_MAX_TENANTS = 1000;
-const rulesCache = new Map<string, { rules: TenantPolicyRule[]; at: number }>();
+const rulesCache = new Map<string, { rules: TenantPolicyRule[]; at: number; version: number }>();
 
 /**
- * The tenant's enabled custom rules, cached for a minute per isolate. Throws when one cannot be
- * evaluated as written: skipping it could skip a deny that a later allow would then get past,
- * so the check grants nothing from the rules until it is fixed (not cached).
+ * The tenant's rules version (`policy_rules_version`, raised in the same batch as every rule
+ * change; 0 before the first). A read failure throws: the cached rules are not used on a guess.
+ */
+async function rulesVersionOf(db: DatabaseAdapter, tenantId: string): Promise<number> {
+  const row = await db.queryOne<{ version: number | string }>(
+    'SELECT version FROM policy_rules_version WHERE tenant_id = ?',
+    [tenantId]
+  );
+  return row ? Number(row.version) : 0;
+}
+
+/**
+ * The tenant's enabled custom rules, cached for a minute per isolate and used only while the
+ * tenant's rules version is the one they were read under (one cheap read per check), so a rule
+ * change reaches every isolate at its next check. Throws when one cannot be evaluated as written:
+ * skipping it could skip a deny that a later allow would then get past, so the check grants
+ * nothing from the rules until it is fixed (not cached).
  */
 export async function loadTenantPolicyRules(
   db: DatabaseAdapter,
   tenantId: string
 ): Promise<TenantPolicyRule[]> {
+  const version = await rulesVersionOf(db, tenantId);
   const cached = rulesCache.get(tenantId);
-  if (cached && Date.now() - cached.at < RULES_CACHE_TTL_MS) return cached.rules;
-  const rows = await db.query<TenantPolicyRuleRow>(
-    `SELECT id, name, description, priority, effect, resource_types, actions, conditions
-       FROM policy_rules
-      WHERE tenant_id = ? AND enabled = 1
-      ORDER BY priority DESC`,
-    [tenantId]
-  );
-  const rules: TenantPolicyRule[] = [];
-  for (const row of rows) {
-    const rule = toTenantPolicyRule(row);
-    if (!rule) {
-      throw new Error(`Policy rule ${row.id} cannot be evaluated as stored`);
-    }
-    rules.push(rule);
+  if (cached && Date.now() - cached.at < RULES_CACHE_TTL_MS && cached.version === version)
+    return cached.rules;
+  const { rules, unusable } = await readTenantPolicyRules(db, tenantId);
+  if (unusable.length) {
+    throw new Error(`Policy rule ${unusable[0]} cannot be evaluated as stored`);
   }
   rulesCache.delete(tenantId);
   if (rulesCache.size >= RULES_CACHE_MAX_TENANTS) {
     const oldest = rulesCache.keys().next().value;
     if (oldest !== undefined) rulesCache.delete(oldest);
   }
-  rulesCache.set(tenantId, { rules, at: Date.now() });
+  rulesCache.set(tenantId, { rules, at: Date.now(), version });
   return rules;
-}
-
-/** Evaluates a tenant's rules for a check (no match: not granted). */
-export function createTenantRuleEvaluator(rules: TenantPolicyRule[]): PolicyEvaluator {
-  return {
-    evaluate(context: PolicyEvaluationContext): PolicyEvaluationResult {
-      const policyContext: PolicyContext = {
-        subject: {
-          id: context.subjectId,
-          roles: (context.subjectRoles ?? []).map((role) => ({
-            name: role.name,
-            scope: role.scope,
-            scopeTarget: role.scopeTarget,
-            expiresAt: role.expiresAt,
-          })),
-          verifiedAttributes: context.verifiedAttributes.map((attribute) => ({
-            name: attribute.name,
-            value: attribute.value,
-            source: attribute.source,
-          })),
-        } as PolicyContext['subject'],
-        resource: {
-          type: context.resourceType,
-          id: context.resourceId ?? '',
-          ownerId: context.resourceOwnerId,
-          groupIds: context.resourceGroupIds,
-          attributes: context.resourceAttributes,
-        },
-        action: { name: context.action },
-        timestamp: context.timestamp,
-        environment: context.environment,
-      };
-      const decision = evaluateTenantRules(rules, policyContext);
-      return { allowed: decision.allowed, reason: decision.reason, decidedBy: decision.decidedBy };
-    },
-  };
 }
 
 /**
@@ -129,10 +98,16 @@ export async function resolveTenantPolicy(
     logDecisions: flags.policyLogging,
     ...(read ? {} : { unavailable: true }),
   };
-  if (!flags.abac || !flags.customRules) return settings;
+  if (!flags.abac) return settings;
   try {
     const rules = await loadTenantPolicyRules(db, tenantId);
-    const unusable = tenantRulesUnusableReason(rules, settings);
+    // A rule relying on non-membership of a group a service group decides makes them unusable.
+    const unusable = tenantRulesUnusableReason(rules, {
+      ...settings,
+      serviceGroupDecided: tenantRulesNeedServiceGroups(rules)
+        ? await serviceGroupDecidedGroups(db, tenantId)
+        : undefined,
+    });
     if (unusable) throw new Error(unusable);
     settings.evaluator = createTenantRuleEvaluator(rules);
   } catch (error) {

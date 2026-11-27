@@ -63,11 +63,25 @@ export {
   validatePolicyConditions,
   CHECK_API_CONDITION_TYPES,
   ATTRIBUTE_CONDITION_TYPES,
+  GROUP_CONDITION_TYPES,
 } from './engine';
 export type { PolicyEngineConfig } from './engine';
 
 // A tenant's custom rules (Check API and policy simulation)
-export { toTenantPolicyRule, evaluateTenantRules, tenantRulesUnusableReason } from './tenant-rules';
+export {
+  toTenantPolicyRule,
+  evaluateTenantRules,
+  tenantRulesUnusableReason,
+  toTenantPolicyContext,
+  createTenantRuleEvaluator,
+  readTenantPolicyRules,
+  tenantRulesUseGroups,
+  tenantRulesNeedServiceGroups,
+  dynamicGroupConditionProblem,
+} from './tenant-rules';
+export type { ServiceGroupDecided } from './tenant-rules';
+// The policy service's rule cache lifetime (shared with the group delegation guard in ar-lib-core).
+export { TENANT_POLICY_RULES_CACHE_TTL_MS } from '@authrim/ar-lib-core';
 export type { TenantPolicyRule, TenantPolicyRuleRow } from './tenant-rules';
 
 // Role Checker utilities

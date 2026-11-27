@@ -3,11 +3,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ApplicationLauncher } from '@authrim/ar-lib-core';
 
 const mocked = vi.hoisted(() => {
+  // A whole DatabaseAdapter, as the shared membership reader (resolveSubjectGroups) takes one.
   const createAdapter = () => ({
     query: vi.fn(),
     queryOne: vi.fn(),
     execute: vi.fn(),
     batch: vi.fn(),
+    transaction: vi.fn(),
+    isHealthy: vi.fn(),
+    getType: vi.fn(() => 'd1'),
+    close: vi.fn(),
   });
   const adapter = createAdapter();
   const accountAdapter = createAdapter();
@@ -834,7 +839,10 @@ describe('account launcher handlers', () => {
         return [launcherRow(forActive), launcherRow(forStopped)];
       // Group definitions: only group-active is active (group-stopped is stopped or deleted).
       if (sql.includes('FROM "groups"'))
-        return params.includes('group-active') ? [{ id: 'group-active' }] : [];
+        return [
+          { id: 'group-active', parent_group_id: null, lifecycle_state: 'active' },
+          { id: 'group-stopped', parent_group_id: null, lifecycle_state: 'suspended' },
+        ].filter((row) => params.includes(row.id));
       return [];
     });
     mocked.accountAdapter.query.mockImplementation(async (sql: string) =>
@@ -848,11 +856,59 @@ describe('account launcher handlers', () => {
     expect(response.status).toBe(200);
     const body = await response.json<{ launchers: { id: string }[] }>();
     expect(body.launchers.map((item) => item.id)).toEqual(['launcher-active']);
-    const groupRead = mocked.adapter.query.mock.calls.find(([sql]) =>
-      String(sql).includes('FROM "groups"')
+    const groupRead = mocked.adapter.query.mock.calls.find(
+      ([sql]) => String(sql).includes('FROM "groups"') && String(sql).includes(' IN (')
     );
-    expect(String(groupRead?.[0])).toContain("lifecycle_state = 'active'");
     expect(groupRead?.[1]).toEqual(['tenant-a', 'group-active', 'group-stopped']);
+  });
+
+  it('hides a group launcher behind a dynamic membership that is not of the current publication', async () => {
+    const forDynamic = launcher(
+      { ...baseVisibility, mode: 'groups', group_ids: ['group-dynamic'] },
+      { id: 'launcher-dynamic' }
+    );
+    const forManual = launcher(
+      { ...baseVisibility, mode: 'groups', group_ids: ['group-manual'] },
+      { id: 'launcher-manual' }
+    );
+    mocked.adapter.query.mockImplementation(async (sql: string, params: unknown[] = []) => {
+      if (sql.includes('FROM application_launchers'))
+        return [launcherRow(forDynamic), launcherRow(forManual)];
+      if (sql.includes('FROM "groups"'))
+        return ['group-dynamic', 'group-manual']
+          .filter((id) => params.includes(id))
+          .map((id) => ({ id, parent_group_id: null, lifecycle_state: 'active' }));
+      return [];
+    });
+    mocked.adapter.queryOne.mockImplementation(async (sql: string) =>
+      sql.includes('service_group_catalog') ? { revision: 2 } : null
+    );
+    // The dynamic row is of rules revision 1, the catalog is at 2: its group is unknown.
+    mocked.accountAdapter.query.mockImplementation(async (sql: string) =>
+      sql.includes('FROM group_memberships')
+        ? [
+            { group_id: 'group-manual', assignment_source: 'manual', source_ref: '' },
+            {
+              group_id: 'group-dynamic',
+              assignment_source: 'dynamic',
+              source_ref: '0000000000000001:1',
+            },
+            // The publication record (read in the same statement); its revision's plan is not
+            // on record, so the service groups are unknown.
+            {
+              group_id: null,
+              assignment_source: 'publication_record',
+              source_ref: '0000000000000001:1',
+            },
+          ]
+        : []
+    );
+
+    const response = await accountApp().request('/launchers');
+
+    expect(response.status).toBe(200);
+    const body = await response.json<{ launchers: { id: string }[] }>();
+    expect(body.launchers.map((item) => item.id)).toEqual(['launcher-manual']);
   });
 
   it('does not allow a launcher with favorites disabled to be favorited', async () => {
