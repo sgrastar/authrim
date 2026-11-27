@@ -349,7 +349,13 @@ export async function assignScopedRoleToUser(
   scopeType: string,
   scopeTarget: string,
   tenantId: string
-): Promise<{ success: boolean; assignment_id?: string; error?: string }> {
+): Promise<{
+  success: boolean;
+  assignment_id?: string;
+  error?: string;
+  /** `role_not_assignable`: the role exists but may not be assigned (refused, not failed). */
+  code?: 'role_not_assignable';
+}> {
   const adapter = getAdapter(dbs.account);
   const assignmentId = `ra_${crypto.randomUUID().replace(/-/g, '')}`;
   const now = Math.floor(Date.now() / 1000);
@@ -364,6 +370,13 @@ export async function assignScopedRoleToUser(
         // SECURITY: Do not expose role ID to prevent enumeration
         error: 'Role not found',
       };
+    }
+
+    // A role marked not assignable is not given, by a JIT rule or a domain mapping either, as an
+    // administrator could not grant it directly (1/0 in SQLite and D1, true/false in PostgreSQL).
+    if (roleCheck.is_assignable !== 1 && roleCheck.is_assignable !== true) {
+      log.warn('JIT role not assignable; skipped', { tenantId, roleId });
+      return { success: false, error: 'Role not assignable', code: 'role_not_assignable' };
     }
 
     // Check if already assigned
@@ -561,7 +574,12 @@ export async function updateDomainMapping(
     verified: boolean;
     priority: number;
     isActive: boolean;
-  }>
+  }>,
+  /**
+   * `expectedUpdatedAt`: write only the row as it was read (its updated_at); a row changed
+   * meanwhile is not written and `org_domain_mapping_changed` is thrown.
+   */
+  options: { expectedUpdatedAt?: number } = {}
 ): Promise<OrgDomainMapping | null> {
   const adapter = getAdapter(db);
   const setClauses: string[] = [];
@@ -605,10 +623,15 @@ export async function updateDomainMapping(
   setClauses.push('updated_at = ?');
   values.push(now, id, tenantId);
 
-  await adapter.execute(
-    `UPDATE org_domain_mappings SET ${setClauses.join(', ')} WHERE id = ? AND tenant_id = ?`,
+  const expected = options.expectedUpdatedAt !== undefined;
+  if (expected) values.push(options.expectedUpdatedAt);
+  const result = await adapter.execute(
+    `UPDATE org_domain_mappings SET ${setClauses.join(', ')} WHERE id = ? AND tenant_id = ?${
+      expected ? ' AND updated_at = ?' : ''
+    }`,
     values
   );
+  if (expected && !result.rowsAffected) throw new Error('org_domain_mapping_changed');
 
   return getDomainMappingById(db, id, tenantId);
 }

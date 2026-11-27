@@ -1330,6 +1330,49 @@ export async function revokeToken(
 }
 
 /**
+ * The revocation state of a token's JWT ID, failing closed: `unavailable` when the revocation
+ * store is not bound, answers with an error, or cannot be reached (isTokenRevoked reads those as
+ * "not revoked"). For decisions that must not outlive a revocation (the Check API's self
+ * contract).
+ */
+export async function readTokenRevocationState(
+  env: Env,
+  jti: string,
+  tenantId: string
+): Promise<'revoked' | 'active' | 'unavailable'> {
+  if (!env.TOKEN_REVOCATION_STORE) return 'unavailable';
+  try {
+    const { stub, instanceName } = await getRevocationStoreByJti(env, jti, tenantId);
+    const response = await stub.fetch(`http://internal/check?jti=${encodeURIComponent(jti)}`, {
+      method: 'GET',
+    });
+    if (!response.ok) return 'unavailable';
+    const data = await response.json<{ revoked?: unknown }>();
+    if (data.revoked === true) return 'revoked';
+    if (data.revoked !== false) return 'unavailable';
+
+    const legacyInstanceName = buildDOInstanceName('token-revocation', tenantId);
+    if (legacyInstanceName !== instanceName) {
+      const legacyStub = env.TOKEN_REVOCATION_STORE.get(
+        env.TOKEN_REVOCATION_STORE.idFromName(legacyInstanceName)
+      );
+      const legacyResponse = await legacyStub.fetch(
+        `http://internal/check?jti=${encodeURIComponent(jti)}`,
+        { method: 'GET' }
+      );
+      if (!legacyResponse.ok) return 'unavailable';
+      const legacyData = await legacyResponse.json<{ revoked?: unknown }>();
+      if (legacyData.revoked === true) return 'revoked';
+      if (legacyData.revoked !== false) return 'unavailable';
+    }
+    return 'active';
+  } catch (error) {
+    log.error('Failed to read token revocation state', {}, error as Error);
+    return 'unavailable';
+  }
+}
+
+/**
  * Check if an access token has been revoked
  *
  * @param env - Cloudflare environment bindings

@@ -142,7 +142,9 @@ export const WORKER_REQUIRED_DATA_ROLES: Record<
   // lookup: the device and CIBA approval APIs resolve the session's account through the lookup
   // directory before reading the user and its consent withdrawals.
   'ar-async': ['tenant_core/default', 'tenant_core/users', 'tenant_pii', 'lookup'],
-  'ar-policy': ['tenant_core/default', 'tenant_core/users'],
+  // lookup: the Check API's self contract resolves the token's account (account_id) through the
+  // lookup directory, as UserInfo does, where no RUNTIME_DATA_PORTS binding resolves it.
+  'ar-policy': ['tenant_core/default', 'tenant_core/users', 'lookup'],
   'ar-saml': ['tenant_core/default', 'tenant_core/users', 'tenant_pii', 'lookup'],
   'ar-bridge': ['tenant_core/default', 'tenant_core/users', 'tenant_pii', 'lookup'],
   'ar-vc': ['tenant_core/default', 'tenant_core/users', 'tenant_pii', 'lookup'],
@@ -180,7 +182,8 @@ export function getBuiltinD1BindingsForComponent(
   // Policy resolves tenant/account adapters from the request-scoped Runtime
   // Registry context. It must not receive the deployment Core binding as a
   // fallback route.
-  if (component === 'ar-policy') return [];
+  // LOOKUP_DB: the lookup directory that resolves a token's account (not a Core route).
+  if (component === 'ar-policy') return ['LOOKUP_DB'];
   if (component === 'ar-saml') return ['DB', 'DB_PII', 'DB_ADMIN', 'LOOKUP_DB'];
   if (component === 'ar-vc') return ['DB_ADMIN', 'LOOKUP_DB'];
   if (component === 'ar-async') return ['LOOKUP_DB'];

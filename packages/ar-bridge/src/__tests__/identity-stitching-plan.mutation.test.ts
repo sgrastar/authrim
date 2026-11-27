@@ -548,6 +548,22 @@ describe('applying the plan', () => {
     expect(result.roles_assigned.map((r) => r.role_id)).toEqual(['default-role']);
   });
 
+  it('does not give the default role when a matched role was refused as not assignable', async () => {
+    m.assign.mockResolvedValueOnce({
+      success: false,
+      error: 'Role not assignable',
+      code: 'role_not_assignable',
+    });
+    const result = await run(
+      plan({
+        roleAssignments: [{ roleId: 'fixed', scopeType: 'global', scopeTarget: '' }],
+        defaultRoleId: 'default-role',
+      })
+    );
+    expect(m.assign).toHaveBeenCalledTimes(1);
+    expect(result.roles_assigned).toEqual([]);
+  });
+
   it('applies nothing when the apply step finds the identity no longer pending', async () => {
     m.findPending
       .mockResolvedValueOnce(await pendingWith(JSON.stringify(plan())))

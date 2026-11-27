@@ -30,6 +30,7 @@ import { DISCOVERY_CATEGORY_META } from './discovery';
 import { PLUGIN_CATEGORY_META } from './plugin';
 import { ASSURANCE_LEVELS_CATEGORY_META } from './assurance-levels';
 import { CHECK_API_AUDIT_CATEGORY_META } from './check-api-audit';
+import { CHECK_CATEGORY_META } from './check';
 import { LOG_STORAGE_CATEGORY_META } from './log-storage';
 import { ADMIN_NOTICES_CATEGORY_META } from './admin-notices';
 import { PROFILES_CATEGORY_META } from './profiles';
@@ -44,6 +45,7 @@ import { TENANT_DISCOVERY_UI_CATEGORY_META } from './tenant-discovery-ui';
 import { SUPPORT_OPS_CATEGORY_META } from './support-ops';
 import { SELF_SERVICE_CATEGORY_META } from './self-service';
 import { SERVICE_SITE_CATEGORY_META } from './service-site';
+import { GROUPS_CATEGORY_META } from './groups';
 import { IDENTITY_MAPPING_CATEGORY_META } from './identity-mapping';
 import { BULK_APPLY_CATEGORY_META } from './bulk-apply';
 import { TENANT_CAPABILITIES_CATEGORY_META } from './tenant-capabilities';
@@ -90,6 +92,8 @@ export const ALL_CATEGORY_META = {
   assurance: ASSURANCE_LEVELS_CATEGORY_META,
   // Check API Audit
   'check-api-audit': CHECK_API_AUDIT_CATEGORY_META,
+  // Check API (the audience of end-user access tokens)
+  check: CHECK_CATEGORY_META,
   // Log storage (D1 retention before R2)
   'log-storage': LOG_STORAGE_CATEGORY_META,
   // Admin console notices (how long handled ones are kept)
@@ -111,6 +115,8 @@ export const ALL_CATEGORY_META = {
   'support-ops': SUPPORT_OPS_CATEGORY_META,
   'self-service': SELF_SERVICE_CATEGORY_META,
   'service-site': SERVICE_SITE_CATEGORY_META,
+  // End-user groups (dynamic membership freshness)
+  groups: GROUPS_CATEGORY_META,
   // Default Mapping Sets (platform, tenant)
   'identity-mapping': IDENTITY_MAPPING_CATEGORY_META,
   // Limits of the bulk apply (platform)
@@ -184,6 +190,10 @@ export const CATEGORY_SCOPE_CONFIG: Record<
   'check-api-audit': {
     // The Check API reads the platform's audit settings (it audits before a check's tenant is known).
     allowedScopes: ['platform'],
+  },
+  check: {
+    // The audience is the tenant's: a token is checked against its own tenant's value.
+    allowedScopes: ['platform', 'tenant'],
   },
   'log-storage': {
     // One archiver moves the rows of every tenant in the environment.
@@ -287,6 +297,9 @@ export const CATEGORY_SCOPE_CONFIG: Record<
     allowedScopes: ['platform', 'tenant'],
   },
   'service-site': {
+    allowedScopes: ['tenant'],
+  },
+  groups: {
     allowedScopes: ['tenant'],
   },
   // The platform's and each tenant's default Mapping Set; an app's own choice is on the app.

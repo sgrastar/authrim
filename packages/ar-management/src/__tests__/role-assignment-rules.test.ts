@@ -69,6 +69,7 @@ function context(
     id?: string;
     query?: Record<string, string | undefined>;
     cacheDelete?: ReturnType<typeof vi.fn>;
+    adminAuth?: Record<string, unknown>;
   } = {}
 ) {
   const cacheDelete = options.cacheDelete ?? vi.fn().mockResolvedValue(undefined);
@@ -80,6 +81,15 @@ function context(
       query: vi.fn((name: string) => query[name]),
     },
     env: { SETTINGS: { delete: cacheDelete } },
+    get: vi.fn((key: string) =>
+      key === 'adminAuth'
+        ? (options.adminAuth ?? {
+            hierarchyLevel: 100,
+            maxGrantTier: 3,
+            permissions: ['admin:roles:write'],
+          })
+        : undefined
+    ),
     json: vi.fn((value: unknown, status = 200) => Response.json(value, { status })),
   } as never;
 }
@@ -95,7 +105,17 @@ describe('role assignment rules settings API', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.adapter.queryOne.mockResolvedValue(null);
-    mocks.adapter.query.mockResolvedValue([]);
+    // The tenant's roles (grant tier, level), read by the delegation check of a rule's roles.
+    mocks.adapter.query.mockImplementation(async (sql: string, params: unknown[] = []) =>
+      sql.includes('FROM roles')
+        ? [
+            { id: 'role-engineer', grant_tier: 1, hierarchy_level: 10, is_assignable: 1 },
+            { id: 'role-new', grant_tier: 1, hierarchy_level: 10, is_assignable: 1 },
+            { id: 'role-admin', grant_tier: 3, hierarchy_level: 10, is_assignable: 1 },
+            { id: 'role-fixed', grant_tier: 1, hierarchy_level: 10, is_assignable: 0 },
+          ].filter((role) => params.includes(role.id))
+        : []
+    );
     mocks.adapter.execute.mockResolvedValue({ success: true, rowsAffected: 1 });
     mocks.getSecret.mockResolvedValue('domain-hash-secret');
     mocks.hashDomain.mockResolvedValue('hashed-domain');
@@ -186,6 +206,52 @@ describe('role assignment rules settings API', () => {
         valid_from: 100,
         valid_until: 200,
       });
+    });
+
+    it('refuses a rule granting a role above the administrator grant ceiling', async () => {
+      const adminAuth = { hierarchyLevel: 80, maxGrantTier: 2, permissions: ['admin:roles:write'] };
+      // Through the rule's own role and through one of its actions.
+      for (const body of [
+        { ...validInput, role_id: 'role-admin' },
+        { ...validInput, actions: [{ type: 'assign_role', role_id: 'role-admin' }] },
+      ]) {
+        const response = await createRoleAssignmentRule(context({ body, adminAuth }));
+        expect(response.status).toBe(403);
+        await expect(response.json()).resolves.toMatchObject({ error: 'role_delegation_denied' });
+      }
+      // Without the role-grant permission, even a role within the ceiling.
+      const response = await createRoleAssignmentRule(
+        context({ body: validInput, adminAuth: { ...adminAuth, permissions: [] } })
+      );
+      expect(response.status).toBe(403);
+      expect(mocks.adapter.execute).not.toHaveBeenCalled();
+    });
+
+    it('creates a rule whose roles are within the administrator grant ceiling', async () => {
+      const response = await createRoleAssignmentRule(
+        context({
+          body: validInput,
+          adminAuth: { hierarchyLevel: 80, maxGrantTier: 1, permissions: ['admin:roles:write'] },
+        })
+      );
+      expect(response.status).toBe(201);
+    });
+
+    it('refuses a role that cannot be assigned, as a direct grant does', async () => {
+      const response = await createRoleAssignmentRule(
+        context({ body: { ...validInput, role_id: 'role-fixed' } })
+      );
+      expect(response.status).toBe(403);
+      await expect(response.json()).resolves.toMatchObject({ error: 'role_not_assignable' });
+      expect(mocks.adapter.execute).not.toHaveBeenCalled();
+    });
+
+    it('refuses a role that is not the tenant role', async () => {
+      const response = await createRoleAssignmentRule(
+        context({ body: { ...validInput, role_id: 'role-elsewhere' } })
+      );
+      expect(response.status).toBe(400);
+      expect(mocks.adapter.execute).not.toHaveBeenCalled();
     });
 
     it('returns a stable server error when persistence fails', async () => {
@@ -330,6 +396,52 @@ describe('role assignment rules settings API', () => {
         context({ body: { name: 'Updated' }, cacheDelete: vi.fn().mockRejectedValue('KV down') })
       );
       expect(response.status).toBe(200);
+    });
+
+    it('refuses re-enabling or changing a rule whose role is above the ceiling', async () => {
+      const adminAuth = { hierarchyLevel: 80, maxGrantTier: 2, permissions: ['admin:roles:write'] };
+      mocks.adapter.queryOne.mockResolvedValue(
+        row({
+          role_id: 'role-admin',
+          actions_json: JSON.stringify([{ type: 'assign_role', role_id: 'role-admin' }]),
+          is_active: 0,
+        })
+      );
+      for (const body of [{ is_active: true }, { name: 'Renamed', is_active: true }]) {
+        const response = await updateRoleAssignmentRule(context({ body, adminAuth }));
+        expect(response.status).toBe(403);
+      }
+      // A rule left disabled grants nothing: changing it is not a grant.
+      const disabled = await updateRoleAssignmentRule(
+        context({ body: { name: 'Renamed' }, adminAuth })
+      );
+      expect(disabled.status).toBe(200);
+      // Replacing the role with one within the ceiling and enabling it is allowed.
+      const within = await updateRoleAssignmentRule(
+        context({
+          body: {
+            role_id: 'role-new',
+            actions: [{ type: 'assign_role', role_id: 'role-new' }],
+            is_active: true,
+          },
+          adminAuth,
+        })
+      );
+      expect(within.status).toBe(200);
+      expect(mocks.adapter.execute).toHaveBeenCalledTimes(2);
+    });
+
+    it('answers 409 when the rule changed between its check and its write', async () => {
+      mocks.adapter.queryOne.mockResolvedValue(row());
+      // The conditional write finds no row in the state that was read.
+      mocks.adapter.execute.mockResolvedValueOnce({ success: true, rowsAffected: 0 });
+      const response = await updateRoleAssignmentRule(context({ body: { name: 'Updated' } }));
+      expect(response.status).toBe(409);
+      await expect(response.json()).resolves.toMatchObject({ error: 'conflict' });
+      expect(mocks.adapter.execute).toHaveBeenCalledWith(
+        expect.stringContaining('AND updated_at = ?'),
+        expect.arrayContaining(['Updated', 'rar_rule1', 'tenant-a', 100])
+      );
     });
 
     it('returns server_error for update failures', async () => {

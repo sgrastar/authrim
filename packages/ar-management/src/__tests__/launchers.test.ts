@@ -820,6 +820,41 @@ describe('account launcher handlers', () => {
     expect(mocked.customClaimsResolve).toHaveBeenCalledWith('tenant-a', 'user-1', ['department']);
   });
 
+  it('shows group launchers only for groups still active in the metadata database', async () => {
+    const forActive = launcher(
+      { ...baseVisibility, mode: 'groups', group_ids: ['group-active'] },
+      { id: 'launcher-active' }
+    );
+    const forStopped = launcher(
+      { ...baseVisibility, mode: 'groups', group_ids: ['group-stopped'] },
+      { id: 'launcher-stopped' }
+    );
+    mocked.adapter.query.mockImplementation(async (sql: string, params: unknown[] = []) => {
+      if (sql.includes('FROM application_launchers'))
+        return [launcherRow(forActive), launcherRow(forStopped)];
+      // Group definitions: only group-active is active (group-stopped is stopped or deleted).
+      if (sql.includes('FROM "groups"'))
+        return params.includes('group-active') ? [{ id: 'group-active' }] : [];
+      return [];
+    });
+    mocked.accountAdapter.query.mockImplementation(async (sql: string) =>
+      sql.includes('FROM group_memberships')
+        ? [{ group_id: 'group-active' }, { group_id: 'group-stopped' }]
+        : []
+    );
+
+    const response = await accountApp().request('/launchers');
+
+    expect(response.status).toBe(200);
+    const body = await response.json<{ launchers: { id: string }[] }>();
+    expect(body.launchers.map((item) => item.id)).toEqual(['launcher-active']);
+    const groupRead = mocked.adapter.query.mock.calls.find(([sql]) =>
+      String(sql).includes('FROM "groups"')
+    );
+    expect(String(groupRead?.[0])).toContain("lifecycle_state = 'active'");
+    expect(groupRead?.[1]).toEqual(['tenant-a', 'group-active', 'group-stopped']);
+  });
+
   it('does not allow a launcher with favorites disabled to be favorited', async () => {
     const definition = launcher(baseVisibility, { allow_favorite: false });
     mocked.adapter.query.mockImplementation(async (sql: string) =>

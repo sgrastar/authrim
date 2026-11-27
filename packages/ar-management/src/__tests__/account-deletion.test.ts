@@ -48,9 +48,14 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   };
 });
 
-const { deleteAccount } = await import('../account-deletion');
+const { deleteAccount, deleteAccountAuthorizationRows } = await import('../account-deletion');
+const { coreSchemaDatabase } = await import('./core-schema-sqlite');
 
-const core = { name: 'core' } as unknown as DatabaseAdapter;
+const coreBatch = vi.fn(async (statements: Array<{ sql: string; params: unknown[] }>) => {
+  calls.push('authorization_rows_delete');
+  return statements.map(() => ({ success: true, rowsAffected: 0 }));
+});
+const core = { name: 'core', batch: coreBatch } as unknown as DatabaseAdapter;
 const pii = { name: 'pii' } as unknown as DatabaseAdapter;
 const env = { ACCOUNT_DIRECTORY: {} } as unknown as Env;
 
@@ -117,6 +122,8 @@ describe('the shared account deletion', () => {
       // The stored identifiers and identifier-source values imported for the account.
       'erase_identifiers',
       'runtime_user_delete',
+      // Its direct role assignments and group memberships, after the account is deleted.
+      'authorization_rows_delete',
       'auth_deleted',
       'removal_ready',
       'removal_attempt',
@@ -135,6 +142,60 @@ describe('the shared account deletion', () => {
     // No erasure time given: the producer's own (two arguments, as the administrator's delete).
     expect(mocks.erase).toHaveBeenCalledWith(pii, { tenantId: 't1', userId: 'u1', core });
     expect(mocks.eraseIdentifiers).toHaveBeenCalledWith(env, { tenantId: 't1', userId: 'u1' });
+    expect(coreBatch.mock.calls[0][0]).toEqual([
+      {
+        sql: 'DELETE FROM role_assignments WHERE tenant_id = ? AND subject_id = ?',
+        params: ['t1', 'u1'],
+      },
+      {
+        sql: 'DELETE FROM group_memberships WHERE tenant_id = ? AND subject_id = ?',
+        params: ['t1', 'u1'],
+      },
+      {
+        sql: 'DELETE FROM dynamic_membership_publications WHERE tenant_id = ? AND subject_id = ?',
+        params: ['t1', 'u1'],
+      },
+    ]);
+  });
+
+  it('removes the subject authorization rows on its own shard only (two account shards)', async () => {
+    const shardA = coreSchemaDatabase();
+    const shardB = coreSchemaDatabase();
+    const seed = (db: typeof shardA.db, subject: string, tenant = 't1') => {
+      db.prepare(
+        `INSERT INTO role_assignments(id, tenant_id, subject_id, role_id, created_at, updated_at)
+          VALUES (?, ?, ?, 'reader', 1, 1)`
+      ).run(`ra-${tenant}-${subject}`, tenant, subject);
+      for (const source of ['manual', 'scim', 'rule', 'dynamic', 'invitation'])
+        db.prepare(
+          `INSERT INTO group_memberships(id, tenant_id, group_id, subject_id, assignment_source,
+            source_ref, created_at, updated_at) VALUES (?, ?, 'g', ?, ?, '', 1, 1)`
+        ).run(`gm-${tenant}-${subject}-${source}`, tenant, subject, source);
+    };
+    seed(shardA.db, 'u1');
+    seed(shardA.db, 'u2');
+    seed(shardA.db, 'u1', 'other-tenant');
+    seed(shardB.db, 'u3');
+    const put = vi.fn(async () => undefined);
+    await deleteAccountAuthorizationRows(shardA.adapter, { tenantId: 't1', userId: 'u1' }, {
+      put,
+    } as never);
+    const count = (db: typeof shardA.db, table: string, subject: string, tenant = 't1') =>
+      (
+        db
+          .prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE tenant_id = ? AND subject_id = ?`)
+          .get(tenant, subject) as { n: number }
+      ).n;
+    expect(count(shardA.db, 'role_assignments', 'u1')).toBe(0);
+    expect(count(shardA.db, 'group_memberships', 'u1')).toBe(0);
+    expect(count(shardA.db, 'group_memberships', 'u2')).toBe(5);
+    expect(count(shardA.db, 'group_memberships', 'u1', 'other-tenant')).toBe(5);
+    expect(count(shardB.db, 'group_memberships', 'u3')).toBe(5);
+    expect(put).toHaveBeenCalledWith('rbac:v2:subject-version:t1:u1', expect.any(String));
+    // Idempotent.
+    await deleteAccountAuthorizationRows(shardA.adapter, { tenantId: 't1', userId: 'u1' });
+    shardA.db.close();
+    shardB.db.close();
   });
 
   it('refuses a held account before anything changes', async () => {

@@ -8,9 +8,15 @@
  * - POST /api/check/batch - Batch permission check (Step 5)
  * - GET /api/check/health - Health check
  *
- * Authentication:
- * - API Key: Authorization: Bearer chk_xxx (prefix-based detection)
- * - Access Token: Authorization: Bearer <JWT> (JWT format detection)
+ * Authentication and contracts (CheckContract in ar-lib-core):
+ * - Server contract: API Key (Authorization: Bearer chk_xxx) or the policy service secret. Any
+ *   subject of the tenant; `resource_context` and `rebac` are taken from the request.
+ * - Self contract: an end-user access token (Authorization: Bearer <JWT>; see
+ *   middleware/check-access-token.ts). The subject is the token's account. Each check may carry only
+ *   `permission` (plus `subject_id` / `subject_type: 'user'` / `tenant_id` when they name the token's
+ *   own subject and tenant); `resource_context`, `rebac` and anything else are refused with 400
+ *   (POLICY_CHECK_CONTRACT_VIOLATION), single and batch alike. The resource's owner, group and
+ *   attributes are resolved server-side (resource-context-resolvers.ts; none by default).
  */
 
 import { Hono, type Context } from 'hono';
@@ -42,9 +48,16 @@ import {
 const log = createLogger().module('CHECK-API');
 import {
   authenticateCheckApiRequest,
+  checkContractOf,
   isOperationAllowed,
   resolveAuthorizedCheckTenantId,
+  type CheckAuthContext,
+  type CheckAuthResult,
 } from '../middleware/check-auth';
+import { createCheckAccessTokenVerifier } from '../middleware/check-access-token';
+import { getBatchSizeLimit, isCheckApiEnabled } from './check-settings';
+import { checkAuthenticationFailure } from './check-auth-response';
+import { checkResourceContextResolvers } from '../resource-context-resolvers';
 import {
   checkRateLimit,
   addRateLimitHeaders,
@@ -92,69 +105,86 @@ interface Env extends SharedEnv {
 // Helpers
 // =============================================================================
 
-/** Default batch size limit (secure default: not too large to prevent DoS) */
-const DEFAULT_BATCH_SIZE_LIMIT = 100;
-
-/** A batch size limit as the Check API applies it: a whole number in 1..1000, else unset. */
-function batchSizeLimitOf(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 1 && value <= 1000
-    ? value
-    : undefined;
-}
-
-/** The batch size from env alone (CHECK_API_BATCH_SIZE_LIMIT), else the default. */
-function envBatchSizeLimit(env: Env): number {
-  const batch = env.CHECK_API_BATCH_SIZE_LIMIT
-    ? batchSizeLimitOf(parseInt(env.CHECK_API_BATCH_SIZE_LIMIT, 10))
-    : undefined;
-  return batch ?? DEFAULT_BATCH_SIZE_LIMIT;
-}
-
-/**
- * Whether the Check API is on, and the most checks in one batch, for the whole platform: the
- * Settings API values (`feature.enable_check_api`, `limits.check_api_batch_size`), else env,
- * else off and 100. When the switch cannot be read the Check API is off (env does not turn on what
- * a saved value may have turned off); a batch size that cannot be read is env's, else 100.
- */
-async function readCheckApiSettings(
-  env: Env
-): Promise<{ enabled: boolean; batchSizeLimit: number }> {
-  // Each read apart, as before: one that fails leaves the other's value in effect.
-  const [flags, limits] = await Promise.allSettled([
-    resolvePlatformSettingsWithSources(env, 'feature-flags', {}),
-    resolvePlatformSettingsWithSources(env, 'limits', {}),
-  ]);
-  for (const result of [flags, limits]) {
-    if (result.status === 'rejected') {
-      log.error(
-        'Failed to read Check API settings',
-        { error: String(result.reason) },
-        result.reason as Error
-      );
-    }
-  }
+/** The authentication context of a Check API request (access tokens: check-access-token.ts). */
+function checkAuthContext(c: Context<{ Bindings: Env }>): CheckAuthContext {
   return {
-    enabled:
-      flags.status === 'fulfilled'
-        ? flags.value.values['feature.enable_check_api'] === true
-        : false,
-    batchSizeLimit:
-      limits.status === 'fulfilled'
-        ? (batchSizeLimitOf(limits.value.values['limits.check_api_batch_size']) ??
-          DEFAULT_BATCH_SIZE_LIMIT)
-        : envBatchSizeLimit(env),
+    db: getPolicyCoreAdapter(c),
+    cache: c.env.CHECK_CACHE_KV,
+    policyApiSecret: c.env.POLICY_API_SECRET,
+    accessTokenVerifier: createCheckAccessTokenVerifier(c),
   };
 }
 
-/** Whether the Check API is on (see readCheckApiSettings). */
-async function isCheckApiEnabled(env: Env): Promise<boolean> {
-  return (await readCheckApiSettings(env)).enabled;
+/** The fields a self-contract check may carry (see the module comment). */
+const SELF_CONTRACT_CHECK_FIELDS: ReadonlySet<string> = new Set([
+  'permission',
+  'subject_id',
+  'subject_type',
+  'tenant_id',
+]);
+
+/**
+ * Why a self-contract check is refused (a field it may not carry, or a subject other than the
+ * token's), or null. `subject_id` may only be omitted or name the token's own public `sub` (what
+ * the app knows the user as); it is never compared with the internal account id, so the answer
+ * reveals nothing about a pairwise subject's account.
+ */
+function selfContractViolation(
+  check: Record<string, unknown>,
+  auth: CheckAuthResult
+): string | null {
+  for (const field of Object.keys(check)) {
+    if (!SELF_CONTRACT_CHECK_FIELDS.has(field)) return field;
+  }
+  if (
+    check.subject_id !== undefined &&
+    (auth.tokenSubject === undefined || check.subject_id !== auth.tokenSubject)
+  ) {
+    return 'subject_id';
+  }
+  if (check.subject_type !== undefined && check.subject_type !== 'user') return 'subject_type';
+  return null;
 }
 
-/** The most checks in one batch request (see readCheckApiSettings). */
-async function getBatchSizeLimit(env: Env): Promise<number> {
-  return (await readCheckApiSettings(env)).batchSizeLimit;
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
+
+/** The request body as JSON, or `undefined` when it is not JSON (a 400, never a 500). */
+async function readJsonBody(c: Context<{ Bindings: Env }>): Promise<unknown> {
+  try {
+    return await c.req.json<unknown>();
+  } catch {
+    return undefined;
+  }
+}
+
+/** Whether a request's `tenant_id` is absent or a string (anything else is a 400). */
+function isTenantIdShape(value: unknown): boolean {
+  return value === undefined || typeof value === 'string';
+}
+
+/** The keys a structured permission may have. */
+const PERMISSION_OBJECT_KEYS: ReadonlySet<string> = new Set(['resource', 'id', 'action']);
+
+/**
+ * Whether a permission has a valid shape before it is parsed: a non-empty string, or an object
+ * with only `resource`, `action` (non-empty strings) and an optional non-empty string `id`.
+ */
+function isWellFormedPermission(permission: unknown): boolean {
+  if (typeof permission === 'string') return permission.length > 0;
+  if (!isPlainObject(permission)) return false;
+  if (Object.keys(permission).some((key) => !PERMISSION_OBJECT_KEYS.has(key))) return false;
+  if (typeof permission.resource !== 'string' || !permission.resource) return false;
+  if (typeof permission.action !== 'string' || !permission.action) return false;
+  if (permission.id !== undefined && (typeof permission.id !== 'string' || !permission.id)) {
+    return false;
+  }
+  return true;
+}
+
+/** The keys of a batch request. */
+const BATCH_ENVELOPE_KEYS: ReadonlySet<string> = new Set(['checks', 'stop_on_deny']);
 
 /** The rate limit, or a 503 when the atomic limiter is unavailable (fail closed). */
 async function checkRateLimitOrUnavailable(
@@ -224,7 +254,9 @@ async function getCheckService(
   const coreAdapter = getPolicyCoreAdapter(c);
 
   // Create ReBAC service if cache KV is available
-  const rebacService = createPolicyReBACService(coreAdapter, env.REBAC_CACHE_KV);
+  // No shared ReBAC result cache on the Check API: each decision reads the current tuples (v1
+  // keeps no shared allow cache; a revoked relationship must not keep granting).
+  const rebacService = createPolicyReBACService(coreAdapter, undefined);
 
   // Create audit service if enabled
   let auditService: CheckAuditService | undefined;
@@ -246,6 +278,8 @@ async function getCheckService(
     // Verified attributes and the tenant's rules, as each check's tenant settings enable them.
     attributeRepository: new UserVerifiedAttributeRepository(coreAdapter),
     tenantPolicy: (tenantId) => resolveTenantPolicy(env, coreAdapter, tenantId),
+    // Self-contract checks: the resource's owner, group and attributes, server-side.
+    resourceContextResolver: checkResourceContextResolvers,
   });
 
   return { checkService, auditService };
@@ -314,16 +348,15 @@ checkRoutes.post('/', async (c) => {
   }
 
   // Authenticate request using dual auth (API Key + Access Token)
-  const coreAdapter = getPolicyCoreAdapter(c);
-  const auth = await authenticateCheckApiRequest(c.req.header('Authorization'), {
-    db: coreAdapter,
-    cache: c.env.CHECK_CACHE_KV,
-    policyApiSecret: c.env.POLICY_API_SECRET,
-  });
+  const auth = await authenticateCheckApiRequest(
+    c.req.header('Authorization'),
+    checkAuthContext(c)
+  );
 
   if (!auth.authenticated) {
-    return createErrorResponse(c, AR_ERROR_CODES.AUTH_LOGIN_REQUIRED);
+    return checkAuthenticationFailure(c, auth);
   }
+  const contract = checkContractOf(auth);
 
   // Check operation permission
   if (!isOperationAllowed(auth, 'check')) {
@@ -357,16 +390,26 @@ checkRoutes.post('/', async (c) => {
     );
   }
 
-  // Get check service
-  const debugMode = isDebugModeEnabled(c.env);
+  // Get check service (debug details only for server credentials)
+  const debugMode = isDebugModeEnabled(c.env) && contract === 'server';
   const services = await getCheckService(c, debugMode);
 
   try {
     // Parse request body
-    const body = await c.req.json<Partial<CheckApiRequest>>();
+    const rawBody = await readJsonBody(c);
+    if (!isPlainObject(rawBody) || !isTenantIdShape(rawBody.tenant_id)) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+    }
+    const body = rawBody as Partial<CheckApiRequest>;
 
-    // Validate required fields
-    if (!body.subject_id) {
+    // Self contract: only the permission (and the token's own subject / tenant)
+    if (contract === 'self') {
+      const violation = selfContractViolation(rawBody, auth);
+      if (violation) {
+        log.debug('Self-contract check refused', { field: violation });
+        return createErrorResponse(c, AR_ERROR_CODES.POLICY_CHECK_CONTRACT_VIOLATION);
+      }
+    } else if (!body.subject_id) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
         variables: { field: 'subject_id' },
       });
@@ -379,6 +422,9 @@ checkRoutes.post('/', async (c) => {
     }
 
     // Validate permission format
+    if (!isWellFormedPermission(body.permission)) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+    }
     try {
       parsePermission(body.permission);
     } catch (error) {
@@ -447,14 +493,23 @@ checkRoutes.post('/', async (c) => {
 
     // Build full request using the authenticated tenant unless a system secret
     // explicitly targets another tenant.
-    const request: CheckApiRequest = {
-      subject_id: body.subject_id,
-      subject_type: body.subject_type ?? 'user',
-      permission: body.permission,
-      tenant_id: tenantId,
-      resource_context: body.resource_context,
-      rebac: body.rebac,
-    };
+    const request: CheckApiRequest =
+      contract === 'self'
+        ? {
+            // The token's account (bound server-side), never the body's.
+            subject_id: auth.subjectId as string,
+            subject_type: 'user',
+            permission: body.permission,
+            tenant_id: tenantId,
+          }
+        : {
+            subject_id: body.subject_id as string,
+            subject_type: body.subject_type ?? 'user',
+            permission: body.permission,
+            tenant_id: tenantId,
+            resource_context: body.resource_context,
+            rebac: body.rebac,
+          };
 
     // Execute check with audit options
     // Note: ExecutionContext is available via c.executionCtx in Hono
@@ -463,6 +518,7 @@ checkRoutes.post('/', async (c) => {
       apiKeyId: auth.apiKeyId,
       clientId: auth.clientId,
       requestId: c.req.header('X-Request-ID'),
+      contract,
     });
 
     // Return with rate limit headers
@@ -488,16 +544,15 @@ checkRoutes.post('/batch', async (c) => {
   }
 
   // Authenticate request using dual auth (API Key + Access Token)
-  const coreAdapter = getPolicyCoreAdapter(c);
-  const auth = await authenticateCheckApiRequest(c.req.header('Authorization'), {
-    db: coreAdapter,
-    cache: c.env.CHECK_CACHE_KV,
-    policyApiSecret: c.env.POLICY_API_SECRET,
-  });
+  const auth = await authenticateCheckApiRequest(
+    c.req.header('Authorization'),
+    checkAuthContext(c)
+  );
 
   if (!auth.authenticated) {
-    return createErrorResponse(c, AR_ERROR_CODES.AUTH_LOGIN_REQUIRED);
+    return checkAuthenticationFailure(c, auth);
   }
+  const contract = checkContractOf(auth);
 
   // Check operation permission
   if (!isOperationAllowed(auth, 'batch')) {
@@ -531,15 +586,21 @@ checkRoutes.post('/batch', async (c) => {
     );
   }
 
-  // Get check service
-  const debugMode = isDebugModeEnabled(c.env);
+  // Get check service (debug details only for server credentials)
+  const debugMode = isDebugModeEnabled(c.env) && contract === 'server';
   const services = await getCheckService(c, debugMode);
 
   try {
-    const body = await c.req.json<{
-      checks?: CheckApiRequest[];
-      stop_on_deny?: boolean;
-    }>();
+    const rawBody = await readJsonBody(c);
+    // The envelope: an object with only `checks` and an optional boolean `stop_on_deny`.
+    if (
+      !isPlainObject(rawBody) ||
+      Object.keys(rawBody).some((key) => !BATCH_ENVELOPE_KEYS.has(key)) ||
+      (rawBody.stop_on_deny !== undefined && typeof rawBody.stop_on_deny !== 'boolean')
+    ) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+    }
+    const body = rawBody as { checks?: CheckApiRequest[]; stop_on_deny?: boolean };
 
     // Validate request
     if (!body.checks || !Array.isArray(body.checks) || body.checks.length === 0) {
@@ -558,10 +619,29 @@ checkRoutes.post('/batch', async (c) => {
     const maxContextualTuples = 100;
     for (let checkIdx = 0; checkIdx < body.checks.length; checkIdx++) {
       const check = body.checks[checkIdx];
-      if (!check.subject_id || !check.permission) {
+      if (!isPlainObject(check) || !isTenantIdShape(check.tenant_id)) {
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+      }
+      // Self contract: every check carries only the permission (and the token's own subject)
+      if (contract === 'self') {
+        const violation = selfContractViolation(check, auth);
+        if (violation) {
+          log.debug('Self-contract batch check refused', {
+            checkIndex: checkIdx,
+            field: violation,
+          });
+          return createErrorResponse(c, AR_ERROR_CODES.POLICY_CHECK_CONTRACT_VIOLATION);
+        }
+        if (!check.permission) {
+          return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+        }
+      } else if (!check.subject_id || !check.permission) {
         return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
       }
 
+      if (!isWellFormedPermission(check.permission)) {
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+      }
       try {
         parsePermission(check.permission);
       } catch (error) {
@@ -616,11 +696,21 @@ checkRoutes.post('/batch', async (c) => {
       if (!tenantId) {
         return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);
       }
-      normalizedChecks.push({
-        ...check,
-        subject_type: check.subject_type ?? 'user',
-        tenant_id: tenantId,
-      });
+      normalizedChecks.push(
+        contract === 'self'
+          ? {
+              // The token's account (bound server-side), never the body's.
+              subject_id: auth.subjectId as string,
+              subject_type: 'user',
+              permission: check.permission,
+              tenant_id: tenantId,
+            }
+          : {
+              ...check,
+              subject_type: check.subject_type ?? 'user',
+              tenant_id: tenantId,
+            }
+      );
     }
 
     // Execute batch check with audit options
@@ -634,6 +724,7 @@ checkRoutes.post('/batch', async (c) => {
         apiKeyId: auth.apiKeyId,
         clientId: auth.clientId,
         requestId: c.req.header('X-Request-ID'),
+        contract,
       }
     );
 

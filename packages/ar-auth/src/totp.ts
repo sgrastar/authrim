@@ -887,7 +887,11 @@ export async function totpSignupActivateHandler(c: Context<{ Bindings: Env }>) {
     if (signupInvitation) {
       activationStage = 'invitation_apply';
       await completeSignupInvitation(
-        { invitations: () => invitationDatabase(c, tenantId), assignments: authCtx.coreAdapter },
+        {
+          invitations: () => invitationDatabase(c, tenantId),
+          assignments: authCtx.coreAdapter,
+          cache: c.env.REBAC_CACHE,
+        },
         log,
         { reservation: signupInvitation, tenantId, userId }
       );

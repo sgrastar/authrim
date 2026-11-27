@@ -23,7 +23,8 @@ import { z } from './zod';
 import { ensureSupportedTenantId } from './single-tenant-guard';
 import { getCanonicalTenantBaseUrl } from './request-issuer';
 import { getAdminAuth, requireTenantResourceAccess } from './admin-tenant-access';
-import { canManageRoleHierarchy } from './admin-rbac';
+import { mayManageEndUserRole } from './role-delegation';
+import { canManageGroupMembership } from './group-role-management';
 import { refuseWhileCapabilityOff } from './capability-authorization';
 import {
   disableTenantDiscoveryAliasDirectory,
@@ -53,6 +54,7 @@ interface TenantInvitationRow {
   invited_by: string;
   role_id: string | null;
   org_id: string | null;
+  group_id: string | null;
   max_uses: number;
   use_count: number;
   expires_at: number;
@@ -68,6 +70,7 @@ const CreateInvitationSchema = z.object({
   invited_email: z.email().optional().nullable(),
   role_id: z.string().min(1).max(63).optional().nullable(),
   org_id: z.string().min(1).max(63).optional().nullable(),
+  group_id: z.string().min(1).max(63).optional().nullable(),
   max_uses: z.number().int().min(-1).max(1000).optional().default(1),
   expires_in_hours: z
     .number()
@@ -95,6 +98,7 @@ function formatInvitation(row: TenantInvitationRow) {
     invited_by: row.invited_by,
     role_id: row.role_id,
     org_id: row.org_id,
+    group_id: row.group_id ?? null,
     max_uses: row.max_uses,
     use_count: row.use_count,
     expires_at: row.expires_at,
@@ -136,7 +140,7 @@ export async function createTenantInvitationHandler(c: Context<{ Bindings: Env }
       return c.json({ error: 'invalid_request', details: z.flattenError(parsed.error) }, 400);
     }
 
-    const { invited_email, role_id, org_id, max_uses, expires_in_hours } = parsed.data;
+    const { invited_email, role_id, org_id, group_id, max_uses, expires_in_hours } = parsed.data;
 
     // An invitation addressed to an e-mail address is mailed: refused, before anything is written,
     // while admin_sent_email is off. One without an address sends nothing and stays possible.
@@ -156,16 +160,21 @@ export async function createTenantInvitationHandler(c: Context<{ Bindings: Env }
     }
 
     if (role_id) {
-      const role = await adapter.queryOne<{ id: string; hierarchy_level: number | null }>(
-        'SELECT id, hierarchy_level FROM roles WHERE id = ? AND tenant_id = ? AND is_assignable = 1',
+      const role = await adapter.queryOne<{
+        id: string;
+        grant_tier: number;
+        hierarchy_level: number | null;
+      }>(
+        'SELECT id, grant_tier, hierarchy_level FROM roles WHERE id = ? AND tenant_id = ? AND is_assignable = 1',
         [role_id, tenantId]
       );
       if (!role) {
         return c.json({ error: 'invalid_request', message: 'role_id is not assignable' }, 400);
       }
       // Redeeming the invitation assigns the role, so the inviter needs the same standing as when
-      // assigning it to a user: only roles below their own level.
-      if (!canManageRoleHierarchy(getAdminAuth(c) ?? null, role.hierarchy_level)) {
+      // assigning it to a user: the role's grant tier within their ceiling, and only roles below
+      // their own level.
+      if (!mayManageEndUserRole(getAdminAuth(c) ?? null, role)) {
         return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
       }
     }
@@ -177,6 +186,21 @@ export async function createTenantInvitationHandler(c: Context<{ Bindings: Env }
       );
       if (!organization) {
         return c.json({ error: 'invalid_request', message: 'org_id is not active' }, 400);
+      }
+    }
+
+    if (group_id) {
+      const group = await adapter.queryOne<{ id: string }>(
+        `SELECT id FROM "groups" WHERE id = ? AND tenant_id = ? AND lifecycle_state = 'active'`,
+        [group_id, tenantId]
+      );
+      if (!group) {
+        return c.json({ error: 'invalid_request', message: 'group_id is not active' }, 400);
+      }
+      // Redeeming the invitation adds the new account to the group, and so grants the roles the
+      // group and its ancestors carry: the inviter needs the standing to add a member to it.
+      if (!(await canManageGroupMembership(adapter, tenantId, getAdminAuth(c) ?? null, group_id))) {
+        return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
       }
     }
 
@@ -195,8 +219,8 @@ export async function createTenantInvitationHandler(c: Context<{ Bindings: Env }
     await prepareTenantDiscoveryAliasDirectory(c.env, discoveryAlias);
     await adapter.execute(
       `INSERT INTO tenant_invitations
-        (id, token, tenant_id, invited_email, invited_by, role_id, org_id, max_uses, use_count, expires_at, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`,
+        (id, token, tenant_id, invited_email, invited_by, role_id, org_id, group_id, max_uses, use_count, expires_at, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`,
       [
         invitationId,
         token,
@@ -205,6 +229,7 @@ export async function createTenantInvitationHandler(c: Context<{ Bindings: Env }
         adminId,
         role_id ?? null,
         org_id ?? null,
+        group_id ?? null,
         max_uses,
         expiresAt,
         now,
@@ -264,7 +289,14 @@ export async function createTenantInvitationHandler(c: Context<{ Bindings: Env }
       action: 'tenant_invitation.create',
       resourceType: 'tenant_invitation',
       resourceId: invitationId,
-      metadata: { tenant_id: tenantId, invited_email, role_id, org_id, email_sent: emailSent },
+      metadata: {
+        tenant_id: tenantId,
+        invited_email,
+        role_id,
+        org_id,
+        group_id,
+        email_sent: emailSent,
+      },
     });
 
     return c.json(
@@ -273,6 +305,7 @@ export async function createTenantInvitationHandler(c: Context<{ Bindings: Env }
         invite_url: inviteUrl,
         token,
         expires_at: expiresAt,
+        group_id: group_id ?? null,
         email_sent: emailSent,
       },
       201

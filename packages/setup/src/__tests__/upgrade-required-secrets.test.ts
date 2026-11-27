@@ -39,6 +39,49 @@ describe('secrets a Worker cannot serve without', () => {
     expect(requiredWorkerSecretNames('ar-discovery', ['A'])).toEqual({ all: [], anyOf: [] });
   });
 
+  it('requires the Lookup HMAC slots and the token keys on the policy service', async () => {
+    expect(requiredWorkerSecretNames('ar-policy', ['B', 'A'])).toEqual({
+      all: [
+        'LOOKUP_HMAC_KEY_SLOT_B',
+        'LOOKUP_HMAC_KEY_SLOT_A',
+        'OBJECT_ENCRYPTION_ROOT_KEY',
+        'PUBLIC_JWK_JSON',
+      ],
+      anyOf: [],
+    });
+    expect(requiredWorkerSecretNames('ar-policy', undefined)).toEqual({
+      all: ['OBJECT_ENCRYPTION_ROOT_KEY', 'PUBLIC_JWK_JSON'],
+      anyOf: [['LOOKUP_HMAC_KEY_SLOT_A', 'LOOKUP_HMAC_KEY_SLOT_B']],
+    });
+    for (const name of [
+      'LOOKUP_HMAC_KEY_SLOT_A',
+      'LOOKUP_HMAC_KEY_SLOT_B',
+      'OBJECT_ENCRYPTION_ROOT_KEY',
+      'PUBLIC_JWK_JSON',
+    ]) {
+      expect(getSecretNamesForWorker('ar-policy')).toContain(name);
+    }
+    // An update (with or without distributing secrets) refuses a policy Worker missing one.
+    await expect(
+      findMissingRequiredWorkerSecrets(
+        { secrets: {}, existingComponents: ['ar-policy'], lookupHmacSlots: ['B'] },
+        ['ar-policy'],
+        bound('LOOKUP_HMAC_KEY_SLOT_B', 'PUBLIC_JWK_JSON')
+      )
+    ).resolves.toEqual([{ component: 'ar-policy', secret: 'OBJECT_ENCRYPTION_ROOT_KEY' }]);
+    await expect(
+      findMissingRequiredWorkerSecrets(
+        {
+          secrets: { OBJECT_ENCRYPTION_ROOT_KEY: 'k' },
+          existingComponents: ['ar-policy'],
+          lookupHmacSlots: ['B'],
+        },
+        ['ar-policy'],
+        bound('LOOKUP_HMAC_KEY_SLOT_B', 'PUBLIC_JWK_JSON')
+      )
+    ).resolves.toEqual([]);
+  });
+
   it("reads the slots and fingerprints from Control's published key state", () => {
     expect(lookupHmacSlotsFromKeyState(undefined)).toBeUndefined();
     expect(lookupHmacSlotsFromKeyState({ activeSlot: 'B' })).toEqual(['B']);

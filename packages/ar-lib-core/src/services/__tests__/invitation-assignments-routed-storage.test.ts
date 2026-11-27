@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DatabaseSync } from 'node:sqlite';
+import type { KVNamespace } from '@cloudflare/workers-types';
 import type { DatabaseAdapter } from '../../db/adapter';
 import { sqliteAdapter } from '../../repositories/__tests__/sqlite-core-schema';
 import {
@@ -108,5 +109,58 @@ describe('invitation assignments under routed account storage', () => {
         )
         .all()
     ).toEqual([{ subject_id: 'user-new', org_id: 'org-1', membership_type: 'member' }]);
+  });
+
+  it("joins the invited group on the account's database and drops the account's cached claims", async () => {
+    metadata.db
+      .prepare(
+        `INSERT INTO "groups" (id, tenant_id, group_key, display_name, lifecycle_state, created_at, updated_at)
+         VALUES ('group-1', 'tenant-a', 'staff', 'Staff', 'active', ?, ?)`
+      )
+      .run(NOW, NOW);
+    metadata.db.exec(`UPDATE tenant_invitations SET group_id = 'group-1' WHERE id = 'inv-1'`);
+    const puts: string[] = [];
+    const cache = {
+      put: vi.fn(async (key: string) => {
+        puts.push(key);
+      }),
+    } as unknown as KVNamespace;
+    const reserved = await reserveExternalSignupInvitation(metadata.adapter, {
+      token: 'token-1',
+      tenantId: 'tenant-a',
+      holder: 'external:flow-2',
+      ttlSeconds: 900,
+    });
+
+    await expect(
+      applyExternalSignupInvitation(() => metadata.adapter, account.adapter, log, {
+        ...reserved!,
+        tenantId: 'tenant-a',
+        userId: 'user-new',
+        cache,
+      })
+    ).resolves.toBe(true);
+
+    expect(log.warn).not.toHaveBeenCalled();
+    expect(
+      account.db
+        .prepare(
+          `SELECT group_id, subject_id, assignment_source, source_ref, lifecycle_state
+             FROM group_memberships WHERE tenant_id = 'tenant-a'`
+        )
+        .all()
+    ).toEqual([
+      {
+        group_id: 'group-1',
+        subject_id: 'user-new',
+        assignment_source: 'invitation',
+        source_ref: 'inv-1',
+        lifecycle_state: 'active',
+      },
+    ]);
+    expect(metadata.db.prepare('SELECT count(*) AS n FROM group_memberships').get()).toEqual({
+      n: 0,
+    });
+    expect(puts).toEqual(['rbac:v2:subject-version:tenant-a:user-new']);
   });
 });

@@ -201,6 +201,10 @@ export const TENANT_TABLES_TO_DELETE = [
   'relationships',
   'resource_permissions',
   'role_assignment_rules',
+  // Groups (memberships and group grants before the groups they name)
+  'group_memberships',
+  'group_role_assignments',
+  'groups',
   // Roles
   'role_assignments',
   'user_roles',

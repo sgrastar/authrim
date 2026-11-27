@@ -18,6 +18,7 @@
  */
 
 import type { Context } from 'hono';
+import type { KVNamespace } from '@cloudflare/workers-types';
 import type { DatabaseAdapter, Env } from '@authrim/ar-lib-core';
 import {
   AR_ERROR_CODES,
@@ -228,6 +229,8 @@ export async function completeSignupInvitation(
     /** Resolved inside the guarded block, so a store that cannot be reached is only logged. */
     invitations: () => DatabaseAdapter;
     assignments: DatabaseAdapter;
+    /** The RBAC claims cache (REBAC_CACHE): the account's cached claims are dropped. */
+    cache?: KVNamespace;
   },
   log: InvitationLogger,
   input: {
@@ -269,7 +272,8 @@ export async function completeSignupInvitation(
       return false;
     }
 
-    // The role and organisation are defined in the metadata database, with the invitation.
+    // The role, organisation and group are defined in the metadata database, with the
+    // invitation; the assignment and the group membership are the account's data.
     const assignments = await applyInvitationAssignments(
       { metadata: invitationDb, account: db.assignments },
       {
@@ -277,6 +281,9 @@ export async function completeSignupInvitation(
         tenantId,
         roleId: invitation.role_id,
         orgId: invitation.org_id,
+        groupId: invitation.group_id,
+        invitationId: invitation.id,
+        cache: db.cache,
       }
     );
     if (invitation.role_id && !assignments.roleAssignment?.success) {
@@ -291,6 +298,13 @@ export async function completeSignupInvitation(
         invite_id: inviteId,
         tenant_id: tenantId,
         error: assignments.orgMembership?.error,
+      });
+    }
+    if (invitation.group_id && !assignments.groupMembership?.success) {
+      log.warn('Failed to join the group from invitation', {
+        invite_id: inviteId,
+        tenant_id: tenantId,
+        error: assignments.groupMembership?.error,
       });
     }
     return true;

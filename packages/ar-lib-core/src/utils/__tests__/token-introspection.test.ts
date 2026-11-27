@@ -313,6 +313,62 @@ describe('Token Introspection Utility', () => {
       );
       expect((await makeRequest('dual-correct', certificate)).valid).toBe(true);
     });
+    it('answers 503 when the DPoP replay store is unavailable, 401 for a replayed proof', async () => {
+      const dpopKeys = await generateKeyPair('ES256');
+      const publicJwk = await exportJWK(dpopKeys.publicKey);
+      const jkt = await calculateJwkThumbprint(publicJwk);
+      const token = (
+        await createAccessToken(
+          {
+            iss: mockEnv.ISSUER_URL,
+            sub: 'user123',
+            aud: mockEnv.ISSUER_URL,
+            scope: 'openid',
+            client_id: 'test-client',
+            cnf: { jkt },
+          },
+          privateKey,
+          mockEnv.KEY_ID!,
+          3600
+        )
+      ).token;
+      const introspectWith = async (record: () => Promise<string>) => {
+        const proof = await new SignJWT({
+          jti: `jti-${Math.random()}`,
+          htm: 'GET',
+          htu: 'https://test.example.com/userinfo',
+          iat: Math.floor(Date.now() / 1000),
+          ath: await calculateAccessTokenHash(token),
+        })
+          .setProtectedHeader({ typ: 'dpop+jwt', alg: 'ES256', jwk: publicJwk })
+          .sign(dpopKeys.privateKey);
+        const rawRequest = new Request('https://test.example.com/userinfo', {
+          headers: { Authorization: `DPoP ${token}`, DPoP: proof },
+        });
+        return introspectToken({
+          method: 'GET',
+          url: rawRequest.url,
+          headers: rawRequest.headers,
+          rawRequest,
+          env: {
+            ...mockEnv,
+            AUTH_RUNTIME_PORTS: { replayGuard: { record } },
+          } as unknown as Env,
+          tenantId: TEST_TENANT_ID,
+        });
+      };
+
+      const unavailable = await introspectWith(async () => {
+        throw new Error('replay store down');
+      });
+      expect(unavailable.valid).toBe(false);
+      expect(unavailable.error?.statusCode).toBe(503);
+
+      const replayed = await introspectWith(async () => 'replayed');
+      expect(replayed.valid).toBe(false);
+      expect(replayed.error?.statusCode).toBe(401);
+    });
+
     it('should return error when DPoP token is used without DPoP proof', async () => {
       const claims = {
         iss: mockEnv.ISSUER_URL,

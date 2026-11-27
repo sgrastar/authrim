@@ -95,7 +95,7 @@ describe('zod pins: CreateInvitationSchema (flatten body)', () => {
     mocks.execute.mockResolvedValue({ rowsAffected: 1 });
     mocks.queryOne.mockImplementation(async (sql: string) => {
       if (sql.includes('FROM tenants')) return { id: 'tenant-a', name: 'Tenant A' };
-      if (sql.includes('FROM roles')) return { id: 'role-a', hierarchy_level: 10 };
+      if (sql.includes('FROM roles')) return { id: 'role-a', grant_tier: 1, hierarchy_level: 10 };
       if (sql.includes('FROM organizations')) return { id: 'org-a' };
       return null;
     });
@@ -270,14 +270,17 @@ describe('zod pins: CreateInvitationSchema (flatten body)', () => {
       ) as unknown,
       token: expect.stringMatching(/^[0-9a-f]{64}$/) as unknown,
       expires_at: NOW + 72 * 3600,
+      group_id: null,
       email_sent: false,
     });
     const params = mocks.execute.mock.calls[0]?.[1] as unknown[];
-    // [id, token, tenant, invited_email, invited_by, role_id, org_id, max_uses, expires_at, now, now]
+    // [id, token, tenant, invited_email, invited_by, role_id, org_id, group_id, max_uses,
+    //  expires_at, now, now]
     expect(params.slice(2)).toEqual([
       'tenant-a',
       null,
       'unknown',
+      null,
       null,
       null,
       1,
@@ -292,6 +295,7 @@ describe('zod pins: CreateInvitationSchema (flatten body)', () => {
       invited_email: null,
       role_id: null,
       org_id: null,
+      group_id: null,
       max_uses: -1,
       expires_in_hours: 720,
       extra_key: 'ignored',
@@ -301,6 +305,7 @@ describe('zod pins: CreateInvitationSchema (flatten body)', () => {
     expect((mocks.execute.mock.calls[0]?.[1] as unknown[]).slice(3)).toEqual([
       null,
       'unknown',
+      null,
       null,
       null,
       -1,

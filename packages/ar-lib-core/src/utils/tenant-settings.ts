@@ -28,7 +28,8 @@ export type TenantSettingsCategory =
   | 'login-entry'
   | 'tenant-discovery-ui'
   | 'support-ops'
-  | 'plugin';
+  | 'plugin'
+  | 'groups';
 
 /** A tenant's older certification profile document (an overlay of `system_settings`), read by the one-time import. */
 export const TENANT_SYSTEM_SETTINGS_CATEGORY = 'certification-profile';

@@ -99,6 +99,7 @@ import {
 } from './account-directory-removal-producer';
 import { timeManagementRequestDiagnosticOperation } from './request-diagnostics';
 import { findActiveAccountLegalHold } from './account-legal-hold-guard';
+import { deleteAccountAuthorizationRows } from './account-deletion';
 import { prepareAccountTombstone, writeAccountTombstone } from './account-tombstone-write';
 import { usesRoutedAccountStorage } from './tenant-routed-storage';
 import { isInactiveAccountRouteError } from './account-route-errors';
@@ -1252,10 +1253,8 @@ export async function adminUserAnonymizeHandler(c: Context<{ Bindings: Env }>) {
                 userId
               )
             : null,
-          target.core.execute(
-            'DELETE FROM role_assignments WHERE tenant_id = ? AND subject_id = ?',
-            [tenantId, userId]
-          ),
+          // Direct role assignments and every group membership row of the subject.
+          deleteAccountAuthorizationRows(target.core, { tenantId, userId }, c.env.REBAC_CACHE),
           target.core.execute(
             'DELETE FROM subject_org_membership WHERE tenant_id = ? AND subject_id = ?',
             [tenantId, userId]

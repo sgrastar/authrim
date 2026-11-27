@@ -12,21 +12,33 @@
  * - API Key: Authorization: Bearer chk_xxx (in query param for WebSocket)
  * - Access Token: Authorization: Bearer <JWT> (in query param for WebSocket)
  *
- * Note: WebSocket connections cannot send custom headers during upgrade,
- * so we accept the token as a query parameter.
+ * Credentials: the `Authorization: Bearer` header of the upgrade request (server-side WebSocket
+ * clients can send it). The `token` query parameter is a deprecated fallback: it ends up in URLs
+ * and logs (the policy worker's request log redacts it, and the public Router refuses it), so it
+ * is read only when the header is absent. An end-user access token is verified only from the
+ * header (check-access-token.ts), and the subscribe operation is not granted to access tokens:
+ * subscriptions, and their stats, are for server credentials.
+ *
+ * The Check API switch is the platform's `feature.enable_check_api` (Settings API, else env), as
+ * for the check routes.
  */
 
 import { Hono } from 'hono';
 import type { KVNamespace, DurableObjectNamespace } from '@cloudflare/workers-types';
 import type { Env as SharedEnv } from '@authrim/ar-lib-core';
-import { createErrorResponse, AR_ERROR_CODES, getLogger } from '@authrim/ar-lib-core';
+import { createErrorResponse, AR_ERROR_CODES, getLogger, createLogger } from '@authrim/ar-lib-core';
 import {
   authenticateCheckApiRequest,
   isOperationAllowed,
   resolveAuthorizedCheckTenantId,
   type CheckAuthContext,
 } from '../middleware/check-auth';
+import { createCheckAccessTokenVerifier } from '../middleware/check-access-token';
 import { getPolicyCoreAdapter } from '../rebac-storage-adapter';
+import { isCheckApiEnabled } from './check-settings';
+import { checkAuthenticationFailure } from './check-auth-response';
+
+const deprecationLog = createLogger().module('SUBSCRIBE');
 
 // =============================================================================
 // Types
@@ -50,13 +62,6 @@ interface Env extends SharedEnv {
 // =============================================================================
 // Helpers
 // =============================================================================
-
-/**
- * Check if Check API feature is enabled
- */
-function isCheckApiEnabled(env: Env): boolean {
-  return env.ENABLE_CHECK_API === 'true';
-}
 
 /**
  * Check if WebSocket Push feature is enabled
@@ -84,7 +89,7 @@ const subscribeRoutes = new Hono<{ Bindings: Env }>();
  */
 subscribeRoutes.get('/subscribe', async (c) => {
   // Check if Check API is enabled
-  if (!isCheckApiEnabled(c.env)) {
+  if (!(await isCheckApiEnabled(c.env))) {
     return createErrorResponse(c, AR_ERROR_CODES.POLICY_FEATURE_DISABLED);
   }
 
@@ -104,10 +109,14 @@ subscribeRoutes.get('/subscribe', async (c) => {
     return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
   }
 
-  // Get token from query parameter (WebSocket can't send custom headers during upgrade)
-  const token = c.req.query('token');
-  if (!token) {
+  // The Authorization header; the `token` query parameter only as a deprecated fallback.
+  const authorization = c.req.header('Authorization');
+  const queryToken = authorization ? undefined : c.req.query('token');
+  if (!authorization && !queryToken) {
     return createErrorResponse(c, AR_ERROR_CODES.AUTH_LOGIN_REQUIRED);
+  }
+  if (queryToken) {
+    deprecationLog.warn('Deprecated: subscription credential in the token query parameter');
   }
 
   // Authenticate using the token
@@ -116,12 +125,16 @@ subscribeRoutes.get('/subscribe', async (c) => {
     db: coreAdapter,
     cache: c.env.CHECK_CACHE_KV,
     policyApiSecret: c.env.POLICY_API_SECRET,
+    accessTokenVerifier: createCheckAccessTokenVerifier(c),
   };
 
-  const auth = await authenticateCheckApiRequest(`Bearer ${token}`, authContext);
+  const auth = await authenticateCheckApiRequest(
+    authorization ?? `Bearer ${queryToken}`,
+    authContext
+  );
 
   if (!auth.authenticated) {
-    return createErrorResponse(c, AR_ERROR_CODES.AUTH_LOGIN_REQUIRED);
+    return checkAuthenticationFailure(c, auth);
   }
 
   // Check if subscribe operation is allowed
@@ -170,7 +183,7 @@ subscribeRoutes.get('/subscribe', async (c) => {
  */
 subscribeRoutes.get('/subscribe/stats', async (c) => {
   // Check if Check API is enabled
-  if (!isCheckApiEnabled(c.env)) {
+  if (!(await isCheckApiEnabled(c.env))) {
     return createErrorResponse(c, AR_ERROR_CODES.POLICY_FEATURE_DISABLED);
   }
 
@@ -180,10 +193,16 @@ subscribeRoutes.get('/subscribe/stats', async (c) => {
     db: coreAdapter,
     cache: c.env.CHECK_CACHE_KV,
     policyApiSecret: c.env.POLICY_API_SECRET,
+    accessTokenVerifier: createCheckAccessTokenVerifier(c),
   });
 
   if (!auth.authenticated) {
-    return createErrorResponse(c, AR_ERROR_CODES.AUTH_LOGIN_REQUIRED);
+    return checkAuthenticationFailure(c, auth);
+  }
+
+  // The stats are part of the subscription feature: same operation grant.
+  if (!isOperationAllowed(auth, 'subscribe')) {
+    return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);
   }
 
   // Check if PermissionChangeHub DO is available

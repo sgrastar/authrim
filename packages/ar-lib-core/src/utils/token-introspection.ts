@@ -31,7 +31,11 @@ import {
 } from '../services/subject-reference';
 import { getClientCached } from './request-cache';
 import { createAccountAuthContextFromHono } from '../context/hono-context';
-import { resolveAccountDataContextFromHono } from '../services/runtime-data-context';
+import {
+  resolveAccountCoreDataContext,
+  resolveAccountDataContextFromHono,
+} from '../services/runtime-data-context';
+import { ensureDatabaseAdapter } from '../db';
 import {
   accessTokenConsentGrant,
   findOAuthClientConsentRevocation,
@@ -97,6 +101,12 @@ export interface TokenValidationRequest {
    * acts on the account its token's sub names, and that sub is not one).
    */
   allowSubjectReference?: boolean;
+  /**
+   * The issuer the token must carry, as the token endpoint used it for the request's host (a
+   * registered custom domain included; the caller derives it from the verified host). Unset: the
+   * tenant's canonical issuer (`buildIssuerUrl`).
+   */
+  issuer?: string;
 }
 
 export interface TokenIntrospectionContextOptions {
@@ -104,6 +114,13 @@ export interface TokenIntrospectionContextOptions {
   audience?: string | string[];
   /** See TokenValidationRequest.allowSubjectReference. */
   allowSubjectReference?: boolean;
+  /** See TokenValidationRequest.issuer. */
+  issuer?: string;
+  /**
+   * Read the consent withdrawal from the account's Core database alone (no PII context is
+   * resolved): for a resource that has no PII binding (the Check API).
+   */
+  consentFromAccountCoreOnly?: boolean;
 }
 
 // ===== Key Caching for Performance Optimization =====
@@ -252,7 +269,7 @@ function extractAccessToken(authHeader: string): {
 }
 
 function getValidationIssuerUrl(request: TokenValidationRequest): string {
-  return buildIssuerUrl(request.env, request.tenantId);
+  return request.issuer ?? buildIssuerUrl(request.env, request.tenantId);
 }
 
 /**
@@ -593,13 +610,16 @@ export async function introspectToken(
     );
 
     if (!dpopValidation.valid) {
+      // The replay store unavailable (server_error) is an infrastructure failure: 503, so a
+      // caller does not read it as an invalid proof. Every other failure is the proof's: 401.
+      const storeUnavailable = dpopValidation.error === 'server_error';
       return {
         valid: false,
         error: {
           error: dpopValidation.error || 'invalid_dpop_proof',
           error_description: dpopValidation.error_description || 'DPoP proof validation failed',
           wwwAuthenticate: 'DPoP error="invalid_dpop_proof"',
-          statusCode: 401,
+          statusCode: storeUnavailable ? 503 : 401,
         },
       };
     }
@@ -743,6 +763,7 @@ export async function introspectTokenFromContext(
     tenantId,
     audience: options.audience,
     allowSubjectReference: options.allowSubjectReference,
+    ...(options.issuer !== undefined && { issuer: options.issuer }),
   });
   if (result.valid && result.claims) {
     const clientId = result.claims.client_id ?? result.claims.azp;
@@ -779,11 +800,20 @@ export async function introspectTokenFromContext(
     };
   }
   try {
-    await resolveAccountDataContextFromHono(c, userId);
-    const withdrawal = await findOAuthClientConsentRevocation(
-      createAccountAuthContextFromHono(c, tenantId).coreAdapter,
-      { tenantId, userId, clientId: consentClientId }
-    );
+    let accountCore;
+    if (options.consentFromAccountCoreOnly) {
+      // The account's Core database only (the withdrawal is there): no PII context.
+      const core = await resolveAccountCoreDataContext(c.env, { tenantId, accountId: userId });
+      accountCore = ensureDatabaseAdapter(core.coreDb, 'token-introspection-consent');
+    } else {
+      await resolveAccountDataContextFromHono(c, userId);
+      accountCore = createAccountAuthContextFromHono(c, tenantId).coreAdapter;
+    }
+    const withdrawal = await findOAuthClientConsentRevocation(accountCore, {
+      tenantId,
+      userId,
+      clientId: consentClientId,
+    });
     if (!isAccessTokenConsentWithdrawn(withdrawal, result.claims)) return result;
   } catch (error) {
     log.error('Failed to read access-token consent withdrawal', {}, error as Error);

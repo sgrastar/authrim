@@ -1253,3 +1253,96 @@ describe('fourth review', () => {
     ).toEqual({ lifecycle_state: 'active' });
   });
 });
+
+describe('service groups through the groups API', () => {
+  function seedServiceGroup(id: string, parentId: string | null, selfWritableField: boolean) {
+    metadataDb
+      .prepare(
+        `INSERT INTO "groups" (id, tenant_id, group_key, display_name, parent_group_id, kind,
+          rule_revision, created_at, updated_at) VALUES (?, 'tenant-a', ?, ?, ?, 'dynamic', 1, 1, 1)`
+      )
+      .run(id, `dynamic:${id}`, id, parentId);
+    if (!selfWritableField) return;
+    metadataDb.exec(`INSERT INTO custom_claim_schemas (id, tenant_id, field_key, display_label,
+      field_type, is_active, operation_status, schema_version, show_on_registration, created_at,
+      updated_at) VALUES ('tenant-a:team', 'tenant-a', 'team', 'Team', 'string', 1, 'active', 1, 1,
+      1, 1)`);
+    const plan = {
+      tenantId: 'tenant-a',
+      groups: [
+        { id, tenantId: 'tenant-a', key: id, displayName: id, description: '', enabled: true },
+      ],
+      fields: { 'custom.team': { type: 'string', schemaId: 'tenant-a:team', schemaVersion: 1 } },
+      nodes: {},
+      order: [id],
+      roots: {},
+      attributes: { 'custom.team': [id] },
+      dependents: { [id]: [] },
+      dependencies: { [id]: [] },
+    };
+    metadataDb
+      .prepare(
+        `INSERT INTO service_group_catalog (tenant_id, revision, plan_json, updated_at, write_token)
+         VALUES ('tenant-a', 1, ?, 1, 't')`
+      )
+      .run(JSON.stringify(plan));
+  }
+
+  it('refuses state, parent and deletion changes of a catalog-owned group (409)', async () => {
+    const parentId = await createGroupVia('parent');
+    seedServiceGroup('dyn', null, false);
+    for (const [method, body] of [
+      ['PUT', { lifecycle_state: 'inactive' }],
+      ['PUT', { parent_group_id: parentId }],
+      ['DELETE', undefined],
+    ] as const) {
+      const result = await call(method, '/api/admin/groups/dyn', body);
+      expect(result.status).toBe(409);
+      expect(result.body.error).toBe('group_managed_by_service_group');
+    }
+    // Only the catalog's own key (`dynamic:<id>`) marks a catalog-owned group.
+    metadataDb.exec(`INSERT INTO "groups" (id, tenant_id, group_key, display_name, kind,
+      created_at, updated_at) VALUES ('hand', 'tenant-a', 'dynamic:someone', 'Hand', 'dynamic', 1, 1)`);
+    expect(
+      (await call('PUT', '/api/admin/groups/hand', { lifecycle_state: 'inactive' })).status
+    ).toBe(200);
+    // Its name may still be edited here (the catalog writes it back on its next save).
+    expect((await call('PUT', '/api/admin/groups/dyn', { display_name: 'Dyn' })).status).toBe(200);
+    expect(
+      metadataDb.prepare('SELECT lifecycle_state FROM "groups" WHERE id = ?').get('dyn')
+    ).toEqual({ lifecycle_state: 'active' });
+  });
+
+  it('refuses a role reaching a service group decided by a self-writable field (400)', async () => {
+    seedRole('reader', 1);
+    const holderId = await createGroupVia('holder');
+    const bearerId = await createGroupVia('bearer');
+    seedServiceGroup('dyn', holderId, true);
+    // A role on the group above it.
+    const grant = await call('POST', `/api/admin/groups/${holderId}/roles`, { role_id: 'reader' });
+    expect(grant.status).toBe(400);
+    expect(grant.body.error).toBe('group_self_writable_attribute');
+    // Moving the group above it under a role-bearing parent.
+    expect(
+      (await call('POST', `/api/admin/groups/${bearerId}/roles`, { role_id: 'reader' })).status
+    ).toBe(201);
+    const moved = await call('PUT', `/api/admin/groups/${holderId}`, { parent_group_id: bearerId });
+    expect(moved.status).toBe(400);
+    expect(moved.body.error).toBe('group_self_writable_attribute');
+  });
+
+  it("never lists a membership without a group in a user's groups", async () => {
+    seedServiceGroup('dyn', null, false);
+    accountDb.exec(`INSERT INTO group_memberships (id, tenant_id, group_id, subject_id,
+      assignment_source, source_ref, stale_after, created_at, updated_at)
+      VALUES ('m', 'tenant-a', 'dyn', 'user-1', 'dynamic', '0000000000000002:1', 9999999999, 1, 1);
+      INSERT INTO dynamic_membership_publications (tenant_id, subject_id, generation, published_at)
+      VALUES ('tenant-a', 'user-1', '0000000000000002:1', 1)`);
+    const result = await call('GET', '/api/admin/users/user-1/groups');
+    expect(result.status).toBe(200);
+    expect(result.body.memberships.map((m: { group_id: string }) => m.group_id)).toEqual(['dyn']);
+    expect(
+      accountDb.prepare(`SELECT COUNT(*) AS n FROM group_memberships WHERE group_id = ''`).get()
+    ).toEqual({ n: 0 });
+  });
+});

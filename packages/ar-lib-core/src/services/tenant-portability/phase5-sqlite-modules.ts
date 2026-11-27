@@ -26,6 +26,14 @@ export const PHASE5_SQLITE_TABLE_GROUPS: readonly Phase5TableGroup[] = [
   },
   {
     family: 'core',
+    module: 'authorization',
+    // The service (dynamic) group rules and their immutable revisions: restored as settings, so
+    // the target has the rules (and can evaluate again) before any reconcile runs. Results,
+    // scans and the epoch are rebuilt there.
+    tables: ['service_group_catalog', 'service_group_revisions'],
+  },
+  {
+    family: 'core',
     module: 'credentials',
     // profile_registry is shared installed configuration without tenant-owned rows. Tenant
     // settings retain its logical ID and the target resolves that prerequisite separately.

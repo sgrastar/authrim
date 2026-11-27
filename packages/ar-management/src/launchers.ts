@@ -2,6 +2,7 @@ import type { Context } from 'hono';
 import type {
   AccountLauncher,
   ApplicationLauncher,
+  DatabaseAdapter,
   Env,
   LauncherAttributeRule,
   LauncherVisibility,
@@ -13,6 +14,7 @@ import {
   CanonicalRuntimeUserStore,
   createAccountAuthContextFromHono,
   createAuthContextFromHono,
+  rbacIdBatches,
   createCustomClaimSchemaResolverFromSources,
   createPIIContextFromHono,
   getLogger,
@@ -1196,7 +1198,36 @@ async function resolveAccountAudience(
     add(attribute.attribute_name, attribute.attribute_value);
     add(`verified.${attribute.attribute_name}`, attribute.attribute_value);
   }
-  return { groupIds: new Set(groups.map((entry) => entry.group_id)), attributes };
+  return {
+    groupIds: await activeGroupIds(
+      createAuthContextFromHono(c, tenantId).coreAdapter,
+      tenantId,
+      groups.map((entry) => entry.group_id)
+    ),
+    attributes,
+  };
+}
+
+/**
+ * The groups among `groupIds` that are active in the tenant metadata database, where group
+ * definitions are: a stopped or deleted group no longer shows the launchers it targets. Only the
+ * account's direct memberships are matched (a launcher names the groups it is shown to).
+ */
+async function activeGroupIds(
+  metadata: DatabaseAdapter,
+  tenantId: string,
+  groupIds: string[]
+): Promise<Set<string>> {
+  const active = new Set<string>();
+  for (const batch of rbacIdBatches(groupIds)) {
+    const rows = await metadata.query<{ id: string }>(
+      `SELECT id FROM "groups" WHERE tenant_id = ? AND lifecycle_state = 'active'
+        AND id IN (${batch.map(() => '?').join(', ')})`,
+      [tenantId, ...batch]
+    );
+    for (const row of rows) active.add(row.id);
+  }
+  return active;
 }
 
 export function launcherVisibleToAccount(

@@ -2,13 +2,20 @@
   "schemaVersion": 1,
   "packageName": "@authrim/ar-policy",
   "worker": "ar-policy",
-  "requiredDataRoles": ["tenant_core/default", "tenant_core/users"],
+  "lookupBlindIndex": true,
+  "requiredDataRoles": ["tenant_core/default", "tenant_core/users", "lookup"],
   "bindings": [
     {
       "name": "SETTINGS",
       "kind": "kv_namespace",
       "required": true,
       "capability": "settings.read"
+    },
+    {
+      "name": "LOOKUP_DB",
+      "kind": "d1",
+      "required": true,
+      "dataRole": "lookup"
     },
     {
       "name": "REBAC_CACHE",
@@ -40,6 +47,21 @@
       "capability": "permission_changes.publish"
     },
     {
+      "name": "KEY_MANAGER",
+      "kind": "durable_object_namespace",
+      "required": true
+    },
+    {
+      "name": "DPOP_JTI_STORE",
+      "kind": "durable_object_namespace",
+      "required": true
+    },
+    {
+      "name": "TOKEN_REVOCATION_STORE",
+      "kind": "durable_object_namespace",
+      "required": true
+    },
+    {
       "name": "PLUGIN_RUNNER",
       "kind": "service",
       "required": true,
@@ -65,9 +87,24 @@
   ],
   "secrets": [
     {
+      "name": "PUBLIC_JWK_JSON",
+      "capability": "legacy_signing.public",
+      "required": true
+    },
+    {
       "name": "TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS",
       "capability": "runtime_registry.verify",
       "required": true
+    },
+    {
+      "name": "LOOKUP_HMAC_KEY_SLOT_A",
+      "capability": "lookup_blind_index",
+      "required": true
+    },
+    {
+      "name": "LOOKUP_HMAC_KEY_SLOT_B",
+      "capability": "lookup_blind_index",
+      "required": false
     },
     {
       "name": "CONTROL_SMOKE_VERIFYING_PUBLIC_JWKS",
@@ -76,7 +113,7 @@
     },
     {
       "name": "OBJECT_ENCRYPTION_ROOT_KEY",
-      "required": false,
+      "required": true,
       "capability": "logging.archive.encrypt"
     },
     {

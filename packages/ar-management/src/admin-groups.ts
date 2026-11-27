@@ -25,6 +25,8 @@ import {
   getLogger,
   getTenantIdFromContext,
   groupParentCondition,
+  groupsCarryingRoles,
+  subtreeHasSelfWritableDynamicGroup,
   invalidateSubjectRBACCache,
   isUniqueConstraintError,
   listGroupMembersPage,
@@ -110,6 +112,20 @@ function knownGroupError(c: GroupContext, error: unknown) {
     case 'invalid_group_parent':
     case 'group_not_found_or_invalid_parent':
       return invalid(c, 'parent_group_id must name an existing group that does not form a loop');
+    case 'group_managed_by_service_group':
+      return failure(
+        c,
+        409,
+        'group_managed_by_service_group',
+        'The group is a service group: change its state, parent or existence through the service group rules'
+      );
+    case 'group_self_writable_attribute':
+      return failure(
+        c,
+        400,
+        'group_self_writable_attribute',
+        'A service group below this group is decided by an attribute users can set themselves: it cannot carry roles'
+      );
     default:
       return null;
   }
@@ -129,6 +145,12 @@ interface GroupRow {
   metadata_json: string | null;
   created_at: number;
   updated_at: number;
+}
+
+/** A group the service-group catalog owns (canonical.ts): its state and existence follow the rules. */
+function catalogOwned(group: Pick<GroupRow, 'id' | 'kind' | 'group_key'>) {
+  // Exactly the catalog's own key (canonical.ts: `dynamic:<id>`), not any `dynamic:` key.
+  return group.kind === 'dynamic' && group.group_key === `dynamic:${group.id}`;
 }
 
 const GROUP_COLUMNS = `id, tenant_id, group_key, display_name, description, parent_group_id,
@@ -590,6 +612,18 @@ export async function adminGroupUpdateHandler(c: GroupContext) {
           ? undefined
           : ((body.parent_group_id as string | null) ?? null);
       const parentChanged = newParent !== undefined && newParent !== group.parent_group_id;
+      if (catalogOwned(group) && (lifecycleChanged || parentChanged))
+        throw new Error('group_managed_by_service_group');
+      // Moving the group under a parent that carries roles hands those roles to every group below
+      // it: not when a service group there is decided by an attribute users set themselves.
+      // Checked under the catalog lock (PostgreSQL); on D1 it narrows the window only.
+      if (
+        parentChanged &&
+        newParent &&
+        (await groupsCarryingRoles(tx, tenantId, [newParent])).size &&
+        (await subtreeHasSelfWritableDynamicGroup(tx, tenantId, groupId))
+      )
+        throw new Error('group_self_writable_attribute');
 
       // Every delegation check runs before anything is written.
       if (lifecycleChanged && !(await canManageGroupMembership(tx, tenantId, auth, groupId)))
@@ -708,6 +742,8 @@ export async function adminGroupDeleteHandler(c: GroupContext) {
     const stores = await tenantRBACStores(c, tenantId);
     const cache = c.env.REBAC_CACHE;
     const group = await findGroup(stores.metadata, tenantId, groupId);
+    // A service group is deleted by removing it from the service group rules.
+    if (group && catalogOwned(group)) throw new Error('group_managed_by_service_group');
     if (!group) {
       // A retry after a partial failure: clean up what is left of the group.
       const leftoverGrants = Number(
@@ -1145,6 +1181,10 @@ export async function adminGroupRoleAssignHandler(c: GroupContext) {
       await lockGroupCatalog(tx, tenantId, metadata.getType());
       const group = await findGroup(tx, tenantId, groupId);
       if (!group) return { kind: 'not_found' as const };
+      // A role on the group reaches every group below it: not when a service group there is
+      // decided by an attribute users set themselves (checked under the same lock).
+      if (await subtreeHasSelfWritableDynamicGroup(tx, tenantId, groupId))
+        throw new Error('group_self_writable_attribute');
       if (scopeType === 'group' && !(await findGroup(tx, tenantId, scopeTarget.slice(6))))
         return { kind: 'invalid_scope' as const };
       const role = await tx.queryOne<{

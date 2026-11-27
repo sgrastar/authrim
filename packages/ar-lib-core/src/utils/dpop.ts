@@ -382,17 +382,28 @@ export async function validateDPoPProof(
       stub = dpopJTIStore.get(id);
     }
 
-    // Atomic check-and-store in DPoPJTIStore DO
-    const response = await stub.fetch('http://internal/check-and-store', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        jti: claims.jti,
-        client_id: clientId,
-        iat: claims.iat,
-        ttl: DPOP_JTI_TTL_SECONDS,
-      }),
-    });
+    // Atomic check-and-store in DPoPJTIStore DO. A store that cannot be reached is an
+    // infrastructure failure (server_error), not an invalid proof.
+    let response: Response;
+    try {
+      response = await stub.fetch('http://internal/check-and-store', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jti: claims.jti,
+          client_id: clientId,
+          iat: claims.iat,
+          ttl: DPOP_JTI_TTL_SECONDS,
+        }),
+      });
+    } catch (error) {
+      log.error('DPoP JTI replay store unavailable', {}, error as Error);
+      return {
+        valid: false,
+        error: 'server_error',
+        error_description: 'DPoP JTI validation unavailable',
+      };
+    }
 
     if (!response.ok) {
       // DO detected replay or internal error

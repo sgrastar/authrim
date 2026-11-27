@@ -89,7 +89,9 @@ describe('org-domain-resolver', () => {
 
   it('assigns org-scoped roles through adapter execute', async () => {
     const adapter = createMockAdapter();
-    vi.mocked(adapter.queryOne).mockResolvedValueOnce({ id: 'role-1' }).mockResolvedValueOnce(null);
+    vi.mocked(adapter.queryOne)
+      .mockResolvedValueOnce({ id: 'role-1', is_assignable: 1 })
+      .mockResolvedValueOnce(null);
     vi.mocked(adapter.execute).mockResolvedValueOnce({ success: true, rowsAffected: 1 });
 
     const result = await assignRoleToUser(
@@ -105,6 +107,26 @@ describe('org-domain-resolver', () => {
       expect.stringContaining('INSERT INTO role_assignments'),
       expect.arrayContaining(['tenant-1', 'user-1', 'role-1', 'org:org-1'])
     );
+  });
+
+  it('refuses a role that is not assignable, with a code the caller can tell apart', async () => {
+    const adapter = createMockAdapter();
+    vi.mocked(adapter.queryOne).mockResolvedValueOnce({ id: 'role-1', is_assignable: 0 });
+
+    const result = await assignRoleToUser(
+      singleDatabaseRBAC(adapter),
+      'user-1',
+      'role-1',
+      'org-1',
+      'tenant-1'
+    );
+
+    expect(result).toEqual({
+      success: false,
+      error: 'Role not assignable',
+      code: 'role_not_assignable',
+    });
+    expect(adapter.execute).not.toHaveBeenCalled();
   });
 
   it('lists domain mappings with adapter-backed pagination', async () => {

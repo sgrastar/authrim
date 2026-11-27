@@ -264,6 +264,7 @@ export class RelationParser implements IRelationParser {
     const results = await adapter.query<{ id: string }>(
       `SELECT id FROM relationships
        WHERE tenant_id = ?
+         AND from_type <> 'group' -- group usersets are not evaluated yet
          AND from_type = ?
          AND from_id = ?
          AND to_type = ?
@@ -323,6 +324,7 @@ export class RelationParser implements IRelationParser {
     }>(
       `SELECT to_type, to_id FROM relationships
        WHERE tenant_id = ?
+         AND from_type <> 'group' -- group usersets are not evaluated yet
          AND from_type = ?
          AND from_id = ?
          AND relationship_type = ?

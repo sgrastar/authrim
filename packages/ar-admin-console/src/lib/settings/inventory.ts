@@ -495,7 +495,8 @@ place('access/policies', 'Policies', {
 		'feature.enable_policy_logging',
 		'feature.enable_policy_embedding',
 		'feature.enable_id_level_permissions',
-		'feature.enable_check_api'
+		'feature.enable_check_api',
+		'check.audience'
 	],
 	search: [
 		'limits.max_embedded_permissions',
@@ -507,6 +508,15 @@ place('access/policies', 'Policies', {
 place('access/roles', 'Roles in tokens', {
 	advanced: ['tokens.rbac_id_token_claims', 'tokens.rbac_access_token_claims']
 });
+place(
+	'access/roles',
+	'Dynamic groups',
+	{ advanced: ['groups.dynamic_freshness_seconds'] },
+	{
+		'groups.dynamic_freshness_seconds':
+			'Draft place until the Groups screen is built: how long a published dynamic group membership grants without being checked again.'
+	}
+);
 place('access/schema-setting', 'Custom claims', {
 	advanced: [
 		'feature.enable_custom_claim_schemas',

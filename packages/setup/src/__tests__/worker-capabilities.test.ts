@@ -415,10 +415,23 @@ describe('worker capability manifests', () => {
       }
     }
 
-    for (const component of ['ar-discovery', 'ar-policy'] as const) {
-      const manifest = manifests.find((candidate) => candidate.component === component)?.manifest;
-      expect(manifest?.bindings.filter((binding) => binding.kind === 'd1')).toEqual([]);
-    }
+    const d1Of = (component: string) =>
+      manifests
+        .find((candidate) => candidate.component === component)
+        ?.manifest.bindings.filter((binding) => binding.kind === 'd1');
+    expect(d1Of('ar-discovery')).toEqual([]);
+    // The policy service has no Core route binding: only the lookup directory, for the Check
+    // API's end-user tokens.
+    expect(d1Of('ar-policy')).toEqual([
+      { name: 'LOOKUP_DB', kind: 'd1', required: true, dataRole: 'lookup' },
+    ]);
+    // The token's client is read from oauth_clients (D1) per request: no client or user KV cache.
+    const policyKv = manifests
+      .find((candidate) => candidate.component === 'ar-policy')
+      ?.manifest.bindings.filter((binding) => binding.kind === 'kv_namespace')
+      .map((binding) => binding.name);
+    expect(policyKv).not.toContain('CLIENTS_CACHE');
+    expect(policyKv).not.toContain('USER_CACHE');
   });
 
   it('loads UI Worker manifests without granting assignment roles', async () => {

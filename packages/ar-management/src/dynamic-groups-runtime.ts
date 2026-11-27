@@ -2,6 +2,16 @@ import {
   DynamicGroupStore,
   SavedGroupInputReader,
   ensureDatabaseAdapter,
+  publishDynamicMemberships,
+  removeDynamicGroup,
+  syncDynamicGroupCatalog,
+  expireDynamicMembershipsAfterFailure,
+  resolveDynamicFreshnessSeconds,
+  selfWritableRoleGroups,
+  retryPendingDynamicInvalidations,
+  loadGroupFields,
+  type Catalog,
+  type DynamicPublicationOptions,
   resolveAccountDataContext,
   resolveTenantMetadataContext,
   type DatabaseAdapter,
@@ -122,6 +132,89 @@ export async function processServiceGroupShard(
     );
   }
 }
+/**
+ * One subject of a reconcile pass: evaluated when its result is not fresh, then published (a new
+ * result, a failed publication retried, rows renewed or restored). An evaluation (or its account
+ * routing) that fails makes the subject's dynamic rows stale at once, on the shard being scanned.
+ */
+export async function refreshServiceGroupSubject(
+  env: Env,
+  store: DynamicGroupStore,
+  shard: DatabaseAdapter,
+  userId: string,
+  options: DynamicPublicationOptions
+): Promise<void> {
+  let account = shard;
+  try {
+    const { reader } = await serviceGroupRuntime(env, store.tenantId, userId);
+    if (!reader) throw new Error('group_input_unavailable');
+    account = reader.core;
+    const result = await store.snapshot(userId, reader);
+    if (result.freshness !== 'fresh') await store.evaluate(userId, reader);
+    await publishDynamicMemberships(store, reader, reader.core, options);
+  } catch (error) {
+    await expireDynamicMembershipsAfterFailure(store, account, userId, options);
+    throw error;
+  }
+}
+/**
+ * The refresh pass: the subjects of the shard whose published dynamic rows expire within
+ * `renewBeforeSeconds` (and have not yet expired), soonest first, up to `budget` per run. It
+ * keeps fresh results' rows from lapsing on large shards, where the full scan (20 subjects per
+ * run) comes round too rarely; rows already expired are left to the full scan.
+ */
+export async function refreshExpiringDynamicMemberships(
+  store: DynamicGroupStore,
+  source: DatabaseAdapter,
+  refresh: (userId: string) => Promise<void>,
+  options: { renewBeforeSeconds: number; budget?: number }
+): Promise<{ visited: string[]; failures: number }> {
+  const now = Math.floor(Date.now() / 1000);
+  const rows = await source.query<{ subject_id: string }>(
+    `SELECT subject_id, MIN(stale_after) AS soonest FROM group_memberships
+      WHERE tenant_id = ? AND assignment_source = 'dynamic' AND lifecycle_state = 'active'
+        AND stale_after > ? AND stale_after <= ?
+      GROUP BY subject_id ORDER BY soonest, subject_id LIMIT ?`,
+    [store.tenantId, now, now + options.renewBeforeSeconds, options.budget ?? 100],
+    { consistencyClass: 'primary_required' }
+  );
+  let failures = 0;
+  for (const row of rows) {
+    try {
+      await refresh(row.subject_id);
+    } catch {
+      failures++;
+    }
+  }
+  return { visited: rows.map((row) => row.subject_id), failures };
+}
+/**
+ * Once per catalog revision: the groups whose result depends on a field the person writes
+ * themselves while they carry roles (saved before the check existed, or a role granted since).
+ * They are left out of publication; this names them for an administrator.
+ */
+async function reportSelfWritableRoleGroups(
+  env: Env,
+  store: DynamicGroupStore,
+  catalog: Catalog,
+  log: { warn(message: string, metadata?: Record<string, unknown>): void }
+) {
+  const offending = await selfWritableRoleGroups(
+    store.db,
+    store.tenantId,
+    catalog.plan,
+    await loadGroupFields(store.db, store.tenantId)
+  );
+  if (!offending.size) return;
+  const key = `jobs:service-groups:self-writable-check:${store.tenantId}:${catalog.revision}`;
+  if (env.AUTHRIM_CONFIG && (await env.AUTHRIM_CONFIG.get(key))) return;
+  log.warn('Service groups decided by self-writable attributes carry roles; not published', {
+    tenantId: store.tenantId,
+    ruleVersion: catalog.revision,
+    groupIds: [...offending].sort(),
+  });
+  await env.AUTHRIM_CONFIG?.put(key, '1', { expirationTtl: 30 * 86_400 });
+}
 export async function processScheduledServiceGroups(
   env: Env,
   targets: GuestMaintenanceTarget[],
@@ -130,14 +223,43 @@ export async function processScheduledServiceGroups(
   for (const target of targets) {
     try {
       const { store } = await serviceGroupRuntime(env, target.tenantId);
-      if (!(await store.catalog())) continue;
-      for (const { adapter, bindingRef } of target.adapters) {
-        await processServiceGroupShard(store, adapter, bindingRef, async (userId) => {
-          const { reader } = await serviceGroupRuntime(env, target.tenantId, userId);
-          if (!reader) throw new Error('group_input_unavailable');
-          const result = await store.snapshot(userId, reader);
-          if (result.freshness !== 'fresh') await store.evaluate(userId, reader);
+      const catalog = await store.catalog();
+      // Canonical `groups` rows of the catalog (older catalogs, an interrupted save), and the
+      // removal of groups the catalog no longer has, finished on every account shard.
+      const { orphanIds, awaitingCatalog } = await syncDynamicGroupCatalog(
+        store.db,
+        store.tenantId,
+        catalog,
+        env.REBAC_CACHE
+      );
+      // A tenant restored without its catalog yet: its groups wait for it, untouched.
+      if (awaitingCatalog.length)
+        log.warn('Service-owned groups await their catalog; left as they are', {
+          tenantId: store.tenantId,
+          groupCount: awaitingCatalog.length,
         });
+      const accounts = [store.db, ...target.adapters.map(({ adapter }) => adapter)];
+      for (const groupId of orphanIds)
+        await removeDynamicGroup(store.db, accounts, store.tenantId, groupId, env.REBAC_CACHE);
+      const options = {
+        cache: env.REBAC_CACHE,
+        freshnessSeconds: await resolveDynamicFreshnessSeconds(env, store.tenantId, log),
+        log,
+      };
+      // Cached claims still to be invalidated after an earlier publication or expiry, whatever
+      // the rows or their expiry.
+      for (const { adapter } of target.adapters)
+        await retryPendingDynamicInvalidations(adapter, store.tenantId, options);
+      if (!catalog) continue;
+      await reportSelfWritableRoleGroups(env, store, catalog, log);
+      for (const { adapter, bindingRef } of target.adapters) {
+        const refresh = (userId: string) =>
+          refreshServiceGroupSubject(env, store, adapter, userId, options);
+        // Rows that expire soonest first, independent of the full scan's cursor.
+        await refreshExpiringDynamicMemberships(store, adapter, refresh, {
+          renewBeforeSeconds: Math.floor(options.freshnessSeconds / 2),
+        });
+        await processServiceGroupShard(store, adapter, bindingRef, refresh);
       }
     } catch {
       log.warn('Service group reconciliation deferred', { tenantId: target.tenantId });

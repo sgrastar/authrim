@@ -4,6 +4,8 @@ import {
   eraseRetainedAccountPii,
   findPiiOnlyErasureBlocker,
   redactEarlierWebhookEmailSnapshots,
+  reevaluateDynamicMembershipsAfterErasure,
+  stopDynamicMembershipsForErasure,
   type PiiOnlyErasureBlocker,
 } from './account-pii-only-erasure';
 import {
@@ -86,7 +88,7 @@ import {
   CrossShardAccountListService,
   type CrossShardAccountListItem,
 } from './cross-shard-account-list';
-import { deleteAccount } from './account-deletion';
+import { deleteAccount, deleteAccountAuthorizationRows } from './account-deletion';
 import { eraseAccountIdentifierValues } from './account-identifier-erasure';
 import { findActiveAccountLegalHold } from './account-legal-hold-guard';
 import { isInactiveAccountRouteError } from './account-route-errors';
@@ -2133,6 +2135,13 @@ export async function adminUserDeleteHandler(c: Context<{ Bindings: Env }>) {
         // sources), as the routed deletion erases it.
         await eraseAccountIdentifierValues(c.env, { tenantId, userId });
         await maybeDeleteCanonicalRuntimeUserForAdmin(c, authCtx.coreAdapter, tenantId, userId);
+        // Its direct role assignments and every group membership row, in its account database
+        // (the tenant's own database here, as for the routed deletion's account database).
+        await deleteAccountAuthorizationRows(
+          authCtx.coreAdapter,
+          { tenantId, userId },
+          c.env.REBAC_CACHE
+        );
         await transitionEndingSessions(c.env, ended, {
           tenantId,
           userId,
@@ -2474,84 +2483,112 @@ export async function adminUserDeletePiiHandler(c: Context<{ Bindings: Env }>) {
       },
     });
 
-    // The addresses earlier webhook events kept, redacted (before the profile changes: the
-    // deletion's own notice that the address was removed is still delivered).
-    await redactEarlierWebhookEmailSnapshots(accountPii, { tenantId, userId });
-
-    await createCanonicalRuntimeUserWriter(
-      c,
+    // The whole erasure is one group input write: while it runs, the subject's service-group
+    // inputs read as unsettled, so no evaluation publishes a result taken mid-erasure (a failure
+    // leaves the boundary failed, as for any writer: fail closed until it is retried or accepted).
+    const { firstRevocation, secondRevocation, startedSince } = await withGroupInputWrite(
       accountCore,
       tenantId,
-      accountPii
-    ).syncFromRuntimeUser({
       userId,
-      tenantId,
-      active: Boolean(projection.active),
-      emailVerified: false,
-      phoneNumberVerified: false,
-      userType: userTypeFromAccountType(projection.account_type),
-      displayName: null,
-      sourceRef: 'admin:/users/pii',
-      piiFields: {
-        email: true,
-        phone_number: true,
-        name: true,
-        given_name: true,
-        family_name: true,
-        middle_name: true,
-        nickname: true,
-        preferred_username: true,
-        profile: true,
-        picture: true,
-        website: true,
-        gender: true,
-        birthdate: true,
-        zoneinfo: true,
-        locale: true,
-      },
-      sensitiveValues: buildCanonicalPiiDeletionPatch(),
-      addressJson: null,
-      customAttributesJson: null,
-    });
-    // The erasure below nulls the linked identities' stored provider tokens, after which their
-    // grants can no longer be revoked: ar-bridge revokes them first. Best-effort and time-limited:
-    // a revocation that fails or is slow never stops the deletion (its audit entry records it).
-    // A token a sign-in stores between that read and the erasure is erased unrevoked (no lock is
-    // shared with sign-ins; the window lasts at most the time limit).
-    const revocationLog = getLogger(c).module('ADMIN-USER');
-    const firstRevocation = await revokeUpstreamTokensBeforeErasure(
-      c.env,
-      accountPii,
-      { tenantId, userId },
-      revocationLog
+      'pii_only_erasure',
+      async () => {
+        // Dynamic group memberships derived from the values being erased stop counting now.
+        await stopDynamicMembershipsForErasure(
+          accountCore,
+          { tenantId, userId },
+          c.env.REBAC_CACHE
+        );
+
+        // The addresses earlier webhook events kept, redacted (before the profile changes: the
+        // deletion's own notice that the address was removed is still delivered).
+        await redactEarlierWebhookEmailSnapshots(accountPii, { tenantId, userId });
+
+        await createCanonicalRuntimeUserWriter(
+          c,
+          accountCore,
+          tenantId,
+          accountPii
+        ).syncFromRuntimeUser({
+          userId,
+          tenantId,
+          active: Boolean(projection.active),
+          emailVerified: false,
+          phoneNumberVerified: false,
+          userType: userTypeFromAccountType(projection.account_type),
+          displayName: null,
+          sourceRef: 'admin:/users/pii',
+          piiFields: {
+            email: true,
+            phone_number: true,
+            name: true,
+            given_name: true,
+            family_name: true,
+            middle_name: true,
+            nickname: true,
+            preferred_username: true,
+            profile: true,
+            picture: true,
+            website: true,
+            gender: true,
+            birthdate: true,
+            zoneinfo: true,
+            locale: true,
+          },
+          sensitiveValues: buildCanonicalPiiDeletionPatch(),
+          addressJson: null,
+          customAttributesJson: null,
+        });
+        // The erasure below nulls the linked identities' stored provider tokens, after which their
+        // grants can no longer be revoked: ar-bridge revokes them first. Best-effort and time-limited:
+        // a revocation that fails or is slow never stops the deletion (its audit entry records it).
+        // A token a sign-in stores between that read and the erasure is erased unrevoked (no lock is
+        // shared with sign-ins; the window lasts at most the time limit).
+        const revocationLog = getLogger(c).module('ADMIN-USER');
+        const firstRevocation = await revokeUpstreamTokensBeforeErasure(
+          c.env,
+          accountPii,
+          { tenantId, userId },
+          revocationLog
+        );
+        // The values the writer only marked deleted, the linked identities' provider profile and
+        // tokens, the custom attributes and the screen response records (the tombstone written above
+        // keeps a later screen from recording new ones). The sign-in identifiers stay.
+        await eraseRetainedAccountPii(accountPii, accountCore, { tenantId, userId });
+        // The identifiers and identifier-source values imported for the account (the account stays;
+        // a step that needs one then has none).
+        await eraseAccountIdentifierValues(c.env, { tenantId, userId });
+        // An operation started since the check above keeps its values until it has finished: the
+        // deletion is not reported done (running it again then erases them). One that finished in
+        // the meantime is erased by a second pass (the erasure is idempotent).
+        const startedSince = await findPiiOnlyErasureBlocker(accountPii, { tenantId, userId });
+        let secondRevocation: typeof firstRevocation | null = null;
+        if (!startedSince) {
+          // A change finished in the meantime also kept its addresses in a webhook snapshot (the
+          // deletion's own removal notice stays, as above).
+          await redactEarlierWebhookEmailSnapshots(accountPii, { tenantId, userId });
+          // Tokens stored since the first pass (an identity provider's account creation finished,
+          // or a sign-in through a provider): revoked too. Without any, no call is made.
+          secondRevocation = await revokeUpstreamTokensBeforeErasure(
+            c.env,
+            accountPii,
+            { tenantId, userId },
+            revocationLog
+          );
+          await eraseRetainedAccountPii(accountPii, accountCore, { tenantId, userId });
+          await eraseAccountIdentifierValues(c.env, { tenantId, userId });
+        }
+        // Again after the erasure (a publication racing it is made stale too), then the subject's
+        // service groups are evaluated on what is left; until that publishes, none counts.
+        await stopDynamicMembershipsForErasure(
+          accountCore,
+          { tenantId, userId },
+          c.env.REBAC_CACHE
+        );
+        return { firstRevocation, secondRevocation, startedSince };
+      }
     );
-    // The values the writer only marked deleted, the linked identities' provider profile and
-    // tokens, the custom attributes and the screen response records (the tombstone written above
-    // keeps a later screen from recording new ones). The sign-in identifiers stay.
-    await eraseRetainedAccountPii(accountPii, accountCore, { tenantId, userId });
-    // The identifiers and identifier-source values imported for the account (the account stays;
-    // a step that needs one then has none).
-    await eraseAccountIdentifierValues(c.env, { tenantId, userId });
-    // An operation started since the check above keeps its values until it has finished: the
-    // deletion is not reported done (running it again then erases them). One that finished in
-    // the meantime is erased by a second pass (the erasure is idempotent).
-    const startedSince = await findPiiOnlyErasureBlocker(accountPii, { tenantId, userId });
-    let secondRevocation = null;
-    if (!startedSince) {
-      // A change finished in the meantime also kept its addresses in a webhook snapshot (the
-      // deletion's own removal notice stays, as above).
-      await redactEarlierWebhookEmailSnapshots(accountPii, { tenantId, userId });
-      // Tokens stored since the first pass (an identity provider's account creation finished,
-      // or a sign-in through a provider): revoked too. Without any, no call is made.
-      secondRevocation = await revokeUpstreamTokensBeforeErasure(
-        c.env,
-        accountPii,
-        { tenantId, userId },
-        revocationLog
-      );
-      await eraseRetainedAccountPii(accountPii, accountCore, { tenantId, userId });
-      await eraseAccountIdentifierValues(c.env, { tenantId, userId });
-    }
+    // After the boundary has settled (an evaluation inside it would only find it unsettled).
+    await reevaluateDynamicMembershipsAfterErasure(c.env, { tenantId, userId });
     const upstreamTokenRevocation = mergeUpstreamTokenRevocationSummaries(
       firstRevocation,
       secondRevocation

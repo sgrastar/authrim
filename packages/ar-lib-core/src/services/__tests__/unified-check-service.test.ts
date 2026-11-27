@@ -381,6 +381,7 @@ describe('UnifiedCheckService', () => {
         db: mockD1 as unknown as D1Database,
         cache: cache as unknown as KVNamespace,
         rebacService: rebacService as never,
+        enableRebac: true,
       });
 
       const allowed = await cacheService.check({

@@ -9,6 +9,12 @@
  *
  * Authentication Priority: DPoP > Access Token > API Key
  *
+ * The credential decides the contract (see CheckContract in ar-lib-core): an API key or the policy
+ * secret is the server contract, an end-user access token the self contract. Access tokens are
+ * verified by the `accessTokenVerifier` of the context when given (the routes pass the
+ * introspection-based one, check-access-token.ts: tenant keys, issuer, Check audience, revocation,
+ * sealed account reference); the JWKS path below is kept for callers that supply keys directly.
+ *
  * Security measures:
  * - Timing-safe comparison for API key verification
  * - Rate limiting by tier (strict, moderate, lenient)
@@ -27,7 +33,12 @@ import {
   type DatabaseSource,
 } from '@authrim/ar-lib-core';
 import type { JWK } from 'jose';
-import type { CheckApiKey, RateLimitTier, CheckApiOperation } from '@authrim/ar-lib-core';
+import type {
+  CheckApiKey,
+  RateLimitTier,
+  CheckApiOperation,
+  CheckContract,
+} from '@authrim/ar-lib-core';
 
 const log = createLogger().module('CHECK-AUTH');
 
@@ -66,8 +77,13 @@ export interface CheckAuthResult {
   clientId?: string;
   /** Tenant ID */
   tenantId?: string;
-  /** Subject ID (from access token, if available) */
+  /**
+   * Subject ID (from access token): the account the token is for. For a pairwise or persistent
+   * `sub` this is the internal account id opened from the token's sealed reference, not the `sub`.
+   */
   subjectId?: string;
+  /** The token's own `sub` (what its app knows the user as; may differ from subjectId) */
+  tokenSubject?: string;
   /** Rate limit tier */
   rateLimitTier?: RateLimitTier;
   /** Allowed operations */
@@ -87,6 +103,14 @@ export interface CheckAuthContext {
   expectedAudience?: string;
   /** JWKS (JSON Web Key Set) for JWT signature verification */
   jwks?: { keys: JWK[] };
+  /**
+   * Verifies an access token instead of the JWKS path (the routes pass the introspection-based
+   * verifier of check-access-token.ts).
+   */
+  accessTokenVerifier?: (
+    token: string,
+    scheme: 'Bearer' | 'DPoP'
+  ) => Promise<AccessTokenValidationResult>;
 }
 
 // =============================================================================
@@ -157,6 +181,15 @@ interface ApiKeyValidationResult {
   error?: string;
 }
 
+/** Forget a cached key (best effort: the status read already refused it). */
+async function dropCachedKey(ctx: CheckAuthContext, keyHash: string): Promise<void> {
+  try {
+    await ctx.cache?.delete(`${API_KEY_CACHE_PREFIX}${keyHash}`);
+  } catch {
+    // The entry expires within five minutes anyway, and every hit re-reads the status.
+  }
+}
+
 /**
  * Validate API key against database
  */
@@ -188,10 +221,34 @@ async function validateApiKey(
           return { valid: false, error: 'api_key_expired' };
         }
 
+        // The cache may be up to five minutes old: the key's current status decides (a key
+        // deactivated, rotated or deleted since is refused at once). One indexed read by id.
+        const current = await ensureDatabaseAdapter(ctx.db, 'policy-check-auth').queryOne<{
+          key_hash: string;
+          is_active: number;
+          expires_at: number | null;
+        }>(
+          `SELECT key_hash, is_active, expires_at FROM check_api_keys
+            WHERE id = ? AND tenant_id = ?
+            LIMIT 1`,
+          [key.id, key.tenant_id]
+        );
+        if (!current || !timingSafeEqual(current.key_hash, keyHash)) {
+          await dropCachedKey(ctx, keyHash);
+          return { valid: false, error: 'invalid_api_key' };
+        }
+        if (current.is_active !== 1) {
+          await dropCachedKey(ctx, keyHash);
+          return { valid: false, error: 'api_key_inactive' };
+        }
+        if (current.expires_at && current.expires_at < Math.floor(Date.now() / 1000)) {
+          return { valid: false, error: 'api_key_expired' };
+        }
+
         return { valid: true, key };
       }
     } catch {
-      // Cache error - continue to database
+      // Cache (or status read) error - continue to the full database lookup, which fails closed
     }
   }
 
@@ -275,10 +332,12 @@ async function validateApiKey(
 // Access Token Validation
 // =============================================================================
 
-interface AccessTokenValidationResult {
+export interface AccessTokenValidationResult {
   valid: boolean;
   clientId?: string;
   subjectId?: string;
+  /** The token's own sub, when it differs from subjectId (a pairwise or persistent sub) */
+  tokenSubject?: string;
   tenantId?: string;
   error?: string;
 }
@@ -350,6 +409,7 @@ async function validateAccessToken(
       valid: true,
       clientId: tokenPayload.client_id || tokenPayload.azp,
       subjectId: payload.sub,
+      tokenSubject: payload.sub,
       tenantId:
         typeof tokenPayload.tenant_id === 'string' && tokenPayload.tenant_id.trim()
           ? tokenPayload.tenant_id.trim()
@@ -405,8 +465,14 @@ export async function authenticateCheckApiRequest(
     };
   }
 
-  // Must be Bearer token
-  if (!authHeader.startsWith('Bearer ')) {
+  // Bearer; DPoP only for an end-user access token (the self contract), verified with its proof
+  // by the shared introspection. Server credentials (API keys, the policy secret) are Bearer only.
+  const scheme = authHeader.startsWith('Bearer ')
+    ? 'Bearer'
+    : authHeader.startsWith('DPoP ')
+      ? 'DPoP'
+      : null;
+  if (!scheme) {
     return {
       authenticated: false,
       error: 'invalid_request',
@@ -415,7 +481,15 @@ export async function authenticateCheckApiRequest(
     };
   }
 
-  const token = authHeader.slice(7);
+  const token = authHeader.slice(scheme.length + 1);
+  if (scheme === 'DPoP' && (!isJwtFormat(token) || !ctx.accessTokenVerifier)) {
+    return {
+      authenticated: false,
+      error: 'invalid_request',
+      errorDescription: 'DPoP is accepted only for end-user access tokens',
+      statusCode: 400,
+    };
+  }
 
   if (!token) {
     return {
@@ -479,7 +553,9 @@ export async function authenticateCheckApiRequest(
 
   // 2. Check for Access Token (JWT format)
   if (isJwtFormat(token)) {
-    const result = await validateAccessToken(ctx, token);
+    const result = ctx.accessTokenVerifier
+      ? await ctx.accessTokenVerifier(token, scheme)
+      : await validateAccessToken(ctx, token);
 
     if (result.valid && !result.tenantId) {
       return {
@@ -511,6 +587,32 @@ export async function authenticateCheckApiRequest(
           error: 'invalid_token',
           description: 'Invalid token audience',
           status: 401,
+        },
+        invalid_tenant: {
+          error: 'invalid_token',
+          description: 'The access token is for another tenant',
+          status: 401,
+        },
+        elevated_token_not_allowed: {
+          error: 'elevated_token_not_allowed',
+          description: 'An elevation grant token cannot call the Check API',
+          status: 401,
+        },
+        non_account_subject: {
+          error: 'non_account_subject',
+          description:
+            'The access token is not for a local end-user account (client, machine or exchanged external subject)',
+          status: 401,
+        },
+        invalid_client: {
+          error: 'invalid_token',
+          description: 'The client of the access token is unknown or disabled',
+          status: 401,
+        },
+        temporarily_unavailable: {
+          error: 'temporarily_unavailable',
+          description: 'Access token verification is temporarily unavailable',
+          status: 503,
         },
         no_suitable_key: {
           error: 'server_error',
@@ -544,6 +646,7 @@ export async function authenticateCheckApiRequest(
       method: 'access_token',
       clientId: result.clientId,
       subjectId: result.subjectId,
+      ...(result.tokenSubject !== undefined && { tokenSubject: result.tokenSubject }),
       tenantId: result.tenantId,
       // Access tokens get moderate rate limiting by default
       rateLimitTier: 'moderate',
@@ -573,6 +676,14 @@ export async function authenticateCheckApiRequest(
 }
 
 /**
+ * The contract of an authenticated request: an end-user access token asks about itself (`self`);
+ * an API key or the policy secret is a server credential (`server`).
+ */
+export function checkContractOf(auth: CheckAuthResult): CheckContract {
+  return auth.method === 'access_token' ? 'self' : 'server';
+}
+
+/**
  * Check if operation is allowed for the authenticated context
  */
 export function isOperationAllowed(auth: CheckAuthResult, operation: CheckApiOperation): boolean {
@@ -592,9 +703,10 @@ export function isOperationAllowed(auth: CheckAuthResult, operation: CheckApiOpe
  */
 export function resolveAuthorizedCheckTenantId(
   auth: CheckAuthResult,
-  requestedTenantId: string | undefined
+  requestedTenantId: unknown
 ): string | null {
-  const requested = requestedTenantId?.trim() || undefined;
+  const requested =
+    typeof requestedTenantId === 'string' ? requestedTenantId.trim() || undefined : undefined;
 
   if (auth.method === 'policy_secret') {
     return requested ?? null;

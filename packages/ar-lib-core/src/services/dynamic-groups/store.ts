@@ -1,5 +1,7 @@
-import type { DatabaseAdapter } from '../../db';
+import type { DatabaseAdapter, TransactionContext } from '../../db';
+import { lockGroupCatalog } from '../group-catalog';
 import { compileGroups, evaluateGroupInputDelta } from './engine';
+import { canonicalDynamicGroupStatements } from './canonical';
 import type { Evaluation, EvaluationInput, Field, GroupPlan, ServiceGroup, Scalar } from './model';
 import {
   prepareCoreLogPublication,
@@ -137,7 +139,12 @@ export class DynamicGroupStore {
     groups: ServiceGroup[],
     fields: Record<string, Field>,
     expected: number,
-    actorId: string
+    actorId: string,
+    /**
+     * The caller's checks of the change (delegation, roles of affected groups): run right before
+     * the write, on PostgreSQL inside its transaction after the group catalog lock.
+     */
+    check?: (db: Pick<TransactionContext, 'query' | 'queryOne'>) => Promise<void>
   ): Promise<Catalog> {
     if (!Number.isSafeInteger(expected) || expected < 0) throw new Error('group_version_invalid');
     const plan = compileGroups(this.tenantId, groups, fields);
@@ -148,20 +155,61 @@ export class DynamicGroupStore {
     if (new TextEncoder().encode(json).length > 512 * 1024) throw new Error('group_catalog_limit');
     const now = Date.now();
     const token = crypto.randomUUID();
-    await this.db.batch([
+    const kept = new Set(plan.groups.map((group) => group.id));
+    const removed = (old?.plan.groups ?? []).map((g) => g.id).filter((id) => !kept.has(id));
+    if (removed.length > 40) throw new Error('group_catalog_limit');
+    // A removed group is a canonical group: like the groups API, it is not removed while another
+    // group has it as parent or a group role grant has it as scope. Checked in the catalog write
+    // itself, so it holds with the write (a D1 batch is one transaction; on PostgreSQL the write
+    // runs under the tenant's group catalog lock, as reparenting and grants do).
+    const slots = removed.map(() => '?').join(', ');
+    const removalGuard = removed.length
+      ? {
+          sql: ` AND NOT EXISTS (SELECT 1 FROM "groups" WHERE tenant_id = ? AND parent_group_id IN (${slots}))
+            AND NOT EXISTS (SELECT 1 FROM group_role_assignments WHERE tenant_id = ? AND scope_type = 'group' AND scope_target IN (${slots}))`,
+          params: [this.tenantId, ...removed, this.tenantId, ...removed.map((id) => `group:${id}`)],
+        }
+      : { sql: '', params: [] };
+    const statements = [
       {
         sql: `INSERT INTO service_group_catalog(tenant_id, revision, plan_json, updated_at, write_token) VALUES (?, 0, '{}', ?, '') ON CONFLICT(tenant_id) DO NOTHING`,
         params: [this.tenantId, now],
       },
       {
-        sql: 'UPDATE service_group_catalog SET revision = ?, plan_json = ?, updated_at = ?, write_token = ? WHERE tenant_id = ? AND revision = ?',
-        params: [expected + 1, json, now, token, this.tenantId, expected],
+        sql: `UPDATE service_group_catalog SET revision = ?, plan_json = ?, updated_at = ?, write_token = ? WHERE tenant_id = ? AND revision = ?${removalGuard.sql}`,
+        params: [expected + 1, json, now, token, this.tenantId, expected, ...removalGuard.params],
       },
       {
         sql: `INSERT INTO service_group_revisions(tenant_id, revision, plan_json, actor_id, created_at) SELECT tenant_id, revision, plan_json, ?, ? FROM service_group_catalog WHERE tenant_id = ? AND write_token = ?`,
         params: [actorId, now, this.tenantId, token],
       },
-    ]);
+      // The canonical `groups` rows (see canonical.ts), in the same batch and fenced by the same
+      // token: a conflicting save writes neither the catalog nor them.
+      ...canonicalDynamicGroupStatements(
+        this.tenantId,
+        plan.groups,
+        removed,
+        expected + 1,
+        {
+          sql: 'EXISTS (SELECT 1 FROM service_group_catalog WHERE tenant_id = ? AND write_token = ?)',
+          params: [this.tenantId, token],
+        },
+        now
+      ),
+    ];
+    if (this.db.getType() === 'postgres') {
+      // One transaction under the tenant's group catalog lock (the one reparenting and grants
+      // take): the caller's checks read the state the write is made in.
+      await this.db.transaction(async (tx) => {
+        await lockGroupCatalog(tx, this.tenantId, 'postgres');
+        await check?.(tx);
+        for (const statement of statements) await tx.execute(statement.sql, statement.params);
+      });
+    } else {
+      // D1 takes no lock: the checks narrow the window to the write, they do not close it.
+      await check?.(this.db);
+      await this.db.batch(statements);
+    }
     const current = await this.db.queryOne<{ write_token: string }>(
       'SELECT write_token FROM service_group_catalog WHERE tenant_id = ?',
       [this.tenantId],
@@ -174,9 +222,18 @@ export class DynamicGroupStore {
     userId: string,
     groupId: string,
     present: boolean,
-    actorId: string
+    actorId: string,
+    /**
+     * The catalog revision the caller checked the change against (its delegation check): the
+     * write holds only for that revision (the SQL guards below name it); another is a conflict.
+     */
+    expectedRevision?: number
   ): Promise<void> {
     const catalog = await this.catalog();
+    // The revision first: a group disabled or deleted since the caller's check is a conflict
+    // with what it checked, not a group that never existed.
+    if (expectedRevision !== undefined && catalog?.revision !== expectedRevision)
+      throw new Error('group_version_conflict');
     if (!catalog?.plan.groups.some((g) => g.id === groupId && g.enabled))
       throw new Error('group_not_found');
     const audit = await this.prepareAudit({
