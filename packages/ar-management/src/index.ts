@@ -479,6 +479,20 @@ import {
   adminRoleUpdateHandler,
   adminRoleDeleteHandler,
 } from './admin-rbac';
+import {
+  adminGroupCreateHandler,
+  adminGroupDeleteHandler,
+  adminGroupGetHandler,
+  adminGroupMemberAddHandler,
+  adminGroupMemberRemoveHandler,
+  adminGroupMembersListHandler,
+  adminGroupRoleAssignHandler,
+  adminGroupRoleRemoveHandler,
+  adminGroupRolesListHandler,
+  adminGroupUpdateHandler,
+  adminGroupsListHandler,
+  adminUserGroupsListHandler,
+} from './admin-groups';
 import { registerAdminRbacPermissionMiddleware } from './admin-rbac-permissions';
 import {
   requireClientManagementPermission,
@@ -1039,8 +1053,6 @@ import {
   adminIdentityMappingFederationTrustSourceRequestedAttributesHandler,
   adminIdentityMappingFederationTrustSourceRefreshHistoryHandler,
   adminIdentityMappingFederationTrustSourceUpdateHandler,
-  adminIdentityMappingGroupCreateHandler,
-  adminIdentityMappingGroupMembershipCreateHandler,
   adminIdentityMappingKeyAccessRecordHandler,
   adminIdentityMappingKeyRegistriesListHandler,
   adminIdentityMappingKeyRegistryCreateHandler,
@@ -2533,6 +2545,22 @@ app.post('/api/admin/roles', adminRoleCreateHandler);
 app.patch('/api/admin/roles/:id', adminRoleUpdateHandler);
 app.delete('/api/admin/roles/:id', adminRoleDeleteHandler);
 
+// End-user groups: definitions, members and the roles granted to a group
+const groupsRead = requireAdminPermissions([ADMIN_PERMISSIONS.GROUPS_READ]);
+const groupsWrite = requireAdminPermissions([ADMIN_PERMISSIONS.GROUPS_WRITE]);
+app.get('/api/admin/groups', groupsRead, adminGroupsListHandler);
+app.post('/api/admin/groups', groupsWrite, adminGroupCreateHandler);
+app.get('/api/admin/groups/:id', groupsRead, adminGroupGetHandler);
+app.put('/api/admin/groups/:id', groupsWrite, adminGroupUpdateHandler);
+app.delete('/api/admin/groups/:id', groupsWrite, adminGroupDeleteHandler);
+app.get('/api/admin/groups/:id/members', groupsRead, adminGroupMembersListHandler);
+app.post('/api/admin/groups/:id/members', groupsWrite, adminGroupMemberAddHandler);
+app.delete('/api/admin/groups/:id/members/:subjectId', groupsWrite, adminGroupMemberRemoveHandler);
+app.get('/api/admin/groups/:id/roles', groupsRead, adminGroupRolesListHandler);
+app.post('/api/admin/groups/:id/roles', groupsWrite, adminGroupRoleAssignHandler);
+app.delete('/api/admin/groups/:id/roles/:roleId', groupsWrite, adminGroupRoleRemoveHandler);
+app.get('/api/admin/users/:id/groups', groupsRead, adminUserGroupsListHandler);
+
 // User role assignment management
 app.get('/api/admin/users/:id/roles', adminUserRolesListHandler);
 app.post('/api/admin/users/:id/roles', adminUserRoleAssignHandler);
@@ -3499,16 +3527,6 @@ app.post(
   '/api/admin/identity-mapping/operational-notification-states/:stateId/resolve',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
   adminIdentityMappingOperationalNotificationResolveHandler
-);
-app.post(
-  '/api/admin/identity-mapping/groups',
-  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
-  adminIdentityMappingGroupCreateHandler
-);
-app.post(
-  '/api/admin/identity-mapping/groups/:groupId/memberships',
-  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
-  adminIdentityMappingGroupMembershipCreateHandler
 );
 app.post(
   '/api/admin/identity-mapping/entitlements',

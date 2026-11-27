@@ -207,12 +207,6 @@ const MOVED: ReadonlyArray<readonly [string, string, string]> = [
     '/api/admin/field-mapping/operational-notification-states/:stateId/resolve',
     '/api/admin/identity-mapping/operational-notification-states/:stateId/resolve',
   ],
-  ['POST', '/api/admin/field-mapping/groups', '/api/admin/identity-mapping/groups'],
-  [
-    'POST',
-    '/api/admin/field-mapping/groups/:groupId/memberships',
-    '/api/admin/identity-mapping/groups/:groupId/memberships',
-  ],
   ['POST', '/api/admin/field-mapping/entitlements', '/api/admin/identity-mapping/entitlements'],
   [
     'POST',

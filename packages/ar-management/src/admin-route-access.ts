@@ -283,8 +283,6 @@ const MOVED_MAPPING_ROUTES: ReadonlyArray<readonly [string, AdminRouteMethod[], 
     ['POST'],
     'identity mapping',
   ],
-  ['/api/admin/identity-mapping/groups', ['POST'], 'identity mapping'],
-  ['/api/admin/identity-mapping/groups/:groupId/memberships', ['POST'], 'identity mapping'],
   ['/api/admin/identity-mapping/entitlements', ['POST'], 'identity mapping'],
   ['/api/admin/identity-mapping/provisioning-assignment-rules', ['POST'], 'identity mapping'],
   [
@@ -585,6 +583,27 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     ADMIN_PERMISSIONS.ROLES_WRITE,
     ADMIN_PERMISSIONS.ROLES_DELETE,
     'end-user roles'
+  ),
+  // Granting or removing a role through a group, and changing who is in a group that carries
+  // roles, also needs the role-grant permission and grant ceiling: the handlers check both.
+  ...byMethod(
+    '/api/admin/groups',
+    ADMIN_PERMISSIONS.GROUPS_READ,
+    ADMIN_PERMISSIONS.GROUPS_WRITE,
+    ADMIN_PERMISSIONS.GROUPS_WRITE,
+    'end-user groups'
+  ),
+  ...byMethod(
+    '/api/admin/groups/*',
+    ADMIN_PERMISSIONS.GROUPS_READ,
+    ADMIN_PERMISSIONS.GROUPS_WRITE,
+    ADMIN_PERMISSIONS.GROUPS_WRITE,
+    'end-user groups'
+  ),
+  readOnly(
+    '/api/admin/users/:id/groups',
+    ADMIN_PERMISSIONS.GROUPS_READ,
+    'end-user group memberships'
   ),
   ...byMethod(
     '/api/admin/organizations',
