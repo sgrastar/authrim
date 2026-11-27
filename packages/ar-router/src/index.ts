@@ -54,6 +54,7 @@ interface Env extends SamlDrWriterEnv {
   OP_ASYNC?: Fetcher;
   OP_SAML?: Fetcher;
   EXTERNAL_IDP: Fetcher; // External IdP (social login, enterprise IdP)
+  POLICY_SERVICE?: Fetcher; // ar-policy: the public Check API (/api/check)
   // KV Namespace for configuration (optional)
   // Used for dynamic configuration from Admin UI without redeployment
   AUTHRIM_CONFIG?: KVNamespace;
@@ -212,6 +213,7 @@ const BEARER_TOKEN_CANONICAL_PATHS = [
   '/api/sessions',
   '/api/user',
   '/api/protected',
+  '/api/check',
   '/mcp',
   '/vci',
   '/vp',
@@ -1351,6 +1353,11 @@ app.use('*', async (c, next) => {
   if (url.searchParams.has('access_token')) {
     return bearerTokenTransportError();
   }
+  // The Check API (its WebSocket subscription included) takes credentials in the Authorization
+  // header only: the older `?token=` form would put a credential in URLs and logs.
+  if (matchesPathGroup(c.req.path, '/api/check') && url.searchParams.has('token')) {
+    return bearerTokenTransportError();
+  }
 
   const formInspection = await inspectFormBodyForBearerToken(
     c.req.raw,
@@ -1394,6 +1401,7 @@ app.use(
       '/register', // Dynamic Client Registration (initial access token)
       '/clients', // RFC 7592 client configuration endpoints (registration_access_token)
       '/userinfo', // UserInfo endpoint (Bearer token auth, not cookies)
+      '/api/check', // Check API (Bearer API key or access token, never cookies)
       '/logout/backchannel', // Back-channel logout (RP server-to-server)
       '/device_authorization', // Device flow (client auth)
       '/device', // Device verification page (form submission, CSRF handled by device code)
@@ -1657,6 +1665,43 @@ app.all('/api/protected/customer-profiles/*', async (c) => {
   const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_USERINFO.fetch(request);
 });
+
+/**
+ * Check API - Route to POLICY_SERVICE (ar-policy)
+ * - POST /api/check, POST /api/check/batch: permission checks (server contract with a chk_ API
+ *   key, self contract with an end-user access token; ar-policy decides which)
+ * - GET /api/check/subscribe: permission-change WebSocket (server credentials, in the
+ *   Authorization header; `?token=` is refused here)
+ *
+ * Bearer-authenticated, never cookie-authenticated: excluded from the router's CSRF check, and the
+ * token is accepted only in the Authorization header (no access_token query or form field). The
+ * public URL is the tenant's issuer host: ar-policy binds an access token to that host's tenant.
+ */
+async function forwardToPolicyService(c: Context<{ Bindings: Env }>): Promise<Response> {
+  if (!c.env.POLICY_SERVICE) return notFoundResponse();
+  const response = await c.env.POLICY_SERVICE.fetch(createServiceBindingRequest(c.req.raw));
+  // Service Binding responses can carry an immutable header guard, and the router's security
+  // header middleware sets headers after the route returns: copy the metadata onto a mutable
+  // Response (keeping a WebSocket upgrade's socket).
+  const webSocket = response.webSocket;
+  if (response.status === 101 && webSocket) {
+    return new Response(null, {
+      status: 101,
+      statusText: response.statusText,
+      headers: new Headers(response.headers),
+      webSocket,
+    });
+  }
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: new Headers(response.headers),
+  });
+}
+
+app.post('/api/check', (c) => forwardToPolicyService(c));
+app.post('/api/check/batch', (c) => forwardToPolicyService(c));
+app.get('/api/check/subscribe', (c) => forwardToPolicyService(c));
 
 /**
  * Direct Authentication API v1 - Route to OP_AUTH worker

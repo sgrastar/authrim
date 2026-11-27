@@ -95,7 +95,11 @@ describe('end-user group authorization across two databases', () => {
       permission: 'reports:read',
       resource_context: { group_id: 'reports' },
     };
-    expect((await check.check(request)).allowed).toBe(true);
+    // A role held through a group is reported as such.
+    expect(await check.check(request)).toMatchObject({
+      allowed: true,
+      resolved_via: ['group_role'],
+    });
     expect(
       (await check.check({ ...request, resource_context: { group_id: 'other' } })).allowed
     ).toBe(false);

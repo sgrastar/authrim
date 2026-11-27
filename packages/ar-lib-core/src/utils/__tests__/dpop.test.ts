@@ -171,6 +171,21 @@ describe('DPoP Utilities', () => {
       expect(body).toMatchObject({ jti: 'jti-1', client_id: 'client-1', ttl: 3600 });
     });
 
+    it('reports an unreachable replay store as server_error, not an invalid proof', async () => {
+      const store = namespace();
+      store.fetch.mockRejectedValueOnce(new Error('durable object unreachable'));
+      const result = await validateDPoPProof(
+        await proof(),
+        'POST',
+        'https://api.example/token',
+        undefined,
+        store as never,
+        'client-1',
+        'tenant-a'
+      );
+      expect(result).toMatchObject({ valid: false, error: 'server_error' });
+    });
+
     it('ignores query and fragment in the proof htu claim', async () => {
       const store = namespace();
       const result = await validateDPoPProof(

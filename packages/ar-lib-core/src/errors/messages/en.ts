@@ -172,6 +172,12 @@ export const errorMessagesEn: ErrorMessages = {
   'policy.rebac_denied.detail': 'Access denied by relationship-based access control.',
   'policy.abac_denied.title': 'Access Denied',
   'policy.abac_denied.detail': 'Access denied by attribute-based access control.',
+  'policy.check_contract_violation.title': 'Request Not Allowed for This Credential',
+  'policy.check_contract_violation.detail':
+    'An end-user access token may only ask about its own subject with a permission and a resource; resource_context and rebac need a server credential.',
+  'policy.rebac_tuple_type_not_allowed.title': 'Relationship Tuple Type Not Allowed',
+  'policy.rebac_tuple_type_not_allowed.detail':
+    'A relationship tuple must come from a subject, a group, or an object type and relation declared as the source of a tuple_to_userset.',
 
   // ============================================
   // ADMIN

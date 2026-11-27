@@ -171,6 +171,10 @@ export const AR_ERROR_CODES = {
   POLICY_INSUFFICIENT_PERMISSIONS: 'AR050006',
   POLICY_REBAC_DENIED: 'AR050007',
   POLICY_ABAC_DENIED: 'AR050008',
+  /** A Check API request carries what its contract does not allow (see routes/check.ts). */
+  POLICY_CHECK_CONTRACT_VIOLATION: 'AR050009',
+  /** A ReBAC tuple whose source type the tuple type rules do not accept (rebac/tuple-type-rules.ts). */
+  POLICY_REBAC_TUPLE_TYPE_NOT_ALLOWED: 'AR050010',
 
   // ============================================
   // ADMIN (AR060001 ~ AR069999)
@@ -830,6 +834,26 @@ export const ERROR_DEFINITIONS: Record<ARErrorCode, ErrorCodeDefinition> = {
     titleKey: 'policy.abac_denied.title',
     detailKey: 'policy.abac_denied.detail',
     meta: { retryable: false, user_action: 'contact_admin', severity: 'info' },
+    securityLevel: 'public',
+  },
+  [AR_ERROR_CODES.POLICY_CHECK_CONTRACT_VIOLATION]: {
+    code: 'AR050009',
+    rfcError: RFC_ERROR_CODES.INVALID_REQUEST,
+    status: 400,
+    typeSlug: 'policy/check-contract-violation',
+    titleKey: 'policy.check_contract_violation.title',
+    detailKey: 'policy.check_contract_violation.detail',
+    meta: { retryable: false, user_action: 'update_client', severity: 'warn' },
+    securityLevel: 'public',
+  },
+  [AR_ERROR_CODES.POLICY_REBAC_TUPLE_TYPE_NOT_ALLOWED]: {
+    code: 'AR050010',
+    rfcError: RFC_ERROR_CODES.INVALID_REQUEST,
+    status: 400,
+    typeSlug: 'policy/rebac-tuple-type-not-allowed',
+    titleKey: 'policy.rebac_tuple_type_not_allowed.title',
+    detailKey: 'policy.rebac_tuple_type_not_allowed.detail',
+    meta: { retryable: false, user_action: 'update_client', severity: 'warn' },
     securityLevel: 'public',
   },
 

@@ -147,6 +147,7 @@ describe('POST / gates', () => {
       db: adapter,
       cache: env.CHECK_CACHE_KV,
       policyApiSecret: 'policy-secret',
+      accessTokenVerifier: expect.any(Function) as unknown,
     });
   });
 
@@ -373,7 +374,13 @@ describe('POST / execution', () => {
         resource_context: resourceContext,
         rebac,
       },
-      { ctx: executionCtx, apiKeyId: 'key-2', clientId: 'client-2', requestId: 'req-77' },
+      {
+        ctx: executionCtx,
+        apiKeyId: 'key-2',
+        clientId: 'client-2',
+        requestId: 'req-77',
+        contract: 'server',
+      },
     ]);
   });
 
@@ -393,10 +400,10 @@ describe('POST / execution', () => {
     expect(logger.error).toHaveBeenCalledWith('Check error', { error: 'Error: db down' }, failure);
   });
 
-  it('answers 500 for an unreadable body', async () => {
+  it('answers 400 for an unreadable body', async () => {
     const response = await postJson(checkRoutes, '/', '{not json');
-    expect(response.status).toBe(500);
-    expect(errorCall().code).toBe(AR_ERROR_CODES.INTERNAL_ERROR);
+    expect(response.status).toBe(400);
+    expect(errorCall().code).toBe(AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
   });
 });
 
@@ -410,7 +417,8 @@ describe('check service wiring', () => {
   it('builds the service from the core adapter, caches and rebac service', async () => {
     const env = makeEnv();
     const config = await wiredConfig(env);
-    expect(fns.createRebac).toHaveBeenCalledWith(adapter, env.REBAC_CACHE_KV);
+    // No shared ReBAC result cache on the Check API.
+    expect(fns.createRebac).toHaveBeenCalledWith(adapter, undefined);
     expect(config.db).toBe(adapter);
     expect(config.cache).toBe(env.CHECK_CACHE_KV);
     expect(config.rebacService).toBe(rebacService);

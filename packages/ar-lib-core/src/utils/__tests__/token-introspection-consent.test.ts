@@ -8,6 +8,7 @@ import { introspectTokenFromContext } from '../token-introspection';
 const mocks = vi.hoisted(() => ({
   client: vi.fn(),
   resolveAccount: vi.fn(),
+  resolveAccountCore: vi.fn(),
   findWithdrawal: vi.fn(),
   createAccountAuthContext: vi.fn(() => ({ coreAdapter: {} })),
 }));
@@ -20,6 +21,7 @@ vi.mock('../request-cache', async (original) => ({
 vi.mock('../../services/runtime-data-context', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../services/runtime-data-context')>()),
   resolveAccountDataContextFromHono: mocks.resolveAccount,
+  resolveAccountCoreDataContext: mocks.resolveAccountCore,
 }));
 vi.mock('../../context/hono-context', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../context/hono-context')>()),
@@ -51,7 +53,10 @@ describe('protected-resource consent withdrawal', () => {
     mocks.findWithdrawal.mockResolvedValue({ generation: 1, revokedAt: null });
   });
 
-  async function inspect(claims: Record<string, unknown>) {
+  async function inspect(
+    claims: Record<string, unknown>,
+    options: Parameters<typeof introspectTokenFromContext>[1] = {}
+  ) {
     const token = await createAccessToken(
       {
         iss: 'https://issuer.example',
@@ -71,7 +76,7 @@ describe('protected-resource consent withdrawal', () => {
       await next();
     });
     app.get('/resource', async (c) => {
-      const result = await introspectTokenFromContext(c);
+      const result = await introspectTokenFromContext(c, options);
       return c.json(result);
     });
     const response = await app.request(
@@ -98,6 +103,28 @@ describe('protected-resource consent withdrawal', () => {
       userId: 'user-a',
       clientId: 'client-a',
     });
+  });
+
+  it('reads the withdrawal from the account Core alone when asked (no PII context)', async () => {
+    const coreDb = { query: vi.fn(), queryOne: vi.fn(), execute: vi.fn() };
+    mocks.resolveAccountCore.mockResolvedValue({ coreDb });
+    const result = await inspect(
+      { authrim_consent_generation: 1 },
+      { consentFromAccountCoreOnly: true }
+    );
+    expect(result.valid).toBe(true);
+    expect(mocks.resolveAccountCore).toHaveBeenCalledWith(expect.anything(), {
+      tenantId: 'tenant-a',
+      accountId: 'user-a',
+    });
+    expect(mocks.resolveAccount).not.toHaveBeenCalled();
+    expect(mocks.createAccountAuthContext).not.toHaveBeenCalled();
+  });
+
+  it('verifies against the issuer the caller derived from the request host', async () => {
+    // The token says https://issuer.example; a resource on another host refuses it.
+    expect((await inspect({}, { issuer: 'https://auth.customer.test' })).valid).toBe(false);
+    expect((await inspect({}, { issuer: 'https://issuer.example' })).valid).toBe(true);
   });
 
   it('accepts the current consent generation', async () => {

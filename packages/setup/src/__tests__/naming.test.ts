@@ -202,7 +202,8 @@ describe('getBuiltinD1BindingsForComponent', () => {
       'LOOKUP_DB',
     ]);
     expect(getBuiltinD1BindingsForComponent('ar-discovery')).toEqual([]);
-    expect(getBuiltinD1BindingsForComponent('ar-policy')).toEqual([]);
+    // Only the lookup directory (a token's account), never a Core route.
+    expect(getBuiltinD1BindingsForComponent('ar-policy')).toEqual(['LOOKUP_DB']);
     expect(getBuiltinD1BindingsForComponent('ar-agent-access')).toEqual(['DB_ADMIN']);
     expect(getBuiltinD1BindingsForComponent('ar-async')).toEqual(['LOOKUP_DB']);
     expect(getBuiltinD1BindingsForComponent('ar-saml')).toEqual([
