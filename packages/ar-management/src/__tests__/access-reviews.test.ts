@@ -100,6 +100,7 @@ vi.mock('../admin-operation-audit', () => import('./helpers/legacy-admin-audit-s
 const REPO_ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
 const CORE_SCHEMA = [
   readRenderedMigrationSql(resolve(REPO_ROOT, 'migrations/core/d1'), '001_0_5_0_core_baseline.sql'),
+  readRenderedMigrationSql(resolve(REPO_ROOT, 'migrations/core/d1'), '015_end_user_groups.sql'),
 ];
 
 type SqlValue = string | number | null;

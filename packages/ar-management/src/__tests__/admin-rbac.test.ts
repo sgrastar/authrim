@@ -477,7 +477,7 @@ describe('admin-rbac schema alignment', () => {
         sql.includes('FROM role_assignments')
           ? { id: 'ra-1', role_id: 'role-1' }
           : sql.includes('FROM roles WHERE tenant_id = ? AND id = ?')
-            ? { id: 'role-1', hierarchy_level: 10 }
+            ? { id: 'role-1', hierarchy_level: 10, grant_tier: 1 }
             : null,
     });
     mocked.createAuthContextFromHono.mockReturnValue({ coreAdapter });
@@ -652,13 +652,17 @@ describe('admin-rbac schema alignment', () => {
     expect(coreAdapter.execute).not.toHaveBeenCalled();
   });
 
-  it('allows assigning a lower hierarchy role', async () => {
+  it.each([
+    [1, 201],
+    [2, 403],
+  ])('checks grant tier %i on a lower hierarchy role', async (tier, status) => {
     const coreAdapter = createMockAdapter({
       queryOne: (sql, params) => {
         if (sql.includes('FROM roles WHERE tenant_id = ? AND id = ?')) {
           expect(params).toEqual(['default', 'role-lower']);
           return {
             id: 'role-lower',
+            grant_tier: tier,
             name: 'lower',
             hierarchy_level: 10,
             is_assignable: 1,
@@ -689,7 +693,11 @@ describe('admin-rbac schema alignment', () => {
 
     const res = await adminUserRoleAssignHandler(c);
 
-    expect(res.status).toBe(201);
+    expect(res.status).toBe(status);
+    if (status === 403) {
+      expect(coreAdapter.execute).not.toHaveBeenCalled();
+      return;
+    }
     expect(coreAdapter.execute).toHaveBeenCalledWith(
       expect.stringContaining('INSERT INTO role_assignments'),
       expect.arrayContaining(['default', 'user-1', 'role-lower'])

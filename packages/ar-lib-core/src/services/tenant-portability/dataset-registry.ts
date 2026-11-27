@@ -45,7 +45,7 @@ const TABLE_GROUPS: Partial<
       consent_statement_localizations consent_statement_versions consent_statements credential_configurations
       custom_claim_schemas directory_auth_retention_policies directory_auth_tenant_policies directory_connector_instances
       field_usage_bindings flow_assignments flow_versions flows
-      groups identity_providers internal_notification_delivery_routes logging_quota_policies
+      group_role_assignments groups identity_providers internal_notification_delivery_routes logging_quota_policies
       lookup_retention_policies oauth_clients oidc_scopes org_domain_mappings
       organizations policy_rules presentation_definitions provisioning_assignment_rules
       relation_definitions resource_permissions role_assignment_rules roles

@@ -1,9 +1,9 @@
 /**
  * Tenant RBAC across the tenant's two core databases
  *
- * Role and organisation definitions (`roles`, `organizations`) are tenant settings, kept in the
+ * Roles, groups, group role assignments and organisations are tenant settings, kept in the
  * tenant metadata database (`tenant_core/default`). A subject's assignments
- * (`role_assignments`, `subject_org_membership`) are account data, kept in the account's own
+ * and memberships (`role_assignments`, `group_memberships`, `subject_org_membership`) are account data, kept in the account's own
  * database (`tenant_core/users`, one of possibly several shards). The two may be different D1
  * databases, so no query joins them and no foreign key links them: assignments are read from the
  * account database, the definitions they name are read by id from the metadata database, and the
@@ -13,13 +13,15 @@
  * In a single-database deployment both are the same database.
  */
 
+import { listGroupRoleAssignments } from './group-role-assignments';
+import { resolveSubjectGroups, rbacIdBatches } from './group-membership';
 import type { DatabaseSource } from '../db';
 import { ensureDatabaseAdapter } from '../db';
 
 export interface TenantRBACDatabases {
-  /** The tenant metadata database: role and organisation definitions. */
+  /** Role, group and organisation definitions and group role assignments. */
   metadata: DatabaseSource;
-  /** The subject's account database: its role assignments and organisation memberships. */
+  /** The subject's direct role assignments and group and organisation memberships. */
   account: DatabaseSource;
 }
 
@@ -36,6 +38,7 @@ export interface TenantRoleDefinition {
   permissions_json: string;
   role_type: string;
   hierarchy_level: number | null;
+  grant_tier: number;
   /** 1/0 in SQLite and D1, true/false in PostgreSQL */
   is_assignable: number | boolean | null;
   is_system: number | boolean;
@@ -71,7 +74,7 @@ export interface SubjectOrgMembershipRecord {
 }
 
 export interface ResolvedSubjectRole {
-  assignment: SubjectRoleAssignmentRecord;
+  assignment: EffectiveRoleAssignment;
   role: TenantRoleDefinition;
 }
 
@@ -80,11 +83,8 @@ export interface ResolvedSubjectOrganization {
   organization: TenantOrganizationDefinition;
 }
 
-// D1 binds at most 100 parameters per statement; the tenant id takes one.
-const ID_BATCH_SIZE = 90;
-
 const ROLE_COLUMNS = `id, name, display_name, description, permissions_json, role_type,
-  hierarchy_level, is_assignable, is_system, parent_role_id`;
+  hierarchy_level, grant_tier, is_assignable, is_system, parent_role_id`;
 const ORGANIZATION_COLUMNS = 'id, name, display_name, org_type, plan, parent_org_id, is_active';
 
 async function loadByIds<T extends { id: string }>(
@@ -94,12 +94,9 @@ async function loadByIds<T extends { id: string }>(
   tenantId: string,
   ids: Iterable<string>
 ): Promise<Map<string, T>> {
-  const unique = [...new Set(ids)];
   const found = new Map<string, T>();
-  if (unique.length === 0) return found;
   const adapter = ensureDatabaseAdapter(db, `tenant-rbac-${table}`);
-  for (let offset = 0; offset < unique.length; offset += ID_BATCH_SIZE) {
-    const batch = unique.slice(offset, offset + ID_BATCH_SIZE);
+  for (const batch of rbacIdBatches(ids)) {
     const rows = await adapter.query<T>(
       `SELECT ${columns} FROM ${table}
         WHERE tenant_id = ? AND id IN (${batch.map(() => '?').join(', ')})`,
@@ -174,6 +171,46 @@ export async function listSubjectRoleAssignments(
   );
 }
 
+export type EffectiveRoleAssignment = SubjectRoleAssignmentRecord & {
+  /** groupId owns the assignment; throughGroupId is the subject's direct membership. */
+  via: { kind: 'direct' } | { kind: 'group'; groupId: string; throughGroupId: string };
+};
+
+export async function resolveEffectiveRoleAssignments(
+  dbs: TenantRBACDatabases,
+  tenantId: string,
+  subjectId: string,
+  nowSeconds: number
+) {
+  const [direct, groups] = await Promise.all([
+    listSubjectRoleAssignments(dbs.account, tenantId, subjectId, nowSeconds),
+    resolveSubjectGroups(dbs, tenantId, subjectId, nowSeconds),
+  ]);
+  const effective: EffectiveRoleAssignment[] = direct.map((row) => ({
+    ...row,
+    via: { kind: 'direct' },
+  }));
+  const assignments = await listGroupRoleAssignments(
+    dbs.metadata,
+    tenantId,
+    groups.effectiveGroupIds,
+    nowSeconds
+  );
+  const byGroup = new Map<string, typeof assignments>();
+  for (const row of assignments) {
+    const rows = byGroup.get(row.group_id) ?? [];
+    rows.push(row);
+    byGroup.set(row.group_id, rows);
+  }
+  for (const [throughGroupId, path] of groups.paths) {
+    for (const groupId of path) {
+      for (const row of byGroup.get(groupId) ?? [])
+        effective.push({ ...row, via: { kind: 'group', groupId, throughGroupId } });
+    }
+  }
+  return effective;
+}
+
 /** The subject's organisation memberships. */
 export async function listSubjectOrgMemberships(
   account: DatabaseSource,
@@ -201,12 +238,7 @@ export async function resolveSubjectRoles(
   subjectId: string,
   nowSeconds: number = Math.floor(Date.now() / 1000)
 ): Promise<ResolvedSubjectRole[]> {
-  const assignments = await listSubjectRoleAssignments(
-    dbs.account,
-    tenantId,
-    subjectId,
-    nowSeconds
-  );
+  const assignments = await resolveEffectiveRoleAssignments(dbs, tenantId, subjectId, nowSeconds);
   const roles = await loadTenantRoles(
     dbs.metadata,
     tenantId,
@@ -257,6 +289,8 @@ export interface RoleAssignmentTarget {
   tenantId?: string;
   /** The organisation the resource belongs to, when known. */
   orgId?: string;
+  /** Groups the resource belongs to. */
+  groupIds?: readonly string[] | ReadonlySet<string>;
   resourceType?: string;
   resourceId?: string;
 }
@@ -277,6 +311,12 @@ export function roleAssignmentHolds(
   if (scope === 'global') return true;
   if (scope === 'tenant') {
     return scopeTarget === '' || (Boolean(target.tenantId) && scopeTarget === target.tenantId);
+  }
+  if (scope === 'group') {
+    for (const id of target.groupIds ?? []) {
+      if (id && scopeTarget === `group:${id}`) return true;
+    }
+    return false;
   }
   if (scope === 'org') return Boolean(target.orgId) && scopeTarget === `org:${target.orgId}`;
   if (scope === 'resource') {

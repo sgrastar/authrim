@@ -130,7 +130,7 @@ export type RoleType = 'system' | 'builtin' | 'custom';
  * - org: Applies to a specific organization
  * - resource: Applies to a specific resource
  */
-export type ScopeType = 'global' | 'org' | 'resource';
+export type ScopeType = 'global' | 'org' | 'group' | 'resource';
 
 /**
  * Role entity

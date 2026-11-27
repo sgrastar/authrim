@@ -22,6 +22,7 @@ export function openCoreStore(tenantId = 'tenant-a'): {
     '010_information_release_consent.sql',
     '012_oauth_client_enabled.sql',
     '011_saml_sp_release_consent.sql',
+    '015_end_user_groups.sql',
   ]) {
     db.exec(
       renderPortableMigrationSql(readFileSync(new URL(file, CORE_MIGRATIONS), 'utf8'), 'sqlite')
@@ -53,9 +54,7 @@ export function openCoreStore(tenantId = 'tenant-a'): {
         throw error;
       }
     },
-    transaction: async () => {
-      throw new Error('not used');
-    },
+    transaction: async <T>(fn: (tx: DatabaseAdapter) => Promise<T>) => fn(adapter),
     isHealthy: async () => ({ healthy: true, latencyMs: 0 }),
     getType: () => 'sqlite',
     close: async () => undefined,

@@ -29,6 +29,12 @@
 
 import type { KVNamespace } from '@cloudflare/workers-types';
 import { ensureDatabaseAdapter } from '../db';
+import type { Env } from '../types/env';
+import {
+  bumpTenantRBACCacheVersion,
+  cachedRoleData,
+  invalidateSubjectRBACCache,
+} from './rbac-cache';
 import {
   resolveSubjectRoles,
   roleAssignmentHolds,
@@ -201,7 +207,7 @@ async function subjectGrants(
   subjectId: string,
   tenantId: string,
   now: number,
-  orgId?: string
+  options: Pick<RoleAssignmentTarget, 'orgId' | 'groupIds'> = {}
 ): Promise<SubjectGrants> {
   // Roles of the tenant only: an assignment of a role it does not have grants nothing.
   const assignments = new Map<string, { scope: string; scopeTarget: string }[]>();
@@ -227,7 +233,7 @@ async function subjectGrants(
       (assignments.get(row.subject_id) ?? []).some((assignment) =>
         roleAssignmentHolds(assignment, {
           tenantId,
-          orgId,
+          ...options,
           resourceType: row.resourceType,
           resourceId: row.resourceId,
         })
@@ -309,45 +315,26 @@ export async function evaluateIdLevelPermissions(
   options: {
     cache?: KVNamespace;
     cacheTTL?: number;
+    env?: Env;
   } = {}
 ): Promise<string[]> {
   const normalizedTenantId = requireTenantId(tenantId, 'evaluateIdLevelPermissions');
-  // Try cache first
-  const cacheKey = options.cache
-    ? `${ID_PERMISSION_CACHE_PREFIX}${normalizedTenantId}:${subjectId}`
-    : null;
-
-  if (cacheKey && options.cache) {
-    const cached = await options.cache.get(cacheKey);
-    if (cached) {
-      try {
-        return JSON.parse(cached) as string[];
-      } catch {
-        // Cache is corrupted, fetch fresh
-      }
+  // Cached under the RBAC generations, so a revoked membership or group role is not re-added here.
+  return cachedRoleData(
+    dbs,
+    normalizedTenantId,
+    subjectId,
+    `${ID_PERMISSION_CACHE_PREFIX}${normalizedTenantId}:${subjectId}`,
+    { cache: options.cache, env: options.env, cacheTTL: options.cacheTTL ?? 300 },
+    async () => {
+      const permissions = await getUserIdLevelPermissions(dbs, subjectId, normalizedTenantId);
+      return permissions.flatMap((perm) =>
+        perm.actions.map((action) =>
+          formatIdLevelPermission(perm.resource_type, perm.resource_id, action)
+        )
+      );
     }
-  }
-
-  // Fetch from database
-  const permissions = await getUserIdLevelPermissions(dbs, subjectId, normalizedTenantId);
-
-  // Format as scope strings
-  const permissionStrings: string[] = [];
-  for (const perm of permissions) {
-    for (const action of perm.actions) {
-      permissionStrings.push(formatIdLevelPermission(perm.resource_type, perm.resource_id, action));
-    }
-  }
-
-  // Cache the result
-  if (cacheKey && options.cache) {
-    const ttl = options.cacheTTL ?? 300;
-    await options.cache.put(cacheKey, JSON.stringify(permissionStrings), {
-      expirationTtl: ttl,
-    });
-  }
-
-  return permissionStrings;
+  );
 }
 
 /**
@@ -369,13 +356,13 @@ export async function hasIdLevelPermission(
   resourceId: string,
   action: string,
   tenantId: string,
-  options: { orgId?: string } = {}
+  options: Pick<RoleAssignmentTarget, 'orgId' | 'groupIds'> = {}
 ): Promise<boolean> {
   const normalizedTenantId = requireTenantId(tenantId, 'ID-level permission check');
   const now = Math.floor(Date.now() / 1000);
   const adapter = ensureDatabaseAdapter(dbs.metadata, 'resource-permissions');
   const fullResult: { actions_json: string }[] = [];
-  const grants = await subjectGrants(dbs, subjectId, normalizedTenantId, now, options.orgId);
+  const grants = await subjectGrants(dbs, subjectId, normalizedTenantId, now, options);
   for (const grantedTo of grants.clauses) {
     const rows = await adapter.query<{
       actions_json: string;
@@ -502,13 +489,18 @@ export async function getEmbeddingLimits(
 export async function invalidateIdPermissionCache(
   cache: KVNamespace,
   subjectId: string,
-  tenantId: string
+  tenantId: string,
+  subjectType: string = 'user'
 ): Promise<void> {
-  const cacheKey = `${ID_PERMISSION_CACHE_PREFIX}${requireTenantId(
-    tenantId,
-    'invalidateIdPermissionCache'
-  )}:${subjectId}`;
-  await cache.delete(cacheKey);
+  const tenant = requireTenantId(tenantId, 'invalidateIdPermissionCache');
+  // Cached results are keyed by user. A grant to a role (or another non-user subject) reaches
+  // every holder, so the tenant generation moves; a grant to a user moves that user's generation.
+  if (subjectType === 'user') {
+    await invalidateSubjectRBACCache(cache, tenant, subjectId);
+    await cache.delete(`${ID_PERMISSION_CACHE_PREFIX}${tenant}:${subjectId}`);
+  } else {
+    await bumpTenantRBACCacheVersion(cache, tenant);
+  }
 }
 
 function compareText(left: string, right: string): number {

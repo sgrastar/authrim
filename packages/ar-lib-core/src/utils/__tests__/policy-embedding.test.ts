@@ -322,7 +322,8 @@ describe('evaluatePermissionEmbeddingForScope', () => {
       tenantId: 'tenant-a',
     });
 
-    expect(dbs.account.queries).toHaveLength(1);
+    expect(dbs.account.queries).toHaveLength(2);
+    expect(dbs.account.queries[1]).toContain('FROM group_memberships');
     expect(dbs.account.queries[0]).toContain('FROM role_assignments');
     expect(dbs.metadata.queries).toHaveLength(1);
     expect(dbs.metadata.queries[0]).toContain('FROM roles');

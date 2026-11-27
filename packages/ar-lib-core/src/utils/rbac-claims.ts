@@ -35,11 +35,23 @@
  * ```
  */
 
-import type { KVNamespace } from '@cloudflare/workers-types';
+import {
+  cachedRoleData,
+  requireTenantId,
+  buildRBACCacheKey,
+  buildCompositeRBACCacheKey,
+  type RBACClaimsOptions,
+} from './rbac-cache';
+export {
+  invalidateSubjectRBACCache,
+  bumpTenantRBACCacheVersion,
+  getTenantRBACCacheVersion,
+  getRBACCacheTTL,
+  getRBACCacheVersion,
+  type RBACClaimsOptions,
+} from './rbac-cache';
 import type { DatabaseSource } from '../db';
 import { ensureDatabaseAdapter } from '../db';
-import { KV_MIN_TTL_SECONDS } from './kv-ttl';
-import { createLogger } from './logger';
 import type {
   RBACTokenClaims,
   UserType,
@@ -53,7 +65,6 @@ import type {
   AccessTokenClaimKey,
 } from '../types/rbac';
 import { DEFAULT_ID_TOKEN_CLAIMS, DEFAULT_ACCESS_TOKEN_CLAIMS } from '../types/rbac';
-import type { Env } from '../types/env';
 import {
   resolveSubjectOrganizations,
   resolveSubjectRoles,
@@ -65,140 +76,8 @@ import {
   type TenantRBACDatabases,
 } from '../services/tenant-rbac';
 
-const log = createLogger().module('RBAC_CLAIMS');
-
 function getRBACDatabaseAdapter(db: DatabaseSource) {
   return ensureDatabaseAdapter(db, 'rbac-claims');
-}
-
-function requireTenantId(tenantId: string | undefined, context: string): string {
-  const normalized = tenantId?.trim();
-  if (!normalized) {
-    throw new Error(`${context} requires tenantId`);
-  }
-  return normalized;
-}
-
-// =============================================================================
-// RBAC Cache Configuration
-// =============================================================================
-
-const DEFAULT_RBAC_CACHE_TTL = 600; // 10 minutes in seconds (default)
-// v2: roles named by the tenant metadata database, tenant-wide permissions from tenant-wide
-// assignments only. Entries computed before are not read (they expire on their own).
-const RBAC_CACHE_PREFIX = 'rbac:v2:';
-const DEFAULT_RBAC_CACHE_VERSION = 1; // Increment when CompositeRBACCache structure changes
-
-// In-memory cache for TTL value (avoid repeated KV reads)
-let cachedRBACCacheTTL: number | null = null;
-let cachedRBACCacheTTLAt = 0;
-const TTL_CACHE_DURATION_MS = 60000; // 1 minute
-
-// In-memory cache for version value (avoid repeated KV reads)
-let cachedRBACCacheVersion: number | null = null;
-let cachedRBACCacheVersionAt = 0;
-
-/**
- * Get RBAC cache TTL with dynamic configuration
- *
- * Priority: KV (rbac_cache_ttl) > Environment variable (RBAC_CACHE_TTL) > Default (600s)
- *
- * @param env - Environment bindings
- * @returns TTL in seconds
- */
-export async function getRBACCacheTTL(env: Env): Promise<number> {
-  const now = Date.now();
-
-  // Return cached value if within TTL
-  if (cachedRBACCacheTTL !== null && now - cachedRBACCacheTTLAt < TTL_CACHE_DURATION_MS) {
-    return cachedRBACCacheTTL;
-  }
-
-  // KV takes priority if available (dynamically changeable)
-  if (env.AUTHRIM_CONFIG) {
-    const kvValue = await env.AUTHRIM_CONFIG.get('rbac_cache_ttl');
-    if (kvValue) {
-      const parsed = parseInt(kvValue, 10);
-      if (!isNaN(parsed) && parsed > 0) {
-        cachedRBACCacheTTL = parsed;
-        cachedRBACCacheTTLAt = now;
-        return parsed;
-      }
-    }
-  }
-
-  // Fallback to environment variable
-  if (env.RBAC_CACHE_TTL) {
-    const parsed = parseInt(env.RBAC_CACHE_TTL, 10);
-    if (!isNaN(parsed) && parsed > 0) {
-      cachedRBACCacheTTL = parsed;
-      cachedRBACCacheTTLAt = now;
-      return parsed;
-    }
-  }
-
-  // Default value
-  cachedRBACCacheTTL = DEFAULT_RBAC_CACHE_TTL;
-  cachedRBACCacheTTLAt = now;
-  return DEFAULT_RBAC_CACHE_TTL;
-}
-
-/**
- * Get RBAC cache version with dynamic configuration
- *
- * Priority: KV (rbac_cache_version) > ENV (RBAC_CACHE_VERSION) > Default (1)
- *
- * Use case: When RBAC internal logic changes and cache needs invalidation,
- * increment the version in KV to force cache miss without deployment.
- *
- * @param env - Environment bindings
- * @returns Cache version number
- */
-export async function getRBACCacheVersion(env: Env): Promise<number> {
-  const now = Date.now();
-
-  // Return cached value if within TTL
-  if (cachedRBACCacheVersion !== null && now - cachedRBACCacheVersionAt < TTL_CACHE_DURATION_MS) {
-    return cachedRBACCacheVersion;
-  }
-
-  // KV takes priority if available (dynamically changeable)
-  if (env.AUTHRIM_CONFIG) {
-    const kvValue = await env.AUTHRIM_CONFIG.get('rbac_cache_version');
-    if (kvValue) {
-      const parsed = parseInt(kvValue, 10);
-      if (!isNaN(parsed) && parsed > 0) {
-        cachedRBACCacheVersion = parsed;
-        cachedRBACCacheVersionAt = now;
-        return parsed;
-      }
-    }
-  }
-
-  // Fallback to environment variable
-  if (env.RBAC_CACHE_VERSION) {
-    const parsed = parseInt(env.RBAC_CACHE_VERSION, 10);
-    if (!isNaN(parsed) && parsed > 0) {
-      cachedRBACCacheVersion = parsed;
-      cachedRBACCacheVersionAt = now;
-      return parsed;
-    }
-  }
-
-  // Default value
-  cachedRBACCacheVersion = DEFAULT_RBAC_CACHE_VERSION;
-  cachedRBACCacheVersionAt = now;
-  return DEFAULT_RBAC_CACHE_VERSION;
-}
-
-/**
- * Options for RBAC claims functions with caching support
- */
-export interface RBACClaimsOptions {
-  cache?: KVNamespace; // REBAC_CACHE KV namespace
-  claimsConfig?: string; // Comma-separated list of claims to include
-  env?: Env; // Environment bindings for dynamic TTL
-  tenantId: string; // Tenant ID for multi-tenant isolation
 }
 
 /**
@@ -220,152 +99,44 @@ export interface CompositeRBACCache {
   cached_at: number; // Unix timestamp
 }
 
-/**
- * Build cache key for RBAC claims (with multi-tenant support)
- */
-function buildRBACCacheKey(
-  subjectId: string,
-  tokenType: 'id' | 'access',
-  claimsConfig: string | undefined,
-  tenantId: string
-): string {
-  // Include claimsConfig hash to differentiate cache entries with different claim sets
-  const configHash = claimsConfig
-    ? Buffer.from(claimsConfig).toString('base64').slice(0, 8)
-    : 'default';
-  const tenant = requireTenantId(tenantId, 'buildRBACCacheKey');
-  return `${RBAC_CACHE_PREFIX}${tenant}:${tokenType}:${subjectId}:${configHash}`;
-}
-
-/**
- * Build cache key for Composite RBAC cache (all data in one entry)
- */
-function buildCompositeRBACCacheKey(subjectId: string, tenantId: string): string {
-  const tenant = requireTenantId(tenantId, 'buildCompositeRBACCacheKey');
-  return `${RBAC_CACHE_PREFIX}composite:${tenant}:${subjectId}`;
-}
-
-/**
- * Drops every cached RBAC entry of a subject (the composite entry and the per-token claim sets),
- * so a removed role or membership leaves tokens issued from now on rather than when the cache
- * expires. Per-token keys carry a hash of the claims configuration, so they are found by prefix.
- */
-export async function invalidateSubjectRBACCache(
-  cache: KVNamespace,
-  tenantId: string,
-  subjectId: string
-): Promise<void> {
-  const tenant = requireTenantId(tenantId, 'invalidateSubjectRBACCache');
-  const keys = [buildCompositeRBACCacheKey(subjectId, tenant)];
-  for (const tokenType of ['id', 'access'] as const) {
-    let cursor: string | undefined;
-    do {
-      const listed = await cache.list({
-        prefix: `${RBAC_CACHE_PREFIX}${tenant}:${tokenType}:${subjectId}:`,
-        cursor,
-      });
-      keys.push(...listed.keys.map((key) => key.name));
-      cursor = listed.list_complete ? undefined : listed.cursor;
-    } while (cursor);
-  }
-  await Promise.all(keys.map((key) => cache.delete(key)));
-}
-
-/**
- * Get or create composite RBAC cache for a user
- *
- * This function consolidates all RBAC data into a single KV entry,
- * reducing D1 queries from 7 to 1 on cache miss.
- *
- * Benefits:
- * - Single KV read for all RBAC data (cache hit)
- * - Single parallel D1 query batch on cache miss
- * - Multi-tenant isolation via tenantId in cache key
- *
- * @param dbs - The tenant's metadata and the subject's account database
- * @param subjectId - User ID
- * @param options - Options including cache KV, env for TTL, and tenantId
- * @returns Composite RBAC cache object
- */
 export async function getCompositeRBACCache(
   dbs: TenantRBACDatabases,
   subjectId: string,
   options: Partial<RBACClaimsOptions> = {}
 ): Promise<CompositeRBACCache> {
-  const { cache, env } = options;
   const tenantId = requireTenantId(options.tenantId, 'RBAC claims');
+  return cachedRoleData(
+    dbs,
+    tenantId,
+    subjectId,
+    buildCompositeRBACCacheKey(subjectId, tenantId),
+    options,
+    async (version) => {
+      const data = subjectRBACData(dbs, subjectId, tenantId);
+      const [subjectRoles, subjectOrganizations, userType, relationships] = await Promise.all([
+        data.roles(),
+        data.organizations(),
+        resolveUserType(dbs.account, subjectId, tenantId),
+        resolveRelationshipsSummary(dbs.account, subjectId, tenantId),
+      ]);
+      const orgInfo = organizationInfo(subjectOrganizations);
 
-  // Try cache first
-  if (cache) {
-    const cacheKey = buildCompositeRBACCacheKey(subjectId, tenantId);
-    try {
-      const cached = await cache.get(cacheKey);
-      if (cached) {
-        const parsed = JSON.parse(cached) as CompositeRBACCache;
-        // Get current version from KV/ENV
-        const currentVersion = env ? await getRBACCacheVersion(env) : DEFAULT_RBAC_CACHE_VERSION;
-        // Validate cache structure and version
-        if (
-          parsed.version === currentVersion &&
-          parsed.cached_at &&
-          typeof parsed.roles !== 'undefined'
-        ) {
-          return parsed;
-        }
-        // Version mismatch → treat as cache miss (will be refreshed)
-      }
-    } catch {
-      // PII Protection: Don't log full error object
-      log.warn('Composite RBAC cache read error');
+      return {
+        version,
+        roles: claimRoleNames(subjectRoles, tenantId),
+        scoped_roles: scopedRoles(subjectRoles),
+        permissions: grantedPermissions(subjectRoles, tenantId),
+        organizations: organizationList(subjectOrganizations),
+        user_type: userType,
+        plan: orgInfo?.plan ?? null,
+        org_id: orgInfo?.org_id ?? null,
+        org_name: primaryOrganization(subjectOrganizations)?.organization.name ?? null,
+        org_type: orgInfo?.org_type ?? null,
+        relationships_summary: relationships,
+        cached_at: Math.floor(Date.now() / 1000),
+      };
     }
-  }
-
-  // Cache miss - fetch all RBAC data in parallel
-  const data = subjectRBACData(dbs, subjectId, tenantId);
-  const [subjectRoles, subjectOrganizations, userType, relationships] = await Promise.all([
-    data.roles(),
-    data.organizations(),
-    resolveUserType(dbs.account, subjectId, tenantId),
-    resolveRelationshipsSummary(dbs.account, subjectId, tenantId),
-  ]);
-  const orgInfo = organizationInfo(subjectOrganizations);
-
-  // Get current version for cache storage
-  const cacheVersion = env ? await getRBACCacheVersion(env) : DEFAULT_RBAC_CACHE_VERSION;
-
-  const compositeCache: CompositeRBACCache = {
-    version: cacheVersion,
-    roles: roleNames(subjectRoles),
-    scoped_roles: scopedRoles(subjectRoles),
-    permissions: grantedPermissions(subjectRoles, tenantId),
-    organizations: organizationList(subjectOrganizations),
-    user_type: userType,
-    plan: orgInfo?.plan ?? null,
-    org_id: orgInfo?.org_id ?? null,
-    org_name: primaryOrganization(subjectOrganizations)?.organization.name ?? null,
-    org_type: orgInfo?.org_type ?? null,
-    relationships_summary: relationships,
-    cached_at: Math.floor(Date.now() / 1000),
-  };
-
-  // Store in cache (fire-and-forget with dynamic TTL)
-  if (cache) {
-    const cacheKey = buildCompositeRBACCacheKey(subjectId, tenantId);
-    const storeCacheAsync = async () => {
-      try {
-        const ttl = env ? await getRBACCacheTTL(env) : DEFAULT_RBAC_CACHE_TTL;
-        // Under KV's 60-second minimum the put would fail: such a TTL leaves the claims uncached.
-        if (ttl < KV_MIN_TTL_SECONDS) return;
-        await cache.put(cacheKey, JSON.stringify(compositeCache), { expirationTtl: ttl });
-      } catch {
-        // PII Protection: Don't log full error object
-        log.warn('Composite RBAC cache write error');
-      }
-    };
-    void storeCacheAsync();
-  }
-
-  return compositeCache;
+  );
 }
 
 /**
@@ -516,12 +287,32 @@ function roleNames(roles: ResolvedSubjectRole[]): string[] {
   return [...new Set(roles.map(({ role }) => role.name))];
 }
 
+// Keep the existing flat claim for legacy direct assignments. Newly introduced scoped grants
+// are represented only in scoped_roles unless they apply across the tenant.
+function claimRoleNames(roles: ResolvedSubjectRole[], tenantId: string): string[] {
+  return roleNames(
+    roles.filter(
+      ({ assignment }) =>
+        (assignment.via.kind === 'direct' && assignment.scope_type !== 'group') ||
+        roleAssignmentHolds(
+          { scope: assignment.scope_type, scopeTarget: assignment.scope_target },
+          { tenantId }
+        )
+    )
+  );
+}
+
 function scopedRoles(roles: ResolvedSubjectRole[]): TokenScopedRole[] {
-  return roles.map(({ role, assignment }) => ({
-    name: role.name,
-    scope: assignment.scope_type as ScopeType,
-    ...(assignment.scope_target && { scopeTarget: assignment.scope_target }),
-  }));
+  const claims = new Map<string, TokenScopedRole>();
+  for (const { role, assignment } of roles) {
+    const claim = {
+      name: role.name,
+      scope: assignment.scope_type as ScopeType,
+      ...(assignment.scope_target && { scopeTarget: assignment.scope_target }),
+    };
+    claims.set(JSON.stringify(claim), claim);
+  }
+  return [...claims.values()];
 }
 
 /**
@@ -666,7 +457,7 @@ export async function getUserRBACClaims(
     data.organizations(),
     resolveUserType(dbs.account, subjectId, tenantId),
   ]);
-  const names = roleNames(roles);
+  const names = claimRoleNames(roles, tenantId);
   const orgInfo = organizationInfo(organizations);
 
   const claims: RBACTokenClaims = {};
@@ -719,49 +510,19 @@ export async function getIDTokenRBACClaims(
       ? { claimsConfig: claimsConfigOrOptions }
       : claimsConfigOrOptions || {};
 
-  const { cache, claimsConfig } = options;
+  const { claimsConfig } = options;
   const tenantId = requireTenantId(options.tenantId, 'RBAC claims');
-
-  // Try cache first
-  if (cache) {
-    const cacheKey = buildRBACCacheKey(subjectId, 'id', claimsConfig, tenantId);
-    try {
-      const cached = await cache.get(cacheKey);
-      if (cached) {
-        return JSON.parse(cached) as Partial<RBACTokenClaims>;
-      }
-    } catch {
-      // PII Protection: Don't log full error object
-      log.warn('RBAC cache read error (ID token)');
-    }
-  }
-
-  // Cache miss - fetch from D1
-  let claims: Partial<RBACTokenClaims>;
-  if (claimsConfig !== undefined) {
-    claims = await getIDTokenRBACClaimsConfigurable(dbs, subjectId, claimsConfig, tenantId);
-  } else {
-    claims = await getUserRBACClaims(dbs, subjectId, tenantId);
-  }
-
-  // Store in cache (fire-and-forget with dynamic TTL)
-  if (cache) {
-    const cacheKey = buildRBACCacheKey(subjectId, 'id', claimsConfig, tenantId);
-    const storeCacheAsync = async () => {
-      try {
-        const ttl = options.env ? await getRBACCacheTTL(options.env) : DEFAULT_RBAC_CACHE_TTL;
-        // Under KV's 60-second minimum the put would fail: such a TTL leaves the claims uncached.
-        if (ttl < KV_MIN_TTL_SECONDS) return;
-        await cache.put(cacheKey, JSON.stringify(claims), { expirationTtl: ttl });
-      } catch {
-        // PII Protection: Don't log full error object
-        log.warn('RBAC cache write error (ID token)');
-      }
-    };
-    void storeCacheAsync();
-  }
-
-  return claims;
+  return cachedRoleData(
+    dbs,
+    tenantId,
+    subjectId,
+    buildRBACCacheKey(subjectId, 'id', claimsConfig, tenantId),
+    options,
+    () =>
+      claimsConfig !== undefined
+        ? getIDTokenRBACClaimsConfigurable(dbs, subjectId, claimsConfig, tenantId)
+        : getUserRBACClaims(dbs, subjectId, tenantId)
+  );
 }
 
 /**
@@ -793,44 +554,16 @@ export async function getAccessTokenRBACClaims(
       ? { claimsConfig: claimsConfigOrOptions }
       : claimsConfigOrOptions || {};
 
-  const { cache, claimsConfig } = options;
+  const { claimsConfig } = options;
   const tenantId = requireTenantId(options.tenantId, 'RBAC claims');
-
-  // Try cache first
-  if (cache) {
-    const cacheKey = buildRBACCacheKey(subjectId, 'access', claimsConfig, tenantId);
-    try {
-      const cached = await cache.get(cacheKey);
-      if (cached) {
-        return JSON.parse(cached) as Partial<RBACTokenClaims>;
-      }
-    } catch {
-      // PII Protection: Don't log full error object
-      log.warn('RBAC cache read error (access token)');
-    }
-  }
-
-  // Cache miss - fetch from D1
-  const claims = await getAccessTokenRBACClaimsInternal(dbs, subjectId, claimsConfig, tenantId);
-
-  // Store in cache (fire-and-forget with dynamic TTL)
-  if (cache) {
-    const cacheKey = buildRBACCacheKey(subjectId, 'access', claimsConfig, tenantId);
-    const storeCacheAsync = async () => {
-      try {
-        const ttl = options.env ? await getRBACCacheTTL(options.env) : DEFAULT_RBAC_CACHE_TTL;
-        // Under KV's 60-second minimum the put would fail: such a TTL leaves the claims uncached.
-        if (ttl < KV_MIN_TTL_SECONDS) return;
-        await cache.put(cacheKey, JSON.stringify(claims), { expirationTtl: ttl });
-      } catch {
-        // PII Protection: Don't log full error object
-        log.warn('RBAC cache write error (access token)');
-      }
-    };
-    void storeCacheAsync();
-  }
-
-  return claims;
+  return cachedRoleData(
+    dbs,
+    tenantId,
+    subjectId,
+    buildRBACCacheKey(subjectId, 'access', claimsConfig, tenantId),
+    options,
+    () => getAccessTokenRBACClaimsInternal(dbs, subjectId, claimsConfig, tenantId)
+  );
 }
 
 /**
@@ -861,7 +594,7 @@ async function getAccessTokenRBACClaimsInternal(
     needsRoles || needsScopedRoles || needsPermissions ? data.roles() : Promise.resolve([]),
     needsOrgInfo ? data.organizations() : Promise.resolve([]),
   ]);
-  const names = needsRoles ? roleNames(roles) : [];
+  const names = needsRoles ? claimRoleNames(roles, tenantId) : [];
   const scoped = needsScopedRoles ? scopedRoles(roles) : [];
   const orgInfo = needsOrgInfo ? organizationInfo(organizations) : null;
   const permissions = needsPermissions ? grantedPermissions(roles, tenantId) : [];
@@ -1084,7 +817,7 @@ export async function getIDTokenRBACClaimsConfigurable(
       ? resolveRelationshipsSummary(dbs.account, subjectId, tenantId)
       : Promise.resolve({ children_ids: [], parent_ids: [] }),
   ]);
-  const names = needsRoles ? roleNames(roles) : [];
+  const names = needsRoles ? claimRoleNames(roles, tenantId) : [];
   const scoped = needsScopedRoles ? scopedRoles(roles) : [];
   const orgInfo = needsBasicOrgInfo ? organizationInfo(organizations) : null;
   const orgName = needsOrgName

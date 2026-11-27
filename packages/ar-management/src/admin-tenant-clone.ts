@@ -1373,7 +1373,7 @@ async function cloneRoles(
 }> {
   const ruleNow = Math.floor(now / 1000);
   const roles = await source.query<Record<string, unknown>>(
-    `SELECT id, name, description, permissions_json, role_type, hierarchy_level,
+    `SELECT id, name, description, permissions_json, role_type, hierarchy_level, grant_tier,
             is_assignable, parent_role_id, display_name
        FROM roles WHERE tenant_id = ? AND is_system = 0`,
     [sourceTenantId]
@@ -1399,9 +1399,9 @@ async function cloneRoles(
   for (const role of roles) {
     await target.execute(
       `INSERT INTO roles (
-         id, tenant_id, name, description, permissions_json, role_type, hierarchy_level,
+         id, tenant_id, name, description, permissions_json, role_type, hierarchy_level, grant_tier,
          is_assignable, parent_role_id, display_name, is_system, created_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
       [
         idMap.get(String(role.id)),
         targetTenantId,
@@ -1410,6 +1410,7 @@ async function cloneRoles(
         role.permissions_json,
         role.role_type,
         role.hierarchy_level ?? 0,
+        role.grant_tier ?? 1,
         role.is_assignable ?? 1,
         null,
         role.display_name,

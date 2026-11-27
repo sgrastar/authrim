@@ -4195,11 +4195,13 @@ describe('IdentityMappingControlPlaneRepository provisioning assignment operatio
   it('creates groups, memberships, entitlements, and ownership records', async () => {
     const adapter = createAdapter({
       queryOneRows: [
+        null,
         {
           id: 'group-1',
           group_key: 'faculty',
           display_name: 'Faculty',
         },
+        { id: 'group-1' },
       ],
     });
     const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
@@ -4243,6 +4245,7 @@ describe('IdentityMappingControlPlaneRepository provisioning assignment operatio
   it('updates existing subject-only assignments before inserting duplicates', async () => {
     const adapter = createAdapter({
       queryOneRows: [
+        { id: 'group-1' },
         {
           id: 'existing-membership',
         },
@@ -4296,6 +4299,7 @@ describe('IdentityMappingControlPlaneRepository provisioning assignment operatio
           }),
           priority: 10,
         },
+        { id: 'group-1' },
       ],
     });
     const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
@@ -4439,6 +4443,7 @@ describe('IdentityMappingControlPlaneRepository provisioning assignment operatio
           }),
           priority: 10,
         },
+        { id: 'group-1' },
       ],
     });
     const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);

@@ -201,11 +201,6 @@ export const PHASE8_SQLITE_FOREIGN_KEY_RULES = [
     to: 'core.external_lifecycle_signal_events',
   },
   {
-    from: 'core.group_memberships',
-    columns: ['group_id'],
-    to: 'core.groups',
-  },
-  {
     from: 'core.idempotency_keys',
     columns: ['tenant_id'],
     to: 'core.tenants',

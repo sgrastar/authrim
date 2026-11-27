@@ -64,6 +64,10 @@
             {
               "path": "014_shared_launcher_states.sql",
               "checksum": "c10bb8d2523b6b3c4f3079a4d6111e77fe4e51f360adafc766a52a6a0ee4255f"
+            },
+            {
+              "path": "015_end_user_groups.sql",
+              "checksum": "2bc148b5e2717b73635d05905bae151b5f39952897bc77f6c819cdc44821fcad"
             }
           ]
         },
@@ -272,6 +276,10 @@
             {
               "path": "014_shared_launcher_states.sql",
               "checksum": "efc1392bf0381d0785f564b840608df003f6406aa76293889baea64da2b44e09"
+            },
+            {
+              "path": "015_end_user_groups.sql",
+              "checksum": "32eeb019531135e3085416c455b692e0c37445c9bbc180c7d16ebedafe3ae41e"
             }
           ]
         },
@@ -359,6 +367,10 @@
         {
           "path": "014_shared_launcher_states.sql",
           "checksum": "c10bb8d2523b6b3c4f3079a4d6111e77fe4e51f360adafc766a52a6a0ee4255f"
+        },
+        {
+          "path": "015_end_user_groups.sql",
+          "checksum": "2bc148b5e2717b73635d05905bae151b5f39952897bc77f6c819cdc44821fcad"
         }
       ]
     },
@@ -593,6 +605,10 @@
         {
           "path": "014_shared_launcher_states.sql",
           "checksum": "efc1392bf0381d0785f564b840608df003f6406aa76293889baea64da2b44e09"
+        },
+        {
+          "path": "015_end_user_groups.sql",
+          "checksum": "32eeb019531135e3085416c455b692e0c37445c9bbc180c7d16ebedafe3ae41e"
         }
       ]
     },

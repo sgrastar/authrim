@@ -221,9 +221,15 @@ describe('RBAC token claims', () => {
     });
     const cache = {
       get: vi.fn(async (key: string) =>
-        JSON.stringify(
-          key.includes(':id:') ? { authrim_roles: ['cached'] } : { authrim_org_id: 'o' }
-        )
+        key.includes('-version:')
+          ? null
+          : JSON.stringify({
+              generation: '1:0:0',
+              validUntil: Math.floor(Date.now() / 1000) + 100,
+              claims: key.includes(':id:')
+                ? { authrim_roles: ['cached'] }
+                : { authrim_org_id: 'o' },
+            })
       ),
       put: vi.fn(),
     };
@@ -240,7 +246,11 @@ describe('RBAC token claims', () => {
       } as never)
     ).resolves.toEqual({ authrim_org_id: 'o' });
     expect(cache.get.mock.calls.map(([key]) => key)).toEqual([
+      'rbac:v2:tenant-version:tenant-a',
+      'rbac:v2:subject-version:tenant-a:user-1',
       expect.stringContaining('rbac:v2:tenant-a:id:user-1:'),
+      'rbac:v2:tenant-version:tenant-a',
+      'rbac:v2:subject-version:tenant-a:user-1',
       expect.stringContaining('rbac:v2:tenant-a:access:user-1:'),
     ]);
     expect(cache.put).not.toHaveBeenCalled();
@@ -268,7 +278,20 @@ describe('RBAC token claims', () => {
 
   it('uses a versioned composite cache entry without database access', async () => {
     const valid = cacheFixture();
-    const validCache = { get: vi.fn().mockResolvedValue(JSON.stringify(valid)), put: vi.fn() };
+    const validCache = {
+      get: vi.fn(async (key: string) =>
+        key.includes(':tenant-version:')
+          ? 'gen-a'
+          : key.includes(':subject-version:')
+            ? 'gen-s'
+            : JSON.stringify({
+                generation: '1:gen-a:gen-s',
+                validUntil: Math.floor(Date.now() / 1000) + 100,
+                claims: valid,
+              })
+      ),
+      put: vi.fn(),
+    };
     const db = adapter(() => {
       throw new Error('database must not be queried');
     });

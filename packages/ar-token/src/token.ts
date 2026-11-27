@@ -1552,7 +1552,7 @@ const moduleLogger = createLogger().module('TOKEN');
 
 type AccessTokenScopedPermission = {
   permission: string;
-  scope_type: 'org' | 'resource';
+  scope_type: 'org' | 'group' | 'resource';
   scope_target: string;
 };
 
@@ -3119,11 +3119,13 @@ async function handleAuthorizationCodeGrant(
         Promise.all([
           getAccessTokenRBACClaims(tokenRBACDatabases(c, authCtx), authCodeData.sub, {
             cache: c.env.REBAC_CACHE,
+            env: c.env,
             claimsConfig: tenantRBACClaimsConfig.accessToken,
             tenantId,
           }),
           getIDTokenRBACClaims(tokenRBACDatabases(c, authCtx), authCodeData.sub, {
             cache: c.env.REBAC_CACHE,
+            env: c.env,
             claimsConfig: tenantRBACClaimsConfig.idToken,
             tenantId,
           }),
@@ -3145,6 +3147,7 @@ async function handleAuthorizationCodeGrant(
         authCodeData.scope,
         {
           cache: c.env.REBAC_CACHE,
+          env: c.env,
           tenantId,
           maxPermissions: (await getEmbeddingLimits(c.env, tenantId)).max_embedded_permissions,
         }
@@ -3166,7 +3169,7 @@ async function handleAuthorizationCodeGrant(
         tokenRBACDatabases(c, authCtx),
         authCodeData.sub,
         tenantId,
-        { cache: c.env.REBAC_CACHE }
+        { cache: c.env.REBAC_CACHE, env: c.env }
       );
       // Apply limits to prevent token bloat
       if (allIdPerms.length > limits.max_resource_permissions) {
@@ -4625,11 +4628,13 @@ async function handleRefreshTokenGrant(
     [accessTokenRBACClaims, idTokenRBACClaims] = await Promise.all([
       getAccessTokenRBACClaims(tokenRBACDatabases(c, authCtx), refreshTokenData.sub, {
         cache: c.env.REBAC_CACHE,
+        env: c.env,
         claimsConfig: tenantRBACClaimsConfig.accessToken,
         tenantId,
       }),
       getIDTokenRBACClaims(tokenRBACDatabases(c, authCtx), refreshTokenData.sub, {
         cache: c.env.REBAC_CACHE,
+        env: c.env,
         claimsConfig: tenantRBACClaimsConfig.idToken,
         tenantId,
       }),
@@ -4651,6 +4656,7 @@ async function handleRefreshTokenGrant(
         grantedScope,
         {
           cache: c.env.REBAC_CACHE,
+          env: c.env,
           tenantId: authCtx.tenantId,
           maxPermissions: (await getEmbeddingLimits(c.env, authCtx.tenantId))
             .max_embedded_permissions,
@@ -5903,11 +5909,13 @@ async function handleDeviceCodeGrant(
     [accessTokenRBACClaims, idTokenRBACClaims] = await Promise.all([
       getAccessTokenRBACClaims(tokenRBACDatabases(c, authCtx), metadata.sub, {
         cache: c.env.REBAC_CACHE,
+        env: c.env,
         claimsConfig: tenantRBACClaimsConfig.accessToken,
         tenantId: authCtx.tenantId,
       }),
       getIDTokenRBACClaims(tokenRBACDatabases(c, authCtx), metadata.sub, {
         cache: c.env.REBAC_CACHE,
+        env: c.env,
         claimsConfig: tenantRBACClaimsConfig.idToken,
         tenantId: authCtx.tenantId,
       }),
@@ -5929,6 +5937,7 @@ async function handleDeviceCodeGrant(
         metadata.scope,
         {
           cache: c.env.REBAC_CACHE,
+          env: c.env,
           tenantId: authCtx.tenantId,
           maxPermissions: (await getEmbeddingLimits(c.env, authCtx.tenantId))
             .max_embedded_permissions,
@@ -6665,11 +6674,13 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     [accessTokenRBACClaims, idTokenRBACClaims] = await Promise.all([
       getAccessTokenRBACClaims(tokenRBACDatabases(c, authCtx), metadata.sub, {
         cache: c.env.REBAC_CACHE,
+        env: c.env,
         claimsConfig: tenantRBACClaimsConfig.accessToken,
         tenantId: authCtx.tenantId,
       }),
       getIDTokenRBACClaims(tokenRBACDatabases(c, authCtx), metadata.sub, {
         cache: c.env.REBAC_CACHE,
+        env: c.env,
         claimsConfig: tenantRBACClaimsConfig.idToken,
         tenantId: authCtx.tenantId,
       }),
@@ -6691,6 +6702,7 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
         metadata.scope,
         {
           cache: c.env.REBAC_CACHE,
+          env: c.env,
           tenantId: authCtx.tenantId,
           maxPermissions: (await getEmbeddingLimits(c.env, authCtx.tenantId))
             .max_embedded_permissions,

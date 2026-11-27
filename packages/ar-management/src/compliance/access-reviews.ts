@@ -43,7 +43,7 @@ import {
   suspendAccount,
   type RevocationContext,
 } from '../access-revocation';
-import { canManageRoleHierarchy } from '../admin-rbac';
+import { mayManageEndUserRole } from '../role-delegation';
 import { tenantCoreStores } from './tenant-stores';
 import { CrossShardAccountExactSearchService } from '../cross-shard-account-list';
 import { usesRoutedAccountStorage } from '../tenant-routed-storage';
@@ -900,7 +900,7 @@ async function applyRevocation(
     const role = assigned
       ? await findTenantRole(metadata, context.tenantId, { id: assigned.role_id })
       : null;
-    if (role && !canManageRoleHierarchy(admin, role.hierarchy_level)) {
+    if (role && !mayManageEndUserRole(admin, role)) {
       return { status: 'failed', error: 'insufficient_role_hierarchy' };
     }
     await removeRoleAssignment(context, {

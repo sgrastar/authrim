@@ -160,7 +160,12 @@ export async function createResourcePermission(c: Context) {
     // Invalidate cache for subject
     if (c.env.REBAC_CACHE) {
       try {
-        await invalidateIdPermissionCache(c.env.REBAC_CACHE, body.subject_id, tenantId);
+        await invalidateIdPermissionCache(
+          c.env.REBAC_CACHE,
+          body.subject_id,
+          tenantId,
+          body.subject_type ?? 'user'
+        );
       } catch {
         // Ignore cache invalidation errors
       }
@@ -315,7 +320,12 @@ export async function deleteResourcePermission(c: Context) {
     // Invalidate cache for subject
     if (c.env.REBAC_CACHE) {
       try {
-        await invalidateIdPermissionCache(c.env.REBAC_CACHE, existing.subject_id, tenantId);
+        await invalidateIdPermissionCache(
+          c.env.REBAC_CACHE,
+          existing.subject_id,
+          tenantId,
+          existing.subject_type
+        );
       } catch {
         // Ignore cache invalidation errors
       }
