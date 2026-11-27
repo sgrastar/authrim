@@ -945,7 +945,7 @@ async function resolveAccountPageSettings(c: Context<{ Bindings: Env }>) {
   const record = parseSettingsRecord(raw);
   const configuredPath = record['self-service.account_page_path'];
   const accountPath = validateAccountPagePath(configuredPath)
-    ? configuredPath
+    ? configuredPath.trim() // validateAccountPagePath trims before validating; store the same value
     : SELF_SERVICE_DEFAULTS['self-service.account_page_path'];
   const settings = {
     enabled:
@@ -1098,7 +1098,13 @@ function proxyToLoginUi(
 const app = new Hono<{ Bindings: Env }>();
 
 function isLoopbackHost(hostname: string): boolean {
-  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+  // URL.hostname keeps the brackets of an IPv6 literal ('[::1]'); accept both spellings.
+  return (
+    hostname === 'localhost' ||
+    hostname === '127.0.0.1' ||
+    hostname === '::1' ||
+    hostname === '[::1]'
+  );
 }
 
 function requestUsesHttp(c: Context<{ Bindings: Env }>): boolean {
