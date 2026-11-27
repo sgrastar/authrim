@@ -263,7 +263,9 @@ describe('SCIM Filter Parser', () => {
     });
 
     it('should throw error on unsupported valuePath filters', () => {
-      const ast = parseScimFilter('emails[type eq "work"].value eq "john@work.com"');
+      const ast = parseScimFilter('emails[type eq "work"]');
+      // Changed: the previous input had a trailing `.value eq "..."` after the value path, which is
+      // not valid filter grammar; the parser now rejects trailing tokens instead of dropping them.
       expect(() => filterToSql(ast)).toThrow('Value path filters require custom implementation');
     });
   });
