@@ -333,7 +333,7 @@ describe('Resource Permissions Utilities', () => {
       // The write is fire-and-forget: it lands after the validity boundary has been read.
       await vi.waitFor(() =>
         expect(mockKV.put).toHaveBeenCalledWith(
-          'policy:idperms:v2:default:user_123',
+          'policy:idperms:v3:default:user_123',
           expect.stringContaining('"claims":["documents:doc_123:read"]'),
           { expirationTtl: 300 }
         )
@@ -572,7 +572,7 @@ describe('Resource Permissions Utilities', () => {
     it('should delete cache entry', async () => {
       await invalidateIdPermissionCache(mockKV as unknown as KVNamespace, 'user_123', 'default');
 
-      expect(mockKV.delete).toHaveBeenCalledWith('policy:idperms:v2:default:user_123');
+      expect(mockKV.delete).toHaveBeenCalledWith('policy:idperms:v3:default:user_123');
     });
   });
 

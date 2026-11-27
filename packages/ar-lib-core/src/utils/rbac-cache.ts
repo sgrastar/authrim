@@ -22,7 +22,7 @@ export function requireTenantId(tenantId: string | undefined, context: string): 
 const DEFAULT_RBAC_CACHE_TTL = 600; // 10 minutes in seconds (default)
 // v2: roles named by the tenant metadata database, tenant-wide permissions from tenant-wide
 // assignments only. Entries computed before are not read (they expire on their own).
-const RBAC_CACHE_PREFIX = 'rbac:v2:';
+const RBAC_CACHE_PREFIX = 'rbac:v3:';
 const DEFAULT_RBAC_CACHE_VERSION = 1; // Increment when CompositeRBACCache structure changes
 
 // In-memory cache for TTL value (avoid repeated KV reads)
@@ -136,12 +136,14 @@ export async function getRBACCacheVersion(env: Env): Promise<number> {
  * invalidation. Versions are read before the data is computed for the same reason.
  */
 function tenantRBACCacheVersionKey(tenantId: string): string {
-  return `${RBAC_CACHE_PREFIX}tenant-version:${requireTenantId(tenantId, 'RBAC cache version')}`;
+  // Fixed literals, the names of the first generation: workers of the older and the newer code
+  // agree on them, and a data-format bump of RBAC_CACHE_PREFIX does not reset them.
+  return `rbac:v2:tenant-version:${requireTenantId(tenantId, 'RBAC cache version')}`;
 }
 
 function subjectRBACCacheVersionKey(tenantId: string, subjectId: string): string {
   const tenant = requireTenantId(tenantId, 'RBAC cache version');
-  return `${RBAC_CACHE_PREFIX}subject-version:${tenant}:${subjectId}`;
+  return `rbac:v2:subject-version:${tenant}:${subjectId}`;
 }
 
 export async function getTenantRBACCacheVersion(

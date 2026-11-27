@@ -14,6 +14,7 @@ import {
   CanonicalRuntimeUserProjectionRepository,
   CanonicalSensitiveValueResolver,
   canonicalProjectionToOIDCClaimsUser,
+  createAccountAuthContextFromHono,
   createAuthContextFromHono,
   createPIIContextFromHono,
   evaluateClaimsForTarget,
@@ -23,6 +24,8 @@ import {
   releaseCandidatesOf,
   resolveAssuranceClaims,
   resolveEffectiveSettings,
+  loadSubjectServerClaims,
+  resolveDisclosedServerClaims,
   type ParsedClaimsRequest,
   type ClientMetadata,
   type Env,
@@ -72,6 +75,24 @@ export async function computeReleaseCandidates(
     sub: userId,
   };
 
+  // The server-computed claims (roles, groups), which a claims request's SAO rules may test. They
+  // are never consent items (releaseCandidatesOf leaves them out); a failure computes none.
+  let computed: Record<string, unknown> = {};
+  try {
+    computed = await loadSubjectServerClaims(
+      c.env,
+      {
+        metadata: createAuthContextFromHono(c, tenantId).coreAdapter,
+        account: createAccountAuthContextFromHono(c, tenantId).coreAdapter,
+      },
+      tenantId,
+      userId,
+      'id_token'
+    );
+  } catch {
+    computed = {};
+  }
+
   const lists: ReleaseCandidate[][] = [];
   const values: Record<string, unknown> = {};
   for (const target of ['userinfo', 'id_token'] as const) {
@@ -112,11 +133,32 @@ export async function computeReleaseCandidates(
         throw new ReleaseCandidatesUnavailableError(error);
       }
     }
+    // Only what the app's profile lists on this surface is handed to the SAO rules.
+    const disclosed = await resolveDisclosedServerClaims({
+      env: c.env,
+      tenantId,
+      clientId,
+      selector: clientMetadata.identity_mapping,
+      surface: target,
+      grantedScopes: input.scopes,
+      ...(target === 'id_token' && input.idTokenOnly
+        ? { alsoSurfaces: ['userinfo' as const] }
+        : {}),
+      // UserInfo carries only roles and groups; the ID token the full computed set.
+      claims:
+        target === 'id_token'
+          ? computed
+          : Object.fromEntries(
+              Object.entries(computed).filter(
+                ([name]) => name === 'authrim_roles' || name === 'authrim_groups'
+              )
+            ),
+    });
     const evaluated = evaluateClaimsForTarget({
       target,
       ...(subjectValue !== undefined ? { subjectValue } : {}),
       claimsRequest: input.claimsRequest,
-      initialClaims: { sub: userId },
+      initialClaims: { sub: userId, ...disclosed },
       availableClaims: {
         ...userData,
         ...(assurance.eduperson_assurance
@@ -147,11 +189,15 @@ export async function computeReleaseCandidates(
           claims: evaluated.claims,
           sourceAttributes: userData,
           releaseOptionalOut: optional,
+          // The server's claims are not computed for the screen's own profile check.
+          serverComputedPending: true,
           ...(target === 'id_token'
             ? { claimsAuthorizedByRequest: true, userInfoClaimsInIdToken: input.idTokenOnly }
             : assurance.eduperson_assurance
-              ? { authorizedClaimNames: ['eduperson_assurance'] }
-              : {}),
+              ? { authorizedClaimNames: ['eduperson_assurance', ...Object.keys(disclosed)] }
+              : Object.keys(disclosed).length > 0
+                ? { authorizedClaimNames: Object.keys(disclosed) }
+                : {}),
         })
       ).claims;
     } catch (error) {

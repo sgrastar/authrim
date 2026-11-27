@@ -6,12 +6,12 @@
  *
  * Environment Variables:
  * - RBAC_ID_TOKEN_CLAIMS: Comma-separated list of claims to include in ID Token
- *   Default: "roles,user_type,org_id,plan,org_type"
- *   Available: roles,scoped_roles,user_type,org_id,org_name,plan,org_type,orgs,relationships_summary
+ *   Default: "roles,groups,permissions,user_type"
+ *   Available: roles,groups,permissions,scoped_roles,user_type,org_id,org_name,plan,org_type,orgs,relationships_summary
  *
  * - RBAC_ACCESS_TOKEN_CLAIMS: Comma-separated list of claims to include in Access Token
- *   Default: "roles,org_id,org_type"
- *   Available: roles,scoped_roles,org_id,org_type,permissions,org_context
+ *   Default: "roles,groups"
+ *   Available: roles,groups,scoped_roles,org_id,org_type,permissions,org_context
  *
  * Usage:
  * ```typescript
@@ -60,6 +60,7 @@ import type {
   ScopeType,
   TokenOrgInfo,
   TokenScopedRole,
+  TokenGroup,
   RelationshipsSummary,
   IDTokenClaimKey,
   AccessTokenClaimKey,
@@ -75,6 +76,7 @@ import {
   type ResolvedSubjectRole,
   type TenantRBACDatabases,
 } from '../services/tenant-rbac';
+import { rbacIdBatches, resolveSubjectGroups } from '../services/group-membership';
 
 function getRBACDatabaseAdapter(db: DatabaseSource) {
   return ensureDatabaseAdapter(db, 'rbac-claims');
@@ -89,6 +91,7 @@ export interface CompositeRBACCache {
   roles: string[];
   scoped_roles: TokenScopedRole[];
   permissions: string[];
+  groups: TokenGroup[];
   organizations: TokenOrgInfo[];
   user_type: UserType;
   plan: PlanType | null;
@@ -113,12 +116,14 @@ export async function getCompositeRBACCache(
     options,
     async (version) => {
       const data = subjectRBACData(dbs, subjectId, tenantId);
-      const [subjectRoles, subjectOrganizations, userType, relationships] = await Promise.all([
-        data.roles(),
-        data.organizations(),
-        resolveUserType(dbs.account, subjectId, tenantId),
-        resolveRelationshipsSummary(dbs.account, subjectId, tenantId),
-      ]);
+      const [subjectRoles, subjectGroups, subjectOrganizations, userType, relationships] =
+        await Promise.all([
+          data.roles(),
+          data.groups(),
+          data.organizations(),
+          resolveUserType(dbs.account, subjectId, tenantId),
+          resolveRelationshipsSummary(dbs.account, subjectId, tenantId),
+        ]);
       const orgInfo = organizationInfo(subjectOrganizations);
 
       return {
@@ -126,6 +131,7 @@ export async function getCompositeRBACCache(
         roles: claimRoleNames(subjectRoles, tenantId),
         scoped_roles: scopedRoles(subjectRoles),
         permissions: grantedPermissions(subjectRoles, tenantId),
+        groups: subjectGroups,
         organizations: organizationList(subjectOrganizations),
         user_type: userType,
         plan: orgInfo?.plan ?? null,
@@ -161,6 +167,14 @@ export function extractIDTokenClaimsFromCache(
 
   if (enabledClaims.includes('roles') && compositeCache.roles.length > 0) {
     claims.authrim_roles = compositeCache.roles;
+  }
+
+  if (enabledClaims.includes('groups') && (compositeCache.groups?.length ?? 0) > 0) {
+    claims.authrim_groups = compositeCache.groups;
+  }
+
+  if (enabledClaims.includes('permissions') && compositeCache.permissions.length > 0) {
+    claims.authrim_permissions = compositeCache.permissions;
   }
 
   if (enabledClaims.includes('scoped_roles') && compositeCache.scoped_roles.length > 0) {
@@ -228,6 +242,10 @@ export function extractAccessTokenClaimsFromCache(
     claims.authrim_roles = compositeCache.roles;
   }
 
+  if (enabledClaims.includes('groups') && (compositeCache.groups?.length ?? 0) > 0) {
+    claims.authrim_groups = compositeCache.groups;
+  }
+
   if (enabledClaims.includes('scoped_roles') && compositeCache.scoped_roles.length > 0) {
     claims.authrim_scoped_roles = compositeCache.scoped_roles;
   }
@@ -264,6 +282,7 @@ interface ResolvedOrgInfo {
  */
 interface SubjectRBACData {
   roles(): Promise<ResolvedSubjectRole[]>;
+  groups(): Promise<TokenGroup[]>;
   organizations(): Promise<ResolvedSubjectOrganization[]>;
 }
 
@@ -273,9 +292,11 @@ function subjectRBACData(
   tenantId: string
 ): SubjectRBACData {
   let roles: Promise<ResolvedSubjectRole[]> | undefined;
+  let groups: Promise<TokenGroup[]> | undefined;
   let organizations: Promise<ResolvedSubjectOrganization[]> | undefined;
   return {
     roles: () => (roles ??= resolveSubjectRoles(dbs, tenantId, subjectId)),
+    groups: () => (groups ??= resolveSubjectGroupClaims(dbs, tenantId, subjectId)),
     organizations: () =>
       (organizations ??= resolveSubjectOrganizations(dbs, tenantId, subjectId, {
         activeOnly: true,
@@ -287,19 +308,57 @@ function roleNames(roles: ResolvedSubjectRole[]): string[] {
   return [...new Set(roles.map(({ role }) => role.name))];
 }
 
-// Keep the existing flat claim for legacy direct assignments. Newly introduced scoped grants
-// are represented only in scoped_roles unless they apply across the tenant.
+/**
+ * The flat role claim holds only roles whose assignment holds across the tenant (global, or tenant
+ * in its own tenant), direct or through a group. A group- or resource-scoped assignment is only in
+ * authrim_scoped_roles with its target, so a reader of the flat claim never widens it.
+ */
 function claimRoleNames(roles: ResolvedSubjectRole[], tenantId: string): string[] {
   return roleNames(
-    roles.filter(
-      ({ assignment }) =>
-        (assignment.via.kind === 'direct' && assignment.scope_type !== 'group') ||
-        roleAssignmentHolds(
-          { scope: assignment.scope_type, scopeTarget: assignment.scope_target },
-          { tenantId }
-        )
+    roles.filter(({ assignment }) =>
+      roleAssignmentHolds(
+        { scope: assignment.scope_type, scopeTarget: assignment.scope_target },
+        { tenantId }
+      )
     )
   );
+}
+
+/**
+ * The subject's effective groups (direct memberships and their ancestors, active only) as the
+ * authrim_groups claim, ordered by key.
+ */
+export async function resolveSubjectGroupClaims(
+  dbs: TenantRBACDatabases,
+  tenantId: string,
+  subjectId: string
+): Promise<TokenGroup[]> {
+  const { effectiveGroupIds } = await resolveSubjectGroups(
+    dbs,
+    tenantId,
+    subjectId,
+    Math.floor(Date.now() / 1000)
+  );
+  if (effectiveGroupIds.size === 0) return [];
+  const db = getRBACDatabaseAdapter(dbs.metadata);
+  const groups: TokenGroup[] = [];
+  for (const batch of rbacIdBatches(effectiveGroupIds)) {
+    const rows = await db.query<{
+      id: string;
+      group_key: string;
+      display_name: string;
+      kind: string;
+    }>(
+      `SELECT id, group_key, display_name, kind FROM "groups"
+        WHERE tenant_id = ? AND lifecycle_state = 'active'
+          AND id IN (${batch.map(() => '?').join(', ')})`,
+      [tenantId, ...batch]
+    );
+    for (const row of rows) {
+      groups.push({ id: row.id, key: row.group_key, name: row.display_name, kind: row.kind });
+    }
+  }
+  return groups.sort((left, right) => (left.key < right.key ? -1 : left.key > right.key ? 1 : 0));
 }
 
 function scopedRoles(roles: ResolvedSubjectRole[]): TokenScopedRole[] {
@@ -452,8 +511,9 @@ export async function getUserRBACClaims(
 ): Promise<RBACTokenClaims> {
   const data = subjectRBACData(dbs, subjectId, tenantId);
   // Fetch all RBAC info in parallel
-  const [roles, organizations, userType] = await Promise.all([
+  const [roles, groups, organizations, userType] = await Promise.all([
     data.roles(),
+    data.groups(),
     data.organizations(),
     resolveUserType(dbs.account, subjectId, tenantId),
   ]);
@@ -465,6 +525,10 @@ export async function getUserRBACClaims(
   // Add roles if any exist
   if (names.length > 0) {
     claims.authrim_roles = names;
+  }
+
+  if (groups.length > 0) {
+    claims.authrim_groups = groups;
   }
 
   // Add user type
@@ -518,10 +582,8 @@ export async function getIDTokenRBACClaims(
     subjectId,
     buildRBACCacheKey(subjectId, 'id', claimsConfig, tenantId),
     options,
-    () =>
-      claimsConfig !== undefined
-        ? getIDTokenRBACClaimsConfigurable(dbs, subjectId, claimsConfig, tenantId)
-        : getUserRBACClaims(dbs, subjectId, tenantId)
+    // One definition of the defaults: an unset config is the default claim list.
+    () => getIDTokenRBACClaimsConfigurable(dbs, subjectId, claimsConfig, tenantId)
   );
 }
 
@@ -584,14 +646,16 @@ async function getAccessTokenRBACClaimsInternal(
 
   // Determine what data to fetch based on enabled claims
   const needsRoles = enabledClaims.includes('roles');
+  const needsGroups = enabledClaims.includes('groups');
   const needsScopedRoles = enabledClaims.includes('scoped_roles');
   const needsOrgInfo = enabledClaims.includes('org_id') || enabledClaims.includes('org_type');
   const needsPermissions = enabledClaims.includes('permissions');
 
   // Fetch required data in parallel
   const data = subjectRBACData(dbs, subjectId, tenantId);
-  const [roles, organizations] = await Promise.all([
+  const [roles, groups, organizations] = await Promise.all([
     needsRoles || needsScopedRoles || needsPermissions ? data.roles() : Promise.resolve([]),
+    needsGroups ? data.groups() : Promise.resolve([]),
     needsOrgInfo ? data.organizations() : Promise.resolve([]),
   ]);
   const names = needsRoles ? claimRoleNames(roles, tenantId) : [];
@@ -602,6 +666,10 @@ async function getAccessTokenRBACClaimsInternal(
   // Add claims based on configuration
   if (needsRoles && names.length > 0) {
     claims.authrim_roles = names;
+  }
+
+  if (needsGroups && groups.length > 0) {
+    claims.authrim_groups = groups;
   }
 
   if (needsScopedRoles && scoped.length > 0) {
@@ -793,6 +861,8 @@ export async function getIDTokenRBACClaimsConfigurable(
 
   // Determine what data to fetch based on enabled claims
   const needsRoles = enabledClaims.includes('roles');
+  const needsGroups = enabledClaims.includes('groups');
+  const needsPermissions = enabledClaims.includes('permissions');
   const needsScopedRoles = enabledClaims.includes('scoped_roles');
   const needsUserType = enabledClaims.includes('user_type');
   const needsOrgId = enabledClaims.includes('org_id');
@@ -807,8 +877,9 @@ export async function getIDTokenRBACClaimsConfigurable(
 
   // Fetch required data in parallel
   const data = subjectRBACData(dbs, subjectId, tenantId);
-  const [roles, organizations, userType, relationships] = await Promise.all([
-    needsRoles || needsScopedRoles ? data.roles() : Promise.resolve([]),
+  const [roles, groups, organizations, userType, relationships] = await Promise.all([
+    needsRoles || needsScopedRoles || needsPermissions ? data.roles() : Promise.resolve([]),
+    needsGroups ? data.groups() : Promise.resolve([]),
     needsBasicOrgInfo || needsOrgName || needsOrgs ? data.organizations() : Promise.resolve([]),
     needsUserType
       ? resolveUserType(dbs.account, subjectId, tenantId)
@@ -819,6 +890,7 @@ export async function getIDTokenRBACClaimsConfigurable(
   ]);
   const names = needsRoles ? claimRoleNames(roles, tenantId) : [];
   const scoped = needsScopedRoles ? scopedRoles(roles) : [];
+  const permissions = needsPermissions ? grantedPermissions(roles, tenantId) : [];
   const orgInfo = needsBasicOrgInfo ? organizationInfo(organizations) : null;
   const orgName = needsOrgName
     ? (primaryOrganization(organizations)?.organization.name ?? null)
@@ -828,6 +900,14 @@ export async function getIDTokenRBACClaimsConfigurable(
   // Add claims based on configuration
   if (needsRoles && names.length > 0) {
     claims.authrim_roles = names;
+  }
+
+  if (needsGroups && groups.length > 0) {
+    claims.authrim_groups = groups;
+  }
+
+  if (needsPermissions && permissions.length > 0) {
+    claims.authrim_permissions = permissions;
   }
 
   if (needsScopedRoles && scoped.length > 0) {

@@ -302,6 +302,55 @@ describe('applyIntrospectionIdentityMapping', () => {
     }
   });
 
+  it('does not let a mapping state the server-computed authorization claims', async () => {
+    mocks.resolveBinding.mockResolvedValue({
+      fieldMappingSetId: 'mapping_set_1',
+      fieldMappingVersionId: 'mapping_version_1',
+      fieldMappingSet: { id: 'mapping_set_1' },
+      catalog: { id: 'catalog_1', entries: [] },
+      edges: [],
+      transforms: [],
+      validationRules: [],
+      destinationNamespace: 'introspection.claim',
+      destinationProfileId: 'profile_rs',
+      destinationProfileIds: ['profile_rs'],
+    });
+    const namespace = 'introspection.claim';
+    mocks.executeRuntimeMapping.mockReturnValue({
+      status: 'success',
+      values: [
+        'authrim_resource_permissions',
+        'authrim_groups',
+        'authrim_roles',
+        'authrim_permissions',
+      ]
+        .map((path) => ({
+          value: ['forged'],
+          sourceRef: { side: 'destination', namespace, path },
+        }))
+        .concat([
+          {
+            value: 'Engineering',
+            sourceRef: { side: 'destination', namespace, path: 'department' },
+          },
+        ]),
+    });
+
+    await applyIntrospectionIdentityMapping(input);
+
+    const released = (mocks.filterProfile.mock.calls[0][0] as { claims: Record<string, unknown> })
+      .claims;
+    expect(released).toMatchObject({ department: 'Engineering' });
+    for (const name of [
+      'authrim_resource_permissions',
+      'authrim_groups',
+      'authrim_roles',
+      'authrim_permissions',
+    ]) {
+      expect(released).not.toHaveProperty(name);
+    }
+  });
+
   it('rejects mappings that reference more than one Destination Profile', async () => {
     mocks.resolveBinding.mockResolvedValue({
       fieldMappingSetId: 'mapping_set_1',

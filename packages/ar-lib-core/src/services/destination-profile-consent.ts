@@ -164,6 +164,9 @@ export const AUTHORIZATION_SERVER_COMPUTED_CLAIMS = new Set([
   'authrim_roles',
   'authrim_scoped_roles',
   'authrim_permissions',
+  'authrim_scoped_permissions',
+  'authrim_resource_permissions',
+  'authrim_groups',
   'authrim_user_type',
   'authrim_org_id',
   'authrim_org_name',
@@ -351,6 +354,12 @@ export async function filterOidcClaimsByDestinationConsent(input: {
    * profile, which judges the real value.
    */
   unevaluatedClaims?: ReadonlySet<string>;
+  /**
+   * Set only by the consent screen's candidate computation: the server-computed authorization
+   * claims (roles, groups, ...) are not computed there, so a profile requiring one is not failed
+   * for lacking it. Every real release keeps the strict required check.
+   */
+  serverComputedPending?: boolean;
 }): Promise<Record<string, unknown>> {
   const descriptor = await loadDestinationProfileConsentDescriptor(
     input.adminAdapter,
@@ -449,7 +458,8 @@ export async function filterOidcClaimsByDestinationConsent(input: {
       ? applicableFields.filter((field) => !input.unevaluatedClaims?.has(field.key))
       : applicableFields,
     filtered,
-    'OIDC'
+    'OIDC',
+    input.serverComputedPending === true
   );
 
   if (assumedSelection === undefined) recordTrace(null);
@@ -518,7 +528,7 @@ export async function filterIntrospectionClaimsByResourceServerProfile(input: {
       'active'
     );
   }
-  validateReleasedDestinationFields(allowed.values(), filtered, 'Resource Server');
+  validateReleasedDestinationFields(allowed.values(), filtered, 'Resource Server', false);
   return filtered;
 }
 
@@ -771,11 +781,17 @@ function readValueMultiplicity(value: unknown): 'single' | 'multi' | null {
 function validateReleasedDestinationFields(
   fields: Iterable<DestinationProfileConsentField>,
   claims: Record<string, unknown>,
-  destinationLabel: string
+  destinationLabel: string,
+  serverComputedPending = false
 ): void {
   for (const field of fields) {
     const hasValue = Object.prototype.hasOwnProperty.call(claims, field.key);
-    if (field.required && !hasValue) {
+    // The consent screen does not compute the server's claims (see serverComputedPending).
+    if (
+      field.required &&
+      !hasValue &&
+      !(serverComputedPending && AUTHORIZATION_SERVER_COMPUTED_CLAIMS.has(field.key))
+    ) {
       throw new DestinationProfileReleaseValidationError(
         `Required ${destinationLabel} destination claim is missing: ${field.key}`,
         'required_field_missing',

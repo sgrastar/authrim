@@ -752,8 +752,8 @@ export interface Env extends LogIcebergSettingsEnv {
   // ============================================================
   // RBAC Configuration
   // ============================================================
-  RBAC_ID_TOKEN_CLAIMS?: string; // Default: "roles,user_type,org_id,plan,org_type", "none" to skip
-  RBAC_ACCESS_TOKEN_CLAIMS?: string; // Default: "roles,org_id,org_type", "none" to skip
+  RBAC_ID_TOKEN_CLAIMS?: string; // Default: "roles,groups,permissions,user_type", "none" to skip
+  RBAC_ACCESS_TOKEN_CLAIMS?: string; // Default: "roles,groups", "none" to skip
   RBAC_CACHE_TTL?: string; // Cache TTL in seconds (default: 600)
   RBAC_CACHE_VERSION?: string; // Cache version for invalidation (default: 1)
 

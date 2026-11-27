@@ -236,6 +236,7 @@ export * from './services/active-access-token-protected-resource';
 export * from './services/lookup-directory';
 export * from './services/directory-auth';
 export * from './services/directory-connector-fleet';
+export * from './services/disclosed-server-claims';
 export * from './services/oidc-identity-mapping';
 export * from './services/introspection-identity-mapping';
 export * from './services/information-release-consent';

@@ -97,6 +97,27 @@ describe('access token permissions', () => {
     expect(accessTokenClaims().authrim_resource_permissions).toEqual(['doc:1:read', 'doc:2:read']);
   });
 
+  it('never lets a custom claim set the ID-level resource permissions', async () => {
+    mocks.isCustomClaimsEnabled.mockResolvedValue(true);
+    mocks.createTokenClaimEvaluator.mockReturnValue({
+      evaluate: vi.fn().mockResolvedValue({
+        claims_to_add: { authrim_resource_permissions: ['doc:9:admin'] },
+        claim_overrides: [],
+      }),
+    });
+    await exchange();
+    expect(accessTokenClaims().authrim_resource_permissions).toBeUndefined();
+    mocks.isIdLevelPermissionsEnabled.mockResolvedValue(true);
+    mocks.getEmbeddingLimits.mockResolvedValue({
+      max_embedded_permissions: 50,
+      max_resource_permissions: 5,
+      max_custom_claims: 20,
+    });
+    mocks.evaluateIdLevelPermissions.mockResolvedValue(['doc:1:read']);
+    await exchange();
+    expect(accessTokenClaims().authrim_resource_permissions).toEqual(['doc:1:read']);
+  });
+
   it('embeds every ID-level permission at the limit', async () => {
     mocks.isIdLevelPermissionsEnabled.mockResolvedValue(true);
     mocks.getEmbeddingLimits.mockResolvedValue({
@@ -134,6 +155,68 @@ describe('access token permissions', () => {
     expect(claims.tier).toBe('gold');
     expect(claims.scope).toBe('api:read');
     expect(claims.sub).not.toBe('forged');
+  });
+
+  it('never lets a custom claim replace a server-computed authorization claim', async () => {
+    mocks.isCustomClaimsEnabled.mockResolvedValue(true);
+    const evaluate = vi.fn().mockResolvedValue({
+      claims_to_add: {
+        tier: 'gold',
+        authrim_roles: ['admin'],
+        authrim_groups: [{ id: 'g-forged', key: 'forged', name: 'Forged', kind: 'static' }],
+        authrim_scoped_roles: [{ name: 'admin', scope: 'global' }],
+      },
+      claim_overrides: [],
+    });
+    mocks.createTokenClaimEvaluator.mockReturnValue({ evaluate });
+    const groups = [{ id: 'g-1', key: 'staff', name: 'Staff', kind: 'static' }];
+    mocks.getAccessTokenRBACClaims.mockResolvedValue({
+      authrim_roles: ['member'],
+      authrim_groups: groups,
+    });
+    await exchange();
+    const claims = accessTokenClaims();
+    expect(claims.tier).toBe('gold');
+    expect(claims.authrim_roles).toEqual(['member']);
+    expect(claims.authrim_groups).toEqual(groups);
+    expect(claims.authrim_scoped_roles).toBeUndefined();
+  });
+});
+
+describe('SAO rules on server-computed claims in the ID token', () => {
+  const groups = [{ id: 'g-1', key: 'staff', name: 'Staff', kind: 'static' }];
+  const abortOnGroups = JSON.stringify({
+    id_token: {},
+    _asc: {
+      sao: {
+        id_token: [
+          { loc: '/authrim_groups/0/key', method: 'simple', value: 'staff', else: 'abort' },
+        ],
+      },
+    },
+  });
+  const withRequest = () => ({
+    ...createAuthCodeData({ scope: 'openid', claims: abortOnGroups }),
+    claimsRequestProtected: true,
+  });
+
+  it('answers the same for a person with groups and one without when the app has no profile', async () => {
+    mocks.getIDTokenRBACClaims.mockResolvedValue({ authrim_groups: groups });
+    const withGroups = await exchange(withRequest());
+    mocks.getIDTokenRBACClaims.mockResolvedValue({});
+    const withoutGroups = await exchange(withRequest());
+    // The rule sees no groups either way: it aborts for both.
+    expect(withGroups.response.status).toBe(400);
+    expect(withGroups.response.status).toBe(withoutGroups.response.status);
+    expect(withGroups.body).toEqual(withoutGroups.body);
+  });
+
+  it('issues the ID token as before when no claims request is made', async () => {
+    mocks.getIDTokenRBACClaims.mockResolvedValue({ authrim_groups: groups });
+    const { response } = await exchange(createAuthCodeData({ scope: 'openid' }));
+    expect(response.status).toBe(200);
+    const idClaims = mocks.createIDToken.mock.calls[0][0] as Record<string, unknown>;
+    expect(idClaims).toMatchObject({ aud: client.client_id });
   });
 });
 

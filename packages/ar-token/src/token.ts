@@ -174,6 +174,8 @@ import {
   validateRegisteredClientAuthenticationMethod,
   parseTrustedIssuers,
   getIDTokenRBACClaims,
+  resolveDisclosedServerClaims,
+  RESERVED_CLAIMS,
   getAccessTokenRBACClaims,
   evaluatePermissionEmbeddingForScope,
   isPolicyEmbeddingEnabled,
@@ -3229,7 +3231,13 @@ async function handleAuthorizationCodeGrant(
 
       // Evaluate for access token
       const result = await evaluator.evaluate(claimContext, 'access');
-      customClaims = result.claims_to_add;
+      // The evaluator already refuses reserved names; filter again so a rule can never carry a
+      // server-computed authorization claim (authrim_roles, authrim_groups, ...) into the token.
+      customClaims = Object.fromEntries(
+        Object.entries(result.claims_to_add).filter(
+          ([name]) => !(RESERVED_CLAIMS as readonly string[]).includes(name)
+        )
+      );
 
       // Log overrides for audit
       if (result.claim_overrides.length > 0) {
@@ -3267,10 +3275,11 @@ async function handleAuthorizationCodeGrant(
     // Phase 8.2: Custom Claims (dynamic via [key: string]: unknown)
     [key: string]: unknown;
   } = {
-    // Phase 1 RBAC: Add RBAC claims to access token
-    ...accessTokenRBACClaims,
     // Phase 8.2: Add custom claims from rule evaluation
     ...customClaims,
+    // Phase 1 RBAC: the server-computed authorization claims are assigned after the custom claims,
+    // so no rule can replace authrim_roles / authrim_groups / authrim_scoped_*.
+    ...accessTokenRBACClaims,
     // Protocol claims are assigned last so no evaluated or derived claim can replace the grant.
     iss: getRequestIssuer(c),
     sub: authCodeData.sub,
@@ -3614,11 +3623,29 @@ async function handleAuthorizationCodeGrant(
             authCodeData.sub
           )
         : undefined;
+      // Only the server-computed claims the app's Destination Profile discloses for the ID token
+      // (and the granted scopes allow) are handed to the SAO rules, as deep copies: an abort or an
+      // omit cannot tell the app what its profile does not release. The others are left out of
+      // this evaluation; the release below applies the profile to the claims as before.
+      const saoInitialClaims: Record<string, unknown> = { ...idTokenClaims };
+      for (const name of Object.keys(idTokenRBACClaims)) delete saoInitialClaims[name];
+      Object.assign(
+        saoInitialClaims,
+        await resolveDisclosedServerClaims({
+          env: c.env,
+          tenantId,
+          clientId: client_id,
+          selector: clientMetadata.identity_mapping,
+          surface: 'id_token',
+          grantedScopes: grantedIdTokenScopes,
+          claims: idTokenRBACClaims,
+        })
+      );
       const requestedIdTokenClaims = evaluateClaimsForTarget({
         target: 'id_token',
         ...(subjectValue !== undefined ? { subjectValue } : {}),
         claimsRequest: parsedClaimsRequest.request,
-        initialClaims: idTokenClaims,
+        initialClaims: saoInitialClaims,
         availableClaims: {
           ...availableClaims,
           ...(assuranceClaims.eduperson_assurance

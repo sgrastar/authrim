@@ -378,6 +378,16 @@ export interface RBACTokenClaims {
   authrim_scoped_permissions?: TokenScopedPermission[];
   /** Organization context for acting as/on behalf of (Phase 2) */
   authrim_org_context?: OrgContext;
+  /** The subject's effective groups (direct memberships and their ancestors, active only) */
+  authrim_groups?: TokenGroup[];
+}
+
+/** A group in the authrim_groups claim */
+export interface TokenGroup {
+  id: string;
+  key: string;
+  name: string;
+  kind: string;
 }
 
 /**
@@ -386,6 +396,8 @@ export interface RBACTokenClaims {
  */
 export type IDTokenClaimKey =
   | 'roles'
+  | 'groups'
+  | 'permissions'
   | 'scoped_roles'
   | 'user_type'
   | 'org_id'
@@ -401,6 +413,7 @@ export type IDTokenClaimKey =
  */
 export type AccessTokenClaimKey =
   | 'roles'
+  | 'groups'
   | 'scoped_roles'
   | 'org_id'
   | 'org_type'
@@ -412,13 +425,12 @@ export type AccessTokenClaimKey =
  */
 export const DEFAULT_ID_TOKEN_CLAIMS: IDTokenClaimKey[] = [
   'roles',
+  'groups',
+  'permissions',
   'user_type',
-  'org_id',
-  'plan',
-  'org_type',
 ];
 
-export const DEFAULT_ACCESS_TOKEN_CLAIMS: AccessTokenClaimKey[] = ['roles', 'org_id', 'org_type'];
+export const DEFAULT_ACCESS_TOKEN_CLAIMS: AccessTokenClaimKey[] = ['roles', 'groups'];
 
 // =============================================================================
 // Default Role Names

@@ -310,6 +310,13 @@ export const BUILT_IN_SYSTEM_IDENTITY_SOURCES: ReadonlyArray<{
     path: 'organization_name',
     classification: 'internal',
   },
+  {
+    // The keys of the person's effective groups (a list), from the canonical memberships.
+    catalogEntryId: 'system.identity.member_of',
+    namespace: 'authrim.profile',
+    path: 'memberOf',
+    classification: 'internal',
+  },
 ];
 
 /**

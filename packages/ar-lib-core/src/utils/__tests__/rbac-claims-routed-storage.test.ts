@@ -4,8 +4,10 @@ import type { DatabaseAdapter } from '../../db/adapter';
 import { sqliteAdapter } from '../../repositories/__tests__/sqlite-core-schema';
 import type { TenantRBACDatabases } from '../../services/tenant-rbac';
 import {
+  extractIDTokenClaimsFromCache,
   getAccessTokenRBACClaims,
   getCompositeRBACCache,
+  getIDTokenRBACClaims,
   getIDTokenRBACClaimsConfigurable,
   getUserRBACClaims,
   resolveAllOrganizations,
@@ -174,7 +176,7 @@ describe('RBAC claims across the metadata and account databases', () => {
 
   it('builds the token claims from both databases', async () => {
     await expect(getUserRBACClaims(dbs, 'user-1', 'tenant-a')).resolves.toEqual({
-      authrim_roles: ['admin', 'editor', 'viewer'],
+      authrim_roles: ['admin', 'viewer'],
       authrim_user_type: 'end_user',
       authrim_org_id: 'org-1',
       authrim_plan: 'professional',
@@ -183,7 +185,7 @@ describe('RBAC claims across the metadata and account databases', () => {
     await expect(
       getIDTokenRBACClaimsConfigurable(dbs, 'user-1', 'roles,org_name,orgs', 'tenant-a')
     ).resolves.toEqual({
-      authrim_roles: ['admin', 'editor', 'viewer'],
+      authrim_roles: ['admin', 'viewer'],
       authrim_org_name: 'Acme',
       authrim_orgs: [
         { id: 'org-1', name: 'Acme', type: 'enterprise', is_primary: true },
@@ -196,17 +198,28 @@ describe('RBAC claims across the metadata and account databases', () => {
         claimsConfig: 'roles,org_id,permissions',
       })
     ).resolves.toEqual({
-      authrim_roles: ['admin', 'editor', 'viewer'],
+      authrim_roles: ['admin', 'viewer'],
       authrim_org_id: 'org-1',
       authrim_permissions: ['documents:read', 'users:read', 'users:write'],
     });
     await expect(getCompositeRBACCache(dbs, 'user-1', { tenantId: 'tenant-a' })).resolves.toEqual(
       expect.objectContaining({
-        roles: ['admin', 'editor', 'viewer'],
+        roles: ['admin', 'viewer'],
         org_id: 'org-1',
         org_name: 'Acme',
       })
     );
+  });
+
+  it('gives the default ID token claims, the composite cache default, when no config is set', async () => {
+    const claims = await getIDTokenRBACClaims(dbs, 'user-1', { tenantId: 'tenant-a' });
+    expect(claims).toEqual(
+      extractIDTokenClaimsFromCache(
+        await getCompositeRBACCache(dbs, 'user-1', { tenantId: 'tenant-a' })
+      )
+    );
+    expect(claims.authrim_permissions).toEqual(['documents:read', 'users:read', 'users:write']);
+    expect(claims).not.toHaveProperty('authrim_org_id');
   });
 
   it('gives nothing from the metadata database alone (as one database for both)', async () => {

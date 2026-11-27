@@ -118,8 +118,13 @@ describe('destination profile field consent', () => {
           schema_json: JSON.stringify({ claims }),
         }),
       });
-    const release = (claims: unknown[], grantedScopes: string[]) =>
+    const release = (
+      claims: unknown[],
+      grantedScopes: string[],
+      extra: { serverComputedPending?: boolean } = {}
+    ) =>
       filterOidcClaimsByDestinationConsent({
+        ...extra,
         // The user has agreed to release every field, so the profile and the scopes decide.
         coreAdapter: adapter({
           queryOne: vi.fn().mockResolvedValue({
@@ -142,6 +147,31 @@ describe('destination profile field consent', () => {
       await expect(
         release([{ claimName: 'sub', required: true }], ['openid', 'eduperson_assurance'])
       ).resolves.toEqual({ sub: 'user_1' });
+    });
+
+    it('does not fail the consent-candidate computation for a required server-computed claim it has not computed', async () => {
+      const claims = [
+        { claimName: 'sub', required: true },
+        { claimName: 'authrim_groups', required: true },
+        { claimName: 'authrim_roles', required: true },
+      ];
+      await expect(release(claims, ['openid'], { serverComputedPending: true })).resolves.toEqual({
+        sub: 'user_1',
+      });
+    });
+
+    it('keeps the required check strict for a real release', async () => {
+      for (const name of ['authrim_user_type', 'authrim_groups']) {
+        await expect(
+          release(
+            [
+              { claimName: 'sub', required: true },
+              { claimName: name, required: true },
+            ],
+            ['openid']
+          )
+        ).rejects.toMatchObject({ code: 'required_field_missing' });
+      }
     });
 
     it('needs the eduperson_assurance scope for a listed eduperson_assurance field that names none', async () => {

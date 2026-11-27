@@ -176,6 +176,13 @@ export const RESERVED_CLAIMS = [
   'sid',
   'token_use',
   'authrim_account_lifecycle',
+  // Computed from the subject's effective roles and groups: never stated by a rule.
+  'authrim_roles',
+  'authrim_scoped_roles',
+  'authrim_permissions',
+  'authrim_scoped_permissions',
+  'authrim_resource_permissions',
+  'authrim_groups',
   // The grant a token was issued under: written by the authorization server only.
   'authrim_consent_generation',
   'authrim_release',

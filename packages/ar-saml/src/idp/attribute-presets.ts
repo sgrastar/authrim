@@ -169,14 +169,16 @@ export function buildEnterpriseSaaSAttributeReleaseRules(
     claimRule(ENTERPRISE_SAAS_ATTRIBUTES.displayName, 'name'),
     customClaimRule(ENTERPRISE_SAAS_ATTRIBUTES.givenName, options.givenNameClaim ?? 'givenName'),
     customClaimRule(ENTERPRISE_SAAS_ATTRIBUTES.surname, options.surnameClaim ?? 'surname'),
-    customClaimRule(
+    // The canonical memberships (group keys) by default; a tenant that keeps its own groups in a
+    // custom claim names it with groupsClaim.
+    (options.groupsClaim ? customClaimRule : claimRule)(
       {
         ...ENTERPRISE_SAAS_ATTRIBUTES.memberOf,
         name: options.groupsAttributeName ?? ENTERPRISE_SAAS_ATTRIBUTES.memberOf.name,
         friendlyName:
           options.groupsFriendlyName ?? ENTERPRISE_SAAS_ATTRIBUTES.memberOf.friendlyName,
       },
-      options.groupsClaim ?? 'groups',
+      options.groupsClaim ?? 'memberOf',
       options.groupsRequired ?? false
     ),
   ];

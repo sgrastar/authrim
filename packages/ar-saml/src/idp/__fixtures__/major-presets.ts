@@ -11,8 +11,10 @@ export const enterpriseSaaSSubjectFixture: SAMLAttributeSubject = {
   customClaims: {
     givenName: 'Employee',
     surname: 'Example',
-    groups: ['finance', 'workspace-admins'],
+    // Not the groups released: memberOf (the canonical memberships) is.
+    groups: ['legacy-custom-claim'],
   },
+  memberOf: ['finance', 'workspace-admins'],
 };
 
 export const enterpriseSaaSAttributeReleaseConfigFixture: SAMLAttributeReleaseConfig = {
@@ -22,7 +24,7 @@ export const enterpriseSaaSAttributeReleaseConfigFixture: SAMLAttributeReleaseCo
     ['name', 'authrim.profile', 'name', 'displayName', 'urn:oid:2.16.840.1.113730.3.1.241'],
     ['givenName', 'authrim.custom_claims', 'givenName', 'givenName', 'urn:oid:2.5.4.42'],
     ['surname', 'authrim.custom_claims', 'surname', 'sn', 'urn:oid:2.5.4.4'],
-    ['groups', 'authrim.custom_claims', 'groups', 'memberOf', 'urn:oid:1.2.840.113556.1.2.102'],
+    ['groups', 'authrim.profile', 'memberOf', 'memberOf', 'urn:oid:1.2.840.113556.1.2.102'],
   ]),
 };
 

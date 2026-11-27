@@ -56,6 +56,7 @@ import {
   readSessionProfile,
   sessionProfileSso,
   createAccountAuthContextFromHono,
+  resolveDisclosedServerClaims,
   createPIIContextFromHono,
   getTenantMetadataContextFromHono,
   resolveAccountDataContextFromHono,
@@ -174,6 +175,7 @@ import type { FAPI2MessageSigningConfig } from './fapi-message-signing';
 import { timeAuthRequestDiagnosticOperation } from './request-diagnostics';
 import { isSelfRegistrationAvailable } from './authentication-method-settings';
 import { computeReleaseCandidates } from './release-candidates';
+import { resolveDirectIssuanceRBACClaims } from './authorize-rbac-claims';
 
 const DEFAULT_HANDOFF_ARTIFACT_TTL_SECONDS = 60;
 const MIN_HANDOFF_ARTIFACT_TTL_SECONDS = 30;
@@ -4948,6 +4950,15 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     }
   }
 
+  // The RBAC claims of the tokens issued here, as the token endpoint computes them.
+  const { accessTokenRBACClaims, idTokenRBACClaims } = await resolveDirectIssuanceRBACClaims(
+    c,
+    tenantId,
+    sub,
+    { includesToken, includesIdToken },
+    log
+  );
+
   // Generate access token if needed (for implicit and hybrid flows)
   let accessToken: string | undefined;
   let accessTokenJti: string | undefined;
@@ -4990,6 +5001,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       );
       const tokenResult = await createAccessToken(
         {
+          // The server-computed authorization claims (roles, groups, ...), before the protocol
+          // claims so those are assigned last, as at the token endpoint.
+          ...accessTokenRBACClaims,
           iss: issuer,
           aud: issuer, // Access token audience should be issuer (resource server), not client_id
           scope: validScope,
@@ -5087,6 +5101,21 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         c_hash: cHash,
         at_hash: atHash,
         ...(oidcSid && { sid: oidcSid }), // OIDC Session Management: derived RP-specific session identifier
+        // The server-computed authorization claims (roles, groups, ...): only those the app's
+        // Destination Profile lists, so an SAO rule below cannot tell what it does not release
+        // (deep copies, as the evaluator edits values in place and the cache holds the originals).
+        ...(await resolveDisclosedServerClaims({
+          env: c.env,
+          tenantId,
+          clientId: validClientId,
+          selector: clientMetadata.identity_mapping,
+          surface: 'id_token',
+          grantedScopes: validScope.split(' ').filter(Boolean),
+          ...(includesIdToken && !includesToken && !includesCode
+            ? { alsoSurfaces: ['userinfo' as const] }
+            : {}),
+          claims: idTokenRBACClaims,
+        })),
       };
 
       // Add acr claim if acr_values was requested (OIDC Core 2: SHOULD return acr)

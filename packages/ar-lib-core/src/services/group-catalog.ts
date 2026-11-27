@@ -112,6 +112,6 @@ export async function updateGroup(
     );
     if (!result.rowsAffected) throw new Error('group_not_found_or_invalid_parent');
   });
-  if (cache && (input.parentGroupId !== undefined || input.lifecycleState !== undefined))
-    await bumpTenantRBACCacheVersion(cache, tenantId);
+  // authrim_groups carries the name and kind, so any update changes cached claims.
+  if (cache) await bumpTenantRBACCacheVersion(cache, tenantId);
 }

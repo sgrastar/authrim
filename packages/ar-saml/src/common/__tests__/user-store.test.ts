@@ -5,6 +5,7 @@ const mocked = vi.hoisted(() => ({
   resolveCustomClaimRuntimeSourcesFromEnv: vi.fn(),
   resolveAccountDataContext: vi.fn(),
   resolveAccountDataContextByIdentifier: vi.fn(),
+  resolveTenantMetadataContext: vi.fn(),
 }));
 
 vi.mock('@authrim/ar-lib-core', async () => {
@@ -15,6 +16,7 @@ vi.mock('@authrim/ar-lib-core', async () => {
     resolveCustomClaimRuntimeSourcesFromEnv: mocked.resolveCustomClaimRuntimeSourcesFromEnv,
     resolveAccountDataContext: mocked.resolveAccountDataContext,
     resolveAccountDataContextByIdentifier: mocked.resolveAccountDataContextByIdentifier,
+    resolveTenantMetadataContext: mocked.resolveTenantMetadataContext,
   };
 });
 
@@ -59,12 +61,18 @@ describe('SAML user-store helpers', () => {
       nonPiiDb: createMockAdapter(),
       piiDb: null,
     });
+    mocked.resolveTenantMetadataContext.mockRejectedValue(new Error('no metadata in this test'));
   });
 
   function createCanonicalCoreAdapter(
     tenantId: string,
     userId: string,
-    options: { emailRef?: string; nameRef?: string; customAttributesJson?: string | null } = {}
+    options: {
+      emailRef?: string;
+      nameRef?: string;
+      customAttributesJson?: string | null;
+      memberGroupIds?: string[];
+    } = {}
   ): DatabaseAdapter {
     const coreAdapter = createMockAdapter({
       queryOne: (sql, params) => {
@@ -163,6 +171,9 @@ describe('SAML user-store helpers', () => {
             });
           }
           return rows;
+        }
+        if (sql.includes('FROM group_memberships')) {
+          return (options.memberGroupIds ?? []).map((group_id) => ({ group_id }));
         }
         if (sql.includes('FROM contact_points')) {
           return options.emailRef
@@ -301,6 +312,55 @@ describe('SAML user-store helpers', () => {
         piiEntitlement: ['premium'],
       },
     });
+  });
+
+  it('releases memberOf as the keys of the effective groups, ancestors included', async () => {
+    const coreAdapter = createCanonicalCoreAdapter('tenant-g', 'user-g', {
+      memberGroupIds: ['g-child'],
+    });
+    mockAccountRoute(coreAdapter, createMockAdapter());
+    const nodes: Record<string, Record<string, unknown>> = {
+      'g-child': {
+        id: 'g-child',
+        parent_group_id: 'g-parent',
+        lifecycle_state: 'active',
+        group_key: 'staff.tokyo',
+        display_name: 'Tokyo staff',
+        kind: 'static',
+      },
+      'g-parent': {
+        id: 'g-parent',
+        parent_group_id: null,
+        lifecycle_state: 'active',
+        group_key: 'staff',
+        display_name: 'Staff',
+        kind: 'static',
+      },
+    };
+    const metadata = createMockAdapter({
+      query: (sql, params) => {
+        if (!sql.includes('FROM "groups"')) return [];
+        // The binds are the tenant, then the ids asked for.
+        return (params.slice(1) as string[]).flatMap((id) => (nodes[id] ? [nodes[id]] : []));
+      },
+    });
+    mocked.resolveTenantMetadataContext.mockResolvedValue({
+      tenantId: 'tenant-g',
+      coreDb: metadata,
+    });
+
+    const info = await getSamlUserInfoById({ DB: {} } as Env, 'tenant-g', 'user-g');
+    expect(info?.memberOf).toEqual(['staff', 'staff.tokyo']);
+  });
+
+  it('leaves memberOf out for a person with no groups', async () => {
+    mockAccountRoute(createCanonicalCoreAdapter('tenant-g', 'user-h'), createMockAdapter());
+    mocked.resolveTenantMetadataContext.mockResolvedValue({
+      tenantId: 'tenant-g',
+      coreDb: createMockAdapter(),
+    });
+    const info = await getSamlUserInfoById({ DB: {} } as Env, 'tenant-g', 'user-h');
+    expect(info).not.toHaveProperty('memberOf');
   });
 
   it('returns active SAML users without an email address', async () => {

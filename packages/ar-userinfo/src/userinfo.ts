@@ -38,6 +38,8 @@ import {
   resolveAccountDataContextFromHono,
   resolveIDTokenSigningPolicy,
   resolveAssuranceClaims,
+  resolveDisclosedServerClaims,
+  loadSubjectServerClaims,
 } from '@authrim/ar-lib-core';
 import {
   resolveUserInfoSigningAlgorithm,
@@ -337,11 +339,43 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
   const subjectValue = claimsRequestRestrictsSub(claimsRequest, 'userinfo')
     ? recordedSub
     : undefined;
+  // Authorization claims computed from the subject's effective roles and groups, under the tenant's
+  // ID token claim settings. They go through the Destination Profile like the other claims (a
+  // profile that hides them hides them; one that requires them gets them), as server-computed
+  // values: no claims parameter or mapping can supply or replace them (see below). Computed before
+  // the claims are evaluated, so an SAO omit or abort rule on them sees the real value.
+  // Only the claims the app's Destination Profile lists for UserInfo are handed to the evaluator,
+  // as a deep copy (the evaluator edits values in place, and the cache holds the originals): an
+  // SAO rule outcome then cannot tell the app what its profile does not release.
+  let serverClaims: Record<string, unknown> = {};
+  try {
+    serverClaims = await resolveDisclosedServerClaims({
+      env: c.env,
+      tenantId,
+      clientId: client_id,
+      selector: clientMetadata.identity_mapping,
+      surface: 'userinfo',
+      grantedScopes: scopes,
+      claims: await loadSubjectServerClaims(
+        c.env,
+        {
+          metadata: createAuthContextFromHono(c, tenantId).coreAdapter,
+          account: createAccountAuthContextFromHono(c, tenantId).coreAdapter,
+        },
+        tenantId,
+        sub
+      ),
+    });
+  } catch (error) {
+    // The same as at the token endpoint: the response goes on without claims it cannot compute.
+    log.error('Failed to read RBAC claims for UserInfo', { client_id }, error as Error);
+  }
+
   const claimEvaluation = evaluateClaimsForTarget({
     target: 'userinfo',
     ...(subjectValue !== undefined ? { subjectValue } : {}),
     claimsRequest,
-    initialClaims: { sub },
+    initialClaims: { sub, ...serverClaims },
     availableClaims: {
       ...userData,
       ...(assuranceClaims.eduperson_assurance
@@ -366,6 +400,10 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
   // Released with the other claims, so the app's identity mapping, Destination Profile and
   // attribute release consent hold it to the same rules.
   const userClaims: Record<string, unknown> = claimEvaluation.claims;
+  // A computed claim an SAO rule omitted stays omitted.
+  for (const name of Object.keys(serverClaims)) {
+    if (!(name in userClaims)) delete serverClaims[name];
+  }
 
   // The optional fields of the app's Destination Profile among the claims (see below).
   const releaseOptional = new Set<string>();
@@ -392,9 +430,10 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
         // The request (its scope, or a claims parameter the client's policy lets through) allowed
         // eduperson_assurance already, as authorize judges it for an ID token: a Destination
         // Profile field that names no scope does not ask for it again.
-        ...(assuranceClaims.eduperson_assurance
-          ? { authorizedClaimNames: ['eduperson_assurance'] }
-          : {}),
+        authorizedClaimNames: [
+          ...(assuranceClaims.eduperson_assurance ? ['eduperson_assurance'] : []),
+          ...Object.keys(serverClaims),
+        ],
         // The mapping reads the user's attributes, not only what these scopes release, so it
         // derives the same sub as the ID token does.
         sourceAttributes: userData,
@@ -409,6 +448,12 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
       // The response names the user as the token does: the mapping, given the account, derives
       // today's sub, which a later change of the app's configuration may have moved.
       if ('sub' in userClaims) userClaims.sub = recordedSub;
+      // The server-computed values stand: what the profile let through is the computed value, and
+      // nothing the mapping wrote under these names is released.
+      for (const name of ['authrim_roles', 'authrim_groups']) {
+        if (name in serverClaims && name in userClaims) userClaims[name] = serverClaims[name];
+        else delete userClaims[name];
+      }
     } catch (mappingError) {
       failureContext.code ??=
         mappingError instanceof OIDCIdentityMappingRuntimeError

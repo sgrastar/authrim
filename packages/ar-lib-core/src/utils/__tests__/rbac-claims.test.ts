@@ -42,6 +42,7 @@ function cacheFixture(overrides: Partial<CompositeRBACCache> = {}): CompositeRBA
     roles: ['admin'],
     scoped_roles: [{ name: 'editor', scope: 'organization', scopeTarget: 'org-1' }],
     permissions: ['users:read'],
+    groups: [{ id: 'g-1', key: 'staff', name: 'Staff', kind: 'static' }],
     organizations: [{ id: 'org-1', name: 'Acme', type: 'enterprise', is_primary: true }],
     user_type: 'admin',
     plan: 'professional',
@@ -104,10 +105,12 @@ describe('RBAC token claims', () => {
   it('extracts only configured ID-token claims from a composite cache', () => {
     const all = extractIDTokenClaimsFromCache(
       cacheFixture(),
-      'roles, scoped_roles, user_type, org_id, org_name, plan, org_type, orgs, relationships_summary'
+      'roles, groups, permissions, scoped_roles, user_type, org_id, org_name, plan, org_type, orgs, relationships_summary'
     );
     expect(all).toEqual({
       authrim_roles: ['admin'],
+      authrim_groups: [{ id: 'g-1', key: 'staff', name: 'Staff', kind: 'static' }],
+      authrim_permissions: ['users:read'],
       authrim_scoped_roles: [{ name: 'editor', scope: 'organization', scopeTarget: 'org-1' }],
       authrim_user_type: 'admin',
       authrim_org_id: 'org-1',
@@ -121,11 +124,20 @@ describe('RBAC token claims', () => {
       },
     });
     expect(extractIDTokenClaimsFromCache(cacheFixture(), 'none')).toEqual({});
+    // The defaults: roles, groups, permissions and the user type; no organisation claim.
+    expect(extractIDTokenClaimsFromCache(cacheFixture())).toEqual({
+      authrim_roles: ['admin'],
+      authrim_groups: [{ id: 'g-1', key: 'staff', name: 'Staff', kind: 'static' }],
+      authrim_permissions: ['users:read'],
+      authrim_user_type: 'admin',
+    });
   });
 
   it('omits empty optional ID-token data while retaining requested user type', () => {
     const empty = cacheFixture({
       roles: [],
+      groups: [],
+      permissions: [],
       scoped_roles: [],
       organizations: [],
       org_id: null,
@@ -137,7 +149,7 @@ describe('RBAC token claims', () => {
     expect(
       extractIDTokenClaimsFromCache(
         empty,
-        'roles,scoped_roles,user_type,org_id,org_name,plan,org_type,orgs,relationships_summary'
+        'roles,groups,permissions,scoped_roles,user_type,org_id,org_name,plan,org_type,orgs,relationships_summary'
       )
     ).toEqual({ authrim_user_type: 'admin' });
   });
@@ -146,26 +158,33 @@ describe('RBAC token claims', () => {
     expect(
       extractAccessTokenClaimsFromCache(
         cacheFixture(),
-        'roles,scoped_roles,org_id,org_type,permissions,org_context'
+        'roles,groups,scoped_roles,org_id,org_type,permissions,org_context'
       )
     ).toEqual({
       authrim_roles: ['admin'],
+      authrim_groups: [{ id: 'g-1', key: 'staff', name: 'Staff', kind: 'static' }],
       authrim_scoped_roles: [{ name: 'editor', scope: 'organization', scopeTarget: 'org-1' }],
       authrim_org_id: 'org-1',
       authrim_org_type: 'enterprise',
       authrim_permissions: ['users:read'],
     });
     expect(extractAccessTokenClaimsFromCache(cacheFixture(), 'none')).toEqual({});
+    // The defaults: roles and groups only.
+    expect(extractAccessTokenClaimsFromCache(cacheFixture())).toEqual({
+      authrim_roles: ['admin'],
+      authrim_groups: [{ id: 'g-1', key: 'staff', name: 'Staff', kind: 'static' }],
+    });
     expect(
       extractAccessTokenClaimsFromCache(
         cacheFixture({
           roles: [],
+          groups: [],
           scoped_roles: [],
           permissions: [],
           org_id: null,
           org_type: null,
         }),
-        'roles,scoped_roles,org_id,org_type,permissions'
+        'roles,groups,scoped_roles,org_id,org_type,permissions'
       )
     ).toEqual({});
   });
@@ -248,10 +267,10 @@ describe('RBAC token claims', () => {
     expect(cache.get.mock.calls.map(([key]) => key)).toEqual([
       'rbac:v2:tenant-version:tenant-a',
       'rbac:v2:subject-version:tenant-a:user-1',
-      expect.stringContaining('rbac:v2:tenant-a:id:user-1:'),
+      expect.stringContaining('rbac:v3:tenant-a:id:user-1:'),
       'rbac:v2:tenant-version:tenant-a',
       'rbac:v2:subject-version:tenant-a:user-1',
-      expect.stringContaining('rbac:v2:tenant-a:access:user-1:'),
+      expect.stringContaining('rbac:v3:tenant-a:access:user-1:'),
     ]);
     expect(cache.put).not.toHaveBeenCalled();
   });
@@ -260,7 +279,7 @@ describe('RBAC token claims', () => {
     const one = adapter(() => []);
     const cache = {
       get: vi.fn(async (key: string) =>
-        key.startsWith('rbac:v2:')
+        key.startsWith('rbac:v3:')
           ? null
           : JSON.stringify({ authrim_permissions: ['reports:write'] })
       ),
@@ -273,16 +292,16 @@ describe('RBAC token claims', () => {
         claimsConfig: 'permissions',
       } as never)
     ).resolves.toEqual({});
-    expect(cache.get).toHaveBeenCalledWith(expect.stringMatching(/^rbac:v2:tenant-a:access:/));
+    expect(cache.get).toHaveBeenCalledWith(expect.stringMatching(/^rbac:v3:tenant-a:access:/));
   });
 
   it('uses a versioned composite cache entry without database access', async () => {
     const valid = cacheFixture();
     const validCache = {
       get: vi.fn(async (key: string) =>
-        key.includes(':tenant-version:')
+        key.includes('tenant-version:')
           ? 'gen-a'
-          : key.includes(':subject-version:')
+          : key.includes('subject-version:')
             ? 'gen-s'
             : JSON.stringify({
                 generation: '1:gen-a:gen-s',
