@@ -128,6 +128,10 @@ describe('standard Admin roles', () => {
     expect(hasAdminPermission(support, 'admin:users:unlock')).toBe(true);
     expect(hasAdminPermission(support, 'admin:users:write')).toBe(false);
     expect(hasAdminPermission(viewer, 'admin:audit:read')).toBe(true);
+    // The groups are listed by the roles themselves, not let through by the role permissions.
+    expect(hasAdminPermission(viewer, 'admin:groups:read')).toBe(true);
+    expect(hasAdminPermission(viewer, 'admin:groups:write')).toBe(false);
+    expect(hasAdminPermission(support, 'admin:groups:read')).toBe(false);
   });
 
   it('gives the tenant admin settings writes, ReBAC, IP allow lists and full recipients', () => {
@@ -142,6 +146,8 @@ describe('standard Admin roles', () => {
       'admin:support_ops:actions:approve',
       'admin:admin_users:write',
       'admin:admin_roles:write',
+      'admin:groups:read',
+      'admin:groups:write',
     ]) {
       expect(hasAdminPermission(tenantAdmin, permission), permission).toBe(true);
     }
@@ -156,6 +162,7 @@ describe('migration 054 (ar_ roles)', () => {
   const later = [
     'migrations/admin/d1/025_tenant_admin_saml_dr_bundle.sql',
     'migrations/admin/d1/028_system_logs_permission.sql',
+    'migrations/admin/d1/030_groups_permissions.sql',
   ];
 
   function prepared(): DatabaseSync {
@@ -240,9 +247,40 @@ describe('migration 054 (ar_ roles)', () => {
     // Everything the module has for the role except what the later migrations add.
     expect(permissions).toEqual(
       byName(ADMIN_ROLES.TENANT_ADMIN).permissions.filter(
-        (permission) => !permission.startsWith('admin:system_logs:')
+        (permission) =>
+          !permission.startsWith('admin:system_logs:') && !permission.startsWith('admin:groups:')
       )
     );
+  });
+
+  it('030 gives the roles that hold the role permissions the group ones, once, and leaves the rest alone', () => {
+    const db = prepared();
+    db.exec(sql(migration));
+    for (const path of later.slice(0, 2)) db.exec(sql(path));
+    const before = seeded(db);
+    for (const row of before) expect(row.permissions_json).not.toContain('admin:groups');
+
+    db.exec(sql(later[2]));
+    db.exec(sql(later[2]));
+
+    const after = seeded(db);
+    for (const name of [ADMIN_ROLES.SUPER_ADMIN, ADMIN_ROLES.SUPPORT]) {
+      expect(after.find((row) => row.name === name)).toEqual(
+        before.find((row) => row.name === name)
+      );
+    }
+    const permissionsOf = (rows: Record<string, unknown>[], name: string) =>
+      JSON.parse(rows.find((row) => row.name === name)!.permissions_json as string) as string[];
+    expect(permissionsOf(after, ADMIN_ROLES.TENANT_ADMIN)).toEqual([
+      ...byName(ADMIN_ROLES.TENANT_ADMIN).permissions,
+    ]);
+    expect(permissionsOf(after, ADMIN_ROLES.VIEWER)).toEqual([
+      ...byName(ADMIN_ROLES.VIEWER).permissions,
+    ]);
+    const added = (name: string) =>
+      permissionsOf(after, name).filter((p) => !permissionsOf(before, name).includes(p));
+    expect(added(ADMIN_ROLES.TENANT_ADMIN)).toEqual(['admin:groups:*']);
+    expect(added(ADMIN_ROLES.VIEWER)).toEqual(['admin:groups:read']);
   });
 
   it('028 gives the tenant admin, support and viewer the system log permission once and leaves the super admin alone', () => {
@@ -266,7 +304,10 @@ describe('migration 054 (ar_ roles)', () => {
       const is = JSON.parse(
         after.find((row) => row.name === name)!.permissions_json as string
       ) as string[];
-      expect(is).toEqual([...byName(name).permissions]);
+      // Everything the module has except what a later migration (030) adds.
+      expect(is).toEqual(
+        byName(name).permissions.filter((permission) => !permission.startsWith('admin:groups:'))
+      );
       return is.filter((permission) => !was.includes(permission));
     };
     expect(added(ADMIN_ROLES.TENANT_ADMIN)).toEqual(['admin:system_logs:*']);

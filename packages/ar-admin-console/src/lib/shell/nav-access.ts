@@ -20,6 +20,8 @@ export interface NavRequirement {
 	settings?: readonly CategoryName[];
 	/** A permission the page needs (`admin:users:read`). */
 	permission?: string;
+	/** Permissions of which the page needs any one (the same rule as the page's own). */
+	anyPermission?: readonly string[];
 	/**
 	 * A capability the platform can turn off for tenants. While it is off the item is left out
 	 * (not greyed out), whatever else the admin may do. For an item that belongs to the capability
@@ -32,13 +34,20 @@ export function navItemLevel(item: NavItem, access: AdminAccess, kind: ScopeKind
 	const requires = item.requires;
 	if (!requires) return 'edit';
 	if (requires.capability && isCapabilityDisabled(access, requires.capability)) return 'none';
-	if (!requires.settings && !requires.permission) return 'edit';
+	if (!requires.settings && !requires.permission && !requires.anyPermission) return 'edit';
 	// In platform scope, a per-tenant item stays listed (its page explains where to set it)
 	// for anyone who can use it in a tenant.
 	const scope = kind === 'platform' && item.platform !== 'tenant' ? 'platform' : 'tenant';
 	const levels: AccessLevel[] = [
 		...(requires.settings ?? []).map((category) => settingsLevel(access, category, scope)),
-		...(requires.permission ? [hasPermission(access, requires.permission) ? 'view' : 'none'] : [])
+		...(requires.permission ? [hasPermission(access, requires.permission) ? 'view' : 'none'] : []),
+		...(requires.anyPermission
+			? [
+					requires.anyPermission.some((permission) => hasPermission(access, permission))
+						? 'view'
+						: 'none'
+				]
+			: [])
 	] as AccessLevel[];
 	return widest(levels);
 }

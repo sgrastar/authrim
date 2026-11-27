@@ -22,6 +22,7 @@ import { deSystemLog } from './system-log/de';
 import { deEmailDeliveries } from './email-deliveries/de';
 import { deLogPlatform } from './log-platform/de';
 import { deTeam } from './team/de';
+import { deAuthz } from './authz/de';
 import { deIpAllowlist } from './ip-allowlist/de';
 import { deAccountPages } from './account-pages/de';
 import { deMachineAccess } from './machine-access/de';
@@ -58,6 +59,7 @@ export const de = {
 	...deEmailDeliveries,
 	...deLogPlatform,
 	...deTeam,
+	...deAuthz,
 	...deIpAllowlist,
 	...deAccountPages,
 	...deMachineAccess,
@@ -91,7 +93,7 @@ export const de = {
 	'nav.platform': 'Plattform',
 	'nav.users.all': 'Alle Benutzer',
 	'nav.users.agents': 'Agenten',
-	'nav.users.serviceGroups': 'Servicegruppen',
+	'nav.users.groups': 'Gruppen',
 	'nav.users.lifecycle': 'Kontoaufbewahrung',
 	'nav.users.sessions': 'Sitzungen',
 	'nav.users.invitations': 'Einladungen',
@@ -100,7 +102,7 @@ export const de = {
 	'nav.access.attributes': 'Attribute',
 	'nav.access.relationships': 'Beziehungen (ReBAC)',
 	'nav.access.policies': 'Richtlinien',
-	'nav.access.simulator': 'Zugriffssimulator',
+	'nav.access.accessCheck': 'Zugriffsprüfung',
 	'nav.apps.all': 'Serviceabläufe',
 	'nav.auth.tokens': 'Token und Protokolle',
 	'nav.apps.apis': 'APIs / Ressourcen',
@@ -132,6 +134,7 @@ export const de = {
 	'nav.set.teamGroups': 'Administratorgruppen',
 	'nav.set.teamRoles': 'Administratorrollen',
 	'nav.set.teamIpAllowlist': 'IP-Beschränkung für Administratoren',
+	'nav.set.authorization': 'Autorisierung',
 	'nav.plat.tenants': 'Mandanten',
 	'nav.plat.releases': 'Steuerungsebene',
 	'nav.plat.scale': 'Skalierung',

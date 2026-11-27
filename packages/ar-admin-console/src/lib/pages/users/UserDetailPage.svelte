@@ -1,9 +1,11 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
-	import { userDetailAccess, type AdminAccess } from '#lib/access/access.js';
+	import { authzAccess, userDetailAccess, type AdminAccess } from '#lib/access/access.js';
 	import { adminAccess } from '#lib/access/admin-access.svelte.js';
 	import type { AdminUserDetail, AdminUsersClient } from '#lib/api/admin-users.js';
 	import { ApiError } from '#lib/api/api-error.js';
+	import type { EndUserGroupsClient } from '#lib/api/end-user-groups.js';
+	import type { EndUserRolesClient } from '#lib/api/end-user-roles.js';
 	import { t } from '#lib/i18n/i18n.svelte.js';
 	import Callout from '#lib/ui/patterns/Callout.svelte';
 	import ConfirmDialog from '#lib/ui/patterns/ConfirmDialog.svelte';
@@ -17,6 +19,7 @@
 	import Page from '#lib/ui/templates/Page.svelte';
 	import type { TimeZoneMode } from '#lib/ui/time/format-time.js';
 	import { toast } from '#lib/ui/toast/toast.svelte.js';
+	import UserAuthzCard from '../authz/UserAuthzCard.svelte';
 	import UserActivityCard from './UserActivityCard.svelte';
 	import UserBasicCard from './UserBasicCard.svelte';
 	import UserLifecycleDialog from './UserLifecycleDialog.svelte';
@@ -48,11 +51,18 @@
 		onopenaudit?: (userId: string) => void;
 		/** Override the zone the unlock time is typed in (tests; normally the admin's choice). */
 		zone?: TimeZoneMode;
+		/** The user's groups and roles (the card is left out without it). */
+		authz?: {
+			groups: EndUserGroupsClient;
+			roles: EndUserRolesClient;
+			groupHref: (groupId: string) => string;
+		};
 	}
 
-	let { client, userId, listHref, access, ondeleted, onopenaudit, zone }: Props = $props();
+	let { client, userId, listHref, access, ondeleted, onopenaudit, zone, authz }: Props = $props();
 
 	const can = $derived(userDetailAccess(access ?? adminAccess.current));
+	const authzCan = $derived(authzAccess(access ?? adminAccess.current));
 
 	let detail = $state<AdminUserDetail | null>(null);
 	let phase = $state<'loading' | 'ready' | 'notFound' | 'forbidden' | 'failed'>('loading');
@@ -214,6 +224,17 @@
 				label={userLabel(user)}
 				canRevoke={can.revokeSessions}
 				{refresh}
+			/>
+		{/if}
+		{#if authz && !detail.restricted}
+			<UserAuthzCard
+				groups={authz.groups}
+				roles={authz.roles}
+				{userId}
+				access={authzCan}
+				groupHref={authz.groupHref}
+				{refresh}
+				{zone}
 			/>
 		{/if}
 		<UserActivityCard {client} {userId} {onopenaudit} {refresh} />

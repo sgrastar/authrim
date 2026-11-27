@@ -43,3 +43,23 @@ describe('navigation items of a capability the platform can turn off', () => {
 		expect(navItemLevel(guarded, noPermission, 'tenant')).toBe('none');
 	});
 });
+
+describe('navigation items any of several permissions opens', () => {
+	const check = item('access-check', {
+		anyPermission: ['admin:roles:read', 'admin:groups:read']
+	});
+	const only = (permission: string): AdminAccess => ({
+		platform: false,
+		roles: [],
+		permissions: [permission]
+	});
+
+	it('shows them with either permission, as the page does', () => {
+		expect(navItemLevel(check, only('admin:roles:read'), 'tenant')).toBe('view');
+		expect(navItemLevel(check, only('admin:groups:read'), 'tenant')).toBe('view');
+	});
+
+	it('leaves them out with neither', () => {
+		expect(navItemLevel(check, only('admin:users:read'), 'tenant')).toBe('none');
+	});
+});

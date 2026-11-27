@@ -22,6 +22,7 @@ import { arSystemLog } from './system-log/ar';
 import { arEmailDeliveries } from './email-deliveries/ar';
 import { arLogPlatform } from './log-platform/ar';
 import { arTeam } from './team/ar';
+import { arAuthz } from './authz/ar';
 import { arIpAllowlist } from './ip-allowlist/ar';
 import { arAccountPages } from './account-pages/ar';
 import { arMachineAccess } from './machine-access/ar';
@@ -58,6 +59,7 @@ export const ar = {
 	...arEmailDeliveries,
 	...arLogPlatform,
 	...arTeam,
+	...arAuthz,
 	...arIpAllowlist,
 	...arAccountPages,
 	...arMachineAccess,
@@ -91,7 +93,7 @@ export const ar = {
 	'nav.platform': 'المنصة',
 	'nav.users.all': 'كل المستخدمين',
 	'nav.users.agents': 'الوكلاء',
-	'nav.users.serviceGroups': 'مجموعات الخدمة',
+	'nav.users.groups': 'المجموعات',
 	'nav.users.lifecycle': 'الاحتفاظ بالحسابات',
 	'nav.users.sessions': 'الجلسات',
 	'nav.users.invitations': 'الدعوات',
@@ -100,7 +102,7 @@ export const ar = {
 	'nav.access.attributes': 'السمات',
 	'nav.access.relationships': 'العلاقات (ReBAC)',
 	'nav.access.policies': 'السياسات',
-	'nav.access.simulator': 'محاكي الوصول',
+	'nav.access.accessCheck': 'التحقق من الوصول',
 	'nav.apps.all': 'مسارات الخدمة',
 	'nav.auth.tokens': 'الرموز والبروتوكولات',
 	'nav.apps.apis': 'الواجهات / الموارد',
@@ -132,6 +134,7 @@ export const ar = {
 	'nav.set.teamGroups': 'مجموعات المسؤولين',
 	'nav.set.teamRoles': 'أدوار المسؤولين',
 	'nav.set.teamIpAllowlist': 'تقييد عناوين IP للمسؤولين',
+	'nav.set.authorization': 'التفويض',
 	'nav.plat.tenants': 'المستأجرون',
 	'nav.plat.releases': 'مستوى التحكم',
 	'nav.plat.scale': 'التوسع',

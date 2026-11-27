@@ -52,6 +52,8 @@ export interface SessionStatus {
 	name?: string;
 	roles: string[];
 	permissions?: string[];
+	/** The highest grant tier of an end-user role the admin may grant (an older API omits it). */
+	max_grant_tier?: number;
 	admin_scope: 'platform' | 'tenant';
 	is_platform_admin: boolean;
 	/** Capabilities the platform has turned off for tenants (empty for a platform admin). */

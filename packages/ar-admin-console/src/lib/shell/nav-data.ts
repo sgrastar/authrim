@@ -34,9 +34,12 @@ export const TENANT_AREAS: readonly NavArea[] = [
 				platform: 'lookup'
 			},
 			{
-				id: 'service-groups',
-				label: 'nav.users.serviceGroups',
-				platform: 'tenant'
+				id: 'groups',
+				label: 'nav.users.groups',
+				platform: 'tenant',
+				requires: { permission: 'admin:groups:read' },
+				// …/groups/<id>: a group's page (members, roles, nesting, dynamic rule).
+				details: true
 			},
 			{
 				id: 'lifecycle',
@@ -72,7 +75,11 @@ export const TENANT_AREAS: readonly NavArea[] = [
 			},
 			{
 				id: 'roles',
-				label: 'nav.access.roles'
+				label: 'nav.access.roles',
+				platform: 'tenant',
+				requires: { permission: 'admin:roles:read' },
+				// …/roles/<id> and …/roles/new: a role's page.
+				details: true
 			},
 			{
 				id: 'role-rules',
@@ -106,9 +113,11 @@ export const TENANT_AREAS: readonly NavArea[] = [
 				platform: 'template'
 			},
 			{
-				id: 'simulator',
-				label: 'nav.access.simulator',
-				platform: 'tenant'
+				id: 'access-check',
+				label: 'nav.access.accessCheck',
+				platform: 'tenant',
+				// As the page (authzAccess().check) and the API: either read permission opens it.
+				requires: { anyPermission: ['admin:roles:read', 'admin:groups:read'] }
 			}
 		]
 	},
@@ -315,6 +324,16 @@ export const TENANT_AREAS: readonly NavArea[] = [
 			{
 				id: 'compliance',
 				label: 'nav.set.compliance'
+			},
+			{
+				id: 'authorization',
+				label: 'nav.set.authorization',
+				platform: 'tenant',
+				// The settings of these categories, or the Check API keys (their read permission).
+				requires: {
+					settings: ['feature-flags', 'check', 'groups', 'tokens'],
+					permission: 'admin:security:read'
+				}
 			},
 			{
 				id: 'team',

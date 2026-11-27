@@ -105,6 +105,7 @@ import {
   adminRoleAssignmentsListHandler,
   adminRoleDeleteHandler,
   adminRoleGetHandler,
+  adminRoleGroupAssignmentsListHandler,
   adminRolesListHandler,
   adminUserEffectivePermissionsHandler,
 } from '../admin-rbac';
@@ -254,6 +255,7 @@ describe('RBAC admin views under routed account storage', () => {
     // Only the second database holds role-b.
     const refused = await adminRoleDeleteHandler(context({ id: 'role-b' }));
     expect(refused.status).toBe(409);
+    expect((await refused.json()) as { error: string }).toMatchObject({ error: 'role_in_use' });
     expect(metadata.db.prepare("SELECT id FROM roles WHERE id = 'role-b'").get()).toBeTruthy();
 
     const deleted = await adminRoleDeleteHandler(context({ id: 'role-free' }));
@@ -279,6 +281,77 @@ describe('RBAC admin views under routed account storage', () => {
     expect((await page('2')).assignments).toEqual([
       expect.objectContaining({ assignment_id: 'ra-1', user_email: 'user-1@example.test' }),
     ]);
+  });
+
+  it('lists the groups a role is granted to, with the group and the scope, paged', async () => {
+    const grant = (id: string, group: string, at: number, scope = 'global', target = '') =>
+      metadata.db
+        .prepare(
+          `INSERT INTO group_role_assignments
+             (id, tenant_id, group_id, role_id, scope_type, scope_target, expires_at, assigned_by,
+              created_at, updated_at)
+           VALUES (?, 'tenant-a', ?, 'role-a', ?, ?, ?, 'admin-1', ?, ?)`
+        )
+        .run(id, group, scope, target, id === 'gr-2' ? NOW + 3600 : null, at, at);
+    grant('gr-1', 'grp-root', NOW - 20);
+    grant('gr-2', 'grp-child', NOW - 10, 'group', 'group:grp-root');
+    // A grant of another role and of a group deleted since.
+    metadata.db
+      .prepare(
+        `INSERT INTO group_role_assignments (id, tenant_id, group_id, role_id, created_at, updated_at)
+         VALUES ('gr-other', 'tenant-a', 'grp-root', 'role-b', ?, ?)`
+      )
+      .run(NOW, NOW);
+    grant('gr-3', 'grp-gone', NOW - 5);
+
+    const page = async (id: string, pageNumber = '1', limit = '10') => {
+      const response = await adminRoleGroupAssignmentsListHandler(
+        context({ id, query: { page: pageNumber, limit } })
+      );
+      return {
+        status: response.status,
+        body: (await response.json()) as {
+          role_name: string;
+          group_assignments: Array<Record<string, unknown>>;
+          pagination: { total: number; totalPages: number; hasNext: boolean };
+        },
+      };
+    };
+    const all = await page('role-a');
+    expect(all.body.role_name).toBe('auditor');
+    expect(all.body.group_assignments.map((row) => row.assignment_id)).toEqual([
+      'gr-1',
+      'gr-2',
+      'gr-3',
+    ]);
+    expect(all.body.group_assignments[0]).toMatchObject({
+      group_id: 'grp-root',
+      group_key: 'root',
+      group_display_name: 'Root',
+      scope: 'global',
+      expires_at: null,
+    });
+    expect(all.body.group_assignments[1]).toMatchObject({
+      group_key: 'child',
+      scope: 'group',
+      scope_target: 'group:grp-root',
+      assigned_by: 'admin-1',
+      expires_at: (NOW + 3600) * 1000,
+    });
+    expect(all.body.group_assignments[2]).toMatchObject({ group_key: null });
+    const second = await page('role-a', '2', '2');
+    expect(second.body.group_assignments.map((row) => row.assignment_id)).toEqual(['gr-3']);
+    expect(second.body.pagination).toMatchObject({ total: 3, totalPages: 2, hasNext: false });
+    expect((await page('role-b')).body.group_assignments).toHaveLength(1);
+    expect((await page('role-missing')).status).toBe(404);
+
+    // The listing reads the metadata database only: no account store is resolved, so an
+    // unavailable one cannot break it.
+    const lib = await import('@authrim/ar-lib-core');
+    const resolve = vi.mocked(lib.resolveTenantAssignedDatabaseSourcesFromRegistry);
+    resolve.mockClear();
+    expect((await page('role-a')).status).toBe(200);
+    expect(resolve).not.toHaveBeenCalled();
   });
 
   it('lists the members of a group in every account database', async () => {

@@ -458,6 +458,7 @@ import {
   adminRolesListHandler,
   adminRoleGetHandler,
   adminRoleAssignmentsListHandler,
+  adminRoleGroupAssignmentsListHandler,
   adminUserRolesListHandler,
   adminUserRoleAssignHandler,
   adminUserRoleRemoveHandler,
@@ -2505,6 +2506,7 @@ app.get('/api/admin/service-groups/:id/members', serviceGroupMembers);
 app.get('/api/admin/roles', adminRolesListHandler);
 app.get('/api/admin/roles/:id', adminRoleGetHandler);
 app.get('/api/admin/roles/:id/assignments', adminRoleAssignmentsListHandler);
+app.get('/api/admin/roles/:id/group-assignments', adminRoleGroupAssignmentsListHandler);
 app.post('/api/admin/roles', adminRoleCreateHandler);
 app.patch('/api/admin/roles/:id', adminRoleUpdateHandler);
 app.delete('/api/admin/roles/:id', adminRoleDeleteHandler);

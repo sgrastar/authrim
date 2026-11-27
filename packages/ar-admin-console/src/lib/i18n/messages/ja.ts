@@ -21,6 +21,7 @@ import { jaSystemLog } from './system-log/ja';
 import { jaEmailDeliveries } from './email-deliveries/ja';
 import { jaLogPlatform } from './log-platform/ja';
 import { jaTeam } from './team/ja';
+import { jaAuthz } from './authz/ja';
 import { jaIpAllowlist } from './ip-allowlist/ja';
 import { jaAccountPages } from './account-pages/ja';
 import { jaMachineAccess } from './machine-access/ja';
@@ -61,6 +62,7 @@ export const ja = {
 	...jaEmailDeliveries,
 	...jaLogPlatform,
 	...jaTeam,
+	...jaAuthz,
 	...jaIpAllowlist,
 	...jaAccountPages,
 	...jaMachineAccess,
@@ -94,7 +96,7 @@ export const ja = {
 	'nav.platform': 'プラットフォーム',
 	'nav.users.all': 'すべてのユーザー',
 	'nav.users.agents': 'エージェント',
-	'nav.users.serviceGroups': 'サービスグループ',
+	'nav.users.groups': 'グループ',
 	'nav.users.lifecycle': 'アカウントの保持',
 	'nav.users.sessions': 'セッション',
 	'nav.users.invitations': '招待',
@@ -103,7 +105,7 @@ export const ja = {
 	'nav.access.attributes': '属性',
 	'nav.access.relationships': '関係（ReBAC）',
 	'nav.access.policies': 'ポリシー',
-	'nav.access.simulator': 'アクセス検証',
+	'nav.access.accessCheck': 'アクセス確認',
 	'nav.apps.all': 'サービスフロー',
 	'nav.auth.tokens': 'トークンとプロトコル',
 	'nav.apps.apis': 'API / リソース',
@@ -135,6 +137,7 @@ export const ja = {
 	'nav.set.teamGroups': '管理者グループ',
 	'nav.set.teamRoles': '管理者ロール',
 	'nav.set.teamIpAllowlist': '管理者の IP 制限',
+	'nav.set.authorization': '認可',
 	'nav.plat.tenants': 'テナント',
 	'nav.plat.releases': 'コントロールプレーン',
 	'nav.plat.scale': 'スケール',

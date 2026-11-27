@@ -25,6 +25,21 @@ describe('operation-level Admin permissions', () => {
     ).toBe(false);
   });
 
+  it('does not let the role permissions stand in for the group ones', () => {
+    for (const held of [
+      [ADMIN_PERMISSIONS.ROLES_READ],
+      [ADMIN_PERMISSIONS.ROLES_WRITE],
+      [ADMIN_PERMISSIONS.ROLES_ALL],
+    ]) {
+      expect(hasAdminPermission(held, ADMIN_PERMISSIONS.GROUPS_READ)).toBe(false);
+      expect(hasAdminPermission(held, ADMIN_PERMISSIONS.GROUPS_WRITE)).toBe(false);
+    }
+    expect(hasAdminPermission([ADMIN_PERMISSIONS.GROUPS_ALL], ADMIN_PERMISSIONS.GROUPS_WRITE)).toBe(
+      true
+    );
+    expect(hasAdminPermission(['*'], ADMIN_PERMISSIONS.GROUPS_READ)).toBe(true);
+  });
+
   it('lets users:read include the status-only read, never the other way round', () => {
     expect(
       hasAdminPermission([ADMIN_PERMISSIONS.USERS_READ], ADMIN_PERMISSIONS.USERS_STATUS_READ)

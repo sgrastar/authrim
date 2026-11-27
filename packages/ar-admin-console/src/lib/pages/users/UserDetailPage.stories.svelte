@@ -4,6 +4,12 @@
 	import type { AdminAccess } from '#lib/access/access.js';
 	import { persona } from '#lib/access/personas.js';
 	import { USERS_NOW, createFakeAdminUsers, sampleUsers } from '#lib/api/fake/admin-users-fake.js';
+	import {
+		createFakeAuthz,
+		sampleGroup,
+		sampleGroups,
+		sampleMember
+	} from '#lib/api/fake/end-user-authz-fake.js';
 	import { t } from '#lib/i18n/i18n.svelte.js';
 	import { waitForSettledToasts } from '#lib/ui/stories/toast-settled.js';
 	import Toaster from '#lib/ui/toast/Toaster.svelte';
@@ -37,6 +43,51 @@
 
 	const ondeleted = fn();
 	const onopenaudit = fn();
+
+	/** The normal user in Backend (below Engineering, which gives the editor role) and given a role directly. */
+	function authzFor(userId: string) {
+		const who = { id: userId, email: '', name: '' };
+		const fake = createFakeAuthz({
+			members: {
+				grp_backend: [sampleMember(who, 'manual')],
+				grp_jp: [sampleMember(who, 'dynamic', { effective: false })]
+			},
+			userRoles: {
+				[userId]: [
+					{
+						id: 'ura_9',
+						role_id: 'role_billing',
+						role_name: 'billing_admin',
+						role_display_name: null,
+						scope_type: 'resource',
+						scope_target: 'resource:invoices:2026',
+						expires_at: null,
+						created_at: USERS_NOW
+					}
+				]
+			}
+		});
+		return { groups: fake.groups, roles: fake.roles, groupHref: (id: string) => `#group-${id}` };
+	}
+
+	/** In two sibling groups below Engineering: its role reaches the user by two paths. */
+	function siblingsFor(userId: string) {
+		const who = { id: userId, email: '', name: '' };
+		const fake = createFakeAuthz({
+			groups: [
+				...sampleGroups(),
+				sampleGroup('grp_frontend', 'engineering.frontend', 'Frontend', {
+					parent_group_id: 'grp_eng'
+				})
+			],
+			members: {
+				grp_backend: [sampleMember(who, 'manual')],
+				grp_frontend: [sampleMember(who, 'manual')]
+			},
+			userRoles: {}
+		});
+		return { groups: fake.groups, roles: fake.roles, groupHref: (id: string) => `#group-${id}` };
+	}
 
 	/** The sample users, with the suspended one given an end. */
 	function withEnds() {
@@ -73,6 +124,48 @@
 			listHref="#users"
 			{ondeleted}
 			{onopenaudit}
+		/>
+	{/snippet}
+</Story>
+
+<Story
+	name="Groups and effective roles"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findByText(t('az.user.title'));
+		await canvas.findByRole('link', { name: 'Backend' });
+		// Engineering's role reaches the user through Backend.
+		await canvas.findByText(t('az.user.via.through', { group: 'Backend' }));
+	}}
+>
+	{#snippet template()}
+		<UserDetailPage
+			client={createFakeAdminUsers({ now: USERS_NOW })}
+			userId={NORMAL}
+			access={tenant}
+			listHref="#users"
+			{ondeleted}
+			authz={authzFor(NORMAL)}
+		/>
+	{/snippet}
+</Story>
+
+<Story
+	name="Roles reaching a user through two sibling groups"
+	play={async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findByText(t('az.user.via.through', { group: 'Backend' }));
+		await expect(canvas.getByText(t('az.user.via.through', { group: 'Frontend' }))).toBeVisible();
+	}}
+>
+	{#snippet template()}
+		<UserDetailPage
+			client={createFakeAdminUsers({ now: USERS_NOW })}
+			userId={NORMAL}
+			access={tenant}
+			listHref="#users"
+			{ondeleted}
+			authz={siblingsFor(NORMAL)}
 		/>
 	{/snippet}
 </Story>

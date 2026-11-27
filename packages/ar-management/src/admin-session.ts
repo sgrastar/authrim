@@ -36,7 +36,9 @@ import {
   // Cookie Configuration
   getAdminCookieSameSite,
   ADMIN_ROLE_GROUPS,
+  adminMaxGrantTier,
 } from '@authrim/ar-lib-core';
+import { grantCeilingOf } from './role-delegation';
 import { getCanonicalTenantBaseUrl } from './request-issuer';
 
 interface AdminSessionRoleRow {
@@ -287,6 +289,8 @@ export async function adminSessionStatusHandler(c: Context<{ Bindings: Env }>) {
       roles,
       groups,
       permissions: Array.from(permissions).sort(),
+      // The highest grant tier of an end-user role the admin may grant, revoke or edit.
+      max_grant_tier: adminAuth ? grantCeilingOf(adminAuth) : adminMaxGrantTier(roles),
       admin_scope: isPlatformAdmin ? 'platform' : 'tenant',
       is_platform_admin: isPlatformAdmin,
       disabled_capabilities: disabledCapabilities,

@@ -15,6 +15,7 @@ export interface ApiOperation {
 
 /** [method, path, summary, spec], one operation per line. */
 const ROWS: readonly (readonly [ApiMethod, string, string, ApiOperation['spec']])[] = [
+	["POST","/api/admin/access-check","Check an end user's access.","admin"],
 	["GET","/api/admin/access-control/stats","Get access-control statistics.","admin"],
 	["GET","/api/admin/access-trace","List access trace entries.","admin"],
 	["GET","/api/admin/access-trace/stats","Get access trace statistics.","admin"],
@@ -779,6 +780,7 @@ const ROWS: readonly (readonly [ApiMethod, string, string, ApiOperation['spec']]
 	["PATCH","/api/admin/roles/{id}","Update role","admin"],
 	["DELETE","/api/admin/roles/{id}","Delete role","admin"],
 	["GET","/api/admin/roles/{id}/assignments","List role assignments","admin"],
+	["GET","/api/admin/roles/{id}/group-assignments","List the groups a role is granted to","admin"],
 	["GET","/api/admin/runtime-profiles","List runtime profiles.","admin"],
 	["GET","/api/admin/runtime-profiles/defaults","Get default runtime profiles.","admin"],
 	["PUT","/api/admin/runtime-profiles/defaults","Update default runtime profiles.","admin"],

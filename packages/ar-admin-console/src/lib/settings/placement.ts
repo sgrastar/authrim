@@ -461,6 +461,60 @@ export const GENERAL: SettingsPageDef = {
 	]
 };
 
+/**
+ * Settings → Authorization: what the end-user authorization engines take part in (ABAC rules,
+ * relationships), the Check API (the audience of an end-user's own token here; whether the API
+ * answers at all is the platform's), how long a dynamic group membership grants before it is
+ * checked again, and which RBAC claims go into ID and access tokens. The Check API keys are listed
+ * on the same page, from their own API.
+ */
+export const AUTHORIZATION: SettingsPageDef = {
+	id: 'authorization',
+	nav: 'settings/authorization',
+	title: 'set.page.authorization',
+	description: 'set.page.authorization.desc',
+	sections: [
+		{
+			id: 'authz-engines',
+			title: 'set.section.authzEngines',
+			description: 'set.section.authzEngines.desc',
+			settings: [
+				{ key: 'feature.enable_id_level_permissions', depth: 'primary' },
+				{ key: 'feature.enable_abac', depth: 'primary' },
+				{ key: 'feature.enable_rebac', depth: 'primary' }
+			]
+		},
+		{
+			id: 'check-api',
+			title: 'set.section.checkApi',
+			description: 'set.section.checkApi.desc',
+			settings: [{ key: 'check.audience', depth: 'primary' }]
+		},
+		{
+			id: 'check-api-platform',
+			title: 'set.section.checkApiPlatform',
+			description: 'set.section.checkApiPlatform.desc',
+			level: 'platform',
+			settings: [{ key: 'feature.enable_check_api', depth: 'primary' }]
+		},
+		{
+			id: 'dynamic-groups',
+			title: 'set.section.dynamicGroups',
+			description: 'set.section.dynamicGroups.desc',
+			settings: [{ key: 'groups.dynamic_freshness_seconds', depth: 'primary' }]
+		},
+		{
+			id: 'rbac-claims',
+			title: 'set.section.rbacClaims',
+			description: 'set.section.rbacClaims.desc',
+			settings: [
+				{ key: 'tokens.rbac_id_token_claims', depth: 'primary' },
+				{ key: 'tokens.rbac_access_token_claims', depth: 'primary' }
+			]
+		}
+	]
+};
+
 export const SETTINGS_PAGES: readonly SettingsPageDef[] = [
 	LOGOUT,
 	PROTECTION,
@@ -468,5 +522,6 @@ export const SETTINGS_PAGES: readonly SettingsPageDef[] = [
 	SIGNING_KEYS,
 	TOKENS,
 	TEAM,
-	GENERAL
+	GENERAL,
+	AUTHORIZATION
 ];

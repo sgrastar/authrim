@@ -922,16 +922,6 @@ export function hasAdminPermission(permissions: string[], required: string): boo
   const parent = compatibilityParent[required];
   if (parent && permissions.includes(parent)) return true;
 
-  // Groups carry roles: whoever holds the role permissions (also as `admin:roles:*`) holds the
-  // group ones until the standard roles list them (a role migration).
-  const roleParent =
-    required === ADMIN_PERMISSIONS.GROUPS_READ
-      ? ADMIN_PERMISSIONS.ROLES_READ
-      : required === ADMIN_PERMISSIONS.GROUPS_WRITE
-        ? ADMIN_PERMISSIONS.ROLES_WRITE
-        : null;
-  if (roleParent && hasAdminPermission(permissions, roleParent)) return true;
-
   // Check wildcard patterns
   const parts = required.split(':');
   for (let i = parts.length - 1; i >= 0; i--) {

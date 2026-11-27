@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
 	accessFromSession,
+	authzAccess,
 	hasPermission,
 	isCapabilityDisabled,
 	NO_ACCESS,
@@ -37,6 +38,20 @@ describe('permissions', () => {
 		const writer = accessFromSession({ permissions: ['admin:clients:write'] });
 		expect(hasPermission(writer, 'admin:clients:write')).toBe(true);
 		expect(hasPermission(writer, 'admin:clients:update')).toBe(true);
+	});
+
+	it('takes the grant ceiling from the session, else from the role names', () => {
+		const reported = accessFromSession({ roles: ['ar_viewer'], max_grant_tier: 2 });
+		expect(authzAccess(reported).grantCeiling).toBe(2);
+		expect(
+			authzAccess(accessFromSession({ roles: ['ar_viewer'], max_grant_tier: 0 })).grantCeiling
+		).toBe(0);
+		// An older API has no field: computed from the roles (a viewer: 1).
+		expect(authzAccess(accessFromSession({ roles: ['ar_viewer'] })).grantCeiling).toBe(1);
+		// A malformed value is ignored.
+		expect(
+			authzAccess(accessFromSession({ roles: ['ar_viewer'], max_grant_tier: -1 })).grantCeiling
+		).toBe(1);
 	});
 
 	it('gives one level for a kind of object', () => {

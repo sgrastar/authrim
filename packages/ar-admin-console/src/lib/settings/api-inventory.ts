@@ -108,16 +108,17 @@ export const API_GROUPS: readonly ApiGroup[] = [
 	},
 	{
 		id: 'service-groups',
-		name: 'Service groups',
+		name: 'Dynamic group rules (service-group catalog)',
 		kind: 'records',
-		page: 'users/service-groups',
-		paths: [`${A}/service-groups`]
+		page: 'users/groups',
+		paths: [`${A}/service-groups`],
+		note: 'A dynamic group’s rule and evaluation status, on the group’s Dynamic rule tab.'
 	},
 	{
 		id: 'groups',
 		name: 'Groups',
 		kind: 'records',
-		page: 'users/service-groups',
+		page: 'users/groups',
 		paths: [`${A}/groups`],
 		note: 'End-user groups: members and the roles granted to a group. One user’s groups: /users/{id}/groups.'
 	},
@@ -166,8 +167,16 @@ export const API_GROUPS: readonly ApiGroup[] = [
 		id: 'check-api-keys',
 		name: 'Check API keys',
 		kind: 'records',
-		page: 'access/apis',
-		paths: [`${A}/check-api-keys`]
+		page: 'settings/authorization',
+		paths: [`${A}/check-api-keys`],
+		note: 'Listed and revoked on Settings → Authorization; made where an app’s backend is set up.'
+	},
+	{
+		id: 'access-check',
+		name: 'Access check (administrators)',
+		kind: 'actions',
+		page: 'access/access-check',
+		paths: [`${A}/access-check`]
 	},
 	{ id: 'roles', name: 'Roles', kind: 'records', page: 'access/roles', paths: [`${A}/roles`] },
 	{
@@ -292,7 +301,7 @@ export const API_GROUPS: readonly ApiGroup[] = [
 		id: 'access-trace',
 		name: 'Access trace',
 		kind: 'monitoring',
-		page: 'access/simulator',
+		page: 'access/access-check',
 		paths: [`${A}/access-trace`]
 	},
 
