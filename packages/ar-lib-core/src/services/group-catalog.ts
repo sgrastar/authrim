@@ -46,10 +46,11 @@ interface GroupFields {
 export async function createGroup(
   metadata: DatabaseSource,
   tenantId: string,
-  input: Partial<GroupFields> & { groupKey: string; displayName: string }
+  input: Partial<GroupFields> & { groupKey: string; displayName: string; id?: string }
 ) {
   const db = ensureDatabaseAdapter(metadata);
-  const id = crypto.randomUUID();
+  // A caller may choose the id, so a key derived from it (SCIM: `scim:<id>`) can be written at once.
+  const id = input.id ?? crypto.randomUUID();
   const parent = groupParentCondition(tenantId, input.parentGroupId ?? null, { id });
   const now = Date.now();
   await db.transaction(async (tx) => {

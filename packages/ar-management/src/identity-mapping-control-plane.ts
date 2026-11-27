@@ -1,4 +1,5 @@
 import { canManageGroupMembership } from './group-role-management';
+import { SCIM_SOURCE_REF } from './scim-groups';
 import {
   bumpTenantRBACCacheVersion,
   invalidateSubjectRBACCache,
@@ -6720,7 +6721,11 @@ export class IdentityMappingControlPlaneRepository {
     const sourceId = input.assignmentSource ?? 'manual';
     const separator = sourceId.indexOf(':');
     const source = separator < 0 ? sourceId : sourceId.slice(0, separator);
-    const sourceRef = input.sourceRef ?? (separator < 0 ? '' : sourceId.slice(separator + 1));
+    // A SCIM membership with no reference is the tenant's shared SCIM provisioning domain, the
+    // rows SCIM /Groups reads and writes (scim-groups.ts), not a row of its own.
+    const sourceRef =
+      input.sourceRef ??
+      (separator >= 0 ? sourceId.slice(separator + 1) : source === 'scim' ? SCIM_SOURCE_REF : '');
     if (!['manual', 'scim', 'rule', 'dynamic', 'invitation'].includes(source))
       throw badRequest('invalid membership source');
     const existing = await executor.queryOne<{ id: string }>(

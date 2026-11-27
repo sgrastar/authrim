@@ -243,39 +243,71 @@ describe('the method a condition reads', () => {
 
 describe('the signed-in user a condition reads', () => {
   const signedIn = { signedIn: true };
-  const roleRows = (rows: unknown[] | Error) =>
-    mocks.coreAdapter.query.mockImplementation(async (sql: string) => {
-      if (!String(sql).includes('FROM user_roles')) return [];
-      if (rows instanceof Error) throw rows;
-      return rows;
-    });
-
-  it('reads the roles from the tenant metadata', async () => {
-    roleRows([{ name: '' }, { name: 'admin' }]);
-    const { at } = await startWith(when({ type: 'user.role', value: 'admin' }), {}, signedIn);
-    expect(at).toBe('yes:step');
-    expect(mocks.coreAdapter.query).toHaveBeenCalledWith(
-      expect.stringContaining('FROM user_roles'),
-      ['tenant_test', 'user_1']
-    );
+  const direct = { via: { kind: 'direct' }, scope_type: 'global', scope_target: '' };
+  const held = (name: string, assignment: Record<string, unknown> = direct) => ({
+    role: { name },
+    assignment,
   });
 
-  it('has no roles without an account when the metadata has none or cannot be read', async () => {
-    roleRows(new Error('no such table'));
+  it('never reads the SCIM role table (user_roles)', async () => {
+    mocks.resolveAccountCoreDataContext.mockReset().mockResolvedValue({ coreDb: {} });
+    mocks.resolveSubjectRoles.mockResolvedValue([held('admin')]);
+    expect((await startWith(when({ type: 'user.role', value: 'admin' }), {}, signedIn)).at).toBe(
+      'yes:step'
+    );
+    for (const [sql] of mocks.coreAdapter.query.mock.calls)
+      expect(String(sql)).not.toContain('user_roles');
+  });
+
+  it('has no roles without an account', async () => {
     expect((await startWith(when({ type: 'user.role', value: 'admin' }), {}, signedIn)).at).toBe(
       'no:step'
     );
     expect(mocks.resolveSubjectRoles).not.toHaveBeenCalled();
   });
 
+  it('matches a role a group gives when it holds across the tenant', async () => {
+    mocks.resolveAccountCoreDataContext.mockReset().mockResolvedValue({ coreDb: {} });
+    const viaGroup = { kind: 'group', groupId: 'g1', throughGroupId: 'g1' };
+    mocks.resolveSubjectRoles.mockResolvedValue([
+      held('member', { via: viaGroup, scope_type: 'global', scope_target: '' }),
+      // Held only for resources of one group: not a tenant-wide role.
+      held('editor', { via: viaGroup, scope_type: 'group', scope_target: 'group:g2' }),
+    ]);
+    expect((await startWith(when({ type: 'user.role', value: 'member' }), {}, signedIn)).at).toBe(
+      'yes:step'
+    );
+    expect((await startWith(when({ type: 'user.role', value: 'editor' }), {}, signedIn)).at).toBe(
+      'no:step'
+    );
+  });
+
+  it('does not match a directly assigned role held only for one resource', async () => {
+    mocks.resolveAccountCoreDataContext.mockReset().mockResolvedValue({ coreDb: {} });
+    mocks.resolveSubjectRoles.mockResolvedValue([
+      held('owner', {
+        via: { kind: 'direct' },
+        scope_type: 'resource',
+        scope_target: 'resource:doc:1',
+      }),
+      held('tenant-admin', {
+        via: { kind: 'direct' },
+        scope_type: 'tenant',
+        scope_target: 'tenant_test',
+      }),
+    ]);
+    expect((await startWith(when({ type: 'user.role', value: 'owner' }), {}, signedIn)).at).toBe(
+      'no:step'
+    );
+    expect(
+      (await startWith(when({ type: 'user.role', value: 'tenant-admin' }), {}, signedIn)).at
+    ).toBe('yes:step');
+  });
+
   it('reads the roles and organisations of the account, each once', async () => {
     const account = { coreDb: { name: 'account-db' } };
     mocks.resolveAccountCoreDataContext.mockReset().mockResolvedValue(account);
-    mocks.resolveSubjectRoles.mockResolvedValue([
-      { role: { name: 'admin' } },
-      { role: { name: 'admin' } },
-      { role: { name: '' } },
-    ]);
+    mocks.resolveSubjectRoles.mockResolvedValue([held('admin'), held('admin'), held('')]);
     mocks.resolveSubjectOrganizations.mockResolvedValue([
       { organization: { id: 'org_1' } },
       { organization: { id: 'org_1' } },

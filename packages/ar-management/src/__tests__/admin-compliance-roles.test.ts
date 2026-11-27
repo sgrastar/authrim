@@ -1,50 +1,21 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
-// @ts-expect-error node:sqlite is available in the required runtime but this package omits Node types.
-import { DatabaseSync } from 'node:sqlite';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { openCoreStore } from './helpers/core-schema-sqlite';
 
 const mocks = vi.hoisted(() => ({ stores: vi.fn() }));
 vi.mock('../compliance/tenant-stores', () => ({ tenantCoreStores: mocks.stores }));
 
 import { roleUsage } from '../admin-compliance';
 
-const REPO_ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
+type Store = ReturnType<typeof openCoreStore>;
 
-type SqlValue = string | number | null;
-const values = (params: unknown[] = []) =>
-  params.map((value): SqlValue => (value === undefined ? null : (value as SqlValue)));
-
-function store() {
-  const db = new DatabaseSync(':memory:');
-  db.exec(
-    readFileSync(resolve(REPO_ROOT, 'migrations/core/d1/001_0_4_0_core_baseline.sql'), 'utf8')
-      .replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '(unixepoch() * 1000)')
-      .replaceAll('__AUTHRIM_NOW_EPOCH_SECONDS__', 'unixepoch()')
-  );
-  db.exec('PRAGMA foreign_keys = OFF');
-  return {
-    db,
-    adapter: {
-      async queryOne(sql: string, params?: unknown[]) {
-        return db.prepare(sql).get(...values(params)) ?? null;
-      },
-      async query(sql: string, params?: unknown[]) {
-        return db.prepare(sql).all(...values(params));
-      },
-    },
-  };
-}
-
-function role(db: DatabaseSync, id: string, tenantId: string) {
+function role(db: Store['db'], id: string, tenantId: string) {
   db.prepare(
     `INSERT INTO roles (id, tenant_id, name, permissions_json, created_at) VALUES (?, ?, ?, '[]', 0)`
   ).run(id, tenantId, id);
 }
 
 function assign(
-  db: DatabaseSync,
+  db: Store['db'],
   id: string,
   tenantId: string,
   userId: string,
@@ -57,69 +28,151 @@ function assign(
   ).run(id, tenantId, userId, roleId, expiresAt);
 }
 
-function scim(db: DatabaseSync, tenantId: string, userId: string, roleId: string) {
+function group(
+  db: Store['db'],
+  id: string,
+  tenantId: string,
+  parent: string | null = null,
+  lifecycle = 'active'
+) {
   db.prepare(
-    'INSERT INTO user_roles (user_id, role_id, created_at, tenant_id) VALUES (?, ?, 0, ?)'
-  ).run(userId, roleId, tenantId);
+    `INSERT INTO "groups" (id, tenant_id, group_key, display_name, parent_group_id, lifecycle_state,
+       kind, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, 'scim', 0, 0)`
+  ).run(id, tenantId, `scim:${id}`, id, parent, lifecycle);
+}
+
+function grant(
+  db: Store['db'],
+  groupId: string,
+  tenantId: string,
+  roleId: string,
+  expiresAt: number | null = null
+) {
+  db.prepare(
+    `INSERT INTO group_role_assignments (id, tenant_id, group_id, role_id, expires_at, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, 0, 0)`
+  ).run(`gra-${groupId}-${roleId}`, tenantId, groupId, roleId, expiresAt);
+}
+
+function member(
+  db: Store['db'],
+  tenantId: string,
+  userId: string,
+  groupId: string,
+  options: { source?: string; ref?: string; state?: string; expiresAt?: number | null } = {}
+) {
+  db.prepare(
+    `INSERT INTO group_memberships (id, tenant_id, group_id, subject_id, assignment_source, source_ref,
+       lifecycle_state, expires_at, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0)`
+  ).run(
+    crypto.randomUUID(),
+    tenantId,
+    groupId,
+    userId,
+    options.source ?? 'scim',
+    options.ref ?? 'token-a',
+    options.state ?? 'active',
+    options.expiresAt ?? null
+  );
 }
 
 describe('compliance role usage', () => {
-  let main: ReturnType<typeof store>;
+  let main: Store;
   beforeEach(() => {
-    main = store();
+    main = openCoreStore('tenant-a');
     mocks.stores.mockResolvedValue([{ bindingRef: 'DB', adapter: main.adapter }]);
     role(main.db, 'admin', 'tenant-a');
     role(main.db, 'viewer', 'tenant-a');
     role(main.db, 'other', 'tenant-b');
   });
 
-  it('counts users with a role from SCIM or an unexpired assignment, each user once', async () => {
+  it('counts users with an unexpired assignment, each user once', async () => {
     const now = Math.floor(Date.now() / 1000);
-    // SCIM only.
-    scim(main.db, 'tenant-a', 'user-scim', 'viewer');
-    // Both ways (counted once).
     assign(main.db, 'ra-1', 'tenant-a', 'user-both', 'admin');
-    scim(main.db, 'tenant-a', 'user-both', 'viewer');
-    // An assignment only.
+    assign(main.db, 'ra-1b', 'tenant-a', 'user-both', 'viewer');
     assign(main.db, 'ra-2', 'tenant-a', 'user-assigned', 'admin', now + 3600);
     // Not counted: an expired assignment, and roles of another tenant.
     assign(main.db, 'ra-3', 'tenant-a', 'user-expired', 'admin', now - 1);
     assign(main.db, 'ra-4', 'tenant-b', 'user-b', 'other');
-    scim(main.db, 'tenant-b', 'user-b2', 'other');
 
-    expect(await roleUsage({} as never, 'tenant-a', main.adapter as never)).toEqual({
+    expect(await roleUsage({} as never, 'tenant-a', main.adapter)).toEqual({
       active_roles: 2,
-      users_with_roles: 3,
-    });
-  });
-
-  it('adds the users of each store (a routed tenant keeps them with each account)', async () => {
-    const users = store();
-    scim(main.db, 'tenant-a', 'user-1', 'viewer');
-    // A user store holds its own assignment and the role it names (sign-in joins them there).
-    assign(users.db, 'ra-1', 'tenant-a', 'user-2', 'admin');
-    role(users.db, 'admin', 'tenant-a');
-    mocks.stores.mockResolvedValue([
-      { bindingRef: 'DB', adapter: main.adapter },
-      { bindingRef: 'DB_USERS_1', adapter: users.adapter },
-    ]);
-    expect(await roleUsage({} as never, 'tenant-a', main.adapter as never)).toMatchObject({
       users_with_roles: 2,
     });
   });
 
-  it('counts a user with roles in two stores once', async () => {
-    const users = store();
-    role(users.db, 'admin', 'tenant-a');
-    // SCIM gave the user a role in the default store; an assignment lives with the account.
-    scim(main.db, 'tenant-a', 'user-1', 'viewer');
-    assign(users.db, 'ra-1', 'tenant-a', 'user-1', 'admin');
+  it('counts members of a group that holds a role, also through an ancestor', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    group(main.db, 'parent', 'tenant-a');
+    group(main.db, 'child', 'tenant-a', 'parent');
+    group(main.db, 'plain', 'tenant-a');
+    group(main.db, 'stopped', 'tenant-a', 'parent', 'suspended');
+    group(main.db, 'expired-grant', 'tenant-a');
+    grant(main.db, 'parent', 'tenant-a', 'viewer');
+    grant(main.db, 'expired-grant', 'tenant-a', 'viewer', now - 1);
+    // A direct member of the granted group, and a member of its child (SCIM and manual alike).
+    member(main.db, 'tenant-a', 'user-parent', 'parent');
+    member(main.db, 'tenant-a', 'user-child', 'child', { source: 'manual', ref: '' });
+    // A user both assigned directly and through a group is one user.
+    assign(main.db, 'ra-1', 'tenant-a', 'user-child', 'admin');
+    // Not counted: a group without roles, an inactive group below the granted one, an expired
+    // group grant, and memberships no longer in force.
+    member(main.db, 'tenant-a', 'user-plain', 'plain');
+    member(main.db, 'tenant-a', 'user-stopped', 'stopped');
+    member(main.db, 'tenant-a', 'user-expired-grant', 'expired-grant');
+    member(main.db, 'tenant-a', 'user-revoked', 'parent', { state: 'revoked' });
+    member(main.db, 'tenant-a', 'user-ended', 'parent', { expiresAt: now - 1 });
+
+    expect(await roleUsage({} as never, 'tenant-a', main.adapter)).toEqual({
+      active_roles: 2,
+      users_with_roles: 2,
+    });
+  });
+
+  it('never reads the SCIM role table (user_roles)', async () => {
+    const query = vi.spyOn(main.adapter, 'query');
+    await roleUsage({} as never, 'tenant-a', main.adapter);
+    expect(query).toHaveBeenCalled();
+    for (const [sql] of query.mock.calls) expect(String(sql)).not.toContain('user_roles');
+  });
+
+  it('reads no membership when no group holds a role, and never the whole group table', async () => {
+    group(main.db, 'plain', 'tenant-a');
+    member(main.db, 'tenant-a', 'user-plain', 'plain');
+    assign(main.db, 'ra-1', 'tenant-a', 'user-1', 'admin');
+    const query = vi.spyOn(main.adapter, 'query');
+    expect(await roleUsage({} as never, 'tenant-a', main.adapter)).toMatchObject({
+      users_with_roles: 1,
+    });
+    const statements = query.mock.calls.map(([sql]) => String(sql));
+    expect(statements.some((sql) => sql.includes('group_memberships'))).toBe(false);
+    expect(statements.some((sql) => sql.includes('FROM "groups"'))).toBe(false);
+
+    // With a granted group, groups are read by id and by parent only.
+    grant(main.db, 'plain', 'tenant-a', 'viewer');
+    query.mockClear();
+    expect(await roleUsage({} as never, 'tenant-a', main.adapter)).toMatchObject({
+      users_with_roles: 2,
+    });
+    for (const sql of query.mock.calls.map(([sql]) => String(sql)))
+      if (sql.includes('FROM "groups"')) expect(sql).toMatch(/AND (id|parent_group_id) IN \(/);
+  });
+
+  it('adds the users of each store, counting a user with holdings in two stores once', async () => {
+    const users = openCoreStore('tenant-a');
+    group(main.db, 'g', 'tenant-a');
+    grant(main.db, 'g', 'tenant-a', 'viewer');
+    // Memberships and assignments live with each account; the definitions in the metadata store.
+    member(users.db, 'tenant-a', 'user-1', 'g');
+    assign(main.db, 'ra-1', 'tenant-a', 'user-1', 'admin');
     assign(users.db, 'ra-2', 'tenant-a', 'user-2', 'admin');
     mocks.stores.mockResolvedValue([
       { bindingRef: 'DB', adapter: main.adapter },
       { bindingRef: 'DB_USERS_1', adapter: users.adapter },
     ]);
-    expect(await roleUsage({} as never, 'tenant-a', main.adapter as never)).toMatchObject({
+    expect(await roleUsage({} as never, 'tenant-a', main.adapter)).toMatchObject({
       users_with_roles: 2,
     });
   });

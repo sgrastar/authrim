@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-explicit-any -- SCIM JSON bodies and the shared SCIM test harness fakes are untyped in these route tests */
+/* eslint-disable @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-explicit-any -- SCIM JSON bodies and the shared SCIM test harness fakes are untyped in these route tests */
 import { describe, expect, it } from 'vitest';
 import { describeScimTestHarness } from './scim-test-harness';
 
@@ -139,20 +139,13 @@ describeScimTestHarness(
     });
 
     describe('Group members', () => {
-      /** Makes the fake answer the member lookup the way the real user_roles table would. */
+      /** Membership rows SCIM (the request's token) wrote for group-001. */
       function seedMembers(members: Array<{ user_id: string }>): void {
-        const db = harness.env.DB as any;
-        const original = db.prepare;
-        db.prepare = (sql: string) => {
-          const stmt = original.call(db, sql);
-          if (!sql.includes('SELECT user_id FROM user_roles')) return stmt;
-          const bind = stmt.bind.bind(stmt);
-          stmt.bind = (...params: unknown[]) => ({
-            ...bind(...params),
-            all: async () => ({ results: members }),
+        for (const member of members)
+          harness.canonicalGroups.seedMembership({
+            groupId: 'group-001',
+            subjectId: member.user_id,
           });
-          return stmt;
-        };
       }
 
       it('lists members with $ref, type and the email read from the PII store', async () => {

@@ -36,15 +36,12 @@ import {
   hasMalformedPercentEscape,
 } from '@authrim/ar-lib-core';
 import {
-  chunkForBoundParameters,
   type DatabaseAdapter,
-  type PreparedStatement,
   type CanonicalRuntimeUserWriteInput,
   CanonicalIdentityRepository,
   CanonicalRuntimeUserProjectionRepository,
   CanonicalRuntimeUserWriter,
   CanonicalSensitiveValueResolver,
-  generateId,
   generateUserIdFromSettings,
   validateCustomClaimWrite,
   persistCustomClaimWrite,
@@ -88,6 +85,23 @@ import {
   type CrossShardAccountListItem,
 } from './cross-shard-account-list';
 import { applyScimInboundIdentityMapping, ScimIdentityMappingError } from './scim-identity-mapping';
+import { tenantRBACStores } from './rbac-account-stores';
+import {
+  createScimGroup,
+  deleteScimGroup,
+  fetchScimUserGroups,
+  findScimGroup,
+  listOwnedScimMembers,
+  listScimMembersOfGroups,
+  splitScimGroupPatch,
+  listScimGroupRows,
+  scimGroupListSql,
+  scimGroupNameTaken,
+  setOwnedScimMembers,
+  updateScimGroup,
+  type ScimGroupMember,
+  type ScimGroupStores,
+} from './scim-groups';
 import { getScimInboundSettings } from './scim-settings';
 import { syncScimIdentifierReplacements } from './scim-identifier-replacement';
 import { findActiveAccountLegalHold } from './account-legal-hold-guard';
@@ -576,6 +590,8 @@ async function persistScimCustomClaimWrite(
   });
 }
 
+const SCIM_GROUP_HAS_CHILDREN_DETAIL =
+  'The group has child groups; move or delete them before deleting it';
 const DEFAULT_IAL_UNAVAILABLE_DETAIL =
   'The default identity assurance level is unavailable; retry shortly';
 
@@ -955,133 +971,158 @@ function userMatchesScimFilter(user: InternalUser, filter: ScimFilterNode): bool
 }
 
 /**
- * Fetch group members with PII from both Core and PII databases
- * PII/Non-PII DB separation: Cannot JOIN, so query user_roles and PII DB separately
+ * The email of each member, for the members of a SCIM group (read from the member's own account
+ * databases; empty for a member the tenant no longer routes to).
  */
-async function fetchGroupMembersWithPII(
+async function scimMemberDisplays(
   env: Env,
-  coreAdapter: DatabaseAdapter,
-  roleId: string,
+  members: ScimGroupMember[],
   tenantId: string
 ): Promise<{ user_id: string; email: string }[]> {
-  // Get user_ids from user_roles (Core DB) via Adapter
-  const roleMembers = await coreAdapter.query<{ user_id: string }>(
-    'SELECT user_id FROM user_roles WHERE tenant_id = ? AND role_id = ?',
-    [tenantId, roleId]
-  );
-
-  if (roleMembers.length === 0) {
-    return [];
-  }
-
-  return mapScimConcurrent(roleMembers, 4, async (member) => {
-    const adapters = await resolveScimAccountAdapters(env, tenantId, member.user_id);
+  if (members.length === 0) return [];
+  return mapScimConcurrent(members, 4, async ({ subjectId }) => {
+    const adapters = await resolveScimAccountAdapters(env, tenantId, subjectId);
     if (!adapters) {
-      return { user_id: member.user_id, email: '' };
+      return { user_id: subjectId, email: '' };
     }
     const projection = await createCanonicalProjectionRepository(
       adapters.coreAdapter,
       adapters.piiAdapter,
       tenantId
-    ).findByLegacyUserId(member.user_id);
-    return { user_id: member.user_id, email: projection?.email ?? '' };
+    ).findByLegacyUserId(subjectId);
+    return { user_id: subjectId, email: projection?.email ?? '' };
   });
 }
 
-async function fetchUserGroups(
-  coreAdapter: DatabaseAdapter,
-  userId: string,
-  tenantId: string,
-  baseUrl: string
-): Promise<NonNullable<ScimUser['groups']>> {
-  const roles = await coreAdapter.query<{ id: string; name: string }>(
-    `SELECT r.id, r.name
-       FROM user_roles ur
-       INNER JOIN roles r ON r.id = ur.role_id AND r.tenant_id = ur.tenant_id
-      WHERE ur.tenant_id = ? AND ur.user_id = ?
-      ORDER BY r.name ASC`,
-    [tenantId, userId]
-  );
-  return roles.map((role) => ({
-    value: role.id,
-    $ref: `${baseUrl}/scim/v2/Groups/${encodeURIComponent(role.id)}`,
-    display: role.name,
-    type: 'direct',
-  }));
+/** The group's members as SCIM wrote them (see scim-groups.ts), with their emails. */
+async function fetchGroupMembersWithPII(
+  c: ScimContext,
+  stores: ScimGroupStores,
+  groupId: string,
+  tenantId: string
+): Promise<{ user_id: string; email: string }[]> {
+  const members = await listOwnedScimMembers(stores, tenantId, groupId);
+  return scimMemberDisplays(c.env, members, tenantId);
 }
 
-async function findMissingTenantUserIds(
+/** Whether the list response shows `members` (else no member is read). */
+function scimGroupListNeedsMembers(params: ScimQueryParams): boolean {
+  const names = (list: string[] | undefined) =>
+    (list ?? []).map((name) =>
+      name
+        .trim()
+        .toLowerCase()
+        .replace(/^.*:group:/, '')
+    );
+  if (params.attributes && params.attributes.length > 0)
+    return names(params.attributes).some(
+      (name) => name === 'members' || name.startsWith('members.')
+    );
+  return !names(params.excludedAttributes).includes('members');
+}
+
+/**
+ * The canonical user (subject) a member value names, with its account database: null when the
+ * tenant routes no active account to it, or when it routes one whose SCIM User id is another
+ * value (an alias such as `account:<id>`), so only the User's own id is stored as a member.
+ */
+async function resolveScimMemberRoute(
   env: Env,
   tenantId: string,
-  userIds: string[]
-): Promise<string[]> {
-  const uniqueUserIds = [...new Set(userIds.filter(Boolean))];
-  if (uniqueUserIds.length === 0) {
-    return [];
+  value: string
+): Promise<ScimGroupMember | null> {
+  try {
+    const route = await resolveAccountDataContext(env, { tenantId, accountId: value });
+    if (route.legacyUserId !== value) return null;
+    return {
+      subjectId: route.legacyUserId,
+      account: ensureDatabaseAdapter(route.coreDb, 'scim-member-core'),
+    };
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      ['account_data_route_not_found', 'lookup_destination_revalidation_failed'].includes(
+        error.message
+      )
+    ) {
+      return null;
+    }
+    throw error;
   }
+}
 
-  const resolved = await mapScimConcurrent(uniqueUserIds, 4, async (userId) =>
-    resolveScimAccountAdapters(env, tenantId, userId)
+/** The databases SCIM group operations use: group definitions and every account database. */
+async function scimGroupStores(c: ScimContext, tenantId: string): Promise<ScimGroupStores> {
+  const stores = await tenantRBACStores(c, tenantId);
+  return { metadata: stores.metadata, accounts: stores.accounts, cache: c.env.REBAC_CACHE };
+}
+
+/**
+ * The account database of each requested member (each once), and the members the tenant has no
+ * active account for. A member already in the group (`known`, as its rows were read) is kept as
+ * read, so a suspended or locked member does not fail a write that leaves it in place; only new
+ * members are resolved.
+ */
+async function resolveScimGroupMembers(
+  env: Env,
+  tenantId: string,
+  userIds: string[],
+  known: ScimGroupMember[] = []
+): Promise<{ members: ScimGroupMember[]; missing: string[] }> {
+  const knownById = new Map(known.map((member) => [member.subjectId, member]));
+  const uniqueUserIds = [...new Set(userIds.filter(Boolean))];
+  const resolved = await mapScimConcurrent(
+    uniqueUserIds,
+    4,
+    async (userId) => knownById.get(userId) ?? resolveScimMemberRoute(env, tenantId, userId)
   );
-  return uniqueUserIds.filter((_userId, index) => resolved[index] === null);
+  const members: ScimGroupMember[] = [];
+  const missing: string[] = [];
+  uniqueUserIds.forEach((value, index) => {
+    const member = resolved[index];
+    if (member) members.push(member);
+    else missing.push(value);
+  });
+  return { members, missing };
+}
+
+/** Whether any of the values is not the SCIM User id of an active account of the tenant. */
+async function unknownScimMemberValues(
+  env: Env,
+  tenantId: string,
+  values: string[]
+): Promise<boolean> {
+  const resolved = await mapScimConcurrent(values, 4, (value) =>
+    resolveScimMemberRoute(env, tenantId, value)
+  );
+  return resolved.some((member) => member === null);
+}
+
+function resolveBulkMemberId(value: string, bulkIdMap?: Map<string, string>): string {
+  if (bulkIdMap && value.startsWith('bulkId:')) {
+    return bulkIdMap.get(value.substring(7)) ?? value;
+  }
+  return value;
 }
 
 function resolveScimGroupMemberIds(
   members: ScimGroup['members'] | undefined,
   bulkIdMap?: Map<string, string>
 ): string[] {
-  return (members ?? []).map((member) => {
-    if (bulkIdMap && member.value.startsWith('bulkId:')) {
-      return bulkIdMap.get(member.value.substring(7)) ?? member.value;
-    }
-    return member.value;
-  });
+  return (members ?? []).map((member) => resolveBulkMemberId(member.value, bulkIdMap));
 }
 
-/** Multi-row INSERTs adding the members, each within D1's bound-parameter limit. */
-function groupMemberInsertStatements(
-  tenantId: string,
-  roleId: string,
-  memberIds: string[],
-  createdAt: string
-): PreparedStatement[] {
-  return chunkForBoundParameters([...new Set(memberIds)], 0, 4).map((chunk) => ({
-    sql: `INSERT INTO user_roles (user_id, role_id, tenant_id, created_at) VALUES ${chunk
-      .map(() => '(?, ?, ?, ?)')
-      .join(', ')}`,
-    params: chunk.flatMap((memberId) => [memberId, roleId, tenantId, createdAt]),
-  }));
-}
-
-/** Adds the members in one batch: all of them or (on failure) none. */
-async function insertTenantGroupMembers(
-  coreAdapter: DatabaseAdapter,
-  tenantId: string,
-  roleId: string,
-  memberIds: string[],
-  createdAt: string
-): Promise<void> {
-  if (memberIds.length === 0) return;
-  await coreAdapter.batch(groupMemberInsertStatements(tenantId, roleId, memberIds, createdAt));
-}
-
-/**
- * Replaces the members in one batch, so a failure part way never leaves the group empty or
- * partial (which would take the role from users who keep it).
- */
-async function replaceTenantGroupMembers(
-  coreAdapter: DatabaseAdapter,
-  tenantId: string,
-  roleId: string,
-  memberIds: string[]
-): Promise<void> {
-  await coreAdapter.batch([
-    {
-      sql: 'DELETE FROM user_roles WHERE tenant_id = ? AND role_id = ?',
-      params: [tenantId, roleId],
+function duplicateGroupNameBulkResponse(method: string): ScimBulkOperationResponse {
+  return {
+    method: method as ScimBulkMethod,
+    status: '409',
+    response: {
+      schemas: [SCIM_SCHEMAS.ERROR],
+      status: '409',
+      detail: 'Group with this name already exists',
+      scimType: 'uniqueness',
     },
-    ...groupMemberInsertStatements(tenantId, roleId, memberIds, new Date().toISOString()),
-  ]);
+  };
 }
 
 function invalidGroupMemberBulkResponse(
@@ -1128,7 +1169,7 @@ import {
   validateScimGroup,
   validateScimPatchOp,
   type InternalUser,
-  type InternalGroup, // Filter utilities
+  // Filter utilities
   parseScimFilter,
   filterToSql, // Auth middleware
   scimAuthMiddleware,
@@ -1504,8 +1545,8 @@ const ALLOWED_USER_SORT_COLUMNS: Record<string, string> = {
  * Allowed sortBy columns for Groups (SCIM attribute -> DB column)
  */
 const ALLOWED_GROUP_SORT_COLUMNS: Record<string, string> = {
-  displayName: 'name',
-  name: 'name',
+  displayName: 'display_name',
+  name: 'display_name',
   created: 'created_at',
   // Also allow direct DB column names
   created_at: 'created_at',
@@ -2567,10 +2608,11 @@ app.get('/Users/:id', async (c) => {
       }
     }
 
-    const groups = await fetchUserGroups(
+    const groups = await fetchScimUserGroups(
       createTenantMetadataAdapterFromContext(c),
-      userId,
+      coreAdapter,
       tenantId,
+      userId,
       baseUrl
     );
     const scimUser = userToScim(user, { baseUrl, includeGroups: true, groups });
@@ -3202,7 +3244,7 @@ app.get('/Groups', async (c) => {
     const count = Math.min(params.count ?? 100, 1000);
     const offset = startIndex - 1;
 
-    let sql = 'SELECT * FROM roles WHERE tenant_id = ?';
+    let where: string | undefined;
     const sqlParams: (string | number | boolean | null)[] = [tenantId];
 
     // Apply filter if present
@@ -3210,11 +3252,14 @@ app.get('/Groups', async (c) => {
       try {
         const filterAst = parseScimFilter(params.filter);
         const attributeMap: Record<string, string> = {
-          displayName: 'name',
+          displayName: 'display_name',
           externalId: 'external_id',
         };
         const { sql: whereSql, params: whereParams } = filterToSql(filterAst, attributeMap);
-        sql += ` AND ${whereSql}`;
+        // filterToSql numbers its placeholders from ?1, which would name the tenant id bound
+        // first here. Its parameters come in the order the placeholders appear, so plain `?`
+        // binds each to its own.
+        where = whereSql.replace(/\?\d+/g, '?');
         // Filter out undefined values from whereParams
         sqlParams.push(
           ...whereParams.filter((p): p is string | number | boolean | null => p !== undefined)
@@ -3227,11 +3272,12 @@ app.get('/Groups', async (c) => {
         return scimError(c, 400, 'Invalid filter syntax', 'invalidFilter');
       }
     }
+    const query = scimGroupListSql(where);
+    let sql = query.list;
 
     // Get total count
-    const countQuery = sql.replace('SELECT *', 'SELECT COUNT(*) as total');
-    const totalResult = await coreAdapter.queryOne<{ total: number }>(countQuery, sqlParams);
-    const totalResults = totalResult?.total || 0;
+    const totalResult = await coreAdapter.queryOne<{ total: number }>(query.count, sqlParams);
+    const totalResults = Number(totalResult?.total || 0);
 
     // Apply sorting with whitelist validation (prevents SQL injection)
     if (params.sortBy) {
@@ -3255,18 +3301,38 @@ app.get('/Groups', async (c) => {
     sqlParams.push(count, offset);
 
     // Execute query
-    const groups = count === 0 ? [] : await coreAdapter.query<InternalGroup>(sql, sqlParams);
+    const groups = count === 0 ? [] : await listScimGroupRows(coreAdapter, sql, sqlParams);
+
+    // The members of the whole page (one query per account database for each 90 groups), and
+    // none when the response leaves `members` out.
+    const withMembers = groups.length > 0 && scimGroupListNeedsMembers(params);
+    const membersByGroup = withMembers
+      ? await listScimMembersOfGroups(
+          await scimGroupStores(c, tenantId),
+          tenantId,
+          groups.map((group) => group.id)
+        )
+      : new Map<string, ScimGroupMember[]>();
+    const uniqueMembers = new Map<string, ScimGroupMember>();
+    for (const members of membersByGroup.values())
+      for (const member of members) uniqueMembers.set(member.subjectId, member);
+    const displays = new Map(
+      (await scimMemberDisplays(c.env, [...uniqueMembers.values()], tenantId)).map((member) => [
+        member.user_id,
+        member,
+      ])
+    );
 
     // Convert to SCIM format
-    const scimGroups: ScimGroup[] = [];
-    for (const group of groups) {
-      // Fetch members if needed (PII/Non-PII DB separation)
-      const members = await fetchGroupMembersWithPII(c.env, coreAdapter, group.id, tenantId);
-
-      scimGroups.push(
-        projectScimResource(groupToScim(group, { baseUrl, includeMembers: true }, members), params)
+    const scimGroups: ScimGroup[] = groups.map((group) => {
+      const members = (membersByGroup.get(group.id) ?? []).map(
+        (member) => displays.get(member.subjectId) ?? { user_id: member.subjectId, email: '' }
       );
-    }
+      return projectScimResource(
+        groupToScim(group, { baseUrl, includeMembers: withMembers }, members),
+        params
+      );
+    });
 
     const response: ScimListResponse<ScimGroup> = {
       schemas: [SCIM_SCHEMAS.LIST_RESPONSE],
@@ -3303,10 +3369,7 @@ app.get('/Groups/:id', async (c) => {
     const tenantId = getTenantIdFromContext(c);
     const coreAdapter = createTenantMetadataAdapterFromContext(c);
 
-    const group = await coreAdapter.queryOne<InternalGroup>(
-      'SELECT * FROM roles WHERE id = ? AND tenant_id = ?',
-      [groupId, tenantId]
-    );
+    const group = await findScimGroup(coreAdapter, tenantId, groupId);
 
     if (!group) {
       return scimError(c, 404, 'The requested resource was not found');
@@ -3322,7 +3385,8 @@ app.get('/Groups/:id', async (c) => {
     }
 
     // Fetch members (PII/Non-PII DB separation)
-    const members = await fetchGroupMembersWithPII(c.env, coreAdapter, groupId, tenantId);
+    const stores = await scimGroupStores(c, tenantId);
+    const members = await fetchGroupMembersWithPII(c, stores, groupId, tenantId);
 
     const scimGroup = groupToScim(group, { baseUrl, includeMembers: true }, members);
 
@@ -3363,59 +3427,38 @@ app.post('/Groups', async (c) => {
     }
 
     // Check for duplicate displayName
-    const existing = await coreAdapter.queryOne<{ id: string }>(
-      'SELECT id FROM roles WHERE name = ? AND tenant_id = ?',
-      [scimGroup.displayName, tenantId]
-    );
-
-    if (existing) {
+    if (await scimGroupNameTaken(coreAdapter, tenantId, scimGroup.displayName!)) {
       return scimError(c, 409, 'Group with this name already exists', 'uniqueness');
     }
 
     // Convert SCIM group to internal format
     const internalGroup = scimToGroup(scimGroup);
 
-    // Generate ID
-    const groupId = generateId();
-
-    // Set timestamps
-    const now = new Date().toISOString();
-
-    const memberIds = resolveScimGroupMemberIds(scimGroup.members);
-    const missingMemberIds = await findMissingTenantUserIds(c.env, tenantId, memberIds);
-    if (missingMemberIds.length > 0) {
+    const requested = await resolveScimGroupMembers(
+      c.env,
+      tenantId,
+      resolveScimGroupMemberIds(scimGroup.members)
+    );
+    if (requested.missing.length > 0) {
       return scimError(c, 400, 'Group member does not exist in this tenant', 'invalidValue');
     }
 
-    // Insert group
-    await coreAdapter.execute(
-      `INSERT INTO roles (id, tenant_id, name, description, permissions_json, external_id, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [
-        groupId,
-        tenantId,
-        internalGroup.name,
-        internalGroup.description || null,
-        JSON.stringify([]), // Empty permissions by default
-        internalGroup.external_id ?? null,
-        now,
-      ]
-    );
-
-    await insertTenantGroupMembers(coreAdapter, tenantId, groupId, memberIds, now);
+    const stores = await scimGroupStores(c, tenantId);
+    const groupId = await createScimGroup(stores, tenantId, {
+      displayName: internalGroup.name!,
+      externalId: internalGroup.external_id ?? null,
+    });
+    await setOwnedScimMembers(stores, tenantId, groupId, [], requested.members);
 
     // Fetch created group
-    const createdGroup = await coreAdapter.queryOne<InternalGroup>(
-      'SELECT * FROM roles WHERE id = ? AND tenant_id = ?',
-      [groupId, tenantId]
-    );
+    const createdGroup = await findScimGroup(coreAdapter, tenantId, groupId);
 
     if (!createdGroup) {
       return scimError(c, 500, 'Failed to create group');
     }
 
     // Fetch members (PII/Non-PII DB separation)
-    const members = await fetchGroupMembersWithPII(c.env, coreAdapter, groupId, tenantId);
+    const members = await fetchGroupMembersWithPII(c, stores, groupId, tenantId);
 
     const responseGroup = groupToScim(createdGroup, { baseUrl, includeMembers: true }, members);
 
@@ -3464,10 +3507,7 @@ app.put('/Groups/:id', async (c) => {
     }
 
     // Check if group exists
-    const existingGroup = await coreAdapter.queryOne<InternalGroup>(
-      'SELECT * FROM roles WHERE id = ? AND tenant_id = ?',
-      [groupId, tenantId]
-    );
+    const existingGroup = await findScimGroup(coreAdapter, tenantId, groupId);
 
     if (!existingGroup) {
       return scimError(c, 404, 'The requested resource was not found');
@@ -3485,40 +3525,43 @@ app.put('/Groups/:id', async (c) => {
 
     // Convert SCIM group to internal format
     const internalGroup = scimToGroup(scimGroup);
+    if (
+      internalGroup.name !== existingGroup.name &&
+      (await scimGroupNameTaken(coreAdapter, tenantId, internalGroup.name!, groupId))
+    ) {
+      return scimError(c, 409, 'Group with this name already exists', 'uniqueness');
+    }
 
-    const memberIds = resolveScimGroupMemberIds(scimGroup.members);
-    const missingMemberIds = await findMissingTenantUserIds(c.env, tenantId, memberIds);
-    if (missingMemberIds.length > 0) {
+    // Members that stay are kept as read; only new ones must have an active account.
+    const stores = await scimGroupStores(c, tenantId);
+    const current = await listOwnedScimMembers(stores, tenantId, groupId);
+    const requested = await resolveScimGroupMembers(
+      c.env,
+      tenantId,
+      resolveScimGroupMemberIds(scimGroup.members),
+      current
+    );
+    if (requested.missing.length > 0) {
       return scimError(c, 400, 'Group member does not exist in this tenant', 'invalidValue');
     }
 
-    // Update group
-    await coreAdapter.execute(
-      `UPDATE roles SET name = ?, description = ?, external_id = ? WHERE id = ? AND tenant_id = ?`,
-      [
-        internalGroup.name,
-        internalGroup.description ?? null,
-        internalGroup.external_id ?? null,
-        groupId,
-        tenantId,
-      ]
-    );
+    await updateScimGroup(stores, tenantId, existingGroup, {
+      displayName: internalGroup.name!,
+      externalId: internalGroup.external_id ?? null,
+    });
 
-    // Update members only after every routed account has been validated.
-    await replaceTenantGroupMembers(coreAdapter, tenantId, groupId, memberIds);
+    // Replace the SCIM members only after every new member's account has been validated.
+    await setOwnedScimMembers(stores, tenantId, groupId, current, requested.members);
 
     // Fetch updated group
-    const updatedGroup = await coreAdapter.queryOne<InternalGroup>(
-      'SELECT * FROM roles WHERE id = ? AND tenant_id = ?',
-      [groupId, tenantId]
-    );
+    const updatedGroup = await findScimGroup(coreAdapter, tenantId, groupId);
 
     if (!updatedGroup) {
       return scimError(c, 500, 'Failed to fetch updated group');
     }
 
     // Fetch members (PII/Non-PII DB separation)
-    const members = await fetchGroupMembersWithPII(c.env, coreAdapter, groupId, tenantId);
+    const members = await fetchGroupMembersWithPII(c, stores, groupId, tenantId);
 
     const responseGroup = groupToScim(updatedGroup, { baseUrl, includeMembers: true }, members);
 
@@ -3558,10 +3601,7 @@ app.patch('/Groups/:id', async (c) => {
     const coreAdapter = createTenantMetadataAdapterFromContext(c);
 
     // Check if group exists
-    const existingGroup = await coreAdapter.queryOne<InternalGroup>(
-      'SELECT * FROM roles WHERE id = ? AND tenant_id = ?',
-      [groupId, tenantId]
-    );
+    const existingGroup = await findScimGroup(coreAdapter, tenantId, groupId);
 
     if (!existingGroup) {
       return scimError(c, 404, 'The requested resource was not found');
@@ -3577,14 +3617,22 @@ app.patch('/Groups/:id', async (c) => {
       }
     }
 
-    // Fetch current members (PII/Non-PII DB separation)
-    const currentMembers = await fetchGroupMembersWithPII(c.env, coreAdapter, groupId, tenantId);
+    // The SCIM members: the patch adds to (union), replaces or removes from (difference) these.
+    const stores = await scimGroupStores(c, tenantId);
+    const current = await listOwnedScimMembers(stores, tenantId, groupId);
+    const patch = splitScimGroupPatch(
+      current.map((member) => member.subjectId),
+      patchOp.Operations
+    );
+    if (!patch.ok) {
+      return scimError(c, 400, patch.detail, patch.scimType);
+    }
 
-    // Convert to SCIM format
-    let scimGroup = groupToScim(existingGroup, { baseUrl, includeMembers: true }, currentMembers);
-
-    // Apply patch operations (generic function preserves ScimGroup type)
-    scimGroup = applyPatchOperations(scimGroup, patchOp.Operations);
+    // The other attributes, patched on the resource without its members.
+    const scimGroup = applyPatchOperations(
+      groupToScim(existingGroup, { baseUrl, includeMembers: false }),
+      patch.otherOperations
+    );
 
     // Validate after patching
     const validation = validateScimGroup(scimGroup);
@@ -3594,45 +3642,43 @@ app.patch('/Groups/:id', async (c) => {
 
     // Convert back to internal format
     const internalGroup = scimToGroup(scimGroup);
+    if (
+      internalGroup.name !== existingGroup.name &&
+      (await scimGroupNameTaken(coreAdapter, tenantId, internalGroup.name!, groupId))
+    ) {
+      return scimError(c, 409, 'Group with this name already exists', 'uniqueness');
+    }
 
-    const memberIds =
-      scimGroup.members === undefined ? null : resolveScimGroupMemberIds(scimGroup.members);
-    if (memberIds) {
-      const missingMemberIds = await findMissingTenantUserIds(c.env, tenantId, memberIds);
-      if (missingMemberIds.length > 0) {
-        return scimError(c, 400, 'Group member does not exist in this tenant', 'invalidValue');
-      }
+    // Members that stay are kept as read; only new ones must have an active account. A removed
+    // value that is no member must still be a User's own id (an alias is refused, as on add).
+    const requested = patch.changed
+      ? await resolveScimGroupMembers(c.env, tenantId, patch.memberIds, current)
+      : { members: current, missing: [] };
+    if (
+      requested.missing.length > 0 ||
+      (await unknownScimMemberValues(c.env, tenantId, patch.removedValues))
+    ) {
+      return scimError(c, 400, 'Group member does not exist in this tenant', 'invalidValue');
     }
 
     // Update group
-    await coreAdapter.execute(
-      `UPDATE roles SET name = ?, description = ?, external_id = ? WHERE id = ? AND tenant_id = ?`,
-      [
-        internalGroup.name,
-        internalGroup.description ?? null,
-        internalGroup.external_id ?? null,
-        groupId,
-        tenantId,
-      ]
-    );
+    await updateScimGroup(stores, tenantId, existingGroup, {
+      displayName: internalGroup.name!,
+      externalId: internalGroup.external_id ?? null,
+    });
 
-    // Update members if changed
-    if (memberIds) {
-      await replaceTenantGroupMembers(coreAdapter, tenantId, groupId, memberIds);
-    }
+    // Add and revoke the SCIM rows of the members the patch added and removed.
+    await setOwnedScimMembers(stores, tenantId, groupId, current, requested.members);
 
     // Fetch updated group
-    const updatedGroup = await coreAdapter.queryOne<InternalGroup>(
-      'SELECT * FROM roles WHERE id = ? AND tenant_id = ?',
-      [groupId, tenantId]
-    );
+    const updatedGroup = await findScimGroup(coreAdapter, tenantId, groupId);
 
     if (!updatedGroup) {
       return scimError(c, 500, 'Failed to fetch updated group');
     }
 
     // Fetch updated members (PII/Non-PII DB separation)
-    const updatedMembers = await fetchGroupMembersWithPII(c.env, coreAdapter, groupId, tenantId);
+    const updatedMembers = await fetchGroupMembersWithPII(c, stores, groupId, tenantId);
 
     const responseGroup = groupToScim(
       updatedGroup,
@@ -3666,10 +3712,7 @@ app.delete('/Groups/:id', async (c) => {
     const coreAdapter = createTenantMetadataAdapterFromContext(c);
 
     // Check if group exists
-    const existingGroup = await coreAdapter.queryOne<InternalGroup>(
-      'SELECT * FROM roles WHERE id = ? AND tenant_id = ?',
-      [groupId, tenantId]
-    );
+    const existingGroup = await findScimGroup(coreAdapter, tenantId, groupId);
 
     if (!existingGroup) {
       return scimError(c, 404, 'The requested resource was not found');
@@ -3685,14 +3728,14 @@ app.delete('/Groups/:id', async (c) => {
       }
     }
 
-    // Delete group (cascade will handle user_roles)
-    await coreAdapter.batch([
-      {
-        sql: 'DELETE FROM user_roles WHERE tenant_id = ? AND role_id = ?',
-        params: [tenantId, groupId],
-      },
-      { sql: 'DELETE FROM roles WHERE id = ? AND tenant_id = ?', params: [groupId, tenantId] },
-    ]);
+    // The group, its role assignments and its memberships on every account database.
+    const deletion = await deleteScimGroup(await scimGroupStores(c, tenantId), tenantId, groupId);
+    if (deletion === 'has_children') {
+      return scimError(c, 409, SCIM_GROUP_HAS_CHILDREN_DETAIL);
+    }
+    if (deletion === 'not_found') {
+      return scimError(c, 404, 'The requested resource was not found');
+    }
 
     // Audit log (non-blocking) - severity: warning for deletion
     logScimAudit(
@@ -4938,11 +4981,7 @@ async function processGroupOperation(
       }
 
       // Check for duplicate
-      const existing = await coreAdapter.queryOne<{ id: string }>(
-        'SELECT id FROM roles WHERE name = ? AND tenant_id = ?',
-        [scimGroup.displayName, tenantId]
-      );
-      if (existing) {
+      if (await scimGroupNameTaken(coreAdapter, tenantId, scimGroup.displayName!)) {
         return {
           method: 'POST',
           bulkId,
@@ -4957,41 +4996,30 @@ async function processGroupOperation(
       }
 
       const internalGroup = scimToGroup(scimGroup);
-      const groupId = generateId();
-      const now = new Date().toISOString();
 
-      const memberIds = resolveScimGroupMemberIds(scimGroup.members, bulkIdMap);
-      const missingMemberIds = await findMissingTenantUserIds(c.env, tenantId, memberIds);
-      if (missingMemberIds.length > 0) {
+      const requested = await resolveScimGroupMembers(
+        c.env,
+        tenantId,
+        resolveScimGroupMemberIds(scimGroup.members, bulkIdMap)
+      );
+      if (requested.missing.length > 0) {
         return invalidGroupMemberBulkResponse('POST', bulkId);
       }
 
-      await coreAdapter.execute(
-        `INSERT INTO roles (id, tenant_id, name, description, permissions_json, external_id, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [
-          groupId,
-          tenantId,
-          internalGroup.name,
-          internalGroup.description || null,
-          JSON.stringify([]),
-          internalGroup.external_id ?? null,
-          now,
-        ]
-      );
-
-      await insertTenantGroupMembers(coreAdapter, tenantId, groupId, memberIds, now);
+      const stores = await scimGroupStores(c, tenantId);
+      const groupId = await createScimGroup(stores, tenantId, {
+        displayName: internalGroup.name!,
+        externalId: internalGroup.external_id ?? null,
+      });
+      await setOwnedScimMembers(stores, tenantId, groupId, [], requested.members);
 
       // Store bulkId mapping
       if (bulkId) {
         bulkIdMap.set(bulkId, groupId);
       }
 
-      const createdGroup = await coreAdapter.queryOne<InternalGroup>(
-        'SELECT * FROM roles WHERE id = ? AND tenant_id = ?',
-        [groupId, tenantId]
-      );
-      const members = await fetchGroupMembersWithPII(c.env, coreAdapter, groupId, tenantId);
+      const createdGroup = await findScimGroup(coreAdapter, tenantId, groupId);
+      const members = await fetchGroupMembersWithPII(c, stores, groupId, tenantId);
       const responseGroup = createdGroup
         ? groupToScim(createdGroup, { baseUrl, includeMembers: true }, members)
         : null;
@@ -5008,10 +5036,9 @@ async function processGroupOperation(
 
     case 'PUT': {
       // Replace group
-      const existingGroup = await coreAdapter.queryOne<InternalGroup>(
-        'SELECT * FROM roles WHERE id = ? AND tenant_id = ?',
-        [resourceId, tenantId]
-      );
+      const existingGroup = resourceId
+        ? await findScimGroup(coreAdapter, tenantId, resourceId)
+        : null;
       if (!existingGroup) {
         return {
           method: 'PUT',
@@ -5060,32 +5087,36 @@ async function processGroupOperation(
       }
 
       const internalGroup = scimToGroup(scimGroup);
+      if (
+        internalGroup.name !== existingGroup.name &&
+        (await scimGroupNameTaken(coreAdapter, tenantId, internalGroup.name!, existingGroup.id))
+      ) {
+        return duplicateGroupNameBulkResponse('PUT');
+      }
 
-      const memberIds = resolveScimGroupMemberIds(scimGroup.members, bulkIdMap);
-      const missingMemberIds = await findMissingTenantUserIds(c.env, tenantId, memberIds);
-      if (missingMemberIds.length > 0) {
+      // Members that stay are kept as read; only new ones must have an active account.
+      const stores = await scimGroupStores(c, tenantId);
+      const current = await listOwnedScimMembers(stores, tenantId, existingGroup.id);
+      const requested = await resolveScimGroupMembers(
+        c.env,
+        tenantId,
+        resolveScimGroupMemberIds(scimGroup.members, bulkIdMap),
+        current
+      );
+      if (requested.missing.length > 0) {
         return invalidGroupMemberBulkResponse('PUT');
       }
 
-      await coreAdapter.execute(
-        `UPDATE roles SET name = ?, description = ?, external_id = ? WHERE id = ? AND tenant_id = ?`,
-        [
-          internalGroup.name,
-          internalGroup.description ?? null,
-          internalGroup.external_id ?? null,
-          resourceId,
-          tenantId,
-        ]
-      );
+      await updateScimGroup(stores, tenantId, existingGroup, {
+        displayName: internalGroup.name!,
+        externalId: internalGroup.external_id ?? null,
+      });
 
-      // Update members only after every routed account has been validated.
-      await replaceTenantGroupMembers(coreAdapter, tenantId, resourceId!, memberIds);
+      // Replace the SCIM members only after every new member's account has been validated.
+      await setOwnedScimMembers(stores, tenantId, existingGroup.id, current, requested.members);
 
-      const updatedGroup = await coreAdapter.queryOne<InternalGroup>(
-        'SELECT * FROM roles WHERE id = ? AND tenant_id = ?',
-        [resourceId, tenantId]
-      );
-      const members = await fetchGroupMembersWithPII(c.env, coreAdapter, resourceId!, tenantId);
+      const updatedGroup = await findScimGroup(coreAdapter, tenantId, existingGroup.id);
+      const members = await fetchGroupMembersWithPII(c, stores, existingGroup.id, tenantId);
       const responseGroup = updatedGroup
         ? groupToScim(updatedGroup, { baseUrl, includeMembers: true }, members)
         : null;
@@ -5101,10 +5132,9 @@ async function processGroupOperation(
 
     case 'PATCH': {
       // Partial update group
-      const existingGroup = await coreAdapter.queryOne<InternalGroup>(
-        'SELECT * FROM roles WHERE id = ? AND tenant_id = ?',
-        [resourceId, tenantId]
-      );
+      const existingGroup = resourceId
+        ? await findScimGroup(coreAdapter, tenantId, resourceId)
+        : null;
       if (!existingGroup) {
         return {
           method: 'PATCH',
@@ -5133,14 +5163,6 @@ async function processGroupOperation(
         }
       }
 
-      const currentMembers = await fetchGroupMembersWithPII(
-        c.env,
-        coreAdapter,
-        resourceId!,
-        tenantId
-      );
-      let scimGroup = groupToScim(existingGroup, { baseUrl, includeMembers: true }, currentMembers);
-
       const patchOp = data as unknown as ScimPatchOp;
       const patchValidation = validateScimPatchOp(patchOp);
       if (!patchValidation.valid) {
@@ -5155,7 +5177,30 @@ async function processGroupOperation(
           },
         };
       }
-      scimGroup = applyPatchOperations(scimGroup, patchOp.Operations);
+      // The SCIM members: the patch adds to (union), replaces or removes from (difference)
+      // these; the other attributes are patched on the resource without its members.
+      const stores = await scimGroupStores(c, tenantId);
+      const current = await listOwnedScimMembers(stores, tenantId, existingGroup.id);
+      const patch = splitScimGroupPatch(
+        current.map((member) => member.subjectId),
+        patchOp.Operations
+      );
+      if (!patch.ok) {
+        return {
+          method: 'PATCH',
+          status: '400',
+          response: {
+            schemas: [SCIM_SCHEMAS.ERROR],
+            status: '400',
+            detail: patch.detail,
+            scimType: patch.scimType,
+          },
+        };
+      }
+      const scimGroup = applyPatchOperations(
+        groupToScim(existingGroup, { baseUrl, includeMembers: false }),
+        patch.otherOperations
+      );
 
       const validation = validateScimGroup(scimGroup);
       if (!validation.valid) {
@@ -5172,39 +5217,43 @@ async function processGroupOperation(
       }
 
       const internalGroup = scimToGroup(scimGroup);
-
-      const memberIds =
-        scimGroup.members === undefined
-          ? null
-          : resolveScimGroupMemberIds(scimGroup.members, bulkIdMap);
-      if (memberIds) {
-        const missingMemberIds = await findMissingTenantUserIds(c.env, tenantId, memberIds);
-        if (missingMemberIds.length > 0) {
-          return invalidGroupMemberBulkResponse('PATCH');
-        }
+      if (
+        internalGroup.name !== existingGroup.name &&
+        (await scimGroupNameTaken(coreAdapter, tenantId, internalGroup.name!, existingGroup.id))
+      ) {
+        return duplicateGroupNameBulkResponse('PATCH');
       }
 
-      await coreAdapter.execute(
-        `UPDATE roles SET name = ?, description = ?, external_id = ? WHERE id = ? AND tenant_id = ?`,
-        [
-          internalGroup.name,
-          internalGroup.description ?? null,
-          internalGroup.external_id ?? null,
-          resourceId,
+      // Members that stay are kept as read; only new ones must have an active account.
+      const requested = patch.changed
+        ? await resolveScimGroupMembers(
+            c.env,
+            tenantId,
+            patch.memberIds.map((value) => resolveBulkMemberId(value, bulkIdMap)),
+            current
+          )
+        : { members: current, missing: [] };
+      if (
+        requested.missing.length > 0 ||
+        (await unknownScimMemberValues(
+          c.env,
           tenantId,
-        ]
-      );
-
-      // Update members if changed
-      if (memberIds) {
-        await replaceTenantGroupMembers(coreAdapter, tenantId, resourceId!, memberIds);
+          patch.removedValues.map((value) => resolveBulkMemberId(value, bulkIdMap))
+        ))
+      ) {
+        return invalidGroupMemberBulkResponse('PATCH');
       }
 
-      const updatedGroup = await coreAdapter.queryOne<InternalGroup>(
-        'SELECT * FROM roles WHERE id = ? AND tenant_id = ?',
-        [resourceId, tenantId]
-      );
-      const members = await fetchGroupMembersWithPII(c.env, coreAdapter, resourceId!, tenantId);
+      await updateScimGroup(stores, tenantId, existingGroup, {
+        displayName: internalGroup.name!,
+        externalId: internalGroup.external_id ?? null,
+      });
+
+      // Add and revoke the SCIM rows of the members the patch added and removed.
+      await setOwnedScimMembers(stores, tenantId, existingGroup.id, current, requested.members);
+
+      const updatedGroup = await findScimGroup(coreAdapter, tenantId, existingGroup.id);
+      const members = await fetchGroupMembersWithPII(c, stores, existingGroup.id, tenantId);
       const responseGroup = updatedGroup
         ? groupToScim(updatedGroup, { baseUrl, includeMembers: true }, members)
         : null;
@@ -5220,10 +5269,9 @@ async function processGroupOperation(
 
     case 'DELETE': {
       // Delete group
-      const existingGroup = await coreAdapter.queryOne<InternalGroup>(
-        'SELECT * FROM roles WHERE id = ? AND tenant_id = ?',
-        [resourceId, tenantId]
-      );
+      const existingGroup = resourceId
+        ? await findScimGroup(coreAdapter, tenantId, resourceId)
+        : null;
       if (!existingGroup) {
         return {
           method: 'DELETE',
@@ -5252,13 +5300,24 @@ async function processGroupOperation(
         }
       }
 
-      await coreAdapter.batch([
-        {
-          sql: 'DELETE FROM user_roles WHERE tenant_id = ? AND role_id = ?',
-          params: [tenantId, resourceId],
-        },
-        { sql: 'DELETE FROM roles WHERE id = ? AND tenant_id = ?', params: [resourceId, tenantId] },
-      ]);
+      const deletion = await deleteScimGroup(
+        await scimGroupStores(c, tenantId),
+        tenantId,
+        existingGroup.id
+      );
+      if (deletion !== 'deleted') {
+        const status = deletion === 'has_children' ? '409' : '404';
+        return {
+          method: 'DELETE',
+          status,
+          response: {
+            schemas: [SCIM_SCHEMAS.ERROR],
+            status,
+            detail:
+              deletion === 'has_children' ? SCIM_GROUP_HAS_CHILDREN_DETAIL : 'Resource not found',
+          },
+        };
+      }
 
       return {
         method: 'DELETE',

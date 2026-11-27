@@ -159,7 +159,7 @@ describe('admin compliance APIs', () => {
       sql.includes('SELECT id FROM roles WHERE')
         ? [{ id: 'role-1' }, { id: 'role-2' }]
         : sql.includes('FROM role_assignments')
-          ? storeUsers[storeIndex++].map((user_id) => ({ user_id, role_id: 'role-1' }))
+          ? storeUsers[storeIndex++].map((user_id) => ({ user_id, ref: 'r:role-1' }))
           : []
     );
     const response = await adminComplianceStatusHandler(context());
@@ -208,7 +208,9 @@ describe('admin compliance APIs', () => {
     // Users with a role: only unexpired assignments, kept when they name a role of the tenant
     // (the roles are in another database than the assignments, so no join).
     const rbacSql = String(
-      mocks.core.query.mock.calls.find(([sql]) => String(sql).includes('role_assignments'))?.[0]
+      mocks.core.query.mock.calls.find(([sql]) =>
+        String(sql).includes('FROM role_assignments')
+      )?.[0]
     );
     expect(rbacSql).not.toContain('JOIN roles');
     expect(rbacSql).toContain('expires_at IS NULL OR expires_at > ?');

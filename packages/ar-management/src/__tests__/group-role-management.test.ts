@@ -97,3 +97,33 @@ it('reads delegation through the transaction that writes the group or membership
     db.close();
   }
 });
+
+it('files a SCIM membership written without a reference under the shared SCIM domain', async () => {
+  const { db, adapter } = openCoreStore('test');
+  try {
+    const repo = new IdentityMappingControlPlaneRepository(adapter, Date.now, adapter);
+    const group = await repo.createGroup('test', { groupKey: 'g', displayName: 'G' });
+    await repo.createGroupMembership('test', {
+      groupId: group.id,
+      subjectId: 'user',
+      assignmentSource: 'scim',
+    });
+    await repo.createGroupMembership('test', {
+      groupId: group.id,
+      subjectId: 'user',
+      assignmentSource: 'manual',
+    });
+    expect(
+      db
+        .prepare(
+          'SELECT assignment_source, source_ref FROM group_memberships ORDER BY assignment_source'
+        )
+        .all()
+    ).toEqual([
+      { assignment_source: 'manual', source_ref: '' },
+      { assignment_source: 'scim', source_ref: 'scim' },
+    ]);
+  } finally {
+    db.close();
+  }
+});
