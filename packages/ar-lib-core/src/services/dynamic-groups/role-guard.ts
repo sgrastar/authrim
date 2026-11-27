@@ -3,7 +3,8 @@
  *
  * A dynamic group's membership feeds every group whose rule references it (`member`), directly
  * or through others: `dependentGroups` is that closure. A group "carries roles" when it, or one of
- * its canonical ancestors, has an unexpired group role grant: membership then grants those roles.
+ * its canonical ancestors, has an unexpired group role grant or an active, unexpired resource
+ * permission granted to the group: membership then grants that authorization.
  *
  * A field the person can write themselves (`Field.selfWritable`) must not decide membership of a
  * group that carries roles: `selfWritableGroups` are the groups whose result depends on such a
@@ -46,7 +47,11 @@ export function selfWritableGroups(
   return dependentGroups(plan, seeds);
 }
 
-/** The ids among `ids` that carry roles (an unexpired grant on the group or an ancestor). */
+/**
+ * The ids among `ids` that carry authorization: an unexpired role grant, or an active and
+ * unexpired resource permission granted to the group (`subject_type = 'group'`), on the group or
+ * an ancestor.
+ */
 export async function groupsCarryingRoles(
   db: GroupReader,
   tenantId: string,
@@ -62,8 +67,13 @@ export async function groupsCarryingRoles(
         WHERE g.tenant_id = ?
       ) SELECT g.id FROM ancestors a JOIN group_role_assignments g
           ON g.group_id = a.id AND g.tenant_id = ?
-        WHERE g.expires_at IS NULL OR g.expires_at > ? LIMIT 1`,
-      [tenantId, id, tenantId, tenantId, nowSeconds],
+        WHERE g.expires_at IS NULL OR g.expires_at > ?
+        UNION ALL
+        SELECT p.id FROM ancestors a JOIN resource_permissions p
+          ON p.subject_type = 'group' AND p.subject_id = a.id AND p.tenant_id = ?
+        WHERE p.is_active = 1 AND (p.expires_at IS NULL OR p.expires_at > ?)
+        LIMIT 1`,
+      [tenantId, id, tenantId, tenantId, nowSeconds, tenantId, nowSeconds],
       primary
     );
     if (row) carrying.add(id);

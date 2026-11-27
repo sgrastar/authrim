@@ -16,7 +16,6 @@ import {
   group,
   groups,
   auditArgOf,
-  makeAudit,
   makeDb,
   plan,
   publication,
@@ -323,115 +322,5 @@ describe('save', () => {
       )
     ).rejects.toThrow('group_catalog_limit');
     expect(over.raw.batch).not.toHaveBeenCalled();
-  });
-});
-
-describe('setManual', () => {
-  const guard = 'EXISTS(SELECT 1 FROM service_group_catalog WHERE tenant_id=? AND revision=?)';
-
-  it('rejects unknown, disabled and missing-catalog groups before auditing', async () => {
-    const disabled = compileGroups(
-      TENANT,
-      [group('A', null, { enabled: false })],
-      BUILTIN_GROUP_FIELDS
-    );
-    const cases = [
-      makeDb({ catalogRow: null }),
-      makeDb({ catalogRow: { revision: 3, plan_json: JSON.stringify(disabled) } }),
-    ];
-    for (const { db } of cases) {
-      await expect(
-        new DynamicGroupStore(db, TENANT, publication).setManual(USER, 'A', true, 'x')
-      ).rejects.toThrow('group_not_found');
-    }
-    const { db } = makeDb();
-    await expect(
-      new DynamicGroupStore(db, TENANT, publication).setManual(USER, 'ZZ', true, 'x')
-    ).rejects.toThrow('group_not_found');
-    expect(prepareMock).not.toHaveBeenCalled();
-  });
-
-  it('adds a membership with a catalog-revision guard and audits it', async () => {
-    const { db, raw } = makeDb();
-    const audit = makeAudit();
-    prepareMock.mockResolvedValue(audit);
-    await new DynamicGroupStore(db, TENANT, publication).setManual(USER, 'A', true, 'actor-9');
-
-    expect(prepareMock.mock.calls[0].slice(0, 2)).toEqual([publication.env, db]);
-    const arg = auditArgOf(prepareMock);
-    expect(arg.eventAt).toBe(NOW);
-    expect(arg.overview).toEqual({ action: 'manual', subject_id: USER });
-    expect(arg.row).toMatchObject({
-      user_id: USER,
-      rule_version: 3,
-      generation: 0,
-      event_type: 'manual',
-      detail_json: JSON.stringify({ actorId: 'actor-9', groupId: 'A', present: true }),
-    });
-    expect(audit.wrapBusinessBatch).toHaveBeenCalledWith(
-      [
-        {
-          sql: `INSERT INTO service_group_manual(tenant_id,user_id,group_id) SELECT ?,?,? WHERE ${guard} ON CONFLICT(tenant_id,user_id,group_id) DO NOTHING`,
-          params: [TENANT, USER, 'A', TENANT, 3],
-        },
-      ],
-      {
-        where: `${guard} AND EXISTS(SELECT 1 FROM service_group_manual WHERE tenant_id=? AND user_id=? AND group_id=?)`,
-        params: [TENANT, 3, TENANT, USER, 'A'],
-      }
-    );
-    expect(raw.batch).toHaveBeenCalledTimes(1);
-    expect(audit.dispatch).toHaveBeenCalledTimes(1);
-    expect(raw.queryOne).toHaveBeenLastCalledWith(
-      'SELECT state FROM log_iceberg_core_publications WHERE id=? AND tenant_id=?',
-      ['pub-1', TENANT],
-      PRIMARY
-    );
-  });
-
-  it('removes a membership with a NOT EXISTS verification guard', async () => {
-    const { db } = makeDb();
-    const audit = makeAudit();
-    prepareMock.mockResolvedValue(audit);
-    await new DynamicGroupStore(db, TENANT, publication).setManual(USER, 'A', false, 'actor-9');
-    expect(audit.wrapBusinessBatch).toHaveBeenCalledWith(
-      [
-        {
-          sql: `DELETE FROM service_group_manual WHERE tenant_id=? AND user_id=? AND group_id=? AND ${guard}`,
-          params: [TENANT, USER, 'A', TENANT, 3],
-        },
-      ],
-      {
-        where: `${guard} AND NOT EXISTS(SELECT 1 FROM service_group_manual WHERE tenant_id=? AND user_id=? AND group_id=?)`,
-        params: [TENANT, 3, TENANT, USER, 'A'],
-      }
-    );
-    expect(JSON.parse(auditArgOf(prepareMock).row.detail_json)).toEqual({
-      actorId: 'actor-9',
-      groupId: 'A',
-      present: false,
-    });
-  });
-
-  it('only dispatches (no business batch) when the audit is already committed or published', async () => {
-    for (const s of ['committed', 'published']) {
-      const { db, raw } = makeDb();
-      const audit = makeAudit(s);
-      prepareMock.mockResolvedValue(audit);
-      await new DynamicGroupStore(db, TENANT, publication).setManual(USER, 'A', true, 'x');
-      expect(audit.dispatch).toHaveBeenCalledTimes(1);
-      expect(raw.batch).not.toHaveBeenCalled();
-      expect(audit.wrapBusinessBatch).not.toHaveBeenCalled();
-    }
-  });
-
-  it('fails with a version conflict when the publication did not commit', async () => {
-    const { db } = makeDb({ publicationState: 'aborted' });
-    const audit = makeAudit();
-    prepareMock.mockResolvedValue(audit);
-    await expect(
-      new DynamicGroupStore(db, TENANT, publication).setManual(USER, 'A', true, 'x')
-    ).rejects.toThrow('group_version_conflict');
-    expect(audit.dispatch).not.toHaveBeenCalled();
   });
 });

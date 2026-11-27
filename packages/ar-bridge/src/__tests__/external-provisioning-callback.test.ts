@@ -162,7 +162,7 @@ describe('external IdP durable provisioning status', () => {
     mocks.completeJit.mockResolvedValue({
       linkedIdentityId: 'external-link-a',
       roles_assigned: [],
-      orgs_joined: [],
+      groups_joined: [],
     });
     mocks.getProvider.mockResolvedValue({
       id: 'provider-a',

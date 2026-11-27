@@ -53,7 +53,6 @@ export {
   type UpdateClientInput,
   type ClientFilterOptions,
   RoleRepository,
-  type UserRole,
   type CreateRoleInput,
   type UpdateRoleInput,
   SessionClientRepository,

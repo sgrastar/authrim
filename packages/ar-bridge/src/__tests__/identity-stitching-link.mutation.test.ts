@@ -483,7 +483,7 @@ describe('finishing an account an earlier sign-in left pending', () => {
       linkedIdentityId: 'active-1',
       stitchedFromExisting: false,
       roles_assigned: [],
-      orgs_joined: [],
+      groups_joined: [],
     });
     expect(m.updateLinked).toHaveBeenCalledWith(
       ENV,

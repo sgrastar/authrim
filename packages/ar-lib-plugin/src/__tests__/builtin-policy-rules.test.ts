@@ -21,7 +21,7 @@ interface RuleRow {
   conditions: string | null;
   action: string;
   roles_to_assign: string | null;
-  orgs_to_join: string | null;
+  groups_to_join: string | null;
   attributes_to_set: string | null;
   deny_reason: string | null;
 }
@@ -34,7 +34,7 @@ function row(overrides: Partial<RuleRow> = {}): RuleRow {
     conditions: JSON.stringify([{ field: 'provider_id', operator: 'eq', value: 'idp-a' }]),
     action: 'allow',
     roles_to_assign: JSON.stringify(['reader']),
-    orgs_to_join: JSON.stringify(['engineering']),
+    groups_to_join: JSON.stringify(['engineering']),
     attributes_to_set: JSON.stringify([{ key: 'source', value: 'sso' }]),
     deny_reason: null,
     ...overrides,
@@ -76,7 +76,7 @@ describe('BuiltinPolicyInfra role assignment rules', () => {
     expect(result).toEqual({
       matched_rules: ['allow', 'deny'],
       roles_to_assign: ['reader'],
-      orgs_to_join: ['engineering'],
+      groups_to_join: ['engineering'],
       attributes_to_set: [{ key: 'source', value: 'sso' }],
       denied: true,
       deny_reason: 'blocked by policy',
@@ -162,7 +162,7 @@ describe('BuiltinPolicyInfra role assignment rules', () => {
       conditions: [{ field: 'email_verified', operator: 'eq', value: true }],
       action: 'allow',
       roles_to_assign: ['cached-role'],
-      orgs_to_join: [],
+      groups_to_join: [],
       attributes_to_set: [],
     };
     const cache = {

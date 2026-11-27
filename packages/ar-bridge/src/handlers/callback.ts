@@ -957,7 +957,7 @@ export async function handleExternalProvisioningResume(
         linkedIdentityId: completed.linkedIdentityId,
         stitchedFromExisting: false,
         roles_assigned: completed.roles_assigned,
-        orgs_joined: completed.orgs_joined,
+        groups_joined: completed.groups_joined,
       },
     });
   } catch (error) {

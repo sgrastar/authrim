@@ -4,10 +4,9 @@
  * This module contains type definitions for dynamic role assignment rules
  * and policy evaluation:
  * - Rule conditions and operators
- * - Rule actions (assign_role, join_org, deny)
+ * - Rule actions (assign_role, join_group, set_attribute, deny)
  * - OIDC error codes for deny actions
  * - Role assignment rule structure
- * - Organization domain mapping
  */
 
 import type { ScopeType } from './rbac';
@@ -92,29 +91,19 @@ export type DenyErrorCode =
  */
 export interface RuleAction {
   /** Action type */
-  type: 'assign_role' | 'join_org' | 'set_attribute' | 'deny';
+  type: 'assign_role' | 'join_group' | 'set_attribute' | 'deny';
 
   // For assign_role
   /** Role ID to assign */
   role_id?: string;
   /** Scope type for the role */
   scope_type?: ScopeType;
-  /**
-   * Scope target
-   * - 'auto': Use matched organization from org_domain_mappings
-   * - Specific value: e.g., 'org:org_123'
-   */
-  scope_target?: string | 'auto';
+  /** Scope target, e.g. 'group:grp_123' (empty for a global assignment) */
+  scope_target?: string;
 
-  // For join_org
-  /**
-   * Organization ID to join
-   * - 'auto': Use matched organization from email_domain_hash
-   * - Specific value: e.g., 'org_123'
-   */
-  org_id?: string | 'auto';
-  /** Membership type when joining */
-  membership_type?: 'member' | 'admin' | 'owner';
+  // For join_group
+  /** The group to join (a membership with assignment_source 'rule') */
+  group_id?: string;
 
   // For set_attribute
   /** Attribute name to set */
@@ -200,61 +189,6 @@ export interface RoleAssignmentRuleRow extends Omit<
 }
 
 // =============================================================================
-// Organization Domain Mapping
-// =============================================================================
-
-/**
- * Organization domain mapping
- * Links email domains (hashed) to organizations for JIT auto-join
- */
-export interface OrgDomainMapping {
-  /** Unique mapping ID */
-  id: string;
-  /** Tenant ID for multi-tenant isolation */
-  tenant_id: string;
-
-  /** Hashed email domain (HMAC-SHA256) */
-  domain_hash: string;
-  /** Key version used for hashing (for rotation) */
-  domain_hash_version: number;
-
-  /** Target organization ID */
-  org_id: string;
-
-  /** Whether auto-join is enabled */
-  auto_join_enabled: boolean;
-  /** Default membership type on join */
-  membership_type: 'member' | 'admin' | 'owner';
-  /** Optional: auto-assign this role on join */
-  auto_assign_role_id?: string;
-
-  /** Whether domain ownership is verified */
-  verified: boolean;
-  /** Priority for multiple mappings */
-  priority: number;
-  /** Whether mapping is active */
-  is_active: boolean;
-
-  /** Creation timestamp (UNIX seconds) */
-  created_at: number;
-  /** Last update timestamp (UNIX seconds) */
-  updated_at: number;
-}
-
-/**
- * Organization domain mapping row from D1 database
- */
-export interface OrgDomainMappingRow extends Omit<
-  OrgDomainMapping,
-  'auto_join_enabled' | 'verified' | 'is_active' | 'auto_assign_role_id'
-> {
-  auto_join_enabled: number;
-  verified: number;
-  is_active: number;
-  auto_assign_role_id: string | null;
-}
-
-// =============================================================================
 // Rule Evaluation Types
 // =============================================================================
 
@@ -291,8 +225,8 @@ export interface RuleEvaluationResult {
     scope_type: ScopeType;
     scope_target: string;
   }>;
-  /** Organization IDs to join */
-  orgs_to_join: string[];
+  /** Groups to join, with the rule that joins each (a membership with assignment_source 'rule') */
+  groups_to_join: Array<{ group_id: string; rule_id: string }>;
   /** Attributes to set */
   attributes_to_set: Array<{
     name: string;
@@ -326,21 +260,6 @@ export interface RoleAssignmentRuleInput {
   stop_processing?: boolean;
   valid_from?: number;
   valid_until?: number;
-}
-
-/**
- * Input for creating/updating an organization domain mapping
- */
-export interface OrgDomainMappingInput {
-  /** Raw email domain (will be hashed) */
-  domain: string;
-  org_id: string;
-  auto_join_enabled?: boolean;
-  membership_type?: 'member' | 'admin' | 'owner';
-  auto_assign_role_id?: string;
-  verified?: boolean;
-  priority?: number;
-  is_active?: boolean;
 }
 
 /**

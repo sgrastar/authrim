@@ -756,12 +756,17 @@ export async function adminConditionTypesHandler(c: Context<{ Bindings: Env }>) 
   // The Check API's tenant rules: only the conditions it can evaluate, with the parameter names
   // the policy engine reads (validatePolicyConditions checks the same on save).
   const scopeParams = [
-    { name: 'scope', type: 'string', required: false, label: 'Scope (global, org or resource)' },
+    {
+      name: 'scope',
+      type: 'string',
+      required: false,
+      label: 'Scope (global, group or resource)',
+    },
     {
       name: 'scopeTarget',
       type: 'string',
       required: false,
-      label: 'Scope Target (e.g. org:org_123)',
+      label: 'Scope Target (e.g. group:grp_123)',
     },
   ];
   const numeric = (type: string, label: string, description: string) => ({

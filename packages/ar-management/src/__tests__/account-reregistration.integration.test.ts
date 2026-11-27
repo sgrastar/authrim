@@ -168,7 +168,9 @@ function openCore(): { database: SQLiteDatabase; adapter: DatabaseAdapter } {
   for (const file of [
     '001_0_5_0_core_baseline.sql',
     '015_end_user_groups.sql',
+    '016_invitation_group.sql',
     '017_service_group_scim_membership_inputs.sql',
+    '018_remove_organizations.sql',
   ])
     db.exec(
       renderPortableMigrationSql(

@@ -5829,9 +5829,9 @@ describe('Admin API Handlers', () => {
       expect((piiDb.prepare as any).mock.invocationCallOrder[tombstoneCall]).toBeLessThan(
         eraseAccountPii.mock.invocationCallOrder[0]
       );
-      expect(coreSqls).toContainEqual(
-        expect.stringContaining('DELETE FROM subject_org_membership')
-      );
+      // Organisations and the SCIM user_roles are gone: nothing deletes from them.
+      expect(coreSqls).not.toContainEqual(expect.stringContaining('subject_org_membership'));
+      expect(coreSqls).not.toContainEqual(expect.stringContaining('user_roles'));
       expect(coreSqls).toContainEqual(
         expect.stringContaining('DELETE FROM passkeys WHERE tenant_id = ? AND user_id = ?')
       );
@@ -5842,9 +5842,6 @@ describe('Admin API Handlers', () => {
         expect.stringContaining(
           'DELETE FROM session_clients WHERE tenant_id = ? AND session_id = ?'
         )
-      );
-      expect(coreSqls).toContainEqual(
-        expect.stringContaining('DELETE FROM user_roles WHERE tenant_id = ? AND user_id = ?')
       );
       expect(canonicalRuntimeUsers.get(userId)).toEqual(
         expect.objectContaining({ active: 0, lifecycle_state: 'deleted' })

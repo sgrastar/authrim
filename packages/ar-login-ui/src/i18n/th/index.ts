@@ -372,9 +372,6 @@ const th = createTranslation({
 	consent_scope_phone: 'ดูหมายเลขโทรศัพท์ของคุณ',
 	consent_scope_address: 'ดูที่อยู่ของคุณ',
 	consent_scope_offline_access: 'เข้าถึงบัญชีของคุณเมื่อคุณไม่ได้ใช้แอป',
-	consent_organizationSelect: 'เลือกองค์กร',
-	consent_primaryOrg: 'หลัก',
-	consent_currentOrganization: 'องค์กรปัจจุบัน',
 	consent_actingOnBehalfOf: 'ดำเนินการในนามของ {name}',
 	consent_delegatedAccess: 'การเข้าถึงที่ได้รับมอบหมาย',
 	consent_delegatedAccessWarning:

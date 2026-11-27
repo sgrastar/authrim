@@ -27,9 +27,6 @@ export const NO_JIT_PROVIDER = '-';
 const JIT_BOOLEAN_SETTING_KEYS = [
   'external_idp.jit_provisioning_enabled',
   'external_idp.jit_require_verified_email',
-  'external_idp.jit_join_all_matching_orgs',
-  'external_idp.jit_allow_user_without_org',
-  'external_idp.jit_allow_unverified_domain_mappings',
 ] as const;
 
 /**
@@ -69,10 +66,7 @@ export interface ExternalIdPSettings {
 
   'external_idp.jit_require_verified_email': boolean;
   'external_idp.jit_allowed_provider_ids': string;
-  'external_idp.jit_join_all_matching_orgs': boolean;
-  'external_idp.jit_allow_user_without_org': boolean;
   'external_idp.jit_default_role_id': string;
-  'external_idp.jit_allow_unverified_domain_mappings': boolean;
 
   // Provider callbacks
   'external_idp.signed_request_max_age_seconds': number;
@@ -143,24 +137,6 @@ export const EXTERNAL_IDP_SETTINGS_META: Record<keyof ExternalIdPSettings, Setti
     dependsOn: [{ key: 'external_idp.jit_provisioning_enabled', value: true }],
     default: '',
   },
-  'external_idp.jit_join_all_matching_orgs': {
-    key: 'external_idp.jit_join_all_matching_orgs',
-    type: 'boolean',
-    label: 'JIT: Join All Matching Organizations',
-    description: 'Add a new account to every organization whose domain matches, not only the first',
-    visibility: 'admin',
-    dependsOn: [{ key: 'external_idp.jit_provisioning_enabled', value: true }],
-    default: false,
-  },
-  'external_idp.jit_allow_user_without_org': {
-    key: 'external_idp.jit_allow_user_without_org',
-    type: 'boolean',
-    label: 'JIT: Allow Accounts Without Organization',
-    description: 'Create an account even when no organization domain matches',
-    visibility: 'admin',
-    dependsOn: [{ key: 'external_idp.jit_provisioning_enabled', value: true }],
-    default: true,
-  },
   'external_idp.jit_default_role_id': {
     key: 'external_idp.jit_default_role_id',
     type: 'string',
@@ -170,15 +146,6 @@ export const EXTERNAL_IDP_SETTINGS_META: Record<keyof ExternalIdPSettings, Setti
     visibility: 'admin',
     dependsOn: [{ key: 'external_idp.jit_provisioning_enabled', value: true }],
     default: 'role_end_user',
-  },
-  'external_idp.jit_allow_unverified_domain_mappings': {
-    key: 'external_idp.jit_allow_unverified_domain_mappings',
-    type: 'boolean',
-    label: 'JIT: Unverified Domains',
-    description: 'Use organization domain mappings that are not verified',
-    visibility: 'admin',
-    dependsOn: [{ key: 'external_idp.jit_provisioning_enabled', value: true }],
-    default: false,
   },
   'external_idp.signed_request_max_age_seconds': {
     key: 'external_idp.signed_request_max_age_seconds',
@@ -231,10 +198,7 @@ export const EXTERNAL_IDP_DEFAULTS: ExternalIdPSettings = {
   'external_idp.jit_update_fields': [...DEFAULT_PROFILE_UPDATE_FIELDS],
   'external_idp.jit_require_verified_email': true,
   'external_idp.jit_allowed_provider_ids': '',
-  'external_idp.jit_join_all_matching_orgs': false,
-  'external_idp.jit_allow_user_without_org': true,
   'external_idp.jit_default_role_id': 'role_end_user',
-  'external_idp.jit_allow_unverified_domain_mappings': false,
   'external_idp.signed_request_max_age_seconds': DEFAULT_SIGNED_REQUEST_MAX_AGE_SECONDS,
   'external_idp.token_revocation_timeout_ms': DEFAULT_EXTERNAL_IDP_TOKEN_REVOCATION_TIMEOUT_MS,
 };

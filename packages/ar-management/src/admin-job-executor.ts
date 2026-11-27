@@ -35,8 +35,6 @@ import {
   readAccountAuthenticationState,
   getTenantSettingsDocument,
   SUBJECT_UPDATED_AT_FORWARD_SQL,
-  createAuditLog,
-  createLogger,
   ADMIN_ROLES,
   chunkForBoundParameters,
   sqlPlaceholders,
@@ -61,8 +59,7 @@ import {
   type EndedSession,
 } from './session-end-logout';
 import { createLoggingTenantKeyResolver } from './logging-tenant-key';
-import { accessSummaryRows, applyOrganizationBulkMembers, jobRBACStores } from './admin-job-rbac';
-import { removeOrganizationMembership } from './access-revocation';
+import { accessSummaryRows, jobRBACStores } from './admin-job-rbac';
 import { listScimTokens } from '@authrim/ar-lib-scim';
 
 type AdminJobStatus = 'processing' | 'completed' | 'partial_failure';
@@ -96,7 +93,6 @@ const TENANT_BACKUP_CORE_TABLES = [
   'sessions',
   'passkeys',
   'roles',
-  'user_roles',
 ] as const;
 const TENANT_BACKUP_PII_TABLES = [
   'identity_sensitive_values',
@@ -219,7 +215,6 @@ const GENERIC_ADMIN_JOB_TYPES = [
   'tenant-database/purge-backup',
   'users/bulk-update',
   'reports/generate',
-  'organizations/bulk-members',
   SESSION_END_LOGOUT_JOB_TYPE,
   SESSION_REVOKE_LOGOUT_JOB_TYPE,
   SUPPORT_OPS_LOGOUT_JOB_TYPE,
@@ -723,15 +718,6 @@ export interface ReportGenerateConfig {
   to_date: string;
   format?: 'json' | 'csv';
   filters?: Record<string, unknown>;
-  result_delivery?: AdminJobResultDelivery;
-}
-
-export interface OrganizationBulkMembersConfig {
-  organization_id: string;
-  organization_name?: string;
-  action: 'add' | 'remove';
-  role?: string;
-  user_ids: string[];
   result_delivery?: AdminJobResultDelivery;
 }
 
@@ -2274,78 +2260,6 @@ async function processReportGenerateJob(
   };
 }
 
-function normalizeMembershipType(role: string | undefined): 'member' | 'admin' | 'owner' {
-  if (role === undefined || role === '') return 'member';
-  if (role === 'member' || role === 'admin' || role === 'owner') return role;
-  throw new Error('Invalid organization membership role');
-}
-
-async function processOrganizationBulkMembersJob(
-  env: Env,
-  _stores: AdminJobStores,
-  job: AdminJobRow
-): Promise<AdminJobProcessorResult> {
-  // Organisations are read in the tenant metadata database, memberships in each member's.
-  const config = parseJsonConfig<OrganizationBulkMembersConfig>(job);
-  const membershipType = normalizeMembershipType(config.role);
-  const nowSeconds = Math.floor(Date.now() / 1000);
-  const { succeeded, skipped, failures } = await applyOrganizationBulkMembers(
-    await jobRBACStores(env, job.tenant_id),
-    {
-      tenantId: job.tenant_id,
-      orgId: config.organization_id,
-      action: config.action,
-      membershipType,
-      userIds: config.user_ids,
-      nowSeconds,
-    },
-    // As the Admin API removes one: the member's cached claims are dropped and it is audited,
-    // once for this job and member however often the job runs.
-    (account, userId) =>
-      removeOrganizationMembership(
-        {
-          env,
-          tenantId: job.tenant_id,
-          adapter: account,
-          log: createLogger().module('ADMIN-JOBS'),
-          audit: (action, resource, resourceId, details, stable) =>
-            createAuditLog(env, {
-              tenantId: job.tenant_id,
-              userId: 'admin_job',
-              action,
-              resource,
-              resourceId,
-              ipAddress: 'internal',
-              userAgent: `admin-job:${job.job_type}`,
-              metadata: JSON.stringify({ ...details, admin_job_id: job.id }),
-              severity: 'info',
-              ...(stable ? { id: stable.id, createdAt: stable.at } : {}),
-            }),
-          onCacheFailure: 'warn',
-        },
-        {
-          userId,
-          orgId: config.organization_id,
-          // The job's own time, the same on every run of it.
-          audit: { id: `${job.id}:org-member-removed:${userId}`, at: job.created_at * 1000 },
-        }
-      ).then(() => undefined)
-  );
-
-  const total = config.user_ids.length;
-  const failed = failures.length;
-  return {
-    status: failed > 0 ? 'partial_failure' : 'completed',
-    progress: { total, processed: total, succeeded, failed, skipped, stage: 'completed' },
-    result: {
-      summary: { total, processed: total, succeeded, failed, skipped, action: config.action },
-      organization_id: config.organization_id,
-      organization_name: config.organization_name,
-      failures,
-    },
-  };
-}
-
 const ADMIN_JOB_PROCESSORS: Record<GenericAdminJobType, AdminJobProcessor> = {
   'tenants/lifecycle-validation': processTenantLifecycleValidationJob,
   'tenant-database/export': processTenantDatabaseExportJob,
@@ -2356,7 +2270,6 @@ const ADMIN_JOB_PROCESSORS: Record<GenericAdminJobType, AdminJobProcessor> = {
   [SESSION_REVOKE_LOGOUT_JOB_TYPE]: processSessionEndLogoutJob,
   [SUPPORT_OPS_LOGOUT_JOB_TYPE]: processSessionEndLogoutJob,
   'reports/generate': processReportGenerateJob,
-  'organizations/bulk-members': processOrganizationBulkMembersJob,
 };
 
 function getJobResultDelivery(job: AdminJobRow): AdminJobResultDelivery {
@@ -2509,6 +2422,43 @@ const SCHEDULED_GENERIC_ADMIN_JOB_TYPES = GENERIC_ADMIN_JOB_TYPES.filter(
     jobType !== SESSION_REVOKE_LOGOUT_JOB_TYPE &&
     jobType !== SUPPORT_OPS_LOGOUT_JOB_TYPE
 );
+
+/**
+ * Job types that no longer exist (their handlers were removed with the feature): a job of one
+ * left `pending` or `processing` would never run nor finish, so the scheduled scan fails it.
+ */
+export const RETIRED_ADMIN_JOB_TYPES: readonly string[] = ['organizations/bulk-members'];
+
+/**
+ * Moves `pending` and `processing` jobs of a retired type to `failed` (`job_type_retired`),
+ * finished and dead-lettered now. Returns how many were moved.
+ */
+export async function failRetiredAdminJobs(adapter: DatabaseAdapter): Promise<number> {
+  const nowTs = Math.floor(Date.now() / 1000);
+  const placeholders = RETIRED_ADMIN_JOB_TYPES.map(() => '?').join(', ');
+  const result = await adapter.execute(
+    `UPDATE admin_jobs
+        SET status = 'failed', error_code = 'job_type_retired',
+            error_message = 'The job type no longer exists', next_run_at = NULL,
+            dead_lettered_at = ?, completed_at = ?, updated_at = ?
+      WHERE job_type IN (${placeholders}) AND status IN ('pending', 'processing')`,
+    [nowTs, nowTs, nowTs, ...RETIRED_ADMIN_JOB_TYPES]
+  );
+  return result.rowsAffected ?? 0;
+}
+
+/** The scheduled scan's step for retired job types (failRetiredAdminJobs), on DB_ADMIN. */
+export async function processRetiredAdminJobs(env: Env, logger: AdminJobLogger): Promise<void> {
+  if (!env.DB_ADMIN) throw new Error('management_admin_jobs_database_unavailable');
+  const retired = await failRetiredAdminJobs(
+    ensureDatabaseAdapter(env.DB_ADMIN, 'management-generic-jobs')
+  );
+  if (retired > 0)
+    logger.info('Admin jobs of a retired type failed', {
+      count: retired,
+      reason: 'job_type_retired',
+    });
+}
 
 export async function processPendingGenericAdminJobs(
   env: Env,

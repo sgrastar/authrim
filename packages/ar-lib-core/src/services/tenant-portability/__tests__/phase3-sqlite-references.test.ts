@@ -9,7 +9,6 @@ import {
   phase3SqliteDeferredColumns,
   phase3SqliteRestoreOverrides,
   phase3SqliteRestoreDependencies,
-  phase3SqliteRestoreTransform,
   phase3SqliteVerificationIgnoredColumns,
   PHASE3_SQLITE_REFERENCE_RULES,
 } from '../phase3-sqlite-references';
@@ -40,37 +39,6 @@ function streamFor(family: 'core' | 'admin') {
   );
   return inventory.inspectedStreams.find((candidate) => candidate.id === contract?.id);
 }
-
-describe('Phase 3 organisation type restore', () => {
-  const transform = phase3SqliteRestoreTransform('core.organizations')!;
-  const organization = (orgType: string | null) =>
-    JSON.stringify(row({ id: 'org-1', tenant_id: 'tenant-a', name: 'acme', org_type: orgType }));
-  const restored = async (rowJson: string) =>
-    (JSON.parse(await transform.transform({} as never, rowJson, 'write')) as PortableSqliteRow)
-      .org_type;
-
-  it('restores the Admin API types of an older bundle as migration 024 renamed them', async () => {
-    expect(await restored(organization('team'))).toEqual(['text', 'department']);
-    expect(await restored(organization('partner'))).toEqual(['text', 'distributor']);
-    expect(await restored(organization('personal'))).toEqual(['text', 'enterprise']);
-  });
-
-  it('verifies against the same renamed row it wrote', async () => {
-    const source = organization('team');
-    expect(await transform.transform({} as never, source, 'verify')).toBe(
-      await transform.transform({} as never, source, 'write')
-    );
-  });
-
-  it('keeps core types, other values and other datasets as they are', async () => {
-    for (const orgType of ['department', 'distributor', 'enterprise', 'constructor', null]) {
-      const source = organization(orgType);
-      expect(await transform.transform({} as never, source, 'write')).toBe(source);
-    }
-    expect(phase3SqliteRestoreTransform('core.roles')).toBeUndefined();
-    expect(() => phase3SqliteRestoreTransform('core.unknown')).toThrow();
-  });
-});
 
 describe('Phase 3 installed SQL reference graph', () => {
   it('covers every declared foreign key between registered Phase 3 datasets', () => {
@@ -157,14 +125,14 @@ describe('Phase 3 installed SQL reference graph', () => {
   it('skips a nullable empty reference and rejects a missing required identity part', () => {
     const identity = {
       module: 'authorization',
-      collection: 'core.organizations',
-      id: 'org',
+      collection: 'core.groups',
+      id: 'group',
       tenantId: 'tenant-a',
     };
     expect(
       inspectPhase3SqliteReferences(
         identity.collection,
-        row({ tenant_id: 'tenant-a', parent_org_id: null }),
+        row({ tenant_id: 'tenant-a', parent_group_id: null }),
         identity
       ).map(({ to }) => to.collection)
     ).toEqual(['core.tenants']);
@@ -549,8 +517,9 @@ describe('Phase 3 installed SQL reference graph', () => {
       'admin.destination_profile_versions'
     );
     expect(phase3SqliteRestoreDependencies('core.roles')).toEqual(['core.tenants']);
-    expect(phase3SqliteDeferredColumns('core.roles')).toEqual(['parent_role_id']);
-    expect(phase3SqliteDeferredColumns('core.organizations')).toEqual(['parent_org_id']);
+    // Roles do not inherit: nothing of a role waits for another role.
+    expect(phase3SqliteDeferredColumns('core.roles')).toEqual([]);
+    expect(phase3SqliteDeferredColumns('core.groups')).toEqual(['parent_group_id']);
     expect(phase3SqliteDeferredColumns('admin.destination_profiles')).toEqual(['base_profile_id']);
     expect(phase3SqliteDeferredColumns('admin.source_profiles')).toEqual([]);
     expect(phase3SqliteRestoreOverrides('admin.tenant_settings_documents')).toEqual({

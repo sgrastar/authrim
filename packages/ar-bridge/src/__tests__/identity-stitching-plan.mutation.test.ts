@@ -25,7 +25,7 @@ vi.mock('@authrim/ar-lib-core', async (original) => {
     resolveCustomClaimRuntimeSourcesFromEnv: m.customSources,
     persistCustomClaimWrite: m.persist,
     syncUserLifecycleState: m.sync,
-    joinOrganization: m.join,
+    upsertGroupMembership: m.join,
     assignScopedRoleToUser: m.assign,
     ensureDatabaseAdapter: m.ensureDb,
   };
@@ -70,9 +70,9 @@ const VALIDATION = {
 
 function plan(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     customClaimValidation: VALIDATION,
-    organizationIds: [],
+    groupJoins: [],
     roleAssignments: [],
     defaultRoleId: null,
     matchedRules: [],
@@ -145,7 +145,7 @@ describe('finding the pending identity', () => {
     await expect(completeExternalIdpJIT(ENV, INPUT)).resolves.toEqual({
       linkedIdentityId: 'active-1',
       roles_assigned: [],
-      orgs_joined: [],
+      groups_joined: [],
     });
     expect(m.findLinked).toHaveBeenCalledWith(ENV, 'tenant-a', 'prov', 'sub-1', ACCOUNT.piiDb);
     expect(m.persist).not.toHaveBeenCalled();
@@ -215,7 +215,15 @@ describe('the stored plan', () => {
     ['JSON null', 'null'],
     ['a JSON array', '[]'],
     ['a JSON string', '"plan"'],
-    ['another schema version', plan({ schemaVersion: 2 })],
+    ['the previous schema version', plan({ schemaVersion: 1 })],
+    [
+      'the previous organization ids in place of group joins',
+      (() => {
+        const p = plan({ organizationIds: [] });
+        delete p.groupJoins;
+        return p;
+      })(),
+    ],
     ['an extra key', plan({ extra: 1 })],
     [
       'a missing key',
@@ -273,10 +281,26 @@ describe('the stored plan', () => {
       validation({ piiKeysToDelete: Array.from({ length: 65 }, () => 'k') }),
     ],
     ['a non-text PII key to delete', validation({ piiKeysToDelete: [1] })],
-    ['organization ids that are not an array', plan({ organizationIds: 'o' })],
-    ['too many organization ids', plan({ organizationIds: Array.from({ length: 65 }, () => 'o') })],
-    ['an empty organization id', plan({ organizationIds: [''] })],
-    ['a long organization id', plan({ organizationIds: [str(257)] })],
+    ['group joins that are not an array', plan({ groupJoins: 'g' })],
+    [
+      'too many group joins',
+      plan({ groupJoins: Array.from({ length: 65 }, () => ({ groupId: 'g', ruleId: 'r' })) }),
+    ],
+    ['a group join that is not an object', plan({ groupJoins: ['g'] })],
+    ['a null group join', plan({ groupJoins: [null] })],
+    ['an array group join', plan({ groupJoins: [['g', 'r']] })],
+    ['a group join with an extra key', plan({ groupJoins: [{ groupId: 'g', ruleId: 'r', x: 1 }] })],
+    ['a group join with one key', plan({ groupJoins: [{ groupId: 'g' }] })],
+    ['a group join with an empty group id', plan({ groupJoins: [{ groupId: '', ruleId: 'r' }] })],
+    ['a group join with an empty rule id', plan({ groupJoins: [{ groupId: 'g', ruleId: '' }] })],
+    [
+      'a group join with a long group id',
+      plan({ groupJoins: [{ groupId: str(257), ruleId: 'r' }] }),
+    ],
+    [
+      'a group join with a long rule id',
+      plan({ groupJoins: [{ groupId: 'g', ruleId: str(257) }] }),
+    ],
     ['role assignments that are not an array', plan({ roleAssignments: {} })],
     [
       'too many role assignments',
@@ -308,7 +332,15 @@ describe('the stored plan', () => {
     ],
     [
       'a scoped role with an empty target',
-      plan({ roleAssignments: [{ roleId: 'r', scopeType: 'org', scopeTarget: '' }] }),
+      plan({ roleAssignments: [{ roleId: 'r', scopeType: 'group', scopeTarget: '' }] }),
+    ],
+    [
+      'a role of the removed organisation scope',
+      plan({ roleAssignments: [{ roleId: 'r', scopeType: 'org', scopeTarget: 'org:o1' }] }),
+    ],
+    [
+      'a group role whose target is not a group',
+      plan({ roleAssignments: [{ roleId: 'r', scopeType: 'group', scopeTarget: 'grp-1' }] }),
     ],
     [
       'a global role with a target of the wrong type',
@@ -373,8 +405,10 @@ describe('the stored plan', () => {
       }),
     ],
     [
-      '64 organizations',
-      plan({ organizationIds: Array.from({ length: 64 }, (_, i) => `org${i}`) }),
+      '64 group joins',
+      plan({
+        groupJoins: Array.from({ length: 64 }, (_, i) => ({ groupId: `g${i}`, ruleId: `r${i}` })),
+      }),
     ],
     [
       'a global role with an empty target',
@@ -382,7 +416,11 @@ describe('the stored plan', () => {
     ],
     [
       'a scoped role',
-      plan({ roleAssignments: [{ roleId: str(256), scopeType: str(64), scopeTarget: str(256) }] }),
+      plan({
+        roleAssignments: [
+          { roleId: str(256), scopeType: 'group', scopeTarget: `group:${str(250)}` },
+        ],
+      }),
     ],
     ['a default role of 256 characters', plan({ defaultRoleId: str(256) })],
     ['128 matched rules', plan({ matchedRules: Array.from({ length: 128 }, () => 'r') })],
@@ -416,10 +454,10 @@ describe('the stored plan', () => {
 });
 
 describe('applying the plan', () => {
-  const org = (id: string) => ({
+  const grp = (id: string) => ({
     roleId: `role-${id}`,
-    scopeType: 'org',
-    scopeTarget: `org:${id}`,
+    scopeType: 'group',
+    scopeTarget: `group:${id}`,
   });
 
   it('writes the custom claims, then the lifecycle, then activates the identity', async () => {
@@ -429,7 +467,11 @@ describe('applying the plan', () => {
     m.activate.mockImplementation(async () => void order.push('activate'));
     const result = await run(plan());
     expect(order).toEqual(['persist', 'sync', 'activate']);
-    expect(result).toEqual({ linkedIdentityId: 'pending-1', roles_assigned: [], orgs_joined: [] });
+    expect(result).toEqual({
+      linkedIdentityId: 'pending-1',
+      roles_assigned: [],
+      groups_joined: [],
+    });
     expect(m.customSources).toHaveBeenCalledWith(ENV, 'tenant-a');
     expect(argRec(m.persist)).toEqual({
       db: ACCOUNT.coreDb,
@@ -456,61 +498,95 @@ describe('applying the plan', () => {
     );
   });
 
-  it('joins the planned organizations in the tenant metadata and account databases', async () => {
-    m.join
-      .mockResolvedValueOnce({ success: true })
-      .mockResolvedValueOnce({ success: false })
-      .mockResolvedValueOnce({ success: true });
-    const result = await run(plan({ organizationIds: ['o1', 'o2', 'o3'] }));
-    expect(result.orgs_joined).toEqual(['o1', 'o3']);
+  it('joins the planned groups as rule-owned memberships in the metadata and account databases', async () => {
+    m.join.mockRejectedValueOnce(new Error('group_not_found'));
+    const result = await run(
+      plan({
+        groupJoins: [
+          { groupId: 'g1', ruleId: 'r1' },
+          { groupId: 'g2', ruleId: 'r2' },
+          { groupId: 'g3', ruleId: 'r3' },
+        ],
+      })
+    );
+    // g1 was deleted since the rule was saved: skipped, the others joined.
+    expect(result.groups_joined).toEqual(['g2', 'g3']);
+    const rbac = { metadata: META_DB, account: ACCOUNT.coreDb };
     expect(m.join.mock.calls).toEqual([
-      [{ metadata: META_DB, account: ACCOUNT.coreDb }, 'user-a', 'o1', 'tenant-a', 'member'],
-      [{ metadata: META_DB, account: ACCOUNT.coreDb }, 'user-a', 'o2', 'tenant-a', 'member'],
-      [{ metadata: META_DB, account: ACCOUNT.coreDb }, 'user-a', 'o3', 'tenant-a', 'member'],
+      [
+        rbac,
+        'tenant-a',
+        'user-a',
+        { groupId: 'g1', source: 'rule', sourceRef: 'role_assignment_rule:r1' },
+        undefined,
+      ],
+      [
+        rbac,
+        'tenant-a',
+        'user-a',
+        { groupId: 'g2', source: 'rule', sourceRef: 'role_assignment_rule:r2' },
+        undefined,
+      ],
+      [
+        rbac,
+        'tenant-a',
+        'user-a',
+        { groupId: 'g3', source: 'rule', sourceRef: 'role_assignment_rule:r3' },
+        undefined,
+      ],
     ]);
     expect(m.metadataCtx).toHaveBeenCalledWith(ENV, 'tenant-a');
   });
 
-  it('assigns each grantable role and records the ones that succeeded', async () => {
-    // g succeeds, role-o1 fails, x succeeds
-    m.assign.mockResolvedValueOnce({ success: true }).mockResolvedValueOnce({ success: false });
+  it('passes the ReBAC cache to the group join', async () => {
+    const cache = { cache: 1 };
+    m.findPending.mockResolvedValue(
+      await pendingWith(JSON.stringify(plan({ groupJoins: [{ groupId: 'g1', ruleId: 'r1' }] })))
+    );
+    await completeExternalIdpJIT({ ...(ENV as object), REBAC_CACHE: cache } as never, INPUT);
+    expect(m.join.mock.calls[0]?.[4]).toBe(cache);
+  });
+
+  it('lets a group join error other than group_not_found through, before the lifecycle is written', async () => {
+    m.join.mockRejectedValueOnce(new Error('db down'));
+    await expect(run(plan({ groupJoins: [{ groupId: 'g1', ruleId: 'r1' }] }))).rejects.toThrow(
+      'db down'
+    );
+    expect(m.sync).not.toHaveBeenCalled();
+    expect(m.activate).not.toHaveBeenCalled();
+  });
+
+  it('assigns every planned role, whatever its scope, and records the ones that succeeded', async () => {
+    // g succeeds, role-o1 fails, role-o2 succeeds, x succeeds
+    m.assign
+      .mockResolvedValueOnce({ success: true })
+      .mockResolvedValueOnce({ success: false })
+      .mockResolvedValueOnce({ success: true });
     const result = await run(
       plan({
-        organizationIds: ['o1'],
         roleAssignments: [
           { roleId: 'g', scopeType: 'global', scopeTarget: '' },
-          org('o1'),
-          org('o2'),
-          { roleId: 'x', scopeType: 'tenant', scopeTarget: 't' },
+          grp('o1'),
+          grp('o2'),
+          { roleId: 'x', scopeType: 'tenant', scopeTarget: 'tenant-a' },
         ],
       })
     );
-    // org:o2 was not joined: never assigned. The 'x' role is not an org role: assigned.
     expect(m.assign.mock.calls.map((c): unknown[] => c.slice(1))).toEqual([
       ['user-a', 'g', 'global', '', 'tenant-a'],
-      ['user-a', 'role-o1', 'org', 'org:o1', 'tenant-a'],
-      ['user-a', 'x', 'tenant', 't', 'tenant-a'],
+      ['user-a', 'role-o1', 'group', 'group:o1', 'tenant-a'],
+      ['user-a', 'role-o2', 'group', 'group:o2', 'tenant-a'],
+      ['user-a', 'x', 'tenant', 'tenant-a', 'tenant-a'],
     ]);
     expect(callArg(m.assign, 0, 0)).toEqual({ metadata: META_DB, account: ACCOUNT.coreDb });
     expect(result.roles_assigned).toEqual([
       { role_id: 'g', scope_type: 'global', scope_target: '' },
-      { role_id: 'x', scope_type: 'tenant', scope_target: 't' },
+      { role_id: 'role-o2', scope_type: 'group', scope_target: 'group:o2' },
+      { role_id: 'x', scope_type: 'tenant', scope_target: 'tenant-a' },
     ]);
   });
 
-  it('gives the default role, scoped to the first joined organization, when no role was given', async () => {
-    const result = await run(
-      plan({ organizationIds: ['o1', 'o2'], defaultRoleId: 'default-role' })
-    );
-    expect(m.assign.mock.calls.map((c): unknown[] => c.slice(1))).toEqual([
-      ['user-a', 'default-role', 'org', 'org:o1', 'tenant-a'],
-    ]);
-    expect(result.roles_assigned).toEqual([
-      { role_id: 'default-role', scope_type: 'org', scope_target: 'org:o1' },
-    ]);
-  });
-
-  it('gives the default role globally, with an empty target, when no organization was joined', async () => {
+  it('gives the default role globally, with an empty target, when no rule matched', async () => {
     const result = await run(plan({ defaultRoleId: 'default-role' }));
     expect(m.assign.mock.calls.map((c): unknown[] => c.slice(1))).toEqual([
       ['user-a', 'default-role', 'global', '', 'tenant-a'],
@@ -530,6 +606,7 @@ describe('applying the plan', () => {
     const result = await run(
       plan({
         roleAssignments: [{ roleId: 'g', scopeType: 'global', scopeTarget: '' }],
+        matchedRules: ['r1'],
         defaultRoleId: 'default-role',
       })
     );
@@ -537,15 +614,29 @@ describe('applying the plan', () => {
     expect(result.roles_assigned).toHaveLength(1);
   });
 
-  it('adds the default role when every planned role failed', async () => {
+  it('does not give the default role to a sign-up a rule matched that only joins a group', async () => {
+    const result = await run(
+      plan({
+        groupJoins: [{ groupId: 'g1', ruleId: 'r1' }],
+        matchedRules: ['r1'],
+        defaultRoleId: 'default-role',
+      })
+    );
+    expect(m.assign).not.toHaveBeenCalled();
+    expect(result.roles_assigned).toEqual([]);
+  });
+
+  it('does not give the default role when every role of a matched rule failed', async () => {
     m.assign.mockResolvedValueOnce({ success: false }).mockResolvedValueOnce({ success: true });
     const result = await run(
       plan({
         roleAssignments: [{ roleId: 'g', scopeType: 'global', scopeTarget: '' }],
+        matchedRules: ['r1'],
         defaultRoleId: 'default-role',
       })
     );
-    expect(result.roles_assigned.map((r) => r.role_id)).toEqual(['default-role']);
+    expect(m.assign).toHaveBeenCalledTimes(1);
+    expect(result.roles_assigned).toEqual([]);
   });
 
   it('does not give the default role when a matched role was refused as not assignable', async () => {
@@ -572,7 +663,7 @@ describe('applying the plan', () => {
     await expect(completeExternalIdpJIT(ENV, INPUT)).resolves.toEqual({
       linkedIdentityId: 'active-2',
       roles_assigned: [],
-      orgs_joined: [],
+      groups_joined: [],
     });
     expect(m.persist).not.toHaveBeenCalled();
   });

@@ -2,7 +2,7 @@
  * Access reviews: an admin reviews who has some access and takes away what is no longer needed.
  *
  * - Creating a review takes a snapshot of its items from every store the tenant's accounts live
- *   in: the users with a role (`role`), the members of an organization (`organization`), all
+ *   in: the users with a role (`role`), the manual members of a group (`group`), all
  *   active users (`all_users`), or those not signed in for some days (`inactive_users`; the last
  *   sign-in is the one sessions record, read from the account's session state when the account
  *   does not show a recent one). A review over more than MAX_REVIEW_ITEMS items is refused.
@@ -32,18 +32,19 @@ import {
   isDatabaseSource,
   ADMIN_PERMISSIONS,
   hasAdminPermission,
+  revokeManualGroupMemberships,
   type AdminAuthContext,
   type DatabaseAdapter,
   type Env,
 } from '@authrim/ar-lib-core';
 import {
   AccountLifecycleSupersededError,
-  removeOrganizationMembership,
   removeRoleAssignment,
   suspendAccount,
   type RevocationContext,
 } from '../access-revocation';
 import { mayManageEndUserRole } from '../role-delegation';
+import { canManageGroupMembership } from '../group-role-management';
 import { tenantCoreStores } from './tenant-stores';
 import { CrossShardAccountExactSearchService } from '../cross-shard-account-list';
 import { usesRoutedAccountStorage } from '../tenant-routed-storage';
@@ -63,16 +64,18 @@ const APPLY_CLAIM_STALE_MS = 5 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const LAST_LOGIN_CONCURRENCY = 20;
 
-export const ACCESS_REVIEW_SCOPES = [
-  'all_users',
-  'role',
-  'organization',
-  'inactive_users',
-] as const;
+export const ACCESS_REVIEW_SCOPES = ['all_users', 'role', 'group', 'inactive_users'] as const;
 export type AccessReviewScope = (typeof ACCESS_REVIEW_SCOPES)[number];
 export const ACCESS_REVIEW_STATUSES = ['pending', 'in_progress', 'completed', 'cancelled'] as const;
 export type AccessReviewStatus = (typeof ACCESS_REVIEW_STATUSES)[number];
-type PermissionType = 'role' | 'organization' | 'account';
+type PermissionType = 'role' | 'group' | 'account';
+
+const CURRENT_PERMISSION_TYPES: ReadonlySet<string> = new Set(['role', 'group', 'account']);
+
+/** Whether a stored item is of an entitlement kind that still exists. */
+function isCurrentPermissionType(value: string): value is PermissionType {
+  return CURRENT_PERMISSION_TYPES.has(value);
+}
 type Decision = 'approved' | 'revoked';
 
 interface AccessReviewRow {
@@ -298,16 +301,24 @@ export async function takeReviewSnapshot(
           storeRef: bindingRef,
         });
       }
-    } else if (scope === 'organization') {
+    } else if (scope === 'group') {
+      // The memberships a review can take away: the manual ones (SCIM, rules, dynamic groups
+      // and invitations own theirs), in effect now (as membership is read everywhere else).
+      const nowSeconds = Math.floor(now / 1000);
       const rows = await adapter.query<{ subject_id: string }>(
-        `SELECT subject_id FROM subject_org_membership
-          WHERE tenant_id = ? AND org_id = ? ORDER BY subject_id LIMIT ?`,
-        [tenantId, scopeValue, limit]
+        `SELECT DISTINCT subject_id FROM group_memberships
+          WHERE tenant_id = ? AND group_id = ? AND assignment_source = 'manual'
+            AND lifecycle_state = 'active'
+            AND (starts_at IS NULL OR starts_at <= ?)
+            AND (expires_at IS NULL OR expires_at > ?)
+            AND (stale_after IS NULL OR stale_after > ?)
+          ORDER BY subject_id LIMIT ?`,
+        [tenantId, scopeValue, nowSeconds, nowSeconds, nowSeconds, limit]
       );
       for (const row of rows) {
         items.push({
           userId: row.subject_id,
-          permissionType: 'organization',
+          permissionType: 'group',
           permissionValue: scopeValue!,
           entitlementRef: `${scopeValue!}:${row.subject_id}`,
           storeRef: bindingRef,
@@ -474,7 +485,7 @@ const CreateSchema = z
     inactive_days: z.number().int().min(1).max(3650).optional(),
   })
   .superRefine((value, context) => {
-    if ((value.scope === 'role' || value.scope === 'organization') && !value.scope_value) {
+    if ((value.scope === 'role' || value.scope === 'group') && !value.scope_value) {
       context.addIssue({
         code: 'custom',
         path: ['scope_value'],
@@ -505,14 +516,13 @@ export async function createAccessReview(c: Context<{ Bindings: Env }>) {
   if (!adminId) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
 
   const adapter = reviewsAdapter(c, tenantId);
-  const scopeValue =
-    input.scope === 'role' || input.scope === 'organization' ? input.scope_value! : null;
+  const scopeValue = input.scope === 'role' || input.scope === 'group' ? input.scope_value! : null;
   const inactiveDays =
     input.scope === 'inactive_users' ? (input.inactive_days ?? DEFAULT_INACTIVE_DAYS) : null;
 
   try {
-    if (input.scope === 'role' || input.scope === 'organization') {
-      const table = input.scope === 'role' ? 'roles' : 'organizations';
+    if (input.scope === 'role' || input.scope === 'group') {
+      const table = input.scope === 'role' ? 'roles' : '"groups"';
       const exists = await adapter.queryOne<{ id: string }>(
         `SELECT id FROM ${table} WHERE tenant_id = ? AND id = ?`,
         [tenantId, scopeValue]
@@ -534,7 +544,7 @@ export async function createAccessReview(c: Context<{ Bindings: Env }>) {
         return c.json(
           {
             error: 'access_review_scan_limit',
-            error_description: `Finding inactive users needs more than ${MAX_LAST_LOGIN_LOOKUPS} sign-in lookups; review a role or an organization instead`,
+            error_description: `Finding inactive users needs more than ${MAX_LAST_LOGIN_LOOKUPS} sign-in lookups; review a role or a group instead`,
             max_lookups: MAX_LAST_LOGIN_LOOKUPS,
           },
           400
@@ -863,7 +873,9 @@ export async function decideAccessReviewItems(c: Context<{ Bindings: Env }>) {
 function permissionFor(item: AccessReviewItemRow): string {
   return item.permission_type === 'account'
     ? ADMIN_PERMISSIONS.USERS_SUSPEND
-    : ADMIN_PERMISSIONS.ROLES_WRITE;
+    : item.permission_type === 'group'
+      ? ADMIN_PERMISSIONS.GROUPS_WRITE
+      : ADMIN_PERMISSIONS.ROLES_WRITE;
 }
 
 async function applyRevocation(
@@ -876,6 +888,11 @@ async function applyRevocation(
   firstAttemptAt: number,
   started: boolean
 ): Promise<{ status: 'applied' | 'failed'; error?: string }> {
+  // A kind of entitlement that no longer exists (an organisation membership of a review made
+  // before organisations were removed): nothing is left to take away, and nothing else is.
+  if (!isCurrentPermissionType(item.permission_type)) {
+    return { status: 'applied', error: 'skipped_retired' };
+  }
   // The Admin API's own gates: the permission for the change, and for roles the hierarchy.
   if (!hasAdminPermission(admin.permissions ?? [], permissionFor(item))) {
     return { status: 'failed', error: 'insufficient_permissions' };
@@ -911,13 +928,28 @@ async function applyRevocation(
     });
     return { status: 'applied' };
   }
-  if (item.permission_type === 'organization') {
-    await removeOrganizationMembership(context, {
-      userId: item.user_id,
-      orgId: item.permission_value,
-      details,
-      audit,
-    });
+  if (item.permission_type === 'group') {
+    // Taking a member out of a group that carries roles takes those roles away: the same
+    // delegation check as the groups API.
+    if (
+      !(await canManageGroupMembership(metadata, context.tenantId, admin, item.permission_value))
+    ) {
+      return { status: 'failed', error: 'insufficient_role_hierarchy' };
+    }
+    await revokeManualGroupMemberships(
+      { metadata, account: context.adapter },
+      context.tenantId,
+      item.user_id,
+      item.permission_value,
+      context.env.REBAC_CACHE
+    );
+    await context.audit(
+      'group_membership.removed',
+      'group',
+      item.permission_value,
+      { user_id: item.user_id, ...details },
+      audit
+    );
     return { status: 'applied' };
   }
   // An account suspended by another transition, deleted or not found has no access left to take.
@@ -959,15 +991,17 @@ async function storeHolding(
 ): Promise<DatabaseAdapter | null> {
   const recorded = item.store_ref ? stores.get(item.store_ref) : undefined;
   if (recorded) return recorded;
+  if (!isCurrentPermissionType(item.permission_type)) return null;
   const [sql, params] =
     item.permission_type === 'role'
       ? [
           'SELECT 1 AS found FROM role_assignments WHERE tenant_id = ? AND id = ?',
           [tenantId, item.entitlement_ref],
         ]
-      : item.permission_type === 'organization'
+      : item.permission_type === 'group'
         ? [
-            'SELECT 1 AS found FROM subject_org_membership WHERE tenant_id = ? AND org_id = ? AND subject_id = ?',
+            `SELECT 1 AS found FROM group_memberships
+              WHERE tenant_id = ? AND group_id = ? AND subject_id = ? AND assignment_source = 'manual'`,
             [tenantId, item.permission_value, item.user_id],
           ]
         : [

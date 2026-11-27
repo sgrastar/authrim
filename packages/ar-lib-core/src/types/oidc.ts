@@ -2,7 +2,7 @@
  * OpenID Connect and OAuth 2.0 Type Definitions
  */
 
-import type { OrganizationType, PlanType, RBACTokenClaims, UserType } from './rbac';
+import type { RBACTokenClaims, UserType } from './rbac';
 import type { AuthorizationDetails } from './rar';
 import type { JWKS } from './jwk';
 import type { InformationReleaseConsentSetting } from '../services/information-release-consent';
@@ -211,12 +211,6 @@ export interface IDTokenClaims {
   authrim_permissions?: RBACTokenClaims['authrim_permissions'];
   /** User type classification (for UI/logging purposes) */
   authrim_user_type?: UserType;
-  /** Primary organization ID */
-  authrim_org_id?: string;
-  /** Organization's subscription plan */
-  authrim_plan?: PlanType;
-  /** Organization type */
-  authrim_org_type?: OrganizationType;
 
   // ==========================================================================
   // Anonymous Authentication Claims (architecture-decisions.md §17)

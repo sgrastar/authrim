@@ -67,7 +67,7 @@
 			createError = $LL.admin_compliance_review_name_required();
 			return;
 		}
-		if ((scope === 'role' || scope === 'organization') && !scopeValue.trim()) {
+		if ((scope === 'role' || scope === 'group') && !scopeValue.trim()) {
 			createError = $LL.admin_compliance_review_scope_value_required();
 			return;
 		}
@@ -78,7 +78,7 @@
 				name: name.trim(),
 				...(description.trim() ? { description: description.trim() } : {}),
 				scope,
-				...(scope === 'role' || scope === 'organization' ? { scope_value: scopeValue.trim() } : {}),
+				...(scope === 'role' || scope === 'group' ? { scope_value: scopeValue.trim() } : {}),
 				...(scope === 'inactive_users' ? { inactive_days: inactiveDays } : {}),
 				...(dueDate ? { due_date: dueDate } : {})
 			});
@@ -109,8 +109,8 @@
 				return $LL.admin_compliance_scope_all_users();
 			case 'role':
 				return `${$LL.admin_compliance_scope_role()}: ${review.scope_value ?? ''}`;
-			case 'organization':
-				return `${$LL.admin_compliance_scope_organization()}: ${review.scope_value ?? ''}`;
+			case 'group':
+				return `${$LL.admin_compliance_scope_group()}: ${review.scope_value ?? ''}`;
 			case 'inactive_users':
 				return `${$LL.admin_compliance_scope_inactive_users()} (${$LL.admin_compliance_days({
 					count: review.inactive_days ?? 0
@@ -227,16 +227,16 @@
 			<select id="review-scope" class="form-select" bind:value={scope}>
 				<option value="all_users">{$LL.admin_compliance_scope_all_users()}</option>
 				<option value="role">{$LL.admin_compliance_scope_role()}</option>
-				<option value="organization">{$LL.admin_compliance_scope_organization()}</option>
+				<option value="group">{$LL.admin_compliance_scope_group()}</option>
 				<option value="inactive_users">{$LL.admin_compliance_scope_inactive_users()}</option>
 			</select>
 		</div>
-		{#if scope === 'role' || scope === 'organization'}
+		{#if scope === 'role' || scope === 'group'}
 			<div class="form-group">
 				<label class="form-label" for="review-scope-value">
 					{scope === 'role'
 						? $LL.admin_compliance_scope_value_role()
-						: $LL.admin_compliance_scope_value_organization()}
+						: $LL.admin_compliance_scope_value_group()}
 				</label>
 				<input id="review-scope-value" class="form-input" maxlength="255" bind:value={scopeValue} />
 			</div>

@@ -137,7 +137,6 @@ describe('access token permissions', () => {
       claim_overrides: [{ claim: 'sub' }],
     });
     mocks.createTokenClaimEvaluator.mockReturnValue({ evaluate });
-    mocks.getAccessTokenRBACClaims.mockResolvedValue({ authrim_org_id: 'org-1' });
     await exchange();
     expect(evaluate).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -147,7 +146,6 @@ describe('access token permissions', () => {
         scope: 'api:read',
         roles: [],
         permissions: [],
-        org_id: 'org-1',
       }),
       'access'
     );

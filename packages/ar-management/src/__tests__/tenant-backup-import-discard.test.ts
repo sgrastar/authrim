@@ -78,7 +78,9 @@ export function freshDatabase(family: Family) {
           '011_saml_sp_release_consent.sql',
           '014_shared_launcher_states.sql',
           '015_end_user_groups.sql',
+          '016_invitation_group.sql',
           '017_service_group_scim_membership_inputs.sql',
+          '018_remove_organizations.sql',
         ]
       : []),
     ...(family === 'pii'
@@ -326,8 +328,8 @@ async function environment(
       ('consent-b','tenant-b','user-b','client','granted',1);
     INSERT INTO roles(id,tenant_id,name,permissions_json,created_at) VALUES
       ('role-parent','tenant-a','parent','[]',1),('role-b','tenant-b','b','[]',1);
-    INSERT INTO roles(id,tenant_id,name,permissions_json,parent_role_id,created_at) VALUES
-      ('role-child','tenant-a','child','[]','role-parent',1);
+    INSERT INTO roles(id,tenant_id,name,permissions_json,created_at) VALUES
+      ('role-child','tenant-a','child','[]',1);
     INSERT INTO audit_log(id,tenant_id,action,created_at) VALUES
       ('audit-a','tenant-a','restored.history',1),('audit-b','tenant-b','b.history',1);
   `);

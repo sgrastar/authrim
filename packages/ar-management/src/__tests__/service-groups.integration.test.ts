@@ -13,7 +13,6 @@ import {
   serviceGroupValidate,
   serviceGroupSubject,
   serviceGroupMembers,
-  serviceGroupManual,
 } from '../service-groups';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -489,7 +488,7 @@ describe.each(['scheduled', 'pipeline'] as const)('service group log storage (%s
         result_json: null,
       });
     });
-    it('keeps manual and explicitly linked SCIM memberships independent', async () => {
+    it('follows the explicitly linked SCIM membership', async () => {
       // The SCIM link: a SCIM-kind canonical group (metadata) and the subject's SCIM row on
       // its account database.
       meta.db.exec(
@@ -499,18 +498,12 @@ describe.each(['scheduled', 'pipeline'] as const)('service group log storage (%s
         "INSERT INTO group_memberships(id, tenant_id, group_id, subject_id, assignment_source, source_ref, created_at, updated_at) VALUES ('m', 't', 'scim', 'u', 'scim', 'scim', 1, 1)"
       );
       await store.save([{ ...group(), scimRoleId: 'scim' }], BUILTIN_GROUP_FIELDS, 0, 'admin');
-      await store.setManual('u', 'japan', true, 'admin');
       country('US');
       expect((await store.evaluate('u', reader)).evaluation?.groups.japan.sources).toEqual([
-        'manual',
         'scim',
       ]);
       core.db.exec("DELETE FROM group_memberships WHERE tenant_id = 't' AND id = 'm'");
       expect((await store.snapshot('u', reader)).freshness).toBe('stale');
-      expect((await store.evaluate('u', reader)).evaluation?.groups.japan.sources).toEqual([
-        'manual',
-      ]);
-      await store.setManual('u', 'japan', false, 'admin');
       expect((await store.evaluate('u', reader)).evaluation?.groups.japan.member).toBe(false);
     });
     it('does not turn deleted SCIM links into membership through negation', async () => {
@@ -688,7 +681,7 @@ describe.each(['scheduled', 'pipeline'] as const)('service group log storage (%s
       const allowed = {
         userId: 'operator',
         permissions: ['admin:roles:write'],
-        hierarchyLevel: 100,
+        maxGrantTier: 3,
       };
       const denied = { userId: 'operator', permissions: [] };
       const app = () => {
@@ -708,7 +701,6 @@ describe.each(['scheduled', 'pipeline'] as const)('service group log storage (%s
         });
         hono.put('/api/admin/service-groups/:id', serviceGroupWrite);
         hono.delete('/api/admin/service-groups/:id', serviceGroupWrite);
-        hono.post('/api/admin/service-groups/:id/manual/:userId', serviceGroupManual);
         return (path: string, method: string, body: unknown) =>
           hono.request(path, {
             method,
@@ -722,7 +714,7 @@ describe.each(['scheduled', 'pipeline'] as const)('service group log storage (%s
           INSERT INTO group_role_assignments(id, tenant_id, group_id, role_id, created_at, updated_at)
           VALUES ('gr-${groupId}', 't', '${groupId}', 'reader', 1, 1)`);
 
-      it('refuses rule and manual changes reaching a role-carrying group without delegation', async () => {
+      it('refuses rule changes reaching a role-carrying group without delegation', async () => {
         const request = app();
         const referencing = {
           ...group('ref'),
@@ -743,25 +735,11 @@ describe.each(['scheduled', 'pipeline'] as const)('service group log storage (%s
             })
           ).status
         ).toBe(200);
-        expect(
-          (await request('/api/admin/service-groups/japan/manual/u', 'POST', { present: true }))
-            .status
-        ).toBe(403);
         auth = allowed;
         expect(
           (await request('/api/admin/service-groups/japan', 'PUT', { ...changed, ifMatch: 2 }))
             .status
         ).toBe(200);
-        expect(
-          (await request('/api/admin/service-groups/japan/manual/u', 'POST', { present: true }))
-            .status
-        ).toBe(200);
-        // Not on one's own role-carrying memberships.
-        auth = { ...allowed, userId: 'u' };
-        expect(
-          (await request('/api/admin/service-groups/japan/manual/u', 'POST', { present: false }))
-            .status
-        ).toBe(403);
       });
 
       it('refuses a self-writable field deciding a role-carrying group (400)', async () => {

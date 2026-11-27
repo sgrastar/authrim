@@ -218,59 +218,6 @@ export class DynamicGroupStore {
     if (current?.write_token !== token) throw new Error('group_version_conflict');
     return { revision: expected + 1, plan };
   }
-  async setManual(
-    userId: string,
-    groupId: string,
-    present: boolean,
-    actorId: string,
-    /**
-     * The catalog revision the caller checked the change against (its delegation check): the
-     * write holds only for that revision (the SQL guards below name it); another is a conflict.
-     */
-    expectedRevision?: number
-  ): Promise<void> {
-    const catalog = await this.catalog();
-    // The revision first: a group disabled or deleted since the caller's check is a conflict
-    // with what it checked, not a group that never existed.
-    if (expectedRevision !== undefined && catalog?.revision !== expectedRevision)
-      throw new Error('group_version_conflict');
-    if (!catalog?.plan.groups.some((g) => g.id === groupId && g.enabled))
-      throw new Error('group_not_found');
-    const audit = await this.prepareAudit({
-      userId,
-      ruleVersion: catalog.revision,
-      generation: 0,
-      eventType: 'manual',
-      detail: { actorId, groupId, present },
-    });
-    if (audit.state === 'committed' || audit.state === 'published') {
-      await audit.dispatch();
-      return;
-    }
-    const catalogGuard =
-      'EXISTS(SELECT 1 FROM service_group_catalog WHERE tenant_id=? AND revision=?)';
-    await this.db.batch(
-      audit.wrapBusinessBatch(
-        [
-          present
-            ? {
-                sql: `INSERT INTO service_group_manual(tenant_id,user_id,group_id) SELECT ?,?,? WHERE ${catalogGuard} ON CONFLICT(tenant_id,user_id,group_id) DO NOTHING`,
-                params: [this.tenantId, userId, groupId, this.tenantId, catalog.revision],
-              }
-            : {
-                sql: `DELETE FROM service_group_manual WHERE tenant_id=? AND user_id=? AND group_id=? AND ${catalogGuard}`,
-                params: [this.tenantId, userId, groupId, this.tenantId, catalog.revision],
-              },
-        ],
-        {
-          where: `${catalogGuard} AND ${present ? '' : 'NOT '}EXISTS(SELECT 1 FROM service_group_manual WHERE tenant_id=? AND user_id=? AND group_id=?)`,
-          params: [this.tenantId, catalog.revision, this.tenantId, userId, groupId],
-        }
-      )
-    );
-    await this.finishAudit(audit);
-  }
-
   async snapshot(userId: string, reader: GroupInputReader): Promise<GroupSnapshot> {
     if (reader.tenantId !== this.tenantId || reader.userId !== userId)
       throw new Error('group_tenant_or_subject_mismatch');
@@ -302,6 +249,9 @@ export class DynamicGroupStore {
       else if (
         row?.result_json &&
         catalog?.revision === snapshot.ruleVersion &&
+        // Past the time its input changes by itself, the result is stale.
+        (snapshot.evaluation?.inputValidUntil === undefined ||
+          snapshot.evaluation.inputValidUntil > Math.floor(Date.now() / 1000)) &&
         equalVersion(await reader.version(), snapshot.inputVersion)
       )
         snapshot.freshness = 'fresh';
@@ -359,6 +309,9 @@ export class DynamicGroupStore {
         input,
         old.ruleVersion === catalog.revision ? (old.evaluation ?? undefined) : undefined
       );
+      // Valid only until the input changes by itself (a manual membership starting or ending).
+      delete evaluation.inputValidUntil;
+      if (input.validUntil !== undefined) evaluation.inputValidUntil = input.validUntil;
       if (!equalVersion(after, await reader.version())) throw new Error('group_input_changed');
       const json = JSON.stringify(evaluation);
       const evaluatedAt = Date.now();

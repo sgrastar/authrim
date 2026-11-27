@@ -48,7 +48,11 @@ export const mocks = {
     async (..._args: unknown[]): Promise<unknown> => undefined
   ),
   resolveSubjectRoles: vi.fn(async (..._args: unknown[]): Promise<unknown[]> => []),
-  resolveSubjectOrganizations: vi.fn(async (..._args: unknown[]): Promise<unknown[]> => []),
+  resolveSubjectGroups: vi.fn(
+    async (..._args: unknown[]): Promise<{ effectiveGroupIds: Set<string> }> => ({
+      effectiveGroupIds: new Set<string>(),
+    })
+  ),
   resolveStatementRequirements: vi.fn(async (..._args: unknown[]): Promise<unknown[]> => []),
   readStatementConsentDefinition: vi.fn(async (..._args: unknown[]): Promise<unknown> => null),
   readStatementConsentRecord: vi.fn(async (..._args: unknown[]): Promise<unknown> => null),
@@ -92,7 +96,7 @@ export function libCoreMock(actual: Record<string, unknown>): Record<string, unk
     getTenantIdFromContext: vi.fn(() => 'tenant_test'),
     resolveAccountCoreDataContext: mocks.resolveAccountCoreDataContext,
     resolveSubjectRoles: mocks.resolveSubjectRoles,
-    resolveSubjectOrganizations: mocks.resolveSubjectOrganizations,
+    resolveSubjectGroups: mocks.resolveSubjectGroups,
     flowConditionAttributeReader: vi.fn(
       () => (keys: string[]) => mocks.readConditionAttributes(keys) as Promise<unknown>
     ),
@@ -138,7 +142,9 @@ export function resetHarness(): void {
   mocks.readConditionAttributes.mockReset();
   mocks.resolveAccountDataContextFromHono.mockReset().mockResolvedValue(undefined);
   mocks.resolveSubjectRoles.mockReset().mockResolvedValue([]);
-  mocks.resolveSubjectOrganizations.mockReset().mockResolvedValue([]);
+  mocks.resolveSubjectGroups
+    .mockReset()
+    .mockResolvedValue({ effectiveGroupIds: new Set<string>() });
   mocks.resolveStatementRequirements.mockReset().mockResolvedValue([]);
   mocks.readStatementConsentDefinition.mockReset().mockResolvedValue(null);
   mocks.readStatementConsentRecord.mockReset().mockResolvedValue(null);

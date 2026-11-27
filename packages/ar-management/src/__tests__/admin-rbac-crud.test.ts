@@ -29,11 +29,6 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
 });
 
 import {
-  adminOrganizationCreateHandler,
-  adminOrganizationDeleteHandler,
-  adminOrganizationGetHandler,
-  adminOrganizationsListHandler,
-  adminOrganizationUpdateHandler,
   adminRoleCreateHandler,
   adminRoleDeleteHandler,
   adminRoleGetHandler,
@@ -64,21 +59,6 @@ function context(
   } as never;
 }
 
-function organization(overrides: Record<string, unknown> = {}) {
-  return {
-    id: 'org-1',
-    tenant_id: 'tenant-a',
-    name: 'acme',
-    display_name: 'Acme',
-    plan: 'professional',
-    org_type: 'department',
-    is_active: 1,
-    created_at: 100,
-    updated_at: 1_700_000_000_000,
-    ...overrides,
-  };
-}
-
 function role(overrides: Record<string, unknown> = {}) {
   return {
     id: 'role-1',
@@ -89,8 +69,6 @@ function role(overrides: Record<string, unknown> = {}) {
     permissions_json: '["audit:read"]',
     is_system: 0,
     role_type: 'custom',
-    parent_role_id: null,
-    hierarchy_level: 1,
     grant_tier: 1,
     created_at: 100,
     updated_at: 1_700_000_000_000,
@@ -98,9 +76,9 @@ function role(overrides: Record<string, unknown> = {}) {
   };
 }
 
-const adminAuth = { userId: 'admin-1', hierarchyLevel: 100, permissions: ['admin:*'] };
+const adminAuth = { userId: 'admin-1', maxGrantTier: 3, permissions: ['admin:*'] };
 
-describe('admin RBAC organization and role CRUD', () => {
+describe('admin RBAC role CRUD', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.adapter.query.mockReset();
@@ -110,139 +88,6 @@ describe('admin RBAC organization and role CRUD', () => {
     mocks.adapter.queryOne.mockResolvedValue(null);
     mocks.adapter.execute.mockResolvedValue({ success: true, rowsAffected: 1 });
     mocks.audit.mockResolvedValue(undefined);
-  });
-
-  it.each([
-    [{}, ['tenant-a', 20, 0]],
-    [
-      {
-        page: '2',
-        limit: '10',
-        search: '100%_team',
-        is_active: 'true',
-        plan: 'professional',
-        org_type: 'department',
-      },
-      ['tenant-a', '%100\\%\\_team%', '%100\\%\\_team%', 1, 'professional', 'department', 10, 10],
-    ],
-    [{ is_active: 'false' }, ['tenant-a', 0, 20, 0]],
-  ])('lists organizations with tenant filters %#', async (query, expectedBindings) => {
-    mocks.adapter.queryOne.mockResolvedValueOnce({ count: 21 });
-    mocks.adapter.query.mockResolvedValueOnce([
-      organization(),
-      organization({ is_active: 0, created_at: 0 }),
-    ]);
-    const body = (await (await adminOrganizationsListHandler(context({ query }))).json()) as {
-      organizations: Array<Record<string, unknown>>;
-      pagination: Record<string, unknown>;
-    };
-    expect(body.organizations).toEqual([
-      expect.objectContaining({ is_active: true, created_at: 100_000 }),
-      expect.objectContaining({ is_active: false, created_at: null }),
-    ]);
-    expect(mocks.adapter.query.mock.calls[0][1]).toEqual(expectedBindings);
-  });
-
-  it('defaults absent organization counts and handles list failures', async () => {
-    await expect((await adminOrganizationsListHandler(context())).json()).resolves.toMatchObject({
-      pagination: { total: 0, hasNext: false, hasPrev: false },
-    });
-    mocks.adapter.queryOne.mockRejectedValueOnce(new Error('failure'));
-    expect((await adminOrganizationsListHandler(context())).status).toBe(500);
-  });
-
-  it.each([null, organization()])('gets organization result %#', async (org) => {
-    mocks.adapter.queryOne.mockResolvedValueOnce(org);
-    // The member count, by organisation, from the account databases.
-    mocks.adapter.query.mockResolvedValueOnce([{ key: 'resource-1', count: 3 }]);
-    const response = await adminOrganizationGetHandler(context());
-    expect(response.status).toBe(org ? 200 : 404);
-    if (org)
-      await expect(response.json()).resolves.toMatchObject({ organization: { member_count: 3 } });
-  });
-
-  it('handles organization get failures', async () => {
-    mocks.adapter.queryOne.mockRejectedValueOnce(new Error('failure'));
-    expect((await adminOrganizationGetHandler(context())).status).toBe(500);
-  });
-
-  it('requires organization name and rejects duplicates', async () => {
-    expect((await adminOrganizationCreateHandler(context({ body: {} }))).status).toBe(400);
-    mocks.adapter.queryOne.mockResolvedValueOnce({ id: 'existing' });
-    expect((await adminOrganizationCreateHandler(context({ body: { name: 'acme' } }))).status).toBe(
-      409
-    );
-  });
-
-  it.each([
-    [{ name: 'acme' }, 'free', 'enterprise'],
-    [
-      {
-        name: 'acme',
-        display_name: 'Acme',
-        plan: 'enterprise',
-        org_type: 'distributor',
-        metadata_json: '{}',
-      },
-      'enterprise',
-      'distributor',
-    ],
-    [{ name: 'acme', plan: 'invalid', org_type: 'department' }, 'free', 'department'],
-  ])('creates organization with normalized plan/type %#', async (body, plan, orgType) => {
-    mocks.adapter.queryOne
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce(organization({ plan, org_type: orgType }));
-    const response = await adminOrganizationCreateHandler(context({ body }));
-    expect(response.status).toBe(201);
-    expect(mocks.adapter.execute.mock.calls[0][1]).toEqual(
-      expect.arrayContaining(['tenant-a', 'acme', plan, orgType])
-    );
-  });
-
-  it('handles organization create failures', async () => {
-    mocks.adapter.queryOne.mockRejectedValueOnce(new Error('failure'));
-    expect((await adminOrganizationCreateHandler(context({ body: { name: 'acme' } }))).status).toBe(
-      500
-    );
-  });
-
-  it('does not update missing organizations or empty requests', async () => {
-    expect((await adminOrganizationUpdateHandler(context({ body: {} }))).status).toBe(404);
-    mocks.adapter.queryOne.mockResolvedValueOnce({ id: 'org-1' });
-    expect((await adminOrganizationUpdateHandler(context({ body: {} }))).status).toBe(400);
-  });
-
-  it.each([[{ plan: 'invalid' }], [{ org_type: 'invalid' }]])(
-    'rejects invalid organization update %#',
-    async (body) => {
-      mocks.adapter.queryOne.mockResolvedValueOnce({ id: 'org-1' });
-      expect((await adminOrganizationUpdateHandler(context({ body }))).status).toBe(400);
-    }
-  );
-
-  it('updates all organization fields including inactive state', async () => {
-    const body = {
-      name: 'new',
-      display_name: '',
-      plan: 'starter',
-      org_type: 'department',
-      is_active: false,
-      metadata_json: '',
-    };
-    mocks.adapter.queryOne
-      .mockResolvedValueOnce({ id: 'org-1' })
-      .mockResolvedValueOnce(organization({ name: 'new', is_active: 0 }));
-    expect((await adminOrganizationUpdateHandler(context({ body }))).status).toBe(200);
-    expect(mocks.adapter.execute.mock.calls[0][1]).toEqual(
-      expect.arrayContaining(['new', '', 'starter', 'department', 0, '', 'tenant-a', 'resource-1'])
-    );
-  });
-
-  it.each([null, { id: 'org-1' }])('soft deletes organization result %#', async (org) => {
-    mocks.adapter.queryOne.mockResolvedValueOnce(org);
-    const response = await adminOrganizationDeleteHandler(context());
-    expect(response.status).toBe(org ? 200 : 404);
-    expect(mocks.adapter.execute).toHaveBeenCalledTimes(org ? 1 : 0);
   });
 
   it('lists roles with assignment counts and timestamp normalization', async () => {
@@ -257,21 +102,19 @@ describe('admin RBAC organization and role CRUD', () => {
     });
   });
 
-  it('gets role with inherited deduplicated permissions', async () => {
-    mocks.adapter.queryOne
-      .mockResolvedValueOnce(role({ parent_role_id: 'parent' }))
-      .mockResolvedValueOnce(
-        role({ id: 'parent', permissions_json: '["audit:read","user:read"]' })
-      );
+  it('gets a role with its own permissions only (roles do not inherit)', async () => {
+    mocks.adapter.queryOne.mockResolvedValueOnce(role());
     mocks.adapter.query.mockResolvedValueOnce([{ key: 'resource-1', count: 3 }]);
-    await expect((await adminRoleGetHandler(context())).json()).resolves.toMatchObject({
-      role: {
-        assignment_count: 3,
-        added_permissions: ['audit:read'],
-        effective_permissions: ['audit:read', 'user:read'],
-        parent_role: { id: 'parent' },
-      },
+    const body = (await (await adminRoleGetHandler(context())).json()) as {
+      role: Record<string, unknown>;
+    };
+    expect(body.role).toMatchObject({
+      assignment_count: 3,
+      added_permissions: ['audit:read'],
+      effective_permissions: ['audit:read'],
     });
+    expect(body.role).not.toHaveProperty('parent_role');
+    expect(mocks.adapter.queryOne).toHaveBeenCalledTimes(1);
   });
 
   it.each([null, role({ permissions_json: null })])(
@@ -294,20 +137,20 @@ describe('admin RBAC organization and role CRUD', () => {
     expect((await adminRoleCreateHandler(context({ body, auth: adminAuth }))).status).toBe(status);
   });
 
-  it('requires sufficient hierarchy to create a role', async () => {
+  it('requires a grant tier to create a role, whatever the hierarchy level', async () => {
     expect(
       (
         await adminRoleCreateHandler(
           context({
             body: { name: 'auditor', permissions: ['audit:read'] },
-            auth: { hierarchyLevel: 0 },
+            auth: { hierarchyLevel: 100 },
           })
         )
       ).status
     ).toBe(403);
   });
 
-  it('rejects duplicate and missing/inaccessible parent roles', async () => {
+  it('rejects a duplicate role name', async () => {
     mocks.adapter.queryOne.mockResolvedValueOnce({ id: 'existing' });
     expect(
       (
@@ -316,51 +159,27 @@ describe('admin RBAC organization and role CRUD', () => {
         )
       ).status
     ).toBe(400);
-
-    mocks.adapter.queryOne.mockResolvedValueOnce(null).mockResolvedValueOnce(null);
-    expect(
-      (
-        await adminRoleCreateHandler(
-          context({
-            body: { name: 'child', permissions: ['audit:read'], inherits_from: 'missing' },
-            auth: adminAuth,
-          })
-        )
-      ).status
-    ).toBe(404);
-
-    mocks.adapter.queryOne
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce({ id: 'parent', hierarchy_level: 100 });
-    expect(
-      (
-        await adminRoleCreateHandler(
-          context({
-            body: { name: 'child', permissions: ['audit:read'], parent_role_id: 'parent' },
-            auth: adminAuth,
-          })
-        )
-      ).status
-    ).toBe(403);
   });
 
-  it('creates and audits a custom child role', async () => {
-    mocks.adapter.queryOne
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce({ id: 'parent', hierarchy_level: 1, grant_tier: 1 });
+  it('creates and audits a custom role of the lowest grant tier, without hierarchy or parent', async () => {
+    mocks.adapter.queryOne.mockResolvedValueOnce(null);
     const response = await adminRoleCreateHandler(
       context({
         body: {
           name: 'auditor',
           description: 'Read audit',
           permissions: ['audit:read'],
+          // No longer fields of a role: ignored.
           parent_role_id: 'parent',
           hierarchy_level: 2,
         },
-        auth: adminAuth,
+        auth: { userId: 'admin-1', maxGrantTier: 1, permissions: ['admin:roles:write'] },
       })
     );
     expect(response.status).toBe(201);
+    await expect(response.json()).resolves.toMatchObject({ role_id: 'role-new', grant_tier: 1 });
+    const insert = mocks.adapter.execute.mock.calls[0];
+    expect(String(insert[0])).not.toMatch(/hierarchy_level|parent_role_id/);
     expect(mocks.audit).toHaveBeenCalledWith(
       expect.anything(),
       'role.created',
@@ -387,34 +206,142 @@ describe('admin RBAC organization and role CRUD', () => {
     }
   );
 
-  it('updates role fields and can clear parent', async () => {
+  it('updates the description and permissions of a role', async () => {
     mocks.adapter.queryOne.mockResolvedValueOnce(role());
     const response = await adminRoleUpdateHandler(
       context({
-        body: {
-          description: '',
-          permissions: ['audit:write'],
-          hierarchy_level: 2,
-          parent_role_id: null,
-        },
+        body: { description: '', permissions: ['audit:write'] },
         auth: adminAuth,
       })
     );
     expect(response.status).toBe(200);
-    expect(mocks.adapter.execute.mock.calls[0][1]).toEqual(
-      expect.arrayContaining([null, '["audit:write"]', 2, null, 'tenant-a', 'resource-1'])
+    expect(String(mocks.adapter.execute.mock.calls[0][0])).not.toMatch(
+      /hierarchy_level|parent_role_id/
     );
+    expect(mocks.adapter.execute.mock.calls[0][1]).toEqual(
+      expect.arrayContaining([null, '["audit:write"]', 'tenant-a', 'resource-1'])
+    );
+  });
+
+  it('refuses a role above the caller grant tier', async () => {
+    mocks.adapter.queryOne.mockResolvedValueOnce(role({ grant_tier: 3 }));
+    const response = await adminRoleUpdateHandler(
+      context({
+        body: { permissions: ['audit:write'] },
+        auth: { userId: 'admin-1', maxGrantTier: 2, permissions: ['admin:roles:write'] },
+      })
+    );
+    expect(response.status).toBe(403);
+    expect(mocks.adapter.execute).not.toHaveBeenCalled();
+  });
+
+  it('creates a role of the asked grant tier when the caller may grant it', async () => {
+    mocks.adapter.queryOne.mockResolvedValueOnce(null);
+    const response = await adminRoleCreateHandler(
+      context({
+        body: { name: 'approver', permissions: ['audit:read'], grant_tier: 2 },
+        auth: { userId: 'admin-1', maxGrantTier: 2, permissions: ['admin:roles:write'] },
+      })
+    );
+    expect(response.status).toBe(201);
+    await expect(response.json()).resolves.toMatchObject({ grant_tier: 2 });
+    expect(String(mocks.adapter.execute.mock.calls[0][0])).toMatch(/grant_tier/);
+    expect(mocks.adapter.execute.mock.calls[0][1]).toContain(2);
+  });
+
+  it('refuses to create a role above the caller grant tier', async () => {
+    const response = await adminRoleCreateHandler(
+      context({
+        body: { name: 'approver', permissions: ['audit:read'], grant_tier: 3 },
+        auth: { userId: 'admin-1', maxGrantTier: 2, permissions: ['admin:roles:write'] },
+      })
+    );
+    expect(response.status).toBe(403);
+    expect(mocks.adapter.execute).not.toHaveBeenCalled();
+  });
+
+  it.each([0, 4, 1.5, '2', null])('rejects the grant tier %s on create', async (grantTier) => {
+    const response = await adminRoleCreateHandler(
+      context({
+        body: { name: 'approver', permissions: ['audit:read'], grant_tier: grantTier },
+        auth: adminAuth,
+      })
+    );
+    expect(response.status).toBe(400);
+    expect(mocks.adapter.execute).not.toHaveBeenCalled();
+  });
+
+  it('changes the grant tier of a role within the caller tier, and refuses a higher one', async () => {
+    mocks.adapter.queryOne.mockResolvedValueOnce(role());
+    const ok = await adminRoleUpdateHandler(
+      context({
+        body: { grant_tier: 2 },
+        auth: { userId: 'admin-1', maxGrantTier: 2, permissions: ['admin:roles:write'] },
+      })
+    );
+    expect(ok.status).toBe(200);
+    await expect(ok.json()).resolves.toMatchObject({ grant_tier: 2 });
+    expect(String(mocks.adapter.execute.mock.calls[0][0])).toMatch(/grant_tier = \?/);
+
+    mocks.adapter.execute.mockClear();
+    mocks.adapter.queryOne.mockResolvedValueOnce(role());
+    const refused = await adminRoleUpdateHandler(
+      context({
+        body: { grant_tier: 3 },
+        auth: { userId: 'admin-1', maxGrantTier: 2, permissions: ['admin:roles:write'] },
+      })
+    );
+    expect(refused.status).toBe(403);
+    expect(mocks.adapter.execute).not.toHaveBeenCalled();
+
+    mocks.adapter.queryOne.mockResolvedValueOnce(role());
+    expect(
+      (await adminRoleUpdateHandler(context({ body: { grant_tier: 9 }, auth: adminAuth }))).status
+    ).toBe(400);
   });
 
   it.each([
     [null, 404],
-    [role({ hierarchy_level: 100 }), 403],
+    [role({ grant_tier: 4 }), 403],
     [role({ is_system: 1 }), 403],
     [role(), 200],
   ])('deletes custom role result %#', async (existing, status) => {
     mocks.adapter.queryOne.mockResolvedValueOnce(existing).mockResolvedValueOnce({ count: 0 });
     const response = await adminRoleDeleteHandler(context({ auth: adminAuth }));
     expect(response.status).toBe(status);
+  });
+
+  it('updates or deletes only the role at the grant tier it was checked at (409 otherwise)', async () => {
+    // Another administrator changed the tier between the read and the write: nothing matches.
+    mocks.adapter.queryOne.mockResolvedValueOnce(role({ grant_tier: 2 }));
+    mocks.adapter.execute.mockResolvedValueOnce({ success: true, rowsAffected: 0 });
+    const update = await adminRoleUpdateHandler(
+      context({ body: { permissions: ['audit:write'] }, auth: adminAuth })
+    );
+    expect(update.status).toBe(409);
+    expect(String(mocks.adapter.execute.mock.calls[0][0])).toMatch(
+      /WHERE tenant_id = \? AND id = \? AND grant_tier = \?/
+    );
+    expect((mocks.adapter.execute.mock.calls[0][1] as unknown[]).slice(-3)).toEqual([
+      'tenant-a',
+      'resource-1',
+      2,
+    ]);
+    expect(mocks.audit).not.toHaveBeenCalled();
+
+    mocks.adapter.execute.mockClear();
+    mocks.adapter.queryOne.mockResolvedValueOnce(role({ grant_tier: 2 }));
+    mocks.adapter.execute.mockResolvedValueOnce({ success: true, rowsAffected: 0 });
+    const removal = await adminRoleDeleteHandler(context({ auth: adminAuth }));
+    expect(removal.status).toBe(409);
+    expect(String(mocks.adapter.execute.mock.calls[0][0])).toMatch(/AND grant_tier = \?/);
+    expect(mocks.adapter.execute.mock.calls[0][1]).toEqual([
+      'tenant-a',
+      'resource-1',
+      2,
+      'tenant-a',
+      'resource-1',
+    ]);
   });
 
   it('does not delete assigned custom roles', async () => {
@@ -425,7 +352,6 @@ describe('admin RBAC organization and role CRUD', () => {
   });
 
   it.each([
-    [adminOrganizationsListHandler],
     [adminRolesListHandler],
     [adminRoleGetHandler],
     [adminRoleCreateHandler],

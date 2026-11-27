@@ -415,7 +415,7 @@ policyRoutes.post('/check-access', async (c) => {
       resourceType: string;
       resourceId: string;
       resourceOwnerId?: string;
-      resourceOrgId?: string;
+      resourceGroupIds?: string[];
       action: string;
       operation?: string;
     }>();
@@ -445,7 +445,7 @@ policyRoutes.post('/check-access', async (c) => {
         type: body.resourceType,
         id: body.resourceId,
         ownerId: body.resourceOwnerId,
-        orgId: body.resourceOrgId,
+        groupIds: Array.isArray(body.resourceGroupIds) ? body.resourceGroupIds : undefined,
       },
       action: {
         name: body.action,

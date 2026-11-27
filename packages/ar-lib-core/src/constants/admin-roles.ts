@@ -71,8 +71,17 @@ export interface AdminRoleDefinition {
   description: string;
   /** Delegation order: a caller can only give a role of a lower level than any of its own. */
   hierarchyLevel: number;
+  /**
+   * The highest end-user role `grant_tier` an administrator holding this role may grant, revoke
+   * or edit (the only delegation guard for end-user roles). A custom admin role has
+   * DEFAULT_ADMIN_MAX_GRANT_TIER.
+   */
+  maxGrantTier: number;
   permissions: readonly string[];
 }
+
+/** The end-user role tier a custom (non-standard) admin role may delegate. */
+export const DEFAULT_ADMIN_MAX_GRANT_TIER = 1;
 
 /** Read access that all of the lower roles share. */
 const READ_USERS_AND_SESSIONS = [
@@ -251,6 +260,7 @@ export const ADMIN_ROLE_DEFINITIONS: readonly AdminRoleDefinition[] = [
     displayName: 'Super Administrator',
     description: 'Every tenant and the platform: all permissions',
     hierarchyLevel: 100,
+    maxGrantTier: 3,
     permissions: ['*'],
   },
   {
@@ -259,6 +269,7 @@ export const ADMIN_ROLE_DEFINITIONS: readonly AdminRoleDefinition[] = [
     displayName: 'Tenant Administrator',
     description: 'One tenant: settings, apps, users, support operations, and its admins and roles',
     hierarchyLevel: 80,
+    maxGrantTier: 2,
     permissions: TENANT_ADMIN_PERMISSIONS,
   },
   {
@@ -267,6 +278,7 @@ export const ADMIN_ROLE_DEFINITIONS: readonly AdminRoleDefinition[] = [
     displayName: 'Support',
     description: 'Looks up users, unlocks accounts, ends sessions and asks for support operations',
     hierarchyLevel: 40,
+    maxGrantTier: 1,
     permissions: SUPPORT_PERMISSIONS,
   },
   {
@@ -275,9 +287,24 @@ export const ADMIN_ROLE_DEFINITIONS: readonly AdminRoleDefinition[] = [
     displayName: 'Viewer',
     description: 'Read-only access to the Admin console, without secrets',
     hierarchyLevel: 20,
+    maxGrantTier: 1,
     permissions: VIEWER_PERMISSIONS,
   },
 ];
+
+/**
+ * The highest end-user role tier an administrator holding `roleNames` may delegate: the highest
+ * `maxGrantTier` of its standard roles, DEFAULT_ADMIN_MAX_GRANT_TIER for a custom one, 0 without
+ * any role.
+ */
+export function adminMaxGrantTier(roleNames: readonly string[]): number {
+  let tier = 0;
+  for (const name of roleNames) {
+    const standard = ADMIN_ROLE_DEFINITIONS.find((definition) => definition.name === name);
+    tier = Math.max(tier, standard ? standard.maxGrantTier : DEFAULT_ADMIN_MAX_GRANT_TIER);
+  }
+  return tier;
+}
 
 /** Whether `name` is one of the standard Admin roles. */
 export function isStandardAdminRole(name: string): name is AdminRoleName {

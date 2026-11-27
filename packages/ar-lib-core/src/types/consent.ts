@@ -2,12 +2,10 @@
  * Consent Screen Type Definitions
  *
  * Phase 2-B: Consent Screen Enhancement
- * - Organization info display
- * - Organization switching
  * - Acting-as (delegation) support
  */
 
-import type { OrganizationType, PlanType, RelationshipType, PermissionLevel } from './rbac';
+import type { RelationshipType, PermissionLevel } from './rbac';
 import type { ConsentScreenItem, ConsentEnforcement } from './consent-statements';
 
 // =============================================================================
@@ -71,26 +69,6 @@ export interface ConsentUserInfo {
 }
 
 // =============================================================================
-// Organization Information
-// =============================================================================
-
-/**
- * Organization information for consent screen
- */
-export interface ConsentOrgInfo {
-  /** Organization ID */
-  id: string;
-  /** Organization name */
-  name: string;
-  /** Organization type */
-  type: OrganizationType;
-  /** Whether this is the user's primary organization */
-  is_primary: boolean;
-  /** Subscription plan (optional) */
-  plan?: PlanType;
-}
-
-// =============================================================================
 // Acting-As (Delegation) Information
 // =============================================================================
 
@@ -131,20 +109,11 @@ export interface ConsentScreenData {
   /** Currently authenticated user */
   user: ConsentUserInfo;
 
-  /** All organizations the user belongs to */
-  organizations: ConsentOrgInfo[];
-
-  /** User's primary organization (null if no org membership) */
-  primary_org: ConsentOrgInfo | null;
-
-  /** User's role names in the current/target organization */
+  /** User's role names */
   roles: string[];
 
   /** Acting-as info (null if not acting on behalf of someone) */
   acting_as: ConsentActingAsInfo | null;
-
-  /** Target organization ID from request (for org-scoped consent) */
-  target_org_id: string | null;
 
   /** RBAC feature flags for UI display */
   features: ConsentFeatureFlags;
@@ -154,8 +123,6 @@ export interface ConsentScreenData {
  * Feature flags for conditional UI rendering
  */
 export interface ConsentFeatureFlags {
-  /** Show organization selector for multi-org users */
-  org_selector_enabled: boolean;
   /** Show acting-as indicator and allow delegation */
   acting_as_enabled: boolean;
   /** Show user's roles on consent screen */
@@ -189,8 +156,6 @@ export interface ConsentChallengeMetadata {
   ui_locales?: string;
 
   // RBAC extensions (Phase 2-B)
-  /** Target organization ID for org-scoped authorization */
-  org_id?: string;
   /** Acting on behalf of this user ID */
   acting_as?: string;
   /** Relationship type for acting-as */
@@ -222,8 +187,6 @@ export interface ConsentSubmission {
   challenge_id: string;
   /** Whether consent was approved */
   approved: boolean;
-  /** Selected organization ID (for multi-org users) */
-  selected_org_id?: string;
   /** Acting-as user ID (if delegation is active) */
   acting_as_user_id?: string;
   /** Selected scopes (if UI allows scope selection) */
@@ -649,7 +612,7 @@ export interface ExtendedConsentScreenData extends ConsentScreenData {
   /** The information the app would be given about the user, to approve (release consent). */
   information_release?: ConsentInformationReleaseScreen;
   /**
-   * The protocol of the request: a SAML SP's screen has no scopes, organisations or roles, and its
+   * The protocol of the request: a SAML SP's screen has no scopes or roles, and its
    * `client` is the SP (client_id = its entity ID). Absent: OIDC.
    */
   protocol?: 'oidc' | 'saml';

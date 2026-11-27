@@ -152,7 +152,7 @@ const integerIn =
     Number.isInteger(v) && (v as number) >= min && (v as number) <= max;
 /** A time in UNIX seconds (0 or less is no real bound: a range ending in 1970 never applies). */
 const epochSeconds: ParamCheck = (v) => Number.isSafeInteger(v) && (v as number) > 0;
-const scope: ParamCheck = (v) => v === 'global' || v === 'org' || v === 'resource';
+const scope: ParamCheck = (v) => v === 'global' || v === 'group' || v === 'resource';
 /** An IANA time zone the runtime knows (an unknown one would silently be read as UTC). */
 const timeZone: ParamCheck = (v) => {
   if (!text(v)) return false;
@@ -178,10 +178,8 @@ const CONDITION_PARAMS: Record<ConditionType, Record<string, ParamCheck>> = {
   has_any_role: { roles: texts, ...ROLE_PARAMS },
   has_all_roles: { roles: texts, ...ROLE_PARAMS },
   is_resource_owner: {},
-  same_organization: {},
   has_relationship: { types: texts },
   user_type_is: { types: texts },
-  plan_allows: { plans: texts },
   attribute_equals: {
     name: text,
     value: (v) => typeof v === 'string',
@@ -226,7 +224,7 @@ export const ATTRIBUTE_CONDITION_TYPES: ReadonlySet<string> = new Set<ConditionT
 
 /**
  * Condition types the Check API can evaluate: it knows the subject's roles and verified
- * attributes, the resource and the time, but not the subject's user type, organization, plan or
+ * attributes, the resource and the time, but not the subject's user type or
  * relationships, nor the request's country, IP or rate counts.
  */
 export const CHECK_API_CONDITION_TYPES: ReadonlySet<string> = new Set<ConditionType>([
@@ -374,16 +372,6 @@ const conditionEvaluators: Record<ConditionType, ConditionEvaluator> = {
   },
 
   /**
-   * Check if subject and resource are in the same organization
-   */
-  same_organization: (_params, context) => {
-    if (!context.subject.orgId || !context.resource.orgId) {
-      return false;
-    }
-    return context.subject.orgId === context.resource.orgId;
-  },
-
-  /**
    * Check if subject has a relationship with the resource owner
    */
   has_relationship: (params, context) => {
@@ -410,14 +398,6 @@ const conditionEvaluators: Record<ConditionType, ConditionEvaluator> = {
     return (
       context.subject.userType !== undefined && allowedTypes.includes(context.subject.userType)
     );
-  },
-
-  /**
-   * Check if organization plan allows the action
-   */
-  plan_allows: (params, context) => {
-    const allowedPlans = params.plans as string[];
-    return context.subject.plan !== undefined && allowedPlans.includes(context.subject.plan);
   },
 
   // ==========================================================================

@@ -13,7 +13,7 @@ function createStorageWithRule(condition: Record<string, unknown>): IStorageInfr
           conditions: JSON.stringify([condition]),
           action: 'allow',
           roles_to_assign: JSON.stringify(['matched-role']),
-          orgs_to_join: JSON.stringify([]),
+          groups_to_join: JSON.stringify([]),
           attributes_to_set: JSON.stringify([]),
           deny_reason: null,
         },

@@ -191,7 +191,6 @@ tags:
   - name: Logging - Notifications
   - name: Logging - Policies
   - name: Machine Access
-  - name: Organizations
   - name: Plugins
   - name: Policy Administration
   - name: ReBAC Administration
@@ -9659,7 +9658,7 @@ paths:
       summary: Start an access review.
       description: >-
         Starts a review of who has some access, taking its items from every store the tenant's
-        accounts live in: users with a role (`role`), members of an organization (`organization`),
+        accounts live in: users with a role (`role`), manual members of a group (`group`),
         all active registered users (`all_users`), or those not signed in for `inactive_days`
         (default 90; `inactive_users`, by the sign-in their sessions recorded). A review over
         1000 items is refused (`access_review_too_large`), and an inactive-user review that needs
@@ -18173,43 +18172,6 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
-  '/api/admin/jobs/organizations/{id}/bulk-members':
-    post:
-      x-authrim-capability: bulk_jobs
-      tags:
-        - Jobs
-      operationId: postApiAdminJobsOrganizationsByIdBulkMembers
-      summary: Create an organization bulk-members job.
-      description: >-
-        Queues a job to add or remove up to 1,000 active users from an organization. The handler
-        verifies the organization and all user ids before creating a pending
-        organizations/bulk-members job.
-      responses:
-        '202':
-          $ref: '#/components/responses/AdminJobOrgBulkMembersAccepted'
-        '400':
-          $ref: '#/components/responses/Error'
-        '401':
-          $ref: '#/components/responses/Error'
-        '403':
-          $ref: '#/components/responses/Error'
-        '404':
-          $ref: '#/components/responses/Error'
-        '409':
-          $ref: '#/components/responses/Error'
-        '500':
-          $ref: '#/components/responses/Error'
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-      requestBody:
-        $ref: '#/components/requestBodies/AdminJobOrgBulkMembers'
-      security:
-        - adminBearer: []
-        - adminSessionCookie: []
   /api/admin/jobs/reports/generate:
     post:
       x-authrim-capability: bulk_jobs
@@ -18807,617 +18769,6 @@ paths:
             type: integer
             minimum: 0
             maximum: 9007199254740991
-      security:
-        - adminBearer: []
-        - adminSessionCookie: []
-  /api/admin/org-domain-mappings:
-    get:
-      tags:
-        - Admin Miscellaneous
-      operationId: getApiAdminOrgDomainMappings
-      summary: List organization domain mappings.
-      description: >-
-        Lists email-domain-to-organization mappings for the current tenant with optional
-        organization, verified, active-state, limit, and offset filters.
-      parameters:
-        - name: org_id
-          in: query
-          description: Filter mappings for one organization.
-          schema:
-            type: string
-        - name: verified
-          in: query
-          description: Filter by verified status.
-          schema:
-            type: boolean
-        - name: is_active
-          in: query
-          description: Filter by active status.
-          schema:
-            type: boolean
-        - name: limit
-          in: query
-          description: Maximum mappings to return.
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 100
-            default: 50
-        - name: offset
-          in: query
-          description: Offset for list pagination.
-          schema:
-            type: integer
-            minimum: 0
-            default: 0
-      responses:
-        '200':
-          $ref: '#/components/responses/OrgDomainMappingList'
-        '400':
-          $ref: '#/components/responses/Error'
-        '401':
-          $ref: '#/components/responses/Error'
-        '403':
-          $ref: '#/components/responses/Error'
-        '500':
-          $ref: '#/components/responses/Error'
-      security:
-        - adminBearer: []
-        - adminSessionCookie: []
-    post:
-      tags:
-        - Admin Miscellaneous
-      operationId: postApiAdminOrgDomainMappings
-      summary: Create an organization domain mapping.
-      description: >-
-        Creates a tenant-scoped email-domain mapping for an organization. The raw domain is
-        validated and hashed for storage; the response echoes the lowercase domain for operator
-        reference.
-      responses:
-        '201':
-          $ref: '#/components/responses/OrgDomainMappingCreate'
-        '400':
-          $ref: '#/components/responses/Error'
-        '401':
-          $ref: '#/components/responses/Error'
-        '403':
-          $ref: '#/components/responses/Error'
-        '404':
-          $ref: '#/components/responses/Error'
-        '409':
-          $ref: '#/components/responses/Error'
-        '500':
-          $ref: '#/components/responses/Error'
-      requestBody:
-        $ref: '#/components/requestBodies/OrgDomainMappingCreate'
-      security:
-        - adminBearer: []
-        - adminSessionCookie: []
-  '/api/admin/org-domain-mappings/{id}':
-    delete:
-      tags:
-        - Admin Miscellaneous
-      operationId: deleteApiAdminOrgDomainMappingsById
-      summary: Delete an organization domain mapping.
-      description: >-
-        Deletes a tenant-scoped organization domain mapping by id and returns success. Missing
-        mappings return not found.
-      responses:
-        '200':
-          $ref: '#/components/responses/Success'
-        '400':
-          $ref: '#/components/responses/Error'
-        '401':
-          $ref: '#/components/responses/Error'
-        '403':
-          $ref: '#/components/responses/Error'
-        '404':
-          $ref: '#/components/responses/Error'
-        '500':
-          $ref: '#/components/responses/Error'
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-      security:
-        - adminBearer: []
-        - adminSessionCookie: []
-    get:
-      tags:
-        - Admin Miscellaneous
-      operationId: getApiAdminOrgDomainMappingsById
-      summary: Get an organization domain mapping.
-      description: >-
-        Returns one tenant-scoped organization domain mapping by id. Domain hashes are returned
-        according to the mapping formatter, not the raw source domain.
-      responses:
-        '200':
-          $ref: '#/components/responses/OrgDomainMapping'
-        '400':
-          $ref: '#/components/responses/Error'
-        '401':
-          $ref: '#/components/responses/Error'
-        '403':
-          $ref: '#/components/responses/Error'
-        '404':
-          $ref: '#/components/responses/Error'
-        '500':
-          $ref: '#/components/responses/Error'
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-      security:
-        - adminBearer: []
-        - adminSessionCookie: []
-    put:
-      tags:
-        - Admin Miscellaneous
-      operationId: putApiAdminOrgDomainMappingsById
-      summary: Update an organization domain mapping.
-      description: >-
-        Updates mutable organization domain mapping fields such as auto-join behavior, membership
-        type, role assignment, verified flag, priority, and active state. The domain itself cannot
-        be changed.
-      responses:
-        '200':
-          $ref: '#/components/responses/OrgDomainMapping'
-        '400':
-          $ref: '#/components/responses/Error'
-        '401':
-          $ref: '#/components/responses/Error'
-        '403':
-          $ref: '#/components/responses/Error'
-        '404':
-          $ref: '#/components/responses/Error'
-        '500':
-          $ref: '#/components/responses/Error'
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-      requestBody:
-        $ref: '#/components/requestBodies/OrgDomainMappingUpdate'
-      security:
-        - adminBearer: []
-        - adminSessionCookie: []
-  /api/admin/org-domain-mappings/verify:
-    post:
-      tags:
-        - Admin Miscellaneous
-      operationId: postApiAdminOrgDomainMappingsVerify
-      summary: Start organization domain verification.
-      description: >-
-        Starts DNS TXT verification for a domain mapping after validating mapping id, domain format,
-        verification method, and that the supplied domain hashes to the stored mapping domain.
-      responses:
-        '200':
-          $ref: '#/components/responses/OrgDomainMappingVerificationStart'
-        '400':
-          $ref: '#/components/responses/Error'
-        '401':
-          $ref: '#/components/responses/Error'
-        '403':
-          $ref: '#/components/responses/Error'
-        '404':
-          $ref: '#/components/responses/Error'
-        '500':
-          $ref: '#/components/responses/Error'
-      requestBody:
-        $ref: '#/components/requestBodies/OrgDomainMappingVerificationStart'
-      security:
-        - adminBearer: []
-        - adminSessionCookie: []
-  /api/admin/org-domain-mappings/verify/confirm:
-    post:
-      tags:
-        - Admin Miscellaneous
-      operationId: postApiAdminOrgDomainMappingsVerifyConfirm
-      summary: Confirm organization domain verification.
-      description: >-
-        Checks DNS TXT records for a pending organization domain verification. Success marks the
-        mapping verified; expired, missing, mismatched, or failed DNS records return a 400 response
-        with diagnostic fields.
-      responses:
-        '200':
-          $ref: '#/components/responses/OrgDomainMappingVerificationConfirm'
-        '400':
-          $ref: '#/components/responses/Error'
-        '401':
-          $ref: '#/components/responses/Error'
-        '403':
-          $ref: '#/components/responses/Error'
-        '404':
-          $ref: '#/components/responses/Error'
-        '500':
-          $ref: '#/components/responses/Error'
-      requestBody:
-        $ref: '#/components/requestBodies/OrgDomainMappingVerificationConfirm'
-      security:
-        - adminBearer: []
-        - adminSessionCookie: []
-  /api/admin/organizations:
-    get:
-      tags:
-        - Organizations
-      operationId: getApiAdminOrganizations
-      summary: List organizations.
-      description: >-
-        Lists organizations in the current tenant with page/limit pagination and optional search,
-        active-state, plan, and organization-type filters. Timestamps are returned in milliseconds.
-      parameters:
-        - name: page
-          in: query
-          description: Page number.
-          schema:
-            type: integer
-            minimum: 1
-            default: 1
-        - name: limit
-          in: query
-          description: Page size.
-          schema:
-            type: integer
-            minimum: 1
-            default: 20
-        - name: search
-          in: query
-          description: Escaped LIKE search over name and display_name.
-          schema:
-            type: string
-        - name: is_active
-          in: query
-          description: Filter by active state.
-          schema:
-            type: boolean
-        - name: plan
-          in: query
-          description: Filter by organization plan.
-          schema:
-            type: string
-        - name: org_type
-          in: query
-          description: Filter by organization type.
-          schema:
-            type: string
-            enum:
-              - distributor
-              - enterprise
-              - department
-      responses:
-        '200':
-          $ref: '#/components/responses/AdminOrganizationList'
-        '400':
-          $ref: '#/components/responses/Error'
-        '401':
-          $ref: '#/components/responses/Error'
-        '403':
-          $ref: '#/components/responses/Error'
-        '500':
-          $ref: '#/components/responses/Error'
-      security:
-        - adminBearer: []
-        - adminSessionCookie: []
-    post:
-      tags:
-        - Organizations
-      operationId: postApiAdminOrganizations
-      summary: Create an organization.
-      description: >-
-        Creates a tenant organization with a unique name. An invalid or omitted plan defaults to
-        free. An omitted org_type defaults to enterprise; any other value outside distributor,
-        enterprise and department returns invalid_request.
-      responses:
-        '201':
-          $ref: '#/components/responses/AdminOrganization'
-        '400':
-          $ref: '#/components/responses/Error'
-        '401':
-          $ref: '#/components/responses/Error'
-        '403':
-          $ref: '#/components/responses/Error'
-        '409':
-          $ref: '#/components/responses/Error'
-        '500':
-          $ref: '#/components/responses/Error'
-      requestBody:
-        $ref: '#/components/requestBodies/AdminOrganizationCreate'
-      security:
-        - adminBearer: []
-        - adminSessionCookie: []
-  '/api/admin/organizations/{id}':
-    delete:
-      tags:
-        - Organizations
-      operationId: deleteApiAdminOrganizationsById
-      summary: Deactivate an organization.
-      description: >-
-        Soft-deletes an organization by setting is_active to false and updating the timestamp.
-        Missing organizations return not found.
-      responses:
-        '200':
-          $ref: '#/components/responses/AdminOrganizationDelete'
-        '400':
-          $ref: '#/components/responses/Error'
-        '401':
-          $ref: '#/components/responses/Error'
-        '403':
-          $ref: '#/components/responses/Error'
-        '404':
-          $ref: '#/components/responses/Error'
-        '500':
-          $ref: '#/components/responses/Error'
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-      security:
-        - adminBearer: []
-        - adminSessionCookie: []
-    get:
-      tags:
-        - Organizations
-      operationId: getApiAdminOrganizationsById
-      summary: Get an organization.
-      description: >-
-        Returns one organization for the current tenant plus member_count. Boolean fields are
-        normalized and timestamps are returned in milliseconds.
-      responses:
-        '200':
-          $ref: '#/components/responses/AdminOrganization'
-        '400':
-          $ref: '#/components/responses/Error'
-        '401':
-          $ref: '#/components/responses/Error'
-        '403':
-          $ref: '#/components/responses/Error'
-        '404':
-          $ref: '#/components/responses/Error'
-        '500':
-          $ref: '#/components/responses/Error'
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-      security:
-        - adminBearer: []
-        - adminSessionCookie: []
-    put:
-      tags:
-        - Organizations
-      operationId: putApiAdminOrganizationsById
-      summary: Update an organization.
-      description: >-
-        Updates mutable organization fields such as name, display name, plan, type, active state,
-        and metadata. Invalid plan or org_type values return invalid_request.
-      responses:
-        '200':
-          $ref: '#/components/responses/AdminOrganization'
-        '400':
-          $ref: '#/components/responses/Error'
-        '401':
-          $ref: '#/components/responses/Error'
-        '403':
-          $ref: '#/components/responses/Error'
-        '404':
-          $ref: '#/components/responses/Error'
-        '500':
-          $ref: '#/components/responses/Error'
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-      requestBody:
-        $ref: '#/components/requestBodies/AdminOrganizationUpdate'
-      security:
-        - adminBearer: []
-        - adminSessionCookie: []
-  '/api/admin/organizations/{id}/hierarchy':
-    get:
-      tags:
-        - Organizations
-      operationId: getApiAdminOrganizationsByIdHierarchy
-      summary: Get an organization hierarchy.
-      description: >-
-        Returns the selected organization and descendants as a tree, including member counts and
-        summary totals. The max_depth query controls recursive traversal depth.
-      responses:
-        '200':
-          $ref: '#/components/responses/AdminOrganizationHierarchy'
-        '400':
-          $ref: '#/components/responses/Error'
-        '401':
-          $ref: '#/components/responses/Error'
-        '403':
-          $ref: '#/components/responses/Error'
-        '404':
-          $ref: '#/components/responses/Error'
-        '500':
-          $ref: '#/components/responses/Error'
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-        - name: max_depth
-          in: query
-          description: Maximum descendant depth to traverse.
-          schema:
-            type: integer
-            minimum: 0
-            default: 10
-      security:
-        - adminBearer: []
-        - adminSessionCookie: []
-  '/api/admin/organizations/{id}/members':
-    get:
-      tags:
-        - Organizations
-      operationId: getApiAdminOrganizationsByIdMembers
-      summary: List organization members.
-      description: >-
-        Lists organization memberships with page/limit pagination and resolves user email/name from
-        the PII adapter after fetching membership rows from core storage.
-      responses:
-        '200':
-          $ref: '#/components/responses/AdminOrganizationMemberList'
-        '400':
-          $ref: '#/components/responses/Error'
-        '401':
-          $ref: '#/components/responses/Error'
-        '403':
-          $ref: '#/components/responses/Error'
-        '404':
-          $ref: '#/components/responses/Error'
-        '500':
-          $ref: '#/components/responses/Error'
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-        - name: page
-          in: query
-          description: Page number.
-          schema:
-            type: integer
-            minimum: 1
-            default: 1
-        - name: limit
-          in: query
-          description: Page size.
-          schema:
-            type: integer
-            minimum: 1
-            default: 20
-      security:
-        - adminBearer: []
-        - adminSessionCookie: []
-    post:
-      tags:
-        - Organizations
-      operationId: postApiAdminOrganizationsByIdMembers
-      summary: Add an organization member.
-      description: >-
-        Adds an active runtime user to an organization with membership_type or legacy org_role.
-        Setting is_primary clears other primary memberships for the subject.
-      responses:
-        '201':
-          $ref: '#/components/responses/AdminOrganizationMemberCreate'
-        '400':
-          $ref: '#/components/responses/Error'
-        '401':
-          $ref: '#/components/responses/Error'
-        '403':
-          $ref: '#/components/responses/Error'
-        '404':
-          $ref: '#/components/responses/Error'
-        '409':
-          $ref: '#/components/responses/Error'
-        '500':
-          $ref: '#/components/responses/Error'
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-      requestBody:
-        $ref: '#/components/requestBodies/AdminOrganizationMemberCreate'
-      security:
-        - adminBearer: []
-        - adminSessionCookie: []
-  '/api/admin/organizations/{id}/members/{subjectId}':
-    delete:
-      tags:
-        - Organizations
-      operationId: deleteApiAdminOrganizationsByIdMembersBySubjectId
-      summary: Remove an organization member.
-      description: Deletes a subject membership from the organization. Missing memberships return not found.
-      responses:
-        '200':
-          $ref: '#/components/responses/AdminOrganizationMemberDelete'
-        '400':
-          $ref: '#/components/responses/Error'
-        '401':
-          $ref: '#/components/responses/Error'
-        '403':
-          $ref: '#/components/responses/Error'
-        '404':
-          $ref: '#/components/responses/Error'
-        '500':
-          $ref: '#/components/responses/Error'
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-        - name: subjectId
-          in: path
-          required: true
-          schema:
-            type: string
-      security:
-        - adminBearer: []
-        - adminSessionCookie: []
-  '/api/admin/organizations/{org_id}/domain-mappings':
-    get:
-      tags:
-        - Organizations
-      operationId: getApiAdminOrganizationsByOrgIdDomainMappings
-      summary: List organization domain mappings for an organization.
-      description: >-
-        Verifies the organization belongs to the current tenant, then lists its email-domain
-        mappings with limit and offset pagination.
-      responses:
-        '200':
-          $ref: '#/components/responses/OrgDomainMappingList'
-        '400':
-          $ref: '#/components/responses/Error'
-        '401':
-          $ref: '#/components/responses/Error'
-        '403':
-          $ref: '#/components/responses/Error'
-        '404':
-          $ref: '#/components/responses/Error'
-        '500':
-          $ref: '#/components/responses/Error'
-      parameters:
-        - name: org_id
-          in: path
-          required: true
-          schema:
-            type: string
-        - name: limit
-          in: query
-          description: Maximum mappings to return.
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 100
-            default: 50
-        - name: offset
-          in: query
-          description: Offset for list pagination.
-          schema:
-            type: integer
-            minimum: 0
-            default: 0
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -22580,7 +21931,7 @@ paths:
         priority must be an integer, resource_types and actions arrays of strings, and conditions an
         array of conditions
         the Check API can evaluate (roles, verified and numeric attributes, resource owner, time;
-        not user type, organization, plan, relationships, country, IP or request counts), each with
+        not user type, relationships, country, IP or request counts), each with
         the params its type needs (400 otherwise): the Check API grants nothing from a tenant's
         rules while one of them cannot be evaluated.
       responses:
@@ -22719,7 +22070,7 @@ paths:
         (no grant while feature.enable_abac or feature.enable_custom_rules is off; no verified
         attributes while feature.enable_verified_attributes is off), as do the rules' resource
         types and actions, and the subject's scoped roles count only for the context's resource
-        and organization. While a rule cannot be evaluated as stored, nothing is granted and its
+        and its groups. While a rule cannot be evaluated as stored, nothing is granted and its
         id is returned. context.resource.type and context.action.name are required. Answers 503
         when the settings cannot be read.
       responses:
@@ -23175,7 +22526,7 @@ paths:
       operationId: postApiAdminResourcePermissions
       summary: Create a resource permission.
       description: >-
-        Grant ID-level actions on a resource to a user, role, or organization subject. Duplicate
+        Grant ID-level actions on a resource to a user, role, or group subject. Duplicate
         subject/resource grants return conflict.
       responses:
         '201':
@@ -23515,7 +22866,7 @@ paths:
       summary: Evaluate role assignment rules
       description: >-
         Evaluates all active tenant role assignment rules against a supplied context and returns the
-        final role, organization, attribute, and deny outcome.
+        final role, group, attribute, and deny outcome.
       responses:
         '200':
           $ref: '#/components/responses/AdminRoleAssignmentRuleEvaluate'
@@ -23561,8 +22912,8 @@ paths:
       operationId: postApiAdminRoles
       summary: Create role
       description: >-
-        Creates a custom tenant role after validating the name, permission strings, optional parent
-        role, and hierarchy-management permissions.
+        Creates a custom tenant role (grant tier 1) after validating the name, the permission
+        strings and the caller's grant tier.
       responses:
         '201':
           $ref: '#/components/responses/AdminRoleCreate'
@@ -23589,7 +22940,7 @@ paths:
       operationId: deleteApiAdminRolesById
       summary: Delete role
       description: >-
-        Deletes a custom tenant role. System roles, roles outside the caller hierarchy, and roles
+        Deletes a custom tenant role. System roles, roles above the caller's grant tier, and roles
         with active assignments are rejected.
       responses:
         '200':
@@ -23647,8 +22998,8 @@ paths:
       operationId: patchApiAdminRolesById
       summary: Update role
       description: >-
-        Updates mutable fields of a custom tenant role. System roles and hierarchy-protected roles
-        cannot be modified by insufficiently privileged admins.
+        Updates mutable fields of a custom tenant role. System roles and roles above the caller's
+        grant tier cannot be modified.
       responses:
         '200':
           $ref: '#/components/responses/AdminRoleUpdate'
@@ -24796,8 +24147,7 @@ paths:
       operationId: getApiAdminSettingsDomainHashKeysStatus
       summary: Get domain hash key migration status
       description: >-
-        Reports current key version, migration status, and user/organization mapping counts by hash
-        key version.
+        Reports current key version, migration status, and user counts by hash key version.
       responses:
         '200':
           $ref: '#/components/responses/AdminSettingsDomainHashStatus'
@@ -28485,7 +27835,7 @@ paths:
       operationId: getApiAdminUsersByIdEffectivePermissions
       summary: Get user effective permissions
       description: >-
-        Resolves permissions from direct roles and organization memberships for a user. Each role in
+        Resolves permissions from the roles of a user (direct and through its groups). Each role in
         roles carries via: { kind: direct } for a role assigned to the user, or { kind: group,
         group_id, through_group_id } for a role granted to a group the user belongs to (group_id owns
         the grant, through_group_id is the group the user is a member of).
@@ -28711,8 +28061,8 @@ paths:
       operationId: postApiAdminUsersByIdRoles
       summary: Assign role to user
       description: >-
-        Assigns a role by ID or name to the user. Self-assignment and assignments above the admin
-        hierarchy are rejected.
+        Assigns a role by ID or name to the user. Self-assignment and roles above the caller's grant
+        tier are rejected.
       responses:
         '201':
           $ref: '#/components/responses/UserRoleAssign'
@@ -28739,7 +28089,7 @@ paths:
         - Users
       operationId: deleteApiAdminUsersByIdRolesByAssignmentId
       summary: Remove user role assignment
-      description: Removes one role assignment from a user after hierarchy and self-removal checks.
+      description: Removes one role assignment from a user after grant tier and self-removal checks.
       responses:
         '200':
           $ref: '#/components/responses/UserRoleRemove'
@@ -39805,75 +39155,6 @@ paths:
           content:
             application/json:
               schema: { type: object, required: [error], properties: { error: { type: string } } }
-  /api/admin/service-groups/{id}/members/{userId}:
-    put:
-      tags: [Service Groups]
-      summary: Add or remove only the manual membership contribution
-      description: >-
-        Service-user membership only; this operation does not grant authorization or emit token claims.
-        Tenant scope is required. Reads require admin:users:read; mutations and previews require
-        admin:users:write. Rule changes use ifMatch optimistic concurrency; a stale version returns 409.
-        Missing or disabled group references, cycles and invalid typed comparisons are rejected.
-        Malformed, empty or non-object JSON request bodies return 400 with group_request_invalid.
-        Only complete per-user snapshots are published. During reconciliation, old snapshots remain
-        readable with stale status; pending or failed results must not be treated as current membership.
-      security:
-        - adminBearer: []
-        - adminSessionCookie: []
-      parameters:
-        - $ref: '#/components/parameters/TenantIdHeader'
-        - name: id
-          in: path
-          required: true
-          schema: { type: string, maxLength: 128 }
-        - name: userId
-          in: path
-          required: true
-          schema: { type: string, maxLength: 128 }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ServiceGroupManual'
-      responses:
-        '200':
-          description: Successful operation.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ServiceGroupResponse'
-        '400':
-          description: Invalid condition, reference, subject, or unavailable stable input.
-          content:
-            application/json:
-              schema: { type: object, required: [error], properties: { error: { type: string } } }
-        '401':
-          description: Authentication required.
-          content:
-            application/json:
-              schema: { type: object, required: [error], properties: { error: { type: string } } }
-        '403':
-          description: Insufficient tenant-scoped permissions.
-          content:
-            application/json:
-              schema: { type: object, required: [error], properties: { error: { type: string } } }
-        '404':
-          description: Group not found.
-          content:
-            application/json:
-              schema: { type: object, required: [error], properties: { error: { type: string } } }
-        '409':
-          description: Rule version conflict or concurrent evaluation.
-          content:
-            application/json:
-              schema: { type: object, required: [error], properties: { error: { type: string } } }
-        '503':
-          description: Input storage unavailable. No partial result was published.
-          content:
-            application/json:
-              schema: { type: object, required: [error], properties: { error: { type: string } } }
-
   /api/admin/tenant-backups/operations:
     get:
       tags: [Tenant Backup]
@@ -43282,18 +42563,6 @@ components:
             to_date: 2026-02-28T23:59:59.000Z
             format: json
             result_delivery: auto
-    AdminJobOrgBulkMembers:
-      required: true
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/AdminJobOrgBulkMembersRequest'
-          example:
-            user_ids:
-              - 018f3f7c-85b0-7c5d-a6b6-1c3a6e6b9e01
-            role: member
-            action: add
-            result_delivery: auto
     TenantVanityDomainCreate:
       required: true
       content:
@@ -44103,86 +43372,6 @@ components:
             template:
               rules:
                 - ruleKey: email
-    OrgDomainMappingCreate:
-      required: true
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/OrgDomainMappingCreateRequest'
-          example:
-            domain: example.com
-            org_id: org_acme
-            auto_join_enabled: true
-            membership_type: member
-            auto_assign_role_id: null
-            priority: 10
-            is_active: true
-    OrgDomainMappingUpdate:
-      required: true
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/OrgDomainMappingUpdateRequest'
-          example:
-            auto_join_enabled: true
-            membership_type: member
-            auto_assign_role_id: null
-            priority: 20
-            is_active: true
-    OrgDomainMappingVerificationStart:
-      required: true
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/OrgDomainMappingVerificationStartRequest'
-          example:
-            mapping_id: mapping_123
-            domain: example.com
-            verification_method: dns_txt
-    OrgDomainMappingVerificationConfirm:
-      required: true
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/OrgDomainMappingVerificationConfirmRequest'
-          example:
-            mapping_id: mapping_123
-            domain: example.com
-    AdminOrganizationCreate:
-      required: true
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/AdminOrganizationCreateRequest'
-          example:
-            name: engineering
-            display_name: Engineering
-            plan: enterprise
-            org_type: department
-            metadata_json:
-              cost_center: eng
-    AdminOrganizationUpdate:
-      required: true
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/AdminOrganizationUpdateRequest'
-          example:
-            display_name: Platform Engineering
-            is_active: true
-            metadata_json:
-              cost_center: platform
-    AdminOrganizationMemberCreate:
-      required: true
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/AdminOrganizationMemberCreateRequest'
-          example:
-            subject_id: user_123
-            membership_type: member
-            org_role: developer
-            is_primary: false
     AdminPluginConfigUpdate:
       required: true
       content:
@@ -44453,7 +43642,6 @@ components:
             description: Custom viewer role.
             permissions:
               - 'users:read'
-            hierarchy_level: 0
     AdminRoleUpdate:
       required: true
       content:
@@ -44764,7 +43952,6 @@ components:
           example:
             invited_email: new.admin@example.com
             role_id: role_tenant_admin
-            org_id: org_123
             max_uses: 1
             expires_in_hours: 72
       description: Invitation target and optional assignment scope.
@@ -44916,7 +44103,6 @@ components:
                 - employee
               permissions:
                 - 'profile:read'
-              org_id: org_123
               user_type: member
               idp_claims:
                 department: Engineering
@@ -44937,7 +44123,6 @@ components:
                 - employee
               permissions:
                 - 'profile:read'
-              org_id: org_123
               user_type: member
               idp_claims:
                 department: Engineering
@@ -48250,12 +47435,6 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/AdminJobReportAccepted'
-    AdminJobOrgBulkMembersAccepted:
-      description: Organization bulk membership job accepted response.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/AdminJobOrgBulkMembersAccepted'
     OperationalLogList:
       headers:
         X-Authrim-Log-Consistency:
@@ -48308,12 +47487,6 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/SystemLogEntry'
-    OrgDomainMappingList:
-      description: Organization domain mapping list response.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/OrgDomainMappingListResponse'
     Tenant:
       description: >-
         Tenant mutation response. Timestamps and lifecycle fields are assigned by the server and are
@@ -48889,72 +48062,6 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/Error'
-    OrgDomainMappingCreate:
-      description: Organization domain mapping create response.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/OrgDomainMappingCreateResponse'
-    OrgDomainMapping:
-      description: Organization domain mapping response.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/OrgDomainMapping'
-    OrgDomainMappingVerificationStart:
-      description: Organization domain mapping DNS verification challenge response.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/OrgDomainMappingVerificationStartResponse'
-    OrgDomainMappingVerificationConfirm:
-      description: Organization domain mapping verification confirmation response.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/OrgDomainMappingVerificationConfirmResponse'
-    AdminOrganizationList:
-      description: Organization list response.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/AdminOrganizationListResponse'
-    AdminOrganization:
-      description: Organization response.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/AdminOrganizationEnvelope'
-    AdminOrganizationDelete:
-      description: Organization deactivation response.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/AdminOrganizationDeleteResponse'
-    AdminOrganizationHierarchy:
-      description: Organization hierarchy response.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/AdminOrganizationHierarchyResponse'
-    AdminOrganizationMemberList:
-      description: Organization member list response.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/AdminOrganizationMemberListResponse'
-    AdminOrganizationMemberCreate:
-      description: Organization member creation response.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/AdminOrganizationMemberCreateResponse'
-    AdminOrganizationMemberDelete:
-      description: Organization member deletion response.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/AdminOrganizationMemberDeleteResponse'
     AdminPluginList:
       description: Plugin list response.
       content:
@@ -49419,7 +48526,7 @@ components:
                 permissions_json: '["users:read"]'
                 is_system: false
                 role_type: custom
-                parent_role_id: null
+                grant_tier: 1
                 created_at: 1770000000000
                 updated_at: 1770000000000
                 assignment_count: 3
@@ -49439,7 +48546,7 @@ components:
               permissions_json: '["users:read"]'
               is_system: false
               role_type: custom
-              parent_role_id: null
+              grant_tier: 1
               created_at: 1770000000000
               updated_at: 1770000000000
               assignment_count: 3
@@ -49447,7 +48554,6 @@ components:
                 - 'users:read'
               effective_permissions:
                 - 'users:read'
-              parent_role: null
     AdminRoleCreate:
       description: Role creation response.
       content:
@@ -49460,9 +48566,7 @@ components:
             description: Custom viewer role.
             permissions:
               - 'users:read'
-            parent_role_id: null
-            inherits_from: null
-            hierarchy_level: 0
+            grant_tier: 1
             is_system: false
             created_at: 2026-06-20T00:00:00.000Z
     AdminRoleUpdate:
@@ -49478,8 +48582,7 @@ components:
             permissions:
               - 'users:read'
               - 'users:update'
-            parent_role_id: null
-            hierarchy_level: 0
+            grant_tier: 1
             is_system: false
             updated_at: 2026-06-20T00:00:00.000Z
     AdminRoleDelete:
@@ -50149,9 +49252,6 @@ components:
             users_by_version:
               '1': 12
               '2': 48
-            org_mappings_by_version:
-              '1': 3
-              '2': 24
             deprecated_versions:
               - 1
             estimated_completion: 2026-07-01T00:00:00.000Z
@@ -51245,7 +50345,6 @@ components:
                 invited_email: new.admin@example.com
                 invited_by: admin_123
                 role_id: role_tenant_admin
-                org_id: org_123
                 max_uses: 1
                 use_count: 0
                 expires_at: 1770259200
@@ -51791,7 +50890,7 @@ components:
             tombstone_created: true
             retention_days: 90
     UserEffectivePermissions:
-      description: Effective permissions resolved from direct roles and organization memberships.
+      description: Effective permissions resolved from the roles of a user (direct and through its groups).
       content:
         application/json:
           schema:
@@ -51816,19 +50915,11 @@ components:
             summary:
               total_permissions: 1
               from_roles: 1
-              from_organizations: 0
-              from_inherited: 0
             roles:
               - role_id: role_ar_support
                 role_name: Support Agent
                 granted_at: 1770000000000
                 expires_at: null
-            organizations:
-              - organization_id: org_123
-                organization_name: Example Org
-                role_id: role_member
-                role_name: member
-                joined_at: 1770000000000
     UserRelationships:
       description: Active incoming and outgoing user relationships.
       content:
@@ -55764,15 +54855,6 @@ components:
           properties:
             id: { type: string, description: Existing stable group ID when validating an edit. }
             userId: { type: string, description: Optional service user ID for a read-only preview. }
-    ServiceGroupManual:
-      type: object
-      required: [present]
-      properties:
-        present:
-          {
-            type: boolean,
-            description: Adds or removes only the manual source; SCIM and dynamic sources remain intact.,
-          }
     ServiceGroupSnapshot:
       type: object
       required: [tenantId, userId, ruleVersion, inputVersion, generation, freshness, evaluation]
@@ -60569,62 +59651,6 @@ components:
               enum:
                 - json
                 - csv
-    AdminJobOrgBulkMembersRequest:
-      type: object
-      additionalProperties: false
-      required:
-        - user_ids
-      properties:
-        user_ids:
-          type: array
-          minItems: 1
-          maxItems: 1000
-          items:
-            type: string
-            format: uuid
-        role:
-          type: string
-          enum:
-            - member
-            - admin
-            - owner
-        action:
-          type: string
-          enum:
-            - add
-            - remove
-          default: add
-        result_delivery:
-          $ref: '#/components/schemas/AdminJobResultDelivery'
-    AdminJobOrgBulkMembersAccepted:
-      allOf:
-        - $ref: '#/components/schemas/AdminJobAccepted'
-        - type: object
-          additionalProperties: false
-          required:
-            - organization_id
-            - organization_name
-            - action
-            - user_count
-          properties:
-            organization_id:
-              type: string
-            organization_name:
-              type: string
-            action:
-              type: string
-              enum:
-                - add
-                - remove
-            user_count:
-              type: integer
-              minimum: 1
-            role:
-              type: string
-              enum:
-                - member
-                - admin
-                - owner
     AdminJobTypesResponse:
       type: object
       additionalProperties: false
@@ -60793,55 +59819,6 @@ components:
         expires_at:
           type: integer
           format: int64
-    OrgDomainMapping:
-      type: object
-      additionalProperties: false
-      required:
-        - id
-        - tenant_id
-        - domain_hash
-        - domain_hash_version
-        - org_id
-        - auto_join_enabled
-        - membership_type
-        - verified
-        - priority
-        - is_active
-        - created_at
-        - updated_at
-      properties:
-        id:
-          type: string
-        tenant_id:
-          type: string
-        domain_hash:
-          type: string
-        domain_hash_version:
-          type: integer
-        org_id:
-          type: string
-        auto_join_enabled:
-          type: boolean
-        membership_type:
-          type: string
-          enum:
-            - member
-            - admin
-            - owner
-        auto_assign_role_id:
-          type: string
-        verified:
-          type: boolean
-        priority:
-          type: integer
-        is_active:
-          type: boolean
-        created_at:
-          type: integer
-          format: int64
-        updated_at:
-          type: integer
-          format: int64
     SystemLogEntry:
       type: object
       additionalProperties: false
@@ -60941,29 +59918,6 @@ components:
             items: *systemLogItems
             pagination:
               $ref: '#/components/schemas/LogCursorPagination'
-    OrgDomainMappingListResponse:
-      type: object
-      additionalProperties: false
-      required:
-        - mappings
-        - total
-        - limit
-        - offset
-      properties:
-        mappings:
-          type: array
-          items:
-            $ref: '#/components/schemas/OrgDomainMapping'
-        total:
-          type: integer
-          minimum: 0
-        limit:
-          type: integer
-          minimum: 1
-          maximum: 100
-        offset:
-          type: integer
-          minimum: 0
     TenantLifecycleState:
       type: string
       enum:
@@ -62466,7 +61420,8 @@ components:
       enum:
         - global
         - tenant
-        - org
+        - group
+        - resource
     AdminManagementRoleAssignment:
       type: object
       additionalProperties: true
@@ -63564,7 +62519,7 @@ components:
           type: [string, 'null']
         scope:
           type: string
-          enum: [all_users, role, organization, inactive_users]
+          enum: [all_users, role, group, inactive_users]
         scope_value:
           type: [string, 'null']
         inactive_days:
@@ -63645,7 +62600,7 @@ components:
                     type: [string, 'null']
               permission_type:
                 type: string
-                enum: [role, organization, account]
+                enum: [role, group, account]
               permission_value:
                 type: string
               decision:
@@ -63736,11 +62691,11 @@ components:
           enum:
             - all_users
             - role
-            - organization
+            - group
             - inactive_users
         scope_value:
           type: string
-          description: The role id (`role`) or organization id (`organization`); required for them.
+          description: The role id (`role`) or group id (`group`); required for them.
         due_date:
           type: string
           description: A date (the end of that day, UTC) or a date-time.
@@ -72373,269 +71328,6 @@ components:
       properties:
         result:
           $ref: '#/components/schemas/FieldMappingTemplate'
-    OrgDomainMappingCreateRequest:
-      type: object
-      additionalProperties: false
-      required:
-        - domain
-        - org_id
-      properties:
-        domain:
-          type: string
-          maxLength: 253
-          description: Raw email domain. The server hashes this value before storage.
-        org_id:
-          type: string
-        auto_join_enabled:
-          type: boolean
-          default: true
-        membership_type:
-          type: string
-          enum:
-            - member
-            - admin
-            - owner
-          default: member
-        auto_assign_role_id:
-          type:
-            - string
-            - 'null'
-        priority:
-          type: integer
-          minimum: 0
-          maximum: 1000
-          default: 0
-        is_active:
-          type: boolean
-          default: true
-      example:
-        domain: example.com
-        org_id: org_acme
-        auto_join_enabled: true
-        membership_type: member
-        auto_assign_role_id: null
-        priority: 10
-        is_active: true
-    OrgDomainMappingUpdateRequest:
-      type: object
-      additionalProperties: false
-      minProperties: 1
-      properties:
-        auto_join_enabled:
-          type: boolean
-        membership_type:
-          type: string
-          enum:
-            - member
-            - admin
-            - owner
-        auto_assign_role_id:
-          type:
-            - string
-            - 'null'
-        priority:
-          type: integer
-          minimum: 0
-          maximum: 1000
-        is_active:
-          type: boolean
-      example:
-        auto_join_enabled: true
-        membership_type: member
-        auto_assign_role_id: null
-        priority: 20
-        is_active: true
-    OrgDomainMappingCreateResponse:
-      allOf:
-        - $ref: '#/components/schemas/OrgDomainMapping'
-      properties:
-        domain:
-          type: string
-          description: Raw domain echoed from the create request.
-    OrgDomainMappingVerificationStartRequest:
-      type: object
-      additionalProperties: false
-      required:
-        - mapping_id
-        - domain
-      properties:
-        mapping_id:
-          type: string
-        domain:
-          type: string
-          maxLength: 253
-        verification_method:
-          type: string
-          enum:
-            - dns_txt
-          default: dns_txt
-      example:
-        mapping_id: mapping_123
-        domain: example.com
-        verification_method: dns_txt
-    OrgDomainMappingVerificationStartResponse:
-      type: object
-      additionalProperties: false
-      required:
-        - mapping_id
-        - record_name
-        - record_value
-        - expires_at
-        - expires_in_seconds
-        - instructions
-      properties:
-        mapping_id:
-          type: string
-        record_name:
-          type: string
-        record_value:
-          type: string
-        expires_at:
-          type: integer
-          format: int64
-        expires_in_seconds:
-          type: integer
-        instructions:
-          type: string
-      example:
-        mapping_id: mapping_123
-        record_name: _authrim.example.com
-        record_value: authrim-domain-verification=abc123
-        expires_at: 1770003600
-        expires_in_seconds: 3600
-        instructions: Add a TXT record to your DNS configuration.
-    OrgDomainMappingVerificationConfirmRequest:
-      type: object
-      additionalProperties: false
-      required:
-        - mapping_id
-        - domain
-      properties:
-        mapping_id:
-          type: string
-        domain:
-          type: string
-          maxLength: 253
-      example:
-        mapping_id: mapping_123
-        domain: example.com
-    OrgDomainMappingVerificationConfirmResponse:
-      type: object
-      additionalProperties: false
-      required:
-        - verified
-      properties:
-        verified:
-          type: boolean
-        message:
-          type: string
-        mapping:
-          $ref: '#/components/schemas/OrgDomainMapping'
-      example:
-        verified: true
-        mapping:
-          id: mapping_123
-          tenant_id: default
-          domain_hash: 'sha256:...'
-          domain_hash_version: 1
-          org_id: org_acme
-          auto_join_enabled: true
-          membership_type: member
-          auto_assign_role_id: null
-          verified: true
-          priority: 10
-          is_active: true
-          created_at: 1770000000
-          updated_at: 1770000100
-    AdminOrganization:
-      type: object
-      additionalProperties: false
-      required:
-        - id
-        - tenant_id
-        - name
-        - display_name
-        - parent_org_id
-        - path
-        - depth
-        - org_type
-        - is_active
-        - created_at
-        - updated_at
-      properties:
-        id:
-          type: string
-        tenant_id:
-          type: string
-        name:
-          type: string
-        display_name:
-          type:
-            - string
-            - 'null'
-        parent_org_id:
-          type:
-            - string
-            - 'null'
-        path:
-          type: string
-        depth:
-          type: integer
-        org_type:
-          type: string
-          enum:
-            - distributor
-            - enterprise
-            - department
-        metadata_json:
-          type: object
-          additionalProperties: true
-        is_active:
-          type: boolean
-        created_at:
-          type: integer
-          format: int64
-        updated_at:
-          type: integer
-          format: int64
-        member_count:
-          type: integer
-          minimum: 0
-      example:
-        id: org_acme
-        tenant_id: default
-        name: engineering
-        display_name: Engineering
-        parent_org_id: null
-        path: /engineering
-        depth: 0
-        org_type: department
-        metadata_json: {}
-        is_active: true
-        created_at: 1770000000
-        updated_at: 1770000000
-        member_count: 12
-    AdminOrganizationEnvelope:
-      type: object
-      additionalProperties: false
-      required:
-        - organization
-      properties:
-        organization:
-          $ref: '#/components/schemas/AdminOrganization'
-    AdminOrganizationListResponse:
-      type: object
-      additionalProperties: false
-      required:
-        - organizations
-        - pagination
-      properties:
-        organizations:
-          type: array
-          items:
-            $ref: '#/components/schemas/AdminOrganization'
-        pagination:
-          $ref: '#/components/schemas/AdminPagination'
     AdminPagination:
       type: object
       additionalProperties: false
@@ -72663,275 +71355,6 @@ components:
           type: boolean
         hasPrev:
           type: boolean
-    AdminOrganizationCreateRequest:
-      type: object
-      additionalProperties: false
-      required:
-        - name
-      properties:
-        name:
-          type: string
-          minLength: 1
-        display_name:
-          type: string
-        plan:
-          type: string
-        org_type:
-          type: string
-          enum:
-            - distributor
-            - enterprise
-            - department
-          default: enterprise
-        parent_org_id:
-          type:
-            - string
-            - 'null'
-          description: Parent organization of the same tenant; omitted or null for a root.
-        metadata_json:
-          type: object
-          additionalProperties: true
-      example:
-        name: engineering
-        display_name: Engineering
-        plan: enterprise
-        org_type: department
-        metadata_json:
-          cost_center: eng
-    AdminOrganizationUpdateRequest:
-      type: object
-      additionalProperties: false
-      minProperties: 1
-      properties:
-        name:
-          type: string
-          minLength: 1
-        display_name:
-          type:
-            - string
-            - 'null'
-        plan:
-          type: string
-        org_type:
-          type: string
-          enum:
-            - distributor
-            - enterprise
-            - department
-        is_active:
-          type: boolean
-        metadata_json:
-          type: object
-          additionalProperties: true
-      example:
-        display_name: Platform Engineering
-        is_active: true
-        metadata_json:
-          cost_center: platform
-    AdminOrganizationDeleteResponse:
-      type: object
-      additionalProperties: false
-      required:
-        - success
-        - message
-      properties:
-        success:
-          type: boolean
-          enum:
-            - true
-        message:
-          type: string
-      example:
-        success: true
-        message: Organization deactivated successfully
-    AdminOrganizationNode:
-      type: object
-      additionalProperties: false
-      required:
-        - id
-        - name
-        - display_name
-        - parent_id
-        - depth
-        - is_active
-        - member_count
-        - children
-      properties:
-        id:
-          type: string
-        name:
-          type: string
-        display_name:
-          type:
-            - string
-            - 'null'
-        parent_id:
-          type:
-            - string
-            - 'null'
-        depth:
-          type: integer
-        is_active:
-          type: boolean
-        member_count:
-          type: integer
-          minimum: 0
-        children:
-          type: array
-          items:
-            $ref: '#/components/schemas/AdminOrganizationNode'
-    AdminOrganizationHierarchyResponse:
-      type: object
-      additionalProperties: false
-      required:
-        - organization
-        - summary
-      properties:
-        organization:
-          $ref: '#/components/schemas/AdminOrganizationNode'
-        summary:
-          type: object
-          additionalProperties: false
-          required:
-            - total_organizations
-            - total_members
-            - max_depth
-          properties:
-            total_organizations:
-              type: integer
-              minimum: 0
-            total_members:
-              type: integer
-              minimum: 0
-            max_depth:
-              type: integer
-              minimum: 0
-    AdminOrganizationMember:
-      type: object
-      additionalProperties: false
-      required:
-        - subject_id
-        - org_id
-        - membership_type
-        - is_primary
-        - joined_at
-        - user_email
-        - user_name
-      properties:
-        subject_id:
-          type: string
-        org_id:
-          type: string
-        membership_type:
-          type: string
-        is_primary:
-          type: boolean
-        joined_at:
-          type: integer
-          format: int64
-        user_email:
-          type:
-            - string
-            - 'null'
-        user_name:
-          type:
-            - string
-            - 'null'
-    AdminOrganizationMemberListResponse:
-      type: object
-      additionalProperties: false
-      required:
-        - members
-        - pagination
-      properties:
-        members:
-          type: array
-          items:
-            $ref: '#/components/schemas/AdminOrganizationMember'
-        pagination:
-          $ref: '#/components/schemas/AdminPagination'
-    AdminOrganizationMemberCreateRequest:
-      type: object
-      additionalProperties: false
-      required:
-        - subject_id
-      properties:
-        subject_id:
-          type: string
-        membership_type:
-          type: string
-          default: member
-        org_role:
-          type: string
-        is_primary:
-          type: boolean
-          default: false
-      example:
-        subject_id: user_123
-        membership_type: member
-        org_role: developer
-        is_primary: false
-    AdminOrganizationMemberCreateResponse:
-      type: object
-      additionalProperties: false
-      required:
-        - success
-        - message
-        - membership
-      properties:
-        success:
-          type: boolean
-          enum:
-            - true
-        message:
-          type: string
-        membership:
-          type: object
-          additionalProperties: false
-          required:
-            - id
-            - tenant_id
-            - org_id
-            - subject_id
-            - membership_type
-            - is_primary
-            - created_at
-            - updated_at
-          properties:
-            id:
-              type: string
-            tenant_id:
-              type: string
-            org_id:
-              type: string
-            subject_id:
-              type: string
-            membership_type:
-              type: string
-            is_primary:
-              type: boolean
-            created_at:
-              type: integer
-              format: int64
-            updated_at:
-              type: integer
-              format: int64
-    AdminOrganizationMemberDeleteResponse:
-      type: object
-      additionalProperties: false
-      required:
-        - success
-        - message
-      properties:
-        success:
-          type: boolean
-          enum:
-            - true
-        message:
-          type: string
-      example:
-        success: true
-        message: Member removed from organization
     AdminPluginEntry:
       type: object
       additionalProperties: true
@@ -75054,8 +73477,9 @@ components:
           type: object
           additionalProperties: true
           description: >-
-            The subject: id, roles ({ name, scope: global | org | resource, scopeTarget such as
-            org:<id> or resource:<type>:<id> }) and verifiedAttributes ({ name, value }).
+            The subject: id, roles ({ name, scope: global | tenant | group | resource, scopeTarget
+            such as group:<id> or resource:<type>:<id> }), groupIds (the subject's group ids) and
+            verifiedAttributes ({ name, value }).
         resource:
           type: object
           additionalProperties: true
@@ -75068,8 +73492,11 @@ components:
               type: string
             ownerId:
               type: string
-            orgId:
-              type: string
+            groupIds:
+              type: array
+              description: The groups the resource belongs to (group ids).
+              items:
+                type: string
         action:
           type: object
           additionalProperties: true
@@ -75805,7 +74232,7 @@ components:
           enum:
             - user
             - role
-            - org
+            - group
         subject_id:
           type: string
         resource_type:
@@ -75866,7 +74293,7 @@ components:
           enum:
             - user
             - role
-            - org
+            - group
         subject_id:
           type: string
         resource_type:
@@ -76156,7 +74583,7 @@ components:
       required:
         - matched_rules
         - final_roles
-        - final_orgs
+        - final_groups
         - attributes_to_set
         - denied
       properties:
@@ -76169,7 +74596,7 @@ components:
           type: array
           items:
             type: string
-        final_orgs:
+        final_groups:
           type: array
           items:
             type: string
@@ -76215,10 +74642,13 @@ components:
           type: boolean
         role_type:
           type: string
-        parent_role_id:
-          type:
-            - string
-            - 'null'
+        grant_tier:
+          type: integer
+          minimum: 1
+          description: >-
+            Delegation tier: an administrator may grant, revoke or edit the role only when it is at
+            most the highest tier its admin roles allow (super admin 3, tenant admin 2, other admin
+            roles 1).
         created_at:
           type: integer
           format: int64
@@ -76233,22 +74663,9 @@ components:
             type: string
         effective_permissions:
           type: array
+          description: The role's own permissions (roles do not inherit).
           items:
             type: string
-        parent_role:
-          type:
-            - object
-            - 'null'
-          additionalProperties: false
-          properties:
-            id:
-              type: string
-            name:
-              type: string
-            display_name:
-              type:
-                - string
-                - 'null'
     AdminRoleListResponse:
       type: object
       additionalProperties: false
@@ -76269,7 +74686,6 @@ components:
             permissions_json: '["users:read"]'
             is_system: false
             role_type: custom
-            parent_role_id: null
             created_at: 1770000000000
             updated_at: 1770000000000
             assignment_count: 3
@@ -76298,18 +74714,17 @@ components:
           type: array
           items:
             type: string
-        inherits_from:
-          type: string
-        parent_role_id:
-          type: string
-        hierarchy_level:
+        grant_tier:
           type: integer
+          minimum: 1
+          maximum: 3
+          default: 1
+          description: Delegation tier of the role. Allowed only up to the caller's own maximum grant tier (403 otherwise).
       example:
         name: custom_viewer
         description: Custom viewer role.
         permissions:
           - 'users:read'
-        hierarchy_level: 0
     AdminRoleCreateResponse:
       type: object
       additionalProperties: false
@@ -76318,9 +74733,7 @@ components:
         - name
         - description
         - permissions
-        - parent_role_id
-        - inherits_from
-        - hierarchy_level
+        - grant_tier
         - is_system
         - created_at
       properties:
@@ -76336,15 +74749,7 @@ components:
           type: array
           items:
             type: string
-        parent_role_id:
-          type:
-            - string
-            - 'null'
-        inherits_from:
-          type:
-            - string
-            - 'null'
-        hierarchy_level:
+        grant_tier:
           type: integer
         is_system:
           type: boolean
@@ -76364,16 +74769,11 @@ components:
           type: array
           items:
             type: string
-        hierarchy_level:
+        grant_tier:
           type: integer
-        parent_role_id:
-          type:
-            - string
-            - 'null'
-        inherits_from:
-          type:
-            - string
-            - 'null'
+          minimum: 1
+          maximum: 3
+          description: New delegation tier of the role. Allowed only up to the caller's own maximum grant tier (403 otherwise).
       example:
         description: Updated role.
         permissions:
@@ -76387,8 +74787,7 @@ components:
         - name
         - description
         - permissions
-        - parent_role_id
-        - hierarchy_level
+        - grant_tier
         - is_system
         - updated_at
       properties:
@@ -76404,11 +74803,7 @@ components:
           type: array
           items:
             type: string
-        parent_role_id:
-          type:
-            - string
-            - 'null'
-        hierarchy_level:
+        grant_tier:
           type: integer
         is_system:
           type: boolean
@@ -77616,12 +76011,6 @@ components:
         users_by_version:
           type: object
           description: User counts keyed by hash key version.
-          additionalProperties:
-            type: integer
-            minimum: 0
-        org_mappings_by_version:
-          type: object
-          description: Organization domain mapping counts keyed by hash key version.
           additionalProperties:
             type: integer
             minimum: 0
@@ -79248,10 +77637,6 @@ components:
           type:
             - string
             - 'null'
-        org_id:
-          type:
-            - string
-            - 'null'
         max_uses:
           type: integer
           minimum: -1
@@ -79266,7 +77651,6 @@ components:
       example:
         invited_email: new.admin@example.com
         role_id: role_tenant_admin
-        org_id: org_123
         max_uses: 1
         expires_in_hours: 72
     TenantInvitation:
@@ -79284,10 +77668,6 @@ components:
         invited_by:
           type: string
         role_id:
-          type:
-            - string
-            - 'null'
-        org_id:
           type:
             - string
             - 'null'
@@ -80619,10 +78999,6 @@ components:
               type: array
               items:
                 type: string
-            org_id:
-              type: string
-            org_type:
-              type: string
             user_type:
               type: string
             idp_claims:
@@ -80675,10 +79051,6 @@ components:
               type: array
               items:
                 type: string
-            org_id:
-              type: string
-            org_type:
-              type: string
             user_type:
               type: string
             idp_claims:
@@ -80813,8 +79185,6 @@ components:
           type: string
           enum:
             - role
-            - organization
-            - inherited
         source_id:
           type: string
         source_name:
@@ -81278,7 +79648,6 @@ components:
         - by_category
         - summary
         - roles
-        - organizations
       properties:
         user_id:
           type: string
@@ -81298,23 +79667,12 @@ components:
           required:
             - total_permissions
             - from_roles
-            - from_organizations
-            - from_inherited
           properties:
             total_permissions:
               type: integer
             from_roles:
               type: integer
-            from_organizations:
-              type: integer
-            from_inherited:
-              type: integer
         roles:
-          type: array
-          items:
-            type: object
-            additionalProperties: true
-        organizations:
           type: array
           items:
             type: object
@@ -81339,19 +79697,11 @@ components:
         summary:
           total_permissions: 1
           from_roles: 1
-          from_organizations: 0
-          from_inherited: 0
         roles:
           - role_id: role_ar_support
             role_name: Support Agent
             granted_at: 1770000000000
             expires_at: null
-        organizations:
-          - organization_id: org_123
-            organization_name: Example Org
-            role_id: role_member
-            role_name: member
-            joined_at: 1770000000000
     UserRelationshipCreateRequest:
       type: object
       additionalProperties: false
@@ -81562,7 +79912,8 @@ components:
           type: string
           enum:
             - global
-            - org
+            - tenant
+            - group
             - resource
         scope_target:
           type: string
@@ -86749,7 +85100,6 @@ x-tagGroups:
       - Clients
       - Tenants
       - Tenant Domains
-      - Organizations
       - Roles
       - User Attributes
       - Custom Claims

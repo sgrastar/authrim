@@ -1259,9 +1259,7 @@ async function resolveInvitationDiscovery(
 
   // Uses left, counting reservations that expired unapplied as returned (an abandoned sign-up
   // must not leave the link dead until another sign-up starts).
-  if (
-    !(await invitationHasUsesLeft(adapter, { ...invitation, role_id: null, org_id: null }, now))
-  ) {
+  if (!(await invitationHasUsesLeft(adapter, { ...invitation, role_id: null }, now))) {
     return null;
   }
 

@@ -40,7 +40,6 @@ vi.mock('../../admin-shared', async (importOriginal) => {
 
 import {
   adminJobsListHandler,
-  adminJobsOrgBulkMembersHandler,
   adminJobsReportsGenerateHandler,
   adminJobsUsersBulkUpdateHandler,
 } from '../../admin-jobs';
@@ -61,7 +60,6 @@ function createApp() {
   });
   app.post('/api/admin/jobs/users/bulk-update', adminJobsUsersBulkUpdateHandler);
   app.post('/api/admin/jobs/reports/generate', adminJobsReportsGenerateHandler);
-  app.post('/api/admin/jobs/organizations/:id/bulk-members', adminJobsOrgBulkMembersHandler);
   app.get('/api/admin/jobs', adminJobsListHandler);
   return app;
 }
@@ -84,8 +82,6 @@ const invalid = (field: string, reason: string) => ({
   body: { error: 'AR130003', variables: { field, reason } },
 });
 const invalidBody = (reason: string) => invalid('body', reason);
-
-const UUID_A = '11111111-1111-4111-8111-111111111111';
 
 function insertedConfig(): Record<string, unknown> {
   const call = mocks.adapter.execute.mock.calls.find((c) =>
@@ -351,78 +347,5 @@ describe('zod pins: ReportOptionsSchema (POST /jobs/reports/generate)', () => {
       filters: { a: [1, { b: 2 }] },
       result_delivery: 'auto',
     });
-  });
-});
-
-describe('zod pins: BulkMembersOptionsSchema (POST /jobs/organizations/:id/bulk-members)', () => {
-  const members = (body: unknown) =>
-    send('POST', '/api/admin/jobs/organizations/org-1/bulk-members', body);
-
-  it('root and field issues', async () => {
-    expect(await members(null)).toEqual(invalidBody('Expected object, received null'));
-    expect(await members({})).toEqual(invalidBody('Required'));
-    expect(await members({ user_ids: [] })).toEqual(
-      invalidBody('Array must contain at least 1 element(s)')
-    );
-    expect(await members({ user_ids: ['not-a-uuid'] })).toEqual(invalidBody('Invalid uuid'));
-    expect(await members({ user_ids: [UUID_A, 'x', 5, 'y'] })).toEqual(
-      invalidBody('Invalid uuid, Expected string, received number, Invalid uuid')
-    );
-    expect(await members({ user_ids: Array.from({ length: 1001 }, () => UUID_A) })).toEqual(
-      invalidBody('Array must contain at most 1000 element(s)')
-    );
-    expect(await members({ user_ids: [UUID_A], role: 'guest' })).toEqual(
-      invalidBody("Invalid enum value. Expected 'member' | 'admin' | 'owner', received 'guest'")
-    );
-    expect(await members({ user_ids: [UUID_A], action: 'move' })).toEqual(
-      invalidBody("Invalid enum value. Expected 'add' | 'remove', received 'move'")
-    );
-    expect(await members({ user_ids: [UUID_A], result_delivery: 'x' })).toEqual(
-      invalidBody("Invalid enum value. Expected 'auto' | 'inline' | 'artifact', received 'x'")
-    );
-  });
-
-  it('uuid() edge cases (status per value; unknown org -> 404 means schema passed)', async () => {
-    const values = [
-      UUID_A,
-      UUID_A.toUpperCase(),
-      '00000000-0000-0000-0000-000000000000',
-      'ffffffff-ffff-ffff-ffff-ffffffffffff',
-      '11111111-1111-1111-8111-111111111111',
-      '11111111-1111-7111-8111-111111111111',
-      '11111111111141118111111111111111',
-      `{${UUID_A}}`,
-      `${UUID_A} `,
-      '11111111-1111-4111-8111-11111111111g',
-    ];
-    const statuses: Record<string, number> = {};
-    for (const id of values) statuses[id] = (await members({ user_ids: [id] })).status;
-    expect(statuses).toEqual({
-      [UUID_A]: 404,
-      [UUID_A.toUpperCase()]: 404,
-      '00000000-0000-0000-0000-000000000000': 404,
-      'ffffffff-ffff-ffff-ffff-ffffffffffff': 404,
-      '11111111-1111-1111-8111-111111111111': 404,
-      '11111111-1111-7111-8111-111111111111': 404,
-      '11111111111141118111111111111111': 400,
-      [`{${UUID_A}}`]: 400,
-      [`${UUID_A} `]: 400,
-      '11111111-1111-4111-8111-11111111111g': 400,
-    });
-  });
-
-  it('defaults action="add" and result_delivery="auto" are stored in the job config', async () => {
-    mocks.adapter.queryOne.mockResolvedValue({ id: 'org-1', tenant_id: 'tenant-a', name: 'Org' });
-    mocks.adapter.query.mockResolvedValue([{ id: UUID_A }]);
-    const result = await members({ user_ids: [UUID_A], surplus: true });
-    expect(result.status).toBe(202);
-    expect(insertedConfig()).toEqual({
-      organization_id: 'org-1',
-      organization_name: 'Org',
-      action: 'add',
-      user_ids: [UUID_A],
-      result_delivery: 'auto',
-    });
-    expect(result.body).toMatchObject({ action: 'add', user_count: 1 });
   });
 });

@@ -3,7 +3,7 @@
  *
  * Evaluates role assignment rules against user context to determine:
  * - Roles to assign
- * - Organizations to join
+ * - Groups to join
  * - Attributes to set
  * - Access denial decisions
  *
@@ -31,6 +31,7 @@ import type {
 import type { DatabaseAdapter, DatabaseSource } from '../db';
 import { ensureDatabaseAdapter } from '../db';
 import { normalizeClaimValue, compareNormalized, getNestedValue } from '../utils/claim-normalizer';
+import { roleScopeTargetError } from './tenant-rbac';
 
 // =============================================================================
 // Constants
@@ -67,13 +68,13 @@ export class RuleEvaluator {
    * Evaluate all active rules against the given context
    *
    * @param context - Evaluation context with user attributes
-   * @returns Evaluation result with roles, orgs, and deny status
+   * @returns Evaluation result with roles, groups, and deny status
    */
   async evaluate(context: RuleEvaluationContext): Promise<RuleEvaluationResult> {
     const result: RuleEvaluationResult = {
       matched_rules: [],
       roles_to_assign: [],
-      orgs_to_join: [],
+      groups_to_join: [],
       attributes_to_set: [],
       denied: false,
     };
@@ -285,11 +286,11 @@ export class RuleEvaluator {
     for (const action of rule.actions) {
       switch (action.type) {
         case 'assign_role':
-          this.applyAssignRoleAction(rule, action, result);
+          this.applyAssignRoleAction(rule, action, result, context.tenant_id);
           break;
 
-        case 'join_org':
-          this.applyJoinOrgAction(action, result);
+        case 'join_group':
+          this.applyJoinGroupAction(rule, action, result);
           break;
 
         case 'set_attribute':
@@ -313,11 +314,15 @@ export class RuleEvaluator {
   private applyAssignRoleAction(
     rule: RoleAssignmentRule,
     action: RuleAction,
-    result: RuleEvaluationResult
+    result: RuleEvaluationResult,
+    tenantId: string
   ): void {
     const roleId = action.role_id ?? rule.role_id;
     const scopeType = action.scope_type ?? rule.scope_type;
     const scopeTarget = action.scope_target ?? rule.scope_target;
+    // A role of a scope no reader knows (the removed `org`), or with a target that is not one of
+    // its scope, is not given (a rule saved before the scope was removed).
+    if (roleScopeTargetError(scopeType, scopeTarget, tenantId)) return;
 
     // Check if already added (avoid duplicates)
     const exists = result.roles_to_assign.some(
@@ -334,13 +339,21 @@ export class RuleEvaluator {
   }
 
   /**
-   * Apply join_org action
+   * Apply join_group action
    */
-  private applyJoinOrgAction(action: RuleAction, result: RuleEvaluationResult): void {
-    // 'auto' will be resolved by the caller using org_domain_mappings
-    const orgId = action.org_id;
-    if (orgId && !result.orgs_to_join.includes(orgId)) {
-      result.orgs_to_join.push(orgId);
+  private applyJoinGroupAction(
+    rule: RoleAssignmentRule,
+    action: RuleAction,
+    result: RuleEvaluationResult
+  ): void {
+    const groupId = action.group_id;
+    // One entry per group and rule: each rule's membership is its own (its source reference), so
+    // a second rule joining the same group keeps its own.
+    if (
+      groupId &&
+      !result.groups_to_join.some((join) => join.group_id === groupId && join.rule_id === rule.id)
+    ) {
+      result.groups_to_join.push({ group_id: groupId, rule_id: rule.id });
     }
   }
 

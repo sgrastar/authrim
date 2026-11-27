@@ -249,40 +249,6 @@ describe('PolicyEngine', () => {
       });
     });
 
-    describe('same_organization', () => {
-      it('should match when subject and resource are in the same org', () => {
-        engine.addRule({
-          id: 'same_org_test',
-          name: 'Same Org Test',
-          priority: 100,
-          effect: 'allow',
-          conditions: [{ type: 'same_organization', params: {} }],
-        });
-
-        const context = createTestContext({
-          subjectOrgId: 'org_123',
-          resourceOrgId: 'org_123',
-        });
-        expect(engine.evaluate(context).allowed).toBe(true);
-      });
-
-      it('should not match when subject and resource are in different orgs', () => {
-        engine.addRule({
-          id: 'same_org_test',
-          name: 'Same Org Test',
-          priority: 100,
-          effect: 'allow',
-          conditions: [{ type: 'same_organization', params: {} }],
-        });
-
-        const context = createTestContext({
-          subjectOrgId: 'org_123',
-          resourceOrgId: 'org_456',
-        });
-        expect(engine.evaluate(context).allowed).toBe(false);
-      });
-    });
-
     describe('has_relationship', () => {
       it('should match when subject has the relationship with resource owner', () => {
         engine.addRule({
@@ -342,34 +308,6 @@ describe('PolicyEngine', () => {
         expect(engine.evaluate(context).allowed).toBe(true);
       });
     });
-
-    describe('plan_allows', () => {
-      it('should match when plan is in allowed list', () => {
-        engine.addRule({
-          id: 'plan_test',
-          name: 'Plan Test',
-          priority: 100,
-          effect: 'allow',
-          conditions: [{ type: 'plan_allows', params: { plans: ['professional', 'enterprise'] } }],
-        });
-
-        const context = createTestContext({ plan: 'professional' });
-        expect(engine.evaluate(context).allowed).toBe(true);
-      });
-
-      it('should not match when plan is not in allowed list', () => {
-        engine.addRule({
-          id: 'plan_test',
-          name: 'Plan Test',
-          priority: 100,
-          effect: 'allow',
-          conditions: [{ type: 'plan_allows', params: { plans: ['professional', 'enterprise'] } }],
-        });
-
-        const context = createTestContext({ plan: 'free' });
-        expect(engine.evaluate(context).allowed).toBe(false);
-      });
-    });
   });
 
   describe('multiple conditions (AND logic)', () => {
@@ -380,32 +318,29 @@ describe('PolicyEngine', () => {
         priority: 100,
         effect: 'allow',
         conditions: [
-          { type: 'has_role', params: { role: 'org_admin' } },
-          { type: 'same_organization', params: {} },
+          { type: 'has_role', params: { role: 'project_admin' } },
+          { type: 'is_resource_owner', params: {} },
         ],
       });
 
-      // Has role but not same org
+      // Has role but does not own the resource
       const context1 = createTestContext({
-        roles: [{ name: 'org_admin', scope: 'global' }],
-        subjectOrgId: 'org_123',
-        resourceOrgId: 'org_456',
+        roles: [{ name: 'project_admin', scope: 'global' }],
+        resourceOwnerId: 'someone_else',
       });
       expect(engine.evaluate(context1).allowed).toBe(false);
 
-      // Same org but no role
+      // Owns the resource but has no role
       const context2 = createTestContext({
         roles: [{ name: 'user', scope: 'global' }],
-        subjectOrgId: 'org_123',
-        resourceOrgId: 'org_123',
+        resourceOwnerId: 'test_user',
       });
       expect(engine.evaluate(context2).allowed).toBe(false);
 
       // Both conditions met
       const context3 = createTestContext({
-        roles: [{ name: 'org_admin', scope: 'global' }],
-        subjectOrgId: 'org_123',
-        resourceOrgId: 'org_123',
+        roles: [{ name: 'project_admin', scope: 'global' }],
+        resourceOwnerId: 'test_user',
       });
       expect(engine.evaluate(context3).allowed).toBe(true);
     });
@@ -460,12 +395,9 @@ describe('createDefaultPolicyEngine', () => {
  */
 function createTestContext(options: {
   subjectId?: string;
-  roles?: Array<{ name: string; scope: 'global' | 'org' | 'resource'; scopeTarget?: string }>;
+  roles?: Array<{ name: string; scope: 'global' | 'group' | 'resource'; scopeTarget?: string }>;
   userType?: string;
-  plan?: string;
-  subjectOrgId?: string;
   resourceOwnerId?: string;
-  resourceOrgId?: string;
   relationships?: Array<{
     relatedSubjectId: string;
     relationshipType: string;
@@ -477,15 +409,12 @@ function createTestContext(options: {
       id: options.subjectId || 'test_user',
       roles: options.roles || [],
       userType: options.userType as any,
-      plan: options.plan as any,
-      orgId: options.subjectOrgId,
       relationships: options.relationships as any,
     },
     resource: {
       type: 'test_resource',
       id: 'resource_1',
       ownerId: options.resourceOwnerId,
-      orgId: options.resourceOrgId,
     },
     action: {
       name: 'read',

@@ -6,14 +6,13 @@ The current job system is intentionally small. It uses the `admin_jobs` table as
 
 ## Supported job types
 
-| Job type                     | Creation API                                          | Processor | Result class         |
-| ---------------------------- | ----------------------------------------------------- | --------- | -------------------- |
-| `users/import`               | `POST /api/admin/jobs/users/import`                   | scheduled | `user_import_result` |
-| `users/bulk-update`          | `POST /api/admin/jobs/users/bulk-update`              | scheduled | `admin_job_result`   |
-| `reports/generate`           | `POST /api/admin/jobs/reports/generate`               | scheduled | `admin_job_result`   |
-| `organizations/bulk-members` | `POST /api/admin/jobs/organizations/:id/bulk-members` | scheduled | `admin_job_result`   |
+| Job type            | Creation API                             | Processor | Result class         |
+| ------------------- | ---------------------------------------- | --------- | -------------------- |
+| `users/import`      | `POST /api/admin/jobs/users/import`      | scheduled | `user_import_result` |
+| `users/bulk-update` | `POST /api/admin/jobs/users/bulk-update` | scheduled | `admin_job_result`   |
+| `reports/generate`  | `POST /api/admin/jobs/reports/generate`  | scheduled | `admin_job_result`   |
 
-The platform can turn the `bulk_jobs` capability off for tenants (see "Tenant Capabilities" in `ENVIRONMENT_VARIABLES.md`): creating the four job types above is then refused for everyone (403 `capability_disabled`; a platform administrator too, because the job would not run) and queued ones end as `partial_failure` (`tenant_capability_disabled:bulk_jobs`) instead of starting. Reading jobs, results and artifacts stays allowed, and system job types (tenant lifecycle and deletion, tenant database export and restore checks, downstream logout, Support Ops, reindexing) are never held.
+The platform can turn the `bulk_jobs` capability off for tenants (see "Tenant Capabilities" in `ENVIRONMENT_VARIABLES.md`): creating the three job types above is then refused for everyone (403 `capability_disabled`; a platform administrator too, because the job would not run) and queued ones end as `partial_failure` (`tenant_capability_disabled:bulk_jobs`) instead of starting. Reading jobs, results and artifacts stays allowed, and system job types (tenant lifecycle and deletion, tenant database export and restore checks, downstream logout, Support Ops, reindexing) are never held.
 
 The Admin UI reads `GET /api/admin/jobs/types` to discover enabled job types and supported result delivery modes.
 
@@ -31,7 +30,7 @@ Scheduled execution does not rely on a request tenant context. Processors must u
 
 ## Where jobs are kept
 
-The jobs the scheduled runs claim are kept in `admin_jobs` of the Admin database (`DB_ADMIN`): the jobs the creation APIs above create, tenant lifecycle validations, the backup a tenant deletion takes first (`tenant-database/export`), and Support Ops cohort snapshots. The processors keep the Object Catalog entries of their results there too. A processor reads and writes the tenant's own data (accounts, organizations, cohorts) in the tenant's Core database, resolved from the job's `tenant_id`; a lifecycle validation moves the tenant in the tenant inventory (`DB`), where the lifecycle command moved it.
+The jobs the scheduled runs claim are kept in `admin_jobs` of the Admin database (`DB_ADMIN`): the jobs the creation APIs above create, tenant lifecycle validations, the backup a tenant deletion takes first (`tenant-database/export`), and Support Ops cohort snapshots. The processors keep the Object Catalog entries of their results there too. A processor reads and writes the tenant's own data (accounts, groups, cohorts) in the tenant's Core database, resolved from the job's `tenant_id`; a lifecycle validation moves the tenant in the tenant inventory (`DB`), where the lifecycle command moved it.
 
 A tenant whose accounts are routed (`shared_pool` or `tenant_exclusive` storage) keeps them in its account databases, apart from its metadata database. Support Ops keeps its cohorts, their targets and its actions in the metadata database and reads the accounts from every account database: previews and aggregates add up the counts of all of them before any count is compared with the minimum, and an execute updates each account (with its subject) in the database that holds it. A cohort snapshot job reads the account databases one after another, in pages, and records in its progress the database and the last account it took (`store_key`, `last_target_id`), so a run that stops part-way is resumed where it stopped; a page read again does not take a target twice. An account found in more than one account database (which copy is the account is unknown) is refused with `account_store_ambiguous`: by cohort creation, by the snapshot job (each page is checked against the other databases before its targets are taken) and by execute. A count summed over the databases is checked the same way where a copy could have lifted it to the minimum (a count from the minimum up to the minimum times the number of databases): the accounts it counts are read, and a count whose accounts cannot be read back as counted is refused with `count_unverified`. A larger count is of at least the minimum number of accounts even if each were in every database. Each snapshot job run also stops at a budget of statements, as each page costs one per other database. An action's succeeded and failed counts are shown only together and only when neither is below the minimum.
 

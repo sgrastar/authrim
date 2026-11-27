@@ -69,7 +69,7 @@ const adminPolicies = {
 	admin_policies_simulator_description: 'Test how policies evaluate against a given context.',
 	admin_policies_subject: 'Subject',
 	admin_policies_subject_id_required: 'Subject ID *',
-	admin_policies_organization_id: 'Organization ID',
+	admin_policies_resource_group_ids: 'Resource group IDs (comma-separated)',
 	admin_policies_resource: 'Resource',
 	admin_policies_resource_type_required: 'Resource Type *',
 	admin_policies_resource_id_required: 'Resource ID *',
@@ -107,7 +107,6 @@ const adminPolicies = {
 	admin_policies_type_has_any_role: 'Has any role',
 	admin_policies_type_has_all_roles: 'Has all roles',
 	admin_policies_type_is_resource_owner: 'Is resource owner',
-	admin_policies_type_same_organization: 'Same organization',
 	admin_policies_type_attribute_equals: 'Attribute equals',
 	admin_policies_type_attribute_exists: 'Attribute exists',
 	admin_policies_type_attribute_in: 'Attribute in list',
@@ -130,8 +129,6 @@ const adminPolicies = {
 	admin_policies_type_desc_has_any_role: 'Requires at least one of the listed roles.',
 	admin_policies_type_desc_has_all_roles: 'Requires all listed roles.',
 	admin_policies_type_desc_is_resource_owner: 'Allows access when the subject owns the resource.',
-	admin_policies_type_desc_same_organization:
-		'Allows access when the subject and resource are in the same organization.',
 	admin_policies_type_desc_attribute_equals:
 		'Matches when a subject or resource attribute equals a value.',
 	admin_policies_type_desc_attribute_exists: 'Matches when an attribute is present.',
@@ -175,7 +172,6 @@ const adminPolicies = {
 	admin_policies_condition_has_any_role: 'Has any role: {roles:string}',
 	admin_policies_condition_has_all_roles: 'Has all roles: {roles:string}',
 	admin_policies_condition_is_resource_owner: 'Is resource owner',
-	admin_policies_condition_same_organization: 'In same organization',
 	admin_policies_condition_attribute_equals: '{attribute:string} = "{value:string}"',
 	admin_policies_condition_attribute_exists: 'Has attribute "{attribute:string}"',
 	admin_policies_condition_attribute_in: '{attribute:string} in [{values:string}]',

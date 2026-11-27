@@ -2908,7 +2908,6 @@ describe('Direct Auth primary passkey and email-code flows', () => {
           userId: 'user_new',
           tenantId: 'tenant_test',
           roleId: 'role_member',
-          orgId: null,
           // No group on this invitation; the membership would carry the invitation id.
           groupId: undefined,
           invitationId: 'invite_1',
@@ -6499,7 +6498,7 @@ describe('Direct Auth primary passkey and email-code flows', () => {
       tenant_id: 'tenant_test',
       invited_email: null,
       role_id: null,
-      org_id: 'org_1',
+      group_id: 'grp_1',
       max_uses: -1,
       use_count: 7,
       expires_at: Math.floor(Date.now() / 1000) + 3600,
@@ -6764,7 +6763,7 @@ describe('Direct Auth primary passkey and email-code flows', () => {
       mocks.challengeStore.getChallengeRpc.mockResolvedValue(challengeData);
       mocks.challengeStore.consumeChallengeRpc.mockResolvedValue(challengeData);
       mocks.applyInvitationAssignments.mockResolvedValue({
-        orgMembership: { success: false, error: 'Organization not found' },
+        groupMembership: { success: false, error: 'Group not active' },
       });
       const { directEmailCodeVerifyHandler } = await import('../direct-auth');
 
@@ -6794,16 +6793,15 @@ describe('Direct Auth primary passkey and email-code flows', () => {
           userId: 'user_existing',
           tenantId: 'tenant_test',
           roleId: null,
-          orgId: 'org_1',
-          groupId: undefined,
+          groupId: 'grp_1',
           invitationId: 'invite_1',
           cache: undefined,
         }
       );
       // A failed optional assignment is logged; the sign-in still completes.
       expect(mocks.warn).toHaveBeenCalledWith(
-        'Failed to assign organization from invitation',
-        expect.objectContaining({ invite_id: 'invite_1', error: 'Organization not found' })
+        'Failed to join the group from invitation',
+        expect.objectContaining({ invite_id: 'invite_1', error: 'Group not active' })
       );
     });
 
@@ -6851,7 +6849,7 @@ describe('Direct Auth primary passkey and email-code flows', () => {
       );
       expect(mocks.applyInvitationAssignments).toHaveBeenCalledWith(
         { metadata: mocks.coreAdapter, account: { adapter: 'tenant-core' } },
-        expect.objectContaining({ userId: 'user_existing', orgId: 'org_1' })
+        expect.objectContaining({ userId: 'user_existing' })
       );
     });
   });

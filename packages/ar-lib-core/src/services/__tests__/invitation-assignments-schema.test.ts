@@ -3,7 +3,6 @@ import type { DatabaseSync } from 'node:sqlite';
 import type { DatabaseAdapter } from '../../db/adapter';
 import { sqliteAdapter } from '../../repositories/__tests__/sqlite-core-schema';
 import { applyInvitationAssignments } from '../invitation-auth-core';
-import { joinOrganization } from '../org-domain-resolver';
 import { resolveScopedRoles } from '../../utils/rbac-claims';
 import { evaluatePermissionsForScope } from '../../utils/policy-embedding';
 import { singleDatabaseRBAC } from '../tenant-rbac';
@@ -11,8 +10,8 @@ import { singleDatabaseRBAC } from '../tenant-rbac';
 const NOW = 1_800_000_000;
 
 /**
- * The role and organisation an invitation gives, written where token issuance reads them
- * (role_assignments.subject_id, subject_org_membership.subject_id), in the real D1 schema.
+ * The role and group an invitation gives, written where token issuance reads them
+ * (role_assignments.subject_id, group_memberships.subject_id), in the real D1 schema.
  */
 describe('invitation assignments in the real schema', () => {
   let db: DatabaseSync;
@@ -42,29 +41,28 @@ describe('invitation assignments in the real schema', () => {
        VALUES ('role-1', 'tenant-a', 'member', '["documents:read"]', ?, 'custom', 0)`
     ).run(NOW);
     db.prepare(
-      `INSERT INTO organizations (id, tenant_id, name, created_at, updated_at)
-       VALUES ('org-1', 'tenant-a', 'Org One', ?, ?)`
+      `INSERT INTO "groups" (id, tenant_id, group_key, display_name, lifecycle_state, created_at,
+         updated_at)
+       VALUES ('grp-1', 'tenant-a', 'one', 'Group One', 'active', ?, ?)`
     ).run(NOW, NOW);
   });
 
-  it('gives the role and the organisation to the user, once', async () => {
-    const first = await applyInvitationAssignments(singleDatabaseRBAC(adapter), {
+  it('gives the role and the group to the user, once', async () => {
+    const input = {
       userId: 'user-1',
       tenantId: 'tenant-a',
       roleId: 'role-1',
-      orgId: 'org-1',
-    });
-    const second = await applyInvitationAssignments(singleDatabaseRBAC(adapter), {
-      userId: 'user-1',
-      tenantId: 'tenant-a',
-      roleId: 'role-1',
-      orgId: 'org-1',
-    });
+      groupId: 'grp-1',
+      invitationId: 'inv-1',
+    };
+    const first = await applyInvitationAssignments(singleDatabaseRBAC(adapter), input);
+    const second = await applyInvitationAssignments(singleDatabaseRBAC(adapter), input);
 
+    expect(Object.keys(first).sort()).toEqual(['groupMembership', 'roleAssignment']);
     expect(first.roleAssignment).toMatchObject({ success: true });
-    expect(first.orgMembership).toMatchObject({ success: true });
+    expect(first.groupMembership).toEqual({ success: true });
     expect(second.roleAssignment).toMatchObject({ success: true, error: 'Already assigned' });
-    expect(second.orgMembership).toMatchObject({ success: true, error: 'Already a member' });
+    expect(second.groupMembership).toEqual({ success: true });
     expect(
       db
         .prepare(
@@ -78,11 +76,18 @@ describe('invitation assignments in the real schema', () => {
     expect(
       db
         .prepare(
-          `SELECT subject_id, org_id, membership_type FROM subject_org_membership
+          `SELECT subject_id, group_id, assignment_source, source_ref FROM group_memberships
            WHERE tenant_id = 'tenant-a'`
         )
         .all()
-    ).toEqual([{ subject_id: 'user-1', org_id: 'org-1', membership_type: 'member' }]);
+    ).toEqual([
+      {
+        subject_id: 'user-1',
+        group_id: 'grp-1',
+        assignment_source: 'invitation',
+        source_ref: 'inv-1',
+      },
+    ]);
   });
 
   it('gives a role that token issuance and policy embedding read as tenant-wide', async () => {
@@ -90,7 +95,7 @@ describe('invitation assignments in the real schema', () => {
       userId: 'user-1',
       tenantId: 'tenant-a',
       roleId: 'role-1',
-      orgId: null,
+      groupId: null,
     });
 
     expect(await resolveScopedRoles(singleDatabaseRBAC(adapter), 'user-1', 'tenant-a')).toEqual([
@@ -108,32 +113,18 @@ describe('invitation assignments in the real schema', () => {
     ).toEqual(['documents:read']);
   });
 
-  it("gives nothing from another tenant's role or organisation", async () => {
+  it("gives nothing from another tenant's role or group", async () => {
     const result = await applyInvitationAssignments(singleDatabaseRBAC(adapter), {
       userId: 'user-1',
       tenantId: 'tenant-b',
       roleId: 'role-1',
-      orgId: 'org-1',
+      groupId: 'grp-1',
+      invitationId: 'inv-1',
     });
 
     expect(result.roleAssignment).toMatchObject({ success: false });
-    expect(result.orgMembership).toMatchObject({ success: false });
+    expect(result.groupMembership).toMatchObject({ success: false });
     expect(db.prepare('SELECT COUNT(*) AS n FROM role_assignments').get()).toEqual({ n: 0 });
-    expect(db.prepare('SELECT COUNT(*) AS n FROM subject_org_membership').get()).toEqual({ n: 0 });
-  });
-
-  it('joins an organisation with the given membership type (external IdP domain rules)', async () => {
-    const joined = await joinOrganization(
-      singleDatabaseRBAC(adapter),
-      'user-1',
-      'org-1',
-      'tenant-a',
-      'admin'
-    );
-
-    expect(joined).toMatchObject({ success: true, org_id: 'org-1' });
-    expect(
-      db.prepare('SELECT subject_id, membership_type FROM subject_org_membership').all()
-    ).toEqual([{ subject_id: 'user-1', membership_type: 'admin' }]);
+    expect(db.prepare('SELECT COUNT(*) AS n FROM group_memberships').get()).toEqual({ n: 0 });
   });
 });

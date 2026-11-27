@@ -91,7 +91,6 @@ export const de = {
 	'nav.platform': 'Plattform',
 	'nav.users.all': 'Alle Benutzer',
 	'nav.users.agents': 'Agenten',
-	'nav.users.orgs': 'Organisationen',
 	'nav.users.serviceGroups': 'Servicegruppen',
 	'nav.users.lifecycle': 'Kontoaufbewahrung',
 	'nav.users.sessions': 'Sitzungen',
@@ -160,23 +159,6 @@ export const de = {
 	'nav.set.signingKeys': 'Signaturschlüssel',
 	'nav.set.runtime': 'Laufzeit / Zwischenspeicher',
 	'nav.plat.storage': 'Speichertopologie',
-	'retire.org.title': 'Geht in Servicegruppen auf',
-	'retire.org.desc':
-		'Servicegruppen übernehmen diesen Bereich. Aus der Navigation entfernen wir ihn, sobald die vier Punkte unten geklärt sind.',
-	'retire.org.1.t': 'Rollen-Geltungsbereich',
-	'retire.org.1.d':
-		'ScopeType enthält org, „nur innerhalb dieser Organisation Administrator“ ist also im Typ abbildbar. Ein Geltungsbereich für Gruppen fehlt.',
-	'retire.org.2.t': 'Primäre Zugehörigkeit',
-	'retire.org.2.d':
-		'Die Mitgliedschaft trägt is_primary. Eine Bedingung liefert alle passenden Gruppen, also muss etwas die primäre bestimmen.',
-	'retire.org.3.t': 'Standard-Claims im Access Token',
-	'retire.org.3.d':
-		'org_id und org_type stehen in DEFAULT_ACCESS_TOKEN_CLAIMS. Gegenstellen lesen sie womöglich bereits, daher braucht es einen Migrationsweg.',
-	'retire.org.4.t': 'Attribute an der Organisation',
-	'retire.org.4.d':
-		'org_type (distributor / enterprise / department) und der Tarif hängen an der Organisation. Gruppen brauchen Attribute, oder das wandert woanders hin.',
-	'retire.org.foot':
-		'Domain-Zuordnung, Hierarchie und Rollenvergabe decken Servicegruppen bereits ab: Bedingungen (normalize: domain), Verschachtelung (op: member) und scimRoleId.',
 	'theme.system': 'Darstellung: dem System folgen',
 	'theme.light': 'Darstellung: hell',
 	'theme.dark': 'Darstellung: dunkel',

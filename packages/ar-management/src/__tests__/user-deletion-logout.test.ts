@@ -803,12 +803,9 @@ describe('deleting or anonymizing a user notifies downstream relying parties', (
     expect(statements).toContain(
       'DELETE FROM group_memberships WHERE tenant_id = ? AND subject_id = ?'
     );
-    expect(statements).toContain(
-      'DELETE FROM subject_org_membership WHERE tenant_id = ? AND subject_id = ?'
-    );
-    // Its SCIM roles, in the account's database and in the metadata database SCIM keeps them in.
-    expect(statements).toContain('DELETE FROM user_roles WHERE tenant_id = ? AND user_id = ?');
-    expect(mocks.metadataRoleRemoval).toHaveBeenCalledWith('user-1');
+    // Organisations and the SCIM user_roles are gone: nothing is deleted from them.
+    expect(statements.some((sql) => /subject_org_membership|user_roles/.test(sql))).toBe(false);
+    expect(mocks.metadataRoleRemoval).not.toHaveBeenCalled();
   });
 
   it('finishes anonymizing a routed account a failed anonymization left deleting', async () => {

@@ -23,9 +23,9 @@ describe('invitations carried by a federated sign-in, in the real schema', () =>
   function createInvitation(invitedEmail: string | null = null, maxUses = 1) {
     db.prepare(
       `INSERT INTO tenant_invitations
-       (id, token, tenant_id, invited_email, invited_by, role_id, org_id, max_uses, use_count,
+       (id, token, tenant_id, invited_email, invited_by, role_id, max_uses, use_count,
         expires_at, created_at, updated_at)
-       VALUES ('inv-1', 'token-1', 'tenant-a', ?, 'admin-1', 'role-1', NULL, ?, 0, ?, ?, ?)`
+       VALUES ('inv-1', 'token-1', 'tenant-a', ?, 'admin-1', 'role-1', ?, 0, ?, ?, ?)`
     ).run(invitedEmail, maxUses, NOW + 86_400, NOW, NOW);
   }
 

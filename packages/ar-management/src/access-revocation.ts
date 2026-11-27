@@ -1,6 +1,5 @@
 /**
- * Taking access away from an end user: removing a role assignment, removing an organization
- * membership, suspending an account. The Admin API endpoints and access reviews both use these,
+ * Taking access away from an end user: removing a role assignment, suspending an account. The Admin API endpoints and access reviews both use these,
  * so every removal has the same effects: the row goes from the store that holds it, the user's
  * cached RBAC claims and user cache are dropped (so tokens issued from now on no longer carry it),
  * and the removal is audited.
@@ -97,36 +96,6 @@ export async function removeRoleAssignment(
     'role_assignment.removed',
     'role_assignment',
     input.assignmentId,
-    {
-      user_id: input.userId,
-      ...(outcome === 'already_removed' ? { already_removed: true } : {}),
-      ...input.details,
-    },
-    input.audit
-  );
-  return outcome;
-}
-
-/** Removes the user from an organization (already gone: the rest is still done). */
-export async function removeOrganizationMembership(
-  context: RevocationContext,
-  input: {
-    userId: string;
-    orgId: string;
-    details?: Record<string, unknown>;
-    audit?: { id: string; at: number };
-  }
-): Promise<'removed' | 'already_removed'> {
-  const result = await context.adapter.execute(
-    'DELETE FROM subject_org_membership WHERE tenant_id = ? AND org_id = ? AND subject_id = ?',
-    [context.tenantId, input.orgId, input.userId]
-  );
-  const outcome = (result.rowsAffected ?? 0) > 0 ? 'removed' : 'already_removed';
-  await dropAccessCaches(context, input.userId);
-  await context.audit(
-    'organization_membership.removed',
-    'organization',
-    input.orgId,
     {
       user_id: input.userId,
       ...(outcome === 'already_removed' ? { already_removed: true } : {}),

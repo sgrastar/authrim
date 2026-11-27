@@ -174,7 +174,6 @@ describe('admin read routes: identifiers', () => {
     ).toEqual({
       'admin.read.agent-settings.get': 'GET /api/admin/settings/agent',
       'admin.read.identity-providers.inspect': 'GET /api/admin/external-providers',
-      'admin.read.authorization.organizations': 'GET /api/admin/organizations?page=1&limit=50',
       'admin.read.authorization.roles': 'GET /api/admin/roles?page=1&limit=50',
       'admin.read.authorization.policies': 'GET /api/admin/policies?page=1&limit=50',
       'admin.read.flows.inspect': 'GET /api/admin/flows?page=1&limit=50',

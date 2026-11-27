@@ -91,7 +91,6 @@ export const en = {
 	'nav.platform': 'Platform',
 	'nav.users.all': 'All users',
 	'nav.users.agents': 'Agents',
-	'nav.users.orgs': 'Organizations',
 	'nav.users.serviceGroups': 'Service groups',
 	'nav.users.lifecycle': 'Account retention',
 	'nav.users.sessions': 'Sessions',
@@ -160,23 +159,6 @@ export const en = {
 	'nav.set.signingKeys': 'Signing keys',
 	'nav.set.runtime': 'Runtime / cache',
 	'nav.plat.storage': 'Storage topology',
-	'retire.org.title': 'To be folded into service groups',
-	'retire.org.desc':
-		'Service groups will take this over. We remove it from the navigation once the four items below are resolved.',
-	'retire.org.1.t': 'Role scope',
-	'retire.org.1.d':
-		'ScopeType includes org, so “admin only inside this organization” is expressible in the type. A scope that targets a group is needed.',
-	'retire.org.2.t': 'Primary membership',
-	'retire.org.2.d':
-		'Membership carries is_primary. A condition returns every matching group, so something has to decide which one is primary.',
-	'retire.org.3.t': 'Default access token claims',
-	'retire.org.3.d':
-		'org_id and org_type are in DEFAULT_ACCESS_TOKEN_CLAIMS. Relying parties may already read them, so this needs a migration path.',
-	'retire.org.4.t': 'Attributes hanging off the organization',
-	'retire.org.4.d':
-		'org_type (distributor / enterprise / department) and the subscription plan belong to the organization. Groups need attributes, or these move elsewhere.',
-	'retire.org.foot':
-		'Domain mapping, hierarchy and role granting are already covered by service groups: conditions (normalize: domain), nesting (op: member) and scimRoleId.',
 	'theme.system': 'Theme: follow the system',
 	'theme.light': 'Theme: light',
 	'theme.dark': 'Theme: dark',

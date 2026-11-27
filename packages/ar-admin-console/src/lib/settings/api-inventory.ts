@@ -107,13 +107,6 @@ export const API_GROUPS: readonly ApiGroup[] = [
 		paths: [`${A}/jobs/users`]
 	},
 	{
-		id: 'organizations',
-		name: 'Organizations',
-		kind: 'records',
-		page: 'users/organizations',
-		paths: [`${A}/organizations`, `${A}/org-domain-mappings`, `${A}/jobs/organizations`]
-	},
-	{
 		id: 'service-groups',
 		name: 'Service groups',
 		kind: 'records',

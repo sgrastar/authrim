@@ -387,9 +387,6 @@ const translation = {
 	consent_scope_phone: 'Wyświetlać Twój numer telefonu',
 	consent_scope_address: 'Wyświetlać Twój adres',
 	consent_scope_offline_access: 'Uzyskaj dostęp do konta, gdy nie używasz aplikacji',
-	consent_organizationSelect: 'Wybierz organizację',
-	consent_primaryOrg: 'Główna',
-	consent_currentOrganization: 'Obecna organizacja',
 	consent_actingOnBehalfOf: 'Działanie w imieniu {name}',
 	consent_delegatedAccess: 'Dostęp delegowany',
 	consent_delegatedAccessWarning:

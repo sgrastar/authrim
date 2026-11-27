@@ -41,6 +41,7 @@ import {
   type RoleAssignmentTarget,
   type TenantRBACDatabases,
 } from '../services/tenant-rbac';
+import { resolveSubjectGroups } from '../services/group-membership';
 
 function requireTenantId(tenantId: string, context: string): string {
   const normalized = tenantId.trim();
@@ -168,8 +169,8 @@ export function formatIdLevelPermission(resource: string, id: string, action: st
  * Cache key prefix for ID-level permissions
  */
 // v2: a role's grants only for resources its assignment covers. Entries computed before are not
-// read (they expire on their own).
-const ID_PERMISSION_CACHE_PREFIX = 'policy:idperms:v3:';
+// read (they expire on their own). v4: grants to the subject's groups count; organisations removed.
+const ID_PERMISSION_CACHE_PREFIX = 'policy:idperms:v4:';
 
 /**
  * Convert database row to ResourcePermission object
@@ -195,19 +196,20 @@ interface SubjectGrants {
 }
 
 /**
- * Who the subject's `resource_permissions` rows are granted to: the subject itself and each of
- * its roles, as one or more SQL conditions (one per batch of role ids). The grants are tenant
- * settings (metadata database); which roles the subject has is account data (account database),
- * so the role ids are read first and passed in. A row granted to a role counts only for a
- * resource one of the role's assignments holds for (an assignment limited to an organisation
- * holds only when the resource's organisation is known, `orgId`).
+ * Who the subject's `resource_permissions` rows are granted to: the subject itself, each of its
+ * effective groups (direct memberships and their ancestors) and each of its roles, as one or more
+ * SQL conditions (one per batch of ids). The grants are tenant settings (metadata database); which
+ * roles and groups the subject has is account data (account database), so the ids are read first
+ * and passed in. A row granted to a role counts only for a resource one of the role's assignments
+ * holds for (an assignment limited to a group holds only when the resource's groups are known,
+ * `groupIds`).
  */
 async function subjectGrants(
   dbs: TenantRBACDatabases,
   subjectId: string,
   tenantId: string,
   now: number,
-  options: Pick<RoleAssignmentTarget, 'orgId' | 'groupIds'> = {}
+  options: Pick<RoleAssignmentTarget, 'groupIds'> = {}
 ): Promise<SubjectGrants> {
   // Roles of the tenant only: an assignment of a role it does not have grants nothing.
   const assignments = new Map<string, { scope: string; scopeTarget: string }[]>();
@@ -218,7 +220,16 @@ async function subjectGrants(
     ]);
   }
   const roleIds = [...assignments.keys()];
+  const { effectiveGroupIds } = await resolveSubjectGroups(dbs, tenantId, subjectId, now);
+  const groupIds = [...effectiveGroupIds];
   const clauses = [{ sql: `(subject_type = 'user' AND subject_id = ?)`, params: [subjectId] }];
+  for (let offset = 0; offset < groupIds.length; offset += ROLE_SUBJECT_BATCH_SIZE) {
+    const batch = groupIds.slice(offset, offset + ROLE_SUBJECT_BATCH_SIZE);
+    clauses.push({
+      sql: `(subject_type = 'group' AND subject_id IN (${batch.map(() => '?').join(', ')}))`,
+      params: batch,
+    });
+  }
   for (let offset = 0; offset < roleIds.length; offset += ROLE_SUBJECT_BATCH_SIZE) {
     const batch = roleIds.slice(offset, offset + ROLE_SUBJECT_BATCH_SIZE);
     clauses.push({
@@ -245,7 +256,7 @@ async function subjectGrants(
  * Get ID-level permissions for a user from database
  *
  * Queries resource_permissions table for all active permissions
- * granted to the user (directly or through roles/orgs).
+ * granted to the user (directly, through its groups or through its roles).
  *
  * @param dbs - The tenant's metadata and the subject's account database
  * @param subjectId - User ID
@@ -346,7 +357,7 @@ export async function evaluateIdLevelPermissions(
  * @param resourceId - Resource ID
  * @param action - Action name
  * @param tenantId - Tenant ID
- * @param options - orgId: the organisation the resource belongs to, when known
+ * @param options - groupIds: the groups the resource belongs to, when known
  * @returns true if user has the permission
  */
 export async function hasIdLevelPermission(
@@ -356,7 +367,7 @@ export async function hasIdLevelPermission(
   resourceId: string,
   action: string,
   tenantId: string,
-  options: Pick<RoleAssignmentTarget, 'orgId' | 'groupIds'> = {}
+  options: Pick<RoleAssignmentTarget, 'groupIds'> = {}
 ): Promise<boolean> {
   const normalizedTenantId = requireTenantId(tenantId, 'ID-level permission check');
   const now = Math.floor(Date.now() / 1000);

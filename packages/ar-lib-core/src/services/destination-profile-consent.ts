@@ -155,7 +155,7 @@ export const AUTHORIZATION_SERVER_ASSURANCE_CLAIMS = new Set([
 
 /**
  * Claims the authorization server computes from the tenant's own records for the token, not from
- * the person's attributes: the RBAC claims (roles, organisations, permissions, plan) and the
+ * the person's attributes: the RBAC claims (roles, groups, permissions) and the
  * account lifecycle. They are not information the person is asked to release
  * (information-release-consent.ts), so no identity mapping may produce them either: a mapped value
  * under one of these names would reach the app without the person's approval.
@@ -168,11 +168,6 @@ export const AUTHORIZATION_SERVER_COMPUTED_CLAIMS = new Set([
   'authrim_resource_permissions',
   'authrim_groups',
   'authrim_user_type',
-  'authrim_org_id',
-  'authrim_org_name',
-  'authrim_org_type',
-  'authrim_orgs',
-  'authrim_plan',
   'authrim_relationships_summary',
   'authrim_account_lifecycle',
 ]);

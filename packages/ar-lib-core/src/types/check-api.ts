@@ -70,8 +70,7 @@ export interface ResourceContext {
   type?: string;
   /** Resource owner ID */
   owner_id?: string;
-  /** Organization ID */
-  org_id?: string;
+  /** The group the resource belongs to (a group-scoped role assignment holds for it) */
   group_id?: string;
   /** Additional attributes for ABAC */
   attributes?: Record<string, unknown>;
@@ -472,9 +471,9 @@ export interface AttributeRepository {
 /** A role assignment as attribute-based rules see it. */
 export interface PolicySubjectRole {
   name: string;
-  /** Where the assignment applies: everywhere, one organization, or one resource. */
-  scope: 'global' | 'org' | 'resource';
-  /** The organization or resource of a scoped assignment (e.g. 'org:org_123'). */
+  /** Where the assignment applies: everywhere, the tenant, one group's resources, or one resource. */
+  scope: 'global' | 'tenant' | 'group' | 'resource';
+  /** The group or resource of a scoped assignment (e.g. 'group:grp_123'). */
   scopeTarget?: string;
   /** When the assignment ends (UNIX milliseconds). */
   expiresAt?: number;
@@ -493,8 +492,8 @@ export interface PolicyEvaluationContext {
   resourceId?: string;
   /** Resource owner ID (optional) */
   resourceOwnerId?: string;
-  /** Resource organization ID (optional) */
-  resourceOrgId?: string;
+  /** The groups the resource belongs to (optional) */
+  resourceGroupIds?: string[];
   /** Resource attributes (optional) */
   resourceAttributes?: Record<string, unknown>;
   /** Action being performed */

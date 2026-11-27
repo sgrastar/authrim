@@ -185,15 +185,9 @@ const CONSENT = {
 	client: { client_id: 'rp-1', client_name: 'Example App', is_trusted: false },
 	scopes: [{ name: 'openid' }, { name: 'email' }],
 	user: { id: 'u1', email: 'person@example.com' },
-	organizations: [
-		{ id: 'org-1', name: 'One', type: 'company', is_primary: true },
-		{ id: 'org-2', name: 'Two', type: 'company', is_primary: false }
-	],
-	primary_org: { id: 'org-1', name: 'One', type: 'company', is_primary: true },
 	roles: [],
 	acting_as: null,
-	target_org_id: null,
-	features: { org_selector_enabled: true, acting_as_enabled: false, show_roles: false },
+	features: { acting_as_enabled: false, show_roles: false },
 	consent_management_enabled: true,
 	consent_items: [
 		{
@@ -274,8 +268,7 @@ describe('readLiteConsent', () => {
 			clientName: 'Example App',
 			clientUri: null,
 			policyUri: 'https://rp/p',
-			scopes: ['openid', 'email'],
-			defaultOrgId: 'org-1'
+			scopes: ['openid', 'email']
 		});
 		expect(view?.items.map((item) => [item.statementId, item.blocks])).toEqual([
 			['tos', true],
@@ -313,19 +306,7 @@ describe('readLiteConsent', () => {
 		}
 	});
 
-	it('draws the organizations and document links in full, or not the consent', () => {
-		const orgs = Array.from({ length: 26 }, (_, i) => ({
-			id: `org-${i}`,
-			name: `Org ${i}`,
-			type: 'company',
-			is_primary: false
-		}));
-		expect(
-			readLiteConsent({ ...CONSENT, organizations: orgs, target_org_id: 'org-25' })
-		).toBeNull();
-		expect(
-			readLiteConsent({ ...CONSENT, organizations: orgs.slice(0, 2), target_org_id: 'org-9' })
-		).toBeNull();
+	it('draws document links in full, or not the consent', () => {
 		expect(
 			readLiteConsent({
 				...CONSENT,
@@ -340,15 +321,6 @@ describe('readLiteConsent', () => {
 				consent_items: [{ ...CONSENT.consent_items[0], document_url: 'http://d.example/terms' }]
 			})
 		).toBeNull();
-	});
-
-	it('names the organization an Allow is for, chosen or not', () => {
-		const fixed = readLiteConsent({
-			...CONSENT,
-			features: { ...CONSENT.features, org_selector_enabled: false }
-		});
-		expect(fixed?.organizations).toEqual([]);
-		expect(fixed?.targetOrg).toEqual({ id: 'org-1', name: 'One' });
 	});
 
 	it('refuses an answer it cannot draw', () => {
@@ -518,7 +490,6 @@ describe('liteConsentAllow', () => {
 			view,
 			new Map([
 				['item:tos', 'granted'],
-				['org', 'org-2'],
 				['item:unknown', 'granted']
 			])
 		);
@@ -527,7 +498,6 @@ describe('liteConsentAllow', () => {
 			body: {
 				challenge_id: 'cc-1',
 				approved: true,
-				selected_org_id: 'org-2',
 				consent_item_versions: {
 					tos: { version_id: 'v1', content_hash: 'h1' },
 					news: { version_id: 'v2', content_hash: null }
@@ -535,7 +505,7 @@ describe('liteConsentAllow', () => {
 				consent_item_decisions: { tos: 'granted', news: 'denied' }
 			}
 		});
-		// An organization not offered is not taken: the default one is.
+		// A submission never carries an organization, whatever the form says.
 		const other = liteConsentAllow(
 			view,
 			new Map([
@@ -543,7 +513,7 @@ describe('liteConsentAllow', () => {
 				['org', 'org-evil']
 			])
 		);
-		expect(other.ok && other.body.selected_org_id).toBe('org-1');
+		expect(other.ok && 'selected_org_id' in other.body).toBe(false);
 	});
 });
 

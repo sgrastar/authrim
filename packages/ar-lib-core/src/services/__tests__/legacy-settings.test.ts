@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { readLegacyStore } from '../legacy-settings';
+import { LEGACY_IMPORT_CONTRACT } from '../legacy-settings-import';
 
 function kv(values: Record<string, string>): KVNamespace {
   return {
@@ -154,9 +155,6 @@ describe('the older stores, read for the import', () => {
       'external_idp.jit_provisioning_enabled': true,
       'external_idp.jit_require_verified_email': true,
       // Fields left out were off.
-      'external_idp.jit_join_all_matching_orgs': false,
-      'external_idp.jit_allow_user_without_org': false,
-      'external_idp.jit_allow_unverified_domain_mappings': false,
       'external_idp.jit_default_role_id': 'role_member',
       'external_idp.jit_allowed_provider_ids': 'idp-a,idp-b',
     });
@@ -253,5 +251,11 @@ describe('the older stores, read for the import', () => {
     await expect(readLegacyStore(env, 'SETTINGS system_settings (feature-flags)')).resolves.toEqual(
       {}
     );
+  });
+});
+
+describe('the import contract', () => {
+  it('is raised whenever the set of import targets changes (12: the JIT organization settings left)', () => {
+    expect(LEGACY_IMPORT_CONTRACT).toBe(12);
   });
 });

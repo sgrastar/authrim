@@ -94,7 +94,7 @@
         "rebac": {
           "type": "boolean",
           "default": false,
-          "description": "Relationship-Based Access Control (organizations)"
+          "description": "Relationship-Based Access Control (relationships)"
         }
       }
     },

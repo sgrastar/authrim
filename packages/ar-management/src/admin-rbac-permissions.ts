@@ -38,8 +38,6 @@ export function registerAdminRbacPermissionMiddleware(app: Hono<any, any, any>):
   const accessControlGraphPermission = requireAccessControlGraphPermission();
   const rolesReadPermission = requireAdminPermissions([ADMIN_PERMISSIONS.ROLES_READ]);
 
-  app.use('/api/admin/organizations', accessControlGraphPermission);
-  app.use('/api/admin/organizations/*', accessControlGraphPermission);
   app.use('/api/admin/roles', roleDefinitionPermission);
   app.use('/api/admin/roles/*', roleDefinitionPermission);
   app.use('/api/admin/users/:id/roles', accessControlGraphPermission);

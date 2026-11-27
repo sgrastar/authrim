@@ -34,12 +34,6 @@ export const TENANT_AREAS: readonly NavArea[] = [
 				platform: 'lookup'
 			},
 			{
-				id: 'organizations',
-				label: 'nav.users.orgs',
-				platform: 'tenant',
-				retire: 'retire.org'
-			},
-			{
 				id: 'service-groups',
 				label: 'nav.users.serviceGroups',
 				platform: 'tenant'

@@ -183,10 +183,12 @@ describe('Phase 3 empty-environment roundtrip', () => {
         ) VALUES('tenant-a','client-a','Client A','[]','["authorization_code"]','["code"]',1,1,'${encrypted.encrypted}');
         INSERT INTO roles(id,tenant_id,name,permissions_json,created_at)
         VALUES('role-0-parent','tenant-a','Parent','[]',1);
-        INSERT INTO roles(id,tenant_id,name,permissions_json,created_at,parent_role_id)
-        VALUES('role-1-child','tenant-a','Child','[]',1,'role-0-parent');
+        INSERT INTO roles(id,tenant_id,name,permissions_json,created_at)
+        VALUES('role-1-child','tenant-a','Child','[]',1);
         INSERT INTO "groups"(id,tenant_id,group_key,display_name,created_at,updated_at)
-        VALUES('staff','tenant-a','staff','Staff',1,1);
+        VALUES('company','tenant-a','company','Company',1,1);
+        INSERT INTO "groups"(id,tenant_id,group_key,display_name,parent_group_id,created_at,updated_at)
+        VALUES('staff','tenant-a','staff','Staff','company',1,1);
         INSERT INTO group_role_assignments(id,tenant_id,group_id,role_id,created_at,updated_at)
         VALUES('staff-role','tenant-a','staff','role-1-child',1,1);
         INSERT INTO consent_statements(id,tenant_id,slug,created_at,updated_at)
@@ -194,9 +196,6 @@ describe('Phase 3 empty-environment roundtrip', () => {
         INSERT INTO consent_statement_versions(
           id,tenant_id,statement_id,version,effective_at,created_at,updated_at
         ) VALUES('statement-version-a','tenant-a','statement-a','20260915',1,1,1);
-        -- An organisation as the Admin API wrote it before core migration 024.
-        INSERT INTO organizations(id,tenant_id,name,org_type,created_at,updated_at)
-        VALUES('org-a','tenant-a','acme','team',1,1);
       `);
         sourceAdmin.exec(`
         INSERT INTO tenant_settings_documents(
@@ -445,11 +444,8 @@ describe('Phase 3 empty-environment roundtrip', () => {
           name: 'Tenant A',
         });
         expect(
-          targetCore.prepare("SELECT parent_role_id FROM roles WHERE id='role-1-child'").get()
-        ).toEqual({ parent_role_id: 'role-0-parent' });
-        expect(
-          targetCore.prepare("SELECT org_type FROM organizations WHERE id='org-a'").get()
-        ).toEqual({ org_type: 'department' });
+          targetCore.prepare(`SELECT parent_group_id FROM "groups" WHERE id='staff'`).get()
+        ).toEqual({ parent_group_id: 'company' });
         const storedSecret = String(
           targetCore
             .prepare(

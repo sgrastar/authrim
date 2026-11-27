@@ -2354,14 +2354,6 @@ interface ConsentUserInfo {
 	picture?: string;
 }
 
-interface ConsentOrgInfo {
-	id: string;
-	name: string;
-	type: string;
-	is_primary: boolean;
-	plan?: string;
-}
-
 interface ConsentActingAsInfo {
 	id: string;
 	name?: string;
@@ -2371,7 +2363,6 @@ interface ConsentActingAsInfo {
 }
 
 interface ConsentFeatureFlags {
-	org_selector_enabled: boolean;
 	acting_as_enabled: boolean;
 	show_roles: boolean;
 }
@@ -2415,11 +2406,8 @@ interface ConsentScreenData {
 	client: ConsentClientInfo;
 	scopes: ConsentScopeInfo[];
 	user: ConsentUserInfo;
-	organizations: ConsentOrgInfo[];
-	primary_org: ConsentOrgInfo | null;
 	roles: string[];
 	acting_as: ConsentActingAsInfo | null;
-	target_org_id: string | null;
 	features: ConsentFeatureFlags;
 	information_release?: ConsentInformationRelease;
 }
@@ -2427,7 +2415,6 @@ interface ConsentScreenData {
 export interface ConsentSubmission {
 	challenge_id: string;
 	approved: boolean;
-	selected_org_id?: string;
 	acting_as_user_id?: string;
 	consent_item_decisions?: Record<string, 'granted' | 'denied'>;
 	consent_item_versions?: Record<string, { version_id: string; content_hash: string | null }>;

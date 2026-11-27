@@ -86,7 +86,6 @@ const POLICY_SIMULATION_SCHEMA: JsonObject = {
       properties: {
         id: { type: 'string', minLength: 1, maxLength: 128 },
         user_type: { type: 'string', maxLength: 64 },
-        org_id: { type: 'string', maxLength: 128 },
         roles: {
           type: 'array',
           maxItems: 50,
@@ -112,7 +111,6 @@ const POLICY_SIMULATION_SCHEMA: JsonObject = {
         type: { type: 'string', minLength: 1, maxLength: 128 },
         id: { type: 'string', minLength: 1, maxLength: 128 },
         owner_id: { type: 'string', maxLength: 128 },
-        org_id: { type: 'string', maxLength: 128 },
       },
     },
     action: {
@@ -147,14 +145,6 @@ export const ADMIN_CONFIGURATION_INSPECTION_TOOL_DEFINITIONS: readonly AgentTool
       'Inspect OIDC and SAML identity providers',
       'Inspect configured external identity providers without credentials or raw metadata.',
       ADMIN_PERMISSIONS.EXTERNAL_PROVIDERS_READ,
-      'sha256:71fc596a20f27da3dec80050e5d1f553eba34aea24c2853b853488a811e6b892'
-    ),
-    inspection(
-      'admin.read.authorization.organizations',
-      'inspect_organizations',
-      'Inspect organizations',
-      'Inspect organization and membership-model configuration without member PII.',
-      ADMIN_PERMISSIONS.ROLES_READ,
       'sha256:71fc596a20f27da3dec80050e5d1f553eba34aea24c2853b853488a811e6b892'
     ),
     inspection(

@@ -180,11 +180,11 @@
 			<Specimen
 				name="Select"
 				source="select.custom-field-select / select.auth-lang-select"
-				where="signup enum fields (route style); organisation picker on consent; language picker."
+				where="signup enum fields (route style); language picker."
 			>
-				<select class="auth-lang-select" aria-label={$LL.consent_organizationSelect()}>
-					<option>Acme Inc.</option>
-					<option>Acme Labs</option>
+				<select class="auth-lang-select" aria-label={$LL.language_switch()}>
+					<option>English</option>
+					<option>Japanese</option>
 				</select>
 			</Specimen>
 			<Specimen

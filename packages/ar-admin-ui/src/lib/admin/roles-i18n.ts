@@ -28,12 +28,10 @@ export function formatScope(scope: string, LL: TranslationFunctions): string {
 	switch (scope) {
 		case 'global':
 			return LL.admin_roles_scope_global();
-		case 'org':
-			return LL.admin_roles_scope_org();
 		case 'resource':
 			return LL.admin_roles_scope_resource();
-		case 'organization':
-			return LL.admin_roles_scope_organization();
+		case 'group':
+			return LL.admin_roles_scope_group();
 		case 'client':
 			return LL.admin_roles_scope_client();
 		default:
@@ -51,8 +49,6 @@ export function formatPermissionCategory(category: string, LL: TranslationFuncti
 			return LL.admin_roles_perm_category_clients();
 		case 'sessions':
 			return LL.admin_roles_perm_category_sessions();
-		case 'organizations':
-			return LL.admin_roles_perm_category_organizations();
 		case 'stats':
 			return LL.admin_roles_perm_category_stats();
 		case 'audit':
@@ -94,14 +90,6 @@ export function formatPermissionLabel(permissionId: string, LL: TranslationFunct
 			return LL.admin_roles_perm_sessions_read_label();
 		case 'sessions:revoke':
 			return LL.admin_roles_perm_sessions_revoke_label();
-		case 'organizations:read':
-			return LL.admin_roles_perm_organizations_read_label();
-		case 'organizations:create':
-			return LL.admin_roles_perm_organizations_create_label();
-		case 'organizations:update':
-			return LL.admin_roles_perm_organizations_update_label();
-		case 'organizations:delete':
-			return LL.admin_roles_perm_organizations_delete_label();
 		case 'stats:read':
 			return LL.admin_roles_perm_stats_read_label();
 		case 'audit:read':
@@ -160,14 +148,6 @@ export function formatPermissionDescription(
 			return LL.admin_roles_perm_sessions_read_desc();
 		case 'sessions:revoke':
 			return LL.admin_roles_perm_sessions_revoke_desc();
-		case 'organizations:read':
-			return LL.admin_roles_perm_organizations_read_desc();
-		case 'organizations:create':
-			return LL.admin_roles_perm_organizations_create_desc();
-		case 'organizations:update':
-			return LL.admin_roles_perm_organizations_update_desc();
-		case 'organizations:delete':
-			return LL.admin_roles_perm_organizations_delete_desc();
 		case 'stats:read':
 			return LL.admin_roles_perm_stats_read_desc();
 		case 'audit:read':

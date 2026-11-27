@@ -7,19 +7,19 @@
       "count": 3
     },
     "@typescript-eslint/no-unsafe-argument": {
-      "count": 45
+      "count": 49
     },
     "@typescript-eslint/no-unsafe-assignment": {
-      "count": 42
+      "count": 44
     },
     "@typescript-eslint/no-unsafe-call": {
-      "count": 39
+      "count": 51
     },
     "@typescript-eslint/no-unsafe-member-access": {
-      "count": 53
+      "count": 65
     },
     "@typescript-eslint/no-unsafe-return": {
-      "count": 23
+      "count": 27
     }
   },
   "src/__tests__/account-authentication-activation.test.ts": {
@@ -2231,25 +2231,6 @@
       "count": 2
     }
   },
-  "src/__tests__/org-domain-mappings.test.ts": {
-    "@typescript-eslint/no-explicit-any": {
-      "count": 1
-    },
-    "@typescript-eslint/no-unsafe-argument": {
-      "count": 2
-    },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 1
-    },
-    "@typescript-eslint/no-unsafe-return": {
-      "count": 1
-    }
-  },
-  "src/__tests__/organization-type-vocabulary.test.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 1
-    }
-  },
   "src/__tests__/phase4-audit-profile-adoption.test.ts": {
     "@typescript-eslint/no-explicit-any": {
       "count": 2
@@ -4080,17 +4061,6 @@
     },
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 1
-    }
-  },
-  "src/routes/settings/org-domain-mappings.ts": {
-    "@typescript-eslint/no-unnecessary-type-assertion": {
-      "count": 3
-    },
-    "@typescript-eslint/no-unsafe-argument": {
-      "count": 14
-    },
-    "@typescript-eslint/no-unused-vars": {
-      "count": 2
     }
   },
   "src/routes/settings/pii-partitions.ts": {

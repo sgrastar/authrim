@@ -200,12 +200,12 @@
 			<Specimen
 				name="Info box"
 				source=".auth-info-box__label / __value"
-				where="consent (organisation), device and reauth (client)."
+				where="device and reauth (client)."
 				card
 			>
 				<div class="auth-info-box">
-					<p class="auth-info-box__label">{$LL.consent_currentOrganization()}</p>
-					<p class="auth-info-box__value">Acme Inc.</p>
+					<p class="auth-info-box__label">{$LL.consent_trustedClient()}</p>
+					<p class="auth-info-box__value">Example App</p>
 				</div>
 			</Specimen>
 		</Catalog>

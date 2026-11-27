@@ -222,7 +222,7 @@ export interface UnifiedCheckServiceConfig {
   /** Database source for permission queries: the tenant metadata database */
   db: DatabaseSource;
   /**
-   * The database of a subject's account, where its role assignments and organisation memberships
+   * The database of a subject's account, where its role assignments and group memberships
    * are (see services/tenant-rbac.ts). It throws when the subject has no account. Without it, the
    * subject's assignments are read from `db` (a single-database deployment).
    */
@@ -289,7 +289,6 @@ interface InternalCheckResult {
 function checkTarget(context: CheckContext): RoleAssignmentTarget {
   return {
     tenantId: context.tenantId,
-    orgId: context.resourceContext?.org_id,
     groupIds: context.resourceContext?.group_id ? [context.resourceContext.group_id] : [],
     resourceType: context.parsed.resource,
     resourceId: context.parsed.id,
@@ -711,7 +710,7 @@ export class UnifiedCheckService {
       }));
 
       // Role assignments for attribute-based rules with role conditions, with their scope: an
-      // assignment limited to one organization or resource must not match a rule for another.
+      // assignment limited to one group or resource must not match a rule for another.
       // One with a scope the rules cannot express is left out (it only grants less).
       // A tenant-scoped assignment in its own tenant (as invitations once wrote) is tenant-wide, as a
       // global one.
@@ -720,7 +719,7 @@ export class UnifiedCheckService {
         const ownTenant =
           assigned === 'tenant' && (!role.scope_target || role.scope_target === context.tenantId);
         const scope = ownTenant ? 'global' : assigned;
-        if (scope !== 'global' && scope !== 'org' && scope !== 'resource') return [];
+        if (scope !== 'global' && scope !== 'group' && scope !== 'resource') return [];
         return [
           {
             name: role.name,
@@ -819,8 +818,8 @@ export class UnifiedCheckService {
         return { allowed: true, ruleName: 'owner_access' };
       }
 
-      // Membership of the resource's organization alone grants nothing: what a member may do is
-      // decided by their roles (scoped to the organization) and the tenant's rules below.
+      // Membership of the resource's group alone grants nothing: what a member may do is decided
+      // by their roles (scoped to the group) and the tenant's rules below.
 
       // ABAC evaluation: the tenant's rules (when its settings turn attribute-based policy on)
       const evaluator = context.policy.abac ? context.policy.evaluator : undefined;
@@ -838,7 +837,9 @@ export class UnifiedCheckService {
           resourceType: context.parsed.resource,
           resourceId: context.parsed.id,
           resourceOwnerId: context.resourceContext?.owner_id,
-          resourceOrgId: context.resourceContext?.org_id,
+          resourceGroupIds: context.resourceContext?.group_id
+            ? [context.resourceContext.group_id]
+            : undefined,
           resourceAttributes: context.resourceContext?.attributes,
           action: context.parsed.action,
           timestamp: Date.now(),

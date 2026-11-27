@@ -1,19 +1,16 @@
 /**
  * Role Repository
  *
- * Repository for RBAC (Role-Based Access Control) stored in D1_CORE database.
- * Handles role definitions and user-role assignments.
+ * Repository for RBAC (Role-Based Access Control) role definitions stored in D1_CORE database.
+ * Role assignments are role_assignments rows (see services/tenant-rbac.ts).
  *
  * Key features:
  * - Role CRUD with permissions management
- * - User-role assignment/revocation
- * - Permission checking utilities
- * - Bulk role operations
  *
  * Note: Does not extend BaseRepository because roles table
  * doesn't have updated_at field (roles are versioned via new records).
  *
- * Tables: roles, user_roles
+ * Tables: roles
  * Schema (roles):
  *   - id: TEXT PRIMARY KEY (UUID)
  *   - tenant_id: TEXT NOT NULL
@@ -22,13 +19,6 @@
  *   - permissions_json: TEXT NOT NULL (JSON array of permissions)
  *   - created_at: INTEGER NOT NULL (timestamp)
  *   - UNIQUE(tenant_id, name)
- *
- * Schema (user_roles):
- *   - user_id: TEXT NOT NULL (FK to users)
- *   - role_id: TEXT NOT NULL (FK to roles)
- *   - tenant_id: TEXT NOT NULL
- *   - created_at: INTEGER NOT NULL (timestamp)
- *   - PRIMARY KEY (tenant_id, user_id, role_id)
  */
 
 import { generateId, getCurrentTimestamp } from '../base';
@@ -49,20 +39,6 @@ export interface Role {
   /** Permissions granted by this role */
   permissions: string[];
   /** Creation timestamp (Unix ms) */
-  created_at: number;
-}
-
-/**
- * User-role assignment entity
- */
-export interface UserRole {
-  /** User ID */
-  user_id: string;
-  /** Role ID */
-  role_id: string;
-  /** Tenant ID */
-  tenant_id: string;
-  /** Assignment timestamp (Unix ms) */
   created_at: number;
 }
 
@@ -104,16 +80,6 @@ interface RoleRow {
   created_at: number;
 }
 
-/**
- * Database row type for user_roles table
- */
-interface UserRoleRow {
-  user_id: string;
-  role_id: string;
-  tenant_id: string;
-  created_at: number;
-}
-
 function requireTenantId(tenantId: string, context: string): string {
   const normalized = tenantId.trim();
   if (!normalized) {
@@ -125,10 +91,7 @@ function requireTenantId(tenantId: string, context: string): string {
 /**
  * Role Repository
  *
- * Provides CRUD operations for RBAC roles and user assignments with:
- * - Role creation and management
- * - User-role assignment/revocation
- * - Permission checking
+ * Provides CRUD operations for RBAC roles.
  */
 export class RoleRepository {
   protected readonly adapter: DatabaseAdapter;
@@ -258,7 +221,6 @@ export class RoleRepository {
 
   /**
    * Delete a role
-   * Note: This will cascade delete user_roles entries
    *
    * @param id - Role ID
    * @returns True if deleted, false if not found
@@ -279,240 +241,6 @@ export class RoleRepository {
     const sql = 'SELECT 1 FROM roles WHERE tenant_id = ? AND name = ?';
     const result = await this.adapter.queryOne<{ 1: number }>(sql, [this.tenantId, name]);
     return result !== null;
-  }
-
-  // =========================================================================
-  // User-Role Assignment Operations
-  // =========================================================================
-
-  /**
-   * Assign a role to a user
-   *
-   * @param userId - User ID
-   * @param roleId - Role ID
-   * @returns User-role assignment or null if role doesn't exist
-   */
-  async assignRoleToUser(userId: string, roleId: string): Promise<UserRole | null> {
-    // Verify role exists
-    const roleExists = await this.findById(roleId);
-    if (!roleExists) {
-      return null;
-    }
-
-    const existingAssignment = await this.getUserRoleAssignment(userId, roleId);
-    if (existingAssignment) {
-      return existingAssignment;
-    }
-
-    const now = getCurrentTimestamp();
-    const sql =
-      'INSERT INTO user_roles (user_id, role_id, tenant_id, created_at) VALUES (?, ?, ?, ?)';
-    await this.adapter.execute(sql, [userId, roleId, this.tenantId, now]);
-
-    return {
-      user_id: userId,
-      role_id: roleId,
-      tenant_id: this.tenantId,
-      created_at: now,
-    };
-  }
-
-  /**
-   * Revoke a role from a user
-   *
-   * @param userId - User ID
-   * @param roleId - Role ID
-   * @returns True if revoked, false if assignment didn't exist
-   */
-  async revokeRoleFromUser(userId: string, roleId: string): Promise<boolean> {
-    const sql = 'DELETE FROM user_roles WHERE tenant_id = ? AND user_id = ? AND role_id = ?';
-    const result = await this.adapter.execute(sql, [this.tenantId, userId, roleId]);
-    return result.rowsAffected > 0;
-  }
-
-  /**
-   * Get all roles for a user
-   *
-   * @param userId - User ID
-   * @returns Array of roles assigned to the user
-   */
-  async findRolesForUser(userId: string): Promise<Role[]> {
-    const sql = `
-      SELECT r.* FROM roles r
-      INNER JOIN user_roles ur ON r.id = ur.role_id
-      WHERE ur.tenant_id = ? AND ur.user_id = ? AND r.tenant_id = ?
-      ORDER BY r.name ASC
-    `;
-
-    const rows = await this.adapter.query<RoleRow>(sql, [this.tenantId, userId, this.tenantId]);
-    return rows.map((row) => this.rowToEntity(row));
-  }
-
-  /**
-   * Get all users with a specific role
-   *
-   * @param roleId - Role ID
-   * @returns Array of user IDs with this role
-   */
-  async findUsersWithRole(roleId: string): Promise<string[]> {
-    const sql =
-      'SELECT user_id FROM user_roles WHERE tenant_id = ? AND role_id = ? ORDER BY created_at ASC';
-    const rows = await this.adapter.query<{ user_id: string }>(sql, [this.tenantId, roleId]);
-    return rows.map((row) => row.user_id);
-  }
-
-  /**
-   * Check if user has a specific role
-   *
-   * @param userId - User ID
-   * @param roleId - Role ID
-   * @returns True if user has the role
-   */
-  async userHasRole(userId: string, roleId: string): Promise<boolean> {
-    const sql = 'SELECT 1 FROM user_roles WHERE tenant_id = ? AND user_id = ? AND role_id = ?';
-    const result = await this.adapter.queryOne<{ 1: number }>(sql, [this.tenantId, userId, roleId]);
-    return result !== null;
-  }
-
-  /**
-   * Check if user has a specific role by name
-   *
-   * @param userId - User ID
-   * @param roleName - Role name
-   * @returns True if user has the role
-   */
-  async userHasRoleByName(userId: string, roleName: string): Promise<boolean> {
-    const sql = `
-      SELECT 1 FROM user_roles ur
-      INNER JOIN roles r ON ur.role_id = r.id
-      WHERE ur.tenant_id = ? AND ur.user_id = ? AND r.tenant_id = ? AND r.name = ?
-    `;
-    const result = await this.adapter.queryOne<{ 1: number }>(sql, [
-      this.tenantId,
-      userId,
-      this.tenantId,
-      roleName,
-    ]);
-    return result !== null;
-  }
-
-  /**
-   * Get all permissions for a user (aggregated from all roles)
-   *
-   * @param userId - User ID
-   * @returns Array of unique permissions
-   */
-  async getPermissionsForUser(userId: string): Promise<string[]> {
-    const roles = await this.findRolesForUser(userId);
-    const permissionsSet = new Set<string>();
-
-    for (const role of roles) {
-      for (const permission of role.permissions) {
-        permissionsSet.add(permission);
-      }
-    }
-
-    return Array.from(permissionsSet).sort();
-  }
-
-  /**
-   * Check if user has a specific permission
-   *
-   * @param userId - User ID
-   * @param permission - Permission to check
-   * @returns True if user has the permission (via any role)
-   */
-  async userHasPermission(userId: string, permission: string): Promise<boolean> {
-    const permissions = await this.getPermissionsForUser(userId);
-    return permissions.includes(permission);
-  }
-
-  /**
-   * Check if user has all specified permissions
-   *
-   * @param userId - User ID
-   * @param requiredPermissions - Permissions to check
-   * @returns True if user has all permissions
-   */
-  async userHasAllPermissions(userId: string, requiredPermissions: string[]): Promise<boolean> {
-    const permissions = await this.getPermissionsForUser(userId);
-    return requiredPermissions.every((p) => permissions.includes(p));
-  }
-
-  /**
-   * Check if user has any of the specified permissions
-   *
-   * @param userId - User ID
-   * @param anyPermissions - Permissions to check
-   * @returns True if user has at least one permission
-   */
-  async userHasAnyPermission(userId: string, anyPermissions: string[]): Promise<boolean> {
-    const permissions = await this.getPermissionsForUser(userId);
-    return anyPermissions.some((p) => permissions.includes(p));
-  }
-
-  /**
-   * Remove all role assignments for a user
-   *
-   * @param userId - User ID
-   * @returns Number of role assignments removed
-   */
-  async removeAllRolesFromUser(userId: string): Promise<number> {
-    const sql = 'DELETE FROM user_roles WHERE tenant_id = ? AND user_id = ?';
-    const result = await this.adapter.execute(sql, [this.tenantId, userId]);
-    return result.rowsAffected;
-  }
-
-  /**
-   * Replace all roles for a user
-   *
-   * @param userId - User ID
-   * @param roleIds - New role IDs
-   * @returns Number of roles assigned
-   */
-  async setRolesForUser(userId: string, roleIds: string[]): Promise<number> {
-    // Remove existing roles
-    await this.removeAllRolesFromUser(userId);
-
-    if (roleIds.length === 0) {
-      return 0;
-    }
-
-    let assignedCount = 0;
-
-    for (const roleId of roleIds) {
-      const result = await this.assignRoleToUser(userId, roleId);
-      if (result) {
-        assignedCount++;
-      }
-    }
-
-    return assignedCount;
-  }
-
-  /**
-   * Count users with a specific role
-   *
-   * @param roleId - Role ID
-   * @returns Number of users with this role
-   */
-  async countUsersWithRole(roleId: string): Promise<number> {
-    const sql = 'SELECT COUNT(*) as count FROM user_roles WHERE tenant_id = ? AND role_id = ?';
-    const result = await this.adapter.queryOne<{ count: number }>(sql, [this.tenantId, roleId]);
-    return result?.count ?? 0;
-  }
-
-  /**
-   * Get role assignment details
-   *
-   * @param userId - User ID
-   * @param roleId - Role ID
-   * @returns User-role assignment or null if not found
-   */
-  async getUserRoleAssignment(userId: string, roleId: string): Promise<UserRole | null> {
-    const sql = 'SELECT * FROM user_roles WHERE tenant_id = ? AND user_id = ? AND role_id = ?';
-    const row = await this.adapter.queryOne<UserRoleRow>(sql, [this.tenantId, userId, roleId]);
-    return row ?? null;
   }
 
   /**

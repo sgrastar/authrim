@@ -83,21 +83,13 @@ export const PHASE3_SQLITE_REFERENCE_RULES: readonly Phase3SqliteReferenceRule[]
     'consent_statement_versions'
   ),
   relation('core', 'consent_statement_versions', ['statement_id'], 'core', 'consent_statements'),
-  relation('core', 'organizations', ['parent_org_id'], 'core', 'organizations', {
-    nullable: true,
-  }),
-  relation('core', 'roles', ['parent_role_id'], 'core', 'roles', { nullable: true }),
   relation('core', 'web_origin_registry', ['tenant_id', 'client_id'], 'core', 'oauth_clients'),
-  relation('core', 'org_domain_mappings', ['org_id'], 'core', 'organizations'),
-  relation('core', 'org_domain_mappings', ['auto_assign_role_id'], 'core', 'roles', {
-    nullable: true,
-  }),
   relation('core', 'role_assignment_rules', ['role_id'], 'core', 'roles'),
   relation('core', 'resource_permissions', ['subject_id'], 'core', 'roles', {
     when: { column: 'subject_type', equals: 'role' },
   }),
-  relation('core', 'resource_permissions', ['subject_id'], 'core', 'organizations', {
-    when: { column: 'subject_type', equals: 'org' },
+  relation('core', 'resource_permissions', ['subject_id'], 'core', 'groups', {
+    when: { column: 'subject_type', equals: 'group' },
   }),
   relation(
     'admin',
@@ -622,53 +614,23 @@ export function phase3SqliteVerificationIgnoredColumns(datasetId: string): reado
   return datasetId === 'core.oauth_clients' ? ['logout_webhook_secret_encrypted'] : [];
 }
 
-/**
- * Organisation types the Admin API wrote before core migration 024, renamed as that migration
- * renames them, so a bundle captured before it restores the core types.
- */
-const LEGACY_ORGANIZATION_TYPES: Readonly<Record<string, string>> = {
-  team: 'department',
-  partner: 'distributor',
-  personal: 'enterprise',
-};
-
-const ORGANIZATION_TYPE_RESTORE_TRANSFORM: NonNullable<
-  SqliteDatasetInspectionPolicy['restoreTransform']
-> = {
-  id: 'phase3-organization-type-v1',
-  async transform(_context, rowJson) {
-    const parsed = JSON.parse(rowJson) as Record<string, unknown>;
-    const orgType = parsed.org_type;
-    if (!Array.isArray(orgType) || orgType[0] !== 'text' || typeof orgType[1] !== 'string')
-      return rowJson;
-    const renamed = Object.hasOwn(LEGACY_ORGANIZATION_TYPES, orgType[1])
-      ? LEGACY_ORGANIZATION_TYPES[orgType[1]]
-      : undefined;
-    if (!renamed) return rowJson;
-    parsed.org_type = ['text', renamed];
-    return JSON.stringify(parsed);
-  },
-};
-
 /** Installed rewrite of a source row before it is written and verified. */
 export function phase3SqliteRestoreTransform(
   datasetId: string
 ): SqliteDatasetInspectionPolicy['restoreTransform'] {
   if (!PHASE3_SQLITE_DATASET_REGISTRATIONS.some(({ dataset }) => dataset.id === datasetId))
     throw new Error('backup_phase3_reference_dataset');
-  return datasetId === 'core.organizations'
-    ? ORGANIZATION_TYPE_RESTORE_TRANSFORM
-    : datasetId === 'admin.compiled_mapping_snapshots'
+  return datasetId === 'admin.compiled_mapping_snapshots'
+    ? {
+        id: 'mapping-snapshot-local-authority-v2',
+        transform: restoreMappingSnapshotRow,
+      }
+    : datasetId === 'admin.field_mapping_versions'
       ? {
-          id: 'mapping-snapshot-local-authority-v2',
-          transform: restoreMappingSnapshotRow,
+          id: 'mapping-version-local-restore-id-v1',
+          transform: restoreMappingVersionRow,
         }
-      : datasetId === 'admin.field_mapping_versions'
-        ? {
-            id: 'mapping-version-local-restore-id-v1',
-            transform: restoreMappingVersionRow,
-          }
-        : undefined;
+      : undefined;
 }
 
 /** Build import inspectors only from the sealed SQL plan and the installed Phase 3 registry. */

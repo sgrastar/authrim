@@ -452,6 +452,13 @@ async function deleteScimGroupDefinition(
            AND NOT EXISTS (SELECT 1 FROM "groups" g WHERE g.tenant_id = ? AND g.id = ?)`,
     params: [tenantId, groupId, tenantId, groupId],
   };
+  // Resource permissions granted to the group go once the definition is gone; a retry (the group
+  // already gone) deletes what an interrupted deletion left.
+  const deletePermissions = {
+    sql: `DELETE FROM resource_permissions WHERE tenant_id = ? AND subject_type = 'group'
+           AND subject_id = ? AND NOT EXISTS (SELECT 1 FROM "groups" g WHERE g.tenant_id = ? AND g.id = ?)`,
+    params: [tenantId, groupId, tenantId, groupId],
+  };
   const hasChild = async (reader: Pick<DatabaseAdapter, 'queryOne'>) =>
     Boolean(
       await reader.queryOne<{ id: string }>(
@@ -460,7 +467,7 @@ async function deleteScimGroupDefinition(
       )
     );
   if (metadata.getType() !== 'postgres') {
-    const [deleted] = await metadata.batch([deleteDefinition, deleteRoles]);
+    const [deleted] = await metadata.batch([deleteDefinition, deleteRoles, deletePermissions]);
     if (deleted?.rowsAffected) return 'deleted';
     return (await hasChild(metadata)) ? 'has_children' : 'not_found';
   }
@@ -468,8 +475,15 @@ async function deleteScimGroupDefinition(
     await lockGroupCatalog(tx, tenantId, 'postgres');
     if (await hasChild(tx)) return 'has_children';
     const deleted = await tx.execute(deleteDefinition.sql, deleteDefinition.params);
-    if (!deleted.rowsAffected) return (await hasChild(tx)) ? 'has_children' : 'not_found';
+    if (!deleted.rowsAffected) {
+      if (await hasChild(tx)) return 'has_children';
+      // Gone already (a retry): what an interrupted deletion left is deleted.
+      await tx.execute(deleteRoles.sql, deleteRoles.params);
+      await tx.execute(deletePermissions.sql, deletePermissions.params);
+      return 'not_found';
+    }
     await tx.execute(deleteRoles.sql, deleteRoles.params);
+    await tx.execute(deletePermissions.sql, deletePermissions.params);
     return 'deleted';
   });
 }

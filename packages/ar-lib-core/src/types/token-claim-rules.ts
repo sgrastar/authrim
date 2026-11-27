@@ -28,8 +28,6 @@ import type { RuleCondition, CompoundCondition, ConditionOperator } from './poli
  * These extend the base condition fields from policy-rules:
  * - has_role: Check if user has a specific role
  * - has_permission: Check if user has a specific type-level permission
- * - org_type: Organization type classification
- * - org_id: Specific organization ID
  * - user_type: User type classification
  * - scope_contains: Check if requested scope contains a value
  * - idp_claim: Claim from IdP (evaluated in memory)
@@ -38,8 +36,6 @@ import type { RuleCondition, CompoundCondition, ConditionOperator } from './poli
 export type ClaimConditionField =
   | 'has_role'
   | 'has_permission'
-  | 'org_type'
-  | 'org_id'
   | 'user_type'
   | 'scope_contains'
   | 'idp_claim'
@@ -109,8 +105,8 @@ export interface TokenClaimAction {
   // For add_claim_template
   /**
    * Template string with {{variable}} placeholders
-   * Available variables: user_type, org_id, org_type, client_id
-   * Example: "Hello {{user_type}} from {{org_type}}"
+   * Available variables: user_type, client_id, subject_id
+   * Example: "Hello {{user_type}} of {{client_id}}"
    */
   template?: string;
 
@@ -135,7 +131,7 @@ export interface TokenClaimAction {
   // For copy_from_context
   /**
    * Context field to copy
-   * Available: org_id, org_type, user_type, roles, permissions
+   * Available: user_type, roles, permissions
    */
   context_field?: string;
 
@@ -297,9 +293,9 @@ export interface TokenClaimRuleRow extends Omit<
  * Subject type for resource permissions
  * - user: Direct user permission
  * - role: Permission inherited from role
- * - org: Permission inherited from organization membership
+ * - group: Permission of the members of a group (and of its descendant groups)
  */
-export type ResourcePermissionSubjectType = 'user' | 'role' | 'org';
+export type ResourcePermissionSubjectType = 'user' | 'role' | 'group';
 
 /**
  * Resource permission definition
@@ -320,7 +316,7 @@ export interface ResourcePermission {
 
   /** Subject type (who has permission) */
   subject_type: ResourcePermissionSubjectType;
-  /** Subject ID (user_id, role_id, or org_id) */
+  /** Subject ID (user_id, role_id, or group_id) */
   subject_id: string;
 
   /** Resource type (e.g., 'documents', 'projects') */
@@ -389,12 +385,6 @@ export interface TokenClaimEvaluationContext {
   roles: string[];
   /** User's type-level permissions */
   permissions: string[];
-
-  // Organization context
-  /** Current organization ID (if scoped) */
-  org_id?: string;
-  /** Organization type */
-  org_type?: string;
 
   // User attributes
   /** User type classification */
@@ -518,8 +508,6 @@ export interface TokenClaimRuleTestContext {
   scope: string;
   roles?: string[];
   permissions?: string[];
-  org_id?: string;
-  org_type?: string;
   user_type?: string;
   email_domain_hash?: string;
   idp_claims?: Record<string, unknown>;

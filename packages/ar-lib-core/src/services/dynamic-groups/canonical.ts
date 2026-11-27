@@ -188,6 +188,11 @@ export async function removeDynamicGroup(
     'DELETE FROM group_role_assignments WHERE tenant_id = ? AND group_id = ?',
     [tenantId, groupId]
   );
+  // Resource permissions granted to the group go with it (a retry deletes what is left).
+  await metadata.execute(
+    "DELETE FROM resource_permissions WHERE tenant_id = ? AND subject_type = 'group' AND subject_id = ?",
+    [tenantId, groupId]
+  );
   await metadata.execute(`DELETE FROM "groups" WHERE tenant_id = ? AND id = ? AND ${OWNED}`, [
     tenantId,
     groupId,

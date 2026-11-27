@@ -14,9 +14,9 @@ export type RoleType = 'system' | 'builtin' | 'custom';
 
 /**
  * Scope type for role assignments
- * Matches backend RBAC specification: 'global' | 'org' | 'resource'
+ * Matches the backend RBAC specification.
  */
-export type ScopeType = 'global' | 'org' | 'resource';
+export type ScopeType = 'global' | 'tenant' | 'group' | 'resource';
 
 /**
  * Basic role information (for list view)
@@ -28,6 +28,8 @@ export interface Role {
 	display_name?: string;
 	description?: string;
 	is_system: boolean;
+	/** The delegation tier (1-3): an administrator may grant roles up to its own tier. */
+	grant_tier?: number;
 	created_at: number;
 	updated_at: number;
 }
@@ -200,32 +202,6 @@ export const PERMISSION_DEFINITIONS: PermissionCategory[] = [
 		permissions: [
 			{ id: 'sessions:read', label: 'Read Sessions', description: 'View session list' },
 			{ id: 'sessions:revoke', label: 'Revoke Sessions', description: 'Revoke user sessions' }
-		]
-	},
-	{
-		category: 'organizations',
-		categoryLabel: 'Organizations',
-		permissions: [
-			{
-				id: 'organizations:read',
-				label: 'Read Organizations',
-				description: 'View organization list and details'
-			},
-			{
-				id: 'organizations:create',
-				label: 'Create Organizations',
-				description: 'Create new organizations'
-			},
-			{
-				id: 'organizations:update',
-				label: 'Update Organizations',
-				description: 'Update organization details'
-			},
-			{
-				id: 'organizations:delete',
-				label: 'Delete Organizations',
-				description: 'Delete organizations'
-			}
 		]
 	},
 	{

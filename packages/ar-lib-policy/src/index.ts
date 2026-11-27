@@ -26,7 +26,7 @@
  * const engine = createDefaultPolicyEngine();
  * const decision = engine.evaluate({
  *   subject,
- *   resource: { type: 'organization', id: 'org_123' },
+ *   resource: { type: 'document', id: 'doc_123' },
  *   action: { name: 'manage' },
  *   timestamp: Date.now()
  * });

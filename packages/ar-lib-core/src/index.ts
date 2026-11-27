@@ -449,7 +449,7 @@ export * from './vc/credential-status-reservation';
 
 // Services
 export * from './services/rule-evaluator';
-export * from './services/org-domain-resolver';
+export * from './services/jit-role-assignment';
 export * from './services/tenant-domain-resolver';
 export * from './services/tenant-vanity-domain-resolver';
 export * from './services/token-claim-evaluator';

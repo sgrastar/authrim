@@ -105,14 +105,14 @@ describe('role assignment rules settings API', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.adapter.queryOne.mockResolvedValue(null);
-    // The tenant's roles (grant tier, level), read by the delegation check of a rule's roles.
+    // The tenant's roles (grant tier), read by the delegation check of a rule's roles.
     mocks.adapter.query.mockImplementation(async (sql: string, params: unknown[] = []) =>
       sql.includes('FROM roles')
         ? [
-            { id: 'role-engineer', grant_tier: 1, hierarchy_level: 10, is_assignable: 1 },
-            { id: 'role-new', grant_tier: 1, hierarchy_level: 10, is_assignable: 1 },
-            { id: 'role-admin', grant_tier: 3, hierarchy_level: 10, is_assignable: 1 },
-            { id: 'role-fixed', grant_tier: 1, hierarchy_level: 10, is_assignable: 0 },
+            { id: 'role-engineer', grant_tier: 1, is_assignable: 1 },
+            { id: 'role-new', grant_tier: 1, is_assignable: 1 },
+            { id: 'role-admin', grant_tier: 3, is_assignable: 1 },
+            { id: 'role-fixed', grant_tier: 1, is_assignable: 0 },
           ].filter((role) => params.includes(role.id))
         : []
     );
@@ -123,7 +123,7 @@ describe('role assignment rules settings API', () => {
     mocks.evaluate.mockResolvedValue({
       matched_rules: ['rar_rule1'],
       roles_to_assign: ['role-engineer'],
-      orgs_to_join: [],
+      groups_to_join: [],
       attributes_to_set: { department: 'engineering' },
       denied: false,
     });
@@ -184,8 +184,8 @@ describe('role assignment rules settings API', () => {
       const body = {
         ...validInput,
         description: 'Corporate engineering access',
-        scope_type: 'organization',
-        scope_target: 'org-1',
+        scope_type: 'group',
+        scope_target: 'group:grp-1',
         priority: 20,
         is_active: false,
         stop_processing: true,
@@ -198,14 +198,39 @@ describe('role assignment rules settings API', () => {
       expect(response.status).toBe(201);
       await expect(response.json()).resolves.toMatchObject({
         description: 'Corporate engineering access',
-        scope_type: 'organization',
-        scope_target: 'org-1',
+        scope_type: 'group',
+        scope_target: 'group:grp-1',
         priority: 20,
         is_active: false,
         stop_processing: true,
         valid_from: 100,
         valid_until: 200,
       });
+    });
+
+    it('refuses a removed or malformed scope on the rule and on its role actions', async () => {
+      for (const [body, field] of [
+        [{ ...validInput, scope_type: 'org', scope_target: 'org:o1' }, 'scope_type'],
+        [{ ...validInput, scope_type: 'group', scope_target: 'grp-1' }, 'group:<group id>'],
+        [
+          {
+            ...validInput,
+            actions: [{ type: 'assign_role', role_id: 'role-engineer', scope_type: 'org' }],
+          },
+          'actions[0]: scope_type',
+        ],
+      ] as const) {
+        const response = await createRoleAssignmentRule(context({ body }));
+        expect(response.status).toBe(400);
+        const error = await response.json<{ error_description: string }>();
+        expect(error.error_description).toContain(field);
+      }
+      mocks.adapter.queryOne.mockResolvedValue(row());
+      const response = await updateRoleAssignmentRule(
+        context({ body: { scope_type: 'org', scope_target: 'org:o1' } })
+      );
+      expect(response.status).toBe(400);
+      expect(mocks.adapter.execute).not.toHaveBeenCalled();
     });
 
     it('refuses a rule granting a role above the administrator grant ceiling', async () => {
@@ -224,6 +249,31 @@ describe('role assignment rules settings API', () => {
         context({ body: validInput, adminAuth: { ...adminAuth, permissions: [] } })
       );
       expect(response.status).toBe(403);
+      expect(mocks.adapter.execute).not.toHaveBeenCalled();
+    });
+
+    it('refuses a rule joining a group the administrator may not add members to', async () => {
+      const adminAuth = { maxGrantTier: 1, permissions: ['admin:roles:write'] };
+      const body = { ...validInput, actions: [{ type: 'join_group', group_id: 'grp-1' }] };
+      // The group is the tenant's and carries a tier 2 role.
+      mocks.adapter.queryOne.mockImplementation(async (sql: string) =>
+        sql.includes('FROM "groups"') ? { id: 'grp-1' } : null
+      );
+      const roles = mocks.adapter.query.getMockImplementation()!;
+      mocks.adapter.query.mockImplementation(async (sql: string, params: unknown[] = []) =>
+        sql.includes('group_role_assignments')
+          ? [{ kind: 'role', grant_tier: 2 }]
+          : ((await roles(sql, params)) as unknown[])
+      );
+      const refused = await createRoleAssignmentRule(context({ body, adminAuth }));
+      expect(refused.status).toBe(403);
+      await expect(refused.json()).resolves.toMatchObject({ error: 'role_delegation_denied' });
+      expect(mocks.adapter.execute).not.toHaveBeenCalled();
+
+      // A group of another tenant (or none): refused before anything is written.
+      mocks.adapter.queryOne.mockResolvedValue(null);
+      const unknown = await createRoleAssignmentRule(context({ body, adminAuth }));
+      expect(unknown.status).toBe(400);
       expect(mocks.adapter.execute).not.toHaveBeenCalled();
     });
 
@@ -368,8 +418,8 @@ describe('role assignment rules settings API', () => {
           name: 'Updated',
           description: 'Updated description',
           role_id: 'role-new',
-          scope_type: 'organization',
-          scope_target: 'org-2',
+          scope_type: 'group',
+          scope_target: 'group:grp-2',
           condition: { field: 'email_verified', operator: 'eq', value: true },
           actions: [{ type: 'assign_role', role_id: 'role-new' }],
           priority: 50,
@@ -545,7 +595,7 @@ describe('role assignment rules settings API', () => {
       mocks.evaluate.mockResolvedValueOnce({
         matched_rules: ['deny-rule'],
         roles_to_assign: [],
-        orgs_to_join: [],
+        groups_to_join: [],
         attributes_to_set: {},
         denied: true,
         deny_code: 'account_blocked',
@@ -558,7 +608,7 @@ describe('role assignment rules settings API', () => {
       await expect(response.json()).resolves.toEqual({
         matched_rules: ['deny-rule'],
         final_roles: [],
-        final_orgs: [],
+        final_groups: [],
         attributes_to_set: {},
         denied: true,
         deny_code: 'account_blocked',

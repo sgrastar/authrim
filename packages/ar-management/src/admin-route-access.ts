@@ -606,20 +606,6 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     'end-user group memberships'
   ),
   ...byMethod(
-    '/api/admin/organizations',
-    ADMIN_PERMISSIONS.ROLES_READ,
-    ADMIN_PERMISSIONS.ROLES_WRITE,
-    ADMIN_PERMISSIONS.ROLES_WRITE,
-    'organizations and access graph'
-  ),
-  ...byMethod(
-    '/api/admin/organizations/*',
-    ADMIN_PERMISSIONS.ROLES_READ,
-    ADMIN_PERMISSIONS.ROLES_WRITE,
-    ADMIN_PERMISSIONS.ROLES_WRITE,
-    'organizations and access graph'
-  ),
-  ...byMethod(
     '/api/admin/policies',
     ADMIN_PERMISSIONS.ROLES_READ,
     ADMIN_PERMISSIONS.ROLES_WRITE,
@@ -1401,20 +1387,6 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     ADMIN_PERMISSIONS.TENANT_DOMAINS_DELETE,
     'platform tenant vanity domains',
     PLATFORM_ADMIN_ROLES
-  ),
-  ...byMethod(
-    '/api/admin/org-domain-mappings',
-    ADMIN_PERMISSIONS.SETTINGS_READ,
-    ADMIN_PERMISSIONS.SETTINGS_WRITE,
-    ADMIN_PERMISSIONS.SETTINGS_WRITE,
-    'organization domain mappings'
-  ),
-  ...byMethod(
-    '/api/admin/org-domain-mappings/*',
-    ADMIN_PERMISSIONS.SETTINGS_READ,
-    ADMIN_PERMISSIONS.SETTINGS_WRITE,
-    ADMIN_PERMISSIONS.SETTINGS_WRITE,
-    'organization domain mappings'
   ),
 
   ...byMethod(
@@ -2307,7 +2279,7 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
   ]),
 
   // Every write (POST/PUT/PATCH) under the jobs prefix creates bulk work (user import and its
-  // upload, bulk update, report generation, bulk organization members): it needs the bulk_jobs
+  // upload, bulk update, report generation): it needs the bulk_jobs
   // capability. Reads and DELETE stay open while it is off.
   ...forCapability(
     'bulk_jobs',

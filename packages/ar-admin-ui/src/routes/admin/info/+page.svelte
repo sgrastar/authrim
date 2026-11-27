@@ -768,7 +768,6 @@
 					info.admin_api.custom_claims,
 					'api_claims'
 				)}
-				{@render urlRow($LL.admin_info_organizations(), info.admin_api.organizations, 'api_orgs')}
 				{@render urlRow($LL.admin_info_roles(), info.admin_api.roles, 'api_roles')}
 				{@render urlRow($LL.admin_info_webhooks(), info.admin_api.webhooks, 'api_webhooks')}
 			</div>

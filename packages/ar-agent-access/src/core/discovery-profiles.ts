@@ -49,10 +49,9 @@ export const BUILTIN_AGENT_DISCOVERY_PROFILES: readonly AgentDiscoveryProfileDef
     profile(
       'identity_authorization',
       'Identity and authorization',
-      'Identity providers, organizations, roles, policies, and policy simulation.',
+      'Identity providers, roles, policies, and policy simulation.',
       [
         'admin.read.identity-providers.inspect',
-        'admin.read.authorization.organizations',
         'admin.read.authorization.roles',
         'admin.read.authorization.policies',
         'admin.read.authorization.simulate',

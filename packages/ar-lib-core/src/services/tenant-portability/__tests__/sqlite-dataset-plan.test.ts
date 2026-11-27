@@ -160,7 +160,7 @@ it('preserves log-window requirements and never turns current safety state off',
   expect(plan.entries[0].selection).toEqual({ action: 'selected', timeFilter: 'log_window' });
 });
 
-it('splits user grants from role and organization permission settings', () => {
+it('splits user grants from role and group permission settings', () => {
   const tables = schemas(`CREATE TABLE resource_permissions(
     id TEXT PRIMARY KEY NOT NULL,
     tenant_id TEXT NOT NULL,
@@ -172,10 +172,10 @@ it('splits user grants from role and organization permission settings', () => {
   expect(settingsEntry.rowPartitions).toEqual([
     { value: 'user', kind: 'users', selection: { action: 'excluded', reason: 'not_selected' } },
     { value: 'role', kind: 'settings', selection: { action: 'selected', timeFilter: 'none' } },
-    { value: 'org', kind: 'settings', selection: { action: 'selected', timeFilter: 'none' } },
+    { value: 'group', kind: 'settings', selection: { action: 'selected', timeFilter: 'none' } },
   ]);
   expect(settingsEntry.capture).toMatchObject({
-    rowPartition: { column: 'subject_type', values: ['user', 'role', 'org'] },
+    rowPartition: { column: 'subject_type', values: ['user', 'role', 'group'] },
   });
 
   const usersPlan = planSqliteTenantDatasets('core', tables, {
@@ -189,7 +189,7 @@ it('splits user grants from role and organization permission settings', () => {
   ).toEqual([
     ['user', 'selected'],
     ['role', 'excluded'],
-    ['org', 'excluded'],
+    ['group', 'excluded'],
   ]);
 });
 

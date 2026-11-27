@@ -360,7 +360,7 @@ describe('generic admin job executor', () => {
           (params as unknown[]).includes(message)
       );
 
-    it.each(['reports/generate', 'users/bulk-update', 'organizations/bulk-members'])(
+    it.each(['reports/generate', 'users/bulk-update'])(
       'ends a queued %s job as blocked, without starting it, while off',
       async (jobType) => {
         mockAdapter.query.mockResolvedValueOnce([pending(jobType)]);
@@ -1684,89 +1684,6 @@ describe('generic admin job executor', () => {
         expect.any(String),
       ])
     );
-  });
-
-  it('adds organization memberships with tenant-scoped checks', async () => {
-    mockAdapter.query.mockResolvedValueOnce([
-      {
-        id: 'job-3',
-        tenant_id: 'tenant-a',
-        job_type: 'organizations/bulk-members',
-        status: 'pending',
-        progress: null,
-        config: JSON.stringify({
-          organization_id: 'org-1',
-          organization_name: 'Example Org',
-          action: 'add',
-          role: 'admin',
-          user_ids: ['user-1'],
-        }),
-        created_at: 1,
-      },
-    ]);
-    mockAdapter.queryOne
-      .mockResolvedValueOnce({ id: 'org-1' })
-      .mockResolvedValueOnce({ id: 'user-1' })
-      .mockResolvedValueOnce(null);
-
-    await processPendingGenericAdminJobs({} as never, logger);
-
-    expect(mockAdapter.queryOne).toHaveBeenNthCalledWith(
-      1,
-      'SELECT id FROM organizations WHERE id = ? AND tenant_id = ?',
-      ['org-1', 'tenant-a']
-    );
-    expect(mockAdapter.execute).toHaveBeenNthCalledWith(
-      2,
-      expect.stringContaining('INSERT INTO subject_org_membership'),
-      expect.arrayContaining(['tenant-a', 'user-1', 'org-1', 'admin'])
-    );
-    expect(mockAdapter.execute).toHaveBeenLastCalledWith(
-      expect.stringContaining('SET status = ?, progress = ?, result = ?'),
-      expect.arrayContaining([
-        'completed',
-        expect.any(String),
-        expect.any(String),
-        'job-3',
-        'tenant-a',
-      ])
-    );
-  });
-
-  it('records existing organization memberships as job result errors', async () => {
-    mockAdapter.query.mockResolvedValueOnce([
-      {
-        id: 'job-4',
-        tenant_id: 'tenant-a',
-        job_type: 'organizations/bulk-members',
-        status: 'pending',
-        progress: null,
-        config: JSON.stringify({
-          organization_id: 'org-1',
-          organization_name: 'Example Org',
-          action: 'add',
-          role: 'admin',
-          user_ids: ['user-1'],
-        }),
-        created_at: 1,
-      },
-    ]);
-    mockAdapter.queryOne
-      .mockResolvedValueOnce({ id: 'org-1' })
-      .mockResolvedValueOnce({ id: 'user-1' })
-      .mockResolvedValueOnce({ id: 'membership-1' });
-
-    await processPendingGenericAdminJobs({} as never, logger);
-
-    const finalUpdate = mockAdapter.execute.mock.calls.at(-1);
-    expect(finalUpdate?.[0]).toEqual(
-      expect.stringContaining('SET status = ?, progress = ?, result = ?')
-    );
-    expect(finalUpdate?.[1]).toEqual(expect.arrayContaining(['partial_failure']));
-    const resultJson = (finalUpdate?.[1] as unknown[])[2] as string;
-    expect(JSON.parse(resultJson)).toMatchObject({
-      failures: [{ user_id: 'user-1', error: 'membership_already_exists' }],
-    });
   });
 
   it('schedules retry with backoff when a generic job fails before max attempts', async () => {

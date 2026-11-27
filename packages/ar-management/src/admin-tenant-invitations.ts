@@ -53,7 +53,6 @@ interface TenantInvitationRow {
   invited_email: string | null;
   invited_by: string;
   role_id: string | null;
-  org_id: string | null;
   group_id: string | null;
   max_uses: number;
   use_count: number;
@@ -69,7 +68,6 @@ interface TenantInvitationRow {
 const CreateInvitationSchema = z.object({
   invited_email: z.email().optional().nullable(),
   role_id: z.string().min(1).max(63).optional().nullable(),
-  org_id: z.string().min(1).max(63).optional().nullable(),
   group_id: z.string().min(1).max(63).optional().nullable(),
   max_uses: z.number().int().min(-1).max(1000).optional().default(1),
   expires_in_hours: z
@@ -97,7 +95,6 @@ function formatInvitation(row: TenantInvitationRow) {
     invited_email: row.invited_email,
     invited_by: row.invited_by,
     role_id: row.role_id,
-    org_id: row.org_id,
     group_id: row.group_id ?? null,
     max_uses: row.max_uses,
     use_count: row.use_count,
@@ -140,7 +137,7 @@ export async function createTenantInvitationHandler(c: Context<{ Bindings: Env }
       return c.json({ error: 'invalid_request', details: z.flattenError(parsed.error) }, 400);
     }
 
-    const { invited_email, role_id, org_id, group_id, max_uses, expires_in_hours } = parsed.data;
+    const { invited_email, role_id, group_id, max_uses, expires_in_hours } = parsed.data;
 
     // An invitation addressed to an e-mail address is mailed: refused, before anything is written,
     // while admin_sent_email is off. One without an address sends nothing and stays possible.
@@ -163,11 +160,10 @@ export async function createTenantInvitationHandler(c: Context<{ Bindings: Env }
       const role = await adapter.queryOne<{
         id: string;
         grant_tier: number;
-        hierarchy_level: number | null;
-      }>(
-        'SELECT id, grant_tier, hierarchy_level FROM roles WHERE id = ? AND tenant_id = ? AND is_assignable = 1',
-        [role_id, tenantId]
-      );
+      }>('SELECT id, grant_tier FROM roles WHERE id = ? AND tenant_id = ? AND is_assignable = 1', [
+        role_id,
+        tenantId,
+      ]);
       if (!role) {
         return c.json({ error: 'invalid_request', message: 'role_id is not assignable' }, 400);
       }
@@ -176,16 +172,6 @@ export async function createTenantInvitationHandler(c: Context<{ Bindings: Env }
       // their own level.
       if (!mayManageEndUserRole(getAdminAuth(c) ?? null, role)) {
         return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
-      }
-    }
-
-    if (org_id) {
-      const organization = await adapter.queryOne<{ id: string }>(
-        'SELECT id FROM organizations WHERE id = ? AND tenant_id = ? AND is_active = 1',
-        [org_id, tenantId]
-      );
-      if (!organization) {
-        return c.json({ error: 'invalid_request', message: 'org_id is not active' }, 400);
       }
     }
 
@@ -219,8 +205,8 @@ export async function createTenantInvitationHandler(c: Context<{ Bindings: Env }
     await prepareTenantDiscoveryAliasDirectory(c.env, discoveryAlias);
     await adapter.execute(
       `INSERT INTO tenant_invitations
-        (id, token, tenant_id, invited_email, invited_by, role_id, org_id, group_id, max_uses, use_count, expires_at, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`,
+        (id, token, tenant_id, invited_email, invited_by, role_id, group_id, max_uses, use_count, expires_at, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`,
       [
         invitationId,
         token,
@@ -228,7 +214,6 @@ export async function createTenantInvitationHandler(c: Context<{ Bindings: Env }
         invited_email ?? null,
         adminId,
         role_id ?? null,
-        org_id ?? null,
         group_id ?? null,
         max_uses,
         expiresAt,
@@ -293,7 +278,6 @@ export async function createTenantInvitationHandler(c: Context<{ Bindings: Env }
         tenant_id: tenantId,
         invited_email,
         role_id,
-        org_id,
         group_id,
         email_sent: emailSent,
       },

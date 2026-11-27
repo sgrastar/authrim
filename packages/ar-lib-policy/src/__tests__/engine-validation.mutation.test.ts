@@ -193,14 +193,14 @@ describe('validatePolicyConditions: what each parameter must be', () => {
     }
   });
 
-  it('a role scope is global, org or resource', () => {
-    for (const scope of ['global', 'org', 'resource']) {
+  it('a role scope is global, group or resource', () => {
+    for (const scope of ['global', 'group', 'resource']) {
       expect(validate('has_role', { role: 'a', scope })).toBeNull();
     }
-    for (const scope of ['tenant', '', 'Org', 5]) {
+    for (const scope of ['tenant', 'org', '', 'Group', 5]) {
       invalid('has_role', { role: 'a', scope });
     }
-    expect(validate('has_role', { role: 'a', scopeTarget: 'org:1' })).toBeNull();
+    expect(validate('has_role', { role: 'a', scopeTarget: 'group:1' })).toBeNull();
     invalid('has_role', { role: 'a', scopeTarget: '' });
   });
 });

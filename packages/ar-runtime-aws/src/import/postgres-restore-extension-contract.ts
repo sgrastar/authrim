@@ -1078,23 +1078,13 @@ export const POSTGRES_RESTORE_EXTENSION_CONTRACTS: readonly PostgresRestoreTable
       'permissions_json',
       'created_at',
       'role_type',
-      'hierarchy_level',
       'is_assignable',
-      'parent_role_id',
       'display_name',
       'is_system',
       'updated_at',
-      'external_id',
       'grant_tier',
     ],
-    sqliteIntegerColumns: [
-      'grant_tier',
-      'created_at',
-      'hierarchy_level',
-      'is_assignable',
-      'is_system',
-      'updated_at',
-    ],
+    sqliteIntegerColumns: ['grant_tier', 'created_at', 'is_assignable', 'is_system', 'updated_at'],
     postgresBooleanColumns: ['is_assignable', 'is_system'],
     postgresJsonbColumns: [],
     primaryKey: ['id'],
@@ -1135,17 +1125,6 @@ export const POSTGRES_RESTORE_EXTENSION_CONTRACTS: readonly PostgresRestoreTable
     postgresBooleanColumns: [],
     postgresJsonbColumns: [],
     primaryKey: ['tenant_id', 'user_id'],
-    tenantColumn: 'tenant_id',
-  },
-  {
-    family: 'core',
-    datasetId: 'core.service_group_manual',
-    table: 'service_group_manual',
-    columns: ['tenant_id', 'user_id', 'group_id'],
-    sqliteIntegerColumns: [],
-    postgresBooleanColumns: [],
-    postgresJsonbColumns: [],
-    primaryKey: ['tenant_id', 'user_id', 'group_id'],
     tenantColumn: 'tenant_id',
   },
   {
@@ -1290,17 +1269,6 @@ export const POSTGRES_RESTORE_EXTENSION_CONTRACTS: readonly PostgresRestoreTable
     postgresBooleanColumns: ['searchable'],
     postgresJsonbColumns: [],
     primaryKey: ['tenant_id', 'user_id', 'field_name'],
-    tenantColumn: 'tenant_id',
-  },
-  {
-    family: 'core',
-    datasetId: 'core.user_roles',
-    table: 'user_roles',
-    columns: ['user_id', 'role_id', 'created_at', 'tenant_id'],
-    sqliteIntegerColumns: ['created_at'],
-    postgresBooleanColumns: [],
-    postgresJsonbColumns: [],
-    primaryKey: ['tenant_id', 'user_id', 'role_id'],
     tenantColumn: 'tenant_id',
   },
 
@@ -1607,7 +1575,7 @@ export const POSTGRES_RESTORE_EXTENSION_CONTRACTS: readonly PostgresRestoreTable
   },
 ];
 
-/** Parent-first import order; roles also orders its own parent_role_id rows. */
+/** Parent-first import order; groups also orders its own parent_group_id rows. */
 export const POSTGRES_RESTORE_DEPENDENCIES: Readonly<Record<string, readonly string[]>> = {
   // Operations have only a deferred self-reference; admissions are held as source authority.
   'core.statement_consent_key_states': [],
@@ -1631,7 +1599,6 @@ export const POSTGRES_RESTORE_DEPENDENCIES: Readonly<Record<string, readonly str
   'core.role_assignments': ['core.roles', 'core.users_core'],
   'core.subject_account_links': ['core.identity_accounts', 'core.identity_subjects'],
   'core.user_custom_fields': ['core.users_core'],
-  'core.user_roles': ['core.roles', 'core.users_core'],
   'core.user_verified_attributes': ['core.attribute_verifications'],
   'core.web_origin_registry': ['core.oauth_clients'],
 };

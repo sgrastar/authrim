@@ -12,7 +12,6 @@
 		tags: ['autodocs'],
 		args: {
 			consentData: consentBase,
-			onOrgChange: fn(),
 			onSwitchAccount: fn(),
 			onAllow: fn(),
 			onDeny: fn()
@@ -22,16 +21,11 @@
 			docs: {
 				description: {
 					component:
-						'What an application is asking to access. Parts appear by tenant and client settings: trusted badge, delegated access warning, organisation picker, roles, consent items (required items block Allow until given), and the information shared with the app (required rows cannot be unticked; optional ones are checkboxes that start checked only when approved before; values appear only when the app shows them). The route (`src/routes/(main)/consent`) owns the requests.'
+						'What an application is asking to access. Parts appear by tenant and client settings: trusted badge, delegated access warning, roles, consent items (required items block Allow until given), and the information shared with the app (required rows cannot be unticked; optional ones are checkboxes that start checked only when approved before; values appear only when the app shows them). The route (`src/routes/(main)/consent`) owns the requests.'
 				}
 			}
 		}
 	});
-
-	const orgs = [
-		{ id: 'org1', name: 'Acme Inc.', type: 'company', is_primary: true },
-		{ id: 'org2', name: 'Acme Labs', type: 'company', is_primary: false }
-	];
 </script>
 
 {#snippet page(args: Parameters<typeof ConsentView>[1])}
@@ -79,14 +73,12 @@
 </Story>
 
 <Story
-	name="Organisation picker and roles"
+	name="Roles"
 	args={{
-		selectedOrgId: 'org1',
 		consentData: {
 			...consentBase,
-			organizations: orgs,
 			roles: ['admin', 'billing'],
-			features: { org_selector_enabled: true, acting_as_enabled: false, show_roles: true }
+			features: { acting_as_enabled: false, show_roles: true }
 		}
 	}}
 >

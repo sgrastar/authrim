@@ -1,7 +1,7 @@
 /**
  * Identity Stitching Service
  * Handles automatic linking of external identities to existing users
- * with JIT Provisioning, policy evaluation, and organization auto-join
+ * with JIT Provisioning, policy evaluation, and rule-based group joins
  */
 
 import { externalSignupInvitationEmailCheck } from '@authrim/ar-lib-core/services/external-signup-invitation';
@@ -16,14 +16,11 @@ import {
   type DenyErrorCode,
   DEFAULT_JIT_CONFIG,
   createRuleEvaluator,
-  resolveOrgByDomainHash,
-  resolveAllOrgsByDomainHash,
-  joinOrganization,
   type TenantRBACDatabases,
   assignScopedRoleToUser,
+  upsertGroupMembership,
   generateEmailDomainHashWithVersion,
   getEmailDomainHashConfig,
-  type ResolvedOrganization,
   validateCustomClaimWrite,
   persistCustomClaimWrite,
   syncUserLifecycleState,
@@ -43,6 +40,7 @@ import {
   emailDomainAllowed,
   profileAllowsHandle,
   readAuthenticationProfile,
+  roleScopeTargetError,
 } from '@authrim/ar-lib-core';
 import { externalEmailCheckNeeded, providerHandle } from './external-email-check';
 import {
@@ -164,14 +162,8 @@ export async function getJITConfig(env: Env, tenantId: string): Promise<JITProvi
     require_verified_email: values['external_idp.jit_require_verified_email'] === true,
     // Only an empty value allows every provider: one that names none allows none.
     allowed_provider_ids: parseJitAllowedProviderIds(providerList),
-    join_all_matching_orgs: values['external_idp.jit_join_all_matching_orgs'] === true,
-    allow_user_without_org: values['external_idp.jit_allow_user_without_org'] === true,
     // Empty: no default role.
     default_role_id: role,
-    allow_unverified_domain_mappings:
-      values['external_idp.jit_allow_unverified_domain_mappings'] === true,
-    // Not applied by the bridge.
-    auto_create_org_on_domain_match: false,
   };
 }
 
@@ -409,7 +401,7 @@ export async function handleIdentity(
   }
   if (externalRoute) {
     // The account was provisioned by an earlier sign-in that did not finish; finishing it (its
-    // roles, organizations and identity) is still a sign-up, so the tenant's switch holds, and a
+    // roles, groups and identity) is still a sign-up, so the tenant's switch holds, and a
     // sign-in that may not create an account (lite mode) does not finish it either.
     if (params.accountCreationAllowed === false) {
       throw new ExternalIdPError(
@@ -445,7 +437,7 @@ export async function handleIdentity(
       linkedIdentityId: completed.linkedIdentityId,
       stitchedFromExisting: false,
       roles_assigned: completed.roles_assigned,
-      orgs_joined: completed.orgs_joined,
+      groups_joined: completed.groups_joined,
     };
   }
 
@@ -714,7 +706,7 @@ export async function handleIdentity(
       metadata: {
         providerId: provider.id,
         roles_assigned: jitResult.roles_assigned,
-        orgs_joined: jitResult.orgs_joined,
+        groups_joined: jitResult.groups_joined,
         matched_rules: jitResult.matched_rules,
       },
     });
@@ -726,7 +718,7 @@ export async function handleIdentity(
       linkedIdentityId,
       stitchedFromExisting: false,
       roles_assigned: jitResult.roles_assigned,
-      orgs_joined: jitResult.orgs_joined,
+      groups_joined: jitResult.groups_joined,
       attributes_set: jitResult.attributes_set,
     };
   }
@@ -995,7 +987,7 @@ interface JITProvisioningResult {
     scope_type: string;
     scope_target: string;
   }>;
-  orgs_joined: string[];
+  groups_joined: string[];
   attributes_set: Array<{
     name: string;
     value: string;
@@ -1011,7 +1003,7 @@ interface JITProvisioningResult {
 
 /** What applying a stored plan gives: always the identity it activated (or found active). */
 type AppliedJitPlan = Required<
-  Pick<JITProvisioningResult, 'linkedIdentityId' | 'roles_assigned' | 'orgs_joined'>
+  Pick<JITProvisioningResult, 'linkedIdentityId' | 'roles_assigned' | 'groups_joined'>
 >;
 
 interface TenantD1JITProvisioningParams extends JITProvisioningParams {
@@ -1020,9 +1012,11 @@ interface TenantD1JITProvisioningParams extends JITProvisioningParams {
 }
 
 interface TenantD1JITPlan {
-  schemaVersion: 1;
+  /** 2: organisations replaced by the groups the matched rules join. */
+  schemaVersion: 2;
   customClaimValidation: ValidatedCustomClaimWriteResult;
-  organizationIds: string[];
+  /** The groups the matched rules join, each with the rule that joins it. */
+  groupJoins: Array<{ groupId: string; ruleId: string }>;
   roleAssignments: Array<{ roleId: string; scopeType: string; scopeTarget: string }>;
   defaultRoleId: string | null;
   matchedRules: string[];
@@ -1030,21 +1024,6 @@ interface TenantD1JITPlan {
 }
 
 type JITRoleAssignment = TenantD1JITPlan['roleAssignments'][number];
-
-/** The role each matched domain mapping gives, scoped to the organisation it joins. */
-function domainMappingRoleAssignments(matches: ResolvedOrganization[]): JITRoleAssignment[] {
-  return matches.flatMap((match) =>
-    match.auto_assign_role_id
-      ? [
-          {
-            roleId: match.auto_assign_role_id,
-            scopeType: 'org',
-            scopeTarget: `org:${match.org_id}`,
-          },
-        ]
-      : []
-  );
-}
 
 function uniqueRoleAssignments(roles: JITRoleAssignment[]): JITRoleAssignment[] {
   const seen = new Set<string>();
@@ -1054,13 +1033,6 @@ function uniqueRoleAssignments(roles: JITRoleAssignment[]): JITRoleAssignment[] 
     seen.add(key);
     return true;
   });
-}
-
-/** An organisation role is given only for an organisation the user joined here. */
-function isGrantableRole(role: JITRoleAssignment, orgsJoined: string[]): boolean {
-  return (
-    role.scopeType !== 'org' || orgsJoined.some((orgId) => role.scopeTarget === `org:${orgId}`)
-  );
 }
 
 function canonicalJson(value: unknown): string {
@@ -1173,7 +1145,7 @@ async function applyTenantD1JITPlan(
       return {
         linkedIdentityId: assertLinkedIdentityId(active.id),
         roles_assigned: [],
-        orgs_joined: [],
+        groups_joined: [],
       };
     }
   }
@@ -1193,24 +1165,39 @@ async function applyTenantD1JITPlan(
     validation: input.plan.customClaimValidation,
   });
 
-  // Organisations and roles are defined in the tenant metadata database; the user's memberships
-  // and assignments go to its account database.
+  // Groups and roles are defined in the tenant metadata database; the user's memberships and
+  // assignments go to its account database.
   const rbac: TenantRBACDatabases = {
     metadata: (await resolveTenantMetadataContext(env, input.tenantId)).coreDb,
     account: account.coreDb,
   };
-  const orgsJoined: string[] = [];
-  for (const orgId of input.plan.organizationIds) {
-    const joined = await joinOrganization(rbac, input.userId, orgId, input.tenantId, 'member');
-    if (joined.success) orgsJoined.push(orgId);
+  const groupsJoined: string[] = [];
+  for (const join of input.plan.groupJoins) {
+    try {
+      // A membership the rule owns (assignment_source 'rule'); the user's claims are invalidated.
+      await upsertGroupMembership(
+        rbac,
+        input.tenantId,
+        input.userId,
+        { groupId: join.groupId, source: 'rule', sourceRef: `role_assignment_rule:${join.ruleId}` },
+        env.REBAC_CACHE
+      );
+      groupsJoined.push(join.groupId);
+    } catch (error) {
+      // A group deleted since the rule was saved is not joined; the sign-up goes on.
+      if (!(error instanceof Error && error.message === 'group_not_found')) throw error;
+      createLogger()
+        .module('IDENTITY-STITCHING')
+        .warn('JIT rule group not found; not joined', { tenantId: input.tenantId });
+    }
   }
 
   const rolesAssigned: JITProvisioningResult['roles_assigned'] = [];
-  // A matched rule whose role is refused as not assignable is a match that grants nothing: the
-  // default role (for a sign-up no rule matched) is not given in its place.
+  // The default role is for a sign-up no rule matched. A matched rule decides the sign-up even
+  // when it gives no role (it only joins groups), or its role is refused as not assignable: the
+  // default role is not given in its place.
   let refusedRoles = 0;
   for (const role of input.plan.roleAssignments) {
-    if (!isGrantableRole(role, orgsJoined)) continue;
     const assigned = await assignScopedRoleToUser(
       rbac,
       input.userId,
@@ -1235,10 +1222,10 @@ async function applyTenantD1JITPlan(
         tenantId: input.tenantId,
         refusedRoles,
       });
-  } else if (rolesAssigned.length === 0 && input.plan.defaultRoleId) {
+  } else if (input.plan.matchedRules.length === 0 && input.plan.defaultRoleId) {
     // A global role has an empty target, as the admin API and the role readers expect.
-    const scopeTarget = orgsJoined.length > 0 ? `org:${orgsJoined[0]}` : '';
-    const scopeType = orgsJoined.length > 0 ? 'org' : 'global';
+    const scopeTarget = '';
+    const scopeType = 'global';
     const assigned = await assignScopedRoleToUser(
       rbac,
       input.userId,
@@ -1269,11 +1256,17 @@ async function applyTenantD1JITPlan(
   return {
     linkedIdentityId: pendingId,
     roles_assigned: rolesAssigned,
-    orgs_joined: orgsJoined,
+    groups_joined: groupsJoined,
   };
 }
 
-function parseTenantD1JITPlan(value: string): TenantD1JITPlan {
+/**
+ * Reads a stored JIT plan, refusing one outside the limits (at most 64 group joins, 128 role
+ * assignments, 128 matched rules and 128 attributes; roles of a scope and target of this tenant).
+ * The same check runs on the plan built at sign-up, before the account is created, so a plan
+ * outside them is refused there (`external_idp_jit_plan_invalid`) instead of on resume.
+ */
+function parseTenantD1JITPlan(value: string, tenantId: string): TenantD1JITPlan {
   if (new TextEncoder().encode(value).byteLength > 20 * 1024) {
     throw new Error('external_idp_jit_plan_invalid');
   }
@@ -1303,7 +1296,7 @@ function parseTenantD1JITPlan(value: string): TenantD1JITPlan {
       ([key, entry]) => boundedString(key, 128) && boundedString(entry, 16 * 1024)
     );
   if (
-    plan.schemaVersion !== 1 ||
+    plan.schemaVersion !== 2 ||
     Object.keys(plan).length !== 7 ||
     !validation ||
     validation.ok !== true ||
@@ -1321,9 +1314,17 @@ function parseTenantD1JITPlan(value: string): TenantD1JITPlan {
     !boundedStringMap(validation.piiValues) ||
     !boundedStringArray(validation.nonPiiKeysToDelete, 64) ||
     !boundedStringArray(validation.piiKeysToDelete, 64) ||
-    !Array.isArray(plan.organizationIds) ||
-    plan.organizationIds.length > 64 ||
-    !plan.organizationIds.every((entry) => boundedString(entry)) ||
+    !Array.isArray(plan.groupJoins) ||
+    plan.groupJoins.length > 64 ||
+    !(plan.groupJoins as unknown[]).every(
+      (entry) =>
+        entry !== null &&
+        typeof entry === 'object' &&
+        !Array.isArray(entry) &&
+        Object.keys(entry).length === 2 &&
+        boundedString((entry as Record<string, unknown>).groupId) &&
+        boundedString((entry as Record<string, unknown>).ruleId)
+    ) ||
     !Array.isArray(plan.roleAssignments) ||
     plan.roleAssignments.length > 128 ||
     !plan.roleAssignments.every(
@@ -1333,11 +1334,15 @@ function parseTenantD1JITPlan(value: string): TenantD1JITPlan {
         !Array.isArray(value) &&
         Object.keys(value).length === 3 &&
         boundedString((value as Record<string, unknown>).roleId) &&
-        boundedString((value as Record<string, unknown>).scopeType, 64) &&
-        // A global rule role has an empty target.
-        (boundedString((value as Record<string, unknown>).scopeTarget) ||
-          ((value as Record<string, unknown>).scopeType === 'global' &&
-            (value as Record<string, unknown>).scopeTarget === ''))
+        // A scope the readers know, with a target of that scope (a global role has an empty
+        // target); the removed `org` scope is not.
+        typeof (value as Record<string, unknown>).scopeTarget === 'string' &&
+        ((value as Record<string, unknown>).scopeTarget as string).length <= 256 &&
+        roleScopeTargetError(
+          (value as Record<string, unknown>).scopeType,
+          (value as Record<string, unknown>).scopeTarget,
+          tenantId
+        ) === null
     ) ||
     (plan.defaultRoleId !== null && !boundedString(plan.defaultRoleId)) ||
     !boundedStringArray(plan.matchedRules, 128) ||
@@ -1394,7 +1399,7 @@ export async function completeTenantD1ExternalIdpJIT(
       return {
         linkedIdentityId: assertLinkedIdentityId(active.id),
         roles_assigned: [],
-        orgs_joined: [],
+        groups_joined: [],
       };
     }
   }
@@ -1402,7 +1407,8 @@ export async function completeTenantD1ExternalIdpJIT(
     throw new Error('external_idp_jit_pending_identity_not_found');
   }
   const plan = parseTenantD1JITPlan(
-    await decrypt(pending.profileDataEncrypted, getEncryptionKey(env))
+    await decrypt(pending.profileDataEncrypted, getEncryptionKey(env)),
+    input.tenantId
   );
   return applyTenantD1JITPlan(env, { ...input, plan });
 }
@@ -1434,7 +1440,7 @@ async function createTenantD1UserWithJITProvisioning(
     denied: false,
     matched_rules: [],
     roles_assigned: [],
-    orgs_joined: [],
+    groups_joined: [],
     attributes_set: [],
   };
 
@@ -1465,60 +1471,29 @@ async function createTenantD1UserWithJITProvisioning(
     };
   }
 
-  const organizationIds = ruleResult.orgs_to_join.filter((orgId) => orgId !== 'auto');
-  let domainMatches: ResolvedOrganization[] = [];
-  if (emailDomainHash) {
-    const matches = params.jitConfig.join_all_matching_orgs
-      ? await resolveAllOrgsByDomainHash(
-          tenantMetadata.coreDb,
-          emailDomainHash,
-          params.tenantId,
-          params.jitConfig
-        )
-      : [
-          await resolveOrgByDomainHash(
-            tenantMetadata.coreDb,
-            emailDomainHash,
-            params.tenantId,
-            params.jitConfig
-          ),
-        ].filter((value): value is ResolvedOrganization => value !== null);
-    domainMatches = matches;
-    for (const organization of matches) {
-      if (!organizationIds.includes(organization.org_id)) {
-        organizationIds.push(organization.org_id);
-      }
-    }
-  }
-  if (organizationIds.length === 0 && !params.jitConfig.allow_user_without_org) {
-    return {
-      ...result,
-      denied: true,
-      deny_code: 'access_denied',
-      deny_description: 'No organization found for this user and standalone users are not allowed.',
-      matched_rules: ruleResult.matched_rules,
-    };
-  }
+  // Joining a group is the matched rules' (join_group); no entry is refused for want of a group.
+  const groupJoins = ruleResult.groups_to_join.map((join) => ({
+    groupId: join.group_id,
+    ruleId: join.rule_id,
+  }));
 
   const roleAssignments = uniqueRoleAssignments([
     ...ruleResult.roles_to_assign
       .map((role) => ({
         roleId: role.role_id,
         scopeType: role.scope_type,
-        scopeTarget:
-          role.scope_target === 'auto' && organizationIds.length > 0
-            ? `org:${organizationIds[0]}`
-            : role.scope_target,
+        scopeTarget: role.scope_target,
       }))
-      .filter((role) => role.scopeTarget !== 'auto')
-      // Readers treat a scoped role without a target as tenant-wide, so it is never given.
-      .filter((role) => role.scopeType === 'global' || role.scopeTarget.length > 0),
-    ...domainMappingRoleAssignments(domainMatches),
+      // Only a scope the readers know, with a target of that scope: a scoped role without a
+      // target, or of the removed `org` scope, is never given.
+      .filter(
+        (role) => roleScopeTargetError(role.scopeType, role.scopeTarget, params.tenantId) === null
+      ),
   ]);
   const plan: TenantD1JITPlan = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     customClaimValidation,
-    organizationIds,
+    groupJoins,
     roleAssignments,
     // An empty role ID is none.
     defaultRoleId: params.jitConfig.default_role_id || null,
@@ -1529,6 +1504,9 @@ async function createTenantD1UserWithJITProvisioning(
   if (new TextEncoder().encode(planJson).byteLength > 20 * 1024) {
     throw new Error('external_idp_jit_plan_too_large');
   }
+  // The limits the resume reads the plan with, checked before the account is requested: a plan
+  // it would refuse (more than 64 group joins, say) is refused now, not after the account exists.
+  parseTenantD1JITPlan(planJson, params.tenantId);
   const identityDigest = await sha256Hex(
     `${params.tenantId}\u0000${params.identityProviderId}\u0000${params.providerUserId}`
   );

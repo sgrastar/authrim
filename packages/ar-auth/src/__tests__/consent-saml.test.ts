@@ -121,8 +121,8 @@ describe('the SAML consent screen', () => {
       protocol: 'saml',
       client: { client_id: 'https://sp.example.edu/sp', client_name: 'Library' },
       scopes: [],
-      organizations: [],
     });
+    expect(body).not.toHaveProperty('organizations');
     expect(body.information_release.items).toEqual([
       { name: NAMEID, label: 'persistent', kind: 'nameid', required: true, deferred: true },
       { name: MAIL, label: 'Email', kind: 'attribute', required: true, value: 'u@example.edu' },

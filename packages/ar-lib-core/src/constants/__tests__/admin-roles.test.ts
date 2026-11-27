@@ -8,6 +8,7 @@ import {
   ADMIN_ROLE_DEFINITIONS,
   ADMIN_ROLE_GROUPS,
   ADMIN_ROLES,
+  adminMaxGrantTier,
   isReservedAdminRoleName,
   isStandardAdminRole,
 } from '../admin-roles';
@@ -499,5 +500,25 @@ describe('tenant provisioning and deletion permissions in the built-in roles', (
       expect(role.permissions).not.toContain(ADMIN_PERMISSIONS.TENANT_PROVISION);
       expect(role.permissions).not.toContain(ADMIN_PERMISSIONS.TENANT_DELETE);
     }
+  });
+});
+
+describe('end-user role delegation tiers of the admin roles', () => {
+  it('gives each standard role an explicit tier: super admin 3, tenant admin 2, the others 1', () => {
+    expect(
+      Object.fromEntries(ADMIN_ROLE_DEFINITIONS.map((role) => [role.name, role.maxGrantTier]))
+    ).toEqual({
+      [ADMIN_ROLES.SUPER_ADMIN]: 3,
+      [ADMIN_ROLES.TENANT_ADMIN]: 2,
+      [ADMIN_ROLES.SUPPORT]: 1,
+      [ADMIN_ROLES.VIEWER]: 1,
+    });
+  });
+
+  it('takes the highest tier of the roles held, 1 for a custom role, 0 without a role', () => {
+    expect(adminMaxGrantTier([])).toBe(0);
+    expect(adminMaxGrantTier(['custom_auditor'])).toBe(1);
+    expect(adminMaxGrantTier([ADMIN_ROLES.VIEWER, ADMIN_ROLES.TENANT_ADMIN])).toBe(2);
+    expect(adminMaxGrantTier([ADMIN_ROLES.TENANT_ADMIN, ADMIN_ROLES.SUPER_ADMIN])).toBe(3);
   });
 });

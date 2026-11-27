@@ -8,7 +8,7 @@ const cacheKey = 'rebac:user:alice#viewer@document:report';
 function storage(options: { direct?: boolean; inherited?: boolean } = {}) {
   const queryOne = vi.fn(async (sql: string) => {
     if (sql.includes('SELECT COUNT(*)')) return { count: options.direct ? 1 : 0 };
-    if (sql.includes('WITH RECURSIVE')) return options.inherited ? { found: 1 } : null;
+    if (sql.includes('FROM role_assignments ra')) return options.inherited ? { found: 1 } : null;
     throw new Error('unexpected query');
   });
   const query = vi.fn(async (_sql: string, _params?: unknown[]): Promise<unknown[]> => []);
@@ -240,7 +240,7 @@ describe('BuiltinPolicyInfra rule loading', () => {
       conditions: null,
       action: 'allow',
       roles_to_assign: JSON.stringify(['reader']),
-      orgs_to_join: JSON.stringify(['org']),
+      groups_to_join: JSON.stringify(['org']),
       attributes_to_set: JSON.stringify([{ key: 'k', value: 1 }]),
       deny_reason: null,
       ...overrides,
@@ -258,7 +258,7 @@ describe('BuiltinPolicyInfra rule loading', () => {
     expect(await evaluate([row()])).toEqual({
       matched_rules: ['r1'],
       roles_to_assign: ['reader'],
-      orgs_to_join: ['org'],
+      groups_to_join: ['org'],
       attributes_to_set: [{ key: 'k', value: 1 }],
       denied: false,
     });
@@ -331,19 +331,19 @@ describe('BuiltinPolicyInfra rule loading', () => {
     const result = await evaluate([
       row({
         roles_to_assign: '[1]',
-        orgs_to_join: 'nope',
+        groups_to_join: 'nope',
         attributes_to_set: JSON.stringify([{ key: 'a' }, { value: 1 }, 'x']),
       }),
       row({ id: 'r2', attributes_to_set: JSON.stringify([{ key: 'k', value: null }]) }),
       row({
         id: 'r3',
         roles_to_assign: JSON.stringify(['a', 'b']),
-        orgs_to_join: null,
+        groups_to_join: null,
         attributes_to_set: null,
       }),
     ]);
     expect(result.roles_to_assign).toEqual(['reader', 'a', 'b']);
-    expect(result.orgs_to_join).toEqual(['org']);
+    expect(result.groups_to_join).toEqual(['org']);
     expect(result.attributes_to_set).toEqual([{ key: 'k', value: null }]);
   });
 
@@ -419,7 +419,7 @@ describe('BuiltinPolicyInfra rule loading', () => {
           conditions: [{ field: 'f', operator: 'in', value: 'not-an-array' }],
           action: 'deny',
           roles_to_assign: [],
-          orgs_to_join: [],
+          groups_to_join: [],
           attributes_to_set: [],
         },
       ]),
@@ -461,7 +461,7 @@ describe('BuiltinPolicyInfra rule conditions', () => {
         conditions: JSON.stringify([{ field, operator, value }]),
         action: 'allow',
         roles_to_assign: null,
-        orgs_to_join: null,
+        groups_to_join: null,
         attributes_to_set: null,
         deny_reason: null,
       },

@@ -382,9 +382,6 @@ const translation = {
 	consent_scope_phone: 'अपना फ़ोन नंबर देखें',
 	consent_scope_address: 'अपना पता देखें',
 	consent_scope_offline_access: 'जब आप ऐप का उपयोग नहीं कर रहे हों तो अपने खाते तक पहुँचें',
-	consent_organizationSelect: 'संगठन चुनें',
-	consent_primaryOrg: 'प्राथमिक',
-	consent_currentOrganization: 'वर्तमान संगठन',
 	consent_actingOnBehalfOf: '{name} की ओर से कार्य करना',
 	consent_delegatedAccess: 'प्रत्यायोजित पहुँच',
 	consent_delegatedAccessWarning:

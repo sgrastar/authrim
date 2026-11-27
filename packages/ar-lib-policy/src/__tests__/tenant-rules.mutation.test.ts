@@ -41,7 +41,7 @@ function context(options: {
   roles?: SubjectRole[];
   type?: string;
   id?: string;
-  orgId?: string;
+  groupIds?: string[];
   ownerId?: string;
   action?: string;
 }): PolicyContext {
@@ -50,7 +50,7 @@ function context(options: {
     resource: {
       type: options.type ?? 'reports',
       id: options.id ?? 'r1',
-      orgId: options.orgId,
+      groupIds: options.groupIds,
       ownerId: options.ownerId,
     },
     action: { name: options.action ?? 'read' },
@@ -296,22 +296,22 @@ describe('evaluateTenantRules', () => {
 });
 
 describe('evaluateTenantRules: role assignments that hold for the target', () => {
-  const orgRule = rule({
-    conditions: [{ type: 'has_role', params: { role: 'admin', scope: 'org' } }],
+  const groupRule = rule({
+    conditions: [{ type: 'has_role', params: { role: 'admin', scope: 'group' } }],
   });
   const resourceRule = rule({
     conditions: [{ type: 'has_role', params: { role: 'admin', scope: 'resource' } }],
   });
-  const orgRole: SubjectRole = { name: 'admin', scope: 'org', scopeTarget: 'org:o1' };
+  const groupRole: SubjectRole = { name: 'admin', scope: 'group', scopeTarget: 'group:o1' };
 
-  it('counts an organization assignment only for that organization', () => {
-    expect(evaluateTenantRules([orgRule], context({ roles: [orgRole], orgId: 'o1' })).allowed).toBe(
-      true
-    );
-    expect(evaluateTenantRules([orgRule], context({ roles: [orgRole], orgId: 'o2' })).allowed).toBe(
-      false
-    );
-    expect(evaluateTenantRules([orgRule], context({ roles: [orgRole] })).allowed).toBe(false);
+  it('counts a group assignment only for a resource of that group', () => {
+    expect(
+      evaluateTenantRules([groupRule], context({ roles: [groupRole], groupIds: ['o1'] })).allowed
+    ).toBe(true);
+    expect(
+      evaluateTenantRules([groupRule], context({ roles: [groupRole], groupIds: ['o2'] })).allowed
+    ).toBe(false);
+    expect(evaluateTenantRules([groupRule], context({ roles: [groupRole] })).allowed).toBe(false);
   });
 
   it('counts a resource assignment for the resource, typed or not', () => {
@@ -336,9 +336,9 @@ describe('evaluateTenantRules: role assignments that hold for the target', () =>
   });
 
   it('always counts a global assignment', () => {
-    expect(evaluateTenantRules([rule()], context({ roles: [admin], orgId: 'o9' })).allowed).toBe(
-      true
-    );
+    expect(
+      evaluateTenantRules([rule()], context({ roles: [admin], groupIds: ['o9'] })).allowed
+    ).toBe(true);
   });
 });
 
@@ -380,16 +380,16 @@ describe('evaluateTenantRules: a deny that needs a target the request does not g
     });
   });
 
-  it('does not grant when a role deny needs an organization the resource lacks', () => {
+  it('does not grant when a role deny needs the groups the resource lacks', () => {
     for (const type of ['has_role', 'has_any_role', 'has_all_roles'] as const) {
-      expect(evaluateTenantRules([roleDeny(type, 'org')], context({}))).toStrictEqual({
+      expect(evaluateTenantRules([roleDeny(type, 'group')], context({}))).toStrictEqual({
         allowed: false,
-        reason: "A deny rule needs the resource's organization, which the check did not give",
+        reason: "A deny rule needs the resource's groups, which the check did not give",
         decidedBy: 'deny_role',
       });
-      expect(evaluateTenantRules([roleDeny(type, 'org')], context({ orgId: 'o1' })).reason).toBe(
-        'No matching rules found, using default decision: deny'
-      );
+      expect(
+        evaluateTenantRules([roleDeny(type, 'group')], context({ groupIds: ['o1'] })).reason
+      ).toBe('No matching rules found, using default decision: deny');
     }
   });
 
@@ -416,7 +416,7 @@ describe('evaluateTenantRules: a deny that needs a target the request does not g
   it('is not stopped by a condition type that has no role scope', () => {
     const attributeDeny = rule({
       effect: 'deny',
-      conditions: [{ type: 'attribute_exists', params: { name: 'tier', scope: 'org' } }],
+      conditions: [{ type: 'attribute_exists', params: { name: 'tier', scope: 'group' } }],
     });
     expect(evaluateTenantRules([attributeDeny], context({})).decidedBy).toBe('default');
   });

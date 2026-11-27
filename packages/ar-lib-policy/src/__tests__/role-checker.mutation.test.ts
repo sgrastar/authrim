@@ -45,45 +45,45 @@ describe('hasRole', () => {
 
   it('lets a global role satisfy any scope', () => {
     const roles: SubjectRole[] = [{ name: 'admin', scope: 'global' }];
-    expect(hasRole(roles, 'admin', { scope: 'org', scopeTarget: 'org:1' })).toBe(true);
+    expect(hasRole(roles, 'admin', { scope: 'group', scopeTarget: 'group:1' })).toBe(true);
     expect(hasRole(roles, 'admin', { scope: 'resource' })).toBe(true);
   });
 
   it('matches a scoped role on its scope, and on its target when one is asked for', () => {
-    const roles: SubjectRole[] = [{ name: 'admin', scope: 'org', scopeTarget: 'org:1' }];
-    expect(hasRole(roles, 'admin', { scope: 'org' })).toBe(true);
-    expect(hasRole(roles, 'admin', { scope: 'org', scopeTarget: 'org:1' })).toBe(true);
-    expect(hasRole(roles, 'admin', { scope: 'org', scopeTarget: 'org:2' })).toBe(false);
+    const roles: SubjectRole[] = [{ name: 'admin', scope: 'group', scopeTarget: 'group:1' }];
+    expect(hasRole(roles, 'admin', { scope: 'group' })).toBe(true);
+    expect(hasRole(roles, 'admin', { scope: 'group', scopeTarget: 'group:1' })).toBe(true);
+    expect(hasRole(roles, 'admin', { scope: 'group', scopeTarget: 'group:2' })).toBe(false);
     expect(hasRole(roles, 'admin', { scope: 'resource' })).toBe(false);
     expect(hasRole(roles, 'admin')).toBe(false);
     expect(hasRole(roles, 'admin', { scope: 'global' })).toBe(false);
   });
 
   it('does not count a scoped role without a target for a targeted request', () => {
-    const roles: SubjectRole[] = [{ name: 'admin', scope: 'org' }];
-    expect(hasRole(roles, 'admin', { scope: 'org', scopeTarget: 'org:1' })).toBe(false);
-    expect(hasRole(roles, 'admin', { scope: 'org' })).toBe(true);
+    const roles: SubjectRole[] = [{ name: 'admin', scope: 'group' }];
+    expect(hasRole(roles, 'admin', { scope: 'group', scopeTarget: 'group:1' })).toBe(false);
+    expect(hasRole(roles, 'admin', { scope: 'group' })).toBe(true);
   });
 });
 
 describe('hasAnyRole and hasAllRoles', () => {
   const roles: SubjectRole[] = [
     { name: 'a', scope: 'global' },
-    { name: 'b', scope: 'org', scopeTarget: 'org:1' },
+    { name: 'b', scope: 'group', scopeTarget: 'group:1' },
   ];
 
   it('any needs one of the roles', () => {
     expect(hasAnyRole(roles, ['x', 'a'])).toBe(true);
     expect(hasAnyRole(roles, ['x', 'y'])).toBe(false);
     expect(hasAnyRole(roles, [])).toBe(false);
-    expect(hasAnyRole(roles, ['b'], { scope: 'org', scopeTarget: 'org:1' })).toBe(true);
+    expect(hasAnyRole(roles, ['b'], { scope: 'group', scopeTarget: 'group:1' })).toBe(true);
     expect(hasAnyRole(roles, ['b'])).toBe(false);
   });
 
   it('all needs every one of the roles', () => {
     expect(hasAllRoles(roles, ['a'])).toBe(true);
     expect(hasAllRoles(roles, ['a', 'x'])).toBe(false);
-    expect(hasAllRoles(roles, ['a', 'b'], { scope: 'org' })).toBe(true);
+    expect(hasAllRoles(roles, ['a', 'b'], { scope: 'group' })).toBe(true);
     expect(hasAllRoles(roles, ['a', 'b'])).toBe(false);
     expect(hasAllRoles(roles, [])).toBe(true);
   });
@@ -92,7 +92,7 @@ describe('hasAnyRole and hasAllRoles', () => {
 describe('isAdmin', () => {
   it('needs the admin role', () => {
     expect(isAdmin([{ name: 'admin', scope: 'global' }])).toBe(true);
-    expect(isAdmin([{ name: 'admin', scope: 'org', scopeTarget: 'org:1' }])).toBe(false);
+    expect(isAdmin([{ name: 'admin', scope: 'group', scopeTarget: 'group:1' }])).toBe(false);
     expect(isAdmin([{ name: 'end_user', scope: 'global' }])).toBe(false);
     expect(isAdmin({ id: 'u', roles: [{ name: 'admin', scope: 'global' }] })).toBe(true);
   });
@@ -101,11 +101,11 @@ describe('isAdmin', () => {
 describe('getActiveRoles', () => {
   const roles: SubjectRole[] = [
     { name: 'global_role', scope: 'global' },
-    { name: 'org_role', scope: 'org', scopeTarget: 'org:1' },
-    { name: 'org_role_2', scope: 'org', scopeTarget: 'org:2' },
+    { name: 'org_role', scope: 'group', scopeTarget: 'group:1' },
+    { name: 'org_role_2', scope: 'group', scopeTarget: 'group:2' },
     { name: 'resource_role', scope: 'resource', scopeTarget: 'resource:r' },
     { name: 'expired', scope: 'global', expiresAt: NOW },
-    { name: 'global_role', scope: 'org', scopeTarget: 'org:1' },
+    { name: 'global_role', scope: 'group', scopeTarget: 'group:1' },
   ];
 
   it('lists every live role once, in order, when no scope is asked for', () => {
@@ -119,7 +119,7 @@ describe('getActiveRoles', () => {
   });
 
   it('keeps global roles and those of the asked scope', () => {
-    expect(getActiveRoles(roles, { now: NOW, scope: 'org' })).toEqual([
+    expect(getActiveRoles(roles, { now: NOW, scope: 'group' })).toEqual([
       'global_role',
       'org_role',
       'org_role_2',
@@ -132,17 +132,17 @@ describe('getActiveRoles', () => {
   });
 
   it('keeps global roles and those of the asked target', () => {
-    expect(getActiveRoles(roles, { now: NOW, scope: 'org', scopeTarget: 'org:1' })).toEqual([
+    expect(getActiveRoles(roles, { now: NOW, scope: 'group', scopeTarget: 'group:1' })).toEqual([
       'global_role',
       'org_role',
     ]);
-    expect(getActiveRoles(roles, { now: NOW, scope: 'org', scopeTarget: 'org:9' })).toEqual([
+    expect(getActiveRoles(roles, { now: NOW, scope: 'group', scopeTarget: 'group:9' })).toEqual([
       'global_role',
     ]);
   });
 
   it('ignores a target when no scope is asked for', () => {
-    expect(getActiveRoles(roles, { now: NOW, scopeTarget: 'org:9' })).toHaveLength(4);
+    expect(getActiveRoles(roles, { now: NOW, scopeTarget: 'group:9' })).toHaveLength(4);
   });
 
   it('ends a role at its expiry, exactly, and reads the current time by default', () => {
@@ -167,9 +167,7 @@ describe('subjectFromClaims', () => {
         sub: 'user_1',
         authrim_roles: ['end_user', 'billing'],
         authrim_user_type: 'end_user',
-        authrim_org_id: 'org_1',
-        authrim_plan: 'professional',
-        authrim_org_type: 'enterprise',
+        authrim_groups: [{ id: 'grp_1' }, { id: 'grp_2' }],
       })
     ).toStrictEqual({
       id: 'user_1',
@@ -178,9 +176,7 @@ describe('subjectFromClaims', () => {
         { name: 'end_user', scope: 'global' },
         { name: 'billing', scope: 'global' },
       ],
-      orgId: 'org_1',
-      plan: 'professional',
-      orgType: 'enterprise',
+      groupIds: ['grp_1', 'grp_2'],
     });
   });
 
@@ -189,9 +185,6 @@ describe('subjectFromClaims', () => {
       id: '',
       userType: undefined,
       roles: [],
-      orgId: undefined,
-      plan: undefined,
-      orgType: undefined,
     });
   });
 });

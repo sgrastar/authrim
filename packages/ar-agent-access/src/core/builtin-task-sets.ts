@@ -17,7 +17,7 @@ export interface BuiltinAgentTaskSetPreset {
   id: string;
   name: BuiltinAgentTaskSetName;
   description: string;
-  version: 8;
+  version: 9;
   catalogVersion: 'admin-agent-access-v9';
   expectedDigest: string;
   toolIds: readonly string[];
@@ -35,7 +35,6 @@ const GENERAL_READ_TOOLS = [
   'admin.read.agent-grants.list',
   'admin.read.agent-access.explain',
   'admin.read.identity-providers.inspect',
-  'admin.read.authorization.organizations',
   'admin.read.authorization.roles',
   'admin.read.authorization.policies',
   'admin.read.flows.inspect',
@@ -96,7 +95,7 @@ function preset(
     id: `builtin_agent_task_set_${name}`,
     name,
     description,
-    version: 8 as const,
+    version: 9 as const,
     catalogVersion: 'admin-agent-access-v9' as const,
     expectedDigest,
     toolIds: Object.freeze([...new Set(toolIds)]),
@@ -108,7 +107,7 @@ export const BUILTIN_AGENT_TASK_SET_PRESETS: readonly BuiltinAgentTaskSetPreset[
     'read_only_inspector',
     'Inspect clients, identity configuration, authorization, protocol security, sessions, integrations, audit, and Agent Access configuration without user data.',
     GENERAL_READ_TOOLS,
-    'u49bs50zVMDoRNR_D2zRJ9OWBb_HEReUTdViarG08Uc'
+    'tUOYK8CTMY_dpJv039XAP4_gWeLV0uJfLcN-IY7ifBU'
   ),
   preset(
     'user_data_reader',
@@ -120,13 +119,13 @@ export const BUILTIN_AGENT_TASK_SET_PRESETS: readonly BuiltinAgentTaskSetPreset[
     'diagnostics_operator',
     'Inspect tenant state and configuration Plan evidence for diagnosis and verification.',
     [...GENERAL_READ_TOOLS, ...CONFIGURATION_READ_TOOLS],
-    'L5PMVYmQNcv1TvqUgMY7P75Pvs02tq4Kze1zHrZL4Zc'
+    '8OtNxiHhimpXRGqvJ3b516wH_nWzy0v1MOTRJQzbb8s'
   ),
   preset(
     'configuration_designer',
     'Inspect configuration and create, validate, review, and verify immutable Plans without apply.',
     [...GENERAL_READ_TOOLS, ...CONFIGURATION_READ_TOOLS, ...CONFIGURATION_DESIGN_TOOLS],
-    'JQ_DD8EaPb2bV_KvOd0BM1wrQRH7Pe6RckXIf0321YQ'
+    'bNYwCrTO8I8pqlORCz6TGoN0zlLGimQ_Lfl1EGCcSXs'
   ),
   preset(
     'configuration_operator',
@@ -137,7 +136,7 @@ export const BUILTIN_AGENT_TASK_SET_PRESETS: readonly BuiltinAgentTaskSetPreset[
       ...CONFIGURATION_DESIGN_TOOLS,
       ...CONFIGURATION_APPLY_TOOLS,
     ],
-    'IKzJzvGZY056MZMpHd3RloaZH4joF49ANVoDHntY-P4'
+    'Ww-UYAENvFVQYxrPdoM8-0k3LycEl-RK2FgV4h3ueyM'
   ),
   preset(
     'bulk_configuration_operator',
@@ -149,7 +148,7 @@ export const BUILTIN_AGENT_TASK_SET_PRESETS: readonly BuiltinAgentTaskSetPreset[
       ...CONFIGURATION_APPLY_TOOLS,
       ...BULK_TOOLS,
     ],
-    'SOMb-b3fNef_nyGvvt4FHn-z0XBTsaj9hZw42UNNC1U'
+    'UV56vvPKc_sfWkfDvwqQMo968xLGcsDhbLs-LRJtRT4'
   ),
 ]);
 

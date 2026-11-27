@@ -10,7 +10,6 @@ const mocks = vi.hoisted(() => ({
   resolveStores: vi.fn(),
   audit: vi.fn(),
   removeRoleAssignment: vi.fn(),
-  removeOrganizationMembership: vi.fn(),
   suspendAccount: vi.fn(),
   lastLoginAt: vi.fn(),
   reviewsAdapter: null as unknown,
@@ -73,7 +72,6 @@ vi.mock('../access-revocation', () => ({
     }
   },
   removeRoleAssignment: mocks.removeRoleAssignment,
-  removeOrganizationMembership: mocks.removeOrganizationMembership,
   suspendAccount: mocks.suspendAccount,
 }));
 
@@ -101,9 +99,14 @@ const REPO_ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
 const CORE_SCHEMA = [
   readRenderedMigrationSql(resolve(REPO_ROOT, 'migrations/core/d1'), '001_0_5_0_core_baseline.sql'),
   readRenderedMigrationSql(resolve(REPO_ROOT, 'migrations/core/d1'), '015_end_user_groups.sql'),
+  readRenderedMigrationSql(resolve(REPO_ROOT, 'migrations/core/d1'), '016_invitation_group.sql'),
   readRenderedMigrationSql(
     resolve(REPO_ROOT, 'migrations/core/d1'),
     '017_service_group_scim_membership_inputs.sql'
+  ),
+  readRenderedMigrationSql(
+    resolve(REPO_ROOT, 'migrations/core/d1'),
+    '018_remove_organizations.sql'
   ),
 ];
 
@@ -155,13 +158,13 @@ function sqliteStore() {
 
 type Store = ReturnType<typeof sqliteStore>;
 
-function addRole(store: Store, id: string, hierarchy = 10) {
+function addRole(store: Store, id: string, tier = 1) {
   store.db
     .prepare(
-      `INSERT INTO roles (id, tenant_id, name, permissions_json, hierarchy_level, created_at, updated_at)
+      `INSERT INTO roles (id, tenant_id, name, permissions_json, grant_tier, created_at, updated_at)
        VALUES (?, 'tenant-a', ?, '[]', ?, 0, 0)`
     )
-    .run(id, id, hierarchy);
+    .run(id, id, tier);
 }
 
 function assign(store: Store, id: string, userId: string, roleId = 'role-admin') {
@@ -203,7 +206,7 @@ function context(
       'adminAuth',
       {
         userId: 'admin-1',
-        hierarchyLevel: 50,
+        maxGrantTier: 2,
         permissions: options.permissions ?? ALL_PERMISSIONS,
       },
     ],
@@ -236,8 +239,8 @@ describe('access reviews', () => {
     addRole(reviews, 'role-admin');
     reviews.db
       .prepare(
-        `INSERT INTO organizations (id, tenant_id, name, created_at, updated_at)
-         VALUES ('org-1', 'tenant-a', 'org-1', 0, 0)`
+        `INSERT INTO "groups" (id, tenant_id, group_key, display_name, created_at, updated_at)
+         VALUES ('grp-1', 'tenant-a', 'one', 'Group One', 0, 0)`
       )
       .run();
     // Roles are defined in the metadata database (`reviews`); the stores hold assignments only.
@@ -255,7 +258,6 @@ describe('access reviews', () => {
     ]);
     mocks.audit.mockResolvedValue(undefined);
     mocks.removeRoleAssignment.mockResolvedValue('removed');
-    mocks.removeOrganizationMembership.mockResolvedValue('removed');
     mocks.suspendAccount.mockResolvedValue('suspended');
     mocks.lastLoginAt.mockResolvedValue(null);
     mocks.routed = false;
@@ -305,6 +307,116 @@ describe('access reviews', () => {
         ['user-2', 'ra-2', 'DB_USERS_1'],
       ])
     );
+  });
+
+  it('reviews the manual members of a group and takes the membership away in its store', async () => {
+    const join = (store: Store, id: string, userId: string, source: string) =>
+      store.db
+        .prepare(
+          `INSERT INTO group_memberships (id, tenant_id, group_id, subject_id, assignment_source,
+             source_ref, created_at, updated_at)
+           VALUES (?, 'tenant-a', 'grp-1', ?, ?, ?, 0, 0)`
+        )
+        .run(id, userId, source, source === 'manual' ? '' : id);
+    join(db, 'gm-1', 'user-1', 'manual');
+    // A SCIM membership is SCIM's to take away: not an item.
+    join(users1, 'gm-2', 'user-2', 'scim');
+    const response = await createAccessReview(
+      context({ body: { name: 'Group one', scope: 'group', scope_value: 'grp-1' } })
+    );
+    expect(response.status).toBe(201);
+    const review = await json(response);
+    expect(
+      items(reviews).map((item) => [item.user_id, item.permission_type, item.store_ref])
+    ).toEqual([['user-1', 'group', 'DB']]);
+    await decide(review.review_id, [items(reviews)[0].id], 'revoked');
+    const done = await json(
+      await completeAccessReview(context({ params: { id: review.review_id } }))
+    );
+    expect(done).toMatchObject({ completed: true, applied: 1, failed: 0 });
+    expect(
+      db.db.prepare("SELECT lifecycle_state FROM group_memberships WHERE id = 'gm-1'").get()
+    ).toEqual({ lifecycle_state: 'revoked' });
+    expect(mocks.audit).toHaveBeenCalledWith(
+      expect.anything(),
+      'group_membership.removed',
+      'group',
+      'grp-1',
+      expect.objectContaining({ user_id: 'user-1' }),
+      'info',
+      expect.any(String),
+      expect.any(Number)
+    );
+    expect(
+      (
+        await createAccessReview(
+          context({ body: { name: 'x', scope: 'group', scope_value: 'no' } })
+        )
+      ).status
+    ).toBe(400);
+  });
+
+  it('reviews only the group memberships in effect now', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const join = (
+      id: string,
+      userId: string,
+      times: [number | null, number | null, number | null]
+    ) =>
+      db.db
+        .prepare(
+          `INSERT INTO group_memberships (id, tenant_id, group_id, subject_id, assignment_source,
+             source_ref, starts_at, expires_at, stale_after, created_at, updated_at)
+           VALUES (?, 'tenant-a', 'grp-1', ?, 'manual', '', ?, ?, ?, 0, 0)`
+        )
+        .run(id, userId, ...times);
+    join('gm-now', 'user-1', [now - 60, now + 3600, null]);
+    join('gm-later', 'user-2', [now + 3600, null, null]);
+    join('gm-ended', 'user-3', [null, now - 60, null]);
+    join('gm-stale', 'user-4', [null, null, now - 60]);
+    const response = await createAccessReview(
+      context({ body: { name: 'Group one', scope: 'group', scope_value: 'grp-1' } })
+    );
+    expect(response.status).toBe(201);
+    expect(items(reviews).map((item) => item.user_id)).toEqual(['user-1']);
+  });
+
+  it('completes an organisation item of a review made before organisations were removed', async () => {
+    db.db
+      .prepare(
+        `INSERT INTO group_memberships (id, tenant_id, group_id, subject_id, assignment_source,
+           source_ref, created_at, updated_at)
+         VALUES ('gm-1', 'tenant-a', 'grp-1', 'user-1', 'manual', '', 0, 0)`
+      )
+      .run();
+    const response = await createAccessReview(
+      context({ body: { name: 'Old', scope: 'group', scope_value: 'grp-1' } })
+    );
+    const review = await json(response);
+    // As stored by a review made before migration 018.
+    reviews.db
+      .prepare(
+        `UPDATE access_review_items SET permission_type = 'organization',
+           permission_value = 'org-1', entitlement_ref = 'org-1:user-1'`
+      )
+      .run();
+    await decide(review.review_id, [items(reviews)[0].id], 'revoked');
+    const done = await json(
+      await completeAccessReview(context({ params: { id: review.review_id } }))
+    );
+    expect(done).toMatchObject({ completed: true, applied: 1, failed: 0 });
+    expect(items(reviews)[0]).toMatchObject({
+      apply_status: 'applied',
+      apply_error: 'skipped_retired',
+    });
+    // Neither the account nor its sessions are touched, and nothing is taken away.
+    expect(mocks.suspendAccount).not.toHaveBeenCalled();
+    expect(mocks.removeRoleAssignment).not.toHaveBeenCalled();
+    expect(
+      db.db
+        .prepare("SELECT lifecycle_state FROM group_memberships WHERE subject_id = 'user-1'")
+        .get()
+    ).toEqual({ lifecycle_state: 'active' });
   });
 
   it('reads a database named by two assignments once', async () => {
@@ -498,9 +610,9 @@ describe('access reviews', () => {
     expect(items(reviews)[0]).toMatchObject({ apply_error: 'insufficient_permissions' });
     expect(mocks.removeRoleAssignment).not.toHaveBeenCalled();
 
-    // A role above the admin (as the metadata database defines it, the account stores holding
-    // only the assignments): refused as the Admin API refuses it.
-    reviews.db.prepare("UPDATE roles SET hierarchy_level = 90 WHERE id = 'role-admin'").run();
+    // A role above the admin's grant tier (as the metadata database defines it, the account
+    // stores holding only the assignments): refused as the Admin API refuses it.
+    reviews.db.prepare("UPDATE roles SET grant_tier = 3 WHERE id = 'role-admin'").run();
     const again = await json(
       await completeAccessReview(context({ params: { id: review.review_id } }))
     );

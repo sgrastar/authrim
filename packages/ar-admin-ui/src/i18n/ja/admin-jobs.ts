@@ -121,7 +121,6 @@ const adminJobs = {
 	admin_jobs_type_users_import: 'User Import',
 	admin_jobs_type_users_bulk_update: 'Bulk User Update',
 	admin_jobs_type_report_generation: 'Report Generation',
-	admin_jobs_type_org_bulk_members: 'Organization Bulk Members',
 	admin_jobs_type_tenant_delete: 'Tenant Deletion',
 	admin_jobs_type_tenant_database_export: 'Tenant DB Export',
 	admin_jobs_type_tenant_database_restore_dry_run: 'Tenant DB Restore Dry-Run',

@@ -94,7 +94,6 @@ export const ja = {
 	'nav.platform': 'プラットフォーム',
 	'nav.users.all': 'すべてのユーザー',
 	'nav.users.agents': 'エージェント',
-	'nav.users.orgs': '組織',
 	'nav.users.serviceGroups': 'サービスグループ',
 	'nav.users.lifecycle': 'アカウントの保持',
 	'nav.users.sessions': 'セッション',
@@ -163,23 +162,6 @@ export const ja = {
 	'nav.set.signingKeys': '署名鍵',
 	'nav.set.runtime': 'ランタイム / キャッシュ',
 	'nav.plat.storage': 'ストレージ構成',
-	'retire.org.title': 'サービスグループへ統合予定',
-	'retire.org.desc':
-		'この領域はサービスグループが引き受けます。下の 4 つが解消したらナビから削除します。',
-	'retire.org.1.t': 'ロールのスコープ',
-	'retire.org.1.d':
-		'ScopeType に org があり、「この組織の中でだけ管理者」という割り当てが型の上で成立しています。グループを対象にできるスコープが要ります。',
-	'retire.org.2.t': '主たる所属',
-	'retire.org.2.d':
-		'メンバーシップが is_primary を持ちます。条件式は合致する全グループを返すので、どれが主かを決める仕組みが要ります。',
-	'retire.org.3.t': 'アクセストークンの既定クレーム',
-	'retire.org.3.d':
-		'org_id と org_type が DEFAULT_ACCESS_TOKEN_CLAIMS に入っています。連携先が読んでいる可能性があるので、移行の段取りが要ります。',
-	'retire.org.4.t': '組織に紐づく属性',
-	'retire.org.4.d':
-		'org_type（distributor / enterprise / department）と契約プランが組織にぶら下がっています。グループに属性を持たせるか、別で管理するかの判断が要ります。',
-	'retire.org.foot':
-		'ドメインマッピング・階層・ロール付与は、サービスグループの条件式（normalize: domain）、入れ子（op: member）、scimRoleId で既に置き換えられます。',
 	'theme.system': 'テーマ：OS に合わせる',
 	'theme.light': 'テーマ：ライト',
 	'theme.dark': 'テーマ：ダーク',

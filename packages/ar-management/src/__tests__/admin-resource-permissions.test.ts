@@ -64,9 +64,6 @@ function createApp(permissions: string[]) {
   app.get('/api/admin/attributes', (c) => c.json({ ok: true }));
   app.post('/api/admin/attributes', (c) => c.json({ ok: true }));
   app.delete('/api/admin/attributes/attribute-1', (c) => c.json({ ok: true }));
-  app.get('/api/admin/org-domain-mappings', (c) => c.json({ ok: true }));
-  app.post('/api/admin/org-domain-mappings', (c) => c.json({ ok: true }));
-  app.post('/api/admin/org-domain-mappings/verify', (c) => c.json({ ok: true }));
   app.get('/api/admin/external-providers', (c) => c.json({ ok: true }));
   app.post('/api/admin/external-providers', (c) => c.json({ ok: true }));
   app.post('/api/admin/external-providers/discover-oidc', (c) => c.json({ ok: true }));
@@ -330,27 +327,6 @@ describe('admin resource permission middleware', () => {
     expect(deniedDelete.status).toBe(403);
     expect(allowedCreate.status).toBe(200);
     expect(allowedDelete.status).toBe(200);
-  });
-
-  it('requires settings write permission for organization domain mappings', async () => {
-    const readOnly = createApp([ADMIN_PERMISSIONS.SETTINGS_READ]);
-    const writer = createApp([ADMIN_PERMISSIONS.SETTINGS_WRITE]);
-
-    const list = await readOnly.request('/api/admin/org-domain-mappings');
-    const deniedCreate = await readOnly.request('/api/admin/org-domain-mappings', {
-      method: 'POST',
-    });
-    const deniedVerify = await readOnly.request('/api/admin/org-domain-mappings/verify', {
-      method: 'POST',
-    });
-    const allowedCreate = await writer.request('/api/admin/org-domain-mappings', {
-      method: 'POST',
-    });
-
-    expect(list.status).toBe(200);
-    expect(deniedCreate.status).toBe(403);
-    expect(deniedVerify.status).toBe(403);
-    expect(allowedCreate.status).toBe(200);
   });
 
   it('requires external provider permissions for provider and token-refresh changes', async () => {

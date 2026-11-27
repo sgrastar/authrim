@@ -2,6 +2,7 @@ import type { KVNamespace } from '@cloudflare/workers-types';
 import { ensureDatabaseAdapter, type DatabaseSource, type PreparedStatement } from '../db';
 import { invalidateSubjectRBACCache } from '../utils/rbac-cache';
 import type { TenantRBACDatabases } from './tenant-rbac';
+import { markDynamicMembershipsStale } from './dynamic-groups/publication';
 
 const MAX_GROUP_DEPTH = 16;
 
@@ -227,7 +228,25 @@ export async function revokeGroupMembership(
       input.sourceRef ?? '',
     ]
   );
+  if (input.source === 'manual') {
+    await expireDerivedDynamicMemberships(dbs, tenantId, subjectId, cache);
+    return;
+  }
   if (cache) await invalidateSubjectRBACCache(cache, tenantId, subjectId);
+}
+
+/**
+ * After a manual membership is taken away: the subject's published dynamic memberships may derive
+ * from it (member(<group>)), so they stop granting now (stale_after = now) and the cached claims
+ * are dropped; the next evaluation publishes them again from the changed input.
+ */
+async function expireDerivedDynamicMemberships(
+  dbs: TenantRBACDatabases,
+  tenantId: string,
+  subjectId: string,
+  cache?: KVNamespace
+) {
+  await markDynamicMembershipsStale(ensureDatabaseAdapter(dbs.account), tenantId, subjectId, cache);
 }
 
 /**
@@ -246,7 +265,7 @@ export async function revokeManualGroupMemberships(
      WHERE tenant_id=? AND subject_id=? AND group_id=? AND assignment_source='manual'`,
     [Math.floor(Date.now() / 1000), tenantId, subjectId, groupId]
   );
-  if (cache) await invalidateSubjectRBACCache(cache, tenantId, subjectId);
+  await expireDerivedDynamicMemberships(dbs, tenantId, subjectId, cache);
 }
 
 export async function replaceSourceMemberships(

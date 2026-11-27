@@ -5,7 +5,7 @@
  *
  * The page draws what the consent answer gives (checked here, never echoed raw). A decision is
  * built from the consent answer read again when the form is posted: only the person's choices
- * (an optional item, the organization) come from the form, each checked against that answer.
+ * (an optional item) come from the form, each checked against that answer.
  * ar-auth's answer is a destination (the `/authorize` continuation, the client's redirect), or a
  * form post as data (a denial with `response_mode=form_post`, asked for by `X-Authrim-Relay`):
  * the page relays the browser there.
@@ -15,8 +15,8 @@ import { sanitizeRuntimeConsentHtml } from '#lib/consent/runtime-consent-html.js
 import type { LiteBackendClient } from './backend-client';
 
 /**
- * The most items (and organizations) the page draws: a decision's form must stay within the lite
- * form reader's fields (32), with its hidden fields and the organization.
+ * The most items the page draws: a decision's form must stay within the lite form reader's
+ * fields (32), with its hidden fields.
  */
 const MAX_ITEMS = 25;
 /** The most scopes drawn (a request asking for more is not drawn). */
@@ -25,7 +25,7 @@ const MAX_TEXT = 4000;
 /**
  * The most checkboxes a decision form carries: consent items and optional information items
  * together. The lite form reader takes 32 fields; the hidden ones (transaction, token, form
- * nonce) and the organization take 4.
+ * nonce) take 3.
  */
 const MAX_CHECKBOXES = 26;
 const MAX_RELEASE_ITEMS = 60;
@@ -111,12 +111,7 @@ export interface LiteConsentView {
 	scopes: string[];
 	userEmail: string;
 	userName: string | null;
-	/** The organizations the person may choose from (only with the selector on). */
-	organizations: Array<{ id: string; name: string }>;
-	defaultOrgId: string | null;
 	actingAs: { id: string; name: string } | null;
-	/** The organization an Allow is for, when there is one (drawn whether or not it can be chosen). */
-	targetOrg: { id: string; name: string } | null;
 	itemsEnabled: boolean;
 	items: LiteConsentItem[];
 	/** The information shared with the app (release consent); null when the answer has none. */
@@ -194,20 +189,6 @@ export function readLiteConsent(json: unknown): LiteConsentView | null {
 		if (!name) return null;
 		scopes.push(name);
 	}
-	const features = isRecord(json.features) ? json.features : {};
-	// The organizations to choose from are drawn in full (one left out could be the one an Allow is
-	// for, the browser then choosing another), or the consent is not drawn.
-	const organizations: Array<{ id: string; name: string }> = [];
-	if (features.org_selector_enabled === true && Array.isArray(json.organizations)) {
-		if (json.organizations.length > MAX_ITEMS) return null;
-		for (const org of json.organizations) {
-			const id = isRecord(org) ? text(org.id, 200) : null;
-			const name = isRecord(org) ? text(org.name, 200) : null;
-			if (!id || !name) return null;
-			organizations.push({ id, name });
-		}
-	}
-	const primary = isRecord(json.primary_org) ? text(json.primary_org.id, 200) : null;
 	const actingAs =
 		isRecord(json.acting_as) && text(json.acting_as.id, 200)
 			? {
@@ -257,27 +238,6 @@ export function readLiteConsent(json: unknown): LiteConsentView | null {
 	// Every checkbox is one field of the decision form (the reader takes 32).
 	const releaseOptional = release ? release.items.filter((item) => !item.required).length : 0;
 	if (items.length + releaseOptional > MAX_CHECKBOXES) return null;
-	const defaultOrgId = text(json.target_org_id, 200) ?? primary;
-	// With a choice, the organization an Allow is for by default is one of the choices.
-	if (
-		organizations.length > 1 &&
-		defaultOrgId &&
-		!organizations.some((o) => o.id === defaultOrgId)
-	) {
-		return null;
-	}
-	const named = (id: string | null) => {
-		if (!id) return null;
-		for (const org of [
-			...(Array.isArray(json.organizations) ? json.organizations : []),
-			json.primary_org
-		]) {
-			if (isRecord(org) && org.id === id && text(org.name, 200)) {
-				return { id, name: String(org.name) };
-			}
-		}
-		return { id, name: id };
-	};
 	return {
 		challengeId,
 		clientName,
@@ -288,9 +248,6 @@ export function readLiteConsent(json: unknown): LiteConsentView | null {
 		scopes,
 		userEmail,
 		userName: text(json.user.name, 200),
-		organizations,
-		defaultOrgId,
-		targetOrg: named(defaultOrgId),
 		actingAs,
 		itemsEnabled: json.consent_management_enabled === true,
 		items,
@@ -327,8 +284,6 @@ export interface LiteConsentShown {
 	itemsEnabled: boolean;
 	/** [statement ID, version ID, content hash, checkbox mode, blocks]. */
 	items: Array<[string, string, string | null, 'none' | 'required' | 'optional', boolean]>;
-	orgs: string[];
-	defaultOrgId: string | null;
 	actingAsId: string | null;
 	/** The information release shown: its key and [claim name, required] per item. */
 	release: { key: string; items: Array<[string, boolean]> } | null;
@@ -346,8 +301,6 @@ export function liteConsentShown(view: LiteConsentView, op: string): LiteConsent
 			item.checkboxMode,
 			item.blocks
 		]),
-		orgs: view.organizations.map((org) => org.id),
-		defaultOrgId: view.defaultOrgId,
 		actingAsId: view.actingAs?.id ?? null,
 		release: view.release
 			? {
@@ -366,7 +319,7 @@ export function readLiteConsentShown(
 ): LiteConsentShown | null {
 	const shown = data.consent;
 	if (!isRecord(shown) || shown.challengeId !== challengeId || shown.op !== op) return null;
-	if (!Array.isArray(shown.items) || !Array.isArray(shown.orgs)) return null;
+	if (!Array.isArray(shown.items)) return null;
 	const items: LiteConsentShown['items'] = [];
 	for (const raw of shown.items as unknown[]) {
 		if (
@@ -401,8 +354,6 @@ export function readLiteConsentShown(
 		release,
 		itemsEnabled: shown.itemsEnabled === true,
 		items,
-		orgs: (shown.orgs as unknown[]).filter((org): org is string => typeof org === 'string'),
-		defaultOrgId: typeof shown.defaultOrgId === 'string' ? shown.defaultOrgId : null,
 		actingAsId: typeof shown.actingAsId === 'string' ? shown.actingAsId : null
 	};
 }
@@ -427,14 +378,11 @@ export function liteConsentAllow(
 	) {
 		return { ok: false, reason: 'blocked' };
 	}
-	const chosenOrg = fields.get('org');
-	const selectedOrg = chosenOrg && shown.orgs.includes(chosenOrg) ? chosenOrg : shown.defaultOrgId;
 	return {
 		ok: true,
 		body: {
 			challenge_id: shown.challengeId,
 			approved: true,
-			...(selectedOrg ? { selected_org_id: selectedOrg } : {}),
 			...(shown.actingAsId ? { acting_as_user_id: shown.actingAsId } : {}),
 			consent_item_versions: Object.fromEntries(
 				shown.items.map(([id, versionId, hash]) => [

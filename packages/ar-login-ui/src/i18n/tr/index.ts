@@ -386,9 +386,6 @@ const translation = {
 	consent_scope_phone: 'Telefon numaranı görün .',
 	consent_scope_address: 'Adresinizi görün',
 	consent_scope_offline_access: 'Uygulama kullanmadığınızda hesabınıza erişebilirsiniz',
-	consent_organizationSelect: 'Kuruluş seçin',
-	consent_primaryOrg: 'Birincil',
-	consent_currentOrganization: 'Mevcut organizasyon',
 	consent_actingOnBehalfOf: '{name} adına hareket etmek',
 	consent_delegatedAccess: 'Delege edilmiş erişim',
 	consent_delegatedAccessWarning:

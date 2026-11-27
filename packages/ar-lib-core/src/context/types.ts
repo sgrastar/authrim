@@ -69,9 +69,6 @@ export interface CoreRepositories {
 
   /** Session-Client associations (for Backchannel Logout) */
   sessionClient: SessionClientRepository;
-
-  // Future repositories:
-  // organization: OrganizationRepository;
 }
 
 /**

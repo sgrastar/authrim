@@ -91,7 +91,6 @@ export const ar = {
 	'nav.platform': 'المنصة',
 	'nav.users.all': 'كل المستخدمين',
 	'nav.users.agents': 'الوكلاء',
-	'nav.users.orgs': 'المؤسسات',
 	'nav.users.serviceGroups': 'مجموعات الخدمة',
 	'nav.users.lifecycle': 'الاحتفاظ بالحسابات',
 	'nav.users.sessions': 'الجلسات',
@@ -160,23 +159,6 @@ export const ar = {
 	'nav.set.signingKeys': 'مفاتيح التوقيع',
 	'nav.set.runtime': 'التشغيل / التخزين المؤقت',
 	'nav.plat.storage': 'بنية التخزين',
-	'retire.org.title': 'سيُدمج ضمن مجموعات الخدمة',
-	'retire.org.desc':
-		'ستتولى مجموعات الخدمة هذا المجال. سنزيله من التنقل بمجرد حل النقاط الأربع أدناه.',
-	'retire.org.1.t': 'نطاق الأدوار',
-	'retire.org.1.d':
-		'يتضمن ScopeType القيمة org، أي أن «مسؤول داخل هذه المؤسسة فقط» قابل للتعبير في النوع. نحتاج نطاقًا يستهدف المجموعة.',
-	'retire.org.2.t': 'الانتماء الأساسي',
-	'retire.org.2.d':
-		'تحمل العضوية is_primary. الشرط يُعيد كل المجموعات المطابقة، لذا يجب تحديد أيها الأساسية.',
-	'retire.org.3.t': 'مطالبات رمز الوصول الافتراضية',
-	'retire.org.3.d':
-		'org_id و org_type ضمن DEFAULT_ACCESS_TOKEN_CLAIMS. قد تقرأها الأطراف المعتمدة بالفعل، لذا يلزم مسار ترحيل.',
-	'retire.org.4.t': 'سمات مرتبطة بالمؤسسة',
-	'retire.org.4.d':
-		'org_type (distributor / enterprise / department) وخطة الاشتراك تتبع المؤسسة. تحتاج المجموعات إلى سمات، أو تنتقل هذه إلى مكان آخر.',
-	'retire.org.foot':
-		'تغطي مجموعات الخدمة بالفعل ربط النطاقات والتسلسل ومنح الأدوار: الشروط (normalize: domain) والتداخل (op: member) و scimRoleId.',
 	'theme.system': 'المظهر: حسب النظام',
 	'theme.light': 'المظهر: فاتح',
 	'theme.dark': 'المظهر: داكن',

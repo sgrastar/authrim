@@ -5,7 +5,7 @@
  * Phase 1: Role-based access control with scoped roles.
  */
 
-import type { ScopeType, UserType, PlanType, OrganizationType } from '@authrim/ar-lib-core';
+import type { ScopeType, UserType } from '@authrim/ar-lib-core';
 
 /**
  * Subject context for policy evaluation
@@ -21,14 +21,8 @@ export interface PolicySubject {
   /** Roles assigned to the subject */
   roles: SubjectRole[];
 
-  /** Primary organization ID */
-  orgId?: string;
-
-  /** Organization plan (for plan-based policies) */
-  plan?: PlanType;
-
-  /** Organization type */
-  orgType?: OrganizationType;
+  /** Ids of the subject's effective groups (direct memberships and their ancestors) */
+  groupIds?: string[];
 
   /** Relationships where this subject is the parent/guardian */
   relationships?: SubjectRelationship[];
@@ -44,7 +38,7 @@ export interface SubjectRole {
   /** Scope of the role */
   scope: ScopeType;
 
-  /** Scope target (e.g., 'org:org_123', 'resource:doc_456') */
+  /** Scope target (e.g., 'group:grp_123', 'resource:doc_456') */
   scopeTarget?: string;
 
   /** Expiration timestamp (UNIX milliseconds) */
@@ -79,7 +73,7 @@ export type RelationshipType =
  * Resource context for policy evaluation
  */
 export interface PolicyResource {
-  /** Resource type (e.g., 'organization', 'document', 'user') */
+  /** Resource type (e.g., 'document', 'project', 'user') */
   type: string;
 
   /** Resource identifier */
@@ -88,8 +82,8 @@ export interface PolicyResource {
   /** Owner subject ID */
   ownerId?: string;
 
-  /** Organization ID this resource belongs to */
-  orgId?: string;
+  /** Ids of the groups this resource belongs to */
+  groupIds?: string[];
 
   /** Additional attributes for policy evaluation */
   attributes?: Record<string, unknown>;
@@ -223,12 +217,10 @@ export type ConditionType =
   | 'has_all_roles' // Subject has all specified roles
   // Ownership conditions
   | 'is_resource_owner' // Subject owns the resource
-  | 'same_organization' // Subject and resource in same org
   // Relationship conditions
   | 'has_relationship' // Subject has relationship with resource owner
   // User type conditions
   | 'user_type_is' // Subject's user type matches
-  | 'plan_allows' // Organization plan allows action
   // Attribute-based conditions (ABAC) - Phase 3
   | 'attribute_equals' // Subject has attribute with specific value
   | 'attribute_exists' // Subject has attribute (any value)

@@ -21,9 +21,6 @@ interface Options {
   attributes?: VerifiedAttribute[] | undefined;
   environment?: PolicyEnvironment;
   userType?: string;
-  plan?: string;
-  orgId?: string;
-  resourceOrgId?: string;
   ownerId?: string;
   relationships?: Array<{ relatedSubjectId: string; relationshipType: string; expiresAt?: number }>;
 }
@@ -33,13 +30,11 @@ function context(options: Options = {}): PolicyContext {
     subject: {
       id: 'user-1',
       roles: options.roles ?? [],
-      orgId: options.orgId,
       userType: options.userType,
-      plan: options.plan,
       relationships: options.relationships,
       verifiedAttributes: options.attributes,
     } as unknown as PolicyContext['subject'],
-    resource: { type: 'doc', id: 'doc-1', ownerId: options.ownerId, orgId: options.resourceOrgId },
+    resource: { type: 'doc', id: 'doc-1', ownerId: options.ownerId },
     action: { name: 'read' },
     timestamp: options.timestamp ?? T0,
     environment: options.environment,
@@ -111,60 +106,71 @@ describe('evaluate', () => {
 });
 
 describe('role conditions', () => {
-  const org: SubjectRole = { name: 'admin', scope: 'org', scopeTarget: 'org:o1' };
+  const group: SubjectRole = { name: 'admin', scope: 'group', scopeTarget: 'group:o1' };
   const resource: SubjectRole = { name: 'admin', scope: 'resource', scopeTarget: 'resource:d1' };
 
   it('treats a global role as holding everywhere', () => {
     const roles: SubjectRole[] = [{ name: 'admin', scope: 'global' }];
     expect(holds('has_role', { role: 'admin' }, { roles })).toBe(true);
     expect(
-      holds('has_role', { role: 'admin', scope: 'org', scopeTarget: 'org:x' }, { roles })
+      holds('has_role', { role: 'admin', scope: 'group', scopeTarget: 'group:x' }, { roles })
     ).toBe(true);
     expect(holds('has_role', { role: 'other' }, { roles })).toBe(false);
   });
 
   it('matches a scoped role on its scope, and on its target when one is asked for', () => {
-    const roles = [org];
-    expect(holds('has_role', { role: 'admin', scope: 'org' }, { roles })).toBe(true);
+    const roles = [group];
+    expect(holds('has_role', { role: 'admin', scope: 'group' }, { roles })).toBe(true);
     expect(
-      holds('has_role', { role: 'admin', scope: 'org', scopeTarget: 'org:o1' }, { roles })
+      holds('has_role', { role: 'admin', scope: 'group', scopeTarget: 'group:o1' }, { roles })
     ).toBe(true);
     expect(
-      holds('has_role', { role: 'admin', scope: 'org', scopeTarget: 'org:o2' }, { roles })
+      holds('has_role', { role: 'admin', scope: 'group', scopeTarget: 'group:o2' }, { roles })
     ).toBe(false);
     expect(holds('has_role', { role: 'admin', scope: 'resource' }, { roles })).toBe(false);
     expect(holds('has_role', { role: 'admin' }, { roles })).toBe(false);
-    expect(holds('has_role', { role: 'admin', scope: 'org' }, { roles: [resource] })).toBe(false);
-    const untargeted: SubjectRole[] = [{ name: 'admin', scope: 'org' }];
+    expect(holds('has_role', { role: 'admin', scope: 'group' }, { roles: [resource] })).toBe(false);
+    const untargeted: SubjectRole[] = [{ name: 'admin', scope: 'group' }];
     expect(
       holds(
         'has_role',
-        { role: 'admin', scope: 'org', scopeTarget: 'org:o1' },
+        { role: 'admin', scope: 'group', scopeTarget: 'group:o1' },
         { roles: untargeted }
       )
     ).toBe(false);
   });
 
   it('applies the same scope rules to any-of and all-of', () => {
-    const roles: SubjectRole[] = [org, { name: 'viewer', scope: 'org', scopeTarget: 'org:o1' }];
+    const roles: SubjectRole[] = [
+      group,
+      { name: 'viewer', scope: 'group', scopeTarget: 'group:o1' },
+    ];
     for (const type of ['has_any_role', 'has_all_roles']) {
-      expect(holds(type, { roles: ['admin', 'viewer'], scope: 'org' }, { roles })).toBe(true);
+      expect(holds(type, { roles: ['admin', 'viewer'], scope: 'group' }, { roles })).toBe(true);
       expect(
-        holds(type, { roles: ['admin', 'viewer'], scope: 'org', scopeTarget: 'org:o1' }, { roles })
+        holds(
+          type,
+          { roles: ['admin', 'viewer'], scope: 'group', scopeTarget: 'group:o1' },
+          { roles }
+        )
       ).toBe(true);
       expect(
-        holds(type, { roles: ['admin', 'viewer'], scope: 'org', scopeTarget: 'org:o2' }, { roles })
+        holds(
+          type,
+          { roles: ['admin', 'viewer'], scope: 'group', scopeTarget: 'group:o2' },
+          { roles }
+        )
       ).toBe(false);
       expect(holds(type, { roles: ['admin', 'viewer'] }, { roles })).toBe(false);
       expect(holds(type, { roles: ['admin', 'viewer'], scope: 'global' }, { roles })).toBe(false);
     }
-    expect(holds('has_any_role', { roles: ['admin', 'ghost'], scope: 'org' }, { roles })).toBe(
+    expect(holds('has_any_role', { roles: ['admin', 'ghost'], scope: 'group' }, { roles })).toBe(
       true
     );
-    expect(holds('has_all_roles', { roles: ['admin', 'ghost'], scope: 'org' }, { roles })).toBe(
+    expect(holds('has_all_roles', { roles: ['admin', 'ghost'], scope: 'group' }, { roles })).toBe(
       false
     );
-    expect(holds('has_any_role', { roles: ['ghost'], scope: 'org' }, { roles })).toBe(false);
+    expect(holds('has_any_role', { roles: ['ghost'], scope: 'group' }, { roles })).toBe(false);
   });
 
   it('ends a role at its expiry, exactly', () => {
@@ -177,19 +183,11 @@ describe('role conditions', () => {
   });
 });
 
-describe('ownership, organization, relationship, user type and plan', () => {
+describe('ownership, relationship and user type', () => {
   it('is_resource_owner compares the subject with the owner', () => {
     expect(holds('is_resource_owner', {}, { ownerId: 'user-1' })).toBe(true);
     expect(holds('is_resource_owner', {}, { ownerId: 'user-2' })).toBe(false);
     expect(holds('is_resource_owner', {}, {})).toBe(false);
-  });
-
-  it('same_organization needs both organizations and that they are equal', () => {
-    expect(holds('same_organization', {}, { orgId: 'o1', resourceOrgId: 'o1' })).toBe(true);
-    expect(holds('same_organization', {}, { orgId: 'o1', resourceOrgId: 'o2' })).toBe(false);
-    expect(holds('same_organization', {}, { orgId: 'o1' })).toBe(false);
-    expect(holds('same_organization', {}, { resourceOrgId: 'o1' })).toBe(false);
-    expect(holds('same_organization', {}, {})).toBe(false);
   });
 
   it('has_relationship needs a live relationship of a listed type with the owner', () => {
@@ -249,15 +247,12 @@ describe('ownership, organization, relationship, user type and plan', () => {
     ).toBe(false);
   });
 
-  it('user_type_is and plan_allows need a known value in the list', () => {
+  it('user_type_is needs a known value in the list', () => {
     expect(holds('user_type_is', { types: ['end_user', 'admin'] }, { userType: 'end_user' })).toBe(
       true
     );
     expect(holds('user_type_is', { types: ['admin'] }, { userType: 'end_user' })).toBe(false);
     expect(holds('user_type_is', { types: ['admin'] }, {})).toBe(false);
-    expect(holds('plan_allows', { plans: ['pro', 'free'] }, { plan: 'pro' })).toBe(true);
-    expect(holds('plan_allows', { plans: ['pro'] }, { plan: 'free' })).toBe(false);
-    expect(holds('plan_allows', { plans: ['pro'] }, {})).toBe(false);
   });
 });
 

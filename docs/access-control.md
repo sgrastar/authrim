@@ -419,8 +419,18 @@ whoever runs Authrim, in the Admin API or the Admin console.
 | `end_user` | Standard user role.                                                           |
 
 Names that start with `ar_` are reserved for the Admin roles above, and the preset names cannot be
-used for a new role. Organization and group features do not depend on a preset: a role created by
-the operator can be scoped to an organization like any other.
+used for a new role. Group features do not depend on a preset: a role created by the operator can
+be granted to a group, or scoped to a group's resources, like any other.
+
+Organisations were removed (core migration 018, no data carried over): a set of users is a group
+(`groups` / `group_memberships`), joining by e-mail domain is a dynamic group with a domain
+condition plus a role granted to that group, and the `authrim_org_*` / `authrim_plan` claims are no
+longer issued (`authrim_groups` lists the subject's effective groups).
+
+Roles do not inherit (no `parent_role_id`) and have no hierarchy level. Who may grant, revoke or
+edit an end-user role is decided by the role's `grant_tier` alone: an administrator may manage a
+role whose tier is at most its own ceiling, the highest of its admin roles' (`ar_super_admin` 3,
+`ar_tenant_admin` 2, `ar_support` / `ar_viewer` and custom admin roles 1).
 
 ### Type Definitions
 
@@ -437,14 +447,8 @@ interface PolicySubject {
   /** Roles assigned to the subject */
   roles: SubjectRole[];
 
-  /** Primary organization ID */
-  orgId?: string;
-
-  /** Organization plan (for plan-based policies) */
-  plan?: PlanType;
-
-  /** Organization type */
-  orgType?: OrganizationType;
+  /** Ids of the subject's effective groups (from the authrim_groups claim) */
+  groupIds?: string[];
 
   /** Relationships where this subject is the parent/guardian */
   relationships?: SubjectRelationship[];
@@ -458,10 +462,10 @@ interface SubjectRole {
   /** Role name (e.g., 'admin', 'end_user', or a role the operator created) */
   name: string;
 
-  /** Scope of the role: 'global' | 'org' | 'resource' */
+  /** Scope of the role: 'global' | 'tenant' | 'group' | 'resource' */
   scope: ScopeType;
 
-  /** Scope target (e.g., 'org:org_123', 'resource:doc_456') */
+  /** Scope target (e.g., 'group:grp_123', 'resource:doc_456') */
   scopeTarget?: string;
 
   /** Expiration timestamp (UNIX milliseconds) */
@@ -471,18 +475,19 @@ interface SubjectRole {
 
 ### Scoped Roles
 
-Roles support three scope levels:
+Roles support four scope levels:
 
-| Scope      | Description                      | Example                           |
-| ---------- | -------------------------------- | --------------------------------- |
-| `global`   | Applies everywhere               | System administrator              |
-| `org`      | Limited to specific organization | `scopeTarget: "org:org_123"`      |
-| `resource` | Limited to specific resource     | `scopeTarget: "resource:doc_456"` |
+| Scope      | Description                         | Example                           |
+| ---------- | ----------------------------------- | --------------------------------- |
+| `global`   | Applies everywhere                  | System administrator              |
+| `tenant`   | Applies in its own tenant           | `scopeTarget: ""` or tenant id    |
+| `group`    | Limited to the resources of a group | `scopeTarget: "group:grp_123"`    |
+| `resource` | Limited to specific resource        | `scopeTarget: "resource:doc_456"` |
 
 **Scope Resolution:**
 
 - Global scope matches all scope requirements
-- Org scope only matches within the same organization
+- Group scope only matches a resource of that group (the check's `resource_context.group_id`)
 - Resource scope only matches the specific resource
 
 ### RBAC Condition Types
@@ -493,10 +498,8 @@ Roles support three scope levels:
 | `has_any_role`      | Subject has any of roles (OR)       | `{ roles[], scope?, scopeTarget? }` |
 | `has_all_roles`     | Subject has all roles (AND)         | `{ roles[], scope?, scopeTarget? }` |
 | `is_resource_owner` | Subject owns the resource           | `{}`                                |
-| `same_organization` | Subject and resource in same org    | `{}`                                |
 | `has_relationship`  | Subject has relationship with owner | `{ types[] }`                       |
 | `user_type_is`      | Subject's user type matches         | `{ types[] }`                       |
-| `plan_allows`       | Organization plan allows action     | `{ plans[] }`                       |
 
 ### Role Checker Utilities
 
@@ -509,14 +512,13 @@ import {
   hasAllRoles,
   isAdmin,
   isSystemAdmin,
-  isOrgAdmin,
   getActiveRoles,
   subjectFromClaims,
 } from '@authrim/ar-lib-policy';
 
 // Check single role
-if (hasRole(subject, 'billing_manager', { scope: 'org', scopeTarget: 'org:123' })) {
-  // User is admin of organization 123
+if (hasRole(subject, 'billing_manager', { scope: 'group', scopeTarget: 'group:grp_123' })) {
+  // User manages billing for the resources of group grp_123
 }
 
 // Check any role (OR)
@@ -535,14 +537,13 @@ if (isAdmin(subject)) {
 }
 
 // Get active roles
-const activeRoles = getActiveRoles(subject, { scope: 'org', scopeTarget: 'org:123' });
+const activeRoles = getActiveRoles(subject, { scope: 'group', scopeTarget: 'group:grp_123' });
 
 // Create subject from JWT claims
 const subject = subjectFromClaims({
   sub: 'user_123',
   authrim_roles: ['end_user', 'billing_manager'],
-  authrim_org_id: 'org_456',
-  authrim_plan: 'professional',
+  authrim_groups: [{ id: 'grp_456', key: 'billing', name: 'Billing', kind: 'static' }],
 });
 ```
 
@@ -1148,7 +1149,7 @@ interface CheckApiRequest {
   /** Resource context for ABAC */
   resource_context?: {
     owner_id?: string;
-    org_id?: string;
+    group_id?: string;
     attributes?: Record<string, unknown>;
   };
 
@@ -1442,10 +1443,7 @@ engine.addRule({
   name: 'Project Manager Access',
   priority: 750,
   effect: 'allow',
-  conditions: [
-    { type: 'has_role', params: { role: 'project_manager' } },
-    { type: 'same_organization', params: {} },
-  ],
+  conditions: [{ type: 'has_role', params: { role: 'project_manager', scope: 'group' } }],
 });
 
 // Evaluate
@@ -1453,12 +1451,12 @@ const context: PolicyContext = {
   subject: {
     id: 'user_123',
     roles: [{ name: 'project_manager', scope: 'global' }],
-    orgId: 'org_456',
+    groupIds: ['grp_456'],
   },
   resource: {
     type: 'project',
     id: 'proj_789',
-    orgId: 'org_456',
+    groupIds: ['grp_456'],
   },
   action: { name: 'edit' },
   timestamp: Date.now(),
@@ -1551,7 +1549,7 @@ const result = await checkService.check({
   },
   resource_context: {
     owner_id: 'user_789',
-    org_id: 'org_abc',
+    group_id: 'grp_abc',
   },
 });
 
@@ -1574,7 +1572,7 @@ const batchResult = await checkService.batchCheck({
 
 | Scenario                           | Recommended Model |
 | ---------------------------------- | ----------------- |
-| Fixed organizational hierarchy     | RBAC              |
+| Fixed teams and departments        | RBAC (groups)     |
 | Compliance/regulatory requirements | ABAC              |
 | Resource sharing/collaboration     | ReBAC             |
 | Simple admin vs user distinction   | RBAC              |
@@ -1629,16 +1627,14 @@ const batchResult = await checkService.batchCheck({
 
 ### Condition Types
 
-| RBAC (7)            | ABAC (3)           | ReBAC DSL          |
+| RBAC (5)            | ABAC (3)           | ReBAC DSL          |
 | ------------------- | ------------------ | ------------------ |
 | `has_role`          | `attribute_equals` | `direct`           |
 | `has_any_role`      | `attribute_exists` | `union`            |
 | `has_all_roles`     | `attribute_in`     | `tuple_to_userset` |
 | `is_resource_owner` |                    | `intersection` ⏳  |
-| `same_organization` |                    | `exclusion` ⏳     |
-| `has_relationship`  |                    |                    |
+| `has_relationship`  |                    | `exclusion` ⏳     |
 | `user_type_is`      |                    |                    |
-| `plan_allows`       |                    |                    |
 
 ### Performance Characteristics
 

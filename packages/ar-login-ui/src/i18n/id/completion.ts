@@ -64,9 +64,6 @@ const completion = {
 	consent_scope_phone: 'Melihat nomor telepon Anda',
 	consent_scope_address: 'Melihat alamat Anda',
 	consent_scope_offline_access: 'Mengakses akun Anda saat Anda tidak menggunakan aplikasi',
-	consent_organizationSelect: 'Pilih organisasi',
-	consent_primaryOrg: 'Utama',
-	consent_currentOrganization: 'Organisasi saat ini',
 	consent_actingOnBehalfOf: 'Bertindak atas nama {name}',
 	consent_delegatedAccess: 'Akses yang didelegasikan',
 	consent_delegatedAccessWarning:

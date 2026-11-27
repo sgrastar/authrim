@@ -27,9 +27,9 @@ function setup(groupState = 'active') {
   metadata.raw
     .prepare(
       `INSERT INTO tenant_invitations
-       (id, token, tenant_id, invited_email, invited_by, role_id, org_id, group_id, max_uses,
+       (id, token, tenant_id, invited_email, invited_by, role_id, group_id, max_uses,
         use_count, expires_at, created_at, updated_at)
-       VALUES ('inv-1', 'token-1', 'tenant-a', NULL, 'admin-1', NULL, NULL, 'group-1', 1, 0, ?, ?, ?)`
+       VALUES ('inv-1', 'token-1', 'tenant-a', NULL, 'admin-1', NULL, 'group-1', 1, 0, ?, ?, ?)`
     )
     .run(NOW + 86_400, NOW, NOW);
   const puts: string[] = [];

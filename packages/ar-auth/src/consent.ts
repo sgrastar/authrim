@@ -8,8 +8,6 @@
  *    return { redirect_url }
  *
  * Phase 2-B: Consent Screen Enhancement
- * - Organization info display
- * - Organization switching (via selected_org_id)
  * - Acting-as (delegation) support
  */
 
@@ -36,7 +34,6 @@ import {
   getActingAsUserInfo,
   validateActingAsRelationship,
   parseConsentFeatureFlags,
-  getRolesInOrganization,
   invalidateConsentCache,
   getChallengeStoreByChallengeId,
   getSessionStoreBySessionId,
@@ -392,7 +389,7 @@ async function handleJsonConsentGet(
   const { challenge_id, userId, clientRow, scopeDetails, metadata } = params;
   const tenantId = getTenantIdFromContext(c);
   const authCtx = createAccountAuthContextFromHono(c, tenantId);
-  // Roles and organisations: defined in the tenant metadata database, assigned in the account's.
+  // Roles: defined in the tenant metadata database, assigned in the account's.
   const rbacDbs = {
     metadata: createAuthContextFromHono(c, tenantId).coreAdapter,
     account: authCtx.coreAdapter,
@@ -427,12 +424,11 @@ async function handleJsonConsentGet(
     );
   }
 
-  // Get RBAC data (organizations, roles)
+  // Get RBAC data (roles)
   const rbacData = await getConsentRBACData(rbacDbs, userId, tenantId);
 
   // Parse feature flags from environment
   const features = parseConsentFeatureFlags(
-    c.env.ENABLE_RBAC_CONSENT_ORG_SELECTOR,
     c.env.ENABLE_RBAC_CONSENT_ACTING_AS,
     c.env.ENABLE_RBAC_CONSENT_SHOW_ROLES
   );
@@ -448,14 +444,7 @@ async function handleJsonConsentGet(
     );
   }
 
-  // Determine target org and get roles for that org
-  const targetOrgId = metadata.org_id || rbacData.primary_org?.id || null;
-  let roles = rbacData.roles;
-
-  // If targeting a specific org, get roles for that org
-  if (targetOrgId) {
-    roles = await getRolesInOrganization(rbacDbs, userId, targetOrgId, tenantId);
-  }
+  const roles = rbacData.roles;
 
   // Get consent settings
 
@@ -544,11 +533,8 @@ async function handleJsonConsentGet(
     client,
     scopes: scopeDetails,
     user: userInfo,
-    organizations: rbacData.organizations,
-    primary_org: rbacData.primary_org,
     roles,
     acting_as: actingAsInfo,
-    target_org_id: targetOrgId,
     features,
     // Extended consent features
     granular_scopes_enabled: granularScopesEnabled,
@@ -711,7 +697,7 @@ export async function changedConsentDocument(
  * Handle consent approval/denial
  * POST /auth/consent
  *
- * JSON body only: { challenge_id, approved, selected_org_id, acting_as_user_id, selected_scopes,
+ * JSON body only: { challenge_id, approved, acting_as_user_id, selected_scopes,
  * consent_item_decisions }. Responds with { redirect_url }.
  */
 export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
@@ -734,7 +720,6 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
     const jsonBody = await c.req.json<{
       challenge_id?: string;
       approved?: boolean;
-      selected_org_id?: string;
       acting_as_user_id?: string;
       selected_scopes?: string[];
       consent_item_decisions?: Record<string, 'granted' | 'denied'>;
@@ -751,7 +736,6 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
         : undefined;
     const challenge_id = jsonBody.challenge_id;
     const approved = jsonBody.approved === true;
-    const selected_org_id = jsonBody.selected_org_id;
     const acting_as_user_id = jsonBody.acting_as_user_id;
     const selected_scopes = jsonBody.selected_scopes;
     const consent_item_decisions = jsonBody.consent_item_decisions;
@@ -1004,9 +988,6 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
     const consentId = crypto.randomUUID();
     const now = Date.now();
 
-    // Use selected_org_id if provided, otherwise use metadata.org_id
-    const effectiveOrgId = selected_org_id || metadata.org_id || null;
-
     // Get AuthContext for database access
     const tenantId = getTenantIdFromContext(c);
     await resolveAccountDataContextFromHono(c, userId);
@@ -1018,7 +999,6 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
     let validatedActingAsUserId: string | undefined;
     if (requestedActingAsUserId) {
       const features = parseConsentFeatureFlags(
-        c.env.ENABLE_RBAC_CONSENT_ORG_SELECTOR,
         c.env.ENABLE_RBAC_CONSENT_ACTING_AS,
         c.env.ENABLE_RBAC_CONSENT_SHOW_ROLES
       );
@@ -1294,7 +1274,6 @@ export async function consentPostHandler(c: Context<{ Bindings: Env }>) {
     const authorizationMetadata = metadata as unknown as Record<string, unknown>;
     const authorizationRequest = createAuthorizationRequestContinuation(authorizationMetadata, {
       scope: effectiveScope,
-      org_id: effectiveOrgId || undefined,
       acting_as: validatedActingAsUserId,
     });
     const consentConfirmation = await createConsentConfirmationChallenge(

@@ -227,8 +227,8 @@
 		switch (item.permission_type) {
 			case 'role':
 				return $LL.admin_compliance_access_role({ value: item.permission_value });
-			case 'organization':
-				return $LL.admin_compliance_access_organization({ value: item.permission_value });
+			case 'group':
+				return $LL.admin_compliance_access_group({ value: item.permission_value });
 			default:
 				return $LL.admin_compliance_access_account();
 		}

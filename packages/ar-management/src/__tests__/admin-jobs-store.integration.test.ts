@@ -53,12 +53,11 @@ import {
   adminJobGetHandler,
   adminJobResultHandler,
   adminJobsListHandler,
-  adminJobsOrgBulkMembersHandler,
   adminJobsReportsGenerateHandler,
   adminJobsUsersBulkUpdateHandler,
   adminJobsUsersImportHandler,
 } from '../admin-jobs';
-import { processPendingGenericAdminJobs } from '../admin-job-executor';
+import { processPendingGenericAdminJobs, processRetiredAdminJobs } from '../admin-job-executor';
 import { buildUserImportUploadKey, processPendingUserImportJobs } from '../user-import-jobs';
 import { ensureDatabaseAdapter } from '@authrim/ar-lib-core';
 
@@ -109,7 +108,6 @@ function createApp() {
   app.post('/api/admin/jobs/users/import', adminJobsUsersImportHandler);
   app.post('/api/admin/jobs/users/bulk-update', adminJobsUsersBulkUpdateHandler);
   app.post('/api/admin/jobs/reports/generate', adminJobsReportsGenerateHandler);
-  app.post('/api/admin/jobs/organizations/:id/bulk-members', adminJobsOrgBulkMembersHandler);
   app.get('/api/admin/jobs', adminJobsListHandler);
   app.get('/api/admin/jobs/:id/result', adminJobResultHandler);
   app.get('/api/admin/jobs/:id', adminJobGetHandler);
@@ -198,6 +196,26 @@ describe('admin jobs created through the admin API', () => {
     app = createApp();
   });
 
+  it('fails the jobs of a retired type left pending or processing', async () => {
+    const insert = admin.prepare(
+      `INSERT INTO admin_jobs (id, tenant_id, job_type, status, created_by, created_at, updated_at)
+       VALUES (?, 'tenant-a', ?, ?, 'admin-1', 1, 1)`
+    );
+    insert.run('job-pending', 'organizations/bulk-members', 'pending');
+    insert.run('job-processing', 'organizations/bulk-members', 'processing');
+    insert.run('job-done', 'organizations/bulk-members', 'completed');
+
+    await processRetiredAdminJobs(env, logger);
+
+    expect(
+      admin.prepare('SELECT id, status, error_code FROM admin_jobs ORDER BY id').all()
+    ).toEqual([
+      { id: 'job-done', status: 'completed', error_code: null },
+      { id: 'job-pending', status: 'failed', error_code: 'job_type_retired' },
+      { id: 'job-processing', status: 'failed', error_code: 'job_type_retired' },
+    ]);
+  });
+
   it('runs a report job and serves its result', async () => {
     const { job_id } = await post('/api/admin/jobs/reports/generate', {
       type: 'user_activity',
@@ -259,35 +277,6 @@ describe('admin jobs created through the admin API', () => {
       { legacy_user_id: USER_A, status: 'suspended' },
       { legacy_user_id: USER_B, status: 'suspended' },
     ]);
-  });
-
-  it('adds organization members in the tenant Core database', async () => {
-    core
-      .prepare(
-        `INSERT INTO organizations (id, tenant_id, name, display_name, created_at, updated_at)
-         VALUES ('org-a', 'tenant-a', 'org-a', 'Org A', 1, 1)`
-      )
-      .run();
-    // The baseline schema (before core migration 028) still has the membership's subject
-    // reference users_core.
-    core
-      .prepare(
-        `INSERT INTO users_core (id, tenant_id, created_at, updated_at)
-         VALUES (?, 'tenant-a', 1, 1)`
-      )
-      .run(USER_A);
-    const { job_id } = await post('/api/admin/jobs/organizations/org-a/bulk-members', {
-      user_ids: [USER_A],
-      action: 'add',
-    });
-
-    await processPendingGenericAdminJobs(env, logger);
-
-    expect((await get(`/api/admin/jobs/${job_id}`)).body.status).toBe('completed');
-    const membership = core
-      .prepare('SELECT subject_id FROM subject_org_membership WHERE org_id = ?')
-      .all('org-a');
-    expect(membership).toEqual([{ subject_id: USER_A }]);
   });
 
   it('lists the job it created', async () => {

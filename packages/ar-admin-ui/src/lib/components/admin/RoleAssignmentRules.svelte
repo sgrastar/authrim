@@ -217,8 +217,8 @@
 		switch (scope) {
 			case 'global':
 				return 'badge-scope global';
-			case 'organization':
-				return 'badge-scope organization';
+			case 'group':
+				return 'badge-scope group';
 			case 'client':
 				return 'badge-scope client';
 			default:
@@ -573,7 +573,7 @@
 		color: var(--color-accent);
 	}
 
-	.badge-scope.organization {
+	.badge-scope.group {
 		background: color-mix(in srgb, var(--color-success) 14%, transparent);
 		color: var(--color-success);
 	}

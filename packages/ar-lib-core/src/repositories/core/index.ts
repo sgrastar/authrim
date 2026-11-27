@@ -9,10 +9,7 @@
  * - ClientRepository: OAuth 2.0 / OIDC clients
  * - SessionStore Durable Object: User sessions with expiration handling
  * - PasskeyRepository: WebAuthn credentials
- * - RoleRepository: RBAC roles and user-role assignments
- *
- * Future additions:
- * - OrganizationRepository: Multi-tenant organizations
+ * - RoleRepository: RBAC role definitions
  */
 
 export {
@@ -42,13 +39,7 @@ export {
   type CreateTotpBackupCodeInput,
 } from './totp-credential';
 
-export {
-  RoleRepository,
-  type Role,
-  type UserRole,
-  type CreateRoleInput,
-  type UpdateRoleInput,
-} from './role';
+export { RoleRepository, type Role, type CreateRoleInput, type UpdateRoleInput } from './role';
 
 export {
   SessionClientRepository,

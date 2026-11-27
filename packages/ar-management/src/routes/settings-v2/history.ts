@@ -102,7 +102,7 @@ function checkRolePermission(
  * Check if user can access a specific tenant's data
  * The super admin and the tenant admin can access the tenant they hold the role for
  */
-function canAccessTenant(adminAuth: AdminAuthContext | undefined, tenantId: string): boolean {
+function canAccessTenant(adminAuth: AdminAuthContext | undefined, _tenantId: string): boolean {
   if (!adminAuth) return false;
 
   const userRoles = adminAuth.roles;
@@ -111,9 +111,9 @@ function canAccessTenant(adminAuth: AdminAuthContext | undefined, tenantId: stri
     return true;
   }
 
-  // viewer with tenant association
+  // viewer (the request is already scoped to the tenant)
   if (userRoles.includes(ADMIN_ROLES.VIEWER)) {
-    return !adminAuth.org_id || adminAuth.org_id === tenantId;
+    return true;
   }
 
   return false;

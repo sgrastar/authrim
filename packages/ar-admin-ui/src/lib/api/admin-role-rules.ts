@@ -11,7 +11,7 @@ const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || '';
 /**
  * Scope type for rule application
  */
-export type ScopeType = 'global' | 'organization' | 'client';
+export type ScopeType = 'global' | 'group' | 'client';
 
 /**
  * Condition operators for rule matching
@@ -131,7 +131,7 @@ export interface RuleEvaluationContext {
 	claims: Record<string, unknown>;
 	email?: string;
 	provider_id?: string;
-	organization_id?: string;
+	group_id?: string;
 	client_id?: string;
 }
 

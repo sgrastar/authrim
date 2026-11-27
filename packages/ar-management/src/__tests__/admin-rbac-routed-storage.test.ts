@@ -102,9 +102,6 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
 });
 
 import {
-  adminOrganizationGetHandler,
-  adminOrganizationHierarchyHandler,
-  adminOrganizationMembersListHandler,
   adminRoleAssignmentsListHandler,
   adminRoleDeleteHandler,
   adminRoleGetHandler,
@@ -112,6 +109,7 @@ import {
   adminUserEffectivePermissionsHandler,
 } from '../admin-rbac';
 import { adminAccessControlStatsHandler } from '../admin-access-control-stats';
+import { adminGroupMembersListHandler } from '../admin-groups';
 
 // Admin operations are recorded through the forwarding shim (see the helper).
 vi.mock('../admin-operation-audit', () => import('./helpers/legacy-admin-audit-shim'));
@@ -120,7 +118,7 @@ const NOW = Math.floor(Date.now() / 1000);
 
 function context(options: { id?: string; query?: Record<string, string> } = {}) {
   const values = new Map<string, unknown>([
-    ['adminAuth', { userId: 'admin-1', hierarchyLevel: 100, permissions: ['admin:*'] }],
+    ['adminAuth', { userId: 'admin-1', maxGrantTier: 3, permissions: ['admin:*'] }],
   ]);
   return {
     get: (key: string) => values.get(key),
@@ -162,18 +160,18 @@ function assign(
     .run(row.id, row.subject, row.role, row.scope ?? 'global', row.target ?? '', row.at, row.at);
 }
 
-function join(store: Store, row: { id: string; subject: string; org: string; at: number }) {
+function join(store: Store, row: { id: string; subject: string; group: string; at: number }) {
   store.db
     .prepare(
-      `INSERT INTO subject_org_membership
-         (id, tenant_id, subject_id, org_id, membership_type, is_primary, created_at, updated_at)
-       VALUES (?, 'tenant-a', ?, ?, 'member', 0, ?, ?)`
+      `INSERT INTO group_memberships
+         (id, tenant_id, group_id, subject_id, assignment_source, source_ref, created_at, updated_at)
+       VALUES (?, 'tenant-a', ?, ?, 'manual', '', ?, ?)`
     )
-    .run(row.id, row.subject, row.org, row.at, row.at);
+    .run(row.id, row.group, row.subject, row.at, row.at);
 }
 
 /**
- * Routed account storage: role and organisation definitions in the tenant metadata database,
+ * Routed account storage: role and group definitions in the tenant metadata database,
  * each account's assignments and memberships in its own user store. Three separate SQLite
  * databases stand in for the three D1 databases, so a count or list that reads only one of them
  * (or joins a definition in an account database) comes out wrong here.
@@ -206,14 +204,15 @@ describe('RBAC admin views under routed account storage', () => {
       .run(NOW, NOW, NOW);
     metadata.db
       .prepare(
-        `INSERT INTO organizations (id, tenant_id, name, created_at, updated_at)
-         VALUES ('org-root', 'tenant-a', 'Root', ?, ?)`
+        `INSERT INTO "groups" (id, tenant_id, group_key, display_name, created_at, updated_at)
+         VALUES ('grp-root', 'tenant-a', 'root', 'Root', ?, ?)`
       )
       .run(NOW, NOW);
     metadata.db
       .prepare(
-        `INSERT INTO organizations (id, tenant_id, name, parent_org_id, created_at, updated_at)
-         VALUES ('org-child', 'tenant-a', 'Child', 'org-root', ?, ?)`
+        `INSERT INTO "groups" (id, tenant_id, group_key, display_name, parent_group_id, created_at,
+           updated_at)
+         VALUES ('grp-child', 'tenant-a', 'child', 'Child', 'grp-root', ?, ?)`
       )
       .run(NOW, NOW);
     addUser(first, 'user-1');
@@ -225,15 +224,15 @@ describe('RBAC admin views under routed account storage', () => {
       id: 'ra-3',
       subject: 'user-3',
       role: 'role-b',
-      scope: 'org',
-      target: 'org:org-root',
+      scope: 'group',
+      target: 'group:grp-root',
       at: NOW - 20,
     });
     // An assignment of a role deleted since: it names nothing and is counted nowhere.
     assign(first, { id: 'ra-4', subject: 'user-2', role: 'role-gone', at: NOW - 5 });
-    join(first, { id: 'm-1', subject: 'user-1', org: 'org-root', at: NOW - 30 });
-    join(second, { id: 'm-2', subject: 'user-3', org: 'org-root', at: NOW - 10 });
-    join(second, { id: 'm-3', subject: 'user-3', org: 'org-child', at: NOW - 5 });
+    join(first, { id: 'm-1', subject: 'user-1', group: 'grp-root', at: NOW - 30 });
+    join(second, { id: 'm-2', subject: 'user-3', group: 'grp-root', at: NOW - 10 });
+    join(second, { id: 'm-3', subject: 'user-3', group: 'grp-child', at: NOW - 5 });
   });
 
   it('counts the holders of each role in every account database', async () => {
@@ -282,33 +281,15 @@ describe('RBAC admin views under routed account storage', () => {
     ]);
   });
 
-  it('counts and lists the members of organisations in every account database', async () => {
-    const org = (await (await adminOrganizationGetHandler(context({ id: 'org-root' }))).json()) as {
-      organization: { member_count: number };
-    };
-    expect(org.organization.member_count).toBe(2);
-
+  it('lists the members of a group in every account database', async () => {
     const members = (await (
-      await adminOrganizationMembersListHandler(context({ id: 'org-root' }))
+      await adminGroupMembersListHandler(context({ id: 'grp-root' }))
     ).json()) as {
-      members: Array<{ subject_id: string; user_email: string | null }>;
+      members: Array<{ subject_id: string }>;
       pagination: { total: number };
     };
     expect(members.pagination.total).toBe(2);
-    expect(members.members).toEqual([
-      expect.objectContaining({ subject_id: 'user-3', user_email: 'user-3@example.test' }),
-      expect.objectContaining({ subject_id: 'user-1', user_email: 'user-1@example.test' }),
-    ]);
-
-    const hierarchy = (await (
-      await adminOrganizationHierarchyHandler(context({ id: 'org-root' }))
-    ).json()) as {
-      organization: { member_count: number; children: Array<{ member_count: number }> };
-      summary: { total_members: number };
-    };
-    expect(hierarchy.organization.member_count).toBe(2);
-    expect(hierarchy.organization.children[0].member_count).toBe(1);
-    expect(hierarchy.summary.total_members).toBe(3);
+    expect(members.members.map((member) => member.subject_id)).toEqual(['user-3', 'user-1']);
   });
 
   it("reads a user's effective permissions from its account and the role definitions", async () => {
@@ -317,26 +298,22 @@ describe('RBAC admin views under routed account storage', () => {
     ).json()) as {
       permissions: Array<{ permission: string; source_name: string }>;
       roles: Array<{ role_id: string; scope: string }>;
-      organizations: Array<{ organization_id: string }>;
     };
-    // role-b is assigned in org-root only: it grants nothing tenant-wide.
+    // role-b is assigned for grp-root only: it grants nothing tenant-wide.
     expect(body.permissions).toEqual([
       expect.objectContaining({ permission: 'audit:read', source_name: 'auditor' }),
     ]);
     expect(body.roles.map((role) => [role.role_id, role.scope])).toEqual([
       ['role-a', 'global'],
-      ['role-b', 'org'],
+      ['role-b', 'group'],
     ]);
-    expect(body.organizations.map((org) => org.organization_id).sort()).toEqual([
-      'org-child',
-      'org-root',
-    ]);
+    expect(body).not.toHaveProperty('organizations');
   });
 
   it("lists a suspended member's contact, read through the admin view of the stores", async () => {
     state.suspended.add('user-3');
     const members = (await (
-      await adminOrganizationMembersListHandler(context({ id: 'org-root' }))
+      await adminGroupMembersListHandler(context({ id: 'grp-root' }))
     ).json()) as { members: Array<{ subject_id: string; user_email: string | null }> };
     expect(members.members).toEqual([
       expect.objectContaining({ subject_id: 'user-3', user_email: 'user-3@example.test' }),
@@ -347,7 +324,7 @@ describe('RBAC admin views under routed account storage', () => {
   it('lists a suspended member that holds no personal data, without a contact', async () => {
     state.suspended.add('user-3');
     state.withoutPii.add('user-3');
-    const response = await adminOrganizationMembersListHandler(context({ id: 'org-root' }));
+    const response = await adminGroupMembersListHandler(context({ id: 'grp-root' }));
     expect(response.status).toBe(200);
     const members = (await response.json()) as {
       members: Array<{ subject_id: string; user_email: string | null }>;

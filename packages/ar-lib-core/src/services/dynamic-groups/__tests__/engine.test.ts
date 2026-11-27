@@ -107,6 +107,23 @@ describe('service group condition compilation and incremental evaluation', () =>
     input.sources.A.scim = false;
     expect(evaluateGroups(plan, input).groups.A.member).toBe(false);
   });
+  it('reads a manual member of a group as a member in member() and not(member())', () => {
+    const plan = compileGroups(
+      't',
+      [group('A', null), group('M', member('A')), group('N', { op: 'not', arg: member('A') })],
+      fields
+    );
+    const manual = evaluateGroups(plan, {
+      attributes: {},
+      sources: { A: { manual: true, scim: false } },
+    });
+    expect(manual.groups.A).toEqual({ member: true, dynamic: false, sources: ['manual'] });
+    // Only the rule results are dynamic (published): the manual membership is not one.
+    expect(manual.groups.M).toEqual({ member: true, dynamic: true, sources: ['dynamic'] });
+    expect(manual.groups.N.member).toBe(false);
+    const none = evaluateGroups(plan, { attributes: {}, sources: {} });
+    expect([none.groups.M.member, none.groups.N.member]).toEqual([false, true]);
+  });
   it('does not prune a different changed attribute behind a stable membership path', () => {
     const plan = compileGroups('t', groups, fields);
     const before: EvaluationInput = {

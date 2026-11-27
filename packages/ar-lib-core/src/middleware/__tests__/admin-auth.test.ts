@@ -840,6 +840,8 @@ describe('adminAuthMiddleware', () => {
         userId: 'admin-user-123',
         authMethod: 'session',
         roles: ['ar_tenant_admin'],
+        // The tenant admin's end-user role delegation ceiling, from its role definition.
+        maxGrantTier: 2,
         tenantId: 'default',
         transportAuth: {
           authMethod: 'machine_access_token',

@@ -339,8 +339,8 @@ export interface HandleIdentityReadyResult {
     scope_type: string;
     scope_target: string;
   }>;
-  /** Organizations joined during JIT provisioning */
-  orgs_joined?: string[];
+  /** Groups joined during JIT provisioning (by the matched rules) */
+  groups_joined?: string[];
   /** Attributes set during JIT provisioning */
   attributes_set?: Array<{
     name: string;
@@ -355,7 +355,7 @@ export interface HandleIdentityPendingResult {
   stitchedFromExisting: false;
   linkedIdentityId?: string;
   roles_assigned?: HandleIdentityReadyResult['roles_assigned'];
-  orgs_joined?: HandleIdentityReadyResult['orgs_joined'];
+  groups_joined?: HandleIdentityReadyResult['groups_joined'];
   attributes_set?: HandleIdentityReadyResult['attributes_set'];
   accountId: string;
   operationId: string;

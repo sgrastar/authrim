@@ -591,6 +591,21 @@ describeScimTestHarness('SCIM Groups on canonical groups', (harness) => {
       ]);
     });
 
+    it('deletes the resource permissions granted to the group with it', async () => {
+      harness.canonicalGroups.db
+        .prepare(
+          `INSERT INTO resource_permissions (id, tenant_id, subject_type, subject_id, resource_type,
+             resource_id, actions_json, created_at, updated_at)
+           VALUES ('rp-group', 'default', 'group', 'group-001', 'documents', 'd1', '["read"]', 1, 1),
+                  ('rp-user', 'default', 'user', 'group-001', 'documents', 'd1', '["read"]', 1, 1)`
+        )
+        .run();
+      expect((await send('DELETE', '/scim/v2/Groups/group-001')).status).toBe(204);
+      expect(
+        harness.canonicalGroups.db.prepare('SELECT id FROM resource_permissions').all()
+      ).toEqual([{ id: 'rp-user' }]);
+    });
+
     it('moves the tenant version on a rename, and on a delete before the memberships go', async () => {
       harness.canonicalGroups.seedMembership({ groupId: 'group-001', subjectId: 'user-001' });
       const keys = bindCache();

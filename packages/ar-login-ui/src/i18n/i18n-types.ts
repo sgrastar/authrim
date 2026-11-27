@@ -1454,18 +1454,6 @@ type RootTranslation = {
 	 */
 	consent_scope_offline_access: string;
 	/**
-	 * S​e​l​e​c​t​ ​o​r​g​a​n​i​z​a​t​i​o​n
-	 */
-	consent_organizationSelect: string;
-	/**
-	 * P​r​i​m​a​r​y
-	 */
-	consent_primaryOrg: string;
-	/**
-	 * C​u​r​r​e​n​t​ ​o​r​g​a​n​i​z​a​t​i​o​n
-	 */
-	consent_currentOrganization: string;
-	/**
 	 * A​c​t​i​n​g​ ​o​n​ ​b​e​h​a​l​f​ ​o​f​ ​{​n​a​m​e​}
 	 * @param {string} name
 	 */
@@ -3595,18 +3583,6 @@ export type TranslationFunctions = {
 	 * Access your account when you're not using the app
 	 */
 	consent_scope_offline_access: () => LocalizedString;
-	/**
-	 * Select organization
-	 */
-	consent_organizationSelect: () => LocalizedString;
-	/**
-	 * Primary
-	 */
-	consent_primaryOrg: () => LocalizedString;
-	/**
-	 * Current organization
-	 */
-	consent_currentOrganization: () => LocalizedString;
 	/**
 	 * Acting on behalf of {name}
 	 */

@@ -70,7 +70,7 @@ const adminPolicies = {
 		'指定したcontextに対してpolicyがどう評価されるかをテストします。',
 	admin_policies_subject: 'Subject',
 	admin_policies_subject_id_required: 'Subject ID *',
-	admin_policies_organization_id: 'Organization ID',
+	admin_policies_resource_group_ids: 'リソースのグループ ID（カンマ区切り）',
 	admin_policies_resource: 'Resource',
 	admin_policies_resource_type_required: 'Resource Type *',
 	admin_policies_resource_id_required: 'Resource ID *',
@@ -108,7 +108,6 @@ const adminPolicies = {
 	admin_policies_type_has_any_role: 'いずれかのroleを持つ',
 	admin_policies_type_has_all_roles: 'すべてのroleを持つ',
 	admin_policies_type_is_resource_owner: 'Resource ownerである',
-	admin_policies_type_same_organization: '同じ組織',
 	admin_policies_type_attribute_equals: '属性が等しい',
 	admin_policies_type_attribute_exists: '属性が存在する',
 	admin_policies_type_attribute_in: '属性がリスト内',
@@ -131,8 +130,6 @@ const adminPolicies = {
 	admin_policies_type_desc_has_any_role: '指定したroleのうち少なくとも1つを要求します。',
 	admin_policies_type_desc_has_all_roles: '指定したすべてのroleを要求します。',
 	admin_policies_type_desc_is_resource_owner: 'Subjectがresource ownerの場合に一致します。',
-	admin_policies_type_desc_same_organization:
-		'Subjectとresourceが同じ組織に属する場合に一致します。',
 	admin_policies_type_desc_attribute_equals:
 		'Subjectまたはresourceの属性が値と等しい場合に一致します。',
 	admin_policies_type_desc_attribute_exists: '属性が存在する場合に一致します。',
@@ -173,7 +170,6 @@ const adminPolicies = {
 	admin_policies_condition_has_any_role: 'いずれかのroleを持つ: {roles}',
 	admin_policies_condition_has_all_roles: 'すべてのroleを持つ: {roles}',
 	admin_policies_condition_is_resource_owner: 'Resource ownerである',
-	admin_policies_condition_same_organization: '同じ組織内',
 	admin_policies_condition_attribute_equals: '{attribute} = "{value}"',
 	admin_policies_condition_attribute_exists: '属性 "{attribute}" を持つ',
 	admin_policies_condition_attribute_in: '{attribute} in [{values}]',

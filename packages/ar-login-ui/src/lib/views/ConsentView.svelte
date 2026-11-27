@@ -33,14 +33,6 @@
 		picture?: string;
 	}
 
-	export interface ConsentOrgInfo {
-		id: string;
-		name: string;
-		type: string;
-		is_primary: boolean;
-		plan?: string;
-	}
-
 	export interface ConsentActingAsInfo {
 		id: string;
 		name?: string;
@@ -50,7 +42,6 @@
 	}
 
 	export interface ConsentFeatureFlags {
-		org_selector_enabled: boolean;
 		acting_as_enabled: boolean;
 		show_roles: boolean;
 	}
@@ -86,11 +77,8 @@
 		client: ConsentClientInfo;
 		scopes: ConsentScopeInfo[];
 		user: ConsentUserInfo;
-		organizations: ConsentOrgInfo[];
-		primary_org: ConsentOrgInfo | null;
 		roles: string[];
 		acting_as: ConsentActingAsInfo | null;
-		target_org_id: string | null;
 		features: ConsentFeatureFlags;
 		consent_items?: ConsentScreenItem[];
 		consent_management_enabled?: boolean;
@@ -122,13 +110,11 @@
 		loading?: boolean;
 		error?: string;
 		consentData?: ConsentScreenData | null;
-		selectedOrgId?: string | null;
 		consentItemDecisions?: Record<string, 'granted' | 'denied'>;
 		/** Optional information items by claim name: true while kept checked (unset = its default). */
 		releaseChoices?: Record<string, boolean>;
 		allowLoading?: boolean;
 		denyLoading?: boolean;
-		onOrgChange?: (event: Event) => void;
 		onSwitchAccount?: () => void;
 		onAllow?: () => void;
 		onDeny?: () => void;
@@ -138,20 +124,15 @@
 		loading = false,
 		error = '',
 		consentData = null,
-		selectedOrgId = null,
 		consentItemDecisions = $bindable({}),
 		releaseChoices = $bindable({}),
 		allowLoading = false,
 		denyLoading = false,
-		onOrgChange,
 		onSwitchAccount,
 		onAllow,
 		onDeny
 	}: Props = $props();
 
-	const selectedOrg = $derived(
-		consentData?.organizations.find((o) => o.id === selectedOrgId) || consentData?.primary_org
-	);
 	const hasBlockingConsentItems = $derived(
 		Boolean(
 			consentData?.consent_management_enabled &&
@@ -267,52 +248,6 @@
 		{/if}
 
 		<div style="border-top: 1px solid var(--border); padding-top: 24px; margin-bottom: 24px;">
-			<!-- Organization Selector -->
-			{#if consentData.features.org_selector_enabled && consentData.organizations.length > 1}
-				<div class="mb-6">
-					<label
-						for="org-select"
-						class="block text-sm font-medium mb-2"
-						style="color: var(--text-secondary);"
-					>
-						{$LL.consent_organizationSelect()}
-					</label>
-					<select
-						id="org-select"
-						class="auth-lang-select"
-						style="width: 100%; padding: 10px 12px; font-size: 0.875rem;"
-						value={selectedOrgId || ''}
-						onchange={onOrgChange}
-					>
-						{#each consentData.organizations as org (org.id)}
-							<option value={org.id}>
-								{org.name}
-								{#if org.is_primary}
-									({$LL.consent_primaryOrg()})
-								{/if}
-							</option>
-						{/each}
-					</select>
-				</div>
-			{/if}
-
-			<!-- Current Organization Display -->
-			{#if !consentData.features.org_selector_enabled && selectedOrg}
-				<div class="auth-info-box mb-6">
-					<p class="auth-info-box__label">
-						{$LL.consent_currentOrganization()}
-					</p>
-					<p class="auth-info-box__value">
-						{selectedOrg.name}
-						{#if selectedOrg.is_primary}
-							<span style="margin-inline-start: 8px; font-size: 0.75rem; color: var(--primary);">
-								({$LL.consent_primaryOrg()})
-							</span>
-						{/if}
-					</p>
-				</div>
-			{/if}
-
 			<!-- Roles Display -->
 			{#if consentData.features.show_roles && consentData.roles.length > 0}
 				<div class="mb-6">

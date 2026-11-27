@@ -1,11 +1,17 @@
 import { expect, it } from 'vitest';
 import { openCoreStore } from './helpers/core-schema-sqlite';
-import { createGroup, assignGroupRole, type AdminAuthContext } from '@authrim/ar-lib-core';
+import {
+  createGroup,
+  assignGroupRole,
+  groupsCarryingRoles,
+  type AdminAuthContext,
+} from '@authrim/ar-lib-core';
 import {
   adminAssignGroupRole,
   adminRemoveGroupRole,
   adminUpsertGroupMembership,
   adminReparentGroup,
+  canManageGroupMembership,
 } from '../group-role-management';
 import { mayManageEndUserRole } from '../role-delegation';
 import { IdentityMappingControlPlaneRepository } from '../identity-mapping-control-plane';
@@ -15,14 +21,13 @@ it('enforces the same grant ceiling on direct grants, group grants, membership a
   try {
     const tenant = 'test';
     const admin = {
-      hierarchyLevel: 80,
       maxGrantTier: 1,
       permissions: ['admin:roles:write'],
     } as AdminAuthContext;
-    const role = { grant_tier: 2, hierarchy_level: 1 };
+    const role = { grant_tier: 2 };
     expect(mayManageEndUserRole(admin, role)).toBe(false);
     db.exec(
-      "INSERT INTO roles (id,name,tenant_id,grant_tier,hierarchy_level,permissions_json,created_at) VALUES('role','R','test',2,1,'[]',1)"
+      "INSERT INTO roles (id,name,tenant_id,grant_tier,permissions_json,created_at) VALUES('role','R','test',2,'[]',1)"
     );
     const root = await createGroup(adapter, tenant, { groupKey: 'root', displayName: 'Root' });
     const child = await createGroup(adapter, tenant, {
@@ -136,6 +141,49 @@ it('files a SCIM membership written without a reference under the shared SCIM do
       { assignment_source: 'manual', source_ref: '' },
       { assignment_source: 'scim', source_ref: 'scim' },
     ]);
+  } finally {
+    db.close();
+  }
+});
+
+it('treats a resource permission granted to a group or its ancestor as authorization the group carries', async () => {
+  const { db, adapter } = openCoreStore('test');
+  try {
+    const tenant = 'test';
+    const root = await createGroup(adapter, tenant, { groupKey: 'root', displayName: 'Root' });
+    const child = await createGroup(adapter, tenant, {
+      groupKey: 'child',
+      displayName: 'Child',
+      parentGroupId: root,
+    });
+    const settingsOnly = {
+      maxGrantTier: 3,
+      permissions: ['admin:settings:write'],
+    } as AdminAuthContext;
+    const roleWriter = { maxGrantTier: 1, permissions: ['admin:roles:write'] } as AdminAuthContext;
+    expect(await canManageGroupMembership(adapter, tenant, settingsOnly, child)).toBe(true);
+    expect([...(await groupsCarryingRoles(adapter, tenant, [child]))]).toEqual([]);
+    const grant = (id: string, active: number, expiresAt: number | null) =>
+      db
+        .prepare(
+          `INSERT INTO resource_permissions (id, tenant_id, subject_type, subject_id, resource_type,
+             resource_id, actions_json, expires_at, is_active, created_at, updated_at)
+           VALUES (?, 'test', 'group', ?, 'documents', ?, '["read"]', ?, ?, 0, 0)`
+        )
+        .run(id, root, id, expiresAt, active);
+    // Inactive or expired grants carry nothing.
+    grant('rp-off', 0, null);
+    grant('rp-old', 1, Math.floor(Date.now() / 1000) - 60);
+    expect(await canManageGroupMembership(adapter, tenant, settingsOnly, child)).toBe(true);
+    expect([...(await groupsCarryingRoles(adapter, tenant, [child]))]).toEqual([]);
+    grant('rp-on', 1, null);
+    // Granted to the parent: membership of the child grants it, so it needs the role-write
+    // permission (the resource permissions API's); no role is involved, so no grant ceiling.
+    expect(await canManageGroupMembership(adapter, tenant, settingsOnly, child)).toBe(false);
+    expect(await canManageGroupMembership(adapter, tenant, roleWriter, child)).toBe(true);
+    expect([...(await groupsCarryingRoles(adapter, tenant, [child, root]))].sort()).toEqual(
+      [child, root].sort()
+    );
   } finally {
     db.close();
   }

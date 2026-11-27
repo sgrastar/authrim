@@ -79,6 +79,7 @@
 	}
 
 	let showSimulationDialog = $state(false);
+	let resourceGroupIdsText = $state('');
 	let simulationContext: PolicyContext = $state(createSimulationContext());
 	let simulationResult: SimulationResult | null = $state(null);
 	let simulating = $state(false);
@@ -244,6 +245,7 @@
 	function openSimulateDialog() {
 		showSimulationDialog = true;
 		simulationContext = createSimulationContext();
+		resourceGroupIdsText = '';
 		simulationResult = null;
 		simulationError = '';
 	}
@@ -356,8 +358,6 @@
 				});
 			case 'is_resource_owner':
 				return $LL.admin_policies_condition_is_resource_owner();
-			case 'same_organization':
-				return $LL.admin_policies_condition_same_organization();
 			case 'attribute_equals':
 				return $LL.admin_policies_condition_attribute_equals({
 					attribute: String(params.name ?? ''),
@@ -456,8 +456,6 @@
 				return $LL.admin_policies_type_has_all_roles();
 			case 'is_resource_owner':
 				return $LL.admin_policies_type_is_resource_owner();
-			case 'same_organization':
-				return $LL.admin_policies_type_same_organization();
 			case 'attribute_equals':
 				return $LL.admin_policies_type_attribute_equals();
 			case 'attribute_exists':
@@ -509,8 +507,6 @@
 				return $LL.admin_policies_type_desc_has_all_roles();
 			case 'is_resource_owner':
 				return $LL.admin_policies_type_desc_is_resource_owner();
-			case 'same_organization':
-				return $LL.admin_policies_type_desc_same_organization();
 			case 'attribute_equals':
 				return $LL.admin_policies_type_desc_attribute_equals();
 			case 'attribute_exists':
@@ -1206,18 +1202,6 @@
 					placeholder="user_123"
 				/>
 			</div>
-			<div class="form-group">
-				<label for="sim-subject-org" class="form-label"
-					>{$LL.admin_policies_organization_id()}</label
-				>
-				<input
-					id="sim-subject-org"
-					type="text"
-					class="form-input"
-					bind:value={simulationContext.subject.orgId}
-					placeholder="org_456"
-				/>
-			</div>
 		</div>
 
 		<h3 class="section-subtitle">{$LL.admin_policies_resource()}</h3>
@@ -1244,6 +1228,25 @@
 					class="form-input"
 					bind:value={simulationContext.resource.id}
 					placeholder="doc_789"
+				/>
+			</div>
+			<div class="form-group">
+				<label for="sim-resource-groups" class="form-label"
+					>{$LL.admin_policies_resource_group_ids()}</label
+				>
+				<input
+					id="sim-resource-groups"
+					type="text"
+					class="form-input"
+					value={resourceGroupIdsText}
+					oninput={(event) => {
+						resourceGroupIdsText = event.currentTarget.value;
+						simulationContext.resource.groupIds = resourceGroupIdsText
+							.split(',')
+							.map((id) => id.trim())
+							.filter(Boolean);
+					}}
+					placeholder="group_1, group_2"
 				/>
 			</div>
 		</div>

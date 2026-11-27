@@ -54,7 +54,7 @@ import {
   resolveCustomClaimRuntimeSourcesFromHono,
   validateCustomClaimWrite,
   resolveAccountCoreDataContext,
-  resolveSubjectOrganizations,
+  resolveSubjectGroups,
   resolveSubjectRoles,
   roleAssignmentHolds,
   type DatabaseAdapter,
@@ -2579,7 +2579,7 @@ async function getFlowConditionUserContext(
   userId: string,
   attributeKeys: readonly string[] = []
 ): Promise<NonNullable<FlowConditionEvaluationContext['user']>> {
-  // Role and organisation definitions are in the tenant metadata database (`db`); the user's
+  // Role and group definitions are in the tenant metadata database (`db`); the user's
   // assignments and memberships in the user's account database. A user the tenant has no account
   // for has none; one whose account or roles cannot be read throws, so no condition is decided
   // without them (a condition may route admins to a stronger step).
@@ -2590,9 +2590,9 @@ async function getFlowConditionUserContext(
   } catch (error) {
     if (!(error instanceof Error && error.message === 'account_data_route_not_found')) throw error;
   }
-  const [roles, orgIds, attributes] = await Promise.all([
+  const [roles, groupIds, attributes] = await Promise.all([
     getFlowConditionUserRoles(rbac, tenantId, userId),
-    getFlowConditionUserOrgIds(rbac, tenantId, userId),
+    getFlowConditionUserGroupIds(rbac, tenantId, userId),
     // Read, like the roles, only for a user the tenant has an account for; one that cannot be
     // read throws, so no condition on it is decided without it.
     rbac && attributeKeys.length > 0
@@ -2601,7 +2601,7 @@ async function getFlowConditionUserContext(
   ]);
   return {
     roles,
-    org_ids: orgIds,
+    group_ids: groupIds,
     ...(attributes ? { attributes } : {}),
   };
 }
@@ -2628,17 +2628,23 @@ async function getFlowConditionUserRoles(
   return [...new Set(held.map(({ role }) => role.name))].filter(Boolean);
 }
 
-async function getFlowConditionUserOrgIds(
+/**
+ * The user's effective group ids: active memberships of active groups and their ancestors, as
+ * tokens and the Check API see them.
+ */
+async function getFlowConditionUserGroupIds(
   rbac: TenantRBACDatabases | null,
   tenantId: string,
   userId: string
 ): Promise<string[]> {
   if (!rbac) return [];
-  // Active organisations only, as tokens, consent and the Check API see them.
-  const memberships = await resolveSubjectOrganizations(rbac, tenantId, userId, {
-    activeOnly: true,
-  });
-  return [...new Set(memberships.map(({ organization }) => organization.id))];
+  const { effectiveGroupIds } = await resolveSubjectGroups(
+    rbac,
+    tenantId,
+    userId,
+    Math.floor(Date.now() / 1000)
+  );
+  return [...effectiveGroupIds];
 }
 
 async function resolveConditionSelectedHandle(input: {
@@ -2668,7 +2674,7 @@ async function resolveConditionSelectedHandle(input: {
       input.runtime
     );
   } catch (error) {
-    // The user's roles or organisations could not be read: no branch is chosen without them.
+    // The user's roles or groups could not be read: no branch is chosen without them.
     getLogger(input.c)
       .module('LOGIN-RUNTIME-FLOW')
       .warn('Flow condition context unavailable', {

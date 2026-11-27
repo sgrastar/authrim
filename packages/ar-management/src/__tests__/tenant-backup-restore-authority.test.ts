@@ -70,7 +70,9 @@ function freshDatabase(family: 'core' | 'pii' | 'admin') {
           '011_saml_sp_release_consent.sql',
           '014_shared_launcher_states.sql',
           '015_end_user_groups.sql',
+          '016_invitation_group.sql',
           '017_service_group_scim_membership_inputs.sql',
+          '018_remove_organizations.sql',
         ]
       : []),
     ...(family === 'pii'

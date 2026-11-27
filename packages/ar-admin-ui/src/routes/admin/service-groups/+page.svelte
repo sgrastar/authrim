@@ -4,6 +4,9 @@
 	import { settingsContext } from '#lib/stores/settings-context.svelte.js';
 	import {
 		serviceGroupsRequest as request,
+		setManualGroupMember,
+		listGroupMembers,
+		type GroupMemberRow,
 		type ServiceGroupCatalog,
 		type ServiceGroup,
 		type Expression,
@@ -31,6 +34,8 @@
 	let search = $state('');
 	let notice = $state('');
 	let membersLoaded = $state(false);
+	let allMembers = $state<GroupMemberRow[]>([]);
+	let allMembersLoaded = $state(false);
 	let selected = $state<string | null>(null);
 	let key = $state('');
 	let name = $state('');
@@ -91,6 +96,8 @@
 	function edit(group: ServiceGroup | null) {
 		notice = '';
 		membersLoaded = false;
+		allMembers = [];
+		allMembersLoaded = false;
 		selected = group?.id ?? null;
 		key = group?.key ?? '';
 		name = group?.displayName ?? '';
@@ -136,6 +143,11 @@
 			);
 		});
 	}
+	async function loadAllMembers() {
+		if (!selected) return;
+		allMembers = await listGroupMembers(selected);
+		allMembersLoaded = true;
+	}
 	async function listMembers(after = '') {
 		if (!selected) return;
 		await action(async () => {
@@ -158,9 +170,9 @@
 	async function manual(present: boolean) {
 		if (!selected || !subject) return;
 		await action(async () => {
-			output = await request(`/${selected}/members/${encodeURIComponent(subject)}`, 'PUT', {
-				present
-			});
+			await setManualGroupMember(selected!, subject, present);
+			output = null;
+			await loadAllMembers();
 		});
 	}
 	async function recover() {
@@ -375,7 +387,27 @@
 			</div>
 		{/if}
 	</AdminSection>
-	<AdminSection title={text.members}>
+	<AdminSection title={text.allMembers}>
+		<p class="hint">{text.allMembersHint}</p>
+		<button onclick={() => action(loadAllMembers)} disabled={busy || !selected}
+			>{text.refresh}</button
+		>
+		{#if allMembersLoaded && !allMembers.length}<p>{text.noMembers}</p>{/if}
+		{#if allMembers.length}
+			<AdminDataTable compact --table-header-color="var(--color-text)">
+				<caption>{name} · {text.allMembers}</caption>
+				<thead><tr><th>{text.user}</th><th>{text.source}</th><th>{text.state}</th></tr></thead>
+				<tbody
+					>{#each allMembers as item (`${item.subject_id}:${item.assignment_source}`)}<tr
+							><td>{item.subject_id}</td><td>{item.assignment_source}</td><td
+								>{item.lifecycle_state}{item.effective ? '' : ` (${text.notEffective})`}</td
+							></tr
+						>{/each}</tbody
+				>
+			</AdminDataTable>
+		{/if}
+	</AdminSection>
+	<AdminSection title={text.snapshotMembers}>
 		<p class="hint">{text.memberHint}</p>
 		<button onclick={() => listMembers()} disabled={busy || !selected}>{text.refresh}</button>
 		{#if membersLoaded && !members.length}<p>{text.noMembers}</p>{/if}

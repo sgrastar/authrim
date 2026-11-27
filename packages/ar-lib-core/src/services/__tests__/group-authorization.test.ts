@@ -12,6 +12,7 @@ import {
   replaceSourceMemberships,
   resolveSubjectGroups,
   revokeGroupMembership,
+  revokeManualGroupMemberships,
   upsertGroupMembership,
 } from '../group-membership';
 import { assignGroupRole, removeGroupRole } from '../group-role-assignments';
@@ -45,6 +46,71 @@ describe('end-user group authorization across two databases', () => {
     meta.db.close();
     account.db.close();
     vi.useRealTimers();
+  });
+
+  it('stops the dynamic memberships a removed manual membership may have derived', async () => {
+    const manualGroup = await create('manual');
+    const derived = await create('derived');
+    const other = await create('other');
+    const dynamicRow = (id: string, groupId: string) =>
+      account.db
+        .prepare(
+          `INSERT INTO group_memberships (id, tenant_id, group_id, subject_id, assignment_source,
+             source_ref, stale_after, created_at, updated_at)
+           VALUES (?, 'tenant-a', ?, 'user-1', 'dynamic', '0000000000000001:1', ?, 1, 1)`
+        )
+        .run(id, groupId, now + 3600);
+    const staleAfter = () =>
+      (
+        account.db
+          .prepare(
+            "SELECT stale_after FROM group_memberships WHERE assignment_source = 'dynamic' ORDER BY id"
+          )
+          .all() as Array<{ stale_after: number }>
+      ).map((row) => row.stale_after);
+    const invalidations: string[] = [];
+    const cache = {
+      get: vi.fn(async () => null),
+      put: vi.fn(async (key: string) => void invalidations.push(key)),
+    } as unknown as KVNamespace;
+
+    await join(manualGroup);
+    dynamicRow('d-1', derived);
+    // Through the groups API's path (one source reference).
+    await revokeGroupMembership(
+      stores(),
+      tenant,
+      user,
+      { groupId: manualGroup, source: 'manual' },
+      cache
+    );
+    expect(staleAfter()).toEqual([now]);
+    expect(invalidations.length).toBeGreaterThan(0);
+    const pending = account.db
+      .prepare('SELECT invalidation_pending FROM dynamic_membership_publications')
+      .get() as { invalidation_pending: number };
+    expect(pending).toBeDefined();
+
+    // Through the access reviews' path (every manual row of the group).
+    await join(manualGroup);
+    dynamicRow('d-2', other);
+    await revokeManualGroupMemberships(stores(), tenant, user, manualGroup, cache);
+    expect(staleAfter()).toEqual([now, now]);
+    // Removing another source's row does not touch the dynamic rows.
+    account.db.exec(
+      "UPDATE group_memberships SET stale_after = NULL WHERE assignment_source = 'dynamic'"
+    );
+    await upsertGroupMembership(stores(), tenant, user, {
+      groupId: manualGroup,
+      source: 'rule',
+      sourceRef: 'role_assignment_rule:r1',
+    });
+    await revokeGroupMembership(stores(), tenant, user, {
+      groupId: manualGroup,
+      source: 'rule',
+      sourceRef: 'role_assignment_rule:r1',
+    });
+    expect(staleAfter()).toEqual([null, null]);
   });
 
   it('preserves both direct origins of a shared ancestor, scopes and expiration', async () => {
@@ -102,6 +168,24 @@ describe('end-user group authorization across two databases', () => {
     const scoped = { scope: 'group', scopeTarget: 'group:reports' };
     expect(roleAssignmentHolds(scoped, { groupIds: new Set(['reports']) })).toBe(true);
     expect(roleAssignmentHolds(scoped, { groupIds: ['other'] })).toBe(false);
+    // A row of a scope or target the readers do not know never holds.
+    expect(roleAssignmentHolds({ scope: 'global', scopeTarget: 'x' }, {})).toBe(false);
+    expect(roleAssignmentHolds({ scope: 'org', scopeTarget: 'org:reports' }, {})).toBe(false);
+    expect(
+      roleAssignmentHolds({ scope: 'group', scopeTarget: 'reports' }, { groupIds: ['reports'] })
+    ).toBe(false);
+    expect(
+      roleAssignmentHolds(
+        { scope: 'resource', scopeTarget: 'doc:1' },
+        { resourceType: 'doc', resourceId: '1' }
+      )
+    ).toBe(false);
+    expect(
+      roleAssignmentHolds(
+        { scope: 'resource', scopeTarget: 'resource:doc:1' },
+        { resourceType: 'doc', resourceId: '1' }
+      )
+    ).toBe(true);
     await updateGroup(meta.adapter, tenant, root, { lifecycleState: 'suspended' });
     expect(await resolveSubjectRoles(stores(), tenant, user, now)).toHaveLength(1);
     expect((await check.check(request)).allowed).toBe(false);
@@ -124,7 +208,7 @@ describe('end-user group authorization across two databases', () => {
     account.db
       .exec(`INSERT INTO role_assignments(id,tenant_id,subject_id,role_id,scope_type,scope_target,created_at,updated_at)
       VALUES('wide','tenant-a','user-1','writer','global','',1,1),
-            ('narrow','tenant-a','user-1','reader','resource','doc:1',1,1)`);
+            ('narrow','tenant-a','user-1','reader','resource','resource:doc:1',1,1)`);
     await assignGroupRole(meta.adapter, tenant, { groupId: root, roleId: 'reader' });
     await assignGroupRole(meta.adapter, tenant, {
       groupId: child,
@@ -156,7 +240,7 @@ describe('end-user group authorization across two databases', () => {
       expect(claims.authrim_scoped_roles).toEqual(
         expect.arrayContaining([
           { name: 'Reader', scope: 'group', scopeTarget: 'group:reports' },
-          { name: 'Reader', scope: 'resource', scopeTarget: 'doc:1' },
+          { name: 'Reader', scope: 'resource', scopeTarget: 'resource:doc:1' },
         ])
       );
       // Direct memberships and ancestors, active only (the suspended group is out).
@@ -176,12 +260,12 @@ describe('end-user group authorization across two databases', () => {
     await join(group);
     account.db
       .exec(`INSERT INTO role_assignments(id,tenant_id,subject_id,role_id,scope_type,scope_target,created_at,updated_at)
-      VALUES('narrow','tenant-a','user-1','writer','resource','doc:1',1,1)`);
+      VALUES('narrow','tenant-a','user-1','writer','resource','resource:doc:1',1,1)`);
     await assignGroupRole(meta.adapter, tenant, {
       groupId: group,
       roleId: 'reader',
       scopeType: 'resource',
-      scopeTarget: 'doc:2',
+      scopeTarget: 'resource:doc:2',
     });
     const claims = await getAccessTokenRBACClaims(stores(), user, {
       tenantId: tenant,

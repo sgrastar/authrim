@@ -3914,11 +3914,10 @@ components:
                 required: true
             user:
               id: user_123
-            organizations: []
-            primary_org: null
             roles: []
             features:
-              org_selector_enabled: false
+              acting_as_enabled: false
+              show_roles: false
             granular_scopes_enabled: false
             consent_management_enabled: false
             consent_language: en
@@ -5575,16 +5574,6 @@ components:
         user:
           type: object
           additionalProperties: true
-        organizations:
-          type: array
-          items:
-            type: object
-            additionalProperties: true
-        primary_org:
-          anyOf:
-            - type: object
-              additionalProperties: true
-            - type: 'null'
         roles:
           type: array
           items:
@@ -5889,8 +5878,8 @@ components:
           minLength: 1
           description:
             Tenant invitation token. Checked before the account is created (active, of this tenant,
-            and for the email it names, if any) and one use reserved for this signup; its role or
-            organization is assigned to the new account when signup/finish registers the passkey.
+            and for the email it names, if any) and one use reserved for this signup; its role and
+            group are given to the new account when signup/finish registers the passkey.
         invitation_email_proof:
           type: string
           description:
@@ -6905,8 +6894,7 @@ components:
           format: email
         email_verification_required:
           type: boolean
-          description:
-            True when the invitation names an email, so a
+          description: True when the invitation names an email, so a
             passkey or authenticator-app signup must first use /api/v1/invitations/email-verification.
           example: true
         expires_at:

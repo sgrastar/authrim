@@ -626,8 +626,11 @@ async function actualSource(family: 'core' | 'pii', tenantId = 'tenant-a') {
         }
       db.exec(`INSERT INTO legal_holds (id,tenant_id,subject_id,reason_code,created_by,created_at,updated_at)
         VALUES ('hold-a','${tenantId}','account:alice','litigation','operator-a',${now},${now});
-        INSERT INTO roles (id,tenant_id,name,permissions_json,created_at) VALUES ('z-parent','${tenantId}','parent','[]',${now});
-        INSERT INTO roles (id,tenant_id,name,permissions_json,created_at,parent_role_id) VALUES ('a-child','${tenantId}','child','[]',${now},'z-parent');
+        INSERT INTO "groups" (id,tenant_id,group_key,display_name,created_at,updated_at) VALUES ('z-parent','${tenantId}','parent','Parent',${now},${now});
+        INSERT INTO "groups" (id,tenant_id,group_key,display_name,parent_group_id,created_at,updated_at) VALUES ('a-child','${tenantId}','child','Child','z-parent',${now},${now});
+        INSERT INTO group_memberships (id,tenant_id,group_id,subject_id,assignment_source,source_ref,created_at,updated_at)
+          VALUES ('gm-scim','${tenantId}','a-child','alice','scim','scim',${now},${now}),
+                 ('gm-manual','${tenantId}','z-parent','alice','manual','',${now},${now});
         INSERT INTO account_creation_operations
           (operation_id,tenant_id,actor_id,idempotency_key,allocation_idempotency_key,request_hash,user_id,account_id,status,created_at,completed_at,updated_at)
           VALUES ('creation-a','${tenantId}','operator-a','key-a','allocation-a','${'a'.repeat(64)}','alice','account:alice','succeeded',${now},${now},${now});
@@ -700,7 +703,7 @@ async function actualSource(family: 'core' | 'pii', tenantId = 'tenant-a') {
 }
 
 run(
-  'restores real D1 trigger rows, creation bookkeeping and role hierarchy without duplicate effects',
+  'restores real D1 trigger rows, creation bookkeeping and group hierarchy without duplicate effects',
   async () => {
     const source = await actualSource('core');
     await withFamilyDatabase('core', async (connectionString, client) => {
@@ -730,10 +733,13 @@ run(
       expect(
         (
           await client.query<Record<string, unknown>>(
-            "SELECT parent_role_id FROM roles WHERE id='a-child'"
+            `SELECT parent_group_id FROM "groups" WHERE id='a-child'`
           )
-        ).rows[0].parent_role_id
+        ).rows[0].parent_group_id
       ).toBe('z-parent');
+      expect(
+        receipt.tables.find((table) => table.datasetId === 'core.group_memberships')?.rowCount
+      ).toBe(2);
       for (const id of [
         'core.account_creation_operations',
         'core.account_lifecycle_event_outbox',
@@ -755,6 +761,13 @@ run(
           `SELECT revision FROM service_group_inputs WHERE user_id='alice'`
         )
       ).rows[0].revision as string;
+      // The SCIM and manual memberships bumped the source's revision; restoring them (with their
+      // input trigger suspended) copies it as it was, without bumping it again.
+      const sourceRevision = (
+        source.extensions['core.service_group_inputs'] ?? source.rows['core.service_group_inputs']
+      )?.find((row) => row.user_id?.[1] === 'alice')?.revision?.[1];
+      expect(sourceRevision).toBeDefined();
+      expect(before).toBe(sourceRevision);
       const outbox = (
         await client.query<Record<string, unknown>>(
           'SELECT count(*)::text AS count FROM account_webhook_outbox'
@@ -840,12 +853,12 @@ run('replaces only attested fresh reference seeds for the actual default tenant'
   });
 });
 
-run('rolls back imported rows and suspended triggers on a missing role parent', async () => {
+run('rolls back imported rows and suspended triggers on a missing group parent', async () => {
   const source = await actualSource('core');
-  source.extensions['core.roles'][0] = {
-    ...source.extensions['core.roles'][0],
-    parent_role_id: t('missing-parent'),
-  };
+  const groups = source.extensions['core.groups'];
+  const child = groups.findIndex((row) => row.id?.[1] === 'a-child');
+  expect(child).toBeGreaterThanOrEqual(0);
+  groups[child] = { ...groups[child], parent_group_id: t('missing-parent') };
   const input = backup('core', source.rows, source.extensions);
   await withFamilyDatabase('core', async (connectionString, client) => {
     await expect(

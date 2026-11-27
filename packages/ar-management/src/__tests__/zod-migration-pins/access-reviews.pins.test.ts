@@ -69,7 +69,7 @@ const invalid = (field: string, reason: string) => ({
 });
 /** Passed the schema; stopped because the fixture has no adminAuth. */
 const ACCEPTED = { status: 403, body: { error: 'AR060002' } };
-const SCOPE_ENUM = "'all_users' | 'role' | 'organization' | 'inactive_users'";
+const SCOPE_ENUM = "'all_users' | 'role' | 'group' | 'inactive_users'";
 
 describe('zod pins: access review CreateSchema (POST /access-reviews)', () => {
   beforeEach(() => vi.clearAllMocks());
@@ -190,11 +190,11 @@ describe('zod pins: access review CreateSchema (POST /access-reviews)', () => {
     });
   });
 
-  it('superRefine: role / organization scopes need scope_value (path scope_value)', async () => {
+  it('superRefine: role / group scopes need scope_value (path scope_value)', async () => {
     expect(await create({ name: 'n', scope: 'role' })).toEqual(
       invalid('scope_value', 'Required for this scope')
     );
-    expect(await create({ name: 'n', scope: 'organization' })).toEqual(
+    expect(await create({ name: 'n', scope: 'group' })).toEqual(
       invalid('scope_value', 'Required for this scope')
     );
     expect(await create({ name: 'n', scope: 'role', scope_value: 'admin' })).toEqual(ACCEPTED);

@@ -51,11 +51,21 @@ export interface GroupPlan {
 export interface EvaluationInput {
   attributes: Record<string, unknown>;
   sources: Record<string, { manual: boolean; scim: Truth }>;
+  /**
+   * When (UNIX seconds) the input changes by itself: the next start, expiry or staleness of one
+   * of the subject's manual memberships. None: it does not change until a write.
+   */
+  validUntil?: number;
 }
 export interface Evaluation {
   nodes: Record<string, Truth>;
   groups: Record<string, { member: Truth; dynamic: Truth; sources: string[] }>;
   evaluatedNodes: number;
+  /**
+   * The input's `validUntil` when the result was computed: past it the result is not fresh (the
+   * scheduler evaluates again), and published rows never outlive it.
+   */
+  inputValidUntil?: number;
 }
 export const GROUP_LIMITS = {
   groups: 256,

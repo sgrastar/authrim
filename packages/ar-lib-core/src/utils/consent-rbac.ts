@@ -5,27 +5,15 @@
  * Utilities for retrieving RBAC information for consent screen display.
  *
  * These functions extend the base rbac-claims.ts with consent-specific logic:
- * - Organization membership validation
  * - Acting-as relationship validation
  * - Full consent screen data aggregation
  */
 
-import type {
-  ConsentOrgInfo,
-  ConsentActingAsInfo,
-  ConsentUserInfo,
-  ConsentFeatureFlags,
-} from '../types/consent';
-import type { RelationshipType, PermissionLevel, OrganizationType, PlanType } from '../types/rbac';
+import type { ConsentActingAsInfo, ConsentUserInfo, ConsentFeatureFlags } from '../types/consent';
+import type { RelationshipType, PermissionLevel } from '../types/rbac';
 import { ensureDatabaseAdapter, type DatabaseSource } from '../db/adapter-source';
 import { CanonicalRuntimeUserStore } from '../repositories/identity/canonical-runtime-user-store';
-import {
-  isSet,
-  resolveSubjectOrganizations,
-  resolveSubjectRoles,
-  type ResolvedSubjectOrganization,
-  type TenantRBACDatabases,
-} from '../services/tenant-rbac';
+import { resolveSubjectRoles, type TenantRBACDatabases } from '../services/tenant-rbac';
 
 // =============================================================================
 // Consent RBAC Data Retrieval
@@ -35,10 +23,6 @@ import {
  * Result of getConsentRBACData
  */
 export interface ConsentRBACData {
-  /** All organizations the user belongs to */
-  organizations: ConsentOrgInfo[];
-  /** User's primary organization (null if no membership) */
-  primary_org: ConsentOrgInfo | null;
   /** User's role names (from all assignments) */
   roles: string[];
 }
@@ -46,8 +30,7 @@ export interface ConsentRBACData {
 /**
  * Get comprehensive RBAC data for consent screen
  *
- * Fetches all organization memberships, primary org, and role assignments
- * for displaying on the consent screen.
+ * Fetches the role assignments for displaying on the consent screen.
  *
  * @param dbs - The tenant's metadata and the subject's account database
  * @param subjectId - User ID
@@ -58,100 +41,10 @@ export async function getConsentRBACData(
   subjectId: string,
   tenantId: string
 ): Promise<ConsentRBACData> {
-  // Fetch organizations and roles in parallel
-  const [orgs, roles] = await Promise.all([
-    resolveAllOrganizationsWithPlan(dbs, subjectId, tenantId),
-    resolveSubjectRoles(dbs, tenantId, subjectId),
-  ]);
-
-  // Find primary organization
-  const primaryOrg = orgs.find((o) => o.is_primary) || null;
+  const roles = await resolveSubjectRoles(dbs, tenantId, subjectId);
 
   return {
-    organizations: orgs,
-    primary_org: primaryOrg,
     roles: [...new Set(roles.map(({ role }) => role.name))],
-  };
-}
-
-function consentOrgInfo({ organization, membership }: ResolvedSubjectOrganization): ConsentOrgInfo {
-  return {
-    id: organization.id,
-    name: organization.name,
-    type: organization.org_type as OrganizationType,
-    is_primary: isSet(membership.is_primary),
-    plan: organization.plan as PlanType,
-  };
-}
-
-/**
- * Resolve all organizations with plan information
- *
- * Extended version of resolveAllOrganizations that includes plan info
- * needed for consent screen display.
- *
- * @param dbs - The tenant's metadata and the subject's account database
- * @param subjectId - User ID
- * @returns Array of organization info with plan
- */
-async function resolveAllOrganizationsWithPlan(
-  dbs: TenantRBACDatabases,
-  subjectId: string,
-  tenantId: string
-): Promise<ConsentOrgInfo[]> {
-  return (await resolveSubjectOrganizations(dbs, tenantId, subjectId, { activeOnly: true })).map(
-    consentOrgInfo
-  );
-}
-
-// =============================================================================
-// Organization Access Validation
-// =============================================================================
-
-/**
- * Result of validateConsentOrgAccess
- */
-export interface OrgAccessValidationResult {
-  /** Whether access is valid */
-  valid: boolean;
-  /** Error message if invalid */
-  error?: string;
-  /** Organization info if valid */
-  organization?: ConsentOrgInfo;
-}
-
-/**
- * Validate that a user has access to a specific organization
- *
- * Checks that:
- * 1. The organization exists and is active
- * 2. The user is a member of the organization
- *
- * @param dbs - The tenant's metadata and the subject's account database
- * @param subjectId - User ID
- * @param orgId - Target organization ID
- * @returns Validation result
- */
-export async function validateConsentOrgAccess(
-  dbs: TenantRBACDatabases,
-  subjectId: string,
-  orgId: string,
-  tenantId: string
-): Promise<OrgAccessValidationResult> {
-  const result = (
-    await resolveSubjectOrganizations(dbs, tenantId, subjectId, { activeOnly: true })
-  ).find(({ organization }) => organization.id === orgId);
-
-  if (!result) {
-    return {
-      valid: false,
-      error: 'User is not a member of the specified organization',
-    };
-  }
-
-  return {
-    valid: true,
-    organization: consentOrgInfo(result),
   };
 }
 
@@ -359,55 +252,16 @@ export async function getConsentUserInfo(
 /**
  * Parse consent feature flags from environment variables
  *
- * @param orgSelectorEnabled - RBAC_CONSENT_ORG_SELECTOR env var
  * @param actingAsEnabled - RBAC_CONSENT_ACTING_AS env var
  * @param showRoles - RBAC_CONSENT_SHOW_ROLES env var
  * @returns Feature flags for consent screen
  */
 export function parseConsentFeatureFlags(
-  orgSelectorEnabled?: string,
   actingAsEnabled?: string,
   showRoles?: string
 ): ConsentFeatureFlags {
   return {
-    org_selector_enabled: orgSelectorEnabled === 'true',
     acting_as_enabled: actingAsEnabled === 'true',
     show_roles: showRoles === 'true',
   };
-}
-
-// =============================================================================
-// Roles for Specific Organization
-// =============================================================================
-
-/**
- * Get user's roles within a specific organization
- *
- * Returns roles that are either:
- * 1. Global scope (apply to all orgs)
- * 2. Org-scoped with the target organization
- *
- * @param dbs - The tenant's metadata and the subject's account database
- * @param subjectId - User ID
- * @param orgId - Target organization ID
- * @returns Array of role names
- */
-export async function getRolesInOrganization(
-  dbs: TenantRBACDatabases,
-  subjectId: string,
-  orgId: string,
-  tenantId: string
-): Promise<string[]> {
-  const roles = await resolveSubjectRoles(dbs, tenantId, subjectId);
-  return [
-    ...new Set(
-      roles
-        .filter(
-          ({ assignment }) =>
-            assignment.scope_type === 'global' ||
-            (assignment.scope_type === 'org' && assignment.scope_target === `org:${orgId}`)
-        )
-        .map(({ role }) => role.name)
-    ),
-  ];
 }
