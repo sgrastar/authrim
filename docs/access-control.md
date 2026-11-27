@@ -89,7 +89,7 @@ ID-Level → RBAC → ReBAC → ABAC/Computed
 | Policy Types  | `packages/ar-lib-policy/src/types.ts`                        |
 | Policy Engine | `packages/ar-lib-policy/src/engine.ts`                       |
 | Role Checker  | `packages/ar-lib-policy/src/role-checker.ts`                 |
-| Feature Flags | `packages/ar-lib-policy/src/feature-flags.ts`                |
+| Feature Flags | `packages/ar-lib-core/src/utils/policy-flags.ts`             |
 | ReBAC Types   | `packages/ar-lib-core/src/rebac/types.ts`                    |
 | ReBAC Service | `packages/ar-lib-core/src/rebac/rebac-service.ts`            |
 | Unified Check | `packages/ar-lib-core/src/services/unified-check-service.ts` |
@@ -634,6 +634,60 @@ interface PolicySubjectWithAttributes extends PolicySubject {
 | `attribute_exists` | Attribute exists (any value)     | `{ name, checkExpiry? }`           |
 | `attribute_in`     | Attribute value in allowed list  | `{ name, values[], checkExpiry? }` |
 
+### Group Conditions
+
+Group conditions read the subject's **effective groups**: its direct memberships and their
+ancestors. The Check API, the admin access check and the policy simulation read them with the
+subject's roles.
+
+| Condition          | Description                                         | Parameters                |
+| ------------------ | --------------------------------------------------- | ------------------------- |
+| `in_group`         | Subject is a member of the group                    | `{ group_id }`            |
+| `in_any_group`     | Subject is a member of at least one of the groups   | `{ group_ids: string[] }` |
+| `in_all_groups`    | Subject is a member of every one of the groups      | `{ group_ids: string[] }` |
+| `not_in_any_group` | Subject is a member of none of the groups           | `{ group_ids: string[] }` |
+| `same_group`       | Subject shares at least one group with the resource | `{}`                      |
+
+- When the subject's memberships cannot be read they are **unknown**, not "no groups": every group
+  condition is then unmet, `not_in_any_group` included (a negative condition never passes on
+  unknown data), and the Check API does not evaluate a rule set that uses group conditions at all
+  (no grant from the rules).
+- Unknown memberships are tracked per group. A dynamic (service-group) membership whose group
+  rule changed since it was published is unknown until republished (for members and non-members
+  alike), while the subject's other groups stay known; saving the service-group rules without
+  changing a group's rule (a rename, for example) keeps its published memberships. A subject
+  never evaluated has every enabled service group unknown; manual, SCIM, rule and invitation
+  memberships are always known. A group condition naming an unknown group is unmet, and the rules
+  for the request that name one are not evaluated (no grant from them); when an unknown group
+  carries a role, no rule is evaluated.
+- The `authrim_groups` claim (and SAML `memberOf`) lists the memberships that could be confirmed at
+  issuance: never use it to decide that someone is **not** a member of a group.
+- **Service groups and non-membership.** A service (dynamic) group's memberships are published
+  asynchronously, so "not a member" may be stale for a while after an attribute changes. A rule
+  may therefore rely on a service group (or a group above one) only where a wrong "not a member"
+  merely loses access: `not_in_any_group` may not name such a group, and a deny rule may not use
+  `in_group` / `in_any_group` / `in_all_groups` on one, nor `same_group` while the tenant has
+  service groups. Such rules are refused on save, and a stored one makes the rules unusable (no
+  grant from them). Allow rules on membership of a service group are fine.
+- `same_group` compares with the resource's groups (`resource_context.group_id` in the Check API);
+  it is unmet when the resource has none. A deny rule that uses it grants nothing for a check that
+  gives no resource group.
+
+### Additive Evaluation
+
+The tenant's rules are evaluated **after** roles, ID-level permissions and relationships, and only
+when none of those granted. A rule's `deny` therefore never overrides an RBAC allow that already
+granted the permission: it only stops a later rule from granting. To require "member of group G
+**and** attribute X" for an operation, do not also grant the same permission through a role (for
+example a role given to group G): the role would grant it before the rules are evaluated.
+
+### Resource Owner
+
+`is_resource_owner` (and the server contract's owner shortcut) compares the subject with
+`resource_context.owner_id`. In the server contract that value is the caller's claim, not
+something Authrim reads: the server must pass the owner it read from the resource itself, never a
+value taken from the end user's request. The self contract does not accept `resource_context`.
+
 ### Time-Based Conditions (Phase 4+)
 
 | Condition       | Description                               | Parameters                                 |
@@ -1148,6 +1202,10 @@ interface CheckApiRequest {
 
   /** Resource context for ABAC */
   resource_context?: {
+    /**
+     * The resource's owner. In the server contract this is the caller's claim: the server must
+     * pass the value it read from the resource, never one taken from the end user's request.
+     */
     owner_id?: string;
     group_id?: string;
     attributes?: Record<string, unknown>;
@@ -1216,42 +1274,46 @@ interface BatchCheckResponse {
 
 ### Available Flags
 
-| Flag                         | Default | Description                               |
-| ---------------------------- | ------- | ----------------------------------------- |
-| `ENABLE_ABAC`                | `false` | Enable Attribute-Based Access Control     |
-| `ENABLE_REBAC`               | `false` | Enable Relationship-Based Access Control  |
-| `ENABLE_POLICY_LOGGING`      | `false` | Enable detailed policy evaluation logging |
-| `ENABLE_VERIFIED_ATTRIBUTES` | `false` | Enable verified attributes checking       |
-| `ENABLE_CUSTOM_RULES`        | `true`  | Enable custom policy rules                |
-| `ENABLE_SD_JWT`              | `false` | Enable SD-JWT for ID Token issuance       |
-| `ENABLE_POLICY_EMBEDDING`    | `false` | Enable permission embedding in tokens     |
+The policy flags are settings of the `feature-flags` category (Settings API), each with an
+environment variable fallback:
+
+| Setting key                          | Environment variable         | Default | Description                               |
+| ------------------------------------ | ---------------------------- | ------- | ----------------------------------------- |
+| `feature.enable_abac`                | `ENABLE_ABAC`                | `false` | Enable ABAC (the tenant's custom rules)   |
+| `feature.enable_rebac`               | `ENABLE_REBAC`               | `false` | Enable Relationship-Based Access Control  |
+| `feature.enable_policy_logging`      | `ENABLE_POLICY_LOGGING`      | `false` | Enable detailed policy evaluation logging |
+| `feature.enable_verified_attributes` | `ENABLE_VERIFIED_ATTRIBUTES` | `false` | Enable verified attributes checking       |
+| `feature.enable_sd_jwt`              | `ENABLE_SD_JWT`              | `false` | Enable SD-JWT for ID Token issuance       |
+| `feature.enable_policy_embedding`    | `ENABLE_POLICY_EMBEDDING`    | `false` | Enable permission embedding in tokens     |
 
 ### Resolution Priority
 
 ```
-KV Override > Environment Variable > Default Value
+Tenant setting > Platform setting > Environment Variable > Default Value
 ```
 
 ### Usage
 
 ```typescript
-import { createFeatureFlagsManager } from '@authrim/ar-lib-policy';
+import { resolvePolicyFlags } from '@authrim/ar-lib-core';
 
-const flagsManager = createFeatureFlagsManager(env, kvNamespace);
-
-// Async flag check
-const abacEnabled = await flagsManager.isAbacEnabled();
-const rebacEnabled = await flagsManager.isRebacEnabled();
-
-// Sync flag check (from cache/env only)
-const flags = flagsManager.getFlagsSync();
-
-// Set flag override in KV
-await flagsManager.setFlag('ENABLE_ABAC', true);
-
-// Clear flag override (revert to env/default)
-await flagsManager.clearFlag('ENABLE_ABAC');
+// The tenant's flags (all off when the settings cannot be read)
+const flags = await resolvePolicyFlags(env, tenantId);
+if (flags.abac) {
+  // the tenant's custom rules take part in permission checks
+}
 ```
+
+Set a flag for one tenant through the Settings API:
+
+```http
+PATCH /api/admin/tenants/{tenantId}/settings/feature-flags
+Content-Type: application/json
+
+{ "ifMatch": "<version>", "set": { "feature.enable_abac": true } }
+```
+
+Use `/api/admin/platform/settings/feature-flags` for the platform-wide value.
 
 ---
 

@@ -49,6 +49,7 @@ import {
   chunkForBoundParameters,
   sqlPlaceholders,
   layerTenantSettingsDocument,
+  fieldDecidesPolicyRuleGroup,
 } from '@authrim/ar-lib-core';
 import { CUSTOM_CLAIM_PRESETS, type CustomClaimPresetField } from './custom-claim-presets';
 import { ASSURANCE_IMPORT_COLUMNS } from './admin-shared';
@@ -1846,6 +1847,30 @@ export async function adminCustomClaimUpdateHandler(c: AdminContext) {
           );
         }
       }
+    }
+
+    // Making the attribute one users write themselves (on the registration screen) is refused
+    // while it decides, through a service group, a group an enabled policy rule names: users
+    // would then decide what the rule grants or denies them (as a rule naming such a group is
+    // refused on save).
+    const isSet = (value: unknown) => value === 1 || value === true || value === '1';
+    const requested = body as { show_on_registration?: unknown; registration_required?: unknown };
+    const becomesSelfWritable =
+      !isSet(schema.show_on_registration) &&
+      !isSet(schema.registration_required) &&
+      (!!requested.show_on_registration || !!requested.registration_required);
+    if (
+      becomesSelfWritable &&
+      (await fieldDecidesPolicyRuleGroup(adapter, tenantId, `custom.${String(schema.field_key)}`))
+    ) {
+      return c.json(
+        {
+          error: 'attribute_decides_policy_rule_group',
+          error_description:
+            'The attribute decides a service group that carries authorization (a role, a resource permission or a policy rule): it cannot be shown on the registration screen',
+        },
+        409
+      );
     }
 
     // Block changing is_system via admin API

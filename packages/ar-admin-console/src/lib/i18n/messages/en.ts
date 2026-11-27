@@ -99,7 +99,6 @@ export const en = {
 	'nav.users.invitations': 'Invitations',
 	'nav.users.support': 'Support actions',
 	'nav.access.roles': 'Roles',
-	'nav.access.attributes': 'Attributes',
 	'nav.access.relationships': 'Relationships (ReBAC)',
 	'nav.access.policies': 'Policies',
 	'nav.access.accessCheck': 'Access check',

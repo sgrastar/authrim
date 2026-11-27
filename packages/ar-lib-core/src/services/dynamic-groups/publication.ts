@@ -139,6 +139,7 @@ interface DynamicRow {
 interface PublicationRow {
   generation: string;
   invalidation_pending: number | string;
+  unknown_groups_json?: string | null;
 }
 
 const nowSeconds = () => Math.floor(Date.now() / 1000);
@@ -154,8 +155,8 @@ async function dynamicRows(account: DatabaseAdapter, tenantId: string, subjectId
 
 async function publicationRow(account: DatabaseAdapter, tenantId: string, subjectId: string) {
   return account.queryOne<PublicationRow>(
-    `SELECT generation, invalidation_pending FROM dynamic_membership_publications
-      WHERE tenant_id = ? AND subject_id = ?`,
+    `SELECT generation, invalidation_pending, unknown_groups_json
+       FROM dynamic_membership_publications WHERE tenant_id = ? AND subject_id = ?`,
     [tenantId, subjectId],
     primary
   );
@@ -167,6 +168,20 @@ function dynamicGroupIds(snapshot: GroupSnapshot, excluded: ReadonlySet<string>)
     .filter(([id, result]) => result.dynamic === true && !excluded.has(id))
     .map(([id]) => id)
     .sort();
+}
+
+/**
+ * The groups whose membership this publication does not decide for the subject: those the
+ * committed result evaluated as `unknown`, and those left out on purpose (`excluded`: decided by
+ * a field the person writes themselves while they carry authorization), in a stable order. They
+ * are recorded with the publication (`unknown_groups_json`) so a reader treats them as unknown,
+ * not as "not a member".
+ */
+function undecidedGroupIds(snapshot: GroupSnapshot, excluded: ReadonlySet<string>): string[] {
+  const ids = new Set(excluded);
+  for (const [id, result] of Object.entries(snapshot.evaluation?.groups ?? {}))
+    if (result.dynamic === 'unknown') ids.add(id);
+  return [...ids].sort();
 }
 
 /** Every published group must be an active canonical dynamic group; the catalog sync repairs. */
@@ -198,7 +213,8 @@ function replaceStatements(
   ref: string,
   groupIds: string[],
   staleAfter: number,
-  now: number
+  now: number,
+  undecided: string[]
 ): PreparedStatement[] {
   const subject = "tenant_id = ? AND subject_id = ? AND assignment_source = 'dynamic'";
   const fence = `NOT EXISTS (SELECT 1 FROM dynamic_membership_publications AS published
@@ -246,12 +262,13 @@ function replaceStatements(
     // Last, so the fence above still reads the generation recorded before this batch.
     {
       sql: `INSERT INTO dynamic_membership_publications (tenant_id, subject_id, generation,
-          published_at, invalidation_pending)
-        SELECT ?, ?, ?, CAST(? AS BIGINT), 1 WHERE ${fence}
+          published_at, invalidation_pending, unknown_groups_json)
+        SELECT ?, ?, ?, CAST(? AS BIGINT), 1, ? WHERE ${fence}
         ON CONFLICT (tenant_id, subject_id) DO UPDATE SET generation = excluded.generation,
-          published_at = excluded.published_at, invalidation_pending = 1
+          published_at = excluded.published_at, invalidation_pending = 1,
+          unknown_groups_json = excluded.unknown_groups_json
         WHERE dynamic_membership_publications.generation <= excluded.generation`,
-      params: [tenantId, subjectId, ref, now, ...fenceParams],
+      params: [tenantId, subjectId, ref, now, JSON.stringify(undecided), ...fenceParams],
     },
   ];
 }
@@ -381,10 +398,11 @@ export async function publishDynamicMemberships(
             store.db,
             tenantId,
             catalog.plan,
-            await loadGroupFields(store.db, tenantId)
+            await loadGroupFields(store.db, tenantId, { cachedScreens: true })
           )
         : new Set<string>();
     const groupIds = dynamicGroupIds(snapshot, excluded);
+    const undecided = undecidedGroupIds(snapshot, excluded);
     const ref = dynamicMembershipSourceRef(generation, snapshot.ruleVersion);
     const [existing, published] = await Promise.all([
       dynamicRows(account, tenantId, subjectId),
@@ -405,6 +423,9 @@ export async function publishDynamicMemberships(
     const active = existing.filter((row) => row.lifecycle_state === 'active');
     const current =
       published?.generation === ref &&
+      // The groups recorded as undecided are those of this result (they change with the rules).
+      // (NULL, a record written before the column existed, is rewritten in the new format.)
+      published.unknown_groups_json === JSON.stringify(undecided) &&
       existing.every((row) => row.source_ref === ref) &&
       active.every(
         (row) =>
@@ -417,7 +438,7 @@ export async function publishDynamicMemberships(
     if (current) return { status: 'current', generation, groupIds };
     await requireCanonicalGroups(store, groupIds);
     await account.batch(
-      replaceStatements(account, tenantId, subjectId, ref, groupIds, expiry, now)
+      replaceStatements(account, tenantId, subjectId, ref, groupIds, expiry, now, undecided)
     );
     written = ref;
     // Two databases: read the committed result again first, whatever the invalidation does.

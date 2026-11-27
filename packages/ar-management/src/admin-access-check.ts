@@ -9,7 +9,7 @@
  *
  * - any subject of the administrator's tenant, with the request's `resource_context` and `rebac`;
  * - the tenant's ABAC rules and ReBAC as its feature flags enable them (`feature.enable_abac`,
- *   `feature.enable_custom_rules`, `feature.enable_rebac`);
+ *   `feature.enable_rebac`);
  * - independent of `feature.enable_check_api` (that switch is for the public Check API).
  *
  * Nothing is written and no permission-check audit row is recorded.
@@ -27,22 +27,22 @@ import {
   parsePermission,
   readPolicyFlags,
   resolveAccountCoreDataContext,
+  resolveSubjectRolesAndGroups,
+  serviceGroupDecidedGroups,
   UserVerifiedAttributeRepository,
   type AdminAuthContext,
   type CheckApiRequest,
   type DatabaseAdapter,
+  type DatabaseSource,
   type Env,
   type IStorageAdapter,
-  type PolicyEvaluationContext,
   type TenantPolicySettings,
 } from '@authrim/ar-lib-core';
 import {
-  evaluateTenantRules,
+  createTenantRuleEvaluator,
+  readTenantPolicyRules,
   tenantRulesUnusableReason,
-  toTenantPolicyRule,
-  type PolicyContext,
-  type TenantPolicyRule,
-  type TenantPolicyRuleRow,
+  tenantRulesNeedServiceGroups,
 } from '@authrim/ar-lib-policy';
 
 type AdminContext = Context<{ Bindings: Env; Variables: { adminAuth?: AdminAuthContext } }>;
@@ -71,6 +71,38 @@ function storageAdapterOf(adapter: DatabaseAdapter): IStorageAdapter {
   };
 }
 
+/** The database of a subject's account (accounts may be sharded across databases). */
+/**
+ * The subject's account database (accounts may be sharded across databases) and the id its rows
+ * are stored under: the account router's canonical id, whatever form the request named it in
+ * (such as with `account:` or surrounding spaces).
+ */
+export async function subjectAccountOf(env: Env, tenantId: string, subjectId: string) {
+  const account = await resolveAccountCoreDataContext(env, { tenantId, accountId: subjectId });
+  return { db: account.coreDb, subjectId: account.legacyUserId };
+}
+
+/**
+ * What a check reads of the subject's groups, from its account (subjectAccountOf): its effective
+ * group ids (direct memberships and their active ancestors) at `nowSeconds`, the groups whose
+ * membership is not known (resolveSubjectGroups), and whether its roles are complete (no unknown
+ * group carries a role grant). Throws when the memberships cannot be read.
+ */
+export async function readSubjectGroupState(
+  metadata: DatabaseAdapter,
+  account: { db: DatabaseSource; subjectId: string },
+  tenantId: string,
+  nowSeconds: number = Math.floor(Date.now() / 1000)
+): Promise<{ groupIds: string[]; unknownGroupIds: string[]; rolesComplete: boolean }> {
+  const { effectiveGroupIds, unknownGroupIds, rolesComplete } = await resolveSubjectRolesAndGroups(
+    { metadata, account: account.db },
+    tenantId,
+    account.subjectId,
+    nowSeconds
+  );
+  return { groupIds: effectiveGroupIds, unknownGroupIds, rolesComplete };
+}
+
 /**
  * The tenant's policy settings for the check, as the policy service resolves them
  * (ar-policy/src/tenant-policy.ts): everything off when they cannot be read, no grants from the
@@ -81,7 +113,8 @@ async function tenantPolicyOf(
   db: DatabaseAdapter,
   tenantId: string
 ): Promise<TenantPolicySettings> {
-  const flags = await readPolicyFlags(env, tenantId);
+  // Read fresh, as the rules are: an administrator's check answers for the current settings.
+  const flags = await readPolicyFlags(env, tenantId, { fresh: true });
   if (!flags) {
     return { abac: false, verifiedAttributes: false, rebac: false, logDecisions: false };
   }
@@ -91,59 +124,19 @@ async function tenantPolicyOf(
     rebac: flags.rebac,
     logDecisions: false,
   };
-  if (!flags.abac || !flags.customRules) return settings;
+  if (!flags.abac) return settings;
   try {
-    const rows = await db.query<TenantPolicyRuleRow>(
-      `SELECT id, name, description, priority, effect, resource_types, actions, conditions
-         FROM policy_rules
-        WHERE tenant_id = ? AND enabled = 1
-        ORDER BY priority DESC`,
-      [tenantId]
-    );
-    const rules: TenantPolicyRule[] = [];
-    for (const row of rows) {
-      const rule = toTenantPolicyRule(row);
-      if (!rule) throw new Error(`Policy rule ${row.id} cannot be evaluated as stored`);
-      rules.push(rule);
-    }
-    const unusable = tenantRulesUnusableReason(rules, settings);
+    const { rules, unusable: stored } = await readTenantPolicyRules(db, tenantId);
+    if (stored.length) throw new Error(`Policy rule ${stored[0]} cannot be evaluated as stored`);
+    // A rule relying on non-membership of a group a service group decides makes them unusable.
+    const unusable = tenantRulesUnusableReason(rules, {
+      ...settings,
+      serviceGroupDecided: tenantRulesNeedServiceGroups(rules)
+        ? await serviceGroupDecidedGroups(db, tenantId)
+        : undefined,
+    });
     if (unusable) throw new Error(unusable);
-    settings.evaluator = {
-      evaluate(context: PolicyEvaluationContext) {
-        const policyContext: PolicyContext = {
-          subject: {
-            id: context.subjectId,
-            roles: (context.subjectRoles ?? []).map((role) => ({
-              name: role.name,
-              scope: role.scope,
-              scopeTarget: role.scopeTarget,
-              expiresAt: role.expiresAt,
-            })),
-            verifiedAttributes: context.verifiedAttributes.map((attribute) => ({
-              name: attribute.name,
-              value: attribute.value,
-              source: attribute.source,
-            })),
-          } as PolicyContext['subject'],
-          resource: {
-            type: context.resourceType,
-            id: context.resourceId ?? '',
-            ownerId: context.resourceOwnerId,
-            groupIds: context.resourceGroupIds,
-            attributes: context.resourceAttributes,
-          },
-          action: { name: context.action },
-          timestamp: context.timestamp,
-          environment: context.environment,
-        };
-        const decision = evaluateTenantRules(rules, policyContext);
-        return {
-          allowed: decision.allowed,
-          reason: decision.reason,
-          decidedBy: decision.decidedBy,
-        };
-      },
-    };
+    settings.evaluator = createTenantRuleEvaluator(rules);
   } catch (error) {
     log.warn('Tenant policy rules could not be used; no grants from them', {
       tenantId,
@@ -230,9 +223,7 @@ export async function adminAccessCheckHandler(c: AdminContext) {
     ).coreAdapter;
     const service = createUnifiedCheckService({
       db: coreAdapter,
-      subjectAccountDb: async (tenant, subject) =>
-        (await resolveAccountCoreDataContext(c.env, { tenantId: tenant, accountId: subject }))
-          .coreDb,
+      subjectAccount: (tenant, subject) => subjectAccountOf(c.env, tenant, subject),
       rebacService: createReBACService(storageAdapterOf(coreAdapter), { max_depth: 5 }),
       debugMode: true,
       attributeRepository: new UserVerifiedAttributeRepository(coreAdapter),

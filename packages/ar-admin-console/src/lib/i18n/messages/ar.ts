@@ -99,7 +99,6 @@ export const ar = {
 	'nav.users.invitations': 'الدعوات',
 	'nav.users.support': 'إجراءات الدعم',
 	'nav.access.roles': 'الأدوار',
-	'nav.access.attributes': 'السمات',
 	'nav.access.relationships': 'العلاقات (ReBAC)',
 	'nav.access.policies': 'السياسات',
 	'nav.access.accessCheck': 'التحقق من الوصول',

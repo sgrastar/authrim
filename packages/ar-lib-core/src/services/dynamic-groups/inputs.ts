@@ -26,23 +26,116 @@ function fieldContract(field: Field | undefined): string {
   const { selfWritable: _selfWritable, ...contract } = field;
   return JSON.stringify(contract);
 }
+/** The input parts of a screen that may save an answer to the profile (screens.ts). */
+const PROFILE_INPUT_BLOCK_TYPES = new Set(['identity_field', 'select', 'radio', 'checkbox']);
+const SCREEN_KEYS_TTL_MS = 30_000;
+const SCREEN_KEYS_MAX_TENANTS = 500;
+/** The attribute keys the screens may save, per tenant, cached briefly per isolate. */
+const screenKeysCache = new Map<string, { keys: Set<string>; at: number }>();
+
+/** As the Login UI's answer path normalises a part's field (runtimeAttributeKey). */
+export function answerKey(field: string): string {
+  const normalized = field.trim().toLowerCase();
+  return normalized.startsWith('field.canonical.')
+    ? normalized.slice('field.canonical.'.length)
+    : normalized;
+}
+
 /**
- * The fields a rule may read. A custom field the person can write themselves (shown on, or
- * required by, the registration form, which saves it through the validated registration path) is
- * marked `selfWritable`. Such a field must not decide membership of a group that carries roles
- * (see role-guard.ts): the save refuses it and publication leaves such groups out, both reading
- * the mark from the current fields.
+ * The attribute keys (normalised) that a screen a login flow may show saves its answers into: an
+ * input part kept on the profile (`store_to_profile` not false) of any active screen of the
+ * tenant, or of the built-in screens a tenant falls back to. Hidden parts count too (a screen's
+ * display rules change without a catalog save), so this is a superset of what flows can write.
  */
-export async function loadGroupFields(
+async function screenWritableKeys(
   db: Pick<TransactionContext, 'query'>,
-  tenantId: string
-): Promise<Record<string, Field>> {
-  const schemas = await db.query<SchemaRow>(
-    `SELECT id, field_key, field_type, cardinality, is_pii, schema_version, show_on_registration, registration_required FROM custom_claim_schemas WHERE tenant_id = ? AND is_active = 1 AND operation_status = 'active' ORDER BY field_key LIMIT 1000`,
+  tenantId: string,
+  cached: boolean
+): Promise<Set<string>> {
+  const entry = cached ? screenKeysCache.get(tenantId) : undefined;
+  if (entry && Date.now() - entry.at < SCREEN_KEYS_TTL_MS) return entry.keys;
+  // fields_json is TEXT on D1 and jsonb on PostgreSQL (read back already parsed).
+  const rows = await db.query<{ fields_json: string | unknown[] | null }>(
+    `SELECT fields_json FROM screens
+      WHERE is_active = TRUE AND (tenant_id = ? OR (tenant_id = 'default' AND is_system = TRUE))`,
     [tenantId],
     primary
   );
-  const fields = { ...BUILTIN_GROUP_FIELDS };
+  const keys = new Set<string>();
+  for (const row of rows) {
+    let fields: unknown;
+    try {
+      fields =
+        typeof row.fields_json === 'string' ? JSON.parse(row.fields_json) : (row.fields_json ?? []);
+    } catch {
+      continue;
+    }
+    for (const key of screenSavedAttributeKeys(fields)) keys.add(key);
+  }
+  screenKeysCache.delete(tenantId);
+  if (screenKeysCache.size >= SCREEN_KEYS_MAX_TENANTS) {
+    const oldest = screenKeysCache.keys().next().value;
+    if (oldest !== undefined) screenKeysCache.delete(oldest);
+  }
+  screenKeysCache.set(tenantId, { keys, at: Date.now() });
+  return keys;
+}
+
+/**
+ * The attribute keys (normalised, answerKey) a screen's parts save answers into: its input parts
+ * kept on the profile (`store_to_profile` not false), hidden ones included.
+ */
+export function screenSavedAttributeKeys(fields: unknown): Set<string> {
+  const keys = new Set<string>();
+  for (const part of Array.isArray(fields) ? (fields as Array<Record<string, unknown>>) : []) {
+    if (!part || typeof part !== 'object' || typeof part.field !== 'string') continue;
+    const blockType = typeof part.block_type === 'string' ? part.block_type : 'identity_field';
+    if (!PROFILE_INPUT_BLOCK_TYPES.has(blockType) || part.store_to_profile === false) continue;
+    keys.add(answerKey(part.field));
+  }
+  return keys;
+}
+
+/** Tests: forget the cached screen attribute keys. */
+export function clearScreenWritableKeysCache(): void {
+  screenKeysCache.clear();
+}
+
+/**
+ * The fields a rule may read. A custom field the person can write themselves is marked
+ * `selfWritable`: one shown on, or required by, the registration form (which saves it through the
+ * validated registration path), or one a login flow's screen saves an answer into (an input part
+ * kept on the profile; screenWritableKeys). Such a field must not decide membership of a group
+ * that carries roles (see role-guard.ts): the save refuses it and publication leaves such groups
+ * out, both reading the mark from the current fields. Values written by SCIM stay trusted:
+ * provisioning is an administrator's integration, not the person's own input.
+ */
+export async function loadGroupFields(
+  db: Pick<TransactionContext, 'query'>,
+  tenantId: string,
+  options: {
+    /**
+     * Use the screens read up to 30 s ago (publication and evaluation, which run often). The
+     * save-time checks leave it off: they read the screens from the primary at every save.
+     */
+    cachedScreens?: boolean;
+  } = {}
+): Promise<Record<string, Field>> {
+  const schemas = await db.query<SchemaRow>(
+    `SELECT id, field_key, field_type, cardinality, is_pii, schema_version, show_on_registration, registration_required FROM custom_claim_schemas WHERE tenant_id = ? AND is_active = TRUE AND operation_status = 'active' ORDER BY field_key LIMIT 1000`,
+    [tenantId],
+    primary
+  );
+  // Built-ins the person edits themselves: `country` (read from address_country, else from the
+  // address the person edits in their profile, address_json.country). email, email_domain,
+  // email_verified and registration_state are not self-editable.
+  const fields: Record<string, Field> = {
+    ...BUILTIN_GROUP_FIELDS,
+    country: { ...BUILTIN_GROUP_FIELDS.country, selfWritable: true },
+  };
+  const fromScreens = schemas.length
+    ? await screenWritableKeys(db, tenantId, options.cachedScreens === true)
+    : new Set<string>();
   for (const row of schemas) {
     if (!['string', 'number', 'boolean', 'enum', 'date'].includes(row.field_type)) continue;
     fields[`custom.${row.field_key}`] = {
@@ -50,7 +143,9 @@ export async function loadGroupFields(
       schemaId: row.id,
       schemaVersion: Number(row.schema_version),
       pii: !!row.is_pii,
-      ...(flag(row.show_on_registration) || flag(row.registration_required)
+      ...(flag(row.show_on_registration) ||
+      flag(row.registration_required) ||
+      fromScreens.has(answerKey(row.field_key))
         ? { selfWritable: true }
         : {}),
     };
@@ -215,7 +310,9 @@ export class SavedGroupInputReader implements GroupInputReader {
     if (!account || account.account_type !== 'user') throw new Error('group_subject_unavailable');
     if (account.lifecycle_state !== 'active' || account.directory_publication_state !== 'active')
       throw new Error('group_subject_not_active');
-    const currentFields = await loadGroupFields(this.metadata, this.tenantId);
+    const currentFields = await loadGroupFields(this.metadata, this.tenantId, {
+      cachedScreens: true,
+    });
     for (const key of Object.keys(plan.attributes)) {
       if (fieldContract(currentFields[key]) !== fieldContract(plan.fields[key]))
         throw new Error('group_attribute_schema_changed');

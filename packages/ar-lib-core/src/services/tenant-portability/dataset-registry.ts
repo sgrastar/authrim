@@ -47,7 +47,7 @@ const TABLE_GROUPS: Partial<
       field_usage_bindings flow_assignments flow_versions flows
       group_role_assignments groups identity_providers internal_notification_delivery_routes logging_quota_policies
       lookup_retention_policies oauth_clients oidc_scopes
-      policy_rules presentation_definitions provisioning_assignment_rules
+      policy_rules policy_rules_version presentation_definitions provisioning_assignment_rules
       relation_definitions resource_permissions role_assignment_rules roles
       saml_attribute_presets scope_mappings screens service_group_catalog service_group_revisions shared_launcher_states sign_in_confirmation_policies
       status_lists tenant_domain_mappings tenant_vanity_domains

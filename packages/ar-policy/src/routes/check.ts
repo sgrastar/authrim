@@ -267,9 +267,12 @@ async function getCheckService(
 
   const checkService = createUnifiedCheckService({
     db: coreAdapter,
-    // A subject's role assignments and organisation memberships are in its account database.
-    subjectAccountDb: async (tenantId, subjectId) =>
-      (await resolveAccountCoreDataContext(env, { tenantId, accountId: subjectId })).coreDb,
+    // A subject's role assignments and group memberships are in its account database, stored
+    // under the router's canonical id (the request may name the account in another form).
+    subjectAccount: async (tenantId, subjectId) => {
+      const account = await resolveAccountCoreDataContext(env, { tenantId, accountId: subjectId });
+      return { db: account.coreDb, subjectId: account.legacyUserId };
+    },
     cache: env.CHECK_CACHE_KV,
     rebacService,
     cacheTTL: 60,

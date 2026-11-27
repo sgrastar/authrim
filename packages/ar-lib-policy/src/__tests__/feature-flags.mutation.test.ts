@@ -38,7 +38,6 @@ describe('flag defaults and environment', () => {
       'ENABLE_REBAC',
       'ENABLE_POLICY_LOGGING',
       'ENABLE_VERIFIED_ATTRIBUTES',
-      'ENABLE_CUSTOM_RULES',
       'ENABLE_SD_JWT',
       'ENABLE_POLICY_EMBEDDING',
     ]);
@@ -47,7 +46,6 @@ describe('flag defaults and environment', () => {
       ENABLE_REBAC: false,
       ENABLE_POLICY_LOGGING: false,
       ENABLE_VERIFIED_ATTRIBUTES: false,
-      ENABLE_CUSTOM_RULES: true,
       ENABLE_SD_JWT: false,
       ENABLE_POLICY_EMBEDDING: false,
     });
@@ -66,15 +64,18 @@ describe('flag defaults and environment', () => {
 
   it('reads true, TRUE and 1 as on, other text as off, and nothing as the default', () => {
     for (const on of ['true', 'TRUE', 'True', '1']) {
-      expect(getFlagsFromEnv({ ENABLE_ABAC: on, ENABLE_CUSTOM_RULES: on }).ENABLE_ABAC).toBe(true);
+      expect(getFlagsFromEnv({ ENABLE_ABAC: on, ENABLE_SD_JWT: on }).ENABLE_SD_JWT).toBe(true);
     }
     for (const off of ['false', '0', 'yes', 'on', ' true', '2']) {
       expect(getFlagsFromEnv({ ENABLE_ABAC: off }).ENABLE_ABAC).toBe(false);
-      expect(getFlagsFromEnv({ ENABLE_CUSTOM_RULES: off }).ENABLE_CUSTOM_RULES).toBe(false);
+      expect(getFlagsFromEnv({ ENABLE_SD_JWT: off }).ENABLE_SD_JWT).toBe(false);
     }
     expect(getFlagsFromEnv({ ENABLE_ABAC: '' }).ENABLE_ABAC).toBe(false);
-    expect(getFlagsFromEnv({ ENABLE_CUSTOM_RULES: '' }).ENABLE_CUSTOM_RULES).toBe(true);
-    expect(getFlagsFromEnv({ ENABLE_CUSTOM_RULES: undefined }).ENABLE_CUSTOM_RULES).toBe(true);
+    expect(getFlagsFromEnv({ ENABLE_SD_JWT: undefined }).ENABLE_SD_JWT).toBe(false);
+    // The retired switch is no flag any more: feature.enable_abac alone turns the rules on.
+    expect(getFlagsFromEnv({ ENABLE_CUSTOM_RULES: 'false' })).not.toHaveProperty(
+      'ENABLE_CUSTOM_RULES'
+    );
   });
 });
 
@@ -83,7 +84,7 @@ describe('FeatureFlagsManager.getFlag', () => {
     const manager = new FeatureFlagsManager({ ENABLE_ABAC: 'true' });
     expect(await manager.getFlag('ENABLE_ABAC')).toBe(true);
     expect(await manager.getFlag('ENABLE_REBAC')).toBe(false);
-    expect(await manager.getFlag('ENABLE_CUSTOM_RULES')).toBe(true);
+    expect(await manager.getFlag('ENABLE_VERIFIED_ATTRIBUTES')).toBe(false);
   });
 
   it('lets a KV override win over the environment, reading true, TRUE and 1 as on', async () => {
@@ -91,14 +92,17 @@ describe('FeatureFlagsManager.getFlag', () => {
       'policy:flags:ENABLE_ABAC': 'TRUE',
       'policy:flags:ENABLE_REBAC': '1',
       'policy:flags:ENABLE_SD_JWT': 'false',
-      'policy:flags:ENABLE_CUSTOM_RULES': '0',
+      'policy:flags:ENABLE_VERIFIED_ATTRIBUTES': '0',
       'policy:flags:ENABLE_POLICY_LOGGING': 'yes',
     });
-    const manager = new FeatureFlagsManager({ ENABLE_SD_JWT: 'true' }, kv);
+    const manager = new FeatureFlagsManager(
+      { ENABLE_SD_JWT: 'true', ENABLE_VERIFIED_ATTRIBUTES: 'true' },
+      kv
+    );
     expect(await manager.getFlag('ENABLE_ABAC')).toBe(true);
     expect(await manager.getFlag('ENABLE_REBAC')).toBe(true);
     expect(await manager.getFlag('ENABLE_SD_JWT')).toBe(false);
-    expect(await manager.getFlag('ENABLE_CUSTOM_RULES')).toBe(false);
+    expect(await manager.getFlag('ENABLE_VERIFIED_ATTRIBUTES')).toBe(false);
     expect(await manager.getFlag('ENABLE_POLICY_LOGGING')).toBe(false);
     expect(get).toHaveBeenCalledWith('policy:flags:ENABLE_ABAC');
   });
@@ -235,9 +239,9 @@ describe('FeatureFlagsManager overrides', () => {
     const { kv, put, store } = fakeKv();
     const manager = new FeatureFlagsManager({}, kv, 1000);
     await manager.setFlag('ENABLE_ABAC', true);
-    await manager.setFlag('ENABLE_CUSTOM_RULES', false);
+    await manager.setFlag('ENABLE_SD_JWT', false);
     expect(put).toHaveBeenCalledWith('policy:flags:ENABLE_ABAC', 'true');
-    expect(put).toHaveBeenCalledWith('policy:flags:ENABLE_CUSTOM_RULES', 'false');
+    expect(put).toHaveBeenCalledWith('policy:flags:ENABLE_SD_JWT', 'false');
     store.set('policy:flags:ENABLE_ABAC', 'false');
     vi.advanceTimersByTime(999);
     expect(await manager.getFlag('ENABLE_ABAC')).toBe(true);
@@ -287,7 +291,7 @@ describe('FeatureFlagsManager.getFlagSources', () => {
     const { kv } = fakeKv({
       'policy:flags:ENABLE_REBAC': 'TRUE',
       'policy:flags:ENABLE_SD_JWT': '1',
-      'policy:flags:ENABLE_CUSTOM_RULES': 'false',
+      'policy:flags:ENABLE_VERIFIED_ATTRIBUTES': 'false',
       'policy:flags:ENABLE_POLICY_LOGGING': '0',
     });
     const manager = new FeatureFlagsManager({ ENABLE_ABAC: 'true' }, kv);
@@ -295,8 +299,7 @@ describe('FeatureFlagsManager.getFlagSources', () => {
       ENABLE_ABAC: { value: true, source: 'env' },
       ENABLE_REBAC: { value: true, source: 'kv' },
       ENABLE_POLICY_LOGGING: { value: false, source: 'kv' },
-      ENABLE_VERIFIED_ATTRIBUTES: { value: false, source: 'default' },
-      ENABLE_CUSTOM_RULES: { value: false, source: 'kv' },
+      ENABLE_VERIFIED_ATTRIBUTES: { value: false, source: 'kv' },
       ENABLE_SD_JWT: { value: true, source: 'kv' },
       ENABLE_POLICY_EMBEDDING: { value: false, source: 'default' },
     });
@@ -322,6 +325,6 @@ describe('FeatureFlagsManager.getFlagSources', () => {
     const without = new FeatureFlagsManager({});
     const sources = await without.getFlagSources();
     expect(Object.keys(sources)).toEqual([...FLAG_NAMES]);
-    expect(sources.ENABLE_CUSTOM_RULES).toStrictEqual({ value: true, source: 'default' });
+    expect(sources.ENABLE_VERIFIED_ATTRIBUTES).toStrictEqual({ value: false, source: 'default' });
   });
 });

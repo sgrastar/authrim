@@ -187,9 +187,16 @@ describe('tenantRulesUnusableReason', () => {
   it('ignores allow rules on attributes and denies that use none', () => {
     const attributeAllow = rule({ conditions: attributeDeny.conditions });
     const roleDeny = rule({ effect: 'deny' });
+    // (A deny on a role also needs what service groups decide: none here.)
+    expect(
+      tenantRulesUnusableReason([attributeAllow, roleDeny], {
+        verifiedAttributes: false,
+        serviceGroupDecided: { affected: new Set(), any: false, roles: new Set() },
+      })
+    ).toBeNull();
     expect(
       tenantRulesUnusableReason([attributeAllow, roleDeny], { verifiedAttributes: false })
-    ).toBeNull();
+    ).toMatch(/service groups could not be read/);
   });
 
   it('looks at every condition of a deny rule', () => {

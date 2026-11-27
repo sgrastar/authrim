@@ -12,21 +12,28 @@ import {
   generateId,
   getTenantIdFromContext,
   getLogger,
+  policyConditionGroupIds,
+  policyConditionRoleNames,
   readPolicyFlags,
+  serviceGroupDecidedGroups,
+  subtreeHasSelfWritableDynamicGroup,
+  tenantHasSelfWritableDynamicGroup,
 } from '@authrim/ar-lib-core';
 import {
   CHECK_API_CONDITION_TYPES,
+  dynamicGroupConditionProblem,
   evaluateTenantRules,
   tenantRulesUnusableReason,
-  toTenantPolicyRule,
+  tenantRulesNeedServiceGroups,
+  readTenantPolicyRules,
   validatePolicyConditions,
-  type TenantPolicyRule,
   type PolicyRule,
   type PolicyCondition,
   type PolicyContext,
   type PolicyDecision,
 } from '@authrim/ar-lib-policy';
 import { recordAdminOperationAudit } from './admin-operation-audit';
+import { readSubjectGroupState, subjectAccountOf } from './admin-access-check';
 
 // =============================================================================
 // Types
@@ -154,11 +161,12 @@ export async function adminPoliciesListHandler(c: Context<{ Bindings: Env }>) {
     const whereClause = ' WHERE ' + whereClauses.join(' AND ');
 
     // Get total count
-    const countResult = await db.queryOne<{ count: number }>(
+    const countResult = await db.queryOne<{ count: number | string }>(
       `SELECT COUNT(*) as count FROM policy_rules ${whereClause}`,
       params
     );
-    const total = countResult?.count || 0;
+    // PostgreSQL (node-pg) returns COUNT(*) as a string.
+    const total = Number(countResult?.count ?? 0) || 0;
 
     // Get rules
     const rows = await db.query<PolicyRuleRow>(
@@ -285,6 +293,138 @@ function validatePolicyRuleBody(body: {
 }
 
 /**
+ * Writes a rule change together with the tenant's rules version (`policy_rules_version`), in one
+ * batch: the policy service compares that version with the one its cached rules were read under,
+ * so every isolate reads the rules again at its next check. Returns the rule statement's result.
+ */
+async function writeRuleChange(
+  db: DatabaseAdapter,
+  tenantId: string,
+  sql: string,
+  params: unknown[]
+) {
+  const [result] = await db.batch([
+    { sql, params },
+    {
+      sql: `INSERT INTO policy_rules_version (tenant_id, version) VALUES (?, 1)
+        ON CONFLICT (tenant_id) DO UPDATE SET version = policy_rules_version.version + 1`,
+      params: [tenantId],
+    },
+  ]);
+  return result;
+}
+
+const SELF_WRITABLE_GROUP_REFUSAL = {
+  error: 'group_self_writable_attribute',
+  error_description:
+    'A group condition names a group whose membership (at or below it) is decided by an attribute users can set themselves',
+};
+
+const POLICY_VERSION_CONFLICT = {
+  error: 'policy_version_conflict',
+  error_description: 'The policy rule changed since it was read: reload it and retry',
+};
+
+const GROUP_VERSION_CONFLICT = {
+  error: 'group_version_conflict',
+  error_description: 'The service-group rules changed while the policy rule was checked: retry',
+};
+
+/** A condition of the rule's write that holds only while the checked catalog revision holds. */
+interface CatalogFence {
+  sql: string;
+  params: unknown[];
+}
+
+/**
+ * The checks of a rule's group conditions before it is written: every group they name (by ID)
+ * must be a group of the tenant (400 group_not_found), and none may have its membership, at or
+ * below it, decided by a service-group rule on an attribute users can set themselves (400
+ * group_self_writable_attribute). The write is then made conditional on the service-group catalog
+ * revision the checks read (`fence`), so a service-group rule saved in between makes it 409.
+ * Rules with no group condition need no fence.
+ */
+async function checkRuleGroups(
+  db: DatabaseAdapter,
+  tenantId: string,
+  conditions: unknown,
+  effect: string
+): Promise<
+  | { refusal: Record<string, string>; fence?: undefined }
+  | { refusal?: undefined; fence: CatalogFence | null }
+> {
+  const groupIds = [...new Set(policyConditionGroupIds(conditions))];
+  const comparesGroups =
+    Array.isArray(conditions) &&
+    conditions.some((condition) => (condition as { type?: unknown })?.type === 'same_group');
+  const ruleConditions = Array.isArray(conditions) ? (conditions as PolicyCondition[]) : [];
+  if (!groupIds.length && !comparesGroups) {
+    // A deny on a role may still rely on a service group: the role may be granted through one.
+    if (effect === 'deny' && policyConditionRoleNames(conditions).length) {
+      const problem = dynamicGroupConditionProblem(
+        { effect, conditions: ruleConditions },
+        await serviceGroupDecidedGroups(db, tenantId)
+      );
+      if (problem)
+        return {
+          refusal: { error: 'dynamic_group_negative_condition', error_description: problem },
+        };
+    }
+    return { fence: null };
+  }
+  const catalog = await db.queryOne<{ revision: number | string }>(
+    'SELECT revision FROM service_group_catalog WHERE tenant_id = ?',
+    [tenantId]
+  );
+  for (let offset = 0; offset < groupIds.length; offset += 90) {
+    const batch = groupIds.slice(offset, offset + 90);
+    const found = new Set(
+      (
+        await db.query<{ id: string }>(
+          `SELECT id FROM "groups" WHERE tenant_id = ? AND id IN (${batch.map(() => '?').join(', ')})`,
+          [tenantId, ...batch]
+        )
+      ).map((row) => row.id)
+    );
+    const missing = batch.find((id) => !found.has(id));
+    if (missing !== undefined) {
+      return {
+        refusal: {
+          error: 'group_not_found',
+          error_description: `A group condition names ${missing}, which is not a group of the tenant (groups are named by ID)`,
+        },
+      };
+    }
+  }
+  // Non-membership of a group a service group decides cannot be trusted (eventual consistency):
+  // only rules where a wrong "not a member" merely loses access may name one.
+  const problem = dynamicGroupConditionProblem(
+    { effect, conditions: Array.isArray(conditions) ? (conditions as PolicyCondition[]) : [] },
+    await serviceGroupDecidedGroups(db, tenantId)
+  );
+  if (problem)
+    return { refusal: { error: 'dynamic_group_negative_condition', error_description: problem } };
+  for (const groupId of groupIds)
+    if (await subtreeHasSelfWritableDynamicGroup(db, tenantId, groupId))
+      return { refusal: SELF_WRITABLE_GROUP_REFUSAL };
+  // same_group may compare with any group: no enabled service group may be decided by a field
+  // users write themselves.
+  if (comparesGroups && (await tenantHasSelfWritableDynamicGroup(db, tenantId)))
+    return { refusal: SELF_WRITABLE_GROUP_REFUSAL };
+  return {
+    fence: catalog
+      ? {
+          sql: 'EXISTS (SELECT 1 FROM service_group_catalog WHERE tenant_id = ? AND revision = ?)',
+          params: [tenantId, Number(catalog.revision)],
+        }
+      : {
+          sql: 'NOT EXISTS (SELECT 1 FROM service_group_catalog WHERE tenant_id = ?)',
+          params: [tenantId],
+        },
+  };
+}
+
+/**
  * Create policy rule
  */
 export async function adminPolicyCreateHandler(c: AdminContext) {
@@ -328,17 +468,25 @@ export async function adminPolicyCreateHandler(c: AdminContext) {
     if (createProblem) {
       return c.json({ error: 'invalid_request', error_description: createProblem }, 400);
     }
+    const groups = await checkRuleGroups(db, tenantId, conditions, body.effect);
+    if (groups.refusal) return c.json(groups.refusal, 400);
 
     const ruleId = generateId();
     const now = Math.floor(Date.now() / 1000);
     const adminUserId = getAdminUserId(c);
 
-    await db.execute(
-      `INSERT INTO policy_rules (
-        id, tenant_id, name, description, priority, effect,
+    const columns = `id, tenant_id, name, description, priority, effect,
         resource_types, actions, conditions, enabled,
-        created_by, created_at, updated_by, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        created_by, created_at, updated_by, updated_at`;
+    const inserted = await writeRuleChange(
+      db,
+      tenantId,
+      groups.fence
+        ? // Written only while the service-group catalog is at the revision checked.
+          `INSERT INTO policy_rules (${columns})
+          SELECT ?, ?, ?, ?, CAST(? AS INTEGER), ?, ?, ?, ?, CAST(? AS INTEGER), ?, CAST(? AS BIGINT),
+            ?, CAST(? AS BIGINT) WHERE ${groups.fence.sql}`
+        : `INSERT INTO policy_rules (${columns}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         ruleId,
         tenantId,
@@ -354,8 +502,10 @@ export async function adminPolicyCreateHandler(c: AdminContext) {
         now,
         adminUserId,
         now,
+        ...(groups.fence?.params ?? []),
       ]
     );
+    if (groups.fence && inserted.rowsAffected === 0) return c.json(GROUP_VERSION_CONFLICT, 409);
 
     await recordAdminOperationAudit(asBaseContext(c), {
       action: 'policy_rule_create',
@@ -427,6 +577,20 @@ export async function adminPolicyUpdateHandler(c: AdminContext) {
     if (updateProblem) {
       return c.json({ error: 'invalid_request', error_description: updateProblem }, 400);
     }
+    // The rule as it will be: its group conditions are checked whether they or its state change,
+    // except when the update only turns the rule off (`{ enabled: false }` and nothing else:
+    // always allowed, so a problem rule can be stopped).
+    const keys = Object.keys(body);
+    const onlyDisables = body.enabled === false && keys.length === 1 && keys[0] === 'enabled';
+    const groups = onlyDisables
+      ? { fence: null }
+      : await checkRuleGroups(
+          db,
+          tenantId,
+          body.conditions !== undefined ? body.conditions : parseConditions(existing.conditions),
+          body.effect ?? existing.effect
+        );
+    if (groups.refusal) return c.json(groups.refusal, 400);
 
     const updates: string[] = [];
     const params: unknown[] = [];
@@ -474,10 +638,35 @@ export async function adminPolicyUpdateHandler(c: AdminContext) {
     updates.push('updated_by = ?', 'updated_at = ?');
     params.push(adminUserId, now, tenantId, ruleId);
 
-    await db.execute(
-      `UPDATE policy_rules SET ${updates.join(', ')} WHERE tenant_id = ? AND id = ?`,
-      params
+    // Written only while the service-group catalog is at the revision checked.
+    // Written only on the rule as it was read and checked (its state, conditions and effect), and
+    // while the service-group catalog is at the revision checked.
+    const rowFence = ' AND updated_at = ? AND enabled = ? AND effect = ? AND conditions = ?';
+    const rowParams = [existing.updated_at, existing.enabled, existing.effect, existing.conditions];
+    const updated = await writeRuleChange(
+      db,
+      tenantId,
+      `UPDATE policy_rules SET ${updates.join(', ')} WHERE tenant_id = ? AND id = ?${rowFence}${
+        groups.fence ? ` AND ${groups.fence.sql}` : ''
+      }`,
+      [...params, ...rowParams, ...(groups.fence?.params ?? [])]
     );
+    if (updated.rowsAffected === 0) {
+      const current = await db.queryOne<PolicyRuleRow>(
+        'SELECT * FROM policy_rules WHERE tenant_id = ? AND id = ?',
+        [tenantId, ruleId]
+      );
+      const unchanged =
+        current &&
+        current.updated_at === existing.updated_at &&
+        current.enabled === existing.enabled &&
+        current.effect === existing.effect &&
+        current.conditions === existing.conditions;
+      return c.json(
+        unchanged && groups.fence ? GROUP_VERSION_CONFLICT : POLICY_VERSION_CONFLICT,
+        409
+      );
+    }
 
     await recordAdminOperationAudit(asBaseContext(c), {
       action: 'policy_rule_update',
@@ -527,7 +716,10 @@ export async function adminPolicyDeleteHandler(c: AdminContext) {
       );
     }
 
-    await db.execute('DELETE FROM policy_rules WHERE tenant_id = ? AND id = ?', [tenantId, ruleId]);
+    await writeRuleChange(db, tenantId, 'DELETE FROM policy_rules WHERE tenant_id = ? AND id = ?', [
+      tenantId,
+      ruleId,
+    ]);
 
     await recordAdminOperationAudit(asBaseContext(c), {
       action: 'policy_rule_delete',
@@ -575,11 +767,8 @@ export async function adminPolicySimulateHandler(c: AdminContext) {
       );
     }
 
-    // Load enabled rules
-    const rows = await db.query<PolicyRuleRow>(
-      'SELECT * FROM policy_rules WHERE tenant_id = ? AND enabled = 1 ORDER BY priority DESC',
-      [tenantId]
-    );
+    // Load enabled rules (as checks read them)
+    const { rules, unusable } = await readTenantPolicyRules(db, tenantId);
 
     if (
       typeof body.context.resource?.type !== 'string' ||
@@ -589,6 +778,19 @@ export async function adminPolicySimulateHandler(c: AdminContext) {
         {
           error: 'invalid_request',
           error_description: 'context.resource.type and context.action.name are required',
+        },
+        400
+      );
+    }
+    const givenGroupIds = body.context.subject?.groupIds;
+    if (
+      givenGroupIds !== undefined &&
+      (!Array.isArray(givenGroupIds) || !givenGroupIds.every((id) => typeof id === 'string'))
+    ) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'context.subject.groupIds must be an array of group ids',
         },
         400
       );
@@ -607,24 +809,74 @@ export async function adminPolicySimulateHandler(c: AdminContext) {
       );
     }
     const verifiedAttributes = flags.abac && flags.verifiedAttributes;
-    const rules: TenantPolicyRule[] = [];
-    const unusable: string[] = [];
-    for (const row of rows) {
-      const rule = toTenantPolicyRule(row);
-      if (rule) rules.push(rule);
-      else unusable.push(row.id);
+    // Evaluated now unless the request says when (in UNIX milliseconds).
+    const evaluatedAt =
+      typeof body.context.timestamp === 'number' ? body.context.timestamp : Date.now();
+    // The subject's effective groups, as checks read them: the ones the request gives, else the
+    // memberships of the user it names (unknown when they cannot be read: not "no groups").
+    // The subject is named under the account router's canonical id, as checks name it (so
+    // `is_resource_owner` compares what checks compare); resolving it is separate from reading its
+    // groups, so a failed group read does not put the request's id back.
+    let subjectGroupIds: string[] | undefined = givenGroupIds;
+    let subjectUnknownGroupIds: string[] = [];
+    let rolesComplete = true;
+    let subjectGroups: 'given' | 'resolved' | 'partially_unknown' | 'unknown' =
+      givenGroupIds === undefined ? 'unknown' : 'given';
+    let subjectId = body.context.subject?.id;
+    let account: Awaited<ReturnType<typeof subjectAccountOf>> | null = null;
+    if (typeof subjectId === 'string' && subjectId) {
+      try {
+        account = await subjectAccountOf(asBaseContext(c).env, tenantId, subjectId);
+        subjectId = account.subjectId;
+      } catch {
+        // Not an account of the tenant, or unreadable: the id as given, groups as given or unknown.
+      }
+    }
+    if (account && givenGroupIds === undefined) {
+      try {
+        // At the instant the simulation evaluates (memberships start, end and go stale).
+        const state = await readSubjectGroupState(
+          db,
+          account,
+          tenantId,
+          Math.floor(evaluatedAt / 1000)
+        );
+        subjectGroupIds = state.groupIds;
+        subjectUnknownGroupIds = state.unknownGroupIds;
+        rolesComplete = state.rolesComplete;
+        subjectGroups = state.unknownGroupIds.length ? 'partially_unknown' : 'resolved';
+      } catch {
+        // As checks decide when the roles and groups cannot be read: no rule is evaluated (the
+        // canonical id is kept).
+        subjectGroupIds = undefined;
+        rolesComplete = false;
+      }
     }
     const unusableReason =
       unusable.length > 0
         ? 'Some rules cannot be evaluated as stored: checks grant nothing from the rules until they are fixed'
-        : tenantRulesUnusableReason(rules, { verifiedAttributes });
-    const decision: PolicyDecision =
-      !flags.abac || !flags.customRules
+        : tenantRulesUnusableReason(rules, {
+            serviceGroupDecided: tenantRulesNeedServiceGroups(rules)
+              ? // At the simulated instant, like the memberships above.
+                await serviceGroupDecidedGroups(db, tenantId, Math.floor(evaluatedAt / 1000))
+              : undefined,
+            verifiedAttributes,
+            subjectGroupsUnknown: subjectGroupIds === undefined,
+          });
+    const evaluated: PolicyDecision = !flags.abac
+      ? {
+          allowed: false,
+          reason:
+            'Attribute-based policy is off for this tenant: checks grant nothing from the rules',
+          details: { abac: flags.abac },
+        }
+      : !rolesComplete
         ? {
+            // As checks decide: a group with a role grant has an unknown membership, so the
+            // subject's roles are not all known and no rule is evaluated.
             allowed: false,
             reason:
-              'Attribute-based policy or custom rules are off for this tenant: checks grant nothing from the rules',
-            details: { abac: flags.abac, custom_rules: flags.customRules },
+              "The subject's roles are not all known (they could not be read, or a group with a role has an unknown membership): checks grant nothing from the rules",
           }
         : unusableReason
           ? {
@@ -634,14 +886,21 @@ export async function adminPolicySimulateHandler(c: AdminContext) {
             }
           : evaluateTenantRules(rules, {
               ...body.context,
-              // Evaluated now unless the request says when (in UNIX milliseconds).
-              timestamp:
-                typeof body.context.timestamp === 'number' ? body.context.timestamp : Date.now(),
+              timestamp: evaluatedAt,
               // Checks do not load verified attributes while the settings keep them off.
-              subject: verifiedAttributes
-                ? body.context.subject
-                : ({ ...body.context.subject, verifiedAttributes: [] } as PolicyContext['subject']),
+              subject: {
+                ...body.context.subject,
+                ...(verifiedAttributes ? {} : { verifiedAttributes: [] }),
+                ...(typeof subjectId === 'string' ? { id: subjectId } : {}),
+                groupIds: subjectGroupIds,
+                unknownGroupIds: subjectUnknownGroupIds,
+              },
             });
+    // Whether the subject's groups were given, read from its memberships, or unknown.
+    const decision: PolicyDecision = {
+      ...evaluated,
+      details: { ...evaluated.details, subject_groups: subjectGroups },
+    };
 
     // Optionally save simulation history
     if (body.save_history) {
@@ -674,7 +933,7 @@ export async function adminPolicySimulateHandler(c: AdminContext) {
       reason: decision.reason,
       decided_by: decision.decidedBy,
       details: decision.details,
-      evaluated_rules: rows.length,
+      evaluated_rules: rules.length + unusable.length,
     });
   } catch (error) {
     const log = getLogger(asBaseContext(c)).module('ADMIN-POLICIES');
@@ -819,6 +1078,46 @@ export async function adminConditionTypesHandler(c: Context<{ Bindings: Env }>) 
       description: 'Subject owns the resource (from the check’s resource context)',
       params: [],
     },
+    // Group conditions (the subject's effective groups: direct memberships and their ancestors;
+    // none is met while the memberships are unknown)
+    {
+      type: 'in_group',
+      category: 'group',
+      label: 'In Group',
+      description:
+        'Subject is a member of the group (directly or through a child group). In a deny rule, only a group no service group decides',
+      params: [{ name: 'group_id', type: 'string', required: true, label: 'Group ID' }],
+    },
+    {
+      type: 'in_any_group',
+      category: 'group',
+      label: 'In Any Group',
+      description: 'Subject is a member of at least one of the groups',
+      params: [{ name: 'group_ids', type: 'string[]', required: true, label: 'Group IDs' }],
+    },
+    {
+      type: 'in_all_groups',
+      category: 'group',
+      label: 'In All Groups',
+      description: 'Subject is a member of every one of the groups',
+      params: [{ name: 'group_ids', type: 'string[]', required: true, label: 'Group IDs' }],
+    },
+    {
+      type: 'not_in_any_group',
+      category: 'group',
+      label: 'Not In Any Group',
+      description:
+        'Subject is a member of none of the groups (not met while the memberships are unknown). Only groups no service group decides (neither a service group nor above one)',
+      params: [{ name: 'group_ids', type: 'string[]', required: true, label: 'Group IDs' }],
+    },
+    {
+      type: 'same_group',
+      category: 'group',
+      label: 'Same Group as Resource',
+      description:
+        'Subject shares at least one group with the resource (from the check’s resource context). Not in a deny rule while the tenant has service groups',
+      params: [],
+    },
     // ABAC conditions (the subject's verified attributes)
     {
       type: 'attribute_equals',
@@ -906,6 +1205,7 @@ export async function adminConditionTypesHandler(c: Context<{ Bindings: Env }>) 
   const categories = [
     { id: 'rbac', label: 'Role-Based (RBAC)', icon: 'user-check' },
     { id: 'ownership', label: 'Ownership', icon: 'shield' },
+    { id: 'group', label: 'Group conditions', icon: 'users' },
     { id: 'abac', label: 'Attribute-Based (ABAC)', icon: 'tag' },
     { id: 'time', label: 'Time-Based', icon: 'clock' },
     { id: 'numeric', label: 'Numeric', icon: 'hash' },

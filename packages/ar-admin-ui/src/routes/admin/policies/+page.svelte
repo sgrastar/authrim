@@ -605,7 +605,7 @@
 
 		try {
 			const settings = await adminSettingsAPI.getSettings('feature-flags');
-			customRulesEnabled = settings.values['feature.enable_custom_rules'] === true;
+			customRulesEnabled = settings.values['feature.enable_abac'] === true;
 			featureFlagsVersion = settings.version;
 		} catch (err) {
 			customRulesError =
@@ -625,13 +625,13 @@
 			if (!featureFlagsVersion) {
 				const settings = await adminSettingsAPI.getSettings('feature-flags');
 				featureFlagsVersion = settings.version;
-				customRulesEnabled = settings.values['feature.enable_custom_rules'] === true;
+				customRulesEnabled = settings.values['feature.enable_abac'] === true;
 			}
 
 			const newValue = !customRulesEnabled;
 			const result = await adminSettingsAPI.updateSettings('feature-flags', {
 				ifMatch: featureFlagsVersion,
-				set: { 'feature.enable_custom_rules': newValue }
+				set: { 'feature.enable_abac': newValue }
 			});
 			customRulesEnabled = newValue;
 			featureFlagsVersion = result.version;

@@ -481,7 +481,8 @@ export const AUTHORIZATION: SettingsPageDef = {
 			settings: [
 				{ key: 'feature.enable_id_level_permissions', depth: 'primary' },
 				{ key: 'feature.enable_abac', depth: 'primary' },
-				{ key: 'feature.enable_rebac', depth: 'primary' }
+				{ key: 'feature.enable_rebac', depth: 'primary' },
+				{ key: 'feature.enable_verified_attributes', depth: 'advanced' }
 			]
 		},
 		{

@@ -54,8 +54,7 @@ import {
   resolveCustomClaimRuntimeSourcesFromHono,
   validateCustomClaimWrite,
   resolveAccountCoreDataContext,
-  resolveSubjectGroups,
-  resolveSubjectRoles,
+  resolveSubjectRolesAndGroups,
   roleAssignmentHolds,
   type DatabaseAdapter,
   type PreparedStatement,
@@ -2534,7 +2533,9 @@ async function buildConditionEvaluationContext(
   db: DatabaseAdapter,
   tenantId: string,
   interaction: FlowInteractionRow,
-  runtime: FlowRuntimeContract
+  runtime: FlowRuntimeContract,
+  /** The conditions being evaluated now (their groups decide whether unknown ones matter). */
+  evaluated: readonly unknown[] = []
 ): Promise<FlowConditionEvaluationContext> {
   const requestContext = parseJsonObject(interaction.context_json);
   const authenticationMethod = await getLatestCompletedAuthenticationMethod(
@@ -2561,7 +2562,9 @@ async function buildConditionEvaluationContext(
           tenantId,
           interaction.user_id,
           // Only the attributes a condition of this Flow reads (none: nothing is read).
-          conditionUserAttributeKeys(runtimeConditionExpressions(runtime))
+          conditionUserAttributeKeys(runtimeConditionExpressions(runtime)),
+          conditionGroupIds(evaluated),
+          conditionsReadRoles(evaluated)
         )
       : undefined,
     // The choices screen steps sent to the Flow (a screen answer condition reads them).
@@ -2577,7 +2580,9 @@ async function getFlowConditionUserContext(
   db: DatabaseAdapter,
   tenantId: string,
   userId: string,
-  attributeKeys: readonly string[] = []
+  attributeKeys: readonly string[] = [],
+  conditionGroups: ReadonlySet<string> = new Set(),
+  readsRoles = true
 ): Promise<NonNullable<FlowConditionEvaluationContext['user']>> {
   // Role and group definitions are in the tenant metadata database (`db`); the user's
   // assignments and memberships in the user's account database. A user the tenant has no account
@@ -2590,9 +2595,8 @@ async function getFlowConditionUserContext(
   } catch (error) {
     if (!(error instanceof Error && error.message === 'account_data_route_not_found')) throw error;
   }
-  const [roles, groupIds, attributes] = await Promise.all([
-    getFlowConditionUserRoles(rbac, tenantId, userId),
-    getFlowConditionUserGroupIds(rbac, tenantId, userId),
+  const [{ roles, groupIds }, attributes] = await Promise.all([
+    getFlowConditionUserRolesAndGroups(rbac, tenantId, userId, conditionGroups, readsRoles),
     // Read, like the roles, only for a user the tenant has an account for; one that cannot be
     // read throws, so no condition on it is decided without it.
     rbac && attributeKeys.length > 0
@@ -2606,45 +2610,101 @@ async function getFlowConditionUserContext(
   };
 }
 
+/** Stands for "any group" in conditionGroupIds: a `user.group` condition naming no group. */
+const ANY_GROUP = '\u0000any';
+
+/**
+ * The group ids the conditions name (`group_membership`'s group, `user.group`'s values), one
+ * level into `all` as the evaluator reads them; ANY_GROUP for a `user.group` naming none (such as
+ * `exists` / `not_exists`, which read whether there is any group at all).
+ */
+/** Whether the conditions read the user's roles (`user.role`, one level into `all`). */
+function conditionsReadRoles(conditions: readonly unknown[]): boolean {
+  const reads = (condition: unknown): boolean => {
+    if (!condition || typeof condition !== 'object') return false;
+    const record = condition as Record<string, unknown>;
+    if (record.type === 'user.role') return true;
+    return record.type === 'all' && Array.isArray(record.all) && record.all.some(reads);
+  };
+  return conditions.some(reads);
+}
+
+function conditionGroupIds(conditions: readonly unknown[]): Set<string> {
+  const ids = new Set<string>();
+  const visit = (condition: unknown) => {
+    if (!condition || typeof condition !== 'object') return;
+    const record = condition as Record<string, unknown>;
+    if (record.type === 'group_membership') {
+      const ref = record.group_ref as { id?: unknown } | undefined;
+      if (typeof ref?.id === 'string') ids.add(ref.id);
+    } else if (record.type === 'user.group') {
+      // By the operator first, as the evaluator reads it: exists / not_exists read whether
+      // there is any group at all (a stored value is ignored); the others name `values`, else
+      // `value` (expected() in condition-operators.ts).
+      if (record.operator === 'exists' || record.operator === 'not_exists') {
+        ids.add(ANY_GROUP);
+        return;
+      }
+      const named = Array.isArray(record.values)
+        ? (record.values as unknown[])
+        : record.value === undefined
+          ? []
+          : [record.value];
+      // Whether this condition names a valid id at all (not whether the set grew: another
+      // condition may already name the same group).
+      const valid = named.filter(
+        (value): value is string | number => typeof value === 'string' || typeof value === 'number'
+      );
+      for (const value of valid) ids.add(String(value));
+      if (!valid.length) ids.add(ANY_GROUP);
+    } else if (record.type === 'all' && Array.isArray(record.all)) {
+      record.all.forEach(visit);
+    }
+  };
+  conditions.forEach(visit);
+  return ids;
+}
+
 /**
  * The user's effective role names (direct assignments and those of the user's groups, ancestors
- * included) whose assignment holds across the tenant (global, or tenant-scoped to this tenant);
- * a role held only for a group's or a resource's sake does not count, however it was assigned.
- * SCIM group membership reaches them through the groups, as every other membership does.
+ * included) whose assignment holds across the tenant (global, or tenant-scoped to this tenant),
+ * and the user's effective group ids (active memberships of active groups and their ancestors),
+ * read together as tokens and the Check API read them. A role held only for a group's or a
+ * resource's sake does not count, however it was assigned. SCIM group membership reaches them
+ * through the groups, as every other membership does.
+ *
+ * Throws (so no branch is chosen: AR_FLOW_CONDITION_CONTEXT_UNAVAILABLE) when the roles are
+ * incomplete (a group with a role grant has an unknown membership), or when a group the
+ * conditions name has an unknown membership and the user is not known to be in it.
  */
-async function getFlowConditionUserRoles(
+async function getFlowConditionUserRolesAndGroups(
   rbac: TenantRBACDatabases | null,
   tenantId: string,
-  userId: string
-): Promise<string[]> {
-  if (!rbac) return [];
-  const roles = await resolveSubjectRoles(rbac, tenantId, userId);
+  userId: string,
+  conditionGroups: ReadonlySet<string>,
+  readsRoles: boolean
+): Promise<{ roles: string[]; groupIds: string[] }> {
+  if (!rbac) return { roles: [], groupIds: [] };
+  const { roles, effectiveGroupIds, unknownGroupIds, rolesComplete } =
+    await resolveSubjectRolesAndGroups(rbac, tenantId, userId, Math.floor(Date.now() / 1000));
+  // Incomplete roles matter only to a condition on them (group conditions have their own check).
+  if (readsRoles && !rolesComplete) throw new Error('flow_condition_roles_incomplete');
+  const known = new Set(effectiveGroupIds);
+  if (unknownGroupIds.some((id) => conditionGroups.has(id) && !known.has(id)))
+    throw new Error('flow_condition_groups_uncertain');
+  // "Any group" with none known and some unknown: whether there is one is not known.
+  if (conditionGroups.has(ANY_GROUP) && known.size === 0 && unknownGroupIds.length > 0)
+    throw new Error('flow_condition_groups_uncertain');
   const held = roles.filter(({ assignment }) =>
     roleAssignmentHolds(
       { scope: assignment.scope_type, scopeTarget: assignment.scope_target },
       { tenantId }
     )
   );
-  return [...new Set(held.map(({ role }) => role.name))].filter(Boolean);
-}
-
-/**
- * The user's effective group ids: active memberships of active groups and their ancestors, as
- * tokens and the Check API see them.
- */
-async function getFlowConditionUserGroupIds(
-  rbac: TenantRBACDatabases | null,
-  tenantId: string,
-  userId: string
-): Promise<string[]> {
-  if (!rbac) return [];
-  const { effectiveGroupIds } = await resolveSubjectGroups(
-    rbac,
-    tenantId,
-    userId,
-    Math.floor(Date.now() / 1000)
-  );
-  return [...effectiveGroupIds];
+  return {
+    roles: [...new Set(held.map(({ role }) => role.name))].filter(Boolean),
+    groupIds: effectiveGroupIds,
+  };
 }
 
 async function resolveConditionSelectedHandle(input: {
@@ -2671,7 +2731,8 @@ async function resolveConditionSelectedHandle(input: {
       input.db,
       input.tenantId,
       input.interaction,
-      input.runtime
+      input.runtime,
+      stepConditionExpressions(input.step)
     );
   } catch (error) {
     // The user's roles or groups could not be read: no branch is chosen without them.

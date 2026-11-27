@@ -138,6 +138,22 @@ export async function resolveEffectiveRoleAssignments(
   subjectId: string,
   nowSeconds: number
 ) {
+  return (await resolveEffectiveAssignmentsAndGroups(dbs, tenantId, subjectId, nowSeconds))
+    .assignments;
+}
+
+/** The subject's effective role assignments, and the effective groups they were read through. */
+async function resolveEffectiveAssignmentsAndGroups(
+  dbs: TenantRBACDatabases,
+  tenantId: string,
+  subjectId: string,
+  nowSeconds: number
+): Promise<{
+  assignments: EffectiveRoleAssignment[];
+  effectiveGroupIds: Set<string>;
+  unknownGroupIds: Set<string>;
+  rolesComplete: boolean;
+}> {
   const [direct, groups] = await Promise.all([
     listSubjectRoleAssignments(dbs.account, tenantId, subjectId, nowSeconds),
     resolveSubjectGroups(dbs, tenantId, subjectId, nowSeconds),
@@ -146,12 +162,14 @@ export async function resolveEffectiveRoleAssignments(
     ...row,
     via: { kind: 'direct' },
   }));
-  const assignments = await listGroupRoleAssignments(
-    dbs.metadata,
-    tenantId,
-    groups.effectiveGroupIds,
-    nowSeconds
-  );
+  const [assignments, unknownGrants] = await Promise.all([
+    listGroupRoleAssignments(dbs.metadata, tenantId, groups.effectiveGroupIds, nowSeconds),
+    // A role granted to a group whose membership is unknown (or one of its ancestors, which the
+    // unknown set holds) may be the subject's: the roles are then not complete.
+    groups.unknownGroupIds.size
+      ? listGroupRoleAssignments(dbs.metadata, tenantId, groups.unknownGroupIds, nowSeconds)
+      : Promise.resolve([]),
+  ]);
   const byGroup = new Map<string, typeof assignments>();
   for (const row of assignments) {
     const rows = byGroup.get(row.group_id) ?? [];
@@ -164,7 +182,12 @@ export async function resolveEffectiveRoleAssignments(
         effective.push({ ...row, via: { kind: 'group', groupId, throughGroupId } });
     }
   }
-  return effective;
+  return {
+    assignments: effective,
+    effectiveGroupIds: groups.effectiveGroupIds,
+    unknownGroupIds: groups.unknownGroupIds,
+    rolesComplete: unknownGrants.length === 0,
+  };
 }
 
 /**
@@ -177,18 +200,46 @@ export async function resolveSubjectRoles(
   subjectId: string,
   nowSeconds: number = Math.floor(Date.now() / 1000)
 ): Promise<ResolvedSubjectRole[]> {
-  const assignments = await resolveEffectiveRoleAssignments(dbs, tenantId, subjectId, nowSeconds);
+  return (await resolveSubjectRolesAndGroups(dbs, tenantId, subjectId, nowSeconds)).roles;
+}
+
+/**
+ * The subject's roles (as resolveSubjectRoles) and its effective groups (direct memberships and
+ * their active ancestors), read together. `unknownGroupIds` are the groups whose membership is
+ * not known (resolveSubjectGroups): neither in `effectiveGroupIds` nor known not to be. When one of
+ * them carries a role grant, `rolesComplete` is false: `roles` then holds only the assignments that
+ * are known (direct ones and those through known groups), so it may grant what they grant but
+ * must not be read as the whole set (no "has no role X" decision, no attribute-based rule).
+ */
+export async function resolveSubjectRolesAndGroups(
+  dbs: TenantRBACDatabases,
+  tenantId: string,
+  subjectId: string,
+  nowSeconds: number = Math.floor(Date.now() / 1000)
+): Promise<{
+  roles: ResolvedSubjectRole[];
+  effectiveGroupIds: string[];
+  unknownGroupIds: string[];
+  rolesComplete: boolean;
+}> {
+  const { assignments, effectiveGroupIds, unknownGroupIds, rolesComplete } =
+    await resolveEffectiveAssignmentsAndGroups(dbs, tenantId, subjectId, nowSeconds);
   const roles = await loadTenantRoles(
     dbs.metadata,
     tenantId,
     assignments.map((assignment) => assignment.role_id)
   );
-  return assignments
-    .flatMap((assignment) => {
-      const role = roles.get(assignment.role_id);
-      return role ? [{ assignment, role }] : [];
-    })
-    .sort((left, right) => compareText(left.role.name, right.role.name));
+  return {
+    roles: assignments
+      .flatMap((assignment) => {
+        const role = roles.get(assignment.role_id);
+        return role ? [{ assignment, role }] : [];
+      })
+      .sort((left, right) => compareText(left.role.name, right.role.name)),
+    effectiveGroupIds: [...effectiveGroupIds],
+    unknownGroupIds: [...unknownGroupIds],
+    rolesComplete,
+  };
 }
 
 /** What a check is about, for deciding which role assignments hold for it. */

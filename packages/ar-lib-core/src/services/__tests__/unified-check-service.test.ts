@@ -773,6 +773,270 @@ describe('UnifiedCheckService', () => {
       expect((await healthy.check(request)).allowed).toBe(true);
     });
 
+    it("gives the rules the subject's effective groups (direct and ancestors)", async () => {
+      mockD1.all.mockImplementation(async (sql: string) => {
+        if (sql.includes('FROM group_memberships')) return { results: [{ group_id: 'grp_team' }] };
+        if (sql.includes('FROM "groups"')) {
+          return {
+            results: [
+              { id: 'grp_team', parent_group_id: 'grp_dept', lifecycle_state: 'active' },
+              { id: 'grp_dept', parent_group_id: null, lifecycle_state: 'active' },
+            ],
+          };
+        }
+        return { results: [] };
+      });
+      const inDept = {
+        usesSubjectGroups: true,
+        evaluate: vi.fn((context: { subjectGroupIds?: string[] }) =>
+          context.subjectGroupIds?.includes('grp_dept')
+            ? { allowed: true, decidedBy: 'rule_dept' }
+            : { allowed: false }
+        ),
+      };
+      const withGroups = createUnifiedCheckService({
+        db: mockD1 as unknown as D1Database,
+        tenantPolicy: async () => ({
+          abac: true,
+          verifiedAttributes: false,
+          logDecisions: false,
+          evaluator: inDept,
+        }),
+      });
+
+      expect((await withGroups.check(request)).allowed).toBe(true);
+      const [evaluated] = inDept.evaluate.mock.calls[0] ?? [];
+      expect([...(evaluated?.subjectGroupIds ?? [])].sort()).toEqual(['grp_dept', 'grp_team']);
+    });
+
+    it('does not evaluate rules with group conditions when the groups cannot be read', async () => {
+      mockD1.all.mockImplementation(async (sql: string) => {
+        if (sql.includes('FROM group_memberships')) throw new Error('memberships unavailable');
+        return { results: [] };
+      });
+      const grantAll = {
+        usesSubjectGroups: true,
+        evaluate: vi.fn(() => ({ allowed: true, decidedBy: 'rule_any' })),
+      };
+      const groupsDown = createUnifiedCheckService({
+        db: mockD1 as unknown as D1Database,
+        tenantPolicy: async () => ({
+          abac: true,
+          verifiedAttributes: false,
+          logDecisions: false,
+          evaluator: grantAll,
+        }),
+      });
+
+      expect((await groupsDown.check(request)).allowed).toBe(false);
+      expect(grantAll.evaluate).not.toHaveBeenCalled();
+    });
+
+    it('evaluates no rule while memberships are unknown, and still grants through known roles', async () => {
+      // A dynamic row whose publication cannot be checked (the catalog read fails), next to a
+      // direct role assignment.
+      mockD1.all.mockImplementation(async (sql: string) => {
+        if (sql.includes('FROM group_memberships')) {
+          return {
+            results: [
+              {
+                group_id: 'grp_dyn',
+                assignment_source: 'dynamic',
+                source_ref: '0000000000000001:1',
+              },
+              // The publication record (read in the same statement).
+              {
+                group_id: null,
+                assignment_source: 'publication_record',
+                source_ref: '0000000000000001:1',
+              },
+            ],
+          };
+        }
+        // The unknown group carries a role grant: the roles are incomplete.
+        if (sql.includes('FROM group_role_assignments')) {
+          return {
+            results: [
+              {
+                id: 'gra',
+                group_id: 'grp_dyn',
+                role_id: 'role_x',
+                scope_type: 'global',
+                scope_target: '',
+                expires_at: null,
+                assigned_by: null,
+                created_at: 0,
+              },
+            ],
+          };
+        }
+        if (sql.includes('FROM role_assignments')) {
+          return {
+            results: [
+              {
+                id: 'ra',
+                role_id: 'role_0',
+                scope_type: 'global',
+                scope_target: '',
+                expires_at: null,
+                created_at: 0,
+              },
+            ],
+          };
+        }
+        if (sql.includes('FROM roles')) {
+          return {
+            results: [{ id: 'role_0', name: 'writer', permissions_json: '["notes:write"]' }],
+          };
+        }
+        return { results: [] };
+      });
+      mockD1.first.mockImplementation(async (sql: string) => {
+        if (sql.includes('service_group_catalog')) throw new Error('catalog unavailable');
+        return null;
+      });
+      const grantAll = {
+        usesSubjectGroups: true,
+        evaluate: vi.fn(() => ({ allowed: true, decidedBy: 'rule_any' })),
+      };
+      // Rules that read no group are not evaluated either: the roles through the unknown
+      // memberships are unknown too, and a rule may deny on a role the subject lacks.
+      const noGroupRules = { evaluate: vi.fn(() => ({ allowed: true, decidedBy: 'rule_roles' })) };
+      const service = (evaluator: typeof grantAll | typeof noGroupRules) =>
+        createUnifiedCheckService({
+          db: mockD1 as unknown as D1Database,
+          tenantPolicy: async () => ({
+            abac: true,
+            verifiedAttributes: false,
+            logDecisions: false,
+            evaluator,
+          }),
+        });
+
+      expect((await service(grantAll).check(request)).allowed).toBe(false);
+      expect((await service(noGroupRules).check(request)).allowed).toBe(false);
+      expect(grantAll.evaluate).not.toHaveBeenCalled();
+      expect(noGroupRules.evaluate).not.toHaveBeenCalled();
+      // The direct role is known: it still grants what it grants.
+      const direct = await service(noGroupRules).check({ ...request, permission: 'notes:write' });
+      expect(direct).toMatchObject({ allowed: true, resolved_via: ['role'] });
+    });
+
+    it('denies an account:-prefixed subject on its attribute before a group allow', async () => {
+      const accountDb = {
+        prepare: (sql: string) => {
+          const statement = {
+            bind: () => statement,
+            all: async () =>
+              sql.includes('FROM group_memberships')
+                ? { results: [{ group_id: 'grp_staff', assignment_source: 'manual' }] }
+                : { results: [] },
+            first: async () => null,
+          };
+          return statement;
+        },
+      };
+      mockD1.all.mockImplementation(async (sql: string) =>
+        sql.includes('FROM "groups"')
+          ? { results: [{ id: 'grp_staff', parent_group_id: null, lifecycle_state: 'active' }] }
+          : { results: [] }
+      );
+      // The attribute is stored under the canonical id only.
+      const blockedAttributes = {
+        getValidAttributesForUser: vi.fn(async (_tenant: string, subject: string) =>
+          subject === 'user_123' ? { blocked: 'true' } : {}
+        ),
+      };
+      // As a tenant's rules: deny on the attribute first, then allow members of the group.
+      const rules = {
+        usesSubjectGroups: true,
+        evaluate: vi.fn(
+          (context: {
+            subjectGroupIds?: string[];
+            verifiedAttributes: Array<{ name: string; value: string | null }>;
+          }) =>
+            context.verifiedAttributes.some((a) => a.name === 'blocked' && a.value === 'true')
+              ? { allowed: false, decidedBy: 'deny_blocked' }
+              : context.subjectGroupIds?.includes('grp_staff')
+                ? { allowed: true, decidedBy: 'allow_staff' }
+                : { allowed: false }
+        ),
+      };
+      const service = createUnifiedCheckService({
+        db: mockD1 as unknown as D1Database,
+        attributeRepository: blockedAttributes,
+        subjectAccount: async () => ({
+          db: accountDb as unknown as D1Database,
+          subjectId: 'user_123',
+        }),
+        tenantPolicy: async () => ({
+          abac: true,
+          verifiedAttributes: true,
+          logDecisions: false,
+          evaluator: rules,
+        }),
+      });
+
+      const result = await service.check({ ...request, subject_id: 'account:user_123' });
+      expect(result.allowed).toBe(false);
+      expect(blockedAttributes.getValidAttributesForUser).toHaveBeenCalledWith('acme', 'user_123');
+      expect(rules.evaluate).toHaveBeenCalledWith(
+        expect.objectContaining({ subjectId: 'user_123' })
+      );
+    });
+
+    it("reads the subject's rows under the account router's canonical id", async () => {
+      const binds: Array<{ sql: string; params: unknown[] }> = [];
+      const accountDb = {
+        prepare: (sql: string) => {
+          const statement = {
+            bind: (...params: unknown[]) => {
+              binds.push({ sql, params });
+              return statement;
+            },
+            all: async () =>
+              sql.includes('FROM role_assignments')
+                ? {
+                    results: [
+                      {
+                        id: 'ra',
+                        role_id: 'role_0',
+                        scope_type: 'global',
+                        scope_target: '',
+                        expires_at: null,
+                        created_at: 0,
+                      },
+                    ],
+                  }
+                : { results: [] },
+            first: async () => null,
+          };
+          return statement;
+        },
+      };
+      mockSubjectRoles([{ name: 'reader', permissions_json: '["reports:read"]' }]);
+      const subjectAccount = vi.fn(async () => ({
+        db: accountDb as unknown as D1Database,
+        subjectId: 'user_123',
+      }));
+      const canonical = createUnifiedCheckService({
+        db: mockD1 as unknown as D1Database,
+        subjectAccount,
+      });
+
+      const result = await canonical.check({ ...request, subject_id: ' account:user_123' });
+      expect(result.allowed).toBe(true);
+      expect(subjectAccount).toHaveBeenCalledWith('acme', ' account:user_123');
+      const reads = binds.filter(
+        ({ sql }) => sql.includes('FROM role_assignments') || sql.includes('FROM group_memberships')
+      );
+      expect(reads.length).toBeGreaterThan(0);
+      for (const { params } of reads) {
+        expect(params).toContain('user_123');
+        expect(params).not.toContain(' account:user_123');
+      }
+    });
+
     it('keeps results out of the shared cache while tenant rules apply or cannot be read', async () => {
       const cache = { get: vi.fn(async () => null), put: vi.fn(async () => undefined) };
       const withPolicy = (policy: Record<string, unknown>) =>

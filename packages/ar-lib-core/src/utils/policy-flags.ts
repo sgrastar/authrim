@@ -20,8 +20,6 @@ export interface PolicyFlags {
   policyLogging: boolean;
   /** Users' verified attributes in attribute-based rules (`feature.enable_verified_attributes`). */
   verifiedAttributes: boolean;
-  /** The tenant's custom policy rules in attribute-based checks (`feature.enable_custom_rules`). */
-  customRules: boolean;
   /** SD-JWT ID tokens for clients that request them (`feature.enable_sd_jwt`). */
   sdJwt: boolean;
   /** Permissions embedded in access tokens (`feature.enable_policy_embedding`). */
@@ -33,7 +31,6 @@ const FLAG_KEYS: Record<keyof PolicyFlags, string> = {
   rebac: 'feature.enable_rebac',
   policyLogging: 'feature.enable_policy_logging',
   verifiedAttributes: 'feature.enable_verified_attributes',
-  customRules: 'feature.enable_custom_rules',
   sdJwt: 'feature.enable_sd_jwt',
   policyEmbedding: 'feature.enable_policy_embedding',
 };
@@ -44,7 +41,6 @@ export const POLICY_FLAGS_OFF: PolicyFlags = Object.freeze({
   rebac: false,
   policyLogging: false,
   verifiedAttributes: false,
-  customRules: false,
   sdJwt: false,
   policyEmbedding: false,
 });

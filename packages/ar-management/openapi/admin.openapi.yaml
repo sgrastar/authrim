@@ -5183,8 +5183,11 @@ paths:
         unified check as the public Check API (POST /api/check) under its server contract: any
         subject of the tenant, with the request's resource_context and rebac. The tenant's ABAC
         rules and ReBAC take part as its feature flags enable them (feature.enable_abac,
-        feature.enable_custom_rules, feature.enable_rebac); feature.enable_check_api does not
-        apply. Requires admin:roles:read or admin:groups:read. Writes nothing.
+        feature.enable_rebac); feature.enable_check_api does not apply. The rules' group
+        conditions name groups by ID and read the subject's effective groups; a dynamic
+        membership whose group rule changed since it was published is unknown until republished,
+        and then no rule is evaluated. Requires
+        admin:roles:read or admin:groups:read. Writes nothing.
       requestBody:
         required: true
         content:
@@ -8615,7 +8618,7 @@ paths:
       operationId: postApiAdminGroupsByIdRoles
       summary: Grant a role to a group
       description: >-
-        Grants a role to every member of the group (and of its child groups). Needs `admin:roles:write` and a grant ceiling that covers the role (403 otherwise). expires_at is Unix seconds.
+        Grants a role to every member of the group (and of its child groups). Needs `admin:roles:write` and a grant ceiling that covers the role (403 otherwise). expires_at is Unix seconds. Refused (409 dynamic_group_negative_condition) when an enabled deny policy rule names the role and a service group decides membership of the group (it is one, or one is below it): the deny would rely on a possibly stale "not a member".
       responses:
         '201':
           description: Grant a role to a group
@@ -8631,6 +8634,11 @@ paths:
           $ref: '#/components/responses/Error'
         '404':
           $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+          description: >-
+            dynamic_group_negative_condition: an enabled deny rule names the role and a service
+            group decides membership of the group.
         '500':
           $ref: '#/components/responses/Error'
       parameters:
@@ -22081,12 +22089,33 @@ paths:
         the Check API can evaluate (roles, verified and numeric attributes, resource owner, time;
         not user type, relationships, country, IP or request counts), each with
         the params its type needs (400 otherwise): the Check API grants nothing from a tenant's
-        rules while one of them cannot be evaluated.
+        rules while one of them cannot be evaluated. Group conditions (in_group, in_any_group,
+        in_all_groups, not_in_any_group) name groups by ID: every ID must be a group of the
+        tenant (400 group_not_found). A rule naming a group whose membership, at or below it, is
+        decided by a service-group rule on an attribute users can set themselves is refused (400
+        group_self_writable_attribute). Non-membership of a group a service group decides (a
+        service group or a group above one) is eventually consistent, so a rule may not rely on
+        it: not_in_any_group may not name such a group, and a deny rule may not use in_group,
+        in_any_group or in_all_groups on one, nor same_group while the tenant has service groups,
+        nor has_role / has_any_role / has_all_roles on a role granted to such a group (400
+        dynamic_group_negative_condition; a stored rule doing so makes the rules unusable).
+        A rule with group conditions is written only while the service-group rules are as
+        checked (409 group_version_conflict otherwise: retry).
       responses:
         '201':
           $ref: '#/components/responses/AdminPolicyCreate'
         '400':
           $ref: '#/components/responses/Error'
+          description: >-
+            Invalid rule (invalid_request); group_not_found: a group condition names an ID that is
+            not a group of the tenant; group_self_writable_attribute: a group condition names a
+            group whose membership (at or below it) is decided by an attribute users can set
+            themselves; or dynamic_group_negative_condition: the rule relies on non-membership of
+            a group a service group decides.
+        '409':
+          $ref: '#/components/responses/Error'
+          description: >-
+            group_version_conflict: the service-group rules changed while the rule was checked.
         '401':
           $ref: '#/components/responses/Error'
         '403':
@@ -22161,12 +22190,30 @@ paths:
       description: >-
         Update mutable policy rule fields and return a success object. If no fields are supplied,
         the handler also returns success without changing the row. Supplied fields are validated as
-        on create (400 otherwise).
+        on create (400 otherwise). The rule's group conditions as they will be (the ones sent, else
+        the stored ones) are checked as on create (400 group_not_found,
+        group_self_writable_attribute or dynamic_group_negative_condition, 409
+        group_version_conflict), also when it re-enables the rule or changes its effect, except for
+        an update whose body is only enabled false. The write applies only to the rule as it was
+        read (409 policy_version_conflict otherwise). Turning a rule off that way is always
+        allowed.
       responses:
         '200':
           $ref: '#/components/responses/AdminPolicyDelete'
         '400':
           $ref: '#/components/responses/Error'
+          description: >-
+            Invalid fields (invalid_request); group_not_found: a group condition names an ID that
+            is not a group of the tenant; group_self_writable_attribute: a group condition of the
+            rule names a group whose membership (at or below it) is decided by an attribute users
+            can set themselves; or dynamic_group_negative_condition: the rule relies on
+            non-membership of a group a service group decides.
+        '409':
+          $ref: '#/components/responses/Error'
+          description: >-
+            policy_version_conflict: the rule changed since it was read (its state, effect or
+            conditions); or group_version_conflict: the service-group rules changed while the
+            rule was checked.
         '401':
           $ref: '#/components/responses/Error'
         '403':
@@ -22215,12 +22262,20 @@ paths:
       description: >-
         Evaluate enabled policy rules against a supplied context as the Check API would, and
         optionally persist the simulation history for later review. The tenant's settings apply
-        (no grant while feature.enable_abac or feature.enable_custom_rules is off; no verified
-        attributes while feature.enable_verified_attributes is off), as do the rules' resource
-        types and actions, and the subject's scoped roles count only for the context's resource
-        and its groups. While a rule cannot be evaluated as stored, nothing is granted and its
-        id is returned. context.resource.type and context.action.name are required. Answers 503
-        when the settings cannot be read.
+        (no grant while feature.enable_abac is off; no verified attributes while
+        feature.enable_verified_attributes is off), as do the rules' resource types and actions,
+        and the subject's scoped roles count only for the context's resource and its groups.
+        Group conditions read context.subject.groupIds when given; otherwise the effective groups
+        (direct memberships and their ancestors) of the user context.subject.id names are read.
+        When they cannot be read they are unknown (not "no groups"): rules with group conditions
+        then grant nothing. Group conditions name groups by ID, and a dynamic membership whose
+        group rule changed since it was published is unknown until republished. The subject is named by the account router's
+        canonical id when context.subject.id resolves to an account. details.subject_groups says
+        which applied: given, resolved, partially_unknown (read from the account, some groups'
+        membership unknown: a rule naming one of them is not evaluated, and when one of them carries
+        a role no rule is, as in checks) or unknown. While a rule cannot be evaluated as stored, nothing is granted and its id is
+        returned. context.resource.type and context.action.name are required. Answers 503 when
+        the settings cannot be read.
       responses:
         '200':
           $ref: '#/components/responses/AdminPolicySimulation'
@@ -73696,7 +73751,8 @@ components:
           additionalProperties: true
           description: >-
             The subject: id, roles ({ name, scope: global | tenant | group | resource, scopeTarget
-            such as group:<id> or resource:<type>:<id> }), groupIds (the subject's group ids) and
+            such as group:<id> or resource:<type>:<id> }), groupIds (the subject's effective group
+            ids, for group conditions; when absent, those of the user id names are read) and
             verifiedAttributes ({ name, value }).
         resource:
           type: object

@@ -190,8 +190,9 @@ export const API_GROUPS: readonly ApiGroup[] = [
 		id: 'user-attributes',
 		name: 'User attributes (verified)',
 		kind: 'records',
-		page: 'access/attributes',
-		paths: [`${A}/attributes`]
+		page: 'settings/authorization',
+		paths: [`${A}/attributes`],
+		note: 'No console page manages these records yet: only the switch (feature.enable_verified_attributes) is on Settings → Authorization.'
 	},
 	{
 		id: 'rebac',
@@ -206,7 +207,7 @@ export const API_GROUPS: readonly ApiGroup[] = [
 		kind: 'records',
 		page: 'access/policies',
 		paths: [`${A}/policies`],
-		note: 'The tenant’s custom rules the Check API evaluates with feature.enable_abac and feature.enable_custom_rules.'
+		note: 'The tenant’s custom rules the Check API evaluates when feature.enable_abac is on.'
 	},
 	{
 		id: 'resource-permissions',

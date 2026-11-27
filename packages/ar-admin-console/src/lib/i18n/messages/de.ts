@@ -99,7 +99,6 @@ export const de = {
 	'nav.users.invitations': 'Einladungen',
 	'nav.users.support': 'Supportaktionen',
 	'nav.access.roles': 'Rollen',
-	'nav.access.attributes': 'Attribute',
 	'nav.access.relationships': 'Beziehungen (ReBAC)',
 	'nav.access.policies': 'Richtlinien',
 	'nav.access.accessCheck': 'Zugriffsprüfung',

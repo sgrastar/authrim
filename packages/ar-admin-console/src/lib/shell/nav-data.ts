@@ -86,16 +86,17 @@ export const TENANT_AREAS: readonly NavArea[] = [
 				label: 'nav.access.roleRules'
 			},
 			{
-				id: 'attributes',
-				label: 'nav.access.attributes'
-			},
-			{
 				id: 'relationships',
 				label: 'nav.access.relationships'
 			},
 			{
 				id: 'policies',
-				label: 'nav.access.policies'
+				label: 'nav.access.policies',
+				platform: 'tenant',
+				// As the API: reading `admin:roles:read`, changing `admin:roles:write`.
+				requires: { permission: 'admin:roles:read' },
+				// …/policies/<id> and …/policies/new: a policy's page.
+				details: true
 			},
 			{
 				id: 'schema-setting',

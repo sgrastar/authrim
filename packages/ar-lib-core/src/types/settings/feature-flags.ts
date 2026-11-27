@@ -17,7 +17,6 @@ export interface FeatureFlagsSettings {
   'feature.enable_rebac': boolean;
   'feature.enable_policy_logging': boolean;
   'feature.enable_verified_attributes': boolean;
-  'feature.enable_custom_rules': boolean;
   'feature.enable_policy_embedding': boolean;
   'feature.enable_id_level_permissions': boolean;
 
@@ -53,7 +52,7 @@ export const FEATURE_FLAGS_SETTINGS_META: Record<keyof FeatureFlagsSettings, Set
     envKey: 'ENABLE_ABAC',
     label: 'Enable ABAC',
     description:
-      'Evaluate attribute-based policy rules in permission checks (the Check API), after roles, ID-level permissions and relationships',
+      "Evaluate the tenant's custom policy rules (attribute-based policy) in permission checks (the Check API), after roles, ID-level permissions and relationships",
     visibility: 'page', // Managed on Attributes page
   },
   'feature.enable_rebac': {
@@ -83,15 +82,6 @@ export const FEATURE_FLAGS_SETTINGS_META: Record<keyof FeatureFlagsSettings, Set
     label: 'Enable Verified Attributes',
     description: "Use users' verified attributes in attribute-based policy rules",
     visibility: 'admin',
-  },
-  'feature.enable_custom_rules': {
-    key: 'feature.enable_custom_rules',
-    type: 'boolean',
-    default: true,
-    envKey: 'ENABLE_CUSTOM_RULES',
-    label: 'Enable Custom Rules',
-    description: "Evaluate the tenant's custom policy rules in attribute-based checks",
-    visibility: 'page', // Managed on Policies page
   },
   'feature.enable_policy_embedding': {
     key: 'feature.enable_policy_embedding',
@@ -270,7 +260,6 @@ export const FEATURE_FLAGS_DEFAULTS: FeatureFlagsSettings = {
   'feature.enable_rebac': false,
   'feature.enable_policy_logging': false,
   'feature.enable_verified_attributes': false,
-  'feature.enable_custom_rules': true,
   'feature.enable_policy_embedding': false,
   'feature.enable_id_level_permissions': false,
 

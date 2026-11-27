@@ -49,7 +49,13 @@ export const mocks = {
   ),
   resolveSubjectRoles: vi.fn(async (..._args: unknown[]): Promise<unknown[]> => []),
   resolveSubjectGroups: vi.fn(
-    async (..._args: unknown[]): Promise<{ effectiveGroupIds: Set<string> }> => ({
+    async (
+      ..._args: unknown[]
+    ): Promise<{
+      effectiveGroupIds: Set<string>;
+      unknownGroupIds?: Set<string>;
+      rolesComplete?: boolean;
+    }> => ({
       effectiveGroupIds: new Set<string>(),
     })
   ),
@@ -97,6 +103,20 @@ export function libCoreMock(actual: Record<string, unknown>): Record<string, unk
     resolveAccountCoreDataContext: mocks.resolveAccountCoreDataContext,
     resolveSubjectRoles: mocks.resolveSubjectRoles,
     resolveSubjectGroups: mocks.resolveSubjectGroups,
+    // One read of both, as the flow makes it: composed of the two mocks above.
+    resolveSubjectRolesAndGroups: async (...args: unknown[]) => {
+      const [dbs, tenantId, subjectId] = args;
+      const [roles, groups] = await Promise.all([
+        mocks.resolveSubjectRoles(dbs, tenantId, subjectId),
+        mocks.resolveSubjectGroups(...args),
+      ]);
+      return {
+        roles,
+        effectiveGroupIds: [...groups.effectiveGroupIds],
+        unknownGroupIds: [...(groups.unknownGroupIds ?? [])],
+        rolesComplete: groups.rolesComplete ?? true,
+      };
+    },
     flowConditionAttributeReader: vi.fn(
       () => (keys: string[]) => mocks.readConditionAttributes(keys) as Promise<unknown>
     ),

@@ -102,7 +102,6 @@ export const ja = {
 	'nav.users.invitations': '招待',
 	'nav.users.support': 'サポート操作',
 	'nav.access.roles': 'ロール',
-	'nav.access.attributes': '属性',
 	'nav.access.relationships': '関係（ReBAC）',
 	'nav.access.policies': 'ポリシー',
 	'nav.access.accessCheck': 'アクセス確認',

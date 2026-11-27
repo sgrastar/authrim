@@ -55,6 +55,7 @@ export const PHASE3_SQLITE_TABLE_GROUPS: readonly Phase3TableGroup[] = [
       'groups',
       'oidc_scopes',
       'policy_rules',
+      'policy_rules_version',
       'provisioning_assignment_rules',
       'relation_definitions',
       'resource_permissions',

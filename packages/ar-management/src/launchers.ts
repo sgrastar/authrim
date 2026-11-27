@@ -2,7 +2,6 @@ import type { Context } from 'hono';
 import type {
   AccountLauncher,
   ApplicationLauncher,
-  DatabaseAdapter,
   Env,
   LauncherAttributeRule,
   LauncherVisibility,
@@ -14,13 +13,13 @@ import {
   CanonicalRuntimeUserStore,
   createAccountAuthContextFromHono,
   createAuthContextFromHono,
-  rbacIdBatches,
   createCustomClaimSchemaResolverFromSources,
   createPIIContextFromHono,
   getLogger,
   getTenantIdFromContext,
   requireDedicatedAdminDatabaseAdapter,
   resolveCustomClaimRuntimeSourcesFromHono,
+  resolveSubjectGroups,
 } from '@authrim/ar-lib-core';
 import { requireAccountSession } from './account-page';
 import {
@@ -1157,13 +1156,17 @@ async function resolveAccountAudience(
   const now = Math.floor(Date.now() / 1000);
   const [user, groups, customClaims, verifiedAttributes] = await Promise.all([
     runtimeUsers.findById(userId),
-    authCtx.coreAdapter.query<{ group_id: string }>(
-      `SELECT group_id FROM group_memberships
-        WHERE tenant_id = ? AND subject_id = ? AND lifecycle_state = 'active'
-          AND (starts_at IS NULL OR starts_at <= ?)
-          AND (expires_at IS NULL OR expires_at > ?)
-          AND (stale_after IS NULL OR stale_after > ?)`,
-      [tenantId, userId, now, now, now]
+    // The account's direct memberships of active groups, as authorization reads them (a dynamic
+    // membership counts only for the current publication; unknown ones are left out, so the
+    // launchers they would show stay hidden).
+    resolveSubjectGroups(
+      {
+        metadata: createAuthContextFromHono(c, tenantId).coreAdapter,
+        account: authCtx.coreAdapter,
+      },
+      tenantId,
+      userId,
+      now
     ),
     customClaimResolver.resolveFieldValues(tenantId, userId, customFieldKeys),
     authCtx.coreAdapter.query<{ attribute_name: string; attribute_value: string }>(
@@ -1198,36 +1201,9 @@ async function resolveAccountAudience(
     add(attribute.attribute_name, attribute.attribute_value);
     add(`verified.${attribute.attribute_name}`, attribute.attribute_value);
   }
-  return {
-    groupIds: await activeGroupIds(
-      createAuthContextFromHono(c, tenantId).coreAdapter,
-      tenantId,
-      groups.map((entry) => entry.group_id)
-    ),
-    attributes,
-  };
-}
-
-/**
- * The groups among `groupIds` that are active in the tenant metadata database, where group
- * definitions are: a stopped or deleted group no longer shows the launchers it targets. Only the
- * account's direct memberships are matched (a launcher names the groups it is shown to).
- */
-async function activeGroupIds(
-  metadata: DatabaseAdapter,
-  tenantId: string,
-  groupIds: string[]
-): Promise<Set<string>> {
-  const active = new Set<string>();
-  for (const batch of rbacIdBatches(groupIds)) {
-    const rows = await metadata.query<{ id: string }>(
-      `SELECT id FROM "groups" WHERE tenant_id = ? AND lifecycle_state = 'active'
-        AND id IN (${batch.map(() => '?').join(', ')})`,
-      [tenantId, ...batch]
-    );
-    for (const row of rows) active.add(row.id);
-  }
-  return active;
+  // Only the account's direct memberships of active groups are matched (a launcher names the
+  // groups it is shown to; a stopped or deleted group no longer shows them).
+  return { groupIds: new Set(groups.directGroupIds), attributes };
 }
 
 export function launcherVisibleToAccount(

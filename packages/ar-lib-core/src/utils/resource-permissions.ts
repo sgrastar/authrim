@@ -170,7 +170,7 @@ export function formatIdLevelPermission(resource: string, id: string, action: st
  */
 // v2: a role's grants only for resources its assignment covers. Entries computed before are not
 // read (they expire on their own). v4: grants to the subject's groups count; organisations removed.
-const ID_PERMISSION_CACHE_PREFIX = 'policy:idperms:v4:';
+const ID_PERMISSION_CACHE_PREFIX = 'policy:idperms:v5:';
 
 /**
  * Convert database row to ResourcePermission object

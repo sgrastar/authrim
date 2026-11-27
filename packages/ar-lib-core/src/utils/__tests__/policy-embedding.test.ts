@@ -324,8 +324,10 @@ describe('evaluatePermissionEmbeddingForScope', () => {
     expect(dbs.account.queries).toHaveLength(2);
     expect(dbs.account.queries[1]).toContain('FROM group_memberships');
     expect(dbs.account.queries[0]).toContain('FROM role_assignments');
-    expect(dbs.metadata.queries).toHaveLength(1);
-    expect(dbs.metadata.queries[0]).toContain('FROM roles');
+    // The roles, and (no service-group publication on record) the tenant's service groups.
+    expect(dbs.metadata.queries).toHaveLength(2);
+    expect(dbs.metadata.queries.some((sql) => sql.includes('FROM roles'))).toBe(true);
+    expect(dbs.metadata.queries.some((sql) => sql.includes("kind = 'dynamic'"))).toBe(true);
   });
 
   it('continues returning tenant-wide permissions through the legacy helper', async () => {

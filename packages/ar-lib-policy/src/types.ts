@@ -21,8 +21,17 @@ export interface PolicySubject {
   /** Roles assigned to the subject */
   roles: SubjectRole[];
 
-  /** Ids of the subject's effective groups (direct memberships and their ancestors) */
+  /**
+   * Ids of the subject's effective groups (direct memberships and their ancestors). Undefined
+   * means the memberships are unknown (not "none"): every group condition is then unmet.
+   */
   groupIds?: string[];
+
+  /**
+   * Groups whose membership is not known (neither in `groupIds` nor known not to be): a group
+   * condition naming one is not met, the negative one included.
+   */
+  unknownGroupIds?: string[];
 
   /** Relationships where this subject is the parent/guardian */
   relationships?: SubjectRelationship[];
@@ -217,6 +226,12 @@ export type ConditionType =
   | 'has_all_roles' // Subject has all specified roles
   // Ownership conditions
   | 'is_resource_owner' // Subject owns the resource
+  // Group conditions (the subject's effective groups)
+  | 'in_group' // Subject is in a group
+  | 'in_any_group' // Subject is in any of the groups
+  | 'in_all_groups' // Subject is in all of the groups
+  | 'not_in_any_group' // Subject is in none of the groups (unmet when memberships are unknown)
+  | 'same_group' // Subject shares a group with the resource
   // Relationship conditions
   | 'has_relationship' // Subject has relationship with resource owner
   // User type conditions

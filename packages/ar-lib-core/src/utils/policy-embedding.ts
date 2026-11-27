@@ -102,7 +102,7 @@ export interface PolicyEmbeddingOptions {
  * Role-permission mapping cache key prefix
  */
 // v4: organisations removed (no organisation-scoped grants).
-const PERMISSION_CACHE_PREFIX = 'policy:perms:v4:';
+const PERMISSION_CACHE_PREFIX = 'policy:perms:v5:';
 
 /**
  * Parse scope string into resource:action pairs

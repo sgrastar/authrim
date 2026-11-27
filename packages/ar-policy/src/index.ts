@@ -98,7 +98,6 @@ interface Env extends SharedEnv {
   ENABLE_REBAC?: string;
   ENABLE_POLICY_LOGGING?: string;
   ENABLE_VERIFIED_ATTRIBUTES?: string;
-  ENABLE_CUSTOM_RULES?: string;
   ENABLE_POLICY_SIMULATION_API?: string;
 }
 
@@ -199,7 +198,6 @@ const POLICY_FLAG_SETTINGS: Record<string, string> = {
   ENABLE_REBAC: 'feature.enable_rebac',
   ENABLE_POLICY_LOGGING: 'feature.enable_policy_logging',
   ENABLE_VERIFIED_ATTRIBUTES: 'feature.enable_verified_attributes',
-  ENABLE_CUSTOM_RULES: 'feature.enable_custom_rules',
 };
 
 /**
@@ -220,7 +218,6 @@ policyRoutes.get('/health', async (c) => {
       rebac: flags.rebac,
       logging: flags.policyLogging,
       verifiedAttributes: flags.verifiedAttributes,
-      customRules: flags.customRules,
     },
   });
 });

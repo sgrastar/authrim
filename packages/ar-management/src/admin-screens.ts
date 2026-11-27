@@ -41,6 +41,7 @@ import {
   createErrorResponse,
   getLogger,
   getTenantIdFromContext,
+  screenChangeSelfWritablePolicyField,
 } from '@authrim/ar-lib-core';
 import { collectScreenUsages, usageCounts } from './admin-screen-usage';
 import { recordAdminOperationAudit } from './admin-operation-audit';
@@ -3050,6 +3051,21 @@ export async function adminScreenGetHandler(c: AdminContext) {
   }
 }
 
+/**
+ * A screen change that would let people write an attribute themselves (a part saving to the
+ * profile) while the attribute decides, through a service group, a group a policy rule names:
+ * refused (409), as making the attribute a registration field is.
+ */
+function attributeDecidesPolicyRuleGroup(c: AdminContext, field: string) {
+  return c.json(
+    {
+      error: 'attribute_decides_policy_rule_group',
+      error_description: `The screen would let people write ${field} themselves, which decides a service group that carries authorization (a role, a resource permission or a policy rule)`,
+    },
+    409
+  );
+}
+
 async function adminScreenCreateUnguarded(c: AdminContext) {
   const log = getLogger(c).module('ADMIN_SCREENS');
   try {
@@ -3073,6 +3089,13 @@ async function adminScreenCreateUnguarded(c: AdminContext) {
     }
     const schemaProblem = await schemaProblemOf(authCtx.coreAdapter, tenantId, fields);
     if (schemaProblem) return invalid(c, schemaProblem);
+    const selfWritable = await screenChangeSelfWritablePolicyField(
+      authCtx.coreAdapter,
+      tenantId,
+      null,
+      readBoolean(body.is_active, true) ? fields : null
+    );
+    if (selfWritable) return attributeDecidesPolicyRuleGroup(c, selfWritable);
     // Default keys are reserved even before tenant initialization: runtime pages refer to them.
     const taken =
       RESERVED_SCREEN_KEYS.has(screenKey) ||
@@ -3140,7 +3163,7 @@ async function adminScreenUpdateUnguarded(c: AdminContext) {
     if (!id) return invalid(c, 'Screen id is required');
     const authCtx = createAuthContextFromHono(c, tenantId);
     const existing = await authCtx.coreAdapter.queryOne<Row>(
-      `SELECT id, screen_key, is_system, screen_kind, fields_json, version
+      `SELECT id, screen_key, is_system, screen_kind, fields_json, is_active, version
          FROM screens WHERE tenant_id = ? AND id = ?`,
       [tenantId, id]
     );
@@ -3218,6 +3241,28 @@ async function adminScreenUpdateUnguarded(c: AdminContext) {
       params.push(readBoolean(body.is_active, true) ? 1 : 0);
     }
     if (sets.length === 0) return invalid(c, 'No fields to update');
+    // The screen's parts as saved and as they will be (none while inactive): an attribute newly
+    // written by people themselves must not decide a group a policy rule names.
+    {
+      const savedFields = parseJson<ScreenField[]>(existing.fields_json, []);
+      const wasActive = readBoolean(existing.is_active, false);
+      const willBeActive =
+        body.is_active !== undefined ? readBoolean(body.is_active, true) : wasActive;
+      const nextFields =
+        body.fields !== undefined
+          ? (() => {
+              const read = normalizeFieldsDetailed(body.fields);
+              return read.ok ? read.fields : savedFields;
+            })()
+          : savedFields;
+      const selfWritable = await screenChangeSelfWritablePolicyField(
+        authCtx.coreAdapter,
+        tenantId,
+        wasActive ? savedFields : null,
+        willBeActive ? nextFields : null
+      );
+      if (selfWritable) return attributeDecidesPolicyRuleGroup(c, selfWritable);
+    }
     sets.push('updated_at = ?', 'version = version + 1');
     params.push(nowMs(), tenantId, id, expected);
     // The version named in If-Match must still be the row's: a change saved in between wins.

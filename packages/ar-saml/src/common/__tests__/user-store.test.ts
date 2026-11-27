@@ -353,6 +353,50 @@ describe('SAML user-store helpers', () => {
     expect(info?.memberOf).toEqual(['staff', 'staff.tokyo']);
   });
 
+  it.each([
+    ['releases the confirmed groups while another is unknown', true, ['g-static']],
+    ['leaves memberOf out when no group is confirmed and one is unknown', false, undefined],
+  ])('%s', async (_label, withStatic, expected) => {
+    const coreAdapter = createCanonicalCoreAdapter('tenant-g', 'user-u');
+    const queryMock = vi.mocked(coreAdapter.query);
+    const original = queryMock.getMockImplementation();
+    const query = async (sql: string, params?: unknown[]): Promise<unknown[]> =>
+      original ? original(sql, params) : [];
+    // (A static membership and) a dynamic one with no publication on record.
+    queryMock.mockImplementation(async (sql: string, params?: unknown[]) =>
+      sql.includes('FROM group_memberships')
+        ? [
+            ...(withStatic
+              ? [{ group_id: 'g-static', assignment_source: 'manual', source_ref: '' }]
+              : []),
+            { group_id: 'g-dyn', assignment_source: 'dynamic', source_ref: '0000000000000001:1' },
+          ]
+        : query(sql, params)
+    );
+    mockAccountRoute(coreAdapter, createMockAdapter());
+    const metadata = createMockAdapter({
+      query: (sql, params) =>
+        sql.includes('FROM "groups"')
+          ? (params.slice(1) as string[]).map((id) => ({
+              id,
+              parent_group_id: null,
+              lifecycle_state: 'active',
+              group_key: id,
+              display_name: id,
+              kind: 'static',
+            }))
+          : [],
+    });
+    mocked.resolveTenantMetadataContext.mockResolvedValue({
+      tenantId: 'tenant-g',
+      coreDb: metadata,
+    });
+
+    const info = await getSamlUserInfoById({ DB: {} } as Env, 'tenant-g', 'user-u');
+    if (expected) expect(info?.memberOf).toEqual(expected);
+    else expect(info).not.toHaveProperty('memberOf');
+  });
+
   it('leaves memberOf out for a person with no groups', async () => {
     mockAccountRoute(createCanonicalCoreAdapter('tenant-g', 'user-h'), createMockAdapter());
     mocked.resolveTenantMetadataContext.mockResolvedValue({

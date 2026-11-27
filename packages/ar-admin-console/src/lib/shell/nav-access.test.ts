@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { persona } from '#lib/access/personas.js';
 import type { AdminAccess } from '#lib/access/access.js';
 import { navItemLevel, visibleItems } from './nav-access';
+import { TENANT_AREAS } from './nav-data';
 import type { NavItem } from './nav-types';
 
 const tenant = persona('tenant').access;
@@ -61,5 +62,28 @@ describe('navigation items any of several permissions opens', () => {
 
 	it('leaves them out with neither', () => {
 		expect(navItemLevel(check, only('admin:users:read'), 'tenant')).toBe('none');
+	});
+});
+
+describe('the policies and attributes items of Access', () => {
+	const access = TENANT_AREAS.find((area) => area.id === 'access');
+	const policies = access?.children.find((child) => child.id === 'policies');
+	const only = (permission: string): AdminAccess => ({
+		platform: false,
+		roles: [],
+		permissions: [permission]
+	});
+
+	it('open with the roles’ read permission, as the policies API asks', () => {
+		expect(policies?.requires).toEqual({ permission: 'admin:roles:read' });
+		expect(policies && navItemLevel(policies, only('admin:roles:read'), 'tenant')).toBe('view');
+		expect(policies && navItemLevel(policies, only('admin:groups:read'), 'tenant')).toBe('none');
+		expect(policies && navItemLevel(policies, tenant, 'tenant')).not.toBe('none');
+		// A policy's own page (…/policies/<id>) belongs to the item.
+		expect(policies?.details).toBe(true);
+	});
+
+	it('no longer list an attributes item: its switch is on Settings → Authorization', () => {
+		expect(access?.children.some((child) => child.id === 'attributes')).toBe(false);
 	});
 });

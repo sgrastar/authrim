@@ -367,6 +367,116 @@ describe('the signed-in user a condition reads', () => {
     expect(mocks.readConditionAttributes).not.toHaveBeenCalled();
   });
 
+  it('decides nothing on a group whose membership is not known, and decides on the others', async () => {
+    mocks.resolveAccountCoreDataContext.mockReset().mockResolvedValue({ coreDb: {} });
+    mocks.resolveSubjectRoles.mockResolvedValue([]);
+    // grp_2's membership (a service group whose rule changed) is not known.
+    mocks.resolveSubjectGroups.mockResolvedValue({
+      effectiveGroupIds: new Set(['grp_1']),
+      unknownGroupIds: new Set(['grp_2']),
+    });
+    const unknown = await startWith(
+      when({ type: 'group_membership', group_ref: { id: 'grp_2' } }),
+      {},
+      signedIn
+    );
+    expect(unknown.status).toBe(409);
+    expect(unknown.data.error_code).toBe('AR_FLOW_CONDITION_CONTEXT_UNAVAILABLE');
+    // A condition on a known group is decided as usual.
+    const known = await startWith(
+      when({ type: 'group_membership', group_ref: { id: 'grp_1' } }),
+      {},
+      signedIn
+    );
+    expect(known.at).toBe('yes:step');
+  });
+
+  it('decides no "any group" condition while none is known and some is unknown', async () => {
+    mocks.resolveAccountCoreDataContext.mockReset().mockResolvedValue({ coreDb: {} });
+    mocks.resolveSubjectRoles.mockResolvedValue([]);
+    const exists = when({ type: 'user.group', operator: 'exists' });
+    mocks.resolveSubjectGroups.mockResolvedValue({
+      effectiveGroupIds: new Set<string>(),
+      unknownGroupIds: new Set(['grp_2']),
+    });
+    const unknown = await startWith(exists, {}, signedIn);
+    expect(unknown.status).toBe(409);
+    expect(unknown.data.error_code).toBe('AR_FLOW_CONDITION_CONTEXT_UNAVAILABLE');
+    // One group known: there is a group, whatever the unknown one is.
+    mocks.resolveSubjectGroups.mockResolvedValue({
+      effectiveGroupIds: new Set(['grp_1']),
+      unknownGroupIds: new Set(['grp_2']),
+    });
+    expect((await startWith(exists, {}, signedIn)).at).toBe('yes:step');
+  });
+
+  it('reads not_exists by its operator, whatever value is left on it', async () => {
+    mocks.resolveAccountCoreDataContext.mockReset().mockResolvedValue({ coreDb: {} });
+    mocks.resolveSubjectRoles.mockResolvedValue([]);
+    mocks.resolveSubjectGroups.mockResolvedValue({
+      effectiveGroupIds: new Set<string>(),
+      unknownGroupIds: new Set(['grp_2']),
+    });
+    // A value left from an earlier operator: not_exists still reads "any group at all".
+    const { status, data } = await startWith(
+      when({ type: 'user.group', operator: 'not_exists', value: 'grp_1' }),
+      {},
+      signedIn
+    );
+    expect(status).toBe(409);
+    expect(data.error_code).toBe('AR_FLOW_CONDITION_CONTEXT_UNAVAILABLE');
+  });
+
+  it('decides a branch that reads no role while the roles are incomplete', async () => {
+    mocks.resolveAccountCoreDataContext.mockReset().mockResolvedValue({ coreDb: {} });
+    mocks.resolveSubjectRoles.mockResolvedValue([]);
+    // A role-bearing service group's membership is unknown: only a role condition cares.
+    mocks.resolveSubjectGroups.mockResolvedValue({
+      effectiveGroupIds: new Set<string>(),
+      unknownGroupIds: new Set(['grp_9']),
+      rolesComplete: false,
+    });
+    expect((await startWith(when({ type: 'flow_kind', value: 'login' }), {}, signedIn)).at).toBe(
+      'yes:step'
+    );
+  });
+
+  it('judges per condition whether it names a group (two naming the same one)', async () => {
+    mocks.resolveAccountCoreDataContext.mockReset().mockResolvedValue({ coreDb: {} });
+    mocks.resolveSubjectRoles.mockResolvedValue([]);
+    mocks.resolveSubjectGroups.mockResolvedValue({
+      effectiveGroupIds: new Set<string>(),
+      unknownGroupIds: new Set(['grp_9']),
+    });
+    // Both name grp_1 (known: not a member): decided, not "any group" on unknown memberships.
+    const both = when({
+      type: 'all',
+      all: [
+        { type: 'user.group', value: 'grp_1' },
+        { type: 'user.group', value: 'grp_1' },
+      ],
+    });
+    expect((await startWith(both, {}, signedIn)).at).toBe('no:step');
+  });
+
+  it('decides nothing while the roles are incomplete', async () => {
+    mocks.resolveAccountCoreDataContext.mockReset().mockResolvedValue({ coreDb: {} });
+    mocks.resolveSubjectRoles.mockResolvedValue([]);
+    // An unknown group with a role grant: "has no role X" cannot be decided.
+    mocks.resolveSubjectGroups.mockResolvedValue({
+      effectiveGroupIds: new Set<string>(),
+      unknownGroupIds: new Set(['grp_9']),
+      rolesComplete: false,
+    });
+    const { status, data } = await startWith(
+      when({ type: 'user.role', value: 'admin' }),
+      {},
+      signedIn
+    );
+    expect(status).toBe(409);
+    expect(data.error_code).toBe('AR_FLOW_CONDITION_CONTEXT_UNAVAILABLE');
+  });
+
   it('decides nothing when the account cannot be read', async () => {
     mocks.resolveAccountCoreDataContext.mockReset().mockRejectedValue(new Error('db down'));
     const { status, data } = await startWith(

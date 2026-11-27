@@ -404,6 +404,14 @@ describe('refusals', () => {
 			['role_in_use', 'eur.error.inUse'],
 			['role_version_conflict', 'eur.error.changed']
 		];
+		// A policy refused for a dynamic group in a negative condition is a 400, not a 409.
+		expect(
+			authzRefusal(
+				new ApiError(400, 'dynamic_group_negative_condition', 'Words nobody matches', {
+					error: 'dynamic_group_negative_condition'
+				})
+			)
+		).toEqual({ key: 'pol.error.dynamicNegative' });
 		for (const [code, key] of byCode)
 			expect(authzRefusal(conflict('Words nobody matches', code)).key).toBe(key);
 		// A role in use is told apart from a changed role by its code, not its words.

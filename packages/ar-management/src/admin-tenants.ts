@@ -191,6 +191,7 @@ export const TENANT_TABLES_TO_DELETE = [
   'permission_change_audit',
   'permission_check_audit',
   'policy_rules',
+  'policy_rules_version',
   'policy_simulations',
   'relation_definitions',
   'relationship_closure',
