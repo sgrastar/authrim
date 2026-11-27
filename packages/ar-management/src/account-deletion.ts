@@ -19,9 +19,11 @@
  * an upsert, the erasure is re-run whole. A hold found by the prepared move throws
  * AccountDeletionHeldError, the account left as it was.
  */
+import type { KVNamespace } from '@cloudflare/workers-types';
 import {
   CanonicalIdentityRepository,
   CanonicalRuntimeUserWriter,
+  invalidateSubjectRBACCache,
   type DatabaseAdapter,
   type Env,
 } from '@authrim/ar-lib-core';
@@ -75,6 +77,33 @@ export interface DeleteAccountInput {
 
 export type DeleteAccountResult = { status: 'deleted' } | { status: 'held'; holdId: string };
 
+/**
+ * The subject's own authorization rows on its account database: its direct role assignments and
+ * every group membership row (manual, SCIM, rule, dynamic, invitation), in one batch. Group
+ * definitions and group role grants (tenant metadata) are shared and stay. Idempotent.
+ */
+export async function deleteAccountAuthorizationRows(
+  core: DatabaseAdapter,
+  input: { tenantId: string; userId: string },
+  cache?: KVNamespace
+): Promise<void> {
+  await core.batch([
+    {
+      sql: 'DELETE FROM role_assignments WHERE tenant_id = ? AND subject_id = ?',
+      params: [input.tenantId, input.userId],
+    },
+    {
+      sql: 'DELETE FROM group_memberships WHERE tenant_id = ? AND subject_id = ?',
+      params: [input.tenantId, input.userId],
+    },
+    {
+      sql: 'DELETE FROM dynamic_membership_publications WHERE tenant_id = ? AND subject_id = ?',
+      params: [input.tenantId, input.userId],
+    },
+  ]);
+  if (cache) await invalidateSubjectRBACCache(cache, input.tenantId, input.userId);
+}
+
 export async function deleteAccount(
   env: Env,
   input: DeleteAccountInput
@@ -127,6 +156,9 @@ export async function deleteAccount(
       new CanonicalIdentityRepository(core, tenantId),
       pii
     ).deleteRuntimeUser(userId);
+    // After the account is deleted (its lifecycle change also makes the service-group result
+    // stale, so no later publication writes dynamic rows for it again).
+    await deleteAccountAuthorizationRows(core, { tenantId, userId }, env.REBAC_CACHE);
     await transitionEndingSessions(env, ended, {
       tenantId,
       userId,

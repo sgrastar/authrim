@@ -34,6 +34,11 @@ interface SqliteForeignKeyRow {
   table: string;
 }
 
+interface SqliteTriggerRow {
+  tbl_name?: unknown;
+  sql?: unknown;
+}
+
 async function batchSchemaIntrospection<T>(
   session: D1DatabaseSession,
   tables: string[],
@@ -204,6 +209,41 @@ async function listTenantScopedTables(session: D1DatabaseSession): Promise<strin
       }
       dependencies.get(table)?.add(foreignKey.table);
       incoming.set(foreignKey.table, (incoming.get(foreignKey.table) ?? 0) + 1);
+    }
+  }
+  // A trigger on one tenant table that writes another (service_group_inputs, written when
+  // user_custom_fields, service_group_manual or group_memberships rows are deleted, ...): the
+  // written table is purged after the table whose deletion writes it, or the purge would leave the
+  // rows its own deletes wrote. An edge that would close a cycle is left out (the count check
+  // after the purge still catches what it leaves).
+  const triggers = await session
+    .prepare("SELECT tbl_name, sql FROM sqlite_master WHERE type = 'trigger'")
+    .all<SqliteTriggerRow>();
+  const reaches = (from: string, to: string): boolean => {
+    const seen = new Set<string>();
+    const pending = [from];
+    for (let current = pending.pop(); current !== undefined; current = pending.pop()) {
+      if (current === to) return true;
+      if (seen.has(current)) continue;
+      seen.add(current);
+      pending.push(...(dependencies.get(current) ?? []));
+    }
+    return false;
+  };
+  for (const trigger of triggers.results ?? []) {
+    const source = trigger.tbl_name;
+    if (typeof source !== 'string' || typeof trigger.sql !== 'string' || !discovered.has(source))
+      continue;
+    for (const target of discovered) {
+      if (
+        target === source ||
+        dependencies.get(source)?.has(target) ||
+        !new RegExp(`INSERT\\s+INTO\\s+"?${target}"?[\\s(]`, 'i').test(trigger.sql) ||
+        reaches(target, source)
+      )
+        continue;
+      dependencies.get(source)?.add(target);
+      incoming.set(target, (incoming.get(target) ?? 0) + 1);
     }
   }
 

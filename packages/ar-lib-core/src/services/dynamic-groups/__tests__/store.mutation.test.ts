@@ -251,7 +251,15 @@ describe('save', () => {
     expect(result).toEqual({ revision: 1, plan });
     expect(raw.batch).toHaveBeenCalledTimes(1);
     const json = JSON.stringify(plan);
-    expect(raw.batch.mock.calls[0][0]).toEqual([
+    const statements = raw.batch.mock.calls[0][0] as Array<{ sql: string; params: unknown[] }>;
+    // One canonical `groups` upsert per catalog group, fenced by the same write token.
+    expect(statements).toHaveLength(3 + groups.length);
+    expect(statements.slice(3).map((s) => s.params[0])).toEqual(groups.map((g) => g.id));
+    for (const statement of statements.slice(3)) {
+      expect(statement.sql).toContain(`INSERT INTO "groups"`);
+      expect(statement.params.slice(-2)).toEqual([TENANT, 'uuid-1']);
+    }
+    expect(statements.slice(0, 3)).toEqual([
       {
         sql: `INSERT INTO service_group_catalog(tenant_id, revision, plan_json, updated_at, write_token) VALUES (?, 0, '{}', ?, '') ON CONFLICT(tenant_id) DO NOTHING`,
         params: [TENANT, NOW],

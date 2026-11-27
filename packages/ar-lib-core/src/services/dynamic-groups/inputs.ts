@@ -1,4 +1,4 @@
-import type { DatabaseAdapter } from '../../db';
+import type { DatabaseAdapter, TransactionContext } from '../../db';
 import { settleGroupInputBoundary } from '../../db/group-input-mutations';
 import { BUILTIN_GROUP_FIELDS, type EvaluationInput, type Field, type GroupPlan } from './model';
 import type { GroupInputReader, InputVersion } from './store';
@@ -12,13 +12,33 @@ interface SchemaRow {
   cardinality: string;
   is_pii: number;
   schema_version: number;
+  show_on_registration?: number | boolean | string | null;
+  registration_required?: number | boolean | string | null;
 }
+const flag = (value: unknown) => value === true || Number(value) === 1;
+/**
+ * What a saved plan's field must still be for the plan to evaluate: everything but the
+ * self-writable mark, which is read fresh where it matters (at save and at publication) instead,
+ * so plans saved before the mark existed keep evaluating.
+ */
+function fieldContract(field: Field | undefined): string {
+  if (!field) return '';
+  const { selfWritable: _selfWritable, ...contract } = field;
+  return JSON.stringify(contract);
+}
+/**
+ * The fields a rule may read. A custom field the person can write themselves (shown on, or
+ * required by, the registration form, which saves it through the validated registration path) is
+ * marked `selfWritable`. Such a field must not decide membership of a group that carries roles
+ * (see role-guard.ts): the save refuses it and publication leaves such groups out, both reading
+ * the mark from the current fields.
+ */
 export async function loadGroupFields(
-  db: DatabaseAdapter,
+  db: Pick<TransactionContext, 'query'>,
   tenantId: string
 ): Promise<Record<string, Field>> {
   const schemas = await db.query<SchemaRow>(
-    `SELECT id, field_key, field_type, cardinality, is_pii, schema_version FROM custom_claim_schemas WHERE tenant_id = ? AND is_active = 1 AND operation_status = 'active' ORDER BY field_key LIMIT 1000`,
+    `SELECT id, field_key, field_type, cardinality, is_pii, schema_version, show_on_registration, registration_required FROM custom_claim_schemas WHERE tenant_id = ? AND is_active = 1 AND operation_status = 'active' ORDER BY field_key LIMIT 1000`,
     [tenantId],
     primary
   );
@@ -30,6 +50,9 @@ export async function loadGroupFields(
       schemaId: row.id,
       schemaVersion: Number(row.schema_version),
       pii: !!row.is_pii,
+      ...(flag(row.show_on_registration) || flag(row.registration_required)
+        ? { selfWritable: true }
+        : {}),
     };
   }
   return fields;
@@ -194,7 +217,7 @@ export class SavedGroupInputReader implements GroupInputReader {
       throw new Error('group_subject_not_active');
     const currentFields = await loadGroupFields(this.metadata, this.tenantId);
     for (const key of Object.keys(plan.attributes)) {
-      if (JSON.stringify(currentFields[key]) !== JSON.stringify(plan.fields[key]))
+      if (fieldContract(currentFields[key]) !== fieldContract(plan.fields[key]))
         throw new Error('group_attribute_schema_changed');
     }
     const attributes: Record<string, unknown> = { registration_state: account.registration_state };
@@ -273,8 +296,15 @@ export class SavedGroupInputReader implements GroupInputReader {
           : decode(typeof raw === 'string' ? raw : JSON.stringify(raw), plan.fields[key]);
     }
     const manual = new Set<string>();
-    const roles = new Set<string>();
-    const assigned = new Set<string>();
+    // The SCIM link (`scimRoleId`, name kept for saved catalogs) is the id of a SCIM-kind
+    // canonical group (`groups.kind = 'scim'`: since SCIM Groups moved to the canonical tables, a
+    // SCIM Group's id is its `groups.id`). The subject is linked while it has an active SCIM
+    // membership row in that group on its own account database (`assignment_source = 'scim'`;
+    // direct rows only: no ancestors, no row times). An id naming no SCIM group is a broken
+    // reference: unknown; a SCIM group that is not active links nobody (false). Both reads are
+    // versioned by the migration 017 triggers.
+    const scimGroups = new Map<string, boolean>();
+    const scimMembers = new Set<string>();
     for (let offset = 0; offset < plan.groups.length; offset += 40) {
       const page = plan.groups.slice(offset, offset + 40);
       const placeholders = page.map(() => '?').join(',');
@@ -287,26 +317,27 @@ export class SavedGroupInputReader implements GroupInputReader {
       const ids = [...new Set(page.flatMap((g) => (g.scimRoleId ? [g.scimRoleId] : [])))];
       if (!ids.length) continue;
       const slots = ids.map(() => '?').join(',');
-      for (const row of await this.metadata.query<{ id: string }>(
-        `SELECT id FROM roles WHERE tenant_id = ? AND id IN (${slots})`,
+      for (const row of await this.metadata.query<{ id: string; lifecycle_state: string }>(
+        `SELECT id, lifecycle_state FROM "groups" WHERE tenant_id = ? AND kind = 'scim' AND id IN (${slots})`,
         [this.tenantId, ...ids],
         primary
       ))
-        roles.add(row.id);
-      for (const row of await this.metadata.query<{ role_id: string }>(
-        `SELECT role_id FROM user_roles WHERE tenant_id = ? AND user_id = ? AND role_id IN (${slots})`,
+        scimGroups.set(row.id, row.lifecycle_state === 'active');
+      for (const row of await this.core.query<{ group_id: string }>(
+        `SELECT DISTINCT group_id FROM group_memberships WHERE tenant_id = ? AND subject_id = ?
+          AND assignment_source = 'scim' AND lifecycle_state = 'active' AND group_id IN (${slots})`,
         [this.tenantId, this.userId, ...ids],
         primary
       ))
-        assigned.add(row.role_id);
+        scimMembers.add(row.group_id);
     }
     const sources: EvaluationInput['sources'] = {};
     for (const group of plan.groups) {
       const scim = !group.scimRoleId
         ? false
-        : !roles.has(group.scimRoleId)
+        : !scimGroups.has(group.scimRoleId)
           ? 'unknown'
-          : assigned.has(group.scimRoleId);
+          : scimGroups.get(group.scimRoleId) === true && scimMembers.has(group.scimRoleId);
       sources[group.id] = { manual: manual.has(group.id), scim };
     }
     return { attributes, sources };

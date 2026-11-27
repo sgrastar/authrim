@@ -49,7 +49,7 @@ const TABLE_GROUPS: Partial<
       lookup_retention_policies oauth_clients oidc_scopes org_domain_mappings
       organizations policy_rules presentation_definitions provisioning_assignment_rules
       relation_definitions resource_permissions role_assignment_rules roles
-      saml_attribute_presets scope_mappings screens shared_launcher_states sign_in_confirmation_policies
+      saml_attribute_presets scope_mappings screens service_group_catalog service_group_revisions shared_launcher_states sign_in_confirmation_policies
       status_lists tenant_domain_mappings tenant_vanity_domains
       tenants token_claim_rules trusted_issuers upstream_providers
       web_origin_registry webhook_configs
@@ -108,8 +108,7 @@ const TABLE_GROUPS: Partial<
       log_iceberg_core_publications statement_consent_guards statement_consent_projection_jobs statement_consent_retention_permits
       directory_auth_release_advisories
       identity_binding_lookup_indexes legal_hold_projection_outbox lookup_retention_policy_projection_outbox refresh_token_shard_configs
-      relationship_closure service_group_catalog service_group_epoch service_group_results
-      service_group_revisions service_group_scans tenant_database_probe_results
+      dynamic_membership_publications relationship_closure service_group_epoch service_group_results service_group_scans tenant_database_probe_results
       tenant_placement_migration_captures tenant_placement_migration_outbox
     `,
     ephemeral: `tenant_backup_restore_targets tenant_backup_snapshots tenant_backup_preimages

@@ -282,9 +282,10 @@ describe('SavedGroupInputReader attribute loading', () => {
     ).toEqual(['tenant-a', 'user-a', 'score', 'flag']);
   });
 
-  it('marks an unknown SCIM role as unknown instead of inferring a membership', async () => {
+  it('marks an unknown SCIM group as unknown instead of inferring a membership', async () => {
     const { instance, metadata, core } = reader();
     core.queryOne.mockResolvedValue(account);
+    core.query.mockResolvedValue([]);
     metadata.query.mockImplementation(async (sql: string) => {
       if (sql.includes('service_group_manual')) return [{ group_id: 'manual-group' }];
       return [];

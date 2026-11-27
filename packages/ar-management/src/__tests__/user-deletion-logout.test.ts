@@ -771,14 +771,37 @@ describe('deleting or anonymizing a user notifies downstream relying parties', (
 
     expect(sent).toEqual([]);
   });
+  /** What ran on the account's core database, one statement at a time or in a batch. */
+  const coreStatements = () => [
+    ...mocks.coreAdapter.execute.mock.calls.map(([sql]) => String(sql)),
+    ...mocks.coreAdapter.batch.mock.calls.flatMap(([statements]) =>
+      (statements as Array<{ sql: string }>).map((statement) => statement.sql)
+    ),
+  ];
+  it("deleting a user (not routed) removes its roles and memberships in the tenant's database", async () => {
+    const env = createEnv();
+    const { c } = context(env);
+    expect((await adminUserDeleteHandler(c)).status).toBe(200);
+    const statements = coreStatements();
+    expect(statements).toContain(
+      'DELETE FROM role_assignments WHERE tenant_id = ? AND subject_id = ?'
+    );
+    expect(statements).toContain(
+      'DELETE FROM group_memberships WHERE tenant_id = ? AND subject_id = ?'
+    );
+  });
   it("anonymizing a routed user removes its roles and memberships in the account's database", async () => {
     mocks.routed = true;
     const env = createEnv();
     const { c } = context(env);
     expect((await adminUserAnonymizeHandler(c)).status).toBe(200);
-    const statements = mocks.coreAdapter.execute.mock.calls.map(([sql]) => String(sql));
+    const statements = coreStatements();
     expect(statements).toContain(
       'DELETE FROM role_assignments WHERE tenant_id = ? AND subject_id = ?'
+    );
+    // Every group membership row of the subject too.
+    expect(statements).toContain(
+      'DELETE FROM group_memberships WHERE tenant_id = ? AND subject_id = ?'
     );
     expect(statements).toContain(
       'DELETE FROM subject_org_membership WHERE tenant_id = ? AND subject_id = ?'
@@ -796,7 +819,7 @@ describe('deleting or anonymizing a user notifies downstream relying parties', (
     const { c } = context(env);
     expect((await adminUserAnonymizeHandler(c)).status).toBe(200);
     expect(mocks.users.has('user-1')).toBe(false);
-    const statements = mocks.coreAdapter.execute.mock.calls.map(([sql]) => String(sql));
+    const statements = coreStatements();
     expect(statements).toContain(
       'DELETE FROM role_assignments WHERE tenant_id = ? AND subject_id = ?'
     );
