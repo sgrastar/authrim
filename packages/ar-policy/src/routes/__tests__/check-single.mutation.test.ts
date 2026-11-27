@@ -438,9 +438,13 @@ describe('check service wiring', () => {
   it('resolves a subject database through the account data context', async () => {
     const env = makeEnv();
     const coreDb = { name: 'account-db' };
-    fns.resolveAccount.mockResolvedValue({ coreDb });
+    fns.resolveAccount.mockResolvedValue({ coreDb, legacyUserId: 'user_1' });
     const config = await wiredConfig(env);
-    expect(await config.subjectAccountDb('tenant-a', 'user_1')).toBe(coreDb);
+    // The router's canonical id comes back with the database (the request may spell it otherwise).
+    expect(await config.subjectAccount('tenant-a', 'user_1')).toEqual({
+      db: coreDb,
+      subjectId: 'user_1',
+    });
     expect(fns.resolveAccount).toHaveBeenCalledWith(env, {
       tenantId: 'tenant-a',
       accountId: 'user_1',
