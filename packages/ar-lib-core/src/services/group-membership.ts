@@ -108,9 +108,9 @@ async function requireGroups(metadata: DatabaseSource, tenantId: string, groupId
 function membershipStatement(
   tenantId: string,
   subjectId: string,
-  input: MembershipKey & MembershipTimes
+  input: MembershipKey & MembershipTimes,
+  now: number = Math.floor(Date.now() / 1000)
 ): PreparedStatement {
-  const now = Math.floor(Date.now() / 1000);
   return {
     sql: `INSERT INTO group_memberships (id, tenant_id, group_id, subject_id, assignment_source,
           source_ref, starts_at, expires_at, stale_after, created_at, updated_at)
@@ -145,6 +145,67 @@ export async function upsertGroupMembership(
   const { sql, params } = membershipStatement(tenantId, subjectId, input);
   await ensureDatabaseAdapter(dbs.account).execute(sql, params);
   if (cache) await invalidateSubjectRBACCache(cache, tenantId, subjectId);
+}
+
+/**
+ * Writes the membership and says, from the write itself, what it did: the row's id, its
+ * updated_at, and whether this request changed it (`changed`: made it, or made it active again,
+ * stamping `updatedAt`), so the caller can take back exactly this write
+ * (`... WHERE id = ? AND updated_at = ?`). Two conditional statements, each RETURNING the row:
+ * an INSERT that does nothing on the unique key, then an UPDATE of a row that is not active. A
+ * row already active is left as it is (`changed: false`, read without writing). The RBAC cache
+ * is left to the caller.
+ */
+export async function writeGroupMembership(
+  dbs: TenantRBACDatabases,
+  tenantId: string,
+  subjectId: string,
+  input: MembershipKey & MembershipTimes
+): Promise<{ id: string; updatedAt: number; changed: boolean }> {
+  await requireGroups(dbs.metadata, tenantId, [input.groupId]);
+  const account = ensureDatabaseAdapter(dbs.account);
+  const now = Math.floor(Date.now() / 1000);
+  const sourceRef = input.sourceRef ?? '';
+  const key = [tenantId, input.groupId, subjectId, input.source, sourceRef];
+  const keyWhere =
+    'tenant_id=? AND group_id=? AND subject_id=? AND assignment_source=? AND source_ref=?';
+  const returned = (rows: { id: string; updated_at: number | string }[]) =>
+    rows[0] ? { id: rows[0].id, updatedAt: Number(rows[0].updated_at) } : null;
+  const inserted = returned(
+    await account.query<{ id: string; updated_at: number | string }>(
+      `INSERT INTO group_memberships (id, tenant_id, group_id, subject_id, assignment_source,
+          source_ref, starts_at, expires_at, stale_after, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (tenant_id, group_id, subject_id, assignment_source, source_ref) DO NOTHING
+        RETURNING id, updated_at`,
+      [
+        crypto.randomUUID(),
+        ...key,
+        input.startsAt ?? null,
+        input.expiresAt ?? null,
+        input.staleAfter ?? null,
+        now,
+        now,
+      ]
+    )
+  );
+  if (inserted) return { ...inserted, changed: true };
+  const reactivated = returned(
+    await account.query<{ id: string; updated_at: number | string }>(
+      `UPDATE group_memberships SET lifecycle_state='active', starts_at=?, expires_at=?,
+          stale_after=?, updated_at=?
+        WHERE ${keyWhere} AND lifecycle_state<>'active'
+        RETURNING id, updated_at`,
+      [input.startsAt ?? null, input.expiresAt ?? null, input.staleAfter ?? null, now, ...key]
+    )
+  );
+  if (reactivated) return { ...reactivated, changed: true };
+  const existing = await account.queryOne<{ id: string; updated_at: number | string }>(
+    `SELECT id, updated_at FROM group_memberships WHERE ${keyWhere}`,
+    key
+  );
+  if (!existing) throw new Error('group_membership_write_lost');
+  return { id: existing.id, updatedAt: Number(existing.updated_at), changed: false };
 }
 
 export async function revokeGroupMembership(

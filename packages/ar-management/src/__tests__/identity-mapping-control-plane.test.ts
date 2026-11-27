@@ -90,7 +90,16 @@ class IdentityMappingControlPlaneRepository extends BaseRepository {
         shardId: 'default',
         shardGroup: 'default',
         shardIndex: 0,
-      }
+      },
+      args[6],
+      // Unless a test says otherwise, every subject's memberships are in the metadata database.
+      args[7] ??
+        (async (_tenantId, id) => {
+          const subjectId = id.subjectId ?? id.accountId?.replace(/^account:/u, '');
+          return subjectId
+            ? { subjectId, accountId: `account:${subjectId}`, account: args[2] ?? args[0] }
+            : null;
+        })
     );
   }
 }
@@ -4192,7 +4201,9 @@ describe('IdentityMappingControlPlaneRepository review and notification operatio
 });
 
 describe('IdentityMappingControlPlaneRepository provisioning assignment operations', () => {
-  it('creates groups, memberships, entitlements, and ownership records', async () => {
+  // Memberships, written on the subject's account database, are covered with real databases in
+  // identity-mapping-group-membership-shards.test.ts.
+  it('creates groups, entitlements, and ownership records', async () => {
     const adapter = createAdapter({
       queryOneRows: [
         null,
@@ -4201,7 +4212,6 @@ describe('IdentityMappingControlPlaneRepository provisioning assignment operatio
           group_key: 'faculty',
           display_name: 'Faculty',
         },
-        { id: 'group-1' },
       ],
     });
     const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
@@ -4218,13 +4228,6 @@ describe('IdentityMappingControlPlaneRepository provisioning assignment operatio
       id: 'group-1',
       groupKey: 'faculty',
     });
-    await repository.createGroupMembership('tenant_a', {
-      groupId: 'group-1',
-      subjectId: 'subject-1',
-      assignmentSource: 'rule:assignment-rule-1',
-      ownershipPolicy: 'source_owned',
-      revokePolicy: 'review',
-    });
     await repository.grantEntitlement('tenant_a', {
       subjectId: 'subject-1',
       entitlementType: 'permission',
@@ -4235,21 +4238,14 @@ describe('IdentityMappingControlPlaneRepository provisioning assignment operatio
 
     expect(adapter.executes.map((item) => item.sql)).toEqual([
       expect.stringContaining('INSERT INTO "groups"'),
-      expect.stringContaining('INSERT INTO group_memberships'),
-      expect.stringContaining('INSERT INTO provisioning_assignment_ownership'),
       expect.stringContaining('INSERT INTO entitlements'),
       expect.stringContaining('INSERT INTO provisioning_assignment_ownership'),
     ]);
   });
 
-  it('updates existing subject-only assignments before inserting duplicates', async () => {
+  it('updates existing subject-only entitlements before inserting duplicates', async () => {
     const adapter = createAdapter({
       queryOneRows: [
-        { id: 'group-1' },
-        {
-          id: 'existing-membership',
-        },
-        null,
         {
           id: 'existing-entitlement',
         },
@@ -4258,15 +4254,6 @@ describe('IdentityMappingControlPlaneRepository provisioning assignment operatio
     });
     const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
 
-    await expect(
-      repository.createGroupMembership('tenant_a', {
-        groupId: 'group-1',
-        subjectId: 'subject-1',
-        assignmentSource: 'rule:assignment-rule-1',
-      })
-    ).resolves.toMatchObject({
-      id: 'existing-membership',
-    });
     await expect(
       repository.grantEntitlement('tenant_a', {
         subjectId: 'subject-1',
@@ -4278,8 +4265,6 @@ describe('IdentityMappingControlPlaneRepository provisioning assignment operatio
     });
 
     expect(adapter.executes.map((item) => item.sql)).toEqual([
-      expect.stringContaining('UPDATE group_memberships'),
-      expect.stringContaining('INSERT INTO provisioning_assignment_ownership'),
       expect.stringContaining('UPDATE entitlements'),
       expect.stringContaining('INSERT INTO provisioning_assignment_ownership'),
     ]);
@@ -4299,7 +4284,12 @@ describe('IdentityMappingControlPlaneRepository provisioning assignment operatio
           }),
           priority: 10,
         },
-        { id: 'group-1' },
+        null,
+      ],
+      // The group definition, then the membership the INSERT ... RETURNING made.
+      queryRowSets: [
+        [{ id: 'group-1', parent_group_id: null, lifecycle_state: 'active' }],
+        [{ id: 'membership-1', updated_at: 1 }],
       ],
     });
     const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
@@ -4326,8 +4316,15 @@ describe('IdentityMappingControlPlaneRepository provisioning assignment operatio
       targetType: 'group',
       targetId: 'group-1',
     });
+    // The membership write (account database, RETURNING), then the guarded ownership batch.
+    expect(adapter.queries.map((item) => item.sql)).toContainEqual(
+      expect.stringContaining('INSERT INTO group_memberships')
+    );
     expect(adapter.executes.map((item) => item.sql)).toEqual([
-      expect.stringContaining('INSERT INTO group_memberships'),
+      expect.stringContaining('INSERT INTO provisioning_assignment_ownership'),
+    ]);
+    expect(adapter.batches).toHaveLength(1);
+    expect(adapter.batches[0]?.map((item) => item.sql)).toEqual([
       expect.stringContaining('INSERT INTO provisioning_assignment_ownership'),
     ]);
   });
@@ -4443,7 +4440,12 @@ describe('IdentityMappingControlPlaneRepository provisioning assignment operatio
           }),
           priority: 10,
         },
-        { id: 'group-1' },
+        null,
+      ],
+      // The group definition, then the membership the INSERT ... RETURNING made.
+      queryRowSets: [
+        [{ id: 'group-1', parent_group_id: null, lifecycle_state: 'active' }],
+        [{ id: 'membership-1', updated_at: 1 }],
       ],
     });
     const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);

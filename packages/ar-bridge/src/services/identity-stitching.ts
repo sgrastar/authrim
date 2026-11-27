@@ -1206,6 +1206,9 @@ async function applyTenantD1JITPlan(
   }
 
   const rolesAssigned: JITProvisioningResult['roles_assigned'] = [];
+  // A matched rule whose role is refused as not assignable is a match that grants nothing: the
+  // default role (for a sign-up no rule matched) is not given in its place.
+  let refusedRoles = 0;
   for (const role of input.plan.roleAssignments) {
     if (!isGrantableRole(role, orgsJoined)) continue;
     const assigned = await assignScopedRoleToUser(
@@ -1216,6 +1219,7 @@ async function applyTenantD1JITPlan(
       role.scopeTarget,
       input.tenantId
     );
+    if (assigned.code === 'role_not_assignable') refusedRoles += 1;
     if (assigned.success) {
       rolesAssigned.push({
         role_id: role.roleId,
@@ -1224,7 +1228,14 @@ async function applyTenantD1JITPlan(
       });
     }
   }
-  if (rolesAssigned.length === 0 && input.plan.defaultRoleId) {
+  if (rolesAssigned.length === 0 && refusedRoles > 0 && input.plan.defaultRoleId) {
+    createLogger()
+      .module('IDENTITY-STITCHING')
+      .warn('JIT roles refused as not assignable; the default role is not given', {
+        tenantId: input.tenantId,
+        refusedRoles,
+      });
+  } else if (rolesAssigned.length === 0 && input.plan.defaultRoleId) {
     // A global role has an empty target, as the admin API and the role readers expect.
     const scopeTarget = orgsJoined.length > 0 ? `org:${orgsJoined[0]}` : '';
     const scopeType = orgsJoined.length > 0 ? 'org' : 'global';

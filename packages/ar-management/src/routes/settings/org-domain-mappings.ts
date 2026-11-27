@@ -36,6 +36,26 @@ import {
   type DomainEventData,
 } from '@authrim/ar-lib-core';
 import { resolveSettingsCoreAdapter, resolveSettingsTenantId } from './tenant-resolver';
+import { refuseUndelegableRoles } from './role-grant-guard';
+
+/** A mapping changed between its check and its write: 409, or 404 when it is gone. */
+async function mappingChanged(
+  c: Context,
+  coreAdapter: ReturnType<typeof resolveSettingsCoreAdapter>,
+  id: string,
+  tenantId: string
+): Promise<Response> {
+  const still = await coreAdapter.queryOne<{ id: string }>(
+    'SELECT id FROM org_domain_mappings WHERE id = ? AND tenant_id = ?',
+    [id, tenantId]
+  );
+  return still
+    ? c.json(
+        { error: 'conflict', error_description: 'The domain mapping changed; read it again' },
+        409
+      )
+    : c.json({ error: 'not_found', error_description: `Domain mapping ${id} not found` }, 404);
+}
 
 // =============================================================================
 // Constants
@@ -172,6 +192,13 @@ export async function createOrgDomainMapping(c: Context) {
         404
       );
     }
+
+    // The mapping grants its role on join without an administrator: the one saving it must be
+    // allowed to grant it.
+    const refused = await refuseUndelegableRoles(c, coreAdapter, tenantId, [
+      body.auto_assign_role_id,
+    ]);
+    if (refused) return refused;
 
     // Check for existing mapping
     const existing = await coreAdapter.queryOne<{ id: string }>(
@@ -315,15 +342,58 @@ export async function updateOrgDomainMapping(c: Context) {
   const coreAdapter = resolveSettingsCoreAdapter(c);
 
   try {
-    // Note: domain cannot be updated. Create a new mapping instead.
-    const updated = await updateDomainMapping(coreAdapter, id, tenantId, {
-      autoJoinEnabled: body.auto_join_enabled,
-      membershipType: body.membership_type,
-      autoAssignRoleId: body.auto_assign_role_id,
-      verified: body.verified,
-      priority: body.priority,
-      isActive: body.is_active,
-    });
+    // A mapping that stays (or becomes) active grants its role, as it is after the change, on
+    // join: the administrator changing it must be allowed to grant that role.
+    const current = await coreAdapter.queryOne<{
+      auto_assign_role_id: string | null;
+      is_active: number | null;
+      updated_at: number;
+    }>(
+      'SELECT auto_assign_role_id, is_active, updated_at FROM org_domain_mappings WHERE id = ? AND tenant_id = ?',
+      [id, tenantId]
+    );
+    if (!current) {
+      return c.json(
+        {
+          error: 'not_found',
+          error_description: `Domain mapping ${id} not found`,
+        },
+        404
+      );
+    }
+    const active = body.is_active !== undefined ? body.is_active : current.is_active !== 0;
+    const roleId =
+      body.auto_assign_role_id !== undefined
+        ? body.auto_assign_role_id
+        : current.auto_assign_role_id;
+    if (active) {
+      const refused = await refuseUndelegableRoles(c, coreAdapter, tenantId, [roleId]);
+      if (refused) return refused;
+    }
+
+    // Note: domain cannot be updated. Create a new mapping instead. The write is of the row as
+    // it was checked (its updated_at): one changed meanwhile is a conflict.
+    let updated: Awaited<ReturnType<typeof updateDomainMapping>>;
+    try {
+      updated = await updateDomainMapping(
+        coreAdapter,
+        id,
+        tenantId,
+        {
+          autoJoinEnabled: body.auto_join_enabled,
+          membershipType: body.membership_type,
+          autoAssignRoleId: body.auto_assign_role_id,
+          verified: body.verified,
+          priority: body.priority,
+          isActive: body.is_active,
+        },
+        { expectedUpdatedAt: Number(current.updated_at) }
+      );
+    } catch (error) {
+      if (error instanceof Error && error.message === 'org_domain_mapping_changed')
+        return mappingChanged(c, coreAdapter, id, tenantId);
+      throw error;
+    }
 
     if (!updated) {
       return c.json(
@@ -652,9 +722,13 @@ export async function confirmDomainVerification(c: Context) {
       verification_method: string | null;
       domain_hash: string;
       domain_hash_version: number;
+      auto_assign_role_id: string | null;
+      is_active: number | null;
+      updated_at: number;
     }>(
       `SELECT id, org_id, verification_token, verification_status, verification_expires_at,
-              verification_method, domain_hash, domain_hash_version
+              verification_method, domain_hash, domain_hash_version, auto_assign_role_id,
+              is_active, updated_at
 	       FROM org_domain_mappings
 	       WHERE id = ? AND tenant_id = ?`,
       [body.mapping_id, tenantId]
@@ -747,10 +821,29 @@ export async function confirmDomainVerification(c: Context) {
     const result = await verifyDomainDnsTxt(domain, row.verification_token);
 
     if (result.verified) {
+      // A verified active mapping gives its role on join: the administrator completing the
+      // verification must be allowed to grant it, and the row written is the one checked.
+      if (row.is_active !== 0 && row.auto_assign_role_id) {
+        const refused = await refuseUndelegableRoles(c, coreAdapter, tenantId, [
+          row.auto_assign_role_id,
+        ]);
+        if (refused) return refused;
+      }
       // Update mapping as verified
-      const updated = await updateDomainMapping(coreAdapter, body.mapping_id, tenantId, {
-        verified: true,
-      });
+      let updated: Awaited<ReturnType<typeof updateDomainMapping>>;
+      try {
+        updated = await updateDomainMapping(
+          coreAdapter,
+          body.mapping_id,
+          tenantId,
+          { verified: true },
+          { expectedUpdatedAt: Number(row.updated_at) }
+        );
+      } catch (error) {
+        if (error instanceof Error && error.message === 'org_domain_mapping_changed')
+          return mappingChanged(c, coreAdapter, body.mapping_id, tenantId);
+        throw error;
+      }
 
       // Also update verification_status
       await coreAdapter.execute(

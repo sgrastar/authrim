@@ -28,6 +28,7 @@ import {
   getEmailDomainHashSecret,
 } from '@authrim/ar-lib-core';
 import { resolveSettingsCoreAdapter, resolveSettingsTenantId } from './tenant-resolver';
+import { actionRoleIds, refuseUndelegableRoles } from './role-grant-guard';
 
 // =============================================================================
 // Constants
@@ -114,6 +115,14 @@ export async function createRoleAssignmentRule(c: Context) {
   const coreAdapter = resolveSettingsCoreAdapter(c);
 
   try {
+    // The rule grants its roles later without an administrator: the one saving it must be
+    // allowed to grant each of them.
+    const refused = await refuseUndelegableRoles(c, coreAdapter, tenantId, [
+      body.role_id,
+      ...actionRoleIds(body.actions),
+    ]);
+    if (refused) return refused;
+
     // Check if name already exists
     const existing = await coreAdapter.queryOne<{ id: string }>(
       'SELECT id FROM role_assignment_rules WHERE tenant_id = ? AND name = ?',
@@ -380,14 +389,36 @@ export async function updateRoleAssignmentRule(c: Context) {
       return c.json(rowToRule(existing));
     }
 
+    // Any change of a rule that stays (or becomes) active needs the standing to grant every role
+    // the rule will grant: its role and those of its actions, as they are after the change.
+    const active = body.is_active !== undefined ? body.is_active : existing.is_active === 1;
+    if (active) {
+      const refused = await refuseUndelegableRoles(c, coreAdapter, tenantId, [
+        body.role_id ?? existing.role_id,
+        ...actionRoleIds(body.actions ?? (JSON.parse(existing.actions_json) as unknown)),
+      ]);
+      if (refused) return refused;
+    }
+
     const now = Math.floor(Date.now() / 1000);
     setClauses.push('updated_at = ?');
-    values.push(now, id, tenantId);
+    values.push(now, id, tenantId, existing.updated_at);
 
-    await coreAdapter.execute(
-      `UPDATE role_assignment_rules SET ${setClauses.join(', ')} WHERE id = ? AND tenant_id = ?`,
+    // Only the rule as it was read and checked (its updated_at) is written.
+    const written = await coreAdapter.execute(
+      `UPDATE role_assignment_rules SET ${setClauses.join(', ')}
+        WHERE id = ? AND tenant_id = ? AND updated_at = ?`,
       values
     );
+    if (!written.rowsAffected) {
+      const still = await coreAdapter.queryOne<{ id: string }>(
+        'SELECT id FROM role_assignment_rules WHERE id = ? AND tenant_id = ?',
+        [id, tenantId]
+      );
+      return still
+        ? c.json({ error: 'conflict', error_description: 'The rule changed; read it again' }, 409)
+        : c.json({ error: 'not_found', error_description: `Rule ${id} not found` }, 404);
+    }
 
     // Invalidate cache
     if (c.env.SETTINGS) {

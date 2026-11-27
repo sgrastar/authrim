@@ -86,6 +86,21 @@ describe('JIT role assignments in the real schema', () => {
     ).toEqual([{ subject_id: 'user-1', scope_type: 'global', scope_target: '' }]);
   });
 
+  it('skips a role that is not assignable', async () => {
+    db.exec(`UPDATE roles SET is_assignable = 0 WHERE id = 'role-1'`);
+    const result = await assignScopedRoleToUser(
+      singleDatabaseRBAC(adapter),
+      'user-1',
+      'role-1',
+      'global',
+      '',
+      'tenant-a'
+    );
+
+    expect(result).toMatchObject({ success: false, error: 'Role not assignable' });
+    expect(db.prepare('SELECT COUNT(*) AS n FROM role_assignments').get()).toEqual({ n: 0 });
+  });
+
   it("gives nothing from another tenant's role", async () => {
     const result = await assignRoleToUser(
       singleDatabaseRBAC(adapter),

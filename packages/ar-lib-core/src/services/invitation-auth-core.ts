@@ -1,5 +1,7 @@
+import type { KVNamespace } from '@cloudflare/workers-types';
 import type { DatabaseSource } from '../db';
 import { ensureDatabaseAdapter } from '../db';
+import { upsertGroupMembership } from './group-membership';
 import { joinOrganization, type OrgJoinResult } from './org-domain-resolver';
 import { findTenantRole, type TenantRBACDatabases } from './tenant-rbac';
 
@@ -10,6 +12,8 @@ export interface TenantInvitationRecord {
   invited_email: string | null;
   role_id: string | null;
   org_id: string | null;
+  /** The group the invitation joins (migration 016); null or absent: none. */
+  group_id?: string | null;
   max_uses: number;
   use_count: number;
   expires_at: number;
@@ -21,9 +25,15 @@ export interface RoleAssignmentResult {
   error?: string;
 }
 
+export interface GroupMembershipResult {
+  success: boolean;
+  error?: string;
+}
+
 export interface InvitationAssignmentResults {
   roleAssignment?: RoleAssignmentResult;
   orgMembership?: OrgJoinResult;
+  groupMembership?: GroupMembershipResult;
 }
 
 function getAdapter(db: DatabaseSource) {
@@ -42,7 +52,7 @@ export async function findActiveInvitationByToken(
   const adapter = getAdapter(db);
 
   return adapter.queryOne<TenantInvitationRecord>(
-    `SELECT id, token, tenant_id, invited_email, role_id, org_id, max_uses, use_count, expires_at
+    `SELECT id, token, tenant_id, invited_email, role_id, org_id, group_id, max_uses, use_count, expires_at
      FROM tenant_invitations
      WHERE token = ? AND expires_at > ?`,
     [token, now]
@@ -350,7 +360,7 @@ export async function findInvitationById(
 ): Promise<TenantInvitationRecord | null> {
   const adapter = getAdapter(db);
   return adapter.queryOne<TenantInvitationRecord>(
-    `SELECT id, token, tenant_id, invited_email, role_id, org_id, max_uses, use_count, expires_at
+    `SELECT id, token, tenant_id, invited_email, role_id, org_id, group_id, max_uses, use_count, expires_at
      FROM tenant_invitations
      WHERE id = ? AND tenant_id = ?`,
     [invitationId, tenantId]
@@ -404,7 +414,42 @@ export async function assignTenantRoleToUser(
   };
 }
 
-/** Gives the user the role and organisation an invitation names (either may be absent). */
+/**
+ * Adds the user to the group an invitation names: a membership row on the user's account
+ * database (`dbs.account`) with assignment_source 'invitation' and the invitation id as its
+ * source_ref, so a second application of the same invitation finds the same row. A group that
+ * is no longer active (stopped or deleted since the invitation was made) is not joined.
+ */
+export async function joinInvitationGroup(
+  dbs: TenantRBACDatabases,
+  params: {
+    userId: string;
+    tenantId: string;
+    groupId: string;
+    invitationId: string;
+    cache?: KVNamespace;
+  }
+): Promise<GroupMembershipResult> {
+  const group = await getAdapter(dbs.metadata).queryOne<{ id: string }>(
+    `SELECT id FROM "groups" WHERE tenant_id = ? AND id = ? AND lifecycle_state = 'active'`,
+    [params.tenantId, params.groupId]
+  );
+  if (!group) return { success: false, error: 'Group not active' };
+  await upsertGroupMembership(
+    dbs,
+    params.tenantId,
+    params.userId,
+    { groupId: params.groupId, source: 'invitation', sourceRef: params.invitationId },
+    params.cache
+  );
+  return { success: true };
+}
+
+/**
+ * Gives the user the role, organisation and group an invitation names (each may be absent). The
+ * group membership is written on the user's account database and the user's cached RBAC claims
+ * are invalidated (`cache`, when bound).
+ */
 export async function applyInvitationAssignments(
   dbs: TenantRBACDatabases,
   params: {
@@ -412,9 +457,12 @@ export async function applyInvitationAssignments(
     tenantId: string;
     roleId?: string | null;
     orgId?: string | null;
+    groupId?: string | null;
+    invitationId?: string;
+    cache?: KVNamespace;
   }
 ): Promise<InvitationAssignmentResults> {
-  const { userId, tenantId, roleId, orgId } = params;
+  const { userId, tenantId, roleId, orgId, groupId, invitationId } = params;
   const results: InvitationAssignmentResults = {};
 
   if (roleId) {
@@ -423,6 +471,18 @@ export async function applyInvitationAssignments(
 
   if (orgId) {
     results.orgMembership = await joinOrganization(dbs, userId, orgId, tenantId, 'member');
+  }
+
+  if (groupId) {
+    results.groupMembership = invitationId
+      ? await joinInvitationGroup(dbs, {
+          userId,
+          tenantId,
+          groupId,
+          invitationId,
+          cache: params.cache,
+        })
+      : { success: false, error: 'Invitation id is required' };
   }
 
   return results;

@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { logProducerFixture } from '../../../../test/helpers/log-iceberg-producer-fixture.mjs';
 import { IdentityMappingControlPlaneRepository } from '../identity-mapping-control-plane';
 import type { Env } from '@authrim/ar-lib-core';
+import { openCoreStore } from './helpers/core-schema-sqlite';
 const close: (() => void)[] = [];
 afterEach(() => {
   vi.restoreAllMocks();
@@ -20,13 +21,30 @@ async function fixture(mode: 'scheduled' | 'pipeline') {
   f.db
     .exec(`INSERT INTO identity_subjects(id,tenant_id,subject_type,lifecycle_state,created_at,updated_at) VALUES('subject','tenant-a','person','active',1,1);
  INSERT INTO "groups"(id,tenant_id,group_key,display_name,lifecycle_state,created_at,updated_at) VALUES('group','tenant-a','group','Group','active',1,1);`);
+  // Memberships are on the subject's account database, another database than tenant Core.
+  const shard = openCoreStore('tenant-a');
+  close.push(() => shard.db.close());
   const repo = new IdentityMappingControlPlaneRepository(
     f.adminAdapter,
     () => f.now,
     f.adapter,
     undefined,
     f.env as Env,
-    f.publicationSource
+    f.publicationSource,
+    null,
+    async (_tenantId, id) => {
+      const subjectId =
+        id.subjectId ??
+        (
+          await shard.adapter.queryOne<{ legacy_user_id: string }>(
+            'SELECT legacy_user_id FROM identity_accounts WHERE id=?',
+            [id.accountId]
+          )
+        )?.legacy_user_id;
+      return subjectId
+        ? { subjectId, accountId: id.accountId ?? `account:${subjectId}`, account: shard.adapter }
+        : null;
+    }
   );
   const rule = await repo.createProvisioningAssignmentRule('tenant-a', {
     ruleType: 'event',
@@ -34,13 +52,13 @@ async function fixture(mode: 'scheduled' | 'pipeline') {
     targetId: 'group',
     condition: { eventTypes: ['jit'] },
   });
-  return { ...f, repo, rule };
+  return { ...f, repo, rule, shard: shard.db as unknown as typeof f.db };
 }
 const input = { eventType: 'jit', subjectId: 'subject' } as const;
 describe.each(['scheduled', 'pipeline'] as const)('Mapping producer storage (%s)', (mode) => {
   it('resolves an account-only provisioning input to the routable subject and keeps its rule ID', async () => {
     const f = await fixture(mode);
-    f.db
+    f.shard
       .exec(`INSERT INTO identity_accounts(id,tenant_id,account_type,legacy_user_id,created_at,updated_at)
       VALUES('account:one','tenant-a','user','routable-user',1,1)`);
     await f.repo.evaluateProvisioningAssignmentRule('tenant-a', f.rule.id, {
@@ -48,7 +66,7 @@ describe.each(['scheduled', 'pipeline'] as const)('Mapping producer storage (%s)
       accountId: 'account:one',
     });
     expect(
-      f.db.prepare('SELECT subject_id,assignment_source,source_ref FROM group_memberships').get()
+      f.shard.prepare('SELECT subject_id,assignment_source,source_ref FROM group_memberships').get()
     ).toEqual({
       subject_id: 'routable-user',
       assignment_source: 'rule',
@@ -56,14 +74,15 @@ describe.each(['scheduled', 'pipeline'] as const)('Mapping producer storage (%s)
     });
   });
 
-  it('commits assignment and ownership in tenant Core with only its browsing log in Admin', async () => {
+  it('commits the membership on the account database and ownership in tenant Core with only its browsing log in Admin', async () => {
     const f = await fixture(mode);
     await expect(
       f.repo.evaluateProvisioningAssignmentRule('tenant-a', f.rule.id, input)
     ).resolves.toMatchObject({ outcome: 'assigned' });
     expect(
-      f.db.prepare('SELECT lifecycle_state FROM group_memberships').get()?.lifecycle_state
+      f.shard.prepare('SELECT lifecycle_state FROM group_memberships').get()?.lifecycle_state
     ).toBe('active');
+    expect(f.db.prepare('SELECT count(*) n FROM group_memberships').get()?.n).toBe(0);
     expect(f.db.prepare('SELECT count(*) n FROM provisioning_assignment_ownership').get()?.n).toBe(
       1
     );
@@ -85,7 +104,12 @@ describe.each(['scheduled', 'pipeline'] as const)('Mapping producer storage (%s)
     await expect(
       f.repo.evaluateProvisioningAssignmentRule('tenant-a', f.rule.id, input)
     ).rejects.toThrow('ownership failed');
-    expect(f.db.prepare('SELECT count(*) n FROM group_memberships').get()?.n).toBe(0);
+    // The membership written first is taken back when the ownership batch fails.
+    expect(
+      f.shard
+        .prepare("SELECT count(*) n FROM group_memberships WHERE lifecycle_state='active'")
+        .get()?.n
+    ).toBe(0);
     expect(await f.rows('core.provisioning_assignment_events')).toHaveLength(0);
     f.db.exec('DROP TRIGGER fail_ownership');
     const writer = f.env.LOG_ARCHIVE_WRITER!;
@@ -99,7 +123,12 @@ describe.each(['scheduled', 'pipeline'] as const)('Mapping producer storage (%s)
     await expect(
       f.repo.evaluateProvisioningAssignmentRule('tenant-a', f.rule.id, input)
     ).rejects.toThrow('business state changed');
-    expect(f.db.prepare('SELECT count(*) n FROM group_memberships').get()?.n).toBe(0);
+    expect(
+      f.shard
+        .prepare("SELECT count(*) n FROM group_memberships WHERE lifecycle_state='active'")
+        .get()?.n
+    ).toBe(0);
+    expect(f.shard.prepare('SELECT count(*) n FROM group_memberships').get()?.n).toBe(1);
     expect(await f.rows('core.provisioning_assignment_events')).toHaveLength(0);
   });
   it('retains source commit after a dispatch failure and publishes through metadata-only recovery', async () => {
@@ -109,7 +138,11 @@ describe.each(['scheduled', 'pipeline'] as const)('Mapping producer storage (%s)
     await expect(
       f.repo.evaluateProvisioningAssignmentRule('tenant-a', f.rule.id, input)
     ).rejects.toThrow('response lost');
-    expect(f.db.prepare('SELECT count(*) n FROM group_memberships').get()?.n).toBe(1);
+    expect(
+      f.shard
+        .prepare("SELECT count(*) n FROM group_memberships WHERE lifecycle_state='active'")
+        .get()?.n
+    ).toBe(1);
     expect(await f.rows('core.provisioning_assignment_events')).toHaveLength(0);
     const pub = f.db
       .prepare("SELECT id FROM log_iceberg_core_publications WHERE state='committed'")
@@ -123,9 +156,11 @@ describe.each(['scheduled', 'pipeline'] as const)('Mapping producer storage (%s)
       ...input,
       dryRun: true,
     });
-    expect(f.db.prepare('SELECT count(*) n FROM group_memberships').get()?.n).toBe(0);
+    expect(f.shard.prepare('SELECT count(*) n FROM group_memberships').get()?.n).toBe(0);
     await f.repo.evaluateProvisioningAssignmentRule('tenant-a', f.rule.id, input);
-    const membership = f.db.prepare('SELECT id FROM group_memberships').get();
+    const membership = f.shard.prepare('SELECT id FROM group_memberships').get() as
+      | { id: string }
+      | undefined;
     f.db.exec("UPDATE provisioning_assignment_ownership SET revoke_policy='auto'");
     const signal = {
       sourceType: 'scim',
@@ -140,8 +175,11 @@ describe.each(['scheduled', 'pipeline'] as const)('Mapping producer storage (%s)
       decision: 'revoke',
     });
     expect(
-      f.db.prepare('SELECT lifecycle_state FROM group_memberships').get()?.lifecycle_state
+      f.shard.prepare('SELECT lifecycle_state FROM group_memberships').get()?.lifecycle_state
     ).toBe('revoked');
+    expect(
+      f.db.prepare('SELECT subject_id FROM external_lifecycle_signal_decisions').get()?.subject_id
+    ).toBe('subject');
     expect(
       f.db.prepare('SELECT processing_state FROM external_lifecycle_signal_events').get()
         ?.processing_state
@@ -158,7 +196,9 @@ describe.each(['scheduled', 'pipeline'] as const)('Mapping producer storage (%s)
   it('refuses an ownership change made while the log body is prepared', async () => {
     const f = await fixture(mode);
     await f.repo.evaluateProvisioningAssignmentRule('tenant-a', f.rule.id, input);
-    const membership = f.db.prepare('SELECT id FROM group_memberships').get();
+    const membership = f.shard.prepare('SELECT id FROM group_memberships').get() as
+      | { id: string }
+      | undefined;
     f.db.exec("UPDATE provisioning_assignment_ownership SET revoke_policy='auto'");
     const writer = f.env.LOG_ARCHIVE_WRITER!,
       original = writer.prepareCorePublication.bind(writer);
@@ -176,10 +216,12 @@ describe.each(['scheduled', 'pipeline'] as const)('Mapping producer storage (%s)
         signalType: 'scim_group_removed',
         targetType: 'group_membership',
         targetId: String(membership?.id),
+        subjectId: 'subject',
       })
     ).rejects.toThrow('business state changed');
+    // The decision is committed before the membership is revoked: a refused one revokes nothing.
     expect(
-      f.db.prepare('SELECT lifecycle_state FROM group_memberships').get()?.lifecycle_state
+      f.shard.prepare('SELECT lifecycle_state FROM group_memberships').get()?.lifecycle_state
     ).toBe('active');
     expect(f.db.prepare('SELECT count(*) n FROM external_lifecycle_signal_events').get()?.n).toBe(
       0

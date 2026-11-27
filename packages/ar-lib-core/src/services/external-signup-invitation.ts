@@ -7,9 +7,11 @@
  * that handler created; a sign-in that finds an existing account, or fails, gives it back.
  *
  * Invitations and reservations live in the tenant metadata database (`db`); role and
- * organisation assignments in the account's database, where token issuance reads them.
+ * organisation assignments and group memberships in the account's database, where token
+ * issuance reads them.
  */
 
+import type { KVNamespace } from '@cloudflare/workers-types';
 import type { DatabaseSource } from '../db';
 import { resolveEffectiveSettings, type EffectiveSettingsEnv } from './effective-settings';
 import {
@@ -98,14 +100,16 @@ export function externalSignupInvitationEmailCheck(
 }
 
 /**
- * Applies the reserved use to the account the sign-in created and assigns the invitation's role
- * and organisation there. The sign-in has succeeded, so a failure is logged, not thrown.
+ * Applies the reserved use to the account the sign-in created and assigns the invitation's role,
+ * organisation and group there (the group membership on the account's database, `accountDb`;
+ * `cache`, the RBAC claims cache, has the account's cached claims dropped). The sign-in has
+ * succeeded, so a failure is logged, not thrown.
  */
 export async function applyExternalSignupInvitation(
   db: () => Promise<DatabaseSource> | DatabaseSource,
   accountDb: DatabaseSource,
   log: InvitationLogger,
-  input: ExternalSignupInvitation & { tenantId: string; userId: string }
+  input: ExternalSignupInvitation & { tenantId: string; userId: string; cache?: KVNamespace }
 ): Promise<boolean> {
   const { tenantId, inviteId, inviteReservationId, userId } = input;
   try {
@@ -141,6 +145,9 @@ export async function applyExternalSignupInvitation(
         tenantId,
         roleId: invitation.role_id,
         orgId: invitation.org_id,
+        groupId: invitation.group_id,
+        invitationId: invitation.id,
+        cache: input.cache,
       }
     );
     if (invitation.role_id && !assignments.roleAssignment?.success) {
@@ -155,6 +162,13 @@ export async function applyExternalSignupInvitation(
         invite_id: inviteId,
         tenant_id: tenantId,
         error: assignments.orgMembership?.error,
+      });
+    }
+    if (invitation.group_id && !assignments.groupMembership?.success) {
+      log.warn('Failed to join the group from invitation', {
+        invite_id: inviteId,
+        tenant_id: tenantId,
+        error: assignments.groupMembership?.error,
       });
     }
     return true;
