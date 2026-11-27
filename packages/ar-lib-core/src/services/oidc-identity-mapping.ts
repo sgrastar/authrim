@@ -103,6 +103,8 @@ export interface ApplyOIDCIdentityMappingInput {
    * before. Ignored when `claimsAuthorizedByRequest` is set, which covers them all.
    */
   authorizedClaimNames?: readonly string[];
+  /** Consent-candidate computation only: see filterOidcClaimsByDestinationConsent. */
+  serverComputedPending?: boolean;
   /**
    * Set when the ID token is all the response gives the app (response_type=id_token carries no
    * access token to call UserInfo with), so the claims the profile lists for UserInfo are
@@ -722,6 +724,7 @@ async function applyOIDCDestinationFieldConsent(
     ...(input.fixture
       ? { assumedConsent: input.fixture.consent, unevaluatedClaims: unevaluated ?? new Set() }
       : {}),
+    ...(input.serverComputedPending ? { serverComputedPending: true } : {}),
     ...(input.trace ? { trace: input.trace } : {}),
     ...(input.releaseOptionalOut ? { optionalOut: input.releaseOptionalOut } : {}),
     ...(input.claimsAuthorizedByRequest

@@ -14,6 +14,7 @@ const fixture = vi.hoisted(() => ({
 const mockIntrospectTokenFromContext = vi.hoisted(() => vi.fn());
 const mockGetClientCached = vi.hoisted(() => vi.fn());
 const mockResolveEffectiveSettings = vi.hoisted(() => vi.fn());
+const mockRbacClaims = vi.hoisted(() => vi.fn());
 
 // No consent withdrawal is recorded (generation 0) unless a test says otherwise.
 const mockFindConsentRevocation = vi.hoisted(() =>
@@ -32,6 +33,7 @@ vi.mock('@authrim/ar-lib-core', async () => {
     }),
     CanonicalSensitiveValueResolver: vi.fn(),
     resolveEffectiveSettings: mockResolveEffectiveSettings,
+    loadSubjectServerClaims: mockRbacClaims,
     resolveAccountDataContextFromHono: vi.fn().mockResolvedValue(undefined),
     isUserInfoEncryptionRequired: () => false,
     createPIIContextFromHono: () => ({
@@ -160,7 +162,16 @@ function userRow() {
 const d1 = {
   prepare: () => ({
     bind: () => ({
-      first: async () => null,
+      // The Destination Profile of the app, for what reads it from the admin database.
+      first: async () =>
+        fixture.profile
+          ? {
+              profile_id: 'profile-1',
+              destination_type: 'oidc',
+              version_id: 'version-1',
+              schema_json: JSON.stringify({ claims: fixture.profile.claims }),
+            }
+          : null,
       all: async () => ({ results: [] }),
       run: async () => ({ success: true, meta: {} }),
     }),
@@ -184,7 +195,9 @@ async function userinfo(options: {
       sub: 'user-123',
       client_id: 'client-1',
       scope: options.scope,
-      ...(options.claims ? { claims: JSON.stringify(options.claims) } : {}),
+      ...(options.claims
+        ? { claims: JSON.stringify(options.claims), claims_request_protected: true }
+        : {}),
     },
   });
   const logger = {
@@ -206,9 +219,9 @@ async function userinfo(options: {
       if (key === 'tenantMetadataContext') return { tenantId: 'default', coreDb: d1 };
       return undefined;
     }),
-  } as any;
-  await userinfoHandler(c);
-  const [body, status] = vi.mocked(c.json).mock.calls[0];
+  };
+  await userinfoHandler(c as unknown as Parameters<typeof userinfoHandler>[0]);
+  const [body, status] = c.json.mock.calls[0] as [unknown, number | undefined];
   return { body: body as Record<string, unknown>, status: status ?? 200 };
 }
 
@@ -218,6 +231,7 @@ describe('UserInfo eduperson_assurance through the identity mapping', () => {
     fixture.approval = ['*'];
     fixture.evidenceReads = 0;
     fixture.profile = null;
+    mockRbacClaims.mockResolvedValue({});
     mockResolveEffectiveSettings.mockImplementation(async (_env: unknown, category: string) =>
       category === 'assurance'
         ? {
@@ -304,5 +318,139 @@ describe('UserInfo eduperson_assurance through the identity mapping', () => {
 
     expect(body.eduperson_assurance).toEqual([IAL1_URI, IAL2_URI]);
     expect(body).not.toHaveProperty('email');
+  });
+});
+
+describe('UserInfo authorization claims through the Destination Profile', () => {
+  const subField = { claimName: 'sub', required: true, surfaces: ['id_token', 'userinfo'] };
+  const groups = [{ id: 'g-1', key: 'staff', name: 'Staff', kind: 'static' }];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    fixture.approval = ['*'];
+    fixture.profile = null;
+    mockResolveEffectiveSettings.mockResolvedValue({ 'oauth.userinfo_require_openid': false });
+    mockRbacClaims.mockResolvedValue({ authrim_roles: ['member'], authrim_groups: groups });
+  });
+
+  it('releases roles and groups where the profile lists them, as the computed values', async () => {
+    fixture.profile = {
+      claims: [subField, { claimName: 'authrim_roles' }, { claimName: 'authrim_groups' }],
+    };
+    const { body, status } = await userinfo({ scope: 'openid' });
+    expect(status).toBe(200);
+    expect(body.authrim_roles).toEqual(['member']);
+    expect(body.authrim_groups).toEqual(groups);
+  });
+
+  it('leaves them out where the profile does not list them', async () => {
+    fixture.profile = { claims: [subField, { claimName: 'authrim_roles' }] };
+    const { body, status } = await userinfo({ scope: 'openid' });
+    expect(status).toBe(200);
+    expect(body.authrim_roles).toEqual(['member']);
+    expect(body).not.toHaveProperty('authrim_groups');
+  });
+
+  it('meets a profile that requires them', async () => {
+    fixture.profile = { claims: [subField, { claimName: 'authrim_groups', required: true }] };
+    const { body, status } = await userinfo({ scope: 'openid' });
+    expect(status).toBe(200);
+    expect(body.authrim_groups).toEqual(groups);
+  });
+
+  const sao = (rules: unknown[]) => ({ userinfo: {}, _asc: { sao: { userinfo: rules } } });
+  const listed = () => {
+    fixture.profile = {
+      claims: [subField, { claimName: 'authrim_groups' }, { claimName: 'authrim_roles' }],
+    };
+  };
+
+  it('lets an SAO omit rule on it see the real value and leave it out', async () => {
+    listed();
+    const { body, status } = await userinfo({
+      scope: 'openid',
+      claims: sao([
+        {
+          loc: '/authrim_groups/0/key',
+          method: 'simple',
+          value: 'other',
+          else: 'omit',
+          what: ['/authrim_groups'],
+        },
+      ]),
+    });
+    expect(status).toBe(200);
+    expect(body).not.toHaveProperty('authrim_groups');
+    expect(body.authrim_roles).toEqual(['member']);
+  });
+
+  it('keeps it when the SAO omit rule is satisfied, and passes an abort rule that holds', async () => {
+    listed();
+    const { body, status } = await userinfo({
+      scope: 'openid',
+      claims: sao([
+        { loc: '/authrim_groups/0/key', method: 'simple', value: 'staff', else: 'abort' },
+      ]),
+    });
+    expect(status).toBe(200);
+    expect(body.authrim_groups).toEqual(groups);
+  });
+
+  it('aborts when an SAO abort rule requires a group the subject lacks', async () => {
+    listed();
+    const { status } = await userinfo({
+      scope: 'openid',
+      claims: sao([
+        { loc: '/authrim_groups/0/key', method: 'simple', value: 'admins', else: 'abort' },
+      ]),
+    });
+    expect(status).toBe(400);
+  });
+
+  it('does not let an SAO rule see a claim the profile does not list (no tell between a person with groups and one without)', async () => {
+    fixture.profile = { claims: [subField, { claimName: 'authrim_roles' }] };
+    const abort = sao([
+      { loc: '/authrim_groups/0/key', method: 'simple', value: 'staff', else: 'abort' },
+    ]);
+    const withGroups = await userinfo({ scope: 'openid', claims: abort });
+    mockRbacClaims.mockResolvedValue({ authrim_roles: ['member'] });
+    const withoutGroups = await userinfo({ scope: 'openid', claims: abort });
+    expect(withGroups.status).toBe(withoutGroups.status);
+    expect(withGroups.body).toEqual(withoutGroups.body);
+    expect(withGroups.body).not.toHaveProperty('authrim_groups');
+  });
+
+  it('leaves the computed values (the cache holds them) as they were after an SAO omit', async () => {
+    listed();
+    const cached = { authrim_roles: ['member'], authrim_groups: structuredClone(groups) };
+    mockRbacClaims.mockResolvedValue(cached);
+    const omit = sao([
+      {
+        loc: '/authrim_groups/0/key',
+        method: 'simple',
+        value: 'other',
+        else: 'omit',
+        what: ['/authrim_groups/0/name'],
+      },
+    ]);
+    const first = await userinfo({ scope: 'openid', claims: omit });
+    expect(first.body.authrim_groups).toEqual([{ id: 'g-1', key: 'staff', kind: 'static' }]);
+    expect(cached.authrim_groups).toEqual(groups);
+    const second = await userinfo({ scope: 'openid' });
+    expect(second.body.authrim_groups).toEqual(groups);
+  });
+
+  it('does not let an SAO rule see a listed claim whose required scope is not granted', async () => {
+    fixture.profile = {
+      claims: [subField, { claimName: 'authrim_groups', requiredScopes: ['groups'] }],
+    };
+    const abort = sao([
+      { loc: '/authrim_groups/0/key', method: 'simple', value: 'staff', else: 'abort' },
+    ]);
+    const withGroups = await userinfo({ scope: 'openid', claims: abort });
+    mockRbacClaims.mockResolvedValue({});
+    const withoutGroups = await userinfo({ scope: 'openid', claims: abort });
+    expect(withGroups.status).toBe(withoutGroups.status);
+    expect(withGroups.body).toEqual(withoutGroups.body);
   });
 });

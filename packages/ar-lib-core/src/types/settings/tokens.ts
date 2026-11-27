@@ -101,7 +101,7 @@ export const TOKENS_SETTINGS_META: Record<keyof TokensSettings, SettingMeta> = {
     // Per tenant (or app) only, as before the category had platform values.
     scopes: ['tenant'],
     type: 'string',
-    default: 'roles,user_type,org_id,plan,org_type',
+    default: 'roles,groups,permissions,user_type',
     envKey: 'RBAC_ID_TOKEN_CLAIMS',
     label: 'ID Token RBAC Claims',
     description: 'Comma-separated list of RBAC claims to embed in ID tokens (none to disable)',
@@ -112,7 +112,7 @@ export const TOKENS_SETTINGS_META: Record<keyof TokensSettings, SettingMeta> = {
     // Per tenant (or app) only, as before the category had platform values.
     scopes: ['tenant'],
     type: 'string',
-    default: 'roles,org_id,org_type',
+    default: 'roles,groups',
     envKey: 'RBAC_ACCESS_TOKEN_CLAIMS',
     label: 'Access Token RBAC Claims',
     description: 'Comma-separated list of RBAC claims to embed in access tokens (none to disable)',
@@ -196,8 +196,8 @@ export const TOKENS_DEFAULTS: TokensSettings = {
   'tokens.exchange_impersonation_enabled': false,
   'tokens.introspection_strict_validation': false,
   'tokens.introspection_extended_claims': false,
-  'tokens.rbac_id_token_claims': 'roles,user_type,org_id,plan,org_type',
-  'tokens.rbac_access_token_claims': 'roles,org_id,org_type',
+  'tokens.rbac_id_token_claims': 'roles,groups,permissions,user_type',
+  'tokens.rbac_access_token_claims': 'roles,groups',
   'tokens.exchange_allowed_subject_token_types': 'access_token',
   'tokens.id_jag_allowed_issuers': [],
   'tokens.id_jag_max_token_lifetime': 3600,

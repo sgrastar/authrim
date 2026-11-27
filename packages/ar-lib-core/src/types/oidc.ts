@@ -2,7 +2,7 @@
  * OpenID Connect and OAuth 2.0 Type Definitions
  */
 
-import type { OrganizationType, PlanType, UserType } from './rbac';
+import type { OrganizationType, PlanType, RBACTokenClaims, UserType } from './rbac';
 import type { AuthorizationDetails } from './rar';
 import type { JWKS } from './jwk';
 import type { InformationReleaseConsentSetting } from '../services/information-release-consent';
@@ -205,6 +205,10 @@ export interface IDTokenClaims {
   // ==========================================================================
   /** User's effective roles */
   authrim_roles?: string[];
+  /** User's effective groups */
+  authrim_groups?: RBACTokenClaims['authrim_groups'];
+  /** Tenant-wide permissions of the user's roles */
+  authrim_permissions?: RBACTokenClaims['authrim_permissions'];
   /** User type classification (for UI/logging purposes) */
   authrim_user_type?: UserType;
   /** Primary organization ID */

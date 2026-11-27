@@ -86,6 +86,19 @@ describe('resolveSourceClassification', () => {
     ).toBe('pii');
   });
 
+  it('knows the canonical group memberships (memberOf) without any catalog entry', () => {
+    expect(
+      resolveSourceClassification([], { namespace: 'authrim.profile', path: 'memberOf' })
+    ).toBe('internal');
+    expect(
+      resolveSourceClassification([], {
+        namespace: 'authrim.profile',
+        path: 'memberOf',
+        catalogEntryId: 'system.identity.member_of',
+      })
+    ).toBe('internal');
+  });
+
   it('is unknown for a place nothing describes, an id the catalog lacks, or an id of another place', () => {
     expect(
       resolveSourceClassification(entries, { namespace: 'authrim.profile', path: 'x' })

@@ -53,6 +53,12 @@ export interface SAMLAttributeSubject {
   customClaims?: Record<string, unknown>;
   customFields?: Record<string, unknown>;
   /**
+   * The keys of the person's effective groups (direct memberships and their ancestors, active
+   * only), from the canonical memberships. A rule releases it as `memberOf`; strings only, as the
+   * attribute normalisation takes primitives.
+   */
+  memberOf?: string[];
+  /**
    * The person's effective IAL ("IAL2"), read from their assurance evidence. Set only by
    * resolveSAMLAssuranceAttributes, never from user data, and only when a mapping releases it.
    */

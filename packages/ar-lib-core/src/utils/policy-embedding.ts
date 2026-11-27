@@ -100,7 +100,7 @@ export interface PolicyEmbeddingOptions {
 /**
  * Role-permission mapping cache key prefix
  */
-const PERMISSION_CACHE_PREFIX = 'policy:perms:v2:';
+const PERMISSION_CACHE_PREFIX = 'policy:perms:v3:';
 
 /**
  * Parse scope string into resource:action pairs

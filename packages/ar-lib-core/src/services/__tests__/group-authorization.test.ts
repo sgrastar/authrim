@@ -114,6 +114,84 @@ describe('end-user group authorization across two databases', () => {
     expect(meta.db.prepare('SELECT count(*) n FROM group_role_assignments').get()?.n).toBe(1);
   });
 
+  it('puts only tenant-wide grants in the flat claims, and groups in authrim_groups', async () => {
+    const root = await create('root');
+    const child = await create('child', root);
+    const other = await create('other');
+    await join(child);
+    await updateGroup(meta.adapter, tenant, other, { lifecycleState: 'suspended' });
+    await join(other);
+    account.db
+      .exec(`INSERT INTO role_assignments(id,tenant_id,subject_id,role_id,scope_type,scope_target,created_at,updated_at)
+      VALUES('wide','tenant-a','user-1','writer','global','',1,1),
+            ('narrow','tenant-a','user-1','reader','resource','doc:1',1,1)`);
+    await assignGroupRole(meta.adapter, tenant, { groupId: root, roleId: 'reader' });
+    await assignGroupRole(meta.adapter, tenant, {
+      groupId: child,
+      roleId: 'reader',
+      scopeType: 'group',
+      scopeTarget: 'group:reports',
+    });
+    meta.db.exec(
+      `UPDATE roles SET permissions_json='["reports:read","reports:audit"]' WHERE id='reader'`
+    );
+    const config = 'roles,groups,permissions,scoped_roles';
+    const options = { tenantId: tenant, claimsConfig: config };
+    const expectedGroups = [
+      { id: child, key: 'child', name: 'child', kind: 'static' },
+      { id: root, key: 'root', name: 'root', kind: 'static' },
+    ];
+    for (const claims of [
+      await getIDTokenRBACClaims(stores(), user, options),
+      await getAccessTokenRBACClaims(stores(), user, options),
+    ]) {
+      // The tenant-wide group grant (Reader through root) and the global direct grant (Writer).
+      expect(claims.authrim_roles).toEqual(['Reader', 'Writer']);
+      expect(claims.authrim_permissions).toEqual([
+        'reports:audit',
+        'reports:read',
+        'reports:write',
+      ]);
+      // The group-scoped and the resource-scoped grants stay in the scoped claim with a target.
+      expect(claims.authrim_scoped_roles).toEqual(
+        expect.arrayContaining([
+          { name: 'Reader', scope: 'group', scopeTarget: 'group:reports' },
+          { name: 'Reader', scope: 'resource', scopeTarget: 'doc:1' },
+        ])
+      );
+      // Direct memberships and ancestors, active only (the suspended group is out).
+      expect(claims.authrim_groups).toEqual(expectedGroups);
+    }
+    // The access token default carries no group-scoped permission and the groups.
+    const defaults = await getAccessTokenRBACClaims(stores(), user, { tenantId: tenant });
+    expect(defaults.authrim_groups).toEqual(expectedGroups);
+    expect(Object.keys(defaults).sort()).toEqual(['authrim_groups', 'authrim_roles']);
+    const composite = await getCompositeRBACCache(stores(), user, { tenantId: tenant });
+    expect(composite.groups).toEqual(expectedGroups);
+    expect(composite.roles).toEqual(['Reader', 'Writer']);
+  });
+
+  it('keeps a role held only through a group scope or a resource out of the flat claims', async () => {
+    const group = await create('team');
+    await join(group);
+    account.db
+      .exec(`INSERT INTO role_assignments(id,tenant_id,subject_id,role_id,scope_type,scope_target,created_at,updated_at)
+      VALUES('narrow','tenant-a','user-1','writer','resource','doc:1',1,1)`);
+    await assignGroupRole(meta.adapter, tenant, {
+      groupId: group,
+      roleId: 'reader',
+      scopeType: 'resource',
+      scopeTarget: 'doc:2',
+    });
+    const claims = await getAccessTokenRBACClaims(stores(), user, {
+      tenantId: tenant,
+      claimsConfig: 'roles,scoped_roles,permissions',
+    });
+    expect(claims.authrim_roles).toBeUndefined();
+    expect(claims.authrim_permissions).toBeUndefined();
+    expect(claims.authrim_scoped_roles).toHaveLength(2);
+  });
+
   it('replaces one source atomically and preserves overlapping ownership and other sources', async () => {
     const a = await create('a');
     const b = await create('b');
@@ -241,6 +319,9 @@ describe('end-user group authorization across two databases', () => {
     await createGroup(meta.adapter, 'other', { groupKey: 'g', displayName: 'G' });
     expect(await read()).toEqual([['Reader'], ['Reader'], ['Reader']]);
     expect(cache.put.mock.calls.length).toBe(writes);
+    // A rename alone changes authrim_groups, so it bumps the tenant version too.
+    await updateGroup(meta.adapter, tenant, g, { displayName: 'Renamed' }, options.cache);
+    expect(values.has(`rbac:v2:tenant-version:${tenant}`)).toBe(true);
     // A cached entry is not served past the next scheduled change of the subject's roles.
     await upsertGroupMembership(
       stores(),

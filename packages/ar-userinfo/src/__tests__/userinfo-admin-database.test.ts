@@ -34,6 +34,8 @@ vi.mock('@authrim/ar-lib-core', async () => {
     ...actual,
     findOAuthClientConsentRevocation: mockFindConsentRevocation,
     createAccountAuthContextFromHono: () => ({ coreAdapter: {} }),
+    // This test is about the Mapping Set's database: the subject has no roles or groups.
+    loadSubjectServerClaims: async () => ({}),
     introspectTokenFromContext: mockIntrospectTokenFromContext,
     getClientCached: mockGetClientCached,
     CanonicalRuntimeUserProjectionRepository: vi.fn().mockImplementation(function () {

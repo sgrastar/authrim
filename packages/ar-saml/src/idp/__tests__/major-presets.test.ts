@@ -55,7 +55,7 @@ describe('major SAML attribute presets', () => {
     const attributes = buildSAMLAttributesForSP(enterpriseSaaSSubjectFixture, {
       attributeMapping: {},
       identityMapping: buildIdentityMappingConfig([
-        ['groups', 'authrim.custom_claims', 'groups', 'Groups', 'Groups'],
+        ['groups', 'authrim.profile', 'memberOf', 'Groups', 'Groups'],
       ]),
     });
 

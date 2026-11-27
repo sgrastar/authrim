@@ -6,6 +6,8 @@ import {
   resolveCustomClaimRuntimeSourcesFromEnv,
   resolveAccountDataContext,
   resolveAccountDataContextByIdentifier,
+  resolveTenantMetadataContext,
+  resolveSubjectGroupClaims,
   type DatabaseAdapter,
 } from '@authrim/ar-lib-core';
 import type { SAMLAttributeSubject } from '../idp/attributes';
@@ -131,6 +133,7 @@ export async function getSamlUserInfoById(
     piiAdapter
   )?.findByLegacyUserId(userId);
   if (canonicalProjection) {
+    const memberOf = await getSamlMemberOf(env, tenantId, userId, coreAdapter);
     return {
       id: canonicalProjection.id,
       ...(canonicalProjection.email ? { email: canonicalProjection.email } : {}),
@@ -145,11 +148,35 @@ export async function getSamlUserInfoById(
         : {}),
       ...(canonicalProjection.picture ? { picture_url: canonicalProjection.picture } : {}),
       ...(canonicalProjection.locale ? { locale: canonicalProjection.locale } : {}),
+      ...(memberOf.length > 0 ? { memberOf } : {}),
       customClaims: await getNonPiiCustomClaims(env, tenantId, userId),
       customFields: parseCustomFields(canonicalProjection.custom_attributes_json),
     };
   }
   return null;
+}
+
+/**
+ * The keys of the person's effective groups (direct memberships and their ancestors, active
+ * only), from the canonical memberships. Left out when they cannot be read.
+ */
+async function getSamlMemberOf(
+  env: Env,
+  tenantId: string,
+  userId: string,
+  account: DatabaseAdapter
+): Promise<string[]> {
+  try {
+    const metadata = await resolveTenantMetadataContext(env, tenantId);
+    const groups = await resolveSubjectGroupClaims(
+      { metadata: metadata.coreDb, account },
+      tenantId,
+      userId
+    );
+    return groups.map((group) => group.key);
+  } catch {
+    return [];
+  }
 }
 
 async function getNonPiiCustomClaims(
