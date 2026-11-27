@@ -18,6 +18,15 @@ async function fixture(mode: 'scheduled' | 'pipeline') {
       'utf8'
     )
   );
+  f.db.exec(
+    readFileSync(
+      new URL(
+        '../../../../migrations/core/d1/017_service_group_scim_membership_inputs.sql',
+        import.meta.url
+      ),
+      'utf8'
+    )
+  );
   f.db
     .exec(`INSERT INTO identity_subjects(id,tenant_id,subject_type,lifecycle_state,created_at,updated_at) VALUES('subject','tenant-a','person','active',1,1);
  INSERT INTO "groups"(id,tenant_id,group_key,display_name,lifecycle_state,created_at,updated_at) VALUES('group','tenant-a','group','Group','active',1,1);`);

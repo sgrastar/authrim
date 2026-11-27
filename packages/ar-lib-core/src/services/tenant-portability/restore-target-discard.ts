@@ -92,10 +92,10 @@ export const TENANT_DISCARD_UNPLANNED_TABLES: Readonly<
     legal_hold_projection_outbox: byTenantId,
     lookup_retention_policy_projection_outbox: byTenantId,
     relationship_closure: byTenantId,
-    service_group_catalog: byTenantId,
+    // Rebuilt after a restore (the newest dynamic generation published per subject).
+    dynamic_membership_publications: byTenantId,
     service_group_epoch: byTenantId,
     service_group_results: byTenantId,
-    service_group_revisions: byTenantId,
     service_group_scans: byTenantId,
     ciba_requests: byTenantId,
     credential_offers: byTenantId,

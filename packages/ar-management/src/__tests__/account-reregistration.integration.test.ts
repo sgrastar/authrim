@@ -163,15 +163,19 @@ function d1Over(db: SQLiteDatabase): unknown {
 
 function openCore(): { database: SQLiteDatabase; adapter: DatabaseAdapter } {
   const db = new DatabaseSync(':memory:');
-  db.exec(
-    renderPortableMigrationSql(
-      readFileSync(
-        new URL('../../../../migrations/core/d1/001_0_5_0_core_baseline.sql', import.meta.url),
-        'utf8'
-      ),
-      'sqlite'
-    )
-  );
+  // The baseline, the end-user group tables and the dynamic membership publication record the
+  // account deletion clears.
+  for (const file of [
+    '001_0_5_0_core_baseline.sql',
+    '015_end_user_groups.sql',
+    '017_service_group_scim_membership_inputs.sql',
+  ])
+    db.exec(
+      renderPortableMigrationSql(
+        readFileSync(new URL(`../../../../migrations/core/d1/${file}`, import.meta.url), 'utf8'),
+        'sqlite'
+      )
+    );
   const values = (params: unknown[] = []) =>
     params.map((value) => (value === undefined ? null : value) as SQLInputValue);
   const run = (statement: PreparedStatement) => ({
