@@ -2909,6 +2909,10 @@ describe('Direct Auth primary passkey and email-code flows', () => {
           tenantId: 'tenant_test',
           roleId: 'role_member',
           orgId: null,
+          // No group on this invitation; the membership would carry the invitation id.
+          groupId: undefined,
+          invitationId: 'invite_1',
+          cache: undefined,
         }
       );
       // Claimed before anything is assigned, and assigned before the artifact is issued so the
@@ -6791,6 +6795,9 @@ describe('Direct Auth primary passkey and email-code flows', () => {
           tenantId: 'tenant_test',
           roleId: null,
           orgId: 'org_1',
+          groupId: undefined,
+          invitationId: 'invite_1',
+          cache: undefined,
         }
       );
       // A failed optional assignment is logged; the sign-in still completes.
