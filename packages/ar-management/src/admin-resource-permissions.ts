@@ -14,7 +14,7 @@ type AdminPermissionMiddleware = (
 ) => Promise<Response | void>;
 
 function isUserRbacSubresource(path: string): boolean {
-  return /^\/api\/admin\/users\/[^/]+\/(roles|relationships|effective-permissions)(?:\/|$)/.test(
+  return /^\/api\/admin\/users\/[^/]+\/(roles|relationships|effective-permissions|groups)(?:\/|$)/.test(
     path
   );
 }

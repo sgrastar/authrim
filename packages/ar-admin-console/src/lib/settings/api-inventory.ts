@@ -121,6 +121,14 @@ export const API_GROUPS: readonly ApiGroup[] = [
 		paths: [`${A}/service-groups`]
 	},
 	{
+		id: 'groups',
+		name: 'Groups',
+		kind: 'records',
+		page: 'users/service-groups',
+		paths: [`${A}/groups`],
+		note: 'End-user groups: members and the roles granted to a group. One user’s groups: /users/{id}/groups.'
+	},
+	{
 		id: 'guests',
 		name: 'Guest accounts and retention',
 		kind: 'records',
@@ -265,7 +273,6 @@ export const API_GROUPS: readonly ApiGroup[] = [
 		kind: 'records',
 		page: 'access/mapping-sets',
 		paths: [
-			`${A}/identity-mapping/groups`,
 			`${A}/identity-mapping/entitlements`,
 			`${A}/identity-mapping/provisioning-assignment-rules`,
 			`${A}/identity-mapping/source-authority-contracts`,

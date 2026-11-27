@@ -169,6 +169,25 @@ export async function revokeGroupMembership(
   if (cache) await invalidateSubjectRBACCache(cache, tenantId, subjectId);
 }
 
+/**
+ * Revokes every `manual` row of the subject in the group with one statement (whatever its
+ * `source_ref`), then drops the subject's cached claims once.
+ */
+export async function revokeManualGroupMemberships(
+  dbs: TenantRBACDatabases,
+  tenantId: string,
+  subjectId: string,
+  groupId: string,
+  cache?: KVNamespace
+) {
+  await ensureDatabaseAdapter(dbs.account).execute(
+    `UPDATE group_memberships SET lifecycle_state='revoked', updated_at=?
+     WHERE tenant_id=? AND subject_id=? AND group_id=? AND assignment_source='manual'`,
+    [Math.floor(Date.now() / 1000), tenantId, subjectId, groupId]
+  );
+  if (cache) await invalidateSubjectRBACCache(cache, tenantId, subjectId);
+}
+
 export async function replaceSourceMemberships(
   dbs: TenantRBACDatabases,
   tenantId: string,

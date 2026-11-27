@@ -569,6 +569,11 @@ export const ADMIN_PERMISSIONS = {
   ROLES_DELETE: 'admin:roles:delete',
   ROLES_ALL: 'admin:roles:*',
 
+  // End-user groups (definitions, memberships and the roles granted to a group)
+  GROUPS_READ: 'admin:groups:read',
+  GROUPS_WRITE: 'admin:groups:write',
+  GROUPS_ALL: 'admin:groups:*',
+
   // Admin role management (Admin roles in DB_ADMIN)
   ADMIN_ROLES_READ: 'admin:admin_roles:read',
   ADMIN_ROLES_WRITE: 'admin:admin_roles:write',
@@ -916,6 +921,16 @@ export function hasAdminPermission(permissions: string[], required: string): boo
   };
   const parent = compatibilityParent[required];
   if (parent && permissions.includes(parent)) return true;
+
+  // Groups carry roles: whoever holds the role permissions (also as `admin:roles:*`) holds the
+  // group ones until the standard roles list them (a role migration).
+  const roleParent =
+    required === ADMIN_PERMISSIONS.GROUPS_READ
+      ? ADMIN_PERMISSIONS.ROLES_READ
+      : required === ADMIN_PERMISSIONS.GROUPS_WRITE
+        ? ADMIN_PERMISSIONS.ROLES_WRITE
+        : null;
+  if (roleParent && hasAdminPermission(permissions, roleParent)) return true;
 
   // Check wildcard patterns
   const parts = required.split(':');
