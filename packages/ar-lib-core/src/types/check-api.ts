@@ -121,6 +121,70 @@ export interface CheckApiRequest {
 }
 
 /**
+ * The two Check API contracts.
+ *
+ * - `server`: a server credential (a `chk_` API key or the policy service secret). It may ask
+ *   about any subject of its tenant and pass the evaluation material itself (`resource_context`,
+ *   `rebac`): the caller is a trusted backend that owns that material.
+ * - `self`: an end-user access token. The subject is the token's own account (bound by the policy
+ *   service, never taken from the body), and the request carries only `permission` (the resource
+ *   type, optional id and action). The resource's owner, group and attributes are resolved by the
+ *   service (see ResourceContextResolver); nothing the caller writes can grant it access.
+ */
+export type CheckContract = 'server' | 'self';
+
+/**
+ * What a resource context resolver is asked: the resource of a self-contract check.
+ */
+export interface ResourceContextLookup {
+  tenantId: string;
+  /** The resource type of the permission (`documents` in `documents:doc_1:read`) */
+  resourceType: string;
+  /** The resource id, for an ID-level permission */
+  resourceId?: string;
+  /**
+   * The action asked for (`read` in `documents:doc_1:read`): a resolver may name a different
+   * relation per action, or none for an action no relation grants.
+   */
+  action: string;
+  /** The subject the check is for (the token's account) */
+  subjectId: string;
+  /** The client the access token was issued to, when known */
+  clientId?: string;
+}
+
+/**
+ * The material a resolver found for a resource (each field optional; none found is `null`).
+ */
+export interface ResolvedResourceContext {
+  /**
+   * The resource's owner. For a self-contract check it never grants by itself (no owner
+   * shortcut): it is material for the tenant's attribute-based rules, which decide per action.
+   */
+  owner_id?: string;
+  group_id?: string;
+  attributes?: Record<string, unknown>;
+  /**
+   * The relationship that would grant this permission on this resource, for a tenant that turns
+   * ReBAC on: only a direct tuple from the bound subject (`from_type = 'subject'`) to the object
+   * with this relation grants it (no usersets, no computed relations).
+   */
+  rebac?: { relation: string; object_type: string; object_id: string };
+}
+
+/**
+ * Resolves the owner, group and attributes of a resource for self-contract checks, server-side.
+ *
+ * It returns `null` when it knows nothing about the resource: the check then runs without a
+ * resource context (no ownership grant, no group-scoped role match, no resource attributes), so
+ * no allow can come from material that could not be resolved. A resolver that throws is treated
+ * the same way.
+ */
+export interface ResourceContextResolver {
+  resolve(lookup: ResourceContextLookup): Promise<ResolvedResourceContext | null>;
+}
+
+/**
  * Batch check request
  */
 export interface BatchCheckRequest {
@@ -137,7 +201,7 @@ export interface BatchCheckRequest {
 /**
  * Resolution method - how the permission was resolved
  */
-export type ResolvedVia = 'direct' | 'role' | 'rebac' | 'id_level' | 'computed';
+export type ResolvedVia = 'direct' | 'role' | 'group_role' | 'rebac' | 'id_level' | 'computed';
 
 /**
  * Final decision
@@ -541,6 +605,11 @@ export interface TenantPolicySettings {
   abac: boolean;
   /** Load the subject's verified attributes for the evaluator */
   verifiedAttributes: boolean;
+  /**
+   * Evaluate a request's relationship check (`feature.enable_rebac`). Unset is off: a request's
+   * `rebac` is then not evaluated.
+   */
+  rebac?: boolean;
   /** Log each decision */
   logDecisions: boolean;
   /** The tenant's rules (its custom rules), when attribute-based policy is on */

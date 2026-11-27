@@ -29,6 +29,8 @@ export const LOOKUP_HMAC_VERIFICATION_BINDINGS = {
   'ar-saml': 'SMOKE_AR_SAML',
   'ar-bridge': 'SMOKE_AR_BRIDGE',
   'ar-vc': 'SMOKE_AR_VC',
+  // The Check API resolves end-user tokens' accounts through the lookup directory.
+  'ar-policy': 'SMOKE_AR_POLICY',
 } as const satisfies Readonly<Record<string, keyof ControlEnv>>;
 
 export const LOOKUP_HMAC_VERIFICATION_COMPONENTS = Object.keys(

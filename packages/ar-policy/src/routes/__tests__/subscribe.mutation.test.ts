@@ -85,7 +85,7 @@ beforeEach(() => {
   spies.authenticate.mockResolvedValue(auth);
   spies.getAdapter.mockReturnValue(adapter);
   spies.getLogger.mockReturnValue({
-    module: spies.moduleName.mockReturnValue({ error: spies.logError }),
+    module: spies.moduleName.mockReturnValue({ error: spies.logError, warn: vi.fn() }),
   });
 });
 
@@ -128,6 +128,18 @@ describe('GET /subscribe', () => {
     expect(spies.authenticate).not.toHaveBeenCalled();
   });
 
+  it('authenticates from the Authorization header, ignoring a query token then', async () => {
+    const hub = createHub();
+    const env = envWith(hub);
+    await subscribeRoutes.request(
+      '/subscribe?token=chk_query',
+      { headers: { ...WS, Authorization: 'Bearer chk_header' } },
+      env
+    );
+    expect(spies.authenticate).toHaveBeenCalledTimes(1);
+    expect(spies.authenticate).toHaveBeenCalledWith('Bearer chk_header', expect.anything());
+  });
+
   it('wraps the query token as a bearer credential for the route collaborators', async () => {
     const hub = createHub();
     const env = envWith(hub);
@@ -136,6 +148,7 @@ describe('GET /subscribe', () => {
       db: adapter,
       cache: env.CHECK_CACHE_KV,
       policyApiSecret: 'policy-secret',
+      accessTokenVerifier: expect.any(Function) as unknown,
     });
   });
 
@@ -239,6 +252,41 @@ describe('GET /subscribe/stats', () => {
     expect(spies.authenticate).not.toHaveBeenCalled();
   });
 
+  it('maps verification results as /api/check does: 503 when unavailable, 401 when invalid', async () => {
+    const hub = createHub();
+    spies.authenticate.mockResolvedValue({
+      authenticated: false,
+      error: 'temporarily_unavailable',
+      statusCode: 503,
+    });
+    expect((await stats(hub)).status).toBe(503);
+    expect(
+      (
+        await subscribeRoutes.request(
+          '/subscribe',
+          { headers: { ...WS, Authorization: 'Bearer t' } },
+          envWith(hub)
+        )
+      ).status
+    ).toBe(503);
+    spies.authenticate.mockResolvedValue({
+      authenticated: false,
+      error: 'invalid_token',
+      statusCode: 401,
+    });
+    expect((await stats(hub)).status).toBe(401);
+    spies.errorResponse.mockClear();
+  });
+
+  it('requires the subscribe operation', async () => {
+    const hub = createHub();
+    spies.authenticate.mockResolvedValue({ ...auth, allowedOperations: ['check'] });
+    const response = await stats(hub);
+    expect(response.status).toBe(403);
+    expect(lastErrorCode()).toBe(AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);
+    expect(hub.fetch).not.toHaveBeenCalled();
+  });
+
   it('authenticates with the Authorization header and the route collaborators', async () => {
     const hub = createHub();
     const env = envWith(hub);
@@ -247,6 +295,7 @@ describe('GET /subscribe/stats', () => {
       db: adapter,
       cache: env.CHECK_CACHE_KV,
       policyApiSecret: 'policy-secret',
+      accessTokenVerifier: expect.any(Function) as unknown,
     });
   });
 

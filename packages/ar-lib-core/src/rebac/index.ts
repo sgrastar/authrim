@@ -97,3 +97,17 @@ export {
   parseObjectString,
   buildObjectString,
 } from './relation-parser';
+
+// Tuple type rules (which tuples may be written)
+export {
+  ruleOnRelationshipTupleSource,
+  relationshipSourceTypes,
+  declaresTuplesetRelation,
+  REBAC_SUBJECT_FROM_TYPE,
+  REBAC_GROUP_FROM_TYPE,
+} from './tuple-type-rules';
+export type {
+  RelationshipTupleSourceKind,
+  RelationshipTupleSourceRuling,
+  TupleTypeRuleStore,
+} from './tuple-type-rules';

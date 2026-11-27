@@ -436,6 +436,7 @@ export class ReBACService implements IReBACService {
           r.id as path
         FROM relationships r
         WHERE r.tenant_id = ?
+          AND r.from_type <> 'group' -- group usersets are not evaluated yet
           AND r.from_type = 'subject'
           AND r.from_id = ?
           AND (r.expires_at IS NULL OR r.expires_at > ?)
@@ -454,6 +455,7 @@ export class ReBACService implements IReBACService {
           ON r.from_type = rch.target_type
           AND r.from_id = rch.target_id
         WHERE r.tenant_id = ?
+          AND r.from_type <> 'group' -- group usersets are not evaluated yet
           AND rch.depth < ?
           AND (r.expires_at IS NULL OR r.expires_at > ?)
       )
@@ -561,6 +563,7 @@ export class ReBACService implements IReBACService {
           1 as depth
         FROM relationships r
         WHERE r.tenant_id = ?
+          AND r.from_type <> 'group' -- group usersets are not evaluated yet
           AND r.from_type = 'subject'
           AND r.from_id = ?
           AND (r.expires_at IS NULL OR r.expires_at > ?)
@@ -578,6 +581,7 @@ export class ReBACService implements IReBACService {
           ON r.from_type = rch.target_type
           AND r.from_id = rch.target_id
         WHERE r.tenant_id = ?
+          AND r.from_type <> 'group' -- group usersets are not evaluated yet
           AND rch.depth < ?
           AND (r.expires_at IS NULL OR r.expires_at > ?)
       )
@@ -634,6 +638,7 @@ export class ReBACService implements IReBACService {
           1 as depth
         FROM relationships r
         WHERE r.tenant_id = ?
+          AND r.from_type <> 'group' -- group usersets are not evaluated yet
           AND r.to_type = ?
           AND r.to_id = ?
           AND r.relationship_type = ?
@@ -652,6 +657,7 @@ export class ReBACService implements IReBACService {
           ON r.to_type = rch.source_type
           AND r.to_id = rch.source_id
         WHERE r.tenant_id = ?
+          AND r.from_type <> 'group' -- group usersets are not evaluated yet
           AND rch.depth < ?
           AND (r.expires_at IS NULL OR r.expires_at > ?)
       )

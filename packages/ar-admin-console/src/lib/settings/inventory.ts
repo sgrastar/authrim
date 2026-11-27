@@ -495,7 +495,8 @@ place('access/policies', 'Policies', {
 		'feature.enable_policy_logging',
 		'feature.enable_policy_embedding',
 		'feature.enable_id_level_permissions',
-		'feature.enable_check_api'
+		'feature.enable_check_api',
+		'check.audience'
 	],
 	search: [
 		'limits.max_embedded_permissions',

@@ -172,6 +172,12 @@ export const errorMessagesJa: ErrorMessages = {
     'リレーションシップベースのアクセス制御によりアクセスが拒否されました。',
   'policy.abac_denied.title': 'アクセス拒否',
   'policy.abac_denied.detail': '属性ベースのアクセス制御によりアクセスが拒否されました。',
+  'policy.check_contract_violation.title': 'この認証情報では受け付けない要求です',
+  'policy.check_contract_violation.detail':
+    'エンドユーザーのアクセストークンで聞けるのは、本人についての権限と資源だけです。resource_context と rebac はサーバー用の認証情報が必要です。',
+  'policy.rebac_tuple_type_not_allowed.title': '受け付けない関係タプルの種類です',
+  'policy.rebac_tuple_type_not_allowed.detail':
+    '関係タプルの元は、主体、グループ、または tuple_to_userset の元として定義されたオブジェクト種別と関係のいずれかである必要があります。',
 
   // ============================================
   // Admin API (ADMIN)

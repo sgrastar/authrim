@@ -329,15 +329,17 @@ describe('Check API Authentication Middleware', () => {
       };
       cache.set(`check:apikey:${keyHash}`, JSON.stringify(cacheKey));
 
-      const db = createMockDb();
+      // The key's current status, read by id on a cache hit.
+      const db = createMockDb([{ key_hash: keyHash, is_active: 1, expires_at: null }]);
       const kvMock = createMockKv(cache);
       const ctx: CheckAuthContext = { db, cache: kvMock };
 
       const result = await authenticateCheckApiRequest(`Bearer ${TEST_API_KEY}`, ctx);
 
       expect(result.authenticated).toBe(true);
-      // DB should not be called since cache was hit
-      expect(db.prepare).not.toHaveBeenCalled();
+      // One status read (by id), not the prefix lookup
+      expect(db.prepare).toHaveBeenCalledTimes(1);
+      expect(db.prepare).toHaveBeenCalledWith(expect.stringContaining('WHERE id = ?'));
     });
 
     it('should cache API key after successful DB validation', async () => {

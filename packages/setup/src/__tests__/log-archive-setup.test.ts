@@ -1420,7 +1420,9 @@ describe('log archive setup contract', () => {
   });
 
   it('keeps draft secret recipients minimal until the archive path is selected', () => {
-    expect(getSecretNamesForWorker('ar-policy')).not.toContain('OBJECT_ENCRYPTION_ROOT_KEY');
+    // ar-policy holds OBJECT_ENCRYPTION_ROOT_KEY regardless: the Check API opens pairwise tokens'
+    // sealed account references with it. The archive-only secrets still wait for the archive.
+    expect(getSecretNamesForWorker('ar-policy')).toContain('OBJECT_ENCRYPTION_ROOT_KEY');
     expect(getSecretNamesForWorker('ar-policy')).not.toContain('LOG_ARCHIVE_CONTENT_HMAC_KEY');
     expect(getSecretNamesForWorker('ar-policy', { logArchive: true })).toEqual(
       expect.arrayContaining(['OBJECT_ENCRYPTION_ROOT_KEY', 'LOG_ARCHIVE_CONTENT_HMAC_KEY'])

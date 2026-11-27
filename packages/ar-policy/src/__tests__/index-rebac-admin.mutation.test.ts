@@ -208,7 +208,9 @@ describe('POST /api/rebac/write', () => {
     });
     expect(result.status).toBe(200);
 
-    const lookupParams = ['t1', 'user', 'u1', 'document', 'doc1', 'viewer'];
+    // A direct subject sent as `user` is stored and matched as `subject` (the type the check reads).
+    // ... and also matches a row an older write stored as `user`.
+    const lookupParams = ['t1', 'subject', 'user', 'u1', 'document', 'doc1', 'viewer'];
     expect(probe.adapter.queryOne).toHaveBeenCalledTimes(1);
     const lookup = must(probe.adapter.queryOne.mock.calls[0]);
     expect(lookup[0]).toContain('SELECT id FROM relationships');
@@ -224,7 +226,7 @@ describe('POST /api/rebac/write', () => {
       id,
       't1',
       'viewer',
-      'user',
+      'subject',
       'u1',
       'document',
       'doc1',
@@ -243,7 +245,7 @@ describe('POST /api/rebac/write', () => {
         object_type: 'document',
         object_id: 'doc1',
         relation: 'viewer',
-        subject_type: 'user',
+        subject_type: 'subject',
         subject_id: 'u1',
         expires_at: 1_800_000_000,
         created_at: NOW_S,
@@ -313,10 +315,24 @@ describe('POST /api/rebac/write', () => {
     expect(probe.adapter.queryOne).toHaveBeenCalledTimes(2);
     const relookup = must(probe.adapter.queryOne.mock.calls[1]);
     expect(relookup[0]).toContain('SELECT id FROM relationships');
-    expect(relookup[1]).toEqual(['t1', 'user', 'u1', 'document', 'doc1', 'viewer']);
+    expect(relookup[1]).toEqual(['t1', 'subject', 'user', 'u1', 'document', 'doc1', 'viewer']);
     const update = must(probe.adapter.execute.mock.calls[1]);
     expect(update[0]).toContain('UPDATE relationships');
     expect(update[1]).toEqual([5, NOW_S, 'raced-1', 't1']);
+    expect((result.json.tuple as { id: string }).id).toBe('raced-1');
+  });
+
+  it('recognises a unique-constraint failure wrapped in cause (as the D1 adapter throws it)', async () => {
+    probe.adapter.queryOne.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: 'raced-1' });
+    probe.adapter.execute
+      .mockRejectedValueOnce(
+        new Error('D1 operation failed after retries exhausted', {
+          cause: new Error('D1_ERROR: UNIQUE constraint failed: relationships.tenant_id'),
+        })
+      )
+      .mockResolvedValueOnce({ rowsAffected: 1 });
+    const result = await call('POST', '/api/rebac/write', tupleBody);
+    expect(result.status).toBe(200);
     expect((result.json.tuple as { id: string }).id).toBe('raced-1');
   });
 
@@ -371,6 +387,117 @@ describe('POST /api/rebac/write', () => {
   });
 });
 
+describe('ReBAC tuple type rules on /api/rebac/write and DELETE /api/rebac/tuples', () => {
+  const PARENT_DEFINITION = JSON.stringify({
+    type: 'tuple_to_userset',
+    tupleset: { relation: 'parent' },
+    computed_userset: { relation: 'viewer' },
+  });
+
+  function withDefinitions(rows: Array<{ definition_json: string }>) {
+    const query = vi.fn().mockResolvedValue(rows);
+    (probe.adapter as unknown as { query: typeof query }).query = query;
+    return query;
+  }
+
+  it('stores a subject sent as subject unchanged', async () => {
+    const result = await call('POST', '/api/rebac/write', {
+      ...tupleBody,
+      subject_type: 'subject',
+    });
+    expect(result.status).toBe(200);
+    expect((must(probe.adapter.execute.mock.calls[0])[1] as unknown[])[3]).toBe('subject');
+  });
+
+  it('accepts a group tuple only with no from_relation or member, on write and delete', async () => {
+    for (const [method, path] of [
+      ['POST', '/api/rebac/write'],
+      ['DELETE', '/api/rebac/tuples'],
+    ] as const) {
+      const group = { ...tupleBody, subject_type: 'group', subject_id: 'grp1' };
+      expect((await call(method, path, { ...group, from_relation: 'member' })).status).toBe(200);
+      for (const body of [
+        { ...group, from_relation: 'owner' },
+        { ...group, from_relation: 7 },
+        { ...tupleBody, from_relation: 'member' },
+      ]) {
+        probe.adapter.execute.mockClear();
+        const result = await call(method, path, body);
+        expect(result.status).toBe(400);
+        expect(result.text).toContain('AR050010');
+        expect(probe.adapter.execute).not.toHaveBeenCalled();
+      }
+    }
+  });
+
+  it('stores a group userset as group (not evaluated until usersets are)', async () => {
+    const result = await call('POST', '/api/rebac/write', {
+      ...tupleBody,
+      subject_type: 'group',
+      subject_id: 'grp1',
+    });
+    expect(result.status).toBe(200);
+    const params = must(probe.adapter.execute.mock.calls[0])[1] as unknown[];
+    expect(params.slice(2, 5)).toEqual(['viewer', 'group', 'grp1']);
+  });
+
+  it('accepts an object edge declared as the source of a tuple_to_userset', async () => {
+    const query = withDefinitions([{ definition_json: PARENT_DEFINITION }]);
+    const result = await call('POST', '/api/rebac/write', {
+      tenant_id: 't1',
+      subject_type: 'document',
+      subject_id: 'doc1',
+      relation: 'parent',
+      object_type: 'folder',
+      object_id: 'f1',
+    });
+    expect(result.status).toBe(200);
+    expect(query).toHaveBeenCalledWith(expect.stringContaining('FROM relation_definitions'), [
+      't1',
+      'document',
+    ]);
+    const params = must(probe.adapter.execute.mock.calls[0])[1] as unknown[];
+    expect(params.slice(2, 7)).toEqual(['parent', 'document', 'doc1', 'folder', 'f1']);
+  });
+
+  it.each([
+    ['an undeclared object edge', { subject_type: 'document', relation: 'viewer' }],
+    ['a service subject', { subject_type: 'service' }],
+    ['an organization subject', { subject_type: 'org' }],
+  ])('refuses %s on write and delete with 400', async (_label, override) => {
+    withDefinitions([{ definition_json: PARENT_DEFINITION }]);
+    for (const [method, path] of [
+      ['POST', '/api/rebac/write'],
+      ['DELETE', '/api/rebac/tuples'],
+    ] as const) {
+      probe.adapter.execute.mockClear();
+      probe.adapter.queryOne.mockClear();
+      const result = await call(method, path, { ...tupleBody, ...override });
+      expect(result.status).toBe(400);
+      expect(result.json).toMatchObject({ error: 'invalid_request' });
+      expect(result.text).toContain('AR050010');
+      expect(probe.adapter.queryOne).not.toHaveBeenCalled();
+      expect(probe.adapter.execute).not.toHaveBeenCalled();
+    }
+    expect(probe.events).toEqual([]);
+  });
+});
+
+describe('legacy user rows', () => {
+  it('deletes a row an older write stored as user, sent as user or subject', async () => {
+    for (const subject_type of ['user', 'subject']) {
+      probe.adapter.execute.mockClear();
+      probe.adapter.execute.mockResolvedValue({ rowsAffected: 1 });
+      const result = await call('DELETE', '/api/rebac/tuples', { ...tupleBody, subject_type });
+      expect(result.status).toBe(200);
+      expect(result.json).toEqual({ success: true, deleted: true });
+      const del = must(probe.adapter.execute.mock.calls[0]);
+      expect(del[0]).toContain('from_type IN (?, ?)');
+      expect((del[1] as unknown[]).slice(1, 3)).toEqual(['subject', 'user']);
+    }
+  });
+});
+
 describe('DELETE /api/rebac/tuples', () => {
   it('deletes the tuple, invalidates the cache and publishes a revoke event', async () => {
     const result = await call('DELETE', '/api/rebac/tuples', tupleBody);
@@ -380,7 +507,8 @@ describe('DELETE /api/rebac/tuples', () => {
     expect(probe.adapter.execute).toHaveBeenCalledTimes(1);
     const del = must(probe.adapter.execute.mock.calls[0]);
     expect(del[0]).toContain('DELETE FROM relationships');
-    expect(del[1]).toEqual(['t1', 'user', 'u1', 'document', 'doc1', 'viewer']);
+    expect(del[1]).toEqual(['t1', 'subject', 'user', 'u1', 'document', 'doc1', 'viewer']);
+    expect(del[0]).toContain('from_type IN (?, ?)');
 
     expect(probe.service.invalidateCache).toHaveBeenCalledWith('t1', 'document', 'doc1', 'viewer');
     expect(probe.notifierOptions).toEqual([

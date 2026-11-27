@@ -90,6 +90,7 @@ describe('POST /batch gates', () => {
       db: adapter,
       cache: env.CHECK_CACHE_KV,
       policyApiSecret: 'policy-secret',
+      accessTokenVerifier: expect.any(Function) as unknown,
     });
   });
 
@@ -310,7 +311,13 @@ describe('POST /batch execution', () => {
         ],
         stop_on_deny: true,
       },
-      { ctx: executionCtx, apiKeyId: 'key-2', clientId: 'client-2', requestId: 'req-5' },
+      {
+        ctx: executionCtx,
+        apiKeyId: 'key-2',
+        clientId: 'client-2',
+        requestId: 'req-5',
+        contract: 'server',
+      },
     ]);
   });
 
@@ -334,9 +341,9 @@ describe('POST /batch execution', () => {
     );
   });
 
-  it('answers 500 for an unreadable body', async () => {
+  it('answers 400 for an unreadable body', async () => {
     const response = await postJson(checkRoutes, '/batch', '{oops');
-    expect(response.status).toBe(500);
-    expect(errorCall().code).toBe(AR_ERROR_CODES.INTERNAL_ERROR);
+    expect(response.status).toBe(400);
+    expect(errorCall().code).toBe(AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
   });
 });
