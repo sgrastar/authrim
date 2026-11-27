@@ -484,6 +484,7 @@ import {
   adminUserGroupsListHandler,
 } from './admin-groups';
 import { registerAdminRbacPermissionMiddleware } from './admin-rbac-permissions';
+import { adminAccessCheckHandler } from './admin-access-check';
 import {
   requireClientManagementPermission,
   registerAdminResourcePermissionMiddleware,
@@ -2631,6 +2632,10 @@ app.post('/api/admin/policies', adminPolicyCreateHandler);
 app.get('/api/admin/policies/condition-types', adminConditionTypesHandler);
 app.get('/api/admin/policies/simulations', adminPolicySimulationsHandler);
 app.post('/api/admin/policies/simulate', adminPolicySimulateHandler);
+
+// "May this user do this?" for administrators: the unified check (server contract, debug),
+// evaluated in-process (admin-access-check.ts). Access: admin:roles:read or admin:groups:read.
+app.post('/api/admin/access-check', adminAccessCheckHandler);
 app.get('/api/admin/policies/:id', adminPolicyGetHandler);
 app.put('/api/admin/policies/:id', adminPolicyUpdateHandler);
 app.delete('/api/admin/policies/:id', adminPolicyDeleteHandler);

@@ -47,6 +47,7 @@ describe('check-auth: verified access token', () => {
       method: 'access_token',
       clientId: 'client_1',
       subjectId: 'user_1',
+      tokenSubject: 'user_1',
       tenantId: 'tenant_1',
       rateLimitTier: 'moderate',
       allowedOperations: ['check', 'batch'],

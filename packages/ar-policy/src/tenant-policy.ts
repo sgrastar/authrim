@@ -3,8 +3,9 @@
  *
  * The tenant's settings decide whether attribute-based policy applies (`feature.enable_abac`),
  * whether its custom rules (`policy_rules`) take part (`feature.enable_custom_rules`), whether the
- * subject's verified attributes are loaded (`feature.enable_verified_attributes`) and whether
- * each decision is logged (`feature.enable_policy_logging`).
+ * subject's verified attributes are loaded (`feature.enable_verified_attributes`), whether a
+ * request's relationship check is evaluated (`feature.enable_rebac`) and whether each decision is
+ * logged (`feature.enable_policy_logging`).
  *
  * The rules are the tenant's own: no built-in rule takes part (the built-in roles are already
  * checked before), and a check that matches no rule is not granted by this stage.
@@ -123,6 +124,8 @@ export async function resolveTenantPolicy(
   const settings: TenantPolicySettings = {
     abac: flags.abac,
     verifiedAttributes: flags.abac && flags.verifiedAttributes,
+    // The Check API's relationship check (`feature.enable_rebac`): off when unread.
+    rebac: flags.rebac,
     logDecisions: flags.policyLogging,
     ...(read ? {} : { unavailable: true }),
   };

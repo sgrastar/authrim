@@ -1042,6 +1042,14 @@ const REVIEWED_FIELDS: readonly [string, TenantSettingValueType, TenantSettingHa
   `,
     ],
     [
+      'check',
+      'string',
+      'value',
+      `
+    check.audience
+  `,
+    ],
+    [
       'oauth',
       'enum',
       'value',

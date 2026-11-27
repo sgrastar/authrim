@@ -233,6 +233,7 @@ export * from './services/identity-mapping-source-reads';
 export * from './services/identity-mapping-output-graph';
 export * from './services/server-flow-execution';
 export * from './services/active-access-token-protected-resource';
+export * from './services/resource-context-resolver';
 export * from './services/lookup-directory';
 export * from './services/directory-auth';
 export * from './services/directory-connector-fleet';
@@ -741,6 +742,12 @@ export {
   DEFAULT_MAX_DEPTH,
   REBAC_CACHE_PREFIX,
   DEFAULT_CLOSURE_BATCH_SIZE,
+  // Tuple type rules
+  ruleOnRelationshipTupleSource,
+  relationshipSourceTypes,
+  declaresTuplesetRelation,
+  REBAC_SUBJECT_FROM_TYPE,
+  REBAC_GROUP_FROM_TYPE,
 } from './rebac';
 
 export type {
@@ -776,6 +783,9 @@ export type {
   IReBACCacheManager,
   IRelationParser,
   RelationEvaluationContext,
+  RelationshipTupleSourceKind,
+  RelationshipTupleSourceRuling,
+  TupleTypeRuleStore,
 } from './rebac';
 
 export type {

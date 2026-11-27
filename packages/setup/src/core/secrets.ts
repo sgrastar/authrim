@@ -206,8 +206,15 @@ export const SECRET_UPLOAD_PLAN: Record<WorkerComponent, readonly SecretName[]> 
     'LOOKUP_HMAC_KEY_SLOT_B',
     'CONTROL_SMOKE_VERIFYING_PUBLIC_JWKS',
   ],
+  // PUBLIC_JWK_JSON: the access-token verification key fallback; OBJECT_ENCRYPTION_ROOT_KEY:
+  // opening a pairwise token's sealed account reference (the Check API's self contract).
+  // LOOKUP_HMAC_KEY_SLOT_A/B: the lookup directory's blind index (the token's account).
   'ar-policy': [
+    'PUBLIC_JWK_JSON',
+    'OBJECT_ENCRYPTION_ROOT_KEY',
     'TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS',
+    'LOOKUP_HMAC_KEY_SLOT_A',
+    'LOOKUP_HMAC_KEY_SLOT_B',
     'CONTROL_SMOKE_VERIFYING_PUBLIC_JWKS',
   ],
   'ar-saml': [

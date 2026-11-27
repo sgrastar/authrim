@@ -12,8 +12,13 @@
  * Evaluation Order (first match wins):
  * 1. ID-Level Permission Check (resource_permissions table)
  * 2. Role-Based Permission Check (RBAC)
- * 3. ReBAC Check (relationships via ReBACService)
+ * 3. ReBAC Check (relationships via ReBACService), only when the tenant enables ReBAC
+ *    (`feature.enable_rebac`) and the request carries `rebac`
  * 4. Computed/ABAC (resource_context evaluation)
+ *
+ * Contracts (see CheckContract): a `server` check takes `resource_context` and `rebac` from the
+ * request. A `self` check (an end-user access token) never does: its resource context comes from
+ * the configured ResourceContextResolver (none by default), and it has no relationship check.
  */
 
 import type { KVNamespace } from '@cloudflare/workers-types';
@@ -22,6 +27,8 @@ import { ensureDatabaseAdapter, type DatabaseAdapter, type DatabaseSource } from
 import type {
   CheckApiRequest,
   CheckApiResponse,
+  CheckContract,
+  ResourceContextResolver,
   BatchCheckRequest,
   BatchCheckResponse,
   ParsedPermission,
@@ -40,6 +47,7 @@ import type { CheckAuditService, PermissionCheckAuditEntry } from './check-audit
 import { generateAuditId } from './check-audit-service';
 import type { ReBACService, CheckRequest as ReBACCheckRequest } from '../rebac';
 import { hasIdLevelPermission } from '../utils/resource-permissions';
+import { NO_RESOURCE_CONTEXT_RESOLVER } from './resource-context-resolver';
 import { createLogger } from '../utils/logger';
 import {
   resolveSubjectRoles,
@@ -246,23 +254,51 @@ export interface UnifiedCheckServiceConfig {
   /** Audit service for permission check logging (optional) */
   auditService?: CheckAuditService;
   /**
+   * Evaluate a request's `rebac` (default: false), when `tenantPolicy` is not given. With
+   * `tenantPolicy`, its `rebac` (the tenant's `feature.enable_rebac`) decides.
+   */
+  enableRebac?: boolean;
+  /**
    * The attribute-based policy settings of a tenant (optional). When given, it decides per check
    * (by the check's tenant) instead of `enableAbac` / `policyEvaluator`. It must not throw: it
    * returns everything off when the tenant's settings cannot be read.
    */
   tenantPolicy?: (tenantId: string) => Promise<TenantPolicySettings>;
+  /**
+   * Resolves the resource context of self-contract checks (default: resolves nothing, so a self
+   * check has no resource context). Server-contract checks never use it.
+   */
+  resourceContextResolver?: ResourceContextResolver;
+}
+
+/** Options of a check beyond its request. */
+export interface CheckOptions {
+  ctx?: ExecutionContext;
+  apiKeyId?: string;
+  clientId?: string;
+  requestId?: string;
+  /**
+   * The contract the request came in under (default `server`). A `self` request must not carry
+   * `resource_context` or `rebac` (it is refused with `contract_violation`); its resource context
+   * is resolved server-side.
+   */
+  contract?: CheckContract;
 }
 
 /**
  * Internal check context for evaluation
  */
 interface CheckContext {
+  /** The contract of the request (see CheckContract) */
+  contract: CheckContract;
   subjectId: string;
   subjectType: 'user' | 'service';
   tenantId: string;
   parsed: ParsedPermission;
   resourceContext?: CheckApiRequest['resource_context'];
   rebacParams?: CheckApiRequest['rebac'];
+  /** Self contract: the relationship the resolver says would grant the permission */
+  selfRelation?: { relation: string; object_type: string; object_id: string };
   startTime: number;
   /** Verified attributes for ABAC evaluation (loaded from DB) */
   verifiedAttributes?: VerifiedAttributeForCheck[];
@@ -310,6 +346,8 @@ export class UnifiedCheckService {
   private auditConfig: AuditLogConfig;
   private attributeRepository?: AttributeRepository;
   private enableAbac: boolean;
+  private enableRebac: boolean;
+  private resourceContextResolver: ResourceContextResolver;
   private policyEvaluator?: PolicyEvaluator;
   private auditService?: CheckAuditService;
   private tenantPolicy?: (tenantId: string) => Promise<TenantPolicySettings>;
@@ -328,6 +366,8 @@ export class UnifiedCheckService {
     };
     this.attributeRepository = config.attributeRepository;
     this.enableAbac = config.enableAbac ?? false;
+    this.enableRebac = config.enableRebac ?? false;
+    this.resourceContextResolver = config.resourceContextResolver ?? NO_RESOURCE_CONTEXT_RESOLVER;
     this.policyEvaluator = config.policyEvaluator;
     this.auditService = config.auditService;
     this.tenantPolicy = config.tenantPolicy;
@@ -339,6 +379,7 @@ export class UnifiedCheckService {
       return Promise.resolve({
         abac: this.enableAbac,
         verifiedAttributes: this.enableAbac,
+        rebac: this.enableRebac,
         logDecisions: false,
         evaluator: this.policyEvaluator,
       });
@@ -348,6 +389,7 @@ export class UnifiedCheckService {
       policy = this.tenantPolicy(tenantId).catch(() => ({
         abac: false,
         verifiedAttributes: false,
+        rebac: false,
         logDecisions: false,
         unavailable: true,
       }));
@@ -365,16 +407,9 @@ export class UnifiedCheckService {
    * @param options.apiKeyId - API key ID for audit logging
    * @param options.clientId - Client ID for audit logging
    * @param options.requestId - Request ID for correlation
+   * @param options.contract - The contract of the request (default `server`)
    */
-  async check(
-    request: CheckApiRequest,
-    options?: {
-      ctx?: ExecutionContext;
-      apiKeyId?: string;
-      clientId?: string;
-      requestId?: string;
-    }
-  ): Promise<CheckApiResponse> {
+  async check(request: CheckApiRequest, options?: CheckOptions): Promise<CheckApiResponse> {
     const startTime = performance.now();
     let parsed: ParsedPermission | undefined;
     const tenantId = request.tenant_id?.trim();
@@ -386,14 +421,37 @@ export class UnifiedCheckService {
       // Parse permission
       parsed = parsePermission(request.permission);
 
+      const contract = options?.contract ?? 'server';
+      if (
+        contract === 'self' &&
+        (request.resource_context !== undefined || request.rebac !== undefined)
+      ) {
+        // The route refuses these with 400; never evaluate them if one gets here.
+        const refused: CheckApiResponse = {
+          allowed: false,
+          resolved_via: [],
+          final_decision: 'deny',
+          reason: 'contract_violation',
+          cache_ttl: 0,
+        };
+        await this.logAudit(request, refused, parsed, tenantId, options);
+        return refused;
+      }
+
       // Build context
+      const resolved =
+        contract === 'self'
+          ? await this.resolveSelfResourceContext(tenantId, request.subject_id, parsed, options)
+          : undefined;
       const context: CheckContext = {
+        contract,
         subjectId: request.subject_id,
         subjectType: request.subject_type ?? 'user',
         tenantId,
         parsed,
-        resourceContext: request.resource_context,
-        rebacParams: request.rebac,
+        resourceContext: contract === 'self' ? resolved?.context : request.resource_context,
+        rebacParams: contract === 'self' ? undefined : request.rebac,
+        selfRelation: resolved?.relation,
         startTime,
         policy: await this.policyFor(tenantId),
       };
@@ -429,6 +487,71 @@ export class UnifiedCheckService {
     }
   }
 
+  /**
+   * The resource context of a self-contract check, from the resolver: none when it knows nothing
+   * about the resource or fails (no allow may come from material that could not be resolved).
+   */
+  private async resolveSelfResourceContext(
+    tenantId: string,
+    subjectId: string,
+    parsed: ParsedPermission,
+    options?: CheckOptions
+  ): Promise<
+    | {
+        context?: CheckApiRequest['resource_context'];
+        relation?: { relation: string; object_type: string; object_id: string };
+      }
+    | undefined
+  > {
+    try {
+      const resolved = await this.resourceContextResolver.resolve({
+        tenantId,
+        resourceType: parsed.resource,
+        resourceId: parsed.id,
+        action: parsed.action,
+        subjectId,
+        clientId: options?.clientId,
+      });
+      if (!resolved) return undefined;
+      const context: NonNullable<CheckApiRequest['resource_context']> = {};
+      if (typeof resolved.owner_id === 'string' && resolved.owner_id) {
+        context.owner_id = resolved.owner_id;
+      }
+      if (typeof resolved.group_id === 'string' && resolved.group_id) {
+        context.group_id = resolved.group_id;
+      }
+      if (resolved.attributes && typeof resolved.attributes === 'object') {
+        context.attributes = resolved.attributes;
+      }
+      const rebac = resolved.rebac;
+      const relation =
+        rebac &&
+        typeof rebac.relation === 'string' &&
+        rebac.relation &&
+        typeof rebac.object_type === 'string' &&
+        rebac.object_type &&
+        typeof rebac.object_id === 'string' &&
+        rebac.object_id
+          ? {
+              relation: rebac.relation,
+              object_type: rebac.object_type,
+              object_id: rebac.object_id,
+            }
+          : undefined;
+      return {
+        context: Object.keys(context).length > 0 ? context : undefined,
+        relation,
+      };
+    } catch (error) {
+      log.warn('Resource context resolver failed; checking without a resource context', {
+        tenantId,
+        resourceType: parsed.resource,
+        error: error instanceof Error ? error.message : 'unknown',
+      });
+      return undefined;
+    }
+  }
+
   /** Log a decision, for a tenant that enables it (`feature.enable_policy_logging`). */
   private logDecision(
     context: CheckContext,
@@ -456,12 +579,7 @@ export class UnifiedCheckService {
     response: CheckApiResponse,
     parsed: ParsedPermission | undefined,
     tenantId: string,
-    options?: {
-      ctx?: ExecutionContext;
-      apiKeyId?: string;
-      clientId?: string;
-      requestId?: string;
-    }
+    options?: CheckOptions
   ): Promise<void> {
     if (!this.auditService) return;
 
@@ -499,12 +617,7 @@ export class UnifiedCheckService {
    */
   async batchCheck(
     request: BatchCheckRequest,
-    options?: {
-      ctx?: ExecutionContext;
-      apiKeyId?: string;
-      clientId?: string;
-      requestId?: string;
-    }
+    options?: CheckOptions
   ): Promise<BatchCheckResponse> {
     const startTime = performance.now();
     const results: CheckApiResponse[] = [];
@@ -599,16 +712,34 @@ export class UnifiedCheckService {
     // 2. Role-Based Permission Check (RBAC)
     const rbacResult = await this.checkRoleBasedPermission(context);
     if (rbacResult.allowed) {
-      matchedRules.push(`role:${rbacResult.roleName}`);
+      matchedRules.push(
+        rbacResult.viaGroup
+          ? `group_role:${rbacResult.roleName}@${rbacResult.viaGroup}`
+          : `role:${rbacResult.roleName}`
+      );
       return {
         allowed: true,
-        resolvedVia: ['role'],
+        resolvedVia: [rbacResult.viaGroup ? 'group_role' : 'role'],
         debug: { matched_rules: matchedRules },
       };
     }
 
-    // 3. ReBAC Check (if rebac params provided and service available)
-    if (context.rebacParams && this.rebacService) {
+    // 3a. Self contract: a direct tuple from the bound subject, for the relation the resolver
+    // named (only when the tenant enables ReBAC; no usersets, no computed relations)
+    if (context.contract === 'self' && context.selfRelation && context.policy.rebac === true) {
+      if (await this.hasDirectSubjectTuple(context, context.selfRelation)) {
+        const { relation, object_type, object_id } = context.selfRelation;
+        matchedRules.push(`rebac:${relation}@${object_type}:${object_id}`);
+        return {
+          allowed: true,
+          resolvedVia: ['rebac'],
+          debug: { matched_rules: matchedRules },
+        };
+      }
+    }
+
+    // 3. ReBAC Check (if rebac params provided, service available, and the tenant enables ReBAC)
+    if (context.rebacParams && this.rebacService && context.policy.rebac === true) {
       const rebacResult = await this.checkReBACPermission(context);
       if (rebacResult.allowed) {
         matchedRules.push(`rebac:${context.rebacParams.relation}@${context.rebacParams.object}`);
@@ -692,7 +823,7 @@ export class UnifiedCheckService {
    */
   private async checkRoleBasedPermission(
     context: CheckContext
-  ): Promise<{ allowed: boolean; roleName?: string }> {
+  ): Promise<{ allowed: boolean; roleName?: string; viaGroup?: string }> {
     try {
       // Query user's roles
       const rolesResult = (
@@ -707,6 +838,7 @@ export class UnifiedCheckService {
         scope_type: assignment.scope_type,
         scope_target: assignment.scope_target,
         expires_at: assignment.expires_at,
+        viaGroup: assignment.via.kind === 'group' ? assignment.via.groupId : undefined,
       }));
 
       // Role assignments for attribute-based rules with role conditions, with their scope: an
@@ -735,6 +867,8 @@ export class UnifiedCheckService {
           ? `${context.parsed.resource}:${context.parsed.action}`
           : formatPermission(context.parsed);
 
+      // A direct assignment that grants is reported before one through a group.
+      let groupMatch: { roleName: string; viaGroup: string } | undefined;
       for (const role of rolesResult) {
         // A role grants only where it is assigned (see roleAssignmentHolds).
         if (
@@ -754,14 +888,50 @@ export class UnifiedCheckService {
           permissions.includes('*:*') ||
           permissions.includes('*')
         ) {
-          return { allowed: true, roleName: role.name };
+          if (!role.viaGroup) return { allowed: true, roleName: role.name };
+          groupMatch ??= { roleName: role.name, viaGroup: role.viaGroup };
         }
       }
 
-      return { allowed: false };
+      return groupMatch ? { allowed: true, ...groupMatch } : { allowed: false };
     } catch (error) {
       log.error('RBAC check error', { subjectId: context.subjectId }, error as Error);
       return { allowed: false };
+    }
+  }
+
+  /**
+   * Whether a direct, unexpired tuple from the subject (`from_type = 'subject'`) to the object with
+   * the relation exists (the self contract's relationship check). Errors grant nothing.
+   */
+  private async hasDirectSubjectTuple(
+    context: CheckContext,
+    target: { relation: string; object_type: string; object_id: string }
+  ): Promise<boolean> {
+    try {
+      const row = await this.db.queryOne<{ id: string }>(
+        `SELECT id FROM relationships
+          WHERE tenant_id = ?
+            AND from_type = 'subject'
+            AND from_id = ?
+            AND to_type = ?
+            AND to_id = ?
+            AND relationship_type = ?
+            AND (expires_at IS NULL OR expires_at > ?)
+          LIMIT 1`,
+        [
+          context.tenantId,
+          context.subjectId,
+          target.object_type,
+          target.object_id,
+          target.relation,
+          Math.floor(Date.now() / 1000),
+        ]
+      );
+      return row !== null && row !== undefined;
+    } catch (error) {
+      log.error('Self-contract relationship check error', {}, error as Error);
+      return false;
     }
   }
 
@@ -813,8 +983,13 @@ export class UnifiedCheckService {
     context: CheckContext
   ): Promise<{ allowed: boolean; ruleName?: string }> {
     try {
-      // Simple ownership check
-      if (context.resourceContext && context.resourceContext.owner_id === context.subjectId) {
+      // Simple ownership check: server contract only. A self-contract check's owner (from the
+      // resolver) is material for the tenant's rules below, which decide per action.
+      if (
+        context.contract === 'server' &&
+        context.resourceContext &&
+        context.resourceContext.owner_id === context.subjectId
+      ) {
         return { allowed: true, ruleName: 'owner_access' };
       }
 

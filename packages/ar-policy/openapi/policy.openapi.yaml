@@ -213,6 +213,22 @@ paths:
         - Check
       summary: Run an authorization check.
       description: >-
+        Two contracts, decided by the credential. Server contract (a chk_ API key or the policy
+        service secret): any subject of the key's tenant; resource_context (owner_id, group_id,
+        attributes) and rebac are taken from the request. Self contract (an end-user access token,
+        whose aud must include the tenant's check.audience setting, by default the tenant's issuer
+        URL, and which is used at its own tenant's host; token_use access, not revoked (the
+        revocation store is read failing closed: 503 when it cannot be), its client registered and
+        enabled): the subject is the token's local end-user account (for a pairwise or persistent
+        sub, the account its sealed reference opens). A token for a client, machine or admin
+        principal, or for an external subject a token exchange brought in, is refused with 401
+        and error_code non_account_subject. Each check may carry only permission (a string, or
+        an object with only resource, action and an optional id), plus subject_id equal to the
+        token's own sub, subject_type user and tenant_id when they name the token's tenant. resource_context, rebac or any other field is refused with
+        400 (AR050009, POLICY_CHECK_CONTRACT_VIOLATION); the resource's owner, group and attributes
+        are resolved server-side (none by default, so they grant nothing). A rebac check is
+        evaluated only while the tenant's feature.enable_rebac is on. The Check API itself is off
+        until the platform's feature.enable_check_api is on (403).
         Permission-check auditing is enabled by default when the Check API is enabled.
         Denied decisions are selected for logging, while allowed decisions are sampled at 1%
         by default. Audit logging can be explicitly disabled through platform settings or
@@ -222,6 +238,14 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/CheckApi'
+        '400':
+          $ref: '#/components/responses/CheckApiError'
+        '401':
+          $ref: '#/components/responses/CheckApiError'
+        '403':
+          $ref: '#/components/responses/CheckApiError'
+        '503':
+          $ref: '#/components/responses/TemporarilyUnavailable'
       security:
         - bearerAuth: []
   /api/check/batch:
@@ -230,6 +254,24 @@ paths:
         - Check
       summary: Run authorization checks in batch.
       description: >-
+        Two contracts, decided by the credential. Server contract (a chk_ API key or the policy
+        service secret): any subject of the key's tenant; resource_context (owner_id, group_id,
+        attributes) and rebac are taken from the request. Self contract (an end-user access token,
+        whose aud must include the tenant's check.audience setting, by default the tenant's issuer
+        URL, and which is used at its own tenant's host; token_use access, not revoked (the
+        revocation store is read failing closed: 503 when it cannot be), its client registered and
+        enabled): the subject is the token's local end-user account (for a pairwise or persistent
+        sub, the account its sealed reference opens). A token for a client, machine or admin
+        principal, or for an external subject a token exchange brought in, is refused with 401
+        and error_code non_account_subject. Each check may carry only permission (a string, or
+        an object with only resource, action and an optional id), plus subject_id equal to the
+        token's own sub, subject_type user and tenant_id when they name the token's tenant. resource_context, rebac or any other field is refused with
+        400 (AR050009, POLICY_CHECK_CONTRACT_VIOLATION); the resource's owner, group and attributes
+        are resolved server-side (none by default, so they grant nothing). A rebac check is
+        evaluated only while the tenant's feature.enable_rebac is on. The Check API itself is off
+        until the platform's feature.enable_check_api is on (403).
+        The contract applies to every check of the batch: one check that breaks it refuses the
+        whole batch.
         Permission-check auditing is enabled by default when the Check API is enabled.
         Denied decisions are selected for logging, while allowed decisions are sampled at 1%
         by default. Audit logging can be explicitly disabled through platform settings or
@@ -239,6 +281,14 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/BatchCheckApi'
+        '400':
+          $ref: '#/components/responses/CheckApiError'
+        '401':
+          $ref: '#/components/responses/CheckApiError'
+        '403':
+          $ref: '#/components/responses/CheckApiError'
+        '503':
+          $ref: '#/components/responses/TemporarilyUnavailable'
       security:
         - bearerAuth: []
   /api/check/subscribe:
@@ -249,7 +299,10 @@ paths:
       summary: Open a permission-change subscription WebSocket.
       description:
         Upgrades the request to a WebSocket used by clients to receive permission and policy
-        change notifications. The caller must be authorized for the subscribe operation.
+        change notifications. The caller must be authorized for the subscribe operation (server
+        credentials; end-user access tokens are not), sent in the Authorization header. The token
+        query parameter is a deprecated fallback the public Router refuses (400). Off until the platform's
+        feature.enable_check_api is on.
       responses:
         '101':
           $ref: '#/components/responses/SubscribeUpgrade'
@@ -276,7 +329,9 @@ paths:
       operationId: deleteApiRebacTuples
       summary: Delete a ReBAC relationship tuple.
       description: >-
-        Deletes the specified relationship tuple and invalidates related authorization cache entries. Counted on the Admin API write limit (`rate_limit.admin_write` per `rate_limit.admin_write_window_seconds`), per authenticated principal, in the tenant-less scope shared with the other non-tenant-scoped Admin API writes; over the limit the answer is 429 with `Retry-After`, and 503 when the counter is unavailable.
+        Deletes the specified relationship tuple and invalidates related authorization cache entries.
+        The tuple is matched by the same source type rules as /api/rebac/write (user matches the
+        stored subject rows); a source type the rules refuse is refused with 400 (AR050010). Counted on the Admin API write limit (`rate_limit.admin_write` per `rate_limit.admin_write_window_seconds`), per authenticated principal, in the tenant-less scope shared with the other non-tenant-scoped Admin API writes; over the limit the answer is 429 with `Retry-After`, and 503 when the counter is unavailable.
       responses:
         '200':
           $ref: '#/components/responses/RebacDelete'
@@ -296,7 +351,11 @@ paths:
       summary: Write a ReBAC relationship tuple.
       description: >-
         Creates or updates a relationship tuple used by relationship-based authorization checks
-        and invalidates related cache entries. Counted on the Admin API write limit (`rate_limit.admin_write` per `rate_limit.admin_write_window_seconds`), per authenticated principal, in the tenant-less scope shared with the other non-tenant-scoped Admin API writes; over the limit the answer is 429 with `Retry-After`, and 503 when the counter is unavailable.
+        and invalidates related cache entries. Accepted sources (subject_type): a direct subject
+        (subject, or user, stored as subject), a group userset (group; stored, not evaluated until
+        usersets are), or an object type whose relation is declared in an active relation
+        definition as the tupleset of a tuple_to_userset. Any other is refused with 400 (AR050010,
+        POLICY_REBAC_TUPLE_TYPE_NOT_ALLOWED). Counted on the Admin API write limit (`rate_limit.admin_write` per `rate_limit.admin_write_window_seconds`), per authenticated principal, in the tenant-less scope shared with the other non-tenant-scoped Admin API writes; over the limit the answer is 429 with `Retry-After`, and 503 when the counter is unavailable.
       responses:
         '200':
           $ref: '#/components/responses/RebacWrite'
@@ -506,6 +565,22 @@ components:
             error: rate_limit_exceeded
             error_description: Too many requests. Please try again later.
             retry_after: 30
+    CheckApiError:
+      description: >-
+        The Check API refused the request: 400 for a malformed request or one its contract does
+        not allow (AR050009), 401 for a credential that does not authenticate (an invalid,
+        expired or revoked token, another audience or tenant), 403 while the Check API is off or
+        for an operation or tenant the credential is not granted.
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: true
+          example:
+            error: invalid_request
+            error_description: >-
+              An end-user access token may only ask about its own subject with a permission and a
+              resource; resource_context and rebac need a server credential.
     TemporarilyUnavailable:
       description: The rate limit counter is unavailable; nothing was changed.
       content:

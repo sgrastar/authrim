@@ -4243,6 +4243,9 @@ describe('deployAll', () => {
           SMOKE_RPC_SIGNING_JWK_SLOT_A: '{"kty":"OKP"}',
           // Every Worker deploys here, so the Lookup HMAC key its consumers require is distributed.
           LOOKUP_HMAC_KEY_SLOT_A: 'lookup-key-a',
+          // ... and the token keys the policy service requires.
+          OBJECT_ENCRYPTION_ROOT_KEY: 'c'.repeat(64),
+          PUBLIC_JWK_JSON: '{"kty":"RSA"}',
         },
       },
       selected
@@ -4445,6 +4448,9 @@ describe('deployAll', () => {
           SMOKE_RPC_SIGNING_JWK_SLOT_A: '{"kty":"OKP"}',
           // Every Worker deploys here, so the Lookup HMAC key its consumers require is distributed.
           LOOKUP_HMAC_KEY_SLOT_A: 'lookup-key-a',
+          // ... and the token keys the policy service requires.
+          OBJECT_ENCRYPTION_ROOT_KEY: 'c'.repeat(64),
+          PUBLIC_JWK_JSON: '{"kty":"RSA"}',
         },
       },
       selected

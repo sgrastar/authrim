@@ -20,6 +20,9 @@ import {
   createErrorResponse,
   AR_ERROR_CODES,
   generateId,
+  ruleOnRelationshipTupleSource,
+  relationshipSourceTypes,
+  isUniqueConstraintError,
 } from '@authrim/ar-lib-core';
 import { recordAdminOperationAudit } from './admin-operation-audit';
 
@@ -420,8 +423,9 @@ export async function adminRelationshipTuplesListHandler(c: AdminContext) {
     const bindings: unknown[] = [tenantId];
 
     if (fromType) {
-      whereClauses.push('from_type = ?');
-      bindings.push(fromType);
+      // `subject` and `user` (what older writes stored) list the same direct subjects.
+      whereClauses.push('from_type IN (?, ?)');
+      bindings.push(...relationshipSourceTypes(fromType === 'user' ? 'subject' : fromType));
     }
     if (fromId) {
       whereClauses.push('from_id = ?');
@@ -504,6 +508,13 @@ export async function adminRelationshipTuplesListHandler(c: AdminContext) {
 /**
  * POST /api/admin/rebac/tuples
  * Create a new relationship tuple
+ *
+ * Only the tuple types of ar-lib-core's rebac/tuple-type-rules.ts are accepted, as on
+ * `/api/rebac/write`: a direct subject (`from_type` `subject`, the default, or `user`, stored as
+ * `subject`), a group userset (`group`; stored, not evaluated until usersets are), or an object
+ * edge declared as the source of a `tuple_to_userset`. Others are refused with 400
+ * (POLICY_REBAC_TUPLE_TYPE_NOT_ALLOWED). A tuple that already exists (same relation, source and
+ * target, after that normalisation) is refused with 409.
  */
 export async function adminRelationshipTupleCreateHandler(c: AdminContext) {
   try {
@@ -527,29 +538,70 @@ export async function adminRelationshipTupleCreateHandler(c: AdminContext) {
       });
     }
 
-    const now = Math.floor(Date.now() / 1000);
-    const id = generateId();
+    const source = await ruleOnRelationshipTupleSource(adapter, {
+      tenantId,
+      fromType: body.from_type ?? 'subject',
+      relationshipType: body.relationship_type,
+      fromRelation: (body as { from_relation?: unknown }).from_relation,
+    });
+    if (!source.allowed) {
+      return createErrorResponse(c, AR_ERROR_CODES.POLICY_REBAC_TUPLE_TYPE_NOT_ALLOWED);
+    }
+    const fromType = source.fromType;
 
-    await adapter.execute(
-      `INSERT INTO relationships
-       (id, tenant_id, relationship_type, from_type, from_id, to_type, to_id, permission_level, expires_at, is_bidirectional, metadata_json, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    // Uniqueness on the stored (normalised) key, as idx_relationships_unique holds it; a direct
+    // subject also matches a row an older write stored as `user`.
+    const duplicate = await adapter.query<{ id: string }>(
+      `SELECT id FROM relationships
+       WHERE tenant_id = ? AND relationship_type = ? AND from_type IN (?, ?) AND from_id = ?
+         AND to_type = ? AND to_id = ?
+       LIMIT 1`,
       [
-        id,
         tenantId,
         body.relationship_type,
-        body.from_type ?? 'subject',
+        ...relationshipSourceTypes(fromType),
         body.from_id,
         body.to_type,
         body.to_id,
-        body.permission_level ?? 'full',
-        body.expires_at ? Math.floor(body.expires_at / 1000) : null,
-        0, // is_bidirectional
-        body.metadata ? JSON.stringify(body.metadata) : null,
-        now,
-        now,
       ]
     );
+    if (duplicate.length > 0) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
+    }
+
+    const now = Math.floor(Date.now() / 1000);
+    const id = generateId();
+
+    // A concurrent create of the same tuple loses on idx_relationships_unique (D1): 409, as the
+    // check above. PostgreSQL has no such unique index yet (recorded follow-up), so two concurrent
+    // creates there can both succeed.
+    try {
+      await adapter.execute(
+        `INSERT INTO relationships
+         (id, tenant_id, relationship_type, from_type, from_id, to_type, to_id, permission_level, expires_at, is_bidirectional, metadata_json, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          id,
+          tenantId,
+          body.relationship_type,
+          fromType,
+          body.from_id,
+          body.to_type,
+          body.to_id,
+          body.permission_level ?? 'full',
+          body.expires_at ? Math.floor(body.expires_at / 1000) : null,
+          0, // is_bidirectional
+          body.metadata ? JSON.stringify(body.metadata) : null,
+          now,
+          now,
+        ]
+      );
+    } catch (error) {
+      if (isUniqueConstraintError(error)) {
+        return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
+      }
+      throw error;
+    }
 
     // Audit log
     await recordAdminOperationAudit(asBaseContext(c), {
@@ -558,7 +610,7 @@ export async function adminRelationshipTupleCreateHandler(c: AdminContext) {
       resourceId: id,
       metadata: {
         relationship_type: body.relationship_type,
-        from: `${body.from_type ?? 'subject'}:${body.from_id}`,
+        from: `${fromType}:${body.from_id}`,
         to: `${body.to_type}:${body.to_id}`,
       },
     });
@@ -569,7 +621,7 @@ export async function adminRelationshipTupleCreateHandler(c: AdminContext) {
           id,
           tenant_id: tenantId,
           relationship_type: body.relationship_type,
-          from_type: body.from_type ?? 'subject',
+          from_type: fromType,
           from_id: body.from_id,
           to_type: body.to_type,
           to_id: body.to_id,

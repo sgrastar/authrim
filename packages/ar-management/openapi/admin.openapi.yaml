@@ -5171,6 +5171,148 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
+  /api/admin/access-check:
+    post:
+      tags:
+        - Admin Miscellaneous
+      operationId: postApiAdminAccessCheck
+      summary: Check an end user's access.
+      description: >-
+        Answers whether a user of the administrator's tenant may do something, with the reasons
+        (debug: the matched rules, the ReBAC path and the evaluation time). It runs the same
+        unified check as the public Check API (POST /api/check) under its server contract: any
+        subject of the tenant, with the request's resource_context and rebac. The tenant's ABAC
+        rules and ReBAC take part as its feature flags enable them (feature.enable_abac,
+        feature.enable_custom_rules, feature.enable_rebac); feature.enable_check_api does not
+        apply. Requires admin:roles:read or admin:groups:read. Writes nothing.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - subject_id
+                - permission
+              properties:
+                subject_id:
+                  type: string
+                  description: The user to check, in the administrator's tenant.
+                permission:
+                  description: 'resource:action, resource:id:action, or { resource, id?, action }.'
+                  oneOf:
+                    - type: string
+                    - type: object
+                      required:
+                        - resource
+                        - action
+                      properties:
+                        resource:
+                          type: string
+                        id:
+                          type: string
+                        action:
+                          type: string
+                resource_context:
+                  type: object
+                  properties:
+                    owner_id:
+                      type: string
+                    group_id:
+                      type: string
+                    attributes:
+                      type: object
+                      additionalProperties: true
+                rebac:
+                  type: object
+                  required:
+                    - relation
+                    - object
+                  properties:
+                    relation:
+                      type: string
+                    object:
+                      type: string
+                    contextual_tuples:
+                      type: array
+                      maxItems: 100
+                      items:
+                        type: object
+                        required:
+                          - user_id
+                          - relation
+                          - object
+                        properties:
+                          user_id:
+                            type: string
+                          relation:
+                            type: string
+                          object:
+                            type: string
+      responses:
+        '200':
+          description: The decision with its debug details.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - tenant_id
+                  - subject_id
+                  - allowed
+                  - resolved_via
+                  - final_decision
+                properties:
+                  tenant_id:
+                    type: string
+                  subject_id:
+                    type: string
+                  allowed:
+                    type: boolean
+                  resolved_via:
+                    type: array
+                    items:
+                      type: string
+                      enum:
+                        - direct
+                        - role
+                        - group_role
+                        - rebac
+                        - id_level
+                        - computed
+                  final_decision:
+                    type: string
+                    enum:
+                      - allow
+                      - deny
+                  reason:
+                    type: string
+                  cache_ttl:
+                    type: integer
+                  debug:
+                    type: object
+                    properties:
+                      matched_rules:
+                        type: array
+                        items:
+                          type: string
+                      path:
+                        type: array
+                        items:
+                          type: string
+                      evaluation_time_ms:
+                        type: number
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
   /api/admin/access-control/stats:
     get:
       tags:

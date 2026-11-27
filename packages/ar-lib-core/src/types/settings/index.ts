@@ -30,6 +30,7 @@ export * from './discovery';
 export * from './plugin';
 export * from './assurance-levels';
 export * from './check-api-audit';
+export * from './check';
 export * from './log-storage';
 export * from './admin-notices';
 export * from './profiles';

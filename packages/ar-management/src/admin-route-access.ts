@@ -499,6 +499,13 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     description: 'Simulate authorization policy',
   }),
   rule({
+    // A read: evaluates the end-user check for a subject (debug details), writes nothing.
+    pattern: '/api/admin/access-check',
+    methods: ['POST'],
+    anyPermissions: [ADMIN_PERMISSIONS.ROLES_READ, ADMIN_PERMISSIONS.GROUPS_READ],
+    description: 'Check an end user’s access (unified check, server contract, debug)',
+  }),
+  rule({
     pattern: '/api/admin/flows/:id/validate',
     methods: ['POST'],
     permissions: [ADMIN_PERMISSIONS.FLOWS_VALIDATE],

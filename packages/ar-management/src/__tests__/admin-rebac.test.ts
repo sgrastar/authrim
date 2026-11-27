@@ -347,6 +347,114 @@ describe('admin ReBAC APIs', () => {
     ).toBe(500);
   });
 
+  describe('tuple type rules', () => {
+    const edge = {
+      relationship_type: 'parent',
+      from_type: 'document',
+      from_id: 'doc-1',
+      to_type: 'folder',
+      to_id: 'folder-1',
+    };
+    const parentDefinition = JSON.stringify({
+      type: 'tuple_to_userset',
+      tupleset: { relation: 'parent' },
+      computed_userset: { relation: 'viewer' },
+    });
+
+    it('stores a direct subject sent as user as subject', async () => {
+      mocks.adapter.query.mockResolvedValue([]);
+      const response = await adminRelationshipTupleCreateHandler(
+        context({
+          body: {
+            relationship_type: 'viewer',
+            from_type: 'user',
+            from_id: 'user-1',
+            to_type: 'document',
+            to_id: 'doc-1',
+          },
+        })
+      );
+      expect(response.status).toBe(201);
+      await expect(response.json()).resolves.toMatchObject({ tuple: { from_type: 'subject' } });
+      expect(mocks.adapter.execute.mock.calls[0]?.[1]).toEqual(
+        expect.arrayContaining(['viewer', 'subject', 'user-1'])
+      );
+    });
+
+    it('accepts an object edge a definition declares as a tuple_to_userset source', async () => {
+      mocks.adapter.query
+        .mockResolvedValueOnce([{ definition_json: parentDefinition }])
+        .mockResolvedValueOnce([]);
+      const response = await adminRelationshipTupleCreateHandler(context({ body: edge }));
+      expect(response.status).toBe(201);
+      expect(mocks.adapter.query.mock.calls[0]?.[1]).toEqual(['tenant-a', 'document']);
+    });
+
+    it.each([
+      ['an undeclared object edge', { ...edge, relationship_type: 'owner' }],
+      ['an organization source', { ...edge, from_type: 'org' }],
+    ])('refuses %s with 400 and writes nothing', async (_label, body) => {
+      mocks.adapter.query.mockImplementation(async (_sql: string, params: unknown[]) =>
+        params[1] === 'document' ? [{ definition_json: parentDefinition }] : []
+      );
+      const response = await adminRelationshipTupleCreateHandler(context({ body }));
+      expect(response.status).toBe(400);
+      await expect(response.json()).resolves.toMatchObject({
+        error: 'AR050010',
+      });
+      expect(mocks.adapter.execute).not.toHaveBeenCalled();
+    });
+
+    it('refuses a tuple that already exists with 409', async () => {
+      mocks.adapter.query.mockResolvedValueOnce([{ id: 'existing' }]);
+      const response = await adminRelationshipTupleCreateHandler(
+        context({
+          body: { relationship_type: 'viewer', from_id: 'u', to_type: 'doc', to_id: 'd' },
+        })
+      );
+      expect(response.status).toBe(409);
+      // A direct subject also matches a row an older write stored as `user`.
+      expect(mocks.adapter.query.mock.calls[0]?.[1]).toEqual([
+        'tenant-a',
+        'viewer',
+        'subject',
+        'user',
+        'u',
+        'doc',
+        'd',
+      ]);
+      expect(mocks.adapter.execute).not.toHaveBeenCalled();
+    });
+
+    it('answers 409 when a concurrent create wins the unique index', async () => {
+      mocks.adapter.query.mockResolvedValueOnce([]);
+      mocks.adapter.execute.mockRejectedValueOnce(
+        new Error('D1_ERROR: UNIQUE constraint failed: relationships.tenant_id')
+      );
+      const response = await adminRelationshipTupleCreateHandler(
+        context({
+          body: { relationship_type: 'viewer', from_id: 'u', to_type: 'doc', to_id: 'd' },
+        })
+      );
+      expect(response.status).toBe(409);
+      expect(mocks.audit).not.toHaveBeenCalled();
+    });
+
+    it('lists subject and legacy user rows for either filter spelling', async () => {
+      for (const from_type of ['user', 'subject']) {
+        mocks.adapter.query.mockReset();
+        mocks.adapter.query.mockResolvedValueOnce([{ count: 0 }]).mockResolvedValueOnce([]);
+        const response = await adminRelationshipTuplesListHandler(
+          context({ query: { from_type } })
+        );
+        expect(response.status).toBe(200);
+        const [sql, params] = mocks.adapter.query.mock.calls[0] as [string, unknown[]];
+        expect(sql).toContain('from_type IN (?, ?)');
+        expect(params.slice(1, 3)).toEqual(['subject', 'user']);
+      }
+    });
+  });
+
   it.each([[[]], [[{ tenant_id: 'tenant-a' }]]])('deletes tuple result %#', async (rows) => {
     mocks.adapter.query.mockResolvedValueOnce(rows);
     const response = await adminRelationshipTupleDeleteHandler(context());

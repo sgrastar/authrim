@@ -61,6 +61,11 @@ import {
   resolvePolicyFlags,
   resolveEffectiveSettingsWithSources,
   resolvePlatformSettingsWithSources,
+  ruleOnRelationshipTupleSource,
+  relationshipSourceTypes,
+  // Walks `cause` (D1OperationError keeps the database's error there).
+  isUniqueConstraintError,
+  redactingAccessLogPrinter,
 } from '@authrim/ar-lib-core';
 import {
   createDefaultPolicyEngine,
@@ -107,8 +112,13 @@ const rebacRoutes = new Hono<{ Bindings: Env }>();
 // Create default policy engine
 const policyEngine = createDefaultPolicyEngine();
 
-// Global middleware
-app.use('*', logger());
+// Global middleware (the request log never carries a credential from the query string)
+app.use(
+  '*',
+  // The Router's printer: secret query parameters (names percent-decoded first, so `%74oken=`
+  // too) and secret path segments are redacted.
+  logger(redactingAccessLogPrinter)
+);
 app.use('*', requestContextMiddleware());
 app.use('*', pluginContextMiddleware());
 app.use(
@@ -175,12 +185,8 @@ function rejectTenantMismatch(
   );
 }
 
-function isUniqueConstraintError(error: unknown): boolean {
-  return String(error).includes('UNIQUE constraint');
-}
-
-function requireBodyTenantId(tenantId: string | undefined): string | null {
-  const normalized = tenantId?.trim();
+function requireBodyTenantId(tenantId: unknown): string | null {
+  const normalized = typeof tenantId === 'string' ? tenantId.trim() : undefined;
   return normalized || null;
 }
 
@@ -822,6 +828,11 @@ rebacRoutes.post('/list-users', async (c) => {
  * Write a relationship tuple
  * POST /api/rebac/write
  *
+ * Only the tuple types of rebac/tuple-type-rules.ts are accepted (a direct subject, a group
+ * userset, or an object edge declared as a tuple_to_userset source); others are refused with 400
+ * (POLICY_REBAC_TUPLE_TYPE_NOT_ALLOWED). A direct subject is stored with `from_type = 'subject'`
+ * (the type the relationship check matches), whether sent as `subject` or `user`.
+ *
  * Request body:
  * {
  *   "tenant_id": "tenant_123",
@@ -881,17 +892,22 @@ rebacRoutes.post(
       }
       const now = Math.floor(Date.now() / 1000);
       const coreAdapter = getPolicyCoreAdapter(c);
+      const source = await ruleOnRelationshipTupleSource(coreAdapter, {
+        tenantId,
+        fromType: body.subject_type,
+        relationshipType: body.relation,
+        fromRelation: (body as { from_relation?: unknown }).from_relation,
+      });
+      if (!source.allowed) {
+        return createErrorResponse(c, AR_ERROR_CODES.POLICY_REBAC_TUPLE_TYPE_NOT_ALLOWED);
+      }
+      const fromType = source.fromType;
+      // A direct subject also matches a row an older write stored as `user`.
+      const sourceTypes = relationshipSourceTypes(fromType);
       const existing = await coreAdapter.queryOne<{ id: string }>(
         `SELECT id FROM relationships
-       WHERE tenant_id = ? AND from_type = ? AND from_id = ? AND to_type = ? AND to_id = ? AND relationship_type = ?`,
-        [
-          tenantId,
-          body.subject_type,
-          body.subject_id,
-          body.object_type,
-          body.object_id,
-          body.relation,
-        ]
+       WHERE tenant_id = ? AND from_type IN (?, ?) AND from_id = ? AND to_type = ? AND to_id = ? AND relationship_type = ?`,
+        [tenantId, ...sourceTypes, body.subject_id, body.object_type, body.object_id, body.relation]
       );
 
       let id = existing?.id ?? crypto.randomUUID();
@@ -915,7 +931,7 @@ rebacRoutes.post(
               id,
               tenantId,
               body.relation,
-              body.subject_type,
+              fromType,
               body.subject_id,
               body.object_type,
               body.object_id,
@@ -933,10 +949,10 @@ rebacRoutes.post(
 
           const raced = await coreAdapter.queryOne<{ id: string }>(
             `SELECT id FROM relationships
-           WHERE tenant_id = ? AND from_type = ? AND from_id = ? AND to_type = ? AND to_id = ? AND relationship_type = ?`,
+           WHERE tenant_id = ? AND from_type IN (?, ?) AND from_id = ? AND to_type = ? AND to_id = ? AND relationship_type = ?`,
             [
               tenantId,
-              body.subject_type,
+              ...sourceTypes,
               body.subject_id,
               body.object_type,
               body.object_id,
@@ -991,7 +1007,7 @@ rebacRoutes.post(
           object_type: body.object_type,
           object_id: body.object_id,
           relation: body.relation,
-          subject_type: body.subject_type,
+          subject_type: fromType,
           subject_id: body.subject_id,
           expires_at: body.expires_at,
           created_at: now,
@@ -1007,6 +1023,9 @@ rebacRoutes.post(
 /**
  * Delete a relationship tuple
  * DELETE /api/rebac/tuples
+ *
+ * The same tuple type rules as /api/rebac/write: the tuple is matched with the stored source type
+ * (`user` matches the `subject` rows), and a type the rules refuse is refused here too (400).
  *
  * Request body:
  * {
@@ -1066,17 +1085,26 @@ rebacRoutes.delete(
 
       // Delete relationship tuple
       const coreAdapter = getPolicyCoreAdapter(c);
+      const source = await ruleOnRelationshipTupleSource(coreAdapter, {
+        tenantId,
+        fromType: body.subject_type,
+        relationshipType: body.relation,
+        fromRelation: (body as { from_relation?: unknown }).from_relation,
+      });
+      if (!source.allowed) {
+        return createErrorResponse(c, AR_ERROR_CODES.POLICY_REBAC_TUPLE_TYPE_NOT_ALLOWED);
+      }
       const result = await coreAdapter.execute(
         `DELETE FROM relationships
        WHERE tenant_id = ?
-         AND from_type = ?
+         AND from_type IN (?, ?)
          AND from_id = ?
          AND to_type = ?
          AND to_id = ?
          AND relationship_type = ?`,
         [
           tenantId,
-          body.subject_type,
+          ...relationshipSourceTypes(source.fromType),
           body.subject_id,
           body.object_type,
           body.object_id,

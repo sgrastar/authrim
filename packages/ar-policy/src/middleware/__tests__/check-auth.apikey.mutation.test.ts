@@ -158,18 +158,48 @@ describe('check-auth: API key cache', () => {
     });
   });
 
-  it('serves a cached key without touching the database', async () => {
+  it('serves a cached key after re-reading only its status by id', async () => {
     const row = await keyRow(API_KEY, { expires_at: NOW_SECONDS + 100 });
     const first = fakeAdapter([row]);
     const kv = fakeKv();
     await authenticate(API_KEY, { db: first.adapter, cache: kv.cache });
 
-    const second = fakeAdapter([]);
+    const second = await statusAdapter({});
     const result = await authenticate(API_KEY, { db: second.adapter, cache: kv.cache });
 
     expect(result).toMatchObject({ authenticated: true, apiKeyId: 'key_1', tenantId: 'tenant_a' });
     expect(second.query).not.toHaveBeenCalled();
+    expect(second.queryOne).toHaveBeenCalledWith(expect.stringContaining('WHERE id = ?'), [
+      'key_1',
+      'tenant_a',
+    ]);
   });
+
+  it('refuses a cached key deactivated, rotated or deleted since it was cached', async () => {
+    for (const [status, description] of [
+      [{ is_active: 0 }, 'API key is inactive'],
+      [{ key_hash: 'rotated' }, 'Invalid API key'],
+      [null, 'Invalid API key'],
+      [{ expires_at: NOW_SECONDS - 1 }, 'API key has expired'],
+    ] as const) {
+      const kv = await cachedEntry({});
+      const db = await statusAdapter(status);
+      expect(await authenticate(API_KEY, { db: db.adapter, cache: kv.cache })).toEqual(
+        failure('invalid_token', description, 401)
+      );
+    }
+  });
+
+  async function statusAdapter(status: Record<string, unknown> | null) {
+    const fake = fakeAdapter([]);
+    const queryOne = vi.fn(async () =>
+      status === null
+        ? null
+        : { key_hash: await sha256Hex(API_KEY), is_active: 1, expires_at: null, ...status }
+    );
+    (fake.adapter as unknown as { queryOne: typeof queryOne }).queryOne = queryOne;
+    return { ...fake, queryOne };
+  }
 
   async function cachedEntry(overrides: Record<string, unknown>) {
     const hash = await sha256Hex(API_KEY);
@@ -217,14 +247,15 @@ describe('check-auth: API key cache', () => {
       failure('invalid_token', 'API key has expired', 401)
     );
 
+    const db = (await statusAdapter({})).adapter;
     const now = await cachedEntry({ expires_at: NOW_SECONDS });
-    expect((await authenticate(API_KEY, { cache: now.cache })).authenticated).toBe(true);
+    expect((await authenticate(API_KEY, { db, cache: now.cache })).authenticated).toBe(true);
 
     const later = await cachedEntry({ expires_at: NOW_SECONDS + 3600 });
-    expect((await authenticate(API_KEY, { cache: later.cache })).authenticated).toBe(true);
+    expect((await authenticate(API_KEY, { db, cache: later.cache })).authenticated).toBe(true);
 
     const never = await cachedEntry({});
-    expect((await authenticate(API_KEY, { cache: never.cache })).authenticated).toBe(true);
+    expect((await authenticate(API_KEY, { db, cache: never.cache })).authenticated).toBe(true);
   });
 
   it('falls back to the database when the cache cannot be read or written', async () => {

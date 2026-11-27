@@ -224,8 +224,15 @@ describe('resolveTenantPolicy', () => {
     await expect(resolveTenantPolicy(settings({}), db([baseRow]), 'acme')).resolves.toEqual({
       abac: false,
       verifiedAttributes: false,
+      rebac: false,
       logDecisions: false,
     });
+  });
+
+  it("turns the Check API's relationship check on with feature.enable_rebac", async () => {
+    await expect(
+      resolveTenantPolicy(settings({ 'feature.enable_rebac': true }), db([baseRow]), 'acme')
+    ).resolves.toMatchObject({ abac: false, rebac: true });
   });
 
   it("uses the tenant's rules when attribute-based policy and custom rules are on", async () => {

@@ -561,11 +561,24 @@ const LOOKUP_HMAC_SECRET_NAME = /^LOOKUP_HMAC_KEY_SLOT_[AB]$/u;
  * `lookup_hmac`: the Lookup HMAC key slots the runtime resolves account routes with (see
  * requiredWorkerSecretNames).
  */
+/**
+ * A kind of secret a Worker cannot serve without: the Lookup HMAC slots in use, or one fixed
+ * secret by name.
+ */
+export type RequiredWorkerSecretKind = 'lookup_hmac' | { secret: SecretName };
+
 export const REQUIRED_WORKER_SECRET_KINDS: Readonly<
-  Partial<Record<WorkerComponent, readonly 'lookup_hmac'[]>>
+  Partial<Record<WorkerComponent, readonly RequiredWorkerSecretKind[]>>
 > = {
   // Device and CIBA approvals resolve the browser session's account through the lookup directory.
   'ar-async': ['lookup_hmac'],
+  // The Check API's self contract: the token's account through the lookup directory, a pairwise
+  // token's sealed reference (OBJECT_ENCRYPTION_ROOT_KEY) and the verification key fallback.
+  'ar-policy': [
+    'lookup_hmac',
+    { secret: 'OBJECT_ENCRYPTION_ROOT_KEY' },
+    { secret: 'PUBLIC_JWK_JSON' },
+  ],
 };
 
 /**
@@ -583,7 +596,9 @@ export function requiredWorkerSecretNames(
   if (options.replicationWriter) all.push('AUTHRIM_REPLICATION_WRITER_SECRET');
   const anyOf: SecretName[][] = [];
   for (const kind of REQUIRED_WORKER_SECRET_KINDS[component] ?? []) {
-    if (kind === 'lookup_hmac') {
+    if (typeof kind === 'object') {
+      all.push(kind.secret);
+    } else if (kind === 'lookup_hmac') {
       if (lookupHmacSlots && lookupHmacSlots.length > 0) {
         all.push(...lookupHmacSlots.map((slot) => `LOOKUP_HMAC_KEY_SLOT_${slot}` as SecretName));
       } else {

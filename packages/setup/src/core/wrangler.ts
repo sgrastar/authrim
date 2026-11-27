@@ -418,6 +418,7 @@ const COMPONENT_KV_BINDINGS: Record<WorkerComponent, KVNamespace[]> = {
   'ar-agent-access': ['SETTINGS', 'AUTHRIM_CONFIG', 'TENANT_RUNTIME_REGISTRY'],
   'ar-router': ['SETTINGS', 'AUTHRIM_CONFIG'],
   'ar-async': ['INITIAL_ACCESS_TOKENS', 'SETTINGS', 'AUTHRIM_CONFIG', 'TENANT_RUNTIME_REGISTRY'],
+  // The Check API reads the token's client from oauth_clients (D1, per request), not a KV cache.
   'ar-policy': ['SETTINGS', 'REBAC_CACHE', 'AUTHRIM_CONFIG', 'TENANT_RUNTIME_REGISTRY'],
   'ar-saml': ['SETTINGS', 'AUTHRIM_CONFIG', 'STATE_STORE', 'TENANT_RUNTIME_REGISTRY'],
   'ar-bridge': ['SETTINGS', 'AUTHRIM_CONFIG', 'TENANT_RUNTIME_REGISTRY'],
@@ -507,7 +508,15 @@ const COMPONENT_DO_BINDINGS: Record<WorkerComponent, string[]> = {
     'RATE_LIMITER',
   ],
   // RATE_LIMITER: the Check API counts each client's requests atomically (fails closed if absent).
-  'ar-policy': ['PERMISSION_CHANGE_HUB', 'RATE_LIMITER'],
+  // KEY_MANAGER, DPOP_JTI_STORE, TOKEN_REVOCATION_STORE: the Check API's self contract verifies
+  // end-user access tokens as the other protected resources (UserInfo) do; revocation fails closed.
+  'ar-policy': [
+    'PERMISSION_CHANGE_HUB',
+    'RATE_LIMITER',
+    'KEY_MANAGER',
+    'DPOP_JTI_STORE',
+    'TOKEN_REVOCATION_STORE',
+  ],
   // RATE_LIMITER: the Admin API write limit (the same counter ar-management uses) on the SAML
   // admin routes, which ar-router sends here directly.
   'ar-saml': [
@@ -1607,7 +1616,9 @@ export function generateEnvVars(
     component === 'ar-discovery' ||
     component === 'ar-management' ||
     component === 'ar-agent-access' ||
-    component === 'ar-saml'
+    component === 'ar-saml' ||
+    // The Check API verifies end-user access tokens against the issuer (single-tenant mode).
+    component === 'ar-policy'
   ) {
     vars['ISSUER_URL'] = issuerUrl;
   }
