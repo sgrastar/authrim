@@ -12,6 +12,8 @@
 	import TextField from '#lib/ui/primitives/TextField.svelte';
 	import { useChangeMark } from '#lib/ui/save/save-scope.js';
 	import AllowedKindsField from './AllowedKindsField.svelte';
+	import ClaimListField from './ClaimListField.svelte';
+	import { RBAC_CLAIMS } from './claim-list';
 	import SignInMethodsField from './SignInMethodsField.svelte';
 	import JsonSettingField from './JsonSettingField.svelte';
 	import { formatSetting } from './setting-format';
@@ -165,6 +167,14 @@
 					/>
 				{:else if key === 'security.admin_second_factor_allowed_kinds'}
 					<AllowedKindsField
+						{changed}
+						disabled={inherited}
+						value={entry.v}
+						onvalue={(next) => (entry.v = next)}
+					/>
+				{:else if key in RBAC_CLAIMS}
+					<ClaimListField
+						{key}
 						{changed}
 						disabled={inherited}
 						value={entry.v}

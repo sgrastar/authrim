@@ -10,7 +10,7 @@
  *   view — shown as read-only values, with one note on the page saying why
  *   edit — shown as controls
  */
-import { ADMIN_ROLE_GROUPS } from '@authrim/ar-lib-core/constants/admin-roles';
+import { ADMIN_ROLE_GROUPS, adminMaxGrantTier } from '@authrim/ar-lib-core/constants/admin-roles';
 import { hasAdminPermission } from '@authrim/ar-lib-core/types/admin-user';
 import {
 	CATEGORY_SCOPE_CONFIG,
@@ -39,6 +39,11 @@ export interface AdminAccess {
 	 * who is exempt). Navigation leaves out what needs one of them.
 	 */
 	disabledCapabilities?: readonly TenantCapability[];
+	/**
+	 * The highest grant tier of an end-user role the admin may grant, as the session reports it
+	 * (`max_grant_tier`); absent from an older API, then computed from the role names.
+	 */
+	maxGrantTier?: number;
 }
 
 /** No session yet, or signed out: nothing is shown. */
@@ -50,12 +55,17 @@ export function accessFromSession(session: {
 	permissions?: readonly string[];
 	is_platform_admin?: boolean;
 	disabled_capabilities?: readonly string[];
+	max_grant_tier?: number;
 }): AdminAccess {
+	const tier = session.max_grant_tier;
 	return {
 		platform: session.is_platform_admin === true,
 		roles: session.roles ?? [],
 		permissions: session.permissions ?? [],
-		disabledCapabilities: (session.disabled_capabilities ?? []).filter(isTenantCapability)
+		disabledCapabilities: (session.disabled_capabilities ?? []).filter(isTenantCapability),
+		...(typeof tier === 'number' && Number.isInteger(tier) && tier >= 0
+			? { maxGrantTier: tier }
+			: {})
 	};
 }
 
@@ -334,4 +344,54 @@ export function tenantsAccess(access: AdminAccess): TenantsAccess {
 	const superAdmin =
 		access.platform && access.roles.some((role) => SETTINGS_SUPER_ROLES.includes(role));
 	return { read: superAdmin, manage: superAdmin, copy: superAdmin };
+}
+
+/**
+ * What the admin can do on the end-user authorization pages (Users → Groups, Access → Roles,
+ * Access check), as the Admin API checks it. A change to a group that carries roles also takes
+ * the roles' write permission and a grant ceiling that covers each of its roles (the API checks
+ * that per group): the console shows the ceiling, the API decides.
+ */
+export interface AuthzAccess {
+	/** See the groups and who is in them (`admin:groups:read`, which the roles' read carries). */
+	groupsRead: boolean;
+	/** Create, change and delete groups and their manual members (`admin:groups:write`). */
+	groupsWrite: boolean;
+	/** See the roles (`admin:roles:read`). */
+	rolesRead: boolean;
+	/** Create and change roles, give them and take them away (`admin:roles:write`). */
+	rolesWrite: boolean;
+	/** Delete roles (`admin:roles:delete`). */
+	rolesDelete: boolean;
+	/** Read dynamic group rules: the service-group catalog asks `admin:users:read`. */
+	rulesRead: boolean;
+	/** Create and change dynamic group rules: the catalog asks `admin:users:write` (and read). */
+	rulesWrite: boolean;
+	/** Search users by address or ID (`admin:users:read`); without it an ID is typed in. */
+	usersRead: boolean;
+	/** Run the access check (`admin:roles:read` or `admin:groups:read`). */
+	check: boolean;
+	/**
+	 * The highest role grant tier the admin may create, change, give or take away (0: none): the
+	 * session's `max_grant_tier`, else the highest `maxGrantTier` of their admin roles.
+	 */
+	grantCeiling: number;
+}
+
+export function authzAccess(access: AdminAccess): AuthzAccess {
+	const groupsRead = hasPermission(access, 'admin:groups:read');
+	const rolesRead = hasPermission(access, 'admin:roles:read');
+	const usersRead = hasPermission(access, 'admin:users:read');
+	return {
+		groupsRead,
+		groupsWrite: groupsRead && hasPermission(access, 'admin:groups:write'),
+		rolesRead,
+		rolesWrite: rolesRead && hasPermission(access, 'admin:roles:write'),
+		rolesDelete: rolesRead && hasPermission(access, 'admin:roles:delete'),
+		rulesRead: usersRead,
+		rulesWrite: usersRead && hasPermission(access, 'admin:users:write'),
+		usersRead,
+		check: groupsRead || rolesRead,
+		grantCeiling: access.maxGrantTier ?? adminMaxGrantTier(access.roles)
+	};
 }

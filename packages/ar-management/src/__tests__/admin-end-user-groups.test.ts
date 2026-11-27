@@ -288,7 +288,9 @@ describe('groups: create, list, get, update, delete', () => {
     await call('PUT', `/api/admin/groups/${childId}`, { parent_group_id: rootId });
 
     // A group with a child is not deleted.
-    expect((await call('DELETE', `/api/admin/groups/${rootId}`)).status).toBe(409);
+    const withChild = await call('DELETE', `/api/admin/groups/${rootId}`);
+    expect(withChild.status).toBe(409);
+    expect(withChild.body.error).toBe('group_has_children');
     expect((await call('DELETE', `/api/admin/groups/${childId}`)).status).toBe(200);
     expect((await call('DELETE', `/api/admin/groups/${rootId}`)).status).toBe(200);
     expect((await call('DELETE', `/api/admin/groups/${rootId}`)).status).toBe(404);
@@ -425,6 +427,7 @@ describe('group members', () => {
       .run(groupId);
     const result = await call('DELETE', `/api/admin/groups/${groupId}/members/user-2`);
     expect(result.status).toBe(409);
+    expect(result.body.error).toBe('membership_other_source');
     expect(accountDb.prepare('SELECT lifecycle_state FROM group_memberships').all()).toEqual([
       { lifecycle_state: 'active' },
     ]);
@@ -500,6 +503,38 @@ describe('roles granted to a group', () => {
 });
 
 describe('delegation and permissions', () => {
+  it('tells the caller whether it may change a group’s members, and filters by parent', async () => {
+    seedRole('role-high', 2);
+    const groupId = await createGroupVia('team');
+    const childId = await createGroupVia('team.child', groupId);
+    const otherId = await createGroupVia('other');
+    await call('POST', `/api/admin/groups/${groupId}/roles`, { role_id: 'role-high' });
+    const can = async (id: string) =>
+      (await call('GET', `/api/admin/groups/${id}`)).body.group.can_manage_membership;
+    expect(await can(groupId)).toBe(true);
+
+    // The guard of the member routes: a group carrying (or above) a tier 2 role is out of reach
+    // of a tier 1 ceiling, a group without roles is not.
+    currentAuth = lowCeilingAdmin;
+    expect(await can(groupId)).toBe(false);
+    expect(await can(childId)).toBe(false);
+    expect(await can(otherId)).toBe(true);
+    // Read only: the member routes answer 403 whatever the group carries.
+    currentAuth = readOnlyAdmin;
+    expect(await can(otherId)).toBe(false);
+    expect(await can(groupId)).toBe(false);
+    currentAuth = superAdmin;
+
+    const keys = async (query: string) =>
+      ((await call('GET', `/api/admin/groups${query}`)).body.groups as Json[])
+        .map((group) => group.group_key)
+        .sort();
+    expect(await keys('?parent_group_id=null')).toEqual(['other', 'team']);
+    expect(await keys(`?parent_group_id=${groupId}`)).toEqual(['team.child']);
+    expect(await keys('?parent_group_id=missing')).toEqual([]);
+    expect(await keys('')).toEqual(['other', 'team', 'team.child']);
+  });
+
   it('refuses an admin whose ceiling is below the role or who lacks admin:roles:write', async () => {
     seedRole('role-low', 1);
     seedRole('role-high', 2);
@@ -613,12 +648,12 @@ describe('delegation and permissions', () => {
     }
   });
 
-  it('carries the role permissions over to the group ones until the standard roles list them', () => {
-    expect(hasAdminPermission(['admin:roles:*'], ADMIN_PERMISSIONS.GROUPS_WRITE)).toBe(true);
-    expect(hasAdminPermission(['admin:roles:write'], ADMIN_PERMISSIONS.GROUPS_WRITE)).toBe(true);
-    expect(hasAdminPermission(['admin:roles:read'], ADMIN_PERMISSIONS.GROUPS_READ)).toBe(true);
-    expect(hasAdminPermission(['admin:roles:read'], ADMIN_PERMISSIONS.GROUPS_WRITE)).toBe(false);
+  it('holds the group permissions by name: the role permissions no longer carry over', () => {
+    expect(hasAdminPermission(['admin:roles:*'], ADMIN_PERMISSIONS.GROUPS_WRITE)).toBe(false);
+    expect(hasAdminPermission(['admin:roles:write'], ADMIN_PERMISSIONS.GROUPS_WRITE)).toBe(false);
+    expect(hasAdminPermission(['admin:roles:read'], ADMIN_PERMISSIONS.GROUPS_READ)).toBe(false);
     expect(hasAdminPermission(['admin:users:*'], ADMIN_PERMISSIONS.GROUPS_READ)).toBe(false);
+    expect(hasAdminPermission(['admin:groups:read'], ADMIN_PERMISSIONS.GROUPS_READ)).toBe(true);
     expect(hasAdminPermission(['admin:groups:*'], ADMIN_PERMISSIONS.GROUPS_WRITE)).toBe(true);
   });
 });
@@ -761,6 +796,7 @@ describe('guards and validation of the second review', () => {
     });
     adapter.execute = original;
     expect(raced.status).toBe(409);
+    expect((raced.body as { error?: string }).error).toBe('group_version_conflict');
     expect(
       metadataDb.prepare('SELECT parent_group_id FROM "groups" WHERE id = ?').get(aId)
     ).toEqual({ parent_group_id: bId });
@@ -870,6 +906,7 @@ describe('guards and validation of the second review', () => {
     const raced = await call('PUT', `/api/admin/groups/${aId}`, { lifecycle_state: 'inactive' });
     adapter.execute = original;
     expect(raced.status).toBe(409);
+    expect((raced.body as { error?: string }).error).toBe('group_version_conflict');
     expect(
       metadataDb.prepare('SELECT lifecycle_state FROM "groups" WHERE id = ?').get(aId)
     ).toEqual({
@@ -1160,7 +1197,9 @@ describe('third review', () => {
         })
       ).status
     ).toBe(201);
-    expect((await call('DELETE', `/api/admin/groups/${scopeId}`)).status).toBe(409);
+    const asScope = await call('DELETE', `/api/admin/groups/${scopeId}`);
+    expect(asScope.status).toBe(409);
+    expect(asScope.body.error).toBe('group_referenced_as_scope');
     expect(metadataDb.prepare('SELECT count(*) n FROM "groups"').get()).toEqual({ n: 2 });
     expect(
       (

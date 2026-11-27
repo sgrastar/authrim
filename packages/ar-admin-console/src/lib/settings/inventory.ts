@@ -479,22 +479,15 @@ place(
 // ---------------------------------------------------------------------------------------------
 // Access control
 
+// The ABAC and ReBAC switches, the Check API's audience and switch, the dynamic group freshness,
+// the RBAC claims and the per-resource (ID-level) permissions switch are on Settings → Authorization
+// (placement.ts, AUTHORIZATION).
 place('access/attributes', 'Attribute-based access (ABAC)', {
-	primary: ['feature.enable_abac'],
 	advanced: ['feature.enable_verified_attributes']
-});
-place('access/relationships', 'Relationship-based access (ReBAC)', {
-	primary: ['feature.enable_rebac']
 });
 place('access/policies', 'Policies', {
 	primary: ['feature.enable_custom_rules'],
-	advanced: [
-		'feature.enable_policy_logging',
-		'feature.enable_policy_embedding',
-		'feature.enable_id_level_permissions',
-		'feature.enable_check_api',
-		'check.audience'
-	],
+	advanced: ['feature.enable_policy_logging', 'feature.enable_policy_embedding'],
 	search: [
 		'limits.max_embedded_permissions',
 		'limits.max_resource_permissions',
@@ -502,18 +495,6 @@ place('access/policies', 'Policies', {
 		'feature.enable_ai_ephemeral_auth'
 	]
 });
-place('access/roles', 'Roles in tokens', {
-	advanced: ['tokens.rbac_id_token_claims', 'tokens.rbac_access_token_claims']
-});
-place(
-	'access/roles',
-	'Dynamic groups',
-	{ advanced: ['groups.dynamic_freshness_seconds'] },
-	{
-		'groups.dynamic_freshness_seconds':
-			'Draft place until the Groups screen is built: how long a published dynamic group membership grants without being checked again.'
-	}
-);
 place('access/schema-setting', 'Custom claims', {
 	advanced: [
 		'feature.enable_custom_claim_schemas',

@@ -1334,6 +1334,92 @@ export async function adminRoleAssignmentsListHandler(c: Context<{ Bindings: Env
   }
 }
 
+/**
+ * GET /api/admin/roles/:id/group-assignments
+ * The groups a role is granted to (the group role grants of the role in this tenant).
+ * Metadata database only: the grants and the groups live there.
+ */
+export async function adminRoleGroupAssignmentsListHandler(c: Context<{ Bindings: Env }>) {
+  try {
+    const tenantId = getTenantIdFromContext(c);
+    const roleId = c.req.param('id')!;
+    const { page, limit, offset } = listPage(c);
+    // Roles and their group grants are in the metadata database alone: the account databases
+    // are not resolved (an unreachable one must not break this list).
+    const metadata = createAuthContextFromHono(c, tenantId).coreAdapter;
+
+    const role = await findTenantRole(metadata, tenantId, { id: roleId });
+    if (!role) {
+      return c.json(
+        { error: 'not_found', error_description: 'The requested resource was not found' },
+        404
+      );
+    }
+
+    const totalRow = await metadata.queryOne<{ count: number | string }>(
+      'SELECT COUNT(*) AS count FROM group_role_assignments WHERE tenant_id = ? AND role_id = ?',
+      [tenantId, roleId]
+    );
+    const total = Number(totalRow?.count ?? 0);
+    const rows = await metadata.query<{
+      id: string;
+      group_id: string;
+      group_key: string | null;
+      group_display_name: string | null;
+      scope_type: string;
+      scope_target: string;
+      expires_at: number | null;
+      assigned_by: string | null;
+      created_at: number;
+    }>(
+      `SELECT a.id, a.group_id, g.group_key AS group_key, g.display_name AS group_display_name,
+              a.scope_type, a.scope_target, a.expires_at, a.assigned_by, a.created_at
+         FROM group_role_assignments a
+         LEFT JOIN "groups" g ON g.tenant_id = a.tenant_id AND g.id = a.group_id
+        WHERE a.tenant_id = ? AND a.role_id = ?
+        ORDER BY a.created_at ASC, a.id ASC
+        LIMIT ? OFFSET ?`,
+      [tenantId, roleId, limit, offset]
+    );
+    const totalPages = Math.ceil(total / limit);
+
+    return c.json({
+      role_id: roleId,
+      role_name: role.name,
+      group_assignments: rows.map((row) => ({
+        assignment_id: row.id,
+        group_id: row.group_id,
+        group_key: row.group_key,
+        group_display_name: row.group_display_name,
+        scope: row.scope_type,
+        scope_target: row.scope_target,
+        assigned_by: row.assigned_by,
+        expires_at: row.expires_at ? toMilliseconds(row.expires_at) : null,
+        assigned_at: toMilliseconds(row.created_at),
+      })),
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages,
+        hasNext: page < totalPages,
+        hasPrev: page > 1,
+      },
+    });
+  } catch (error) {
+    const log = getLogger(c).module('ADMIN-RBAC');
+    log.error(
+      'Admin role group assignments list error',
+      { action: 'list_role_group_assignments' },
+      error as Error
+    );
+    return c.json(
+      { error: 'server_error', error_description: 'Failed to retrieve role group assignments' },
+      500
+    );
+  }
+}
+
 // =============================================================================
 // Phase 3: Custom Role Creation
 // =============================================================================
@@ -1349,11 +1435,30 @@ export async function adminRoleCreateHandler(c: Context<{ Bindings: Env }>) {
   try {
     const body = await c.req.json<{
       name: string;
+      display_name?: unknown;
       description?: string;
       permissions: string[];
       grant_tier?: unknown;
     }>();
     const adminAuth = getAdminAuthFromContext(c);
+
+    // The display name is optional text; empty counts as none.
+    if (
+      body.display_name !== undefined &&
+      body.display_name !== null &&
+      (typeof body.display_name !== 'string' || body.display_name.length > 100)
+    ) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: {
+          field: 'display_name',
+          reason: 'display_name must be a string of at most 100 characters',
+        },
+      });
+    }
+    const displayName =
+      typeof body.display_name === 'string' && body.display_name.trim()
+        ? body.display_name.trim()
+        : null;
 
     // Validate name
     if (!body.name || body.name.length < 2 || body.name.length > 50) {
@@ -1432,14 +1537,15 @@ export async function adminRoleCreateHandler(c: Context<{ Bindings: Env }>) {
     // Create the role
     await adapter.execute(
       `INSERT INTO roles (
-         id, tenant_id, name, description, permissions_json, role_type,
+         id, tenant_id, name, display_name, description, permissions_json, role_type,
          is_assignable, is_system, grant_tier, created_at, updated_at
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         roleId,
         tenantId,
         body.name,
+        displayName,
         body.description ?? null,
         JSON.stringify(body.permissions),
         'custom',
@@ -1469,6 +1575,7 @@ export async function adminRoleCreateHandler(c: Context<{ Bindings: Env }>) {
       {
         role_id: roleId,
         name: body.name,
+        display_name: displayName,
         description: body.description ?? null,
         permissions: body.permissions,
         grant_tier: grantTier,
@@ -1603,7 +1710,10 @@ export async function adminRoleUpdateHandler(c: Context<{ Bindings: Env }>) {
     );
     if (!updated.rowsAffected) {
       return c.json(
-        { error: 'conflict', error_description: 'Role changed since it was read. Try again.' },
+        {
+          error: 'role_version_conflict',
+          error_description: 'Role changed since it was read. Try again.',
+        },
         409
       );
     }
@@ -1707,7 +1817,7 @@ export async function adminRoleDeleteHandler(c: Context<{ Bindings: Env }>) {
     if (assignedUsers > 0) {
       return c.json(
         {
-          error: 'conflict',
+          error: 'role_in_use',
           error_description: `Cannot delete role: ${assignedUsers} user(s) are still assigned to this role. Remove all assignments first.`,
         },
         409
@@ -1723,8 +1833,31 @@ export async function adminRoleDeleteHandler(c: Context<{ Bindings: Env }>) {
       [tenantId, roleId, existingRole.grant_tier, tenantId, roleId]
     );
     if (!removed.rowsAffected) {
+      // Say why the guarded delete matched nothing: the role is gone, its tier changed since it
+      // was read, or a group (or, meanwhile, a user) has it.
+      const current = await adapter.queryOne<{ grant_tier: number }>(
+        'SELECT grant_tier FROM roles WHERE tenant_id = ? AND id = ?',
+        [tenantId, roleId]
+      );
+      if (!current) {
+        return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND, {
+          variables: { resource: 'role', id: roleId },
+        });
+      }
+      if (Number(current.grant_tier) !== Number(existingRole.grant_tier)) {
+        return c.json(
+          {
+            error: 'role_version_conflict',
+            error_description: 'Role changed since it was read. Try again.',
+          },
+          409
+        );
+      }
       return c.json(
-        { error: 'conflict', error_description: 'Role changed or is assigned to a group.' },
+        {
+          error: 'role_in_use',
+          error_description: 'Cannot delete role: it is still granted to a group.',
+        },
         409
       );
     }

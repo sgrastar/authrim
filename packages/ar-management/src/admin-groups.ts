@@ -21,6 +21,8 @@ import {
   countGroupMembers,
   createErrorResponse,
   createGroup,
+  ADMIN_PERMISSIONS,
+  hasAdminPermission,
   escapeLikePattern,
   getLogger,
   getTenantIdFromContext,
@@ -405,6 +407,15 @@ export async function adminGroupsListHandler(c: GroupContext) {
       where.push('lifecycle_state = ?');
       params.push(lifecycle);
     }
+    // An exact parent; `null` (the word) means the root groups.
+    const parent = c.req.query('parent_group_id');
+    if (parent !== undefined && parent !== '') {
+      if (parent === 'null') where.push('parent_group_id IS NULL');
+      else {
+        where.push('parent_group_id = ?');
+        params.push(parent);
+      }
+    }
     const condition = where.join(' AND ');
     const [totalRow, rows] = await Promise.all([
       stores.metadata.queryOne<{ count: number | null }>(
@@ -510,14 +521,20 @@ export async function adminGroupGetHandler(c: GroupContext) {
     const stores = await tenantRBACStores(c, tenantId);
     const group = await findGroup(stores.metadata, tenantId, groupId);
     if (!group) return notFound(c);
-    const [chain, counts, roles] = await Promise.all([
+    const [chain, counts, roles, canManage] = await Promise.all([
       parentChain(stores.metadata, tenantId, group),
       countGroupMembers(stores.accounts, tenantId, [groupId]),
       groupRoleRows(stores.metadata, tenantId, groupId),
+      // What member add and remove ask of this caller: the write permission (their route gate)
+      // and the delegation guard.
+      hasAdminPermission(adminAuthOf(c)?.permissions ?? [], ADMIN_PERMISSIONS.GROUPS_WRITE)
+        ? canManageGroupMembership(stores.metadata, tenantId, adminAuthOf(c), groupId)
+        : false,
     ]);
     return c.json({
       group: {
         ...presentGroup(group, counts.get(groupId) ?? 0),
+        can_manage_membership: canManage,
         parent_chain: chain.map((parent) => ({
           id: parent.id,
           group_key: parent.group_key,
@@ -695,7 +712,12 @@ export async function adminGroupUpdateHandler(c: GroupContext) {
     if (outcome.kind === 'not_found') return notFound(c);
     if (outcome.kind === 'forbidden') return forbidden(c);
     if (outcome.kind === 'conflict')
-      return failure(c, 409, 'conflict', 'The group changed meanwhile: read it again and retry');
+      return failure(
+        c,
+        409,
+        'group_version_conflict',
+        'The group changed meanwhile: read it again and retry'
+      );
     if (outcome.kind === 'invalid_parent')
       return invalid(c, 'parent_group_id must name an existing group that does not form a loop');
 
@@ -795,12 +817,17 @@ export async function adminGroupDeleteHandler(c: GroupContext) {
       return 'ok' as const;
     });
     if (gate === 'children')
-      return failure(c, 409, 'conflict', 'The group has child groups: move or delete them first');
+      return failure(
+        c,
+        409,
+        'group_has_children',
+        'The group has child groups: move or delete them first'
+      );
     if (gate === 'scoped')
       return failure(
         c,
         409,
-        'conflict',
+        'group_referenced_as_scope',
         'A role granted to a group has this group as its scope: remove that grant first'
       );
     if (gate === 'forbidden') return forbidden(c);
@@ -1049,7 +1076,7 @@ export async function adminGroupMemberRemoveHandler(c: GroupContext) {
       return failure(
         c,
         409,
-        'conflict',
+        'membership_other_source',
         'The membership comes from another source (SCIM, a rule, a dynamic group or an invitation) and cannot be removed here'
       );
     // Every manual row (whatever its source_ref) in one statement, the cache dropped once.

@@ -22,6 +22,7 @@ import { enSystemLog } from './system-log/en';
 import { enEmailDeliveries } from './email-deliveries/en';
 import { enLogPlatform } from './log-platform/en';
 import { enTeam } from './team/en';
+import { enAuthz } from './authz/en';
 import { enIpAllowlist } from './ip-allowlist/en';
 import { enAccountPages } from './account-pages/en';
 import { enMachineAccess } from './machine-access/en';
@@ -58,6 +59,7 @@ export const en = {
 	...enEmailDeliveries,
 	...enLogPlatform,
 	...enTeam,
+	...enAuthz,
 	...enIpAllowlist,
 	...enAccountPages,
 	...enMachineAccess,
@@ -91,7 +93,7 @@ export const en = {
 	'nav.platform': 'Platform',
 	'nav.users.all': 'All users',
 	'nav.users.agents': 'Agents',
-	'nav.users.serviceGroups': 'Service groups',
+	'nav.users.groups': 'Groups',
 	'nav.users.lifecycle': 'Account retention',
 	'nav.users.sessions': 'Sessions',
 	'nav.users.invitations': 'Invitations',
@@ -100,7 +102,7 @@ export const en = {
 	'nav.access.attributes': 'Attributes',
 	'nav.access.relationships': 'Relationships (ReBAC)',
 	'nav.access.policies': 'Policies',
-	'nav.access.simulator': 'Access simulator',
+	'nav.access.accessCheck': 'Access check',
 	'nav.apps.all': 'Service flows',
 	'nav.auth.tokens': 'Tokens and protocols',
 	'nav.apps.apis': 'APIs / Resources',
@@ -132,6 +134,7 @@ export const en = {
 	'nav.set.teamGroups': 'Administrator groups',
 	'nav.set.teamRoles': 'Administrator roles',
 	'nav.set.teamIpAllowlist': 'Administrator IP limit',
+	'nav.set.authorization': 'Authorization',
 	'nav.plat.tenants': 'Tenants',
 	'nav.plat.releases': 'Control plane',
 	'nav.plat.scale': 'Scale',

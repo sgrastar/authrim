@@ -8287,6 +8287,12 @@ paths:
           schema:
             type: string
             enum: [static, dynamic, scim, provisioned]
+        - name: parent_group_id
+          in: query
+          required: false
+          description: Only the groups directly below this group (exact match); the word `null` lists the root groups.
+          schema:
+            type: string
         - name: lifecycle_state
           in: query
           required: false
@@ -8327,7 +8333,7 @@ paths:
         '403':
           $ref: '#/components/responses/Error'
         '409':
-          $ref: '#/components/responses/Error'
+          $ref: '#/components/responses/AdminAuthzConflict'
         '500':
           $ref: '#/components/responses/Error'
       requestBody:
@@ -8394,7 +8400,7 @@ paths:
         '404':
           $ref: '#/components/responses/Error'
         '409':
-          $ref: '#/components/responses/Error'
+          $ref: '#/components/responses/AdminAuthzConflict'
         '500':
           $ref: '#/components/responses/Error'
       parameters:
@@ -8435,7 +8441,7 @@ paths:
         '404':
           $ref: '#/components/responses/Error'
         '409':
-          $ref: '#/components/responses/Error'
+          $ref: '#/components/responses/AdminAuthzConflict'
         '500':
           $ref: '#/components/responses/Error'
       parameters:
@@ -8514,7 +8520,7 @@ paths:
         '404':
           $ref: '#/components/responses/Error'
         '409':
-          $ref: '#/components/responses/Error'
+          $ref: '#/components/responses/AdminAuthzConflict'
         '500':
           $ref: '#/components/responses/Error'
       parameters:
@@ -8554,7 +8560,7 @@ paths:
         '404':
           $ref: '#/components/responses/Error'
         '409':
-          $ref: '#/components/responses/Error'
+          $ref: '#/components/responses/AdminAuthzConflict'
         '500':
           $ref: '#/components/responses/Error'
       parameters:
@@ -23094,7 +23100,7 @@ paths:
         '404':
           $ref: '#/components/responses/Error'
         '409':
-          $ref: '#/components/responses/Error'
+          $ref: '#/components/responses/AdminAuthzConflict'
         '500':
           $ref: '#/components/responses/Error'
       parameters:
@@ -23153,6 +23159,8 @@ paths:
           $ref: '#/components/responses/Error'
         '404':
           $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/AdminAuthzConflict'
         '500':
           $ref: '#/components/responses/Error'
       parameters:
@@ -23176,6 +23184,52 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/AdminRoleAssignments'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+          description: Page number.
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 20
+          description: Page size.
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/roles/{id}/group-assignments':
+    get:
+      tags:
+        - Roles
+      operationId: getApiAdminRolesByIdGroupAssignments
+      summary: List the groups a role is granted to
+      description: >-
+        Lists the group role grants of a tenant role (group, scope, expiry), oldest first, with
+        offset-style page metadata. Needs `admin:roles:read`. A grant whose group no longer exists
+        is listed with null group fields.
+      responses:
+        '200':
+          $ref: '#/components/responses/AdminRoleGroupAssignments'
         '401':
           $ref: '#/components/responses/Error'
         '403':
@@ -48672,6 +48726,20 @@ components:
                 created_at: 1770000000000
                 updated_at: 1770000000000
                 assignment_count: 3
+    AdminAuthzConflict:
+      description: >-
+        The change conflicts with the current state. `error` says which conflict (see the schema);
+        `error_description` is a human text.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AdminAuthzConflictError'
+    AdminRoleGroupAssignments:
+      description: The groups a role is granted to.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AdminRoleGroupAssignmentsResponse'
     AdminRole:
       description: Role detail response.
       content:
@@ -48705,6 +48773,7 @@ components:
           example:
             role_id: role_custom_viewer
             name: custom_viewer
+            display_name: Custom viewer
             description: Custom viewer role.
             permissions:
               - 'users:read'
@@ -56169,6 +56238,7 @@ components:
         - permissions
         - admin_scope
         - is_platform_admin
+        - max_grant_tier
         - expires_at
         - created_at
         - last_login_at
@@ -56207,6 +56277,12 @@ components:
           type: array
           items:
             type: string
+        max_grant_tier:
+          type: integer
+          minimum: 0
+          description: >-
+            The highest grant tier of an end-user role this admin may grant, revoke or edit (super
+            admin 3, tenant admin 2, other admin roles 1, none 0).
         admin_scope:
           type: string
           enum:
@@ -74850,6 +74926,12 @@ components:
           type: string
           minLength: 2
           maxLength: 50
+        display_name:
+          type:
+            - string
+            - 'null'
+          maxLength: 100
+          description: Name shown to people; blank counts as none.
         description:
           type: string
         permissions:
@@ -74873,6 +74955,7 @@ components:
       required:
         - role_id
         - name
+        - display_name
         - description
         - permissions
         - grant_tier
@@ -74883,6 +74966,10 @@ components:
           type: string
         name:
           type: string
+        display_name:
+          type:
+            - string
+            - 'null'
         description:
           type:
             - string
@@ -74965,6 +75052,115 @@ components:
             - true
         message:
           type: string
+    AdminAuthzConflictError:
+      type: object
+      additionalProperties: true
+      required:
+        - error
+      properties:
+        error:
+          type: string
+          description: >-
+            `group_has_children`: the group has child groups. `group_referenced_as_scope`: a role
+            granted to a group has this group as its scope. `group_managed_by_service_group`: a
+            service group's state, parent or existence follow the service group rules.
+            `membership_other_source`: the membership comes from SCIM, a rule, a dynamic group or an
+            invitation and cannot be removed here. `group_version_conflict`: the group changed
+            meanwhile (read it again). `role_in_use`: the role is still assigned to users or groups
+            (or changed meanwhile). `role_version_conflict`: the role changed since it was read.
+            `conflict`: any other conflict (a duplicate group_key, an inactive account).
+          enum:
+            - conflict
+            - group_has_children
+            - group_referenced_as_scope
+            - group_managed_by_service_group
+            - membership_other_source
+            - group_version_conflict
+            - role_in_use
+            - role_version_conflict
+        error_description:
+          type: string
+    AdminRoleGroupAssignmentsResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - role_id
+        - role_name
+        - group_assignments
+        - pagination
+      properties:
+        role_id:
+          type: string
+        role_name:
+          type: string
+        group_assignments:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required:
+              - assignment_id
+              - group_id
+              - group_key
+              - group_display_name
+              - scope
+              - scope_target
+              - assigned_by
+              - expires_at
+              - assigned_at
+            properties:
+              assignment_id:
+                type: string
+              group_id:
+                type: string
+              group_key:
+                type:
+                  - string
+                  - 'null'
+                description: Null when the group no longer exists.
+              group_display_name:
+                type:
+                  - string
+                  - 'null'
+              scope:
+                type: string
+              scope_target:
+                type: string
+              assigned_by:
+                type:
+                  - string
+                  - 'null'
+              expires_at:
+                type:
+                  - integer
+                  - 'null'
+                description: Milliseconds since the epoch.
+              assigned_at:
+                type: integer
+                format: int64
+        pagination:
+          type: object
+          additionalProperties: false
+          required:
+            - page
+            - limit
+            - total
+            - totalPages
+            - hasNext
+            - hasPrev
+          properties:
+            page:
+              type: integer
+            limit:
+              type: integer
+            total:
+              type: integer
+            totalPages:
+              type: integer
+            hasNext:
+              type: boolean
+            hasPrev:
+              type: boolean
     AdminRoleAssignmentsResponse:
       type: object
       additionalProperties: false
@@ -79540,6 +79736,9 @@ components:
             - $ref: '#/components/schemas/Group'
             - type: object
               properties:
+                can_manage_membership:
+                  type: boolean
+                  description: 'Whether the caller may add or remove members of this group: it holds `admin:groups:write` and passes the delegation guard the member routes apply. Only on a read of one group.'
                 parent_chain:
                   type: array
                   description: The parent, its parent and so on, nearest first. Only on a read of one group.

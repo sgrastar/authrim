@@ -21,11 +21,13 @@ const MACHINE_FULL_ADMIN_GRANT_TIER = 3;
  * is at most the administrator's `maxGrantTier` (from its admin roles' definitions). This is the
  * only delegation guard for end-user roles.
  */
+export function grantCeilingOf(auth: AdminAuthContext): number {
+  return hasMachineFullAdminBypass(auth) ? MACHINE_FULL_ADMIN_GRANT_TIER : (auth.maxGrantTier ?? 0);
+}
+
 export function canGrantRole(auth: AdminAuthContext | null, role: GrantRole): boolean {
   if (!auth || !Number.isInteger(role.grant_tier) || role.grant_tier < 1) return false;
-  const ceiling = hasMachineFullAdminBypass(auth)
-    ? MACHINE_FULL_ADMIN_GRANT_TIER
-    : (auth.maxGrantTier ?? 0);
+  const ceiling = grantCeilingOf(auth);
   return Number.isInteger(ceiling) && role.grant_tier <= ceiling;
 }
 

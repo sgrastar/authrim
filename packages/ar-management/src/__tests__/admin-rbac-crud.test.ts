@@ -189,6 +189,44 @@ describe('admin RBAC role CRUD', () => {
     );
   });
 
+  it('stores and returns the display name of a new role (blank counts as none)', async () => {
+    mocks.adapter.queryOne.mockResolvedValue(null);
+    const named = await adminRoleCreateHandler(
+      context({
+        body: { name: 'auditor', display_name: '  Auditor  ', permissions: ['audit:read'] },
+        auth: adminAuth,
+      })
+    );
+    expect(named.status).toBe(201);
+    await expect(named.json()).resolves.toMatchObject({ display_name: 'Auditor' });
+    const insert = mocks.adapter.execute.mock.calls[0];
+    expect(String(insert[0])).toMatch(/name, display_name, description/);
+    expect((insert[1] as unknown[])[3]).toBe('Auditor');
+
+    mocks.adapter.execute.mockClear();
+    const blank = await adminRoleCreateHandler(
+      context({
+        body: { name: 'auditor2', display_name: '   ', permissions: ['audit:read'] },
+        auth: adminAuth,
+      })
+    );
+    await expect(blank.json()).resolves.toMatchObject({ display_name: null });
+    expect((mocks.adapter.execute.mock.calls[0][1] as unknown[])[3]).toBeNull();
+
+    for (const display_name of [5, 'x'.repeat(101)]) {
+      expect(
+        (
+          await adminRoleCreateHandler(
+            context({
+              body: { name: 'auditor3', display_name, permissions: ['audit:read'] },
+              auth: adminAuth,
+            })
+          )
+        ).status
+      ).toBe(400);
+    }
+  });
+
   it.each([null, role({ is_system: 1 }), role({ role_type: 'builtin' })])(
     'rejects missing/system role update %#',
     async (existing) => {
@@ -319,6 +357,7 @@ describe('admin RBAC role CRUD', () => {
       context({ body: { permissions: ['audit:write'] }, auth: adminAuth })
     );
     expect(update.status).toBe(409);
+    await expect(update.json()).resolves.toMatchObject({ error: 'role_version_conflict' });
     expect(String(mocks.adapter.execute.mock.calls[0][0])).toMatch(
       /WHERE tenant_id = \? AND id = \? AND grant_tier = \?/
     );
@@ -332,8 +371,11 @@ describe('admin RBAC role CRUD', () => {
     mocks.adapter.execute.mockClear();
     mocks.adapter.queryOne.mockResolvedValueOnce(role({ grant_tier: 2 }));
     mocks.adapter.execute.mockResolvedValueOnce({ success: true, rowsAffected: 0 });
+    // The tier changed since it was read.
+    mocks.adapter.queryOne.mockResolvedValueOnce({ grant_tier: 3 });
     const removal = await adminRoleDeleteHandler(context({ auth: adminAuth }));
     expect(removal.status).toBe(409);
+    await expect(removal.json()).resolves.toMatchObject({ error: 'role_version_conflict' });
     expect(String(mocks.adapter.execute.mock.calls[0][0])).toMatch(/AND grant_tier = \?/);
     expect(mocks.adapter.execute.mock.calls[0][1]).toEqual([
       'tenant-a',
@@ -344,10 +386,28 @@ describe('admin RBAC role CRUD', () => {
     ]);
   });
 
+  it('says why a guarded delete removed nothing: a group grant, or the role gone', async () => {
+    mocks.adapter.queryOne.mockResolvedValueOnce(role({ grant_tier: 2 }));
+    mocks.adapter.execute.mockResolvedValueOnce({ success: true, rowsAffected: 0 });
+    mocks.adapter.queryOne.mockResolvedValueOnce({ grant_tier: 2 });
+    const held = await adminRoleDeleteHandler(context({ auth: adminAuth }));
+    expect(held.status).toBe(409);
+    await expect(held.json()).resolves.toMatchObject({ error: 'role_in_use' });
+
+    mocks.adapter.queryOne.mockResolvedValueOnce(role({ grant_tier: 2 }));
+    mocks.adapter.execute.mockResolvedValueOnce({ success: true, rowsAffected: 0 });
+    mocks.adapter.queryOne.mockResolvedValueOnce(null);
+    expect((await adminRoleDeleteHandler(context({ auth: adminAuth }))).status).toBe(404);
+  });
+
   it('does not delete assigned custom roles', async () => {
     mocks.adapter.queryOne.mockResolvedValueOnce(role());
     mocks.adapter.query.mockResolvedValueOnce([{ key: 'resource-1', count: 2 }]);
-    expect((await adminRoleDeleteHandler(context({ auth: adminAuth }))).status).toBe(409);
+    const refused = await adminRoleDeleteHandler(context({ auth: adminAuth }));
+    expect(refused.status).toBe(409);
+    const refusal = await refused.text();
+    expect(refusal).toContain('"error":"role_in_use"');
+    expect(refusal).toContain('2 user(s)');
     expect(mocks.adapter.execute).not.toHaveBeenCalled();
   });
 

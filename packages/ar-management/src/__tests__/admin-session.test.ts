@@ -166,6 +166,7 @@ describe('Admin Session Handlers', () => {
       name: 'Admin User',
       roles: ['ar_viewer'],
       permissions: ['admin:logging:overview:read'],
+      max_grant_tier: 1,
       admin_scope: 'tenant',
       is_platform_admin: false,
       last_login_at: 1700000000,
@@ -214,9 +215,58 @@ describe('Admin Session Handlers', () => {
     await expect(response.json()).resolves.toMatchObject({
       roles: ['ar_super_admin'],
       permissions: ['*'],
+      max_grant_tier: 3,
       admin_scope: 'platform',
       is_platform_admin: true,
     });
+  });
+
+  it('takes the grant ceiling of the auth context when the request carries one', async () => {
+    mockGetCookie.mockReturnValue('admin-session-123');
+    mockAdminSessionRepo.getSession.mockResolvedValue({
+      id: 'admin-session-123',
+      tenant_id: 'default',
+      admin_user_id: 'admin-user-1',
+      created_at: 100,
+      expires_at: 200,
+    });
+    mockAdminAdapter.query.mockResolvedValue([
+      {
+        id: 'role-viewer',
+        name: 'ar_viewer',
+        permissions_json: '[]',
+        hierarchy_level: 10,
+        inherits_from: null,
+        scope_type: 'tenant',
+        scope_id: null,
+      },
+    ]);
+    mockAdminAdapter.queryOne.mockResolvedValue({
+      email: 'admin@example.com',
+      name: 'Admin User',
+      last_login_at: null,
+      is_active: 1,
+      status: 'active',
+    });
+    // A machine token with every admin permission delegates the highest tier.
+    const machine = await adminSessionStatusHandler(
+      createMockContext({
+        adminAuth: {
+          userId: 'm',
+          authMethod: 'machine_access_token',
+          permissions: ['admin:*'],
+          maxGrantTier: 1,
+        },
+      }) as never
+    );
+    await expect(machine.json()).resolves.toMatchObject({ max_grant_tier: 3 });
+    // A context that allows nothing is 0, not the ceiling of the role names.
+    const none = await adminSessionStatusHandler(
+      createMockContext({
+        adminAuth: { userId: 'a', authMethod: 'session', permissions: [], maxGrantTier: 0 },
+      }) as never
+    );
+    await expect(none.json()).resolves.toMatchObject({ max_grant_tier: 0 });
   });
 
   describe('disabled_capabilities', () => {
