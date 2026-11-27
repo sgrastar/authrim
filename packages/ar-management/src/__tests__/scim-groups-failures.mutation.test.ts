@@ -38,6 +38,10 @@ describeScimTestHarness('SCIM Groups write failures (mutation coverage)', (harne
     };
   }
 
+  const dropGroup = () => {
+    harness.canonicalGroups.db.prepare('DELETE FROM "groups" WHERE id = ?').run('group-001');
+  };
+
   const failDatabase = () => {
     (harness.env.DB as any).prepare = () => {
       throw new Error('db down');
@@ -52,9 +56,10 @@ describeScimTestHarness('SCIM Groups write failures (mutation coverage)', (harne
   }
 
   it('reports a group that vanished right after creation', async () => {
-    afterStatement('INSERT INTO roles', () =>
-      harness.groups.delete(must([...harness.groups.keys()].pop()))
-    );
+    afterStatement('INSERT INTO "groups"', () => {
+      const created = must([...harness.groups.keys()].find((id) => id !== 'group-001'));
+      harness.canonicalGroups.db.prepare('DELETE FROM "groups" WHERE id = ?').run(created);
+    });
     const res = await send('POST', '/scim/v2/Groups', {
       schemas: [GROUP_SCHEMA],
       displayName: 'Vanishing',
@@ -63,7 +68,7 @@ describeScimTestHarness('SCIM Groups write failures (mutation coverage)', (harne
   });
 
   it('reports a group that vanished right after replacement', async () => {
-    afterStatement('UPDATE roles', () => harness.groups.delete('group-001'));
+    afterStatement('UPDATE "groups"', dropGroup);
     const res = await send('PUT', '/scim/v2/Groups/group-001', {
       schemas: [GROUP_SCHEMA],
       displayName: 'Replaced',
@@ -72,7 +77,7 @@ describeScimTestHarness('SCIM Groups write failures (mutation coverage)', (harne
   });
 
   it('reports a group that vanished right after a patch', async () => {
-    afterStatement('UPDATE roles', () => harness.groups.delete('group-001'));
+    afterStatement('UPDATE "groups"', dropGroup);
     const res = await send('PATCH', '/scim/v2/Groups/group-001', {
       schemas: [PATCH_SCHEMA],
       Operations: [{ op: 'replace', path: 'displayName', value: 'Patched' }],

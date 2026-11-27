@@ -17,6 +17,10 @@ import { Hono } from 'hono';
 import type { Env } from '@authrim/ar-lib-core/types/env';
 import scimApp from '../scim';
 import { installGroupBoundaryFixture } from './helpers/group-boundary-fixture';
+import {
+  installCanonicalGroupFixture,
+  type CanonicalGroupFixture,
+} from './helpers/canonical-group-fixture';
 
 /** A mock user's account lifecycle: deactivated is deprovisioned (as the writer makes it), deleted only once deleted. */
 function mockAccountLifecycle(user: { active?: number; lifecycle_state?: string }): string {
@@ -642,8 +646,6 @@ describe('SCIM 2.0 Endpoints', () => {
   let app: Hono;
   let mockEnv: Partial<Env>;
   let mockUsers: Map<string, any>;
-  let mockGroups: Map<string, any>;
-  let mockUserRoles: Map<string, any[]>;
   let mockCustomClaimSchemas: Array<Record<string, unknown>>;
   let activeLegalHolds: Map<string, string>;
   let sessionRevocationStates: Map<
@@ -686,9 +688,11 @@ describe('SCIM 2.0 Endpoints', () => {
   }
 
   let groupBoundaries: ReturnType<typeof installGroupBoundaryFixture>;
+  let canonicalGroups: CanonicalGroupFixture;
   afterEach(async () => {
     await settleBackgroundAudit();
     groupBoundaries?.close();
+    canonicalGroups?.close();
   });
 
   beforeEach(() => {
@@ -709,8 +713,6 @@ describe('SCIM 2.0 Endpoints', () => {
     customClaimRoutingState.rejectAccountLookup = false;
     mockUsers = new Map();
     canonicalRuntimeState.users = mockUsers;
-    mockGroups = new Map();
-    mockUserRoles = new Map();
     mockCustomClaimSchemas = [];
     activeLegalHolds = new Map();
     sessionRevocationStates = new Map();
@@ -747,14 +749,6 @@ describe('SCIM 2.0 Endpoints', () => {
       external_id: 'ext-002',
       created_at: jan16,
       updated_at: jan16,
-    });
-
-    mockGroups.set('group-001', {
-      id: 'group-001',
-      name: 'Administrators',
-      description: 'Admin group',
-      external_id: 'ext-grp-001',
-      created_at: jan10,
     });
 
     // Mock database
@@ -823,16 +817,6 @@ describe('SCIM 2.0 Endpoints', () => {
                   if (sql.includes('SELECT COUNT(*) as total')) {
                     if (sql.includes('users') || sql.includes('users_core'))
                       return { total: mockUsers.size };
-                    if (sql.includes('roles')) return { total: mockGroups.size };
-                  }
-                  if (sql.includes('SELECT * FROM roles WHERE id = ?')) {
-                    return mockGroups.get(args[0]) || null;
-                  }
-                  if (sql.includes('SELECT id FROM roles WHERE name = ?')) {
-                    for (const group of mockGroups.values()) {
-                      if (group.name === args[0]) return { id: group.id };
-                    }
-                    return null;
                   }
                   return null;
                 }),
@@ -896,23 +880,6 @@ describe('SCIM 2.0 Endpoints', () => {
                         field_value,
                       }));
                     return { results };
-                  }
-                  if (sql.includes('FROM user_roles ur')) {
-                    const userId = args[1];
-                    const results = [...mockUserRoles.entries()].flatMap(([roleId, members]) => {
-                      if (!members.some((member) => member.user_id === userId)) return [];
-                      const role = mockGroups.get(roleId);
-                      return role ? [{ id: role.id, name: role.name }] : [];
-                    });
-                    return { results };
-                  }
-                  if (sql.includes('SELECT * FROM roles')) {
-                    return { results: Array.from(mockGroups.values()) };
-                  }
-                  if (sql.includes('SELECT ur.user_id')) {
-                    const roleId = args[0];
-                    const members = mockUserRoles.get(roleId) || [];
-                    return { results: members };
                   }
                   return { results: [] };
                 }),
@@ -983,45 +950,6 @@ describe('SCIM 2.0 Endpoints', () => {
                     if (user?.custom_fields) {
                       delete user.custom_fields[args[2]];
                     }
-                    return { success: true };
-                  }
-                  if (sql.includes('INSERT INTO roles')) {
-                    const groupId = args[0];
-                    mockGroups.set(groupId, {
-                      id: groupId,
-                      tenant_id: args[1],
-                      name: args[2],
-                      description: args[3],
-                      external_id: args[5],
-                      created_at: args[6],
-                    });
-                    return { success: true };
-                  }
-                  if (sql.includes('UPDATE roles SET')) {
-                    const groupId = sql.includes('tenant_id = ?')
-                      ? args[args.length - 2]
-                      : args[args.length - 1];
-                    const group = mockGroups.get(groupId);
-                    if (group) {
-                      group.name = args[0];
-                      group.description = args[1];
-                    }
-                    return { success: true };
-                  }
-                  if (sql.includes('DELETE FROM roles')) {
-                    mockGroups.delete(args[0]);
-                    return { success: true };
-                  }
-                  if (sql.includes('DELETE FROM user_roles')) {
-                    mockUserRoles.delete(args[0]);
-                    return { success: true };
-                  }
-                  if (sql.includes('INSERT INTO user_roles')) {
-                    const userId = args[0];
-                    const roleId = args[1];
-                    const members = mockUserRoles.get(roleId) || [];
-                    members.push({ user_id: userId, email: mockUsers.get(userId)?.email });
-                    mockUserRoles.set(roleId, members);
                     return { success: true };
                   }
                   return { success: true };
@@ -1263,6 +1191,13 @@ describe('SCIM 2.0 Endpoints', () => {
 
     if (!mockEnv.DB) throw new Error('scim_core_fixture_missing');
     groupBoundaries = installGroupBoundaryFixture(mockEnv.DB);
+    canonicalGroups = installCanonicalGroupFixture(mockEnv.DB);
+    canonicalGroups.seedGroup({
+      id: 'group-001',
+      displayName: 'Administrators',
+      externalId: 'ext-grp-001',
+      createdAt: jan10 * 1000,
+    });
 
     // Create Hono app with mock environment binding
     app = new Hono();
@@ -1514,7 +1449,7 @@ describe('SCIM 2.0 Endpoints', () => {
     });
 
     it('returns direct group memberships for the user', async () => {
-      mockUserRoles.set('group-001', [{ user_id: 'user-001', email: 'john.doe@example.com' }]);
+      canonicalGroups.seedMembership({ groupId: 'group-001', subjectId: 'user-001' });
 
       const res = await app.fetch(createRequest('/scim/v2/Users/user-001'), mockEnv);
 

@@ -5,6 +5,8 @@ import { describeScimTestHarness } from './scim-test-harness';
 const GROUP_SCHEMA = 'urn:ietf:params:scim:schemas:core:2.0:Group';
 const PATCH_SCHEMA = 'urn:ietf:params:scim:api:messages:2.0:PatchOp';
 const ERROR_SCHEMA = 'urn:ietf:params:scim:api:messages:2.0:Error';
+/** The tenant's SCIM provisioning domain: the source_ref of every SCIM row. */
+const TOKEN_REF = 'scim';
 
 describeScimTestHarness('SCIM Groups routes (mutation coverage)', (harness) => {
   const fetchScim = (path: string, options?: RequestInit) =>
@@ -37,6 +39,14 @@ describeScimTestHarness('SCIM Groups routes (mutation coverage)', (harness) => {
       return stmt;
     };
     return calls;
+  }
+
+  /** The group's membership rows: subject, source, source_ref, state. */
+  function memberRows(groupId: string): Array<[unknown, unknown, unknown, unknown]> {
+    return harness.canonicalGroups
+      .memberships()
+      .filter((row) => row.group_id === groupId)
+      .map((row) => [row.subject_id, row.assignment_source, row.source_ref, row.lifecycle_state]);
   }
 
   async function currentEtag(id: string): Promise<string> {
@@ -73,8 +83,12 @@ describeScimTestHarness('SCIM Groups routes (mutation coverage)', (harness) => {
       const desc = await fetchScim('/scim/v2/Groups?sortBy=displayName&sortOrder=descending');
       expect(desc.status).toBe(200);
       const listSql = queries.map((q) => q.sql).filter((s) => s.includes('ORDER BY'));
-      expect(listSql.some((s) => /ORDER BY name ASC LIMIT \? OFFSET \?/.test(s))).toBe(true);
-      expect(listSql.some((s) => /ORDER BY name DESC LIMIT \? OFFSET \?/.test(s))).toBe(true);
+      expect(listSql.some((s) => /ORDER BY display_name ASC LIMIT \? OFFSET \?/.test(s))).toBe(
+        true
+      );
+      expect(listSql.some((s) => /ORDER BY display_name DESC LIMIT \? OFFSET \?/.test(s))).toBe(
+        true
+      );
     });
 
     it('passes the filter condition to both the count and the list query', async () => {
@@ -86,11 +100,12 @@ describeScimTestHarness('SCIM Groups routes (mutation coverage)', (harness) => {
       const hitBody = (await hit.json()) as any;
       expect(hitBody.totalResults).toBe(1);
       expect(hitBody.Resources.map((r: any) => r.id)).toEqual(['group-001']);
-      const roleStatements = statements.filter((s) => s.sql.includes('FROM roles'));
-      const count = roleStatements.find((s) => s.sql.includes('COUNT(*)'));
-      const list = roleStatements.find((s) => s.sql.includes('LIMIT ? OFFSET ?'));
+      const groupStatements = statements.filter((s) => s.sql.includes('FROM "groups"'));
+      const count = groupStatements.find((s) => s.sql.includes('COUNT(*)'));
+      const list = groupStatements.find((s) => s.sql.includes('LIMIT ? OFFSET ?'));
       for (const stmt of [count, list]) {
-        expect(stmt?.sql).toMatch(/AND name = \?\d+/);
+        expect(stmt?.sql).toContain("kind = 'scim'");
+        expect(stmt?.sql).toMatch(/AND display_name = \?(\s|$)/);
         expect(stmt?.params.slice(0, 2)).toEqual(['default', 'Administrators']);
       }
       const bad = await fetchScim(
@@ -207,7 +222,6 @@ describeScimTestHarness('SCIM Groups routes (mutation coverage)', (harness) => {
     });
 
     it('creates a group with members, Location and the stored fields', async () => {
-      const statements = recordStatements();
       const res = await json('POST', '/scim/v2/Groups', {
         schemas: [GROUP_SCHEMA],
         displayName: 'Engineers',
@@ -223,11 +237,13 @@ describeScimTestHarness('SCIM Groups routes (mutation coverage)', (harness) => {
       expect(stored.name).toBe('Engineers');
       expect(stored.external_id).toBe('ext-eng');
       expect(stored.tenant_id).toBe('default');
-      const insert = statements.find((s) => s.sql.includes('INSERT INTO user_roles'));
-      expect(insert?.sql).toContain('(?, ?, ?, ?), (?, ?, ?, ?)');
-      expect(insert?.params.filter((_, i) => i % 4 === 0)).toEqual(['user-001', 'user-002']);
-      expect(insert?.params.filter((_, i) => i % 4 === 1)).toEqual([body.id, body.id]);
-      expect(insert?.params.filter((_, i) => i % 4 === 2)).toEqual(['default', 'default']);
+      expect(stored.kind).toBe('scim');
+      expect(stored.group_key).toBe(`scim:${body.id}`);
+      expect(memberRows(body.id)).toEqual([
+        ['user-001', 'scim', TOKEN_REF, 'active'],
+        ['user-002', 'scim', TOKEN_REF, 'active'],
+      ]);
+      expect(body.members.map((m: any) => m.value)).toEqual(['user-001', 'user-002']);
     });
   });
 
@@ -291,7 +307,7 @@ describeScimTestHarness('SCIM Groups routes (mutation coverage)', (harness) => {
     });
 
     it('replaces name and members and returns the ETag', async () => {
-      const statements = recordStatements();
+      harness.canonicalGroups.seedMembership({ groupId: 'group-001', subjectId: 'user-001' });
       const res = await json(
         'PUT',
         '/scim/v2/Groups/group-001',
@@ -302,10 +318,12 @@ describeScimTestHarness('SCIM Groups routes (mutation coverage)', (harness) => {
       expect(body.displayName).toBe('Renamed');
       expect(res.headers.get('ETag')).toBe(body.meta.version);
       expect(harness.groups.get('group-001').name).toBe('Renamed');
-      const update = statements.find((s) => s.sql.startsWith('UPDATE roles SET'));
-      expect(update?.params).toEqual(['Renamed', null, null, 'group-001', 'default']);
-      const insert = statements.find((s) => s.sql.includes('INSERT INTO user_roles'));
-      expect(insert?.params.slice(0, 3)).toEqual(['user-002', 'group-001', 'default']);
+      expect(harness.groups.get('group-001').external_id).toBeNull();
+      expect(memberRows('group-001')).toEqual([
+        ['user-001', 'scim', TOKEN_REF, 'revoked'],
+        ['user-002', 'scim', TOKEN_REF, 'active'],
+      ]);
+      expect(body.members.map((m: any) => m.value)).toEqual(['user-002']);
     });
 
     it('answers 500 when the database fails', async () => {
@@ -363,7 +381,6 @@ describeScimTestHarness('SCIM Groups routes (mutation coverage)', (harness) => {
 
     it('renames the group and replaces members with the current ETag', async () => {
       const etag = await currentEtag('group-001');
-      const statements = recordStatements();
       const res = await patch(
         [
           { op: 'replace', path: 'displayName', value: 'Ops' },
@@ -376,11 +393,19 @@ describeScimTestHarness('SCIM Groups routes (mutation coverage)', (harness) => {
       expect(body.displayName).toBe('Ops');
       expect(res.headers.get('ETag')).toBe(body.meta.version);
       expect(harness.groups.get('group-001').name).toBe('Ops');
-      const update = statements.find((s) => s.sql.startsWith('UPDATE roles SET'));
-      expect(update?.params[0]).toBe('Ops');
-      expect(update?.params.slice(2)).toEqual(['ext-grp-001', 'group-001', 'default']);
-      const insert = statements.find((s) => s.sql.includes('INSERT INTO user_roles'));
-      expect(insert?.params.slice(0, 3)).toEqual(['user-002', 'group-001', 'default']);
+      expect(harness.groups.get('group-001').external_id).toBe('ext-grp-001');
+      expect(memberRows('group-001')).toEqual([['user-002', 'scim', TOKEN_REF, 'active']]);
+    });
+
+    it('removes a member by filter path, revoking only that row', async () => {
+      harness.canonicalGroups.seedMembership({ groupId: 'group-001', subjectId: 'user-001' });
+      harness.canonicalGroups.seedMembership({ groupId: 'group-001', subjectId: 'user-002' });
+      const res = await patch([{ op: 'remove', path: 'members[value eq "user-001"]' }]);
+      expect(res.status).toBe(200);
+      expect(memberRows('group-001')).toEqual([
+        ['user-001', 'scim', TOKEN_REF, 'revoked'],
+        ['user-002', 'scim', TOKEN_REF, 'active'],
+      ]);
     });
 
     it('answers 500 when the database fails', async () => {
@@ -414,8 +439,20 @@ describeScimTestHarness('SCIM Groups routes (mutation coverage)', (harness) => {
     });
 
     it('deletes the group and its memberships with 204', async () => {
+      harness.canonicalGroups.seedMembership({ groupId: 'group-001', subjectId: 'user-001' });
+      harness.canonicalGroups.seedMembership({
+        groupId: 'group-001',
+        subjectId: 'user-002',
+        source: 'manual',
+        sourceRef: '',
+      });
+      harness.canonicalGroups.db
+        .prepare(
+          `INSERT INTO group_role_assignments (id, tenant_id, group_id, role_id, created_at, updated_at)
+           VALUES ('gra-1', 'default', 'group-001', 'role-1', 0, 0)`
+        )
+        .run();
       const etag = await currentEtag('group-001');
-      const statements = recordStatements();
       const res = await fetchScim('/scim/v2/Groups/group-001', {
         method: 'DELETE',
         headers: { 'If-Match': etag },
@@ -423,10 +460,28 @@ describeScimTestHarness('SCIM Groups routes (mutation coverage)', (harness) => {
       expect(res.status).toBe(204);
       expect(await res.text()).toBe('');
       expect(harness.groups.has('group-001')).toBe(false);
-      const roleDelete = statements.find((s) => s.sql.startsWith('DELETE FROM roles'));
-      expect(roleDelete?.params).toEqual(['group-001', 'default']);
-      const memberDelete = statements.find((s) => s.sql.startsWith('DELETE FROM user_roles'));
-      expect(memberDelete?.params).toEqual(['default', 'group-001']);
+      // Every membership of the group (whatever its source) and its role assignments go with it.
+      expect(memberRows('group-001')).toEqual([]);
+      expect(
+        harness.canonicalGroups.db.prepare('SELECT id FROM group_role_assignments').all()
+      ).toEqual([]);
+    });
+
+    it('refuses with 409 to delete a group that has child groups', async () => {
+      harness.canonicalGroups.seedGroup({
+        id: 'group-child',
+        displayName: 'Child',
+        parentGroupId: 'group-001',
+      });
+      harness.canonicalGroups.seedMembership({ groupId: 'group-001', subjectId: 'user-001' });
+      const res = await fetchScim('/scim/v2/Groups/group-001', { method: 'DELETE' });
+      await expectError(
+        res,
+        409,
+        'The group has child groups; move or delete them before deleting it'
+      );
+      expect(harness.groups.has('group-001')).toBe(true);
+      expect(memberRows('group-001')).toEqual([['user-001', 'scim', TOKEN_REF, 'active']]);
     });
 
     it('answers 500 when the database fails', async () => {

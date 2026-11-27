@@ -3194,7 +3194,7 @@ describe('LoginUI runtime Flow handlers', () => {
       const { startData } = await submitRoleCondition();
       // The metadata database (the request's core adapter) defines the role, nothing more.
       mocks.coreAdapter.query.mockImplementation(async (sql: string) =>
-        sql.includes('FROM roles') && !sql.includes('user_roles')
+        sql.includes('FROM roles')
           ? [{ id: 'role_ar_tenant_admin', name: 'admin', permissions_json: '[]' }]
           : []
       );

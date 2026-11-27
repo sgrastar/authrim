@@ -56,6 +56,7 @@ import {
   resolveAccountCoreDataContext,
   resolveSubjectOrganizations,
   resolveSubjectRoles,
+  roleAssignmentHolds,
   type DatabaseAdapter,
   type PreparedStatement,
   type ExecuteResult,
@@ -2590,7 +2591,7 @@ async function getFlowConditionUserContext(
     if (!(error instanceof Error && error.message === 'account_data_route_not_found')) throw error;
   }
   const [roles, orgIds, attributes] = await Promise.all([
-    getFlowConditionUserRoles(db, rbac, tenantId, userId),
+    getFlowConditionUserRoles(rbac, tenantId, userId),
     getFlowConditionUserOrgIds(rbac, tenantId, userId),
     // Read, like the roles, only for a user the tenant has an account for; one that cannot be
     // read throws, so no condition on it is decided without it.
@@ -2605,28 +2606,26 @@ async function getFlowConditionUserContext(
   };
 }
 
+/**
+ * The user's effective role names (direct assignments and those of the user's groups, ancestors
+ * included) whose assignment holds across the tenant (global, or tenant-scoped to this tenant);
+ * a role held only for a group's or a resource's sake does not count, however it was assigned.
+ * SCIM group membership reaches them through the groups, as every other membership does.
+ */
 async function getFlowConditionUserRoles(
-  metadata: DatabaseAdapter,
   rbac: TenantRBACDatabases | null,
   tenantId: string,
   userId: string
 ): Promise<string[]> {
-  try {
-    const rows = await metadata.query<{ name: string }>(
-      `SELECT DISTINCT r.name
-         FROM user_roles ur
-         JOIN roles r ON r.tenant_id = ur.tenant_id AND r.id = ur.role_id
-        WHERE ur.tenant_id = ? AND ur.user_id = ?`,
-      [tenantId, userId]
-    );
-    if (rows.length > 0) return rows.map((row) => row.name).filter(Boolean);
-  } catch {
-    // Optional RBAC tables differ by runtime topology; fail closed below.
-  }
-
   if (!rbac) return [];
   const roles = await resolveSubjectRoles(rbac, tenantId, userId);
-  return [...new Set(roles.map(({ role }) => role.name))].filter(Boolean);
+  const held = roles.filter(({ assignment }) =>
+    roleAssignmentHolds(
+      { scope: assignment.scope_type, scopeTarget: assignment.scope_target },
+      { tenantId }
+    )
+  );
+  return [...new Set(held.map(({ role }) => role.name))].filter(Boolean);
 }
 
 async function getFlowConditionUserOrgIds(

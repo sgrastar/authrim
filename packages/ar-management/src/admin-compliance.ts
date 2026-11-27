@@ -27,6 +27,7 @@ import {
   resolveTenantAssignedDatabaseSourcesFromRegistry,
   getTenantMetadataContextFromHono,
   resolveTenantAuditProfileFromEnv,
+  rbacIdBatches,
   type AuditProfile,
 } from '@authrim/ar-lib-core';
 import {
@@ -124,44 +125,119 @@ async function auditLogStats(env: Env, auditProfile: AuditProfile, tenantId: str
 /** Rows read per statement when counting users with a role across stores. */
 const ROLE_USER_PAGE = 5000;
 
+/** The deepest group nesting followed, as the RBAC evaluation does (resolveGroupAncestors). */
+const MAX_GROUP_DEPTH = 16;
+
 /**
- * Roles defined for the tenant, and users holding one: an unexpired role assignment, or a role
- * SCIM gave them (user_roles, which sign-in reads too). The roles are in the metadata database
- * (`adapter`); the assignments are read in every store they may be in (a routed tenant keeps them
- * with each account, its SCIM roles may be in another store) and kept when they name one of the
- * roles, each user counted once across them.
+ * The groups whose members hold a role through them: an active group with an unexpired role
+ * assignment of one of `roleIds`, and every active group below it (a member of a child holds what
+ * its ancestors are given). An inactive group grants nothing and ends the path through it, as in
+ * resolveGroupAncestors. Read from the granted groups down, so a tenant whose groups hold no role
+ * reads one statement.
+ */
+async function roleHoldingGroups(
+  adapter: DatabaseAdapter,
+  tenantId: string,
+  roleIds: Set<string>,
+  nowSeconds: number
+): Promise<Set<string>> {
+  const grants = await adapter.query<{ group_id: string; role_id: string }>(
+    `SELECT group_id, role_id FROM group_role_assignments
+      WHERE tenant_id = ? AND (expires_at IS NULL OR expires_at > ?)`,
+    [tenantId, nowSeconds]
+  );
+  const granted = [
+    ...new Set(grants.filter((grant) => roleIds.has(grant.role_id)).map((grant) => grant.group_id)),
+  ];
+  const holding = new Set<string>();
+  if (granted.length === 0) return holding;
+  type Node = { id: string; lifecycle_state: string };
+  const read = async (column: 'id' | 'parent_group_id', ids: string[]) => {
+    const nodes: Node[] = [];
+    for (const batch of rbacIdBatches(ids)) {
+      nodes.push(
+        ...(await adapter.query<Node>(
+          `SELECT id, lifecycle_state FROM "groups"
+            WHERE tenant_id = ? AND ${column} IN (${batch.map(() => '?').join(', ')})`,
+          [tenantId, ...batch]
+        ))
+      );
+    }
+    return nodes;
+  };
+  let frontier = await read('id', granted);
+  for (let depth = 0; depth <= MAX_GROUP_DEPTH && frontier.length > 0; depth++) {
+    const next: string[] = [];
+    for (const node of frontier) {
+      if (node.lifecycle_state !== 'active' || holding.has(node.id)) continue;
+      holding.add(node.id);
+      next.push(node.id);
+    }
+    frontier = next.length > 0 ? await read('parent_group_id', next) : [];
+  }
+  return holding;
+}
+
+/**
+ * Roles defined for the tenant, and users holding one: an unexpired role assignment of the user,
+ * or a membership in force of a group that holds a role (an unexpired group role assignment, of
+ * the group or an ancestor). The roles, groups and group role assignments are in the metadata
+ * database (`adapter`); the users' assignments and memberships are read in every store they may
+ * be in (a routed tenant keeps them with each account), each user counted once across them.
+ * Counted per tenant from the tables, not per user, so the report never walks every account.
  */
 export async function roleUsage(env: Env, tenantId: string, adapter: DatabaseAdapter) {
+  const nowSeconds = Math.floor(Date.now() / 1000);
   const [roles, stores] = await Promise.all([
     adapter.query<{ id: string }>('SELECT id FROM roles WHERE tenant_id = ?', [tenantId]),
     tenantCoreStores(env, tenantId),
   ]);
   const roleIds = new Set(roles.map((role) => role.id));
-  const nowSeconds = Math.floor(Date.now() / 1000);
+  const groupIds = await roleHoldingGroups(adapter, tenantId, roleIds, nowSeconds);
+  const scanMemberships = groupIds.size > 0;
   const users = new Set<string>();
   await Promise.all(
     stores.map(async ({ adapter: store }) => {
-      let after = { userId: '', roleId: '' };
+      let after = { userId: '', ref: '' };
       for (;;) {
-        const page = await store.query<{ user_id: string; role_id: string }>(
-          `SELECT user_id, role_id FROM (
-             SELECT subject_id AS user_id, role_id
+        // `r:<role>` for a direct assignment, `g:<group>` for a membership in force (read only
+        // when some group holds a role).
+        const page = await store.query<{ user_id: string; ref: string }>(
+          `SELECT user_id, ref FROM (
+             SELECT subject_id AS user_id, 'r:' || role_id AS ref
                FROM role_assignments
-              WHERE tenant_id = ? AND (expires_at IS NULL OR expires_at > ?)
+              WHERE tenant_id = ? AND (expires_at IS NULL OR expires_at > ?)${
+                scanMemberships
+                  ? `
              UNION
-             SELECT user_id, role_id
-               FROM user_roles
-              WHERE tenant_id = ?
-           )
-           WHERE user_id > ? OR (user_id = ? AND role_id > ?)
-           ORDER BY user_id, role_id
+             SELECT subject_id AS user_id, 'g:' || group_id AS ref
+               FROM group_memberships
+              WHERE tenant_id = ? AND lifecycle_state = 'active'
+                AND (starts_at IS NULL OR starts_at <= ?) AND (expires_at IS NULL OR expires_at > ?)
+                AND (stale_after IS NULL OR stale_after > ?)`
+                  : ''
+              }
+           ) AS holdings
+           WHERE user_id > ? OR (user_id = ? AND ref > ?)
+           ORDER BY user_id, ref
            LIMIT ?`,
-          [tenantId, nowSeconds, tenantId, after.userId, after.userId, after.roleId, ROLE_USER_PAGE]
+          [
+            tenantId,
+            nowSeconds,
+            ...(scanMemberships ? [tenantId, nowSeconds, nowSeconds, nowSeconds] : []),
+            after.userId,
+            after.userId,
+            after.ref,
+            ROLE_USER_PAGE,
+          ]
         );
-        for (const row of page) if (roleIds.has(row.role_id)) users.add(row.user_id);
+        for (const row of page) {
+          const id = row.ref.slice(2);
+          if (row.ref.startsWith('r:') ? roleIds.has(id) : groupIds.has(id)) users.add(row.user_id);
+        }
         if (page.length < ROLE_USER_PAGE) break;
         const last = page[page.length - 1];
-        after = { userId: last.user_id, roleId: last.role_id };
+        after = { userId: last.user_id, ref: last.ref };
       }
     })
   );
