@@ -68,6 +68,10 @@
             {
               "path": "015_end_user_groups.sql",
               "checksum": "2bc148b5e2717b73635d05905bae151b5f39952897bc77f6c819cdc44821fcad"
+            },
+            {
+              "path": "016_invitation_group.sql",
+              "checksum": "37782607f62cd33c49e4c2a17c51f3992351e1972a079cc3dd5758c77327e500"
             }
           ]
         },
@@ -280,6 +284,10 @@
             {
               "path": "015_end_user_groups.sql",
               "checksum": "32eeb019531135e3085416c455b692e0c37445c9bbc180c7d16ebedafe3ae41e"
+            },
+            {
+              "path": "016_invitation_group.sql",
+              "checksum": "61335a1530d612bf7da6227cf7eabad700f1728e68927d96c0743d5faa24a739"
             }
           ]
         },
@@ -371,6 +379,10 @@
         {
           "path": "015_end_user_groups.sql",
           "checksum": "2bc148b5e2717b73635d05905bae151b5f39952897bc77f6c819cdc44821fcad"
+        },
+        {
+          "path": "016_invitation_group.sql",
+          "checksum": "37782607f62cd33c49e4c2a17c51f3992351e1972a079cc3dd5758c77327e500"
         }
       ]
     },
@@ -609,6 +621,10 @@
         {
           "path": "015_end_user_groups.sql",
           "checksum": "32eeb019531135e3085416c455b692e0c37445c9bbc180c7d16ebedafe3ae41e"
+        },
+        {
+          "path": "016_invitation_group.sql",
+          "checksum": "61335a1530d612bf7da6227cf7eabad700f1728e68927d96c0743d5faa24a739"
         }
       ]
     },

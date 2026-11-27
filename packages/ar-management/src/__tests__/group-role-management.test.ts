@@ -73,7 +73,7 @@ it('enforces the same grant ceiling on direct grants, group grants, membership a
   }
 });
 
-it('reads delegation through the transaction that writes the group or membership', async () => {
+it('reads delegation through the transaction that writes the group', async () => {
   const { db, adapter } = openCoreStore('test');
   try {
     // The PostgreSQL adapter leases its connection to the callback until it returns.
@@ -85,14 +85,15 @@ it('reads delegation through the transaction that writes the group or membership
     };
     const repo = new IdentityMappingControlPlaneRepository(adapter, Date.now, core);
     const parent = await repo.createGroup('test', { groupKey: 'p', displayName: 'Parent' });
-    const child = await repo.createGroup('test', {
-      groupKey: 'c',
-      displayName: 'Child',
-      parentGroupId: parent.id,
-    });
+    // A membership is written on the subject's account database, apart from any transaction of
+    // the metadata database (identity-mapping-group-membership-shards.test.ts).
     await expect(
-      repo.createGroupMembership('test', { groupId: child.id, subjectId: 'user' })
-    ).resolves.toMatchObject({ groupId: child.id, subjectId: 'user' });
+      repo.createGroup('test', {
+        groupKey: 'c',
+        displayName: 'Child',
+        parentGroupId: parent.id,
+      })
+    ).resolves.toMatchObject({ groupKey: 'c' });
   } finally {
     db.close();
   }
@@ -101,7 +102,19 @@ it('reads delegation through the transaction that writes the group or membership
 it('files a SCIM membership written without a reference under the shared SCIM domain', async () => {
   const { db, adapter } = openCoreStore('test');
   try {
-    const repo = new IdentityMappingControlPlaneRepository(adapter, Date.now, adapter);
+    const repo = new IdentityMappingControlPlaneRepository(
+      adapter,
+      Date.now,
+      adapter,
+      undefined,
+      undefined,
+      undefined,
+      null,
+      async (_tenantId, id) =>
+        id.subjectId
+          ? { subjectId: id.subjectId, accountId: `account:${id.subjectId}`, account: adapter }
+          : null
+    );
     const group = await repo.createGroup('test', { groupKey: 'g', displayName: 'G' });
     await repo.createGroupMembership('test', {
       groupId: group.id,

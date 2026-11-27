@@ -74,7 +74,7 @@ export async function applyExternalSignupInvitation(
     () => invitationDatabase(env, input.tenantId, 'apply'),
     accountCoreAdapter,
     log,
-    invitation
+    { ...invitation, cache: env.REBAC_CACHE }
   );
 }
 

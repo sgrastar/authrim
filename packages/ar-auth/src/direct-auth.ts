@@ -3004,6 +3004,7 @@ export async function directPasskeySignupFinishHandler(c: Context<{ Bindings: En
         {
           invitations: () => invitationDatabase(c, tenantId),
           assignments: authCtx.coreAdapter,
+          cache: c.env.REBAC_CACHE,
         },
         log,
         { reservation: signupInvitation, tenantId, userId, now: Math.floor(now / 1000) }
@@ -3234,6 +3235,7 @@ async function completeDirectEmailVerification(
           {
             invitations: () => invitationDatabase(c, tenantId),
             assignments: coreAdapter,
+            cache: c.env.REBAC_CACHE,
           },
           log,
           { reservation: signupInvitation, tenantId, userId, now: Math.floor(now / 1000) }

@@ -1,5 +1,7 @@
 import { canManageGroupMembership } from './group-role-management';
 import { SCIM_SOURCE_REF } from './scim-groups';
+import { accountStoreHolding } from './rbac-account-stores';
+import { isInactiveAccountRouteError } from './account-route-errors';
 import {
   bumpTenantRBACCacheVersion,
   invalidateSubjectRBACCache,
@@ -73,8 +75,12 @@ import {
   ADMIN_ROLES,
   bumpAuthenticationMethodsCacheRevision,
   getLogger,
+  createLogger,
+  resolveAccountDataContext,
+  writeGroupMembership,
   SAML_FEDERATION_MAX_ENTITY_ID_LENGTH,
   SAML_FEDERATION_MAX_EXCLUDED_ENTITY_IDS,
+  type MembershipSource,
 } from '@authrim/ar-lib-core';
 import type {
   SAMLFederationIdPSelection,
@@ -1181,6 +1187,57 @@ interface CreateGroupMembershipRequest {
   protectedUntil?: number | null;
 }
 
+/** The canonical subject an account or subject id names, and the database its memberships are in. */
+export interface MembershipAccount {
+  /** The canonical subject (the account's legacy user id). */
+  subjectId: string;
+  /** The canonical account id (`identity_accounts.id`). */
+  accountId: string;
+  /** The subject's account database (group_memberships rows are there). */
+  account: DatabaseAdapter;
+}
+
+/**
+ * Finds the subject's account database. `inactive`: also an account its route refuses
+ * (suspended, locked), for taking a membership away. Null when the tenant has no such account.
+ */
+export type MembershipAccountResolver = (
+  tenantId: string,
+  id: { subjectId?: string | null; accountId?: string | null },
+  options: { inactive: boolean }
+) => Promise<MembershipAccount | null>;
+
+/** The membership a lifecycle signal revokes, on its subject's account database. */
+interface LifecycleMembershipTarget extends MembershipAccount {
+  membershipId: string;
+  membership: { group_id: string };
+  /** The row's updated_at when the decision was made: only that row state is revoked. */
+  observedUpdatedAt: number;
+}
+
+/** What revoking a decided membership found on the subject's account database. */
+type DecidedRevocation = 'revoked' | 'already_revoked' | 'membership_changed';
+
+/** Whether a guarded core batch committed; `unknown` when its publication could not be read. */
+type CoreCommitState = 'committed' | 'not_committed' | 'unknown';
+
+const MEMBERSHIP_SOURCES: readonly string[] = ['manual', 'scim', 'rule', 'dynamic', 'invitation'];
+function isMembershipSource(value: string): value is MembershipSource {
+  return MEMBERSHIP_SOURCES.includes(value);
+}
+
+/** A membership row written on the subject's account database. */
+interface WrittenMembership extends MembershipAccount {
+  id: string;
+  groupId: string;
+  source: MembershipSource;
+  sourceRef: string;
+  /** The row's updated_at after this write: compensation revokes the row only in that state. */
+  stamp: number;
+  /** Whether this request made the row or made it active again (from the write itself). */
+  changed: boolean;
+}
+
 interface GrantEntitlementRequest {
   subjectId?: string;
   accountId?: string;
@@ -2244,7 +2301,8 @@ export class IdentityMappingControlPlaneRepository {
     private readonly corePublicationSource?:
       | CoreLogPublicationSource
       | (() => CoreLogPublicationSource),
-    private readonly adminAuth: AdminAuthContext | null = null
+    private readonly adminAuth: AdminAuthContext | null = null,
+    private readonly membershipAccounts?: MembershipAccountResolver
   ) {}
 
   private requireLogEnvironment(): Env {
@@ -2271,14 +2329,36 @@ export class IdentityMappingControlPlaneRepository {
   private async finishCoreEvent(
     prepared: Awaited<ReturnType<IdentityMappingControlPlaneRepository['prepareCoreEvent']>>
   ) {
+    if (!(await this.coreEventCommitted(prepared)))
+      throw conflict('business state changed before log publication');
+    await prepared.dispatch();
+  }
+  /**
+   * Whether the guarded batch of the event committed, from its publication row, read twice at
+   * most: `unknown` when neither read answered (the batch may have committed).
+   */
+  private async coreEventState(
+    prepared: Awaited<ReturnType<IdentityMappingControlPlaneRepository['prepareCoreEvent']>>
+  ): Promise<CoreCommitState> {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        return (await this.coreEventCommitted(prepared)) ? 'committed' : 'not_committed';
+      } catch {
+        // Read once more below.
+      }
+    }
+    return 'unknown';
+  }
+  /** Whether the guarded batch of the event committed (its publication row says so). */
+  private async coreEventCommitted(
+    prepared: Awaited<ReturnType<IdentityMappingControlPlaneRepository['prepareCoreEvent']>>
+  ) {
     const state = await this.requireCore().queryOne<{ state: string }>(
       'SELECT state FROM log_iceberg_core_publications WHERE id=?',
       [prepared.publicationId],
       { consistencyClass: 'primary_required' }
     );
-    if (!state || !['committed', 'published'].includes(state.state))
-      throw conflict('business state changed before log publication');
-    await prepared.dispatch();
+    return !!state && ['committed', 'published'].includes(state.state);
   }
   private corePlan(): { statements: PreparedStatement[]; executor: SqlQueryExecutor } {
     const statements: PreparedStatement[] = [];
@@ -6686,38 +6766,115 @@ export class IdentityMappingControlPlaneRepository {
     // The admin adding a member must be allowed to delegate every role the group carries. A
     // provisioning rule writes memberships without an admin; its author passed this check when
     // the rule was created (createProvisioningAssignmentRule).
-    const membership = await this.requireCore().transaction(async (tx) => {
-      await this.requireGroupDelegation(tenantId, input.groupId, tx);
-      return this.upsertGroupMembership(tenantId, input, tx);
-    });
-    await this.invalidateSubjectClaims(tenantId, membership.subjectId);
-    return membership;
+    await this.requireGroupDelegation(tenantId, input.groupId);
+    // The membership is on the subject's account database and its ownership on the tenant
+    // metadata database: the row first (an idempotent upsert on its unique key), then the
+    // ownership record, so a retry after a failed second step finds the same row.
+    const membership = await this.writeSubjectMembership(tenantId, input);
+    try {
+      await this.recordAssignmentOwnership(tenantId, {
+        assignmentType: 'group_membership',
+        assignmentId: membership.id,
+        sourceId: input.assignmentSource ?? 'manual',
+        ownershipPolicy: input.ownershipPolicy ?? 'manual',
+        revokePolicy: input.revokePolicy ?? 'review',
+        protectedUntil: input.protectedUntil ?? null,
+      });
+    } catch (error) {
+      await this.undoSubjectMembership(tenantId, membership);
+      throw error;
+    }
+    return {
+      id: membership.id,
+      tenantId,
+      groupId: input.groupId,
+      subjectId: membership.subjectId,
+      accountId: input.accountId ?? null,
+      lifecycleState: 'active',
+    };
   }
 
-  private async upsertGroupMembership(
+  /**
+   * The subject an account or subject id names, with its account database: from its account
+   * route (the Lookup directory), or, for `inactive`, from the tenant's user stores when the
+   * route refuses the account (suspended, locked). With both ids, the account decides and its
+   * subject must be `subjectId` (400 otherwise); a subject id alone must be the route's own user.
+   */
+  private async membershipAccount(
     tenantId: string,
-    input: CreateGroupMembershipRequest,
-    executor: SqlQueryExecutor
-  ) {
-    const now = Math.floor(this.now() / 1000);
-    const id = createId('group_membership');
-    const group = await executor.queryOne<{ id: string }>(
-      'SELECT id FROM "groups" WHERE tenant_id=? AND id=?',
-      [tenantId, input.groupId]
-    );
-    if (!group) throw notFound('group not found');
-    const subjectId =
-      input.subjectId ??
-      (
-        await executor.queryOne<{ legacy_user_id: string | null }>(
-          `SELECT legacy_user_id FROM identity_accounts WHERE tenant_id=? AND (id=? OR legacy_user_id=?)
-           ORDER BY CASE WHEN id=? THEN 0 ELSE 1 END LIMIT 1`,
-          [tenantId, input.accountId, input.accountId, input.accountId]
-        )
-      )?.legacy_user_id;
-    if (subjectId && this.adminAuth?.userId === subjectId)
+    id: { subjectId?: string | null; accountId?: string | null },
+    options: { inactive: boolean } = { inactive: false }
+  ): Promise<MembershipAccount | null> {
+    const found = this.membershipAccounts
+      ? await this.membershipAccounts(tenantId, id, options)
+      : await this.routedMembershipAccount(tenantId, id, options);
+    if (found && id.subjectId && found.subjectId !== id.subjectId) {
+      if (id.accountId) throw badRequest('subjectId does not match accountId');
+      return null;
+    }
+    return found;
+  }
+
+  private async routedMembershipAccount(
+    tenantId: string,
+    id: { subjectId?: string | null; accountId?: string | null },
+    options: { inactive: boolean }
+  ): Promise<MembershipAccount | null> {
+    const env = this.requireLogEnvironment();
+    const value = id.accountId ?? id.subjectId;
+    if (!value) return null;
+    try {
+      const route = await resolveAccountDataContext(env, { tenantId, accountId: value });
+      return {
+        subjectId: route.legacyUserId,
+        accountId: route.accountId,
+        account: ensureDatabaseAdapter(route.coreDb, 'identity-mapping-membership-account'),
+      };
+    } catch (error) {
+      if (options.inactive && isInactiveAccountRouteError(error)) {
+        // The account decides when given; its subject is compared with subjectId afterwards (400).
+        const userId = id.accountId ? id.accountId.replace(/^account:/u, '') : value;
+        const account = await accountStoreHolding(env, tenantId, userId);
+        const row = account
+          ? await account.queryOne<{ id: string }>(
+              `SELECT id FROM identity_accounts WHERE tenant_id = ? AND legacy_user_id = ?
+                AND lifecycle_state <> 'deleted' LIMIT 1`,
+              [tenantId, userId]
+            )
+          : null;
+        if (!account || !row) return null;
+        if (id.accountId && row.id !== id.accountId && row.id !== `account:${id.accountId}`)
+          return null;
+        return { subjectId: userId, accountId: row.id, account };
+      }
+      if (
+        error instanceof Error &&
+        [
+          'account_data_route_not_found',
+          'account_data_account_id_invalid',
+          'lookup_destination_revalidation_failed',
+        ].includes(error.message)
+      )
+        return null;
+      throw error;
+    }
+  }
+
+  /**
+   * Writes (or reactivates) the membership row on the subject's account database, where every
+   * reader (resolveSubjectGroups, launchers, claims) looks, and drops the subject's cached RBAC
+   * claims. The upsert is keyed on (tenant, group, subject, source, source_ref), so writing it
+   * again finds the same row and id. The group must exist in the tenant metadata database.
+   */
+  private async writeSubjectMembership(
+    tenantId: string,
+    input: CreateGroupMembershipRequest
+  ): Promise<WrittenMembership> {
+    const target = await this.membershipAccount(tenantId, input);
+    if (!target) throw badRequest('account has no routable subject');
+    const { subjectId, account } = target;
+    if (this.adminAuth?.userId === subjectId)
       throw forbidden('an administrator cannot add themself to a group');
-    if (!subjectId) throw badRequest('account has no routable subject');
     const sourceId = input.assignmentSource ?? 'manual';
     const separator = sourceId.indexOf(':');
     const source = separator < 0 ? sourceId : sourceId.slice(0, separator);
@@ -6726,46 +6883,58 @@ export class IdentityMappingControlPlaneRepository {
     const sourceRef =
       input.sourceRef ??
       (separator >= 0 ? sourceId.slice(separator + 1) : source === 'scim' ? SCIM_SOURCE_REF : '');
-    if (!['manual', 'scim', 'rule', 'dynamic', 'invitation'].includes(source))
-      throw badRequest('invalid membership source');
-    const existing = await executor.queryOne<{ id: string }>(
-      `SELECT id FROM group_memberships WHERE tenant_id=? AND group_id=? AND subject_id=?
-        AND assignment_source=? AND source_ref=?`,
-      [tenantId, input.groupId, subjectId, source, sourceRef]
-    );
-    if (existing) {
-      await executor.execute(
-        `UPDATE group_memberships SET lifecycle_state='active', updated_at=? WHERE tenant_id=? AND id=?`,
-        [now, tenantId, existing.id]
+    if (!isMembershipSource(source)) throw badRequest('invalid membership source');
+    let written: { id: string; updatedAt: number; changed: boolean };
+    try {
+      written = await writeGroupMembership(
+        { metadata: this.requireCore(), account },
+        tenantId,
+        subjectId,
+        { groupId: input.groupId, source, sourceRef }
       );
-    } else {
-      await executor.execute(
-        `INSERT INTO group_memberships (id, tenant_id, group_id, subject_id, assignment_source,
-          source_ref, lifecycle_state, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [id, tenantId, input.groupId, subjectId, source, sourceRef, 'active', now, now]
-      );
+    } catch (error) {
+      if (error instanceof Error && error.message === 'group_not_found')
+        throw notFound('group not found');
+      throw error;
     }
-    const assignmentId = existing?.id ?? id;
-    await this.recordAssignmentOwnership(
-      tenantId,
-      {
-        assignmentType: 'group_membership',
-        assignmentId,
-        sourceId: input.assignmentSource ?? 'manual',
-        ownershipPolicy: input.ownershipPolicy ?? 'manual',
-        revokePolicy: input.revokePolicy ?? 'review',
-        protectedUntil: input.protectedUntil ?? null,
-      },
-      executor
-    );
-    return {
-      id: assignmentId,
-      tenantId,
+    // From here the row this request wrote is revocable: a failure of anything after the upsert
+    // takes it back (undoSubjectMembership).
+    const membership: WrittenMembership = {
+      ...target,
+      id: written.id,
       groupId: input.groupId,
-      subjectId,
-      accountId: input.accountId ?? null,
-      lifecycleState: 'active',
+      source,
+      sourceRef,
+      stamp: written.updatedAt,
+      changed: written.changed,
     };
+    try {
+      await this.invalidateSubjectClaims(tenantId, subjectId);
+    } catch (error) {
+      await this.undoSubjectMembership(tenantId, membership);
+      throw error;
+    }
+    return membership;
+  }
+
+  /**
+   * Takes back a membership this request made or reactivated whose ownership step did not commit
+   * (the rule changed meanwhile, or a step failed): only while the row is still in the state this
+   * request stamped (`updated_at`), so a later successful write of it is never revoked, and not a
+   * row that was active before. Best effort; a retry of the request writes it again.
+   */
+  private async undoSubjectMembership(tenantId: string, membership: WrittenMembership) {
+    if (!membership.changed) return;
+    try {
+      await membership.account.execute(
+        `UPDATE group_memberships SET lifecycle_state='revoked', updated_at=?
+          WHERE tenant_id=? AND id=? AND updated_at=? AND lifecycle_state='active'`,
+        [Math.floor(this.now() / 1000), tenantId, membership.id, membership.stamp]
+      );
+      await this.invalidateSubjectClaims(tenantId, membership.subjectId);
+    } catch {
+      // The request fails anyway; the row stays for its retry.
+    }
   }
 
   async grantEntitlement(tenantId: string, input: GrantEntitlementRequest) {
@@ -6962,6 +7131,13 @@ export class IdentityMappingControlPlaneRepository {
       // must pass it too (an internal run has no admin and relies on the author's check).
       if (rule.target_type === 'group' && this.adminAuth)
         await this.requireGroupDelegation(tenantId, rule.target_id);
+      // A group rule writes in two databases, in this order:
+      //   (a) the membership row on the subject's account database (applyProvisioningAssignment,
+      //       an upsert on its unique key, which also drops the subject's cached claims);
+      //   (b) the ownership record and the audit event on the tenant metadata database, in one
+      //       batch guarded by the rule still being what was evaluated.
+      // A retry after a failure in (b) upserts the same row in (a) and completes (b). When (b)
+      // does not commit, a row (a) newly made or reactivated is revoked again (best effort).
       const plan = this.corePlan();
       const assignment = await this.applyProvisioningAssignment(
         tenantId,
@@ -6969,7 +7145,7 @@ export class IdentityMappingControlPlaneRepository {
         input,
         plan.executor
       );
-      const targetTable = rule.target_type === 'group' ? 'group_memberships' : 'entitlements';
+      const membership = 'membership' in assignment ? assignment.membership : null;
       const assignmentType = rule.target_type === 'group' ? 'group_membership' : rule.target_type;
       const sourceId = rule.target_type === 'group' ? `rule:${rule.id}` : rule.id;
       const ruleGuard: LogIcebergSqlGuard = {
@@ -6983,17 +7159,22 @@ export class IdentityMappingControlPlaneRepository {
           rule.priority,
         ],
       };
-      const targetGuard: LogIcebergSqlGuard = {
-        where: `EXISTS(SELECT 1 FROM ${targetTable} WHERE tenant_id=? AND id=? AND lifecycle_state='active')`,
-        params: [tenantId, assignment.id],
-      };
-      const prepared = await this.prepareCoreEvent(tenantId, event);
-      const invalidate = async () => {
-        if (rule.target_type === 'group' && 'subjectId' in assignment)
-          await this.invalidateSubjectClaims(tenantId, assignment.subjectId);
-      };
+      // The membership row is on the account database, out of reach of this batch's guard; an
+      // entitlement is in the metadata database and must still be active.
+      const targetGuard: LogIcebergSqlGuard = membership
+        ? { where: '1=1', params: [] }
+        : {
+            where: `EXISTS(SELECT 1 FROM entitlements WHERE tenant_id=? AND id=? AND lifecycle_state='active')`,
+            params: [tenantId, assignment.id],
+          };
+      let prepared: Awaited<ReturnType<IdentityMappingControlPlaneRepository['prepareCoreEvent']>>;
+      try {
+        prepared = await this.prepareCoreEvent(tenantId, event);
+      } catch (error) {
+        if (membership) await this.undoSubjectMembership(tenantId, membership);
+        throw error;
+      }
       if (prepared.state === 'committed' || prepared.state === 'published') {
-        await invalidate();
         await prepared.dispatch();
       } else {
         const statements = plan.statements.map((statement) =>
@@ -7018,10 +7199,35 @@ export class IdentityMappingControlPlaneRepository {
             sourceId,
           ],
         };
-        await this.requireCore().batch(prepared.wrapBusinessBatch(statements, predicate));
-        // After the commit and before the log dispatch, whose failure must not leave old claims.
-        await invalidate();
-        await this.finishCoreEvent(prepared);
+        let batchError: Error | null = null;
+        try {
+          await this.requireCore().batch(prepared.wrapBusinessBatch(statements, predicate));
+        } catch (error) {
+          // The batch may still have committed (a lost response): its publication tells.
+          batchError = error instanceof Error ? error : new Error(String(error));
+        }
+        const state = await this.coreEventState(prepared);
+        if (state === 'unknown') {
+          // Neither committed nor not: the membership is left for the retry to settle.
+          createLogger({ tenantId })
+            .module('IDENTITY-MAPPING')
+            .warn('Provisioning assignment commit outcome unknown', {
+              ruleId: rule.id,
+              publicationId: prepared.publicationId,
+              membershipId: membership?.id,
+            });
+          throw new IdentityMappingControlPlaneError(
+            'the assignment commit outcome is unknown; retry the request',
+            500,
+            'commit_outcome_unknown'
+          );
+        }
+        if (state === 'not_committed') {
+          if (membership) await this.undoSubjectMembership(tenantId, membership);
+          if (batchError) throw batchError;
+          throw conflict('business state changed before log publication');
+        }
+        await prepared.dispatch();
       }
     } else {
       await emitLogIcebergRow(this.requireLogEnvironment(), { tenantId, ...event });
@@ -7090,8 +7296,11 @@ export class IdentityMappingControlPlaneRepository {
       const existingDecision = await this.requireCore().queryOne<{
         decision: string;
         reason_codes_json: string | null;
+        subject_id: string | null;
+        account_id: string | null;
+        propagation_targets_json: string | null;
       }>(
-        `SELECT decision, reason_codes_json
+        `SELECT decision, reason_codes_json, subject_id, account_id, propagation_targets_json
            FROM external_lifecycle_signal_decisions
           WHERE tenant_id = ? AND signal_event_id = ?
           ORDER BY created_at DESC
@@ -7099,19 +7308,19 @@ export class IdentityMappingControlPlaneRepository {
         [tenantId, existingEvent.id]
       );
       if (existingDecision) {
-        // The first attempt may have stopped between the commit and the cache invalidation.
-        if (existingDecision.decision === 'revoke' && input.targetType === 'group_membership') {
-          const membership = await this.requireCore().queryOne<{ subject_id: string }>(
-            'SELECT subject_id FROM group_memberships WHERE tenant_id=? AND id=?',
-            [tenantId, input.targetId]
-          );
-          if (membership) await this.invalidateSubjectClaims(tenantId, membership.subject_id);
-        }
+        // The first attempt may have stopped after the decision committed and before the row on
+        // the account database was revoked or the cache invalidated: the decision names the
+        // account and subject and the row state it saw, so the revocation is completed here.
+        const revocation =
+          existingDecision.decision === 'revoke' && input.targetType === 'group_membership'
+            ? await this.completeDecidedRevocation(tenantId, input.targetId, existingDecision)
+            : null;
         return {
           signalEventId: existingEvent.id,
           decision: existingDecision.decision,
           reasonCodes: parseJsonArray(existingDecision.reason_codes_json),
           idempotent: true,
+          ...(revocation === 'membership_changed' ? { notes: ['membership_changed'] } : {}),
         };
       }
     }
@@ -7134,6 +7343,15 @@ export class IdentityMappingControlPlaneRepository {
       params: [tenantId, signalEventId, now, ...ownershipGuard.params],
     };
     const decisionId = createId('external_lifecycle_signal_decision');
+    // Revoking a membership writes in two databases, in this order: (a) the event and the
+    // decision, which names the subject, on the metadata database in one guarded batch (refused,
+    // with nothing revoked, when the ownership changed meanwhile); then (b) the row on the
+    // subject's account database is revoked and the subject's cached claims dropped. A retry
+    // after a failure in (b) finds the decision and completes (b).
+    const membershipTarget =
+      decision.decision === 'revoke' && input.targetType === 'group_membership'
+        ? await this.lifecycleMembershipTarget(tenantId, input)
+        : null;
     const plan = this.corePlan();
     await plan.executor.execute(
       `INSERT INTO external_lifecycle_signal_events (id,tenant_id,source_type,source_id,source_event_id,source_timestamp,observed_at,binding_version,payload_ref,signal_type,dedupe_key,processing_state,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
@@ -7160,20 +7378,29 @@ export class IdentityMappingControlPlaneRepository {
         decisionId,
         tenantId,
         signalEventId,
-        input.subjectId ?? null,
-        input.accountId ?? null,
+        membershipTarget?.subjectId ?? input.subjectId ?? null,
+        membershipTarget?.accountId ?? input.accountId ?? null,
         decision.decision,
-        stableJson([{ targetType: input.targetType, targetId: input.targetId }]),
+        stableJson([
+          {
+            targetType: input.targetType,
+            targetId: input.targetId,
+            ...(membershipTarget
+              ? { membershipUpdatedAt: membershipTarget.observedUpdatedAt }
+              : {}),
+          },
+        ]),
         stableJson(decision.reasonCodes),
         now,
       ]
     );
-    const applied = await this.applyLifecycleSignalDecision(
+    await this.applyLifecycleSignalDecision(
       tenantId,
       input,
       decision,
       plan.executor,
-      now
+      now,
+      membershipTarget
     );
     await plan.executor.execute(
       `UPDATE external_lifecycle_signal_events SET processing_state=?,updated_at=? WHERE tenant_id=? AND id=?`,
@@ -7202,10 +7429,11 @@ export class IdentityMappingControlPlaneRepository {
         created_at: now,
       },
     });
+    let revocation: DecidedRevocation | null = null;
     if (prepared.state === 'committed' || prepared.state === 'published') {
-      // Already committed by an earlier attempt: the invalidation may still be owed.
-      if (applied.revokedSubjectId)
-        await this.invalidateSubjectClaims(tenantId, applied.revokedSubjectId);
+      // Already committed by an earlier attempt: (b) may still be owed.
+      if (membershipTarget)
+        revocation = await this.revokeDecidedMembership(tenantId, membershipTarget);
       await prepared.dispatch();
     } else {
       const firstGuard = {
@@ -7230,13 +7458,20 @@ export class IdentityMappingControlPlaneRepository {
           }
         )
       );
-      // After the commit (a generation moved earlier could be stamped onto pre-commit data) and
-      // before the log dispatch, whose failure must not leave the revoked roles cached.
-      if (applied.revokedSubjectId)
-        await this.invalidateSubjectClaims(tenantId, applied.revokedSubjectId);
-      await this.finishCoreEvent(prepared);
+      if (!(await this.coreEventCommitted(prepared)))
+        throw conflict('business state changed before log publication');
+      // (b), after the commit and before the log dispatch, whose failure must not leave the
+      // membership or its cached roles in place.
+      if (membershipTarget)
+        revocation = await this.revokeDecidedMembership(tenantId, membershipTarget);
+      await prepared.dispatch();
     }
-    return { signalEventId, decision: decision.decision, reasonCodes: decision.reasonCodes };
+    return {
+      signalEventId,
+      decision: decision.decision,
+      reasonCodes: decision.reasonCodes,
+      ...(revocation === 'membership_changed' ? { notes: ['membership_changed'] } : {}),
+    };
   }
 
   async createKeyRegistry(tenantId: string, input: CreateKeyRegistryRequest) {
@@ -8650,19 +8885,31 @@ export class IdentityMappingControlPlaneRepository {
     executor: SqlQueryExecutor
   ) {
     if (rule.target_type === 'group') {
-      return this.upsertGroupMembership(
-        tenantId,
-        {
-          groupId: rule.target_id,
-          subjectId: input.subjectId,
-          accountId: input.accountId,
-          membershipType: 'member',
-          assignmentSource: `rule:${rule.id}`,
-          ownershipPolicy: 'source_owned',
-          revokePolicy: 'review',
-        },
-        executor
-      );
+      // (a) on the subject's account database now; (b) the ownership record in the plan.
+      const membership = await this.writeSubjectMembership(tenantId, {
+        groupId: rule.target_id,
+        subjectId: input.subjectId,
+        accountId: input.accountId,
+        assignmentSource: `rule:${rule.id}`,
+      });
+      try {
+        await this.recordAssignmentOwnership(
+          tenantId,
+          {
+            assignmentType: 'group_membership',
+            assignmentId: membership.id,
+            sourceId: `rule:${rule.id}`,
+            ownershipPolicy: 'source_owned',
+            revokePolicy: 'review',
+            protectedUntil: null,
+          },
+          executor
+        );
+      } catch (error) {
+        await this.undoSubjectMembership(tenantId, membership);
+        throw error;
+      }
+      return { id: membership.id, subjectId: membership.subjectId, membership };
     }
     return this.upsertEntitlementGrant(
       tenantId,
@@ -8850,38 +9097,154 @@ export class IdentityMappingControlPlaneRepository {
     input: RecordLifecycleSignalRequest,
     decision: { decision: string; reasonCodes: string[] },
     executor: SqlExecutor,
-    at: number
-  ): Promise<{ revokedSubjectId: string | null }> {
+    at: number,
+    membershipTarget: LifecycleMembershipTarget | null
+  ): Promise<void> {
     if (decision.decision === 'suspend_account')
       throw new Error('lifecycle_signal_account_service_required');
-    let revokedSubjectId: string | null = null;
-    if (decision.decision === 'revoke') {
-      const table = input.targetType === 'group_membership' ? 'group_memberships' : 'entitlements';
-      if (input.targetType === 'group_membership') {
-        const membership = await this.requireCore().queryOne<{
-          subject_id: string;
-          group_id: string;
-        }>('SELECT subject_id, group_id FROM group_memberships WHERE tenant_id=? AND id=?', [
-          tenantId,
-          input.targetId,
-        ]);
-        // The row must be here: a membership this database does not hold cannot be revoked here.
-        if (!membership) throw notFound('group membership not found');
-        // An admin revoking by hand needs the delegation the membership's group requires.
-        if (this.adminAuth) await this.requireGroupDelegation(tenantId, membership.group_id);
-        revokedSubjectId = membership.subject_id;
-      }
-      await executor.execute(
-        `UPDATE ${table} SET lifecycle_state=?,updated_at=? WHERE tenant_id=? AND id=?`,
-        [
-          'revoked',
-          input.targetType === 'group_membership' ? Math.floor(at / 1000) : at,
-          tenantId,
-          input.targetId,
-        ]
-      );
+    if (decision.decision !== 'revoke') return;
+    if (input.targetType === 'group_membership') {
+      if (!membershipTarget) throw new Error('lifecycle_signal_membership_target_required');
+      // An admin revoking by hand needs the delegation the membership's group requires. The row
+      // itself is revoked once the decision has committed (revokeDecidedMembership).
+      if (this.adminAuth)
+        await this.requireGroupDelegation(tenantId, membershipTarget.membership.group_id);
+      return;
     }
-    return { revokedSubjectId };
+    await executor.execute(
+      `UPDATE entitlements SET lifecycle_state=?,updated_at=? WHERE tenant_id=? AND id=?`,
+      ['revoked', at, tenantId, input.targetId]
+    );
+  }
+
+  /**
+   * The membership a lifecycle signal revokes, read on its subject's account database: the
+   * signal must name the subject (subjectId or accountId), whose route (or, for a suspended or
+   * locked account, the user store holding it) gives the database. Its updated_at is recorded
+   * with the decision.
+   */
+  private async lifecycleMembershipTarget(
+    tenantId: string,
+    input: RecordLifecycleSignalRequest
+  ): Promise<LifecycleMembershipTarget> {
+    if (!input.subjectId && !input.accountId)
+      throw badRequest('subjectId or accountId is required to revoke a group membership');
+    const target = await this.membershipAccount(tenantId, input, { inactive: true });
+    if (!target) throw notFound('group membership not found');
+    const membership = await target.account.queryOne<{
+      group_id: string;
+      updated_at: number | string;
+    }>(
+      `SELECT group_id, updated_at FROM group_memberships
+        WHERE tenant_id=? AND id=? AND subject_id=?`,
+      [tenantId, input.targetId, target.subjectId]
+    );
+    if (!membership) throw notFound('group membership not found');
+    return {
+      ...target,
+      membershipId: input.targetId,
+      membership: { group_id: membership.group_id },
+      observedUpdatedAt: Number(membership.updated_at),
+    };
+  }
+
+  /**
+   * Completes, for a retried signal, the revocation its committed decision recorded: the account
+   * is resolved again from the decision's account id and must still be the decision's subject.
+   * An account that cannot be resolved, or resolves to another subject, is an error (409), never
+   * an idempotent success.
+   */
+  private async completeDecidedRevocation(
+    tenantId: string,
+    membershipId: string,
+    decision: {
+      subject_id: string | null;
+      account_id: string | null;
+      propagation_targets_json: string | null;
+    }
+  ): Promise<DecidedRevocation> {
+    let targets: unknown = null;
+    try {
+      targets = JSON.parse(decision.propagation_targets_json ?? 'null');
+    } catch {
+      // Recorded below as incomplete.
+    }
+    const recorded = (Array.isArray(targets) ? (targets as unknown[]) : []).find(
+      (target): target is { targetId: string; membershipUpdatedAt: number } =>
+        isRecord(target) &&
+        target.targetId === membershipId &&
+        typeof target.membershipUpdatedAt === 'number'
+    );
+    if (!decision.subject_id || !decision.account_id || !recorded)
+      throw new IdentityMappingControlPlaneError(
+        'the revocation decision does not record the membership it revoked',
+        409,
+        'lifecycle_decision_incomplete'
+      );
+    let target: MembershipAccount | null;
+    try {
+      target = await this.membershipAccount(
+        tenantId,
+        { subjectId: decision.subject_id, accountId: decision.account_id },
+        { inactive: true }
+      );
+    } catch (error) {
+      if (error instanceof IdentityMappingControlPlaneError && error.status === 400)
+        throw new IdentityMappingControlPlaneError(
+          'the account of the revocation decision now names another subject',
+          409,
+          'membership_account_changed'
+        );
+      throw error;
+    }
+    if (!target)
+      throw new IdentityMappingControlPlaneError(
+        'the account of the revocation decision cannot be reached',
+        409,
+        'membership_account_unreachable'
+      );
+    return this.revokeDecidedMembership(tenantId, {
+      ...target,
+      membershipId,
+      observedUpdatedAt: recorded.membershipUpdatedAt,
+    });
+  }
+
+  /**
+   * Revokes, on the subject's account database, the membership a committed decision revoked,
+   * only in the state the decision saw (`updated_at` exactly as observed), and drops the
+   * subject's cached claims. A row changed since (given again, even within the same second of
+   * the decision's own revocation stamp) is left alone: `membership_changed`, logged. A query
+   * that cannot reach the database fails the request.
+   */
+  private async revokeDecidedMembership(
+    tenantId: string,
+    target: Pick<LifecycleMembershipTarget, 'account' | 'subjectId' | 'membershipId'> & {
+      observedUpdatedAt: number;
+    }
+  ): Promise<DecidedRevocation> {
+    const now = Math.floor(this.now() / 1000);
+    const updated = await target.account.execute(
+      `UPDATE group_memberships SET lifecycle_state='revoked', updated_at=?
+        WHERE tenant_id=? AND id=? AND subject_id=? AND lifecycle_state='active' AND updated_at=?`,
+      [now, tenantId, target.membershipId, target.subjectId, target.observedUpdatedAt]
+    );
+    let outcome: DecidedRevocation = 'revoked';
+    if (!updated.rowsAffected) {
+      const row = await target.account.queryOne<{ lifecycle_state: string }>(
+        'SELECT lifecycle_state FROM group_memberships WHERE tenant_id=? AND id=? AND subject_id=?',
+        [tenantId, target.membershipId, target.subjectId]
+      );
+      outcome = row?.lifecycle_state === 'active' ? 'membership_changed' : 'already_revoked';
+      if (outcome === 'membership_changed')
+        createLogger({ tenantId })
+          .module('IDENTITY-MAPPING')
+          .warn('Decided membership revocation skipped: the membership changed', {
+            membershipId: target.membershipId,
+          });
+    }
+    await this.invalidateSubjectClaims(tenantId, target.subjectId);
+    return outcome;
   }
 
   async runIdempotent<T>(
