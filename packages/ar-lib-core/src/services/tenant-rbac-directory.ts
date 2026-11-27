@@ -242,3 +242,76 @@ export async function listOrganizationMembersPage(
   ]);
   return { total, items };
 }
+
+export interface GroupMemberListRow {
+  id: string;
+  subject_id: string;
+  assignment_source: string;
+  source_ref: string;
+  lifecycle_state: string;
+  starts_at: number | null;
+  expires_at: number | null;
+  stale_after: number | null;
+  created_at: number;
+}
+
+/** The membership rows of a group (every source, any state), newest first, a page of them. */
+export async function listGroupMembersPage(
+  stores: TenantAccountStores,
+  tenantId: string,
+  groupId: string,
+  page: { limit: number; offset: number }
+): Promise<AccountStorePage<GroupMemberListRow>> {
+  const [total, items] = await Promise.all([
+    sumCounts(
+      stores,
+      'SELECT COUNT(*) AS count FROM group_memberships WHERE tenant_id = ? AND group_id = ?',
+      [tenantId, groupId]
+    ),
+    newestFirstPage(stores, page, (adapter, limit, offset) =>
+      adapter.query<GroupMemberListRow>(
+        `SELECT id, subject_id, assignment_source, source_ref, lifecycle_state, starts_at,
+                expires_at, stale_after, created_at
+           FROM group_memberships
+          WHERE tenant_id = ? AND group_id = ?
+          ORDER BY created_at DESC, id DESC
+          LIMIT ? OFFSET ?`,
+        [tenantId, groupId, limit, offset]
+      )
+    ),
+  ]);
+  return { total, items };
+}
+
+/**
+ * Subjects whose membership in the group holds now (active, started, not expired, not stale: the
+ * conditions `resolveSubjectGroups` applies), by group, across the databases.
+ */
+export async function countGroupMembers(
+  stores: TenantAccountStores,
+  tenantId: string,
+  groupIds: readonly string[],
+  nowSeconds: number = Math.floor(Date.now() / 1000)
+): Promise<Map<string, number>> {
+  const total = new Map<string, number>();
+  await Promise.all(
+    stores.map(async (adapter) => {
+      for (const ids of batches(groupIds)) {
+        addCounts(
+          total,
+          await adapter.query<{ key: string; count: number | null }>(
+            `SELECT group_id AS key, COUNT(DISTINCT subject_id) AS count FROM group_memberships
+              WHERE tenant_id = ? AND lifecycle_state = 'active'
+                AND (starts_at IS NULL OR starts_at <= ?)
+                AND (expires_at IS NULL OR expires_at > ?)
+                AND (stale_after IS NULL OR stale_after > ?)
+                AND group_id IN (${ids.map(() => '?').join(', ')})
+              GROUP BY group_id`,
+            [tenantId, nowSeconds, nowSeconds, nowSeconds, ...ids]
+          )
+        );
+      }
+    })
+  );
+  return total;
+}

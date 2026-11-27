@@ -1,5 +1,5 @@
 import type { KVNamespace } from '@cloudflare/workers-types';
-import { ensureDatabaseAdapter, type DatabaseSource } from '../db';
+import { ensureDatabaseAdapter, type DatabaseSource, type TransactionContext } from '../db';
 import { bumpTenantRBACCacheVersion } from '../utils/rbac-cache';
 import { rbacIdBatches } from './group-membership';
 import type { SubjectRoleAssignmentRecord } from './tenant-rbac';
@@ -37,15 +37,14 @@ export interface GroupRoleGrant extends GroupRoleKey {
   assignedBy?: string | null;
   metadataJson?: string | null;
 }
-/** A role granted to a group reaches every member: the tenant's cached claims are all stale. */
-export async function assignGroupRole(
-  metadata: DatabaseSource,
+/** The grant statement alone, for a caller that runs it inside its own transaction. */
+export async function writeGroupRoleGrant(
+  db: Pick<TransactionContext, 'execute'>,
   tenantId: string,
-  input: GroupRoleGrant,
-  cache?: KVNamespace
+  input: GroupRoleGrant
 ) {
   const now = Math.floor(Date.now() / 1000);
-  const result = await ensureDatabaseAdapter(metadata).execute(
+  const result = await db.execute(
     `INSERT INTO group_role_assignments (id, tenant_id, group_id, role_id, scope_type, scope_target,
       expires_at, assigned_by, metadata_json, created_at, updated_at)
      SELECT ?, g.tenant_id, g.id, r.id, ?, ?, ?, ?, ?, ?, ?
@@ -69,9 +68,23 @@ export async function assignGroupRole(
     ]
   );
   if (!result.rowsAffected) throw new Error('group_or_role_not_found');
+}
+
+/** A role granted to a group reaches every member: the tenant's cached claims are all stale. */
+export async function assignGroupRole(
+  metadata: DatabaseSource,
+  tenantId: string,
+  input: GroupRoleGrant,
+  cache?: KVNamespace
+) {
+  await writeGroupRoleGrant(ensureDatabaseAdapter(metadata), tenantId, input);
   if (cache) await bumpTenantRBACCacheVersion(cache, tenantId);
 }
 
+/**
+ * Idempotent: the delete and the version bump happen whether or not a row was there, so a retry
+ * after a failed bump completes the invalidation.
+ */
 export async function removeGroupRole(
   metadata: DatabaseSource,
   tenantId: string,

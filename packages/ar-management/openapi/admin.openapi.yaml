@@ -182,6 +182,7 @@ tags:
   - name: Identity Mapping
   - name: Persistent Identifiers
   - name: Flows
+  - name: Groups
   - name: Health
   - name: Jobs
   - name: Launchers
@@ -8107,6 +8108,483 @@ paths:
           $ref: '#/components/responses/Error'
         '409':
           $ref: '#/components/responses/Error'
+  /api/admin/groups:
+    get:
+      tags:
+        - Groups
+      operationId: getApiAdminGroups
+      summary: List groups
+      description: >-
+        Lists the tenant's end-user groups ordered by group key, with the number of subjects in each.
+        Filters: q (matches the key and the name), kind, lifecycle_state.
+      responses:
+        '200':
+          description: List groups
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GroupList'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      parameters:
+        - name: q
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: kind
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [static, dynamic, scim, provisioned]
+        - name: lifecycle_state
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [active, inactive]
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+    post:
+      tags:
+        - Groups
+      operationId: postApiAdminGroups
+      summary: Create group
+      description: >-
+        Creates a group. parent_group_id nests it under another group; a parent that does not exist or would form a loop is refused (400). A group_key already in use answers 409.
+      responses:
+        '201':
+          description: Create group
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GroupGet'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GroupCreateRequest'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/groups/{id}':
+    get:
+      tags:
+        - Groups
+      operationId: getApiAdminGroupsById
+      summary: Get group
+      description: >-
+        Returns the group with its parent chain (nearest first), the number of subjects in it and the roles granted to it.
+      responses:
+        '200':
+          description: Get group
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GroupGet'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+    put:
+      tags:
+        - Groups
+      operationId: putApiAdminGroupsById
+      summary: Update group
+      description: >-
+        Changes the name, description, parent, state or metadata of a group. Moving a group, and activating or deactivating one, changes the roles of every member below it: when the group or its ancestors carry roles it needs `admin:roles:write` and a grant ceiling that covers each of those roles (403 otherwise).
+      responses:
+        '200':
+          description: Update group
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GroupGet'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GroupUpdateRequest'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+    delete:
+      tags:
+        - Groups
+      operationId: deleteApiAdminGroupsById
+      summary: Delete group
+      description: >-
+        Deletes the group with its memberships and the roles granted to it. A group with child groups answers 409. When the group carries roles it needs the same authority as adding a member to it. The delete is several writes and its progress is not stored; repeating a request that failed part way finds the group gone with memberships or grants left, cleans them up and answers 204 (404 when nothing is left).
+      responses:
+        '204':
+          description: The leftovers of an already deleted group were cleaned up.
+        '200':
+          description: Delete group
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GroupDeleted'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/groups/{id}/members':
+    get:
+      tags:
+        - Groups
+      operationId: getApiAdminGroupsByIdMembers
+      summary: List group members
+      description: >-
+        Lists the membership rows of a group, newest first, whatever their source and state. A subject with rows from several sources appears once per row.
+      responses:
+        '200':
+          description: List group members
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GroupMemberList'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+    post:
+      tags:
+        - Groups
+      operationId: postApiAdminGroupsByIdMembers
+      summary: Add group member
+      description: >-
+        Adds a subject to the group as a manual membership (the same call again renews it). starts_at and expires_at are Unix seconds. Adding a subject to a group that carries roles grants those roles: it needs `admin:roles:write` and a grant ceiling covering every such role, and an administrator cannot add themselves (403).
+      responses:
+        '201':
+          description: Add group member
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GroupMemberAdded'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GroupMemberAddRequest'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/groups/{id}/members/{subjectId}':
+    delete:
+      tags:
+        - Groups
+      operationId: deleteApiAdminGroupsByIdMembersBySubjectId
+      summary: Remove group member
+      description: >-
+        Ends the manual membership of a subject. A subject whose only rows come from SCIM, a rule, a dynamic group or an invitation answers 409: those are changed at their source. Needs the same authority as adding a member.
+      responses:
+        '200':
+          description: Remove group member
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GroupMemberRemoved'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: subjectId
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/groups/{id}/roles':
+    get:
+      tags:
+        - Groups
+      operationId: getApiAdminGroupsByIdRoles
+      summary: List roles granted to a group
+      description: >-
+        Lists the roles granted to the group, with their scope and expiry.
+      responses:
+        '200':
+          description: List roles granted to a group
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GroupRoleList'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+    post:
+      tags:
+        - Groups
+      operationId: postApiAdminGroupsByIdRoles
+      summary: Grant a role to a group
+      description: >-
+        Grants a role to every member of the group (and of its child groups). Needs `admin:roles:write` and a grant ceiling that covers the role (403 otherwise). expires_at is Unix seconds.
+      responses:
+        '201':
+          description: Grant a role to a group
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GroupRoleAssigned'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GroupRoleAssignRequest'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/groups/{id}/roles/{roleId}':
+    delete:
+      tags:
+        - Groups
+      operationId: deleteApiAdminGroupsByIdRolesByRoleId
+      summary: Remove a role from a group
+      description: >-
+        Removes the grant of a role from the group. The grant is named by role and scope (scope_type, default global, and scope_target, default empty). Needs the same authority as granting it.
+      responses:
+        '200':
+          description: Remove a role from a group
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GroupRoleRemoved'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: roleId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: scope_type
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [global, tenant, group, resource]
+        - name: scope_target
+          in: query
+          required: false
+          schema:
+            type: string
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  '/api/admin/users/{id}/groups':
+    get:
+      tags:
+        - Users
+      operationId: getApiAdminUsersByIdGroups
+      summary: List a user's groups
+      description: >-
+        Returns the user's membership rows and the groups they resolve to: the active direct groups and their ancestors.
+      responses:
+        '200':
+          description: List a user's groups
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserGroupList'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
   /api/admin/guest-users:
     get:
       tags:
@@ -13842,74 +14320,6 @@ paths:
           $ref: '#/components/responses/Error'
         '500':
           $ref: '#/components/responses/Error'
-      security:
-        - adminBearer: []
-        - adminSessionCookie: []
-  /api/admin/identity-mapping/groups:
-    post:
-      tags:
-        - Identity Mapping
-      operationId: postApiAdminFieldMappingGroups
-      summary: Create an identity mapping group.
-      description: >-
-        Creates a tenant-scoped group used by identity mapping and provisioning workflows. The
-        response is wrapped as { result } by the field-mapping mutation layer.
-      parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
-      responses:
-        '200':
-          $ref: '#/components/responses/FieldMappingGroupMutation'
-        '400':
-          $ref: '#/components/responses/Error'
-        '401':
-          $ref: '#/components/responses/Error'
-        '403':
-          $ref: '#/components/responses/Error'
-        '404':
-          $ref: '#/components/responses/Error'
-        '409':
-          $ref: '#/components/responses/Error'
-        '500':
-          $ref: '#/components/responses/Error'
-      requestBody:
-        $ref: '#/components/requestBodies/FieldMappingGroupCreate'
-      security:
-        - adminBearer: []
-        - adminSessionCookie: []
-  '/api/admin/identity-mapping/groups/{groupId}/memberships':
-    post:
-      tags:
-        - Identity Mapping
-      operationId: postApiAdminFieldMappingGroupsByGroupIdMemberships
-      summary: Create a group membership.
-      description: >-
-        Creates or records membership for the path group. The groupId path parameter overrides any
-        group id supplied in the request body, and the mutation returns the created membership in a
-        result envelope.
-      responses:
-        '200':
-          $ref: '#/components/responses/FieldMappingGroupMembershipMutation'
-        '400':
-          $ref: '#/components/responses/Error'
-        '401':
-          $ref: '#/components/responses/Error'
-        '403':
-          $ref: '#/components/responses/Error'
-        '404':
-          $ref: '#/components/responses/Error'
-        '409':
-          $ref: '#/components/responses/Error'
-        '500':
-          $ref: '#/components/responses/Error'
-      parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
-        - name: groupId
-          in: path
-          required: true
-          schema:
-            type: string
-      requestBody:
-        $ref: '#/components/requestBodies/FieldMappingGroupMembershipCreate'
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -28074,7 +28484,11 @@ paths:
         - Users
       operationId: getApiAdminUsersByIdEffectivePermissions
       summary: Get user effective permissions
-      description: Resolves permissions from direct roles and organization memberships for a user.
+      description: >-
+        Resolves permissions from direct roles and organization memberships for a user. Each role in
+        roles carries via: { kind: direct } for a role assigned to the user, or { kind: group,
+        group_id, through_group_id } for a role granted to a group the user belongs to (group_id owns
+        the grant, through_group_id is the group the user is a member of).
       responses:
         '200':
           $ref: '#/components/responses/UserEffectivePermissions'
@@ -43433,24 +43847,6 @@ components:
           example:
             catalogVersionId: catalog_version_123
             compatibilityRange: '>=1.0.0'
-    FieldMappingGroupCreate:
-      required: true
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/FieldMappingGroupCreateRequest'
-          example:
-            groupKey: engineering
-            displayName: Engineering
-    FieldMappingGroupMembershipCreate:
-      required: true
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/FieldMappingGroupMembershipCreateRequest'
-          example:
-            subjectId: subject_123
-            membershipType: member
     FieldMappingEntitlementGrantRequest:
       required: true
       content:
@@ -46863,18 +47259,6 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/FieldMappingActivationResultResponse'
-    FieldMappingGroupMutation:
-      description: Group mutation response.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/FieldMappingGroupMutationResponse'
-    FieldMappingGroupMembershipMutation:
-      description: Group membership mutation response.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/FieldMappingGroupMembershipMutationResponse'
     FieldMappingKeyRegistries:
       description: Key registry list response.
       content:
@@ -70863,108 +71247,6 @@ components:
               type: string
             alreadyActive:
               type: boolean
-    FieldMappingGroupCreateRequest:
-      type: object
-      additionalProperties: false
-      required:
-        - groupKey
-        - displayName
-      properties:
-        groupKey:
-          type: string
-        displayName:
-          type: string
-        description:
-          type: string
-        parentGroupId:
-          type:
-            - string
-            - 'null'
-        metadata:
-          type: object
-          additionalProperties: true
-    FieldMappingGroupMutationResponse:
-      type: object
-      additionalProperties: false
-      required:
-        - result
-      properties:
-        result:
-          type: object
-          additionalProperties: false
-          required:
-            - id
-            - tenantId
-            - groupKey
-            - displayName
-          properties:
-            id:
-              type: string
-            tenantId:
-              type: string
-            groupKey:
-              type: string
-            displayName:
-              type: string
-    FieldMappingGroupMembershipCreateRequest:
-      type: object
-      additionalProperties: false
-      properties:
-        subjectId:
-          type: string
-        accountId:
-          type: string
-        membershipType:
-          type: string
-        assignmentSource:
-          type: string
-        ownershipPolicy:
-          type: string
-          enum:
-            - source_owned
-            - manual
-            - protected
-        revokePolicy:
-          type: string
-          enum:
-            - auto
-            - review
-            - keep
-        protectedUntil:
-          type:
-            - integer
-            - 'null'
-    FieldMappingGroupMembershipMutationResponse:
-      type: object
-      additionalProperties: false
-      required:
-        - result
-      properties:
-        result:
-          type: object
-          additionalProperties: false
-          required:
-            - id
-            - tenantId
-            - groupId
-            - lifecycleState
-          properties:
-            id:
-              type: string
-            tenantId:
-              type: string
-            groupId:
-              type: string
-            subjectId:
-              type:
-                - string
-                - 'null'
-            accountId:
-              type:
-                - string
-                - 'null'
-            lifecycleState:
-              type: string
     FieldMappingKeyRegistryCreateRequest:
       type: object
       additionalProperties: false
@@ -80541,6 +80823,452 @@ components:
           type: integer
         expires_at:
           type: integer
+    GroupMembership:
+      type: object
+      required:
+        - subject_id
+        - assignment_source
+        - source_ref
+        - lifecycle_state
+        - starts_at
+        - expires_at
+        - stale_after
+        - joined_at
+        - effective
+      properties:
+        subject_id:
+          type: string
+        assignment_source:
+          type: string
+          enum: [manual, scim, rule, dynamic, invitation]
+        source_ref:
+          type:
+            - string
+            - 'null'
+        lifecycle_state:
+          type: string
+        starts_at:
+          type:
+            - integer
+            - 'null'
+          description: Unix seconds.
+        expires_at:
+          type:
+            - integer
+            - 'null'
+          description: Unix seconds.
+        stale_after:
+          type:
+            - integer
+            - 'null'
+          description: Unix seconds.
+        joined_at:
+          type:
+            - integer
+            - 'null'
+          description: Unix milliseconds.
+        effective:
+          type: boolean
+          description: Whether the row counts as a membership now (active, started, not expired, not stale).
+    Group:
+      type: object
+      required:
+        - id
+        - group_key
+        - display_name
+        - description
+        - parent_group_id
+        - lifecycle_state
+        - kind
+        - external_id
+        - rule_revision
+        - metadata
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+        group_key:
+          type: string
+        display_name:
+          type: string
+        description:
+          type:
+            - string
+            - 'null'
+        parent_group_id:
+          type:
+            - string
+            - 'null'
+        lifecycle_state:
+          type: string
+          enum: [active, inactive]
+        kind:
+          type: string
+          enum: [static, dynamic, scim, provisioned]
+        external_id:
+          type:
+            - string
+            - 'null'
+        rule_revision:
+          type:
+            - integer
+            - 'null'
+        metadata:
+          type:
+            - object
+            - 'null'
+          additionalProperties: true
+        created_at:
+          type:
+            - integer
+            - 'null'
+          description: Unix milliseconds.
+        updated_at:
+          type:
+            - integer
+            - 'null'
+          description: Unix milliseconds.
+        member_count:
+          type: integer
+          description: Subjects whose membership in the group itself holds now (active, started, not expired, not stale).
+    GroupRoleGrant:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - role_id
+        - role_name
+        - role_display_name
+        - scope_type
+        - scope_target
+        - expires_at
+        - assigned_by
+        - created_at
+      properties:
+        id:
+          type: string
+        role_id:
+          type: string
+        role_name:
+          type:
+            - string
+            - 'null'
+        role_display_name:
+          type:
+            - string
+            - 'null'
+        scope_type:
+          type: string
+          enum: [global, tenant, group, resource]
+        scope_target:
+          type: string
+        expires_at:
+          type:
+            - integer
+            - 'null'
+          description: Unix seconds.
+        assigned_by:
+          type:
+            - string
+            - 'null'
+        created_at:
+          type:
+            - integer
+            - 'null'
+          description: Unix milliseconds.
+    GroupPagination:
+      type: object
+      additionalProperties: false
+      required: [page, limit, total, totalPages, hasNext, hasPrev]
+      properties:
+        page:
+          type: integer
+        limit:
+          type: integer
+        total:
+          type: integer
+        totalPages:
+          type: integer
+        hasNext:
+          type: boolean
+        hasPrev:
+          type: boolean
+    GroupList:
+      type: object
+      additionalProperties: false
+      required: [groups, pagination]
+      properties:
+        groups:
+          type: array
+          items:
+            $ref: '#/components/schemas/Group'
+        pagination:
+          $ref: '#/components/schemas/GroupPagination'
+    GroupParent:
+      type: object
+      additionalProperties: false
+      required: [id, group_key, display_name, lifecycle_state]
+      properties:
+        id:
+          type: string
+        group_key:
+          type: string
+        display_name:
+          type: string
+        lifecycle_state:
+          type: string
+    GroupGet:
+      type: object
+      additionalProperties: false
+      required: [group]
+      properties:
+        group:
+          allOf:
+            - $ref: '#/components/schemas/Group'
+            - type: object
+              properties:
+                parent_chain:
+                  type: array
+                  description: The parent, its parent and so on, nearest first. Only on a read of one group.
+                  items:
+                    $ref: '#/components/schemas/GroupParent'
+                roles:
+                  type: array
+                  description: The roles granted to the group. Only on a read of one group.
+                  items:
+                    $ref: '#/components/schemas/GroupRoleGrant'
+    GroupDeleted:
+      type: object
+      additionalProperties: false
+      required: [success, message]
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+    GroupCreateRequest:
+      type: object
+      additionalProperties: false
+      required: [group_key, display_name]
+      properties:
+        group_key:
+          type: string
+          description: 'Letters, digits and . _ : - (up to 128 characters, starting with a letter or digit). Unique in the tenant.'
+        display_name:
+          type: string
+          maxLength: 200
+        description:
+          type:
+            - string
+            - 'null'
+        parent_group_id:
+          type:
+            - string
+            - 'null'
+        kind:
+          type: string
+          enum: [static, dynamic, scim, provisioned]
+          default: static
+        metadata:
+          type:
+            - object
+            - 'null'
+          additionalProperties: true
+    GroupUpdateRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        display_name:
+          type: string
+          maxLength: 200
+        description:
+          type:
+            - string
+            - 'null'
+        parent_group_id:
+          type:
+            - string
+            - 'null'
+          description: A group id to move the group under, null to make it a top-level group.
+        lifecycle_state:
+          type: string
+          enum: [active, inactive]
+        metadata:
+          type:
+            - object
+            - 'null'
+          additionalProperties: true
+    GroupMemberList:
+      type: object
+      additionalProperties: false
+      required: [members, pagination]
+      properties:
+        members:
+          type: array
+          items:
+            allOf:
+              - $ref: '#/components/schemas/GroupMembership'
+              - type: object
+                required: [user_email, user_name]
+                properties:
+                  user_email:
+                    type:
+                      - string
+                      - 'null'
+                  user_name:
+                    type:
+                      - string
+                      - 'null'
+        pagination:
+          $ref: '#/components/schemas/GroupPagination'
+    GroupMemberAddRequest:
+      type: object
+      additionalProperties: false
+      required: [subject_id]
+      properties:
+        subject_id:
+          type: string
+        starts_at:
+          type:
+            - integer
+            - 'null'
+          description: Unix seconds, an integer from 0 to 10000000000 (a value in milliseconds is refused with 400).
+        expires_at:
+          type:
+            - integer
+            - 'null'
+          description: Unix seconds, an integer from 0 to 10000000000 (milliseconds are refused with 400), after starts_at.
+    GroupMemberAdded:
+      type: object
+      additionalProperties: false
+      required: [success, message, membership]
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+        membership:
+          type: object
+          additionalProperties: true
+    GroupMemberRemoved:
+      type: object
+      additionalProperties: false
+      required: [success, message]
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+    GroupRoleList:
+      type: object
+      additionalProperties: false
+      required: [group_id, roles]
+      properties:
+        group_id:
+          type: string
+        roles:
+          type: array
+          items:
+            $ref: '#/components/schemas/GroupRoleGrant'
+    GroupRoleAssignRequest:
+      type: object
+      additionalProperties: false
+      required: [role_id]
+      properties:
+        role_id:
+          type: string
+        scope_type:
+          type: string
+          enum: [global, tenant, group, resource]
+          default: global
+        scope_target:
+          type:
+            - string
+            - 'null'
+          description: >-
+            Must be empty for global scope; empty or the tenant id for tenant scope; group:<group id>
+            of an existing group for group scope; resource:<type>:<id> or resource:<id> for resource
+            scope.
+        expires_at:
+          type:
+            - integer
+            - 'null'
+          description: Unix seconds, an integer from 0 to 10000000000 (milliseconds are refused with 400), in the future.
+    GroupRoleAssigned:
+      type: object
+      additionalProperties: false
+      required: [success, message, assignment]
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+        assignment:
+          type: object
+          additionalProperties: true
+    GroupRoleRemoved:
+      type: object
+      additionalProperties: false
+      required: [success, message]
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+    UserGroupList:
+      type: object
+      additionalProperties: false
+      required: [user_id, memberships, resolved]
+      properties:
+        user_id:
+          type: string
+        memberships:
+          type: array
+          items:
+            allOf:
+              - $ref: '#/components/schemas/GroupMembership'
+              - type: object
+                required: [group_id, group_key, display_name]
+                properties:
+                  group_id:
+                    type: string
+                  group_key:
+                    type:
+                      - string
+                      - 'null'
+                  display_name:
+                    type:
+                      - string
+                      - 'null'
+        resolved:
+          type: object
+          additionalProperties: false
+          required: [direct_group_ids, effective_groups]
+          properties:
+            direct_group_ids:
+              type: array
+              items:
+                type: string
+            effective_groups:
+              type: array
+              items:
+                type: object
+                additionalProperties: false
+                required: [id, group_key, display_name, direct]
+                properties:
+                  id:
+                    type: string
+                  group_key:
+                    type:
+                      - string
+                      - 'null'
+                  display_name:
+                    type:
+                      - string
+                      - 'null'
+                  direct:
+                    type: boolean
     UserEffectivePermissionsResponse:
       type: object
       additionalProperties: false

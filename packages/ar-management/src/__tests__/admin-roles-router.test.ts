@@ -1021,7 +1021,12 @@ describe('adminRolesRouter', () => {
     expect(response.status).toBe(200);
     expect(body.total).toBe(body.items.length);
     expect(body.items.map((item) => item.key)).toEqual(
-      expect.arrayContaining(['*', ADMIN_PERMISSIONS.ADMIN_ROLES_WRITE])
+      expect.arrayContaining([
+        '*',
+        ADMIN_PERMISSIONS.ADMIN_ROLES_WRITE,
+        ADMIN_PERMISSIONS.GROUPS_READ,
+        ADMIN_PERMISSIONS.GROUPS_WRITE,
+      ])
     );
   });
 

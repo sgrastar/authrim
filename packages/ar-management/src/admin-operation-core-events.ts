@@ -103,6 +103,15 @@ export const ADMIN_OPERATION_CORE_EVENTS: Readonly<Record<string, readonly strin
     'flow_assignment_upsert',
   ],
   flow_assignment: ['flow_assignment_delete'],
+  group: [
+    'group.created',
+    'group.updated',
+    'group.deleted',
+    'group.member_added',
+    'group.member_removed',
+    'group.role_assigned',
+    'group.role_removed',
+  ],
   iat_token: ['iat.token.create', 'iat.token.revoke'],
   identifier_exceptions: ['identifier_exceptions.imported'],
   identifier_salt: [

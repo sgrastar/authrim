@@ -10081,21 +10081,6 @@ export async function adminIdentityMappingOperationalNotificationResolveHandler(
   );
 }
 
-export async function adminIdentityMappingGroupCreateHandler(c: AdminContext) {
-  return handleMutation(c, 'group.create', async (repository, tenantId, body) =>
-    repository.createGroup(tenantId, body as CreateGroupRequest)
-  );
-}
-
-export async function adminIdentityMappingGroupMembershipCreateHandler(c: AdminContext) {
-  return handleMutation(c, 'group-membership.create', async (repository, tenantId, body) =>
-    repository.createGroupMembership(tenantId, {
-      ...(body as Omit<CreateGroupMembershipRequest, 'groupId'>),
-      groupId: requiredParam(c, 'groupId'),
-    })
-  );
-}
-
 export async function adminIdentityMappingEntitlementGrantHandler(c: AdminContext) {
   return handleMutation(c, 'entitlement.grant', async (repository, tenantId, body) =>
     repository.grantEntitlement(tenantId, body as GrantEntitlementRequest)

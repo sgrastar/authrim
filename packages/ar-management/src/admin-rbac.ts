@@ -79,7 +79,7 @@ const VALID_MEMBERSHIP_TYPES = new Set<MembershipType>(['member', 'admin', 'owne
  * Convert timestamp to milliseconds for API response
  * Handles both seconds (10 digits) and milliseconds (13 digits) timestamps
  */
-function toMilliseconds(timestamp: number | null | undefined): number | null {
+export function toMilliseconds(timestamp: number | null | undefined): number | null {
   if (!timestamp) return null;
   if (timestamp < 1e12) {
     return timestamp * 1000;
@@ -156,7 +156,7 @@ function invalidOrganizationType(c: Context<{ Bindings: Env }>) {
  * database, the account's assignments and memberships in `account` (its account database, from
  * createAdaptersFromContext after the account was resolved).
  */
-function rbacDatabasesFromContext(
+export function rbacDatabasesFromContext(
   c: Context<{ Bindings: Env }>,
   account: DatabaseAdapter
 ): TenantRBACDatabases {
@@ -170,7 +170,7 @@ function rbacDatabasesFromContext(
  * Resolves the user's account (its databases) onto the request. False when the tenant has no
  * account for it.
  */
-async function resolveSubjectAccount(
+export async function resolveSubjectAccount(
   c: Context<{ Bindings: Env }>,
   subjectId: string
 ): Promise<boolean> {
@@ -190,7 +190,7 @@ async function resolveSubjectAccount(
  * account, whatever its type), so its access can still be taken away and does not come back when
  * it is activated again. Null when the tenant has no such account.
  */
-async function subjectAccountForRevocation(
+export async function subjectAccountForRevocation(
   c: Context<{ Bindings: Env }>,
   tenantId: string,
   subjectId: string
@@ -207,7 +207,7 @@ async function subjectAccountForRevocation(
 /**
  * Create database adapters from context
  */
-function createAdaptersFromContext(c: Context<{ Bindings: Env }>): {
+export function createAdaptersFromContext(c: Context<{ Bindings: Env }>): {
   coreAdapter: DatabaseAdapter;
   piiAdapter: DatabaseAdapter | null;
 } {
@@ -258,7 +258,7 @@ async function fetchRuntimeUserContactMap(
 }
 
 /** The contacts of a page of a tenant-wide list, each from the account's own databases. */
-async function subjectContacts(
+export async function subjectContacts(
   c: Context<{ Bindings: Env }>,
   stores: TenantRBACStores,
   tenantId: string,
@@ -276,7 +276,11 @@ async function subjectContacts(
 const MAX_LIST_PAGE_SIZE = 100;
 
 /** The page asked for: page from 1, limit from 1 to MAX_LIST_PAGE_SIZE (20 by default). */
-function listPage(c: Context<{ Bindings: Env }>): { page: number; limit: number; offset: number } {
+export function listPage(c: Context<{ Bindings: Env }>): {
+  page: number;
+  limit: number;
+  offset: number;
+} {
   const page = Math.max(1, parseInt(c.req.query('page') || '1', 10) || 1);
   const limit = Math.min(
     MAX_LIST_PAGE_SIZE,
@@ -285,7 +289,7 @@ function listPage(c: Context<{ Bindings: Env }>): { page: number; limit: number;
   return { page, limit, offset: (page - 1) * limit };
 }
 
-function pageTooDeep(c: Context<{ Bindings: Env }>) {
+export function pageTooDeep(c: Context<{ Bindings: Env }>) {
   return c.json(
     {
       error: 'invalid_request',
@@ -296,7 +300,7 @@ function pageTooDeep(c: Context<{ Bindings: Env }>) {
   );
 }
 
-async function runtimeUserExists(
+export async function runtimeUserExists(
   coreAdapter: DatabaseAdapter,
   piiAdapter: DatabaseAdapter | null,
   tenantId: string,
@@ -2188,6 +2192,14 @@ export async function adminUserEffectivePermissionsHandler(c: Context<{ Bindings
         scope_target: assignment.scope_target,
         granted_at: toMilliseconds(assignment.created_at),
         expires_at: toMilliseconds(assignment.expires_at),
+        via:
+          assignment.via.kind === 'group'
+            ? {
+                kind: 'group' as const,
+                group_id: assignment.via.groupId,
+                through_group_id: assignment.via.throughGroupId,
+              }
+            : { kind: 'direct' as const },
       })),
       organizations: orgMemberships.map(({ membership, organization }) => ({
         organization_id: organization.id,
