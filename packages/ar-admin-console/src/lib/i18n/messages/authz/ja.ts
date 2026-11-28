@@ -438,7 +438,7 @@ export const jaAuthz = {
 	// 設定 → 認可 → Check API キー
 	'az.keys.title': 'Check API キー',
 	'az.keys.desc':
-		'サービスのバックエンドが、このテナントの任意のユーザーについて Check API に聞くためのキーです。キーはアプリのバックエンドの設定で作ります（秘密は作成時に 1 回だけ表示されます）。ここでは無効にできます。',
+		'サービスのバックエンドが、このテナントの任意のユーザーについて Check API に聞くためのキーです。ここで作成でき（秘密は作成時に 1 回だけ表示されます）、不要になったら無効にできます。',
 	'az.keys.col.key': 'キー',
 	'az.keys.col.operations': '使える操作',
 	'az.keys.col.state': '状態',
@@ -453,6 +453,37 @@ export const jaAuthz = {
 	'az.keys.revoke.body':
 		'このキーを使うバックエンドは、すぐに Check API を呼べなくなります。元に戻せません。',
 	'az.keys.toast.revoked': '{name} を無効にしました',
+	'az.keys.new.open': 'キーを作成',
+	'az.keys.new.title': 'Check API キーを作成',
+	'az.keys.new.desc':
+		'キーはテナント {tenant} のものになります。秘密は作成後に 1 回だけ表示されます。',
+	'az.keys.new.submit': '作成する',
+	'az.keys.new.name': '名前',
+	'az.keys.new.client': 'クライアント ID',
+	'az.keys.new.clientHint': 'このキーを使うクライアント（アプリのバックエンド）です。',
+	'az.keys.new.operations': '使える操作',
+	'az.keys.new.ends': '期限（任意）',
+	'az.keys.new.endsHint': '空にすると期限はありません。',
+	'az.keys.new.endsInvalid': 'キーの期限が日時として読めません。入力し直してください。',
+	'az.keys.new.endsPast': 'キーの期限は未来の日時にしてください。',
+	'az.keys.op.subscribe': '変更の購読（subscribe）',
+	'az.keys.op.subscribe.desc': '権限の判定結果の変更を受け取ります。',
+	'az.keys.secret.copied': 'コピーしました。秘密はこのページにはもう残っていません。',
+	'az.keys.listDenied': 'ここでキーを作成できますが、既存のキーの一覧は見られません。',
+	'az.keys.new.nameRequired': '名前を入力してください。',
+	'az.keys.new.clientRequired': 'クライアント ID を入力してください。',
+	'az.keys.new.operationsRequired': '操作を 1 つ以上選んでください。',
+	'az.keys.new.capabilityOff':
+		'プラットフォームでマシン認証情報が無効になっているため、今は新しいキーを作成できません。既存のキーは無効にできます。',
+	'az.keys.op.check': '単発の確認（check）',
+	'az.keys.op.check.desc': '1 人のユーザーが 1 つの操作をできるかを聞きます。',
+	'az.keys.op.batch': 'まとめて確認（batch）',
+	'az.keys.op.batch.desc': '複数の権限を 1 回のリクエストで聞きます。',
+	'az.keys.secret.title': '{name} を作成しました。今すぐ秘密をコピーしてください。',
+	'az.keys.secret.warning':
+		'この秘密が表示されるのは今回だけです。このパネルを閉じると二度と表示されません。なくした場合は、キーを無効にして作り直してください。',
+	'az.keys.secret.label': 'API キー（秘密）',
+	'az.keys.secret.done': '保存しました',
 	'az.picker.groupTypedId': 'このグループ ID を使う',
 	'az.picker.groupSearchRefused':
 		'グループを検索する権限がないため、入力した ID をそのまま使います',
@@ -469,9 +500,9 @@ export const jaAuthz = {
 	'grp.rule.savedExpiryPending':
 		'保存しました。一部のアカウント格納先に届かなかったため、前のルールで入っていた所属の一部が、止まるのを待っている状態です。',
 	'az.keys.expired': '期限切れ',
-	'set.k.feature.enable_id_level_permissions': '資源ごとの権限',
+	'set.k.feature.enable_id_level_permissions': 'アクセストークンに入れる資源ごとの権限',
 	'set.k.feature.enable_id_level_permissions.desc':
-		'1 つの資源について個別に与えた権限（資源 ID ごとの権限）でも判定します。',
+		'ユーザーに個別に与えた資源ごとの権限（資源 ID ごと）を、認可コードの交換時にアクセストークンの authrim_resource_permissions クレームへ入れます。Check API の判定は変わらず、資源ごとの権限は常に評価されます。',
 
 	// Access → Policies
 	'pol.page.desc':

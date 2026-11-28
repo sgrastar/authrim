@@ -14,9 +14,11 @@
 		/** Icon only, or icon with the "Copy" label. */
 		variant?: 'icon' | 'button';
 		size?: 'md' | 'sm';
+		/** Called once the text is on the clipboard (not when the write failed). */
+		oncopied?: () => void;
 	}
 
-	let { text, label, variant = 'button', size = 'sm' }: Props = $props();
+	let { text, label, variant = 'button', size = 'sm', oncopied }: Props = $props();
 
 	let state = $state<'idle' | 'copied' | 'failed'>('idle');
 	let timer: ReturnType<typeof setTimeout> | undefined;
@@ -26,6 +28,7 @@
 		try {
 			await navigator.clipboard.writeText(typeof text === 'function' ? text() : text);
 			state = 'copied';
+			oncopied?.();
 		} catch {
 			state = 'failed';
 		}

@@ -41,6 +41,8 @@
 		disabled?: boolean;
 		field?: string;
 		changed?: boolean;
+		/** show: the value reached the clipboard. */
+		oncopied?: () => void;
 	}
 
 	let {
@@ -56,7 +58,8 @@
 		required = false,
 		disabled = false,
 		field,
-		changed
+		changed,
+		oncopied
 	}: Props = $props();
 
 	const uid = $props.id();
@@ -120,7 +123,7 @@
 				label={t(visible ? 'secret.hide' : 'secret.show', { name: label })}
 				onclick={() => (visible = !visible)}
 			/>
-			<CopyButton text={() => value} {label} />
+			<CopyButton text={() => value} {label} {oncopied} />
 		</div>
 	{:else if editing}
 		<div class="secret__row">
