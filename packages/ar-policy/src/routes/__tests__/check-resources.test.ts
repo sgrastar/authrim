@@ -381,10 +381,12 @@ describe('request body limits', () => {
 });
 
 describe('ids a check can name', () => {
-  it.each(['doc_1', 'DOC-1_v2', 'DOC-1.v2', 'a~b', 'caf%C3%A9', 'a'.repeat(256)])(
+  it.each(['doc_1', 'DOC-1_v2', 'DOC-1.v2', 'a~b', 'café', 'a'.repeat(256)])(
     'accepts %s, which the permission parser also accepts',
     async (id) => {
-      expect((await call('PUT', `/api/check/resources/documents/${id}`, {})).status).toBe(200);
+      expect(
+        (await call('PUT', `/api/check/resources/documents/${encodeURIComponent(id)}`, {})).status
+      ).toBe(200);
       expect(() => parsePermission(`documents:${id}:read`)).not.toThrow();
     }
   );

@@ -530,6 +530,8 @@ components:
         pattern: '^[^\s:\u0000-\u001f\u007f-\u009f]+$'
         minLength: 1
         maxLength: 256
+        not:
+          enum: ['.', '..']
     Name:
       name: name
       in: path
@@ -1505,6 +1507,8 @@ components:
           pattern: '^[^\s:\u0000-\u001f\u007f-\u009f]+$'
           minLength: 1
           maxLength: 256
+          not:
+            enum: ['.', '..']
         owner_id:
           type:
             - string
