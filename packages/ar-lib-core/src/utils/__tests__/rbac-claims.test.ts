@@ -249,10 +249,10 @@ describe('RBAC token claims', () => {
     expect(cache.get.mock.calls.map(([key]) => key)).toEqual([
       'rbac:v2:tenant-version:tenant-a',
       'rbac:v2:subject-version:tenant-a:user-1',
-      expect.stringContaining('rbac:v5:tenant-a:id:user-1:'),
+      expect.stringContaining('rbac:v6:tenant-a:id:user-1:'),
       'rbac:v2:tenant-version:tenant-a',
       'rbac:v2:subject-version:tenant-a:user-1',
-      expect.stringContaining('rbac:v5:tenant-a:access:user-1:'),
+      expect.stringContaining('rbac:v6:tenant-a:access:user-1:'),
     ]);
     expect(cache.put).not.toHaveBeenCalled();
   });
@@ -261,7 +261,7 @@ describe('RBAC token claims', () => {
     const one = adapter(() => []);
     const cache = {
       get: vi.fn(async (key: string) =>
-        key.startsWith('rbac:v5:')
+        key.startsWith('rbac:v6:')
           ? null
           : JSON.stringify({ authrim_permissions: ['reports:write'] })
       ),
@@ -274,7 +274,7 @@ describe('RBAC token claims', () => {
         claimsConfig: 'permissions',
       } as never)
     ).resolves.toEqual({});
-    expect(cache.get).toHaveBeenCalledWith(expect.stringMatching(/^rbac:v5:tenant-a:access:/));
+    expect(cache.get).toHaveBeenCalledWith(expect.stringMatching(/^rbac:v6:tenant-a:access:/));
   });
 
   it('uses a versioned composite cache entry without database access', async () => {

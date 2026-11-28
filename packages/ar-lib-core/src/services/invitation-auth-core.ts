@@ -3,6 +3,7 @@ import type { DatabaseSource } from '../db';
 import { ensureDatabaseAdapter } from '../db';
 import { upsertGroupMembership } from './group-membership';
 import { findTenantRole, type TenantRBACDatabases } from './tenant-rbac';
+import { ROLE_TIER_BELOW_WILDCARD, roleTierCoversWildcards } from '../utils/permission-grammar';
 
 export interface TenantInvitationRecord {
   id: string;
@@ -385,6 +386,10 @@ export async function assignTenantRoleToUser(
       error: 'Role not found',
     };
   }
+  // A role below the tier its wildcards need is not given (roleTierCoversWildcards).
+  if (!roleTierCoversWildcards(roleCheck)) {
+    return { success: false, error: ROLE_TIER_BELOW_WILDCARD };
+  }
 
   const existing = await adapter.queryOne<{ id: string }>(
     `SELECT id FROM role_assignments
@@ -432,13 +437,21 @@ export async function joinInvitationGroup(
     [params.tenantId, params.groupId]
   );
   if (!group) return { success: false, error: 'Group not active' };
-  await upsertGroupMembership(
-    dbs,
-    params.tenantId,
-    params.userId,
-    { groupId: params.groupId, source: 'invitation', sourceRef: params.invitationId },
-    params.cache
-  );
+  try {
+    await upsertGroupMembership(
+      dbs,
+      params.tenantId,
+      params.userId,
+      { groupId: params.groupId, source: 'invitation', sourceRef: params.invitationId },
+      params.cache
+    );
+  } catch (error) {
+    // The group (or one above it) carries a role below its wildcard tier: not joined.
+    if (error instanceof Error && error.message === ROLE_TIER_BELOW_WILDCARD) {
+      return { success: false, error: ROLE_TIER_BELOW_WILDCARD };
+    }
+    throw error;
+  }
   return { success: true };
 }
 

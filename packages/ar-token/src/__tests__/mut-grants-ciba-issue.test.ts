@@ -72,6 +72,37 @@ describe('CIBA grant: issuance', () => {
     });
   }
 
+  it('embeds no ID-level resource permissions while the feature is off', async () => {
+    mocks.evaluateIdLevelPermissions.mockResolvedValue(['payments:pay_9:approve']);
+    expect((await redeem(metadata())).status).toBe(200);
+    expect(mocks.evaluateIdLevelPermissions).not.toHaveBeenCalled();
+    expect(mocks.createAccessToken.mock.calls[0][0]).not.toHaveProperty(
+      'authrim_resource_permissions'
+    );
+  });
+
+  it('drops the RBAC claim permissions when embedding is on and nothing matches', async () => {
+    mocks.getAccessTokenRBACClaims.mockResolvedValue({ authrim_permissions: ['*:*'] });
+    mocks.isPolicyEmbeddingEnabled.mockResolvedValue(true);
+    expect((await redeem(metadata())).status).toBe(200);
+    expect(mocks.createAccessToken.mock.calls[0][0]).not.toHaveProperty('authrim_permissions');
+  });
+
+  it('embeds the ID-level resource permissions while the feature is on', async () => {
+    mocks.isIdLevelPermissionsEnabled.mockResolvedValue(true);
+    mocks.evaluateIdLevelPermissions.mockResolvedValue(['payments:pay_9:approve']);
+    expect((await redeem(metadata())).status).toBe(200);
+    expect(mocks.evaluateIdLevelPermissions).toHaveBeenCalledWith(
+      expect.anything(),
+      'user-123',
+      'default',
+      expect.anything()
+    );
+    expect(mocks.createAccessToken.mock.calls[0][0].authrim_resource_permissions).toEqual([
+      'payments:pay_9:approve',
+    ]);
+  });
+
   it('issues DPoP-bound tokens with RBAC claims, permissions, nonce and acr', async () => {
     mocks.extractDPoPProof.mockReturnValue('dpop-proof');
     mocks.getAccessTokenRBACClaims.mockResolvedValue({ authrim_roles: ['approver'] });

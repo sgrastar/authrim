@@ -1,5 +1,8 @@
 import { ADMIN_PERMISSIONS, hasAdminPermission, type AdminAuthContext } from '@authrim/ar-lib-core';
 
+/** See ar-lib-core permission-grammar.ts: one rule for every path that gives a role. */
+export { ROLE_TIER_BELOW_WILDCARD, roleTierCoversWildcards } from '@authrim/ar-lib-core';
+
 function hasMachineFullAdminBypass(authContext: AdminAuthContext | null): boolean {
   if (authContext?.authMethod !== 'machine_access_token') {
     return false;

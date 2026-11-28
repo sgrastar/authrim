@@ -158,7 +158,11 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     resolveAccountDataContextFromHono: mocks.resolveAccountDataContext,
     getAccessTokenRBACClaims: mocks.getAccessTokenRBACClaims,
     getIDTokenRBACClaims: mocks.getIDTokenRBACClaims,
-    isPolicyEmbeddingEnabled: mocks.isPolicyEmbeddingEnabled,
+    // Without an implementation (mockReset), the real reader runs: settings failures are real.
+    isPolicyEmbeddingEnabled: (...args: Parameters<typeof actual.isPolicyEmbeddingEnabled>) =>
+      mocks.isPolicyEmbeddingEnabled.getMockImplementation()
+        ? (mocks.isPolicyEmbeddingEnabled(...args) as Promise<boolean>)
+        : actual.isPolicyEmbeddingEnabled(...args),
     evaluatePermissionEmbeddingForScope: mocks.evaluatePermissionEmbeddingForScope,
     isIdLevelPermissionsEnabled: mocks.isIdLevelPermissionsEnabled,
     evaluateIdLevelPermissions: mocks.evaluateIdLevelPermissions,

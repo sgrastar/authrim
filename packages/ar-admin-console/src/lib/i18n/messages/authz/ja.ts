@@ -274,9 +274,11 @@ export const jaAuthz = {
 	'eur.new.tierInfo':
 		'誰がこのロールを付与・解除・変更できるかを決めます。管理者は自分の段階までのロールだけを扱えます。',
 	'eur.new.permissions': '権限',
-	'eur.new.permissionsHint': '「documents:read」のように「資源:操作」を英小文字で入力します。',
+	'eur.new.permissionsHint':
+		'「documents:read」のように「資源:操作」を英小文字で入力します。1 つの資源には「資源:ID:操作」、すべての操作には「資源:*」「*:*」「*」を使えます。「*」「*:*」を持つロールは段階 3、「資源:*」を持つロールは段階 2 以上が必要です。',
 	'eur.new.permissionsNone': '権限を 1 つ以上入力してください。',
-	'eur.new.permissionInvalid': '「資源:操作」を英小文字（操作は _ も可）で入力してください。',
+	'eur.new.permissionInvalid':
+		'「資源:操作」「資源:ID:操作」「資源:*」「*:*」「*」のいずれかで入力してください（名前は英小文字・数字・_、ID は空白と「:」なし）。',
 	'eur.new.addPermission': '権限を追加',
 	'eur.toast.created': '{name} を作成しました',
 	'eur.toast.deleted': '{name} を削除しました',

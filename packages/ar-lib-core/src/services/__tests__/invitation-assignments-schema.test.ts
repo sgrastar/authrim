@@ -3,6 +3,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import type { DatabaseAdapter } from '../../db/adapter';
 import { sqliteAdapter } from '../../repositories/__tests__/sqlite-core-schema';
 import { applyInvitationAssignments } from '../invitation-auth-core';
+import { upsertGroupMembership } from '../group-membership';
 import { resolveScopedRoles } from '../../utils/rbac-claims';
 import { evaluatePermissionsForScope } from '../../utils/policy-embedding';
 import { singleDatabaseRBAC } from '../tenant-rbac';
@@ -111,6 +112,52 @@ describe('invitation assignments in the real schema', () => {
         }
       )
     ).toEqual(['documents:read']);
+  });
+
+  it('does not join a group carrying a role below its wildcard tier on redemption', async () => {
+    db.prepare(
+      `INSERT INTO roles (id, tenant_id, name, permissions_json, grant_tier, created_at, role_type, is_system)
+       VALUES ('role-wild', 'tenant-a', 'wild', '["*:*"]', 1, ?, 'custom', 0)`
+    ).run(NOW);
+    db.prepare(
+      `INSERT INTO group_role_assignments (id, tenant_id, group_id, role_id, created_at, updated_at)
+       VALUES ('gr-wild', 'tenant-a', 'grp-1', 'role-wild', ?, ?)`
+    ).run(NOW, NOW);
+    const result = await applyInvitationAssignments(singleDatabaseRBAC(adapter), {
+      userId: 'user-1',
+      tenantId: 'tenant-a',
+      groupId: 'grp-1',
+      invitationId: 'inv-1',
+    });
+
+    expect(result.groupMembership).toMatchObject({
+      success: false,
+      error: 'role_grant_tier_below_wildcard',
+    });
+    expect(db.prepare('SELECT COUNT(*) AS n FROM group_memberships').get()).toEqual({ n: 0 });
+    // The shared writer refuses it for every caller, not just invitations.
+    await expect(
+      upsertGroupMembership(singleDatabaseRBAC(adapter), 'tenant-a', 'user-1', {
+        groupId: 'grp-1',
+        source: 'manual',
+      })
+    ).rejects.toThrow('role_grant_tier_below_wildcard');
+  });
+
+  it('does not give a tier-1 role holding * on redemption', async () => {
+    db.exec(`UPDATE roles SET permissions_json = '["*"]', grant_tier = 1 WHERE id = 'role-1'`);
+    const result = await applyInvitationAssignments(singleDatabaseRBAC(adapter), {
+      userId: 'user-1',
+      tenantId: 'tenant-a',
+      roleId: 'role-1',
+      invitationId: 'inv-1',
+    });
+
+    expect(result.roleAssignment).toMatchObject({
+      success: false,
+      error: 'role_grant_tier_below_wildcard',
+    });
+    expect(db.prepare('SELECT COUNT(*) AS n FROM role_assignments').get()).toEqual({ n: 0 });
   });
 
   it("gives nothing from another tenant's role or group", async () => {

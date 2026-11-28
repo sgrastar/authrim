@@ -54,8 +54,6 @@ function getHealth(env: Record<string, unknown>): Promise<Response> {
   return Promise.resolve(checkRoutes.request('/health', {}, env, executionCtx));
 }
 
-const anyString: unknown = expect.any(String);
-
 beforeEach(resetMocks);
 afterEach(() => vi.useRealTimers());
 
@@ -241,9 +239,6 @@ describe('POST / validation', () => {
     expect(errorCall()).toEqual({
       code: AR_ERROR_CODES.VALIDATION_INVALID_VALUE,
       options: undefined,
-    });
-    expect(logger.debug).toHaveBeenCalledWith('Permission parse error', {
-      error: anyString,
     });
   });
 

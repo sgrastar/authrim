@@ -13,10 +13,10 @@
       "count": 44
     },
     "@typescript-eslint/no-unsafe-call": {
-      "count": 51
+      "count": 59
     },
     "@typescript-eslint/no-unsafe-member-access": {
-      "count": 65
+      "count": 73
     },
     "@typescript-eslint/no-unsafe-return": {
       "count": 27

@@ -156,6 +156,41 @@ describe('refresh_token grant: issued claims', () => {
       });
     });
 
+    it('replaces the RBAC claim permissions with the computed list while embedding is on', async () => {
+      mocks.getAccessTokenRBACClaims.mockResolvedValue({ authrim_permissions: ['*'] });
+      mocks.isPolicyEmbeddingEnabled.mockResolvedValue(true);
+      await refresh(env, presented, { scope: 'openid profile' });
+      // Nothing matched: the role's own `*` is not left in the token.
+      expect(accessClaims()).not.toHaveProperty('authrim_permissions');
+
+      env = resetHarness();
+      presented = presentRefreshToken(env);
+      mocks.getAccessTokenRBACClaims.mockResolvedValue({
+        authrim_roles: ['admin'],
+        authrim_permissions: ['*'],
+      });
+      // The real setting reader, with the settings store failing: unreadable is not off.
+      mocks.isPolicyEmbeddingEnabled.mockReset();
+      (env as unknown as { SETTINGS: unknown }).SETTINGS = {
+        get: async (key: string) => {
+          // Only the feature flags (where the embedding setting is) cannot be read.
+          if (key.includes('feature-flags')) throw new Error('settings down');
+          return null;
+        },
+      };
+      await refresh(env, presented, { scope: 'openid profile' });
+      expect(accessClaims()).not.toHaveProperty('authrim_permissions');
+      expect(accessClaims()).not.toHaveProperty('authrim_scoped_permissions');
+      expect(accessClaims().authrim_roles).toEqual(['admin']);
+
+      env = resetHarness();
+      presented = presentRefreshToken(env);
+      mocks.getAccessTokenRBACClaims.mockResolvedValue({ authrim_permissions: ['*'] });
+      await refresh(env, presented, { scope: 'openid profile' });
+      // Embedding off: the RBAC claims stand as configured.
+      expect(accessClaims().authrim_permissions).toEqual(['*']);
+    });
+
     it('embeds nothing when none are found, and evaluates nothing while off', async () => {
       mocks.isPolicyEmbeddingEnabled.mockResolvedValue(true);
       await refresh(env, presented);
@@ -166,6 +201,54 @@ describe('refresh_token grant: issued claims', () => {
       presented = presentRefreshToken(env);
       await refresh(env, presented);
       expect(mocks.evaluatePermissionEmbeddingForScope).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('ID-level resource permissions', () => {
+    it('reads them again for the refreshed token, within the cap, as the code exchange does', async () => {
+      mocks.isIdLevelPermissionsEnabled.mockResolvedValue(true);
+      mocks.getEmbeddingLimits.mockResolvedValue({
+        max_embedded_permissions: 50,
+        max_resource_permissions: 2,
+      });
+      mocks.evaluateIdLevelPermissions.mockResolvedValue([
+        'documents:doc_1:read',
+        'documents:doc_2:read',
+        'documents:doc_3:read',
+      ]);
+      await refresh(env, presented);
+      expect(mocks.evaluateIdLevelPermissions).toHaveBeenCalledWith(
+        expect.anything(),
+        'user-001',
+        'default',
+        expect.anything()
+      );
+      // Read from the database: a grant revoked while the cache could not be invalidated is gone.
+      expect(mocks.evaluateIdLevelPermissions.mock.calls[0][3]).not.toHaveProperty('cache');
+      expect(accessClaims().authrim_resource_permissions).toEqual([
+        'documents:doc_1:read',
+        'documents:doc_2:read',
+      ]);
+    });
+
+    it('embeds none while the feature is off, when none are found, or when they cannot be read', async () => {
+      await refresh(env, presented);
+      expect(mocks.evaluateIdLevelPermissions).not.toHaveBeenCalled();
+      expect(accessClaims()).not.toHaveProperty('authrim_resource_permissions');
+
+      env = resetHarness();
+      presented = presentRefreshToken(env);
+      mocks.isIdLevelPermissionsEnabled.mockResolvedValue(true);
+      await refresh(env, presented);
+      expect(accessClaims()).not.toHaveProperty('authrim_resource_permissions');
+
+      env = resetHarness();
+      presented = presentRefreshToken(env);
+      mocks.isIdLevelPermissionsEnabled.mockResolvedValue(true);
+      mocks.evaluateIdLevelPermissions.mockRejectedValue(new Error('db down'));
+      const response = await refresh(env, presented);
+      expect(response.status).toBe(200);
+      expect(accessClaims()).not.toHaveProperty('authrim_resource_permissions');
     });
   });
 

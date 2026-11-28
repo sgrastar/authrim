@@ -65,6 +65,39 @@ describe('access token permissions', () => {
     expect(claims).not.toHaveProperty('authrim_resource_permissions');
   });
 
+  it('writes only the computed permissions while embedding is on (no RBAC claim left)', async () => {
+    mocks.getAccessTokenRBACClaims.mockResolvedValue({ authrim_permissions: ['*'] });
+    mocks.isPolicyEmbeddingEnabled.mockResolvedValue(true);
+    await exchange();
+    expect(accessTokenClaims()).not.toHaveProperty('authrim_permissions');
+  });
+
+  it('drops the RBAC claim permissions when the embedding setting cannot be read', async () => {
+    mocks.getAccessTokenRBACClaims.mockResolvedValue({
+      authrim_roles: ['admin'],
+      authrim_permissions: ['*'],
+    });
+    // The real setting reader, with the settings store failing: unreadable is not off.
+    mocks.isPolicyEmbeddingEnabled.mockReset();
+    (env as unknown as { SETTINGS: unknown }).SETTINGS = {
+      get: async (key: string) => {
+        // Only the feature flags (where the embedding setting is) cannot be read.
+        if (key.includes('feature-flags')) throw new Error('settings down');
+        return null;
+      },
+    };
+    const { response } = await exchange();
+    expect(response.status).toBe(200);
+    expect(accessTokenClaims()).not.toHaveProperty('authrim_permissions');
+    expect(accessTokenClaims().authrim_roles).toEqual(['admin']);
+  });
+
+  it('keeps the RBAC claim permissions while embedding is off', async () => {
+    mocks.getAccessTokenRBACClaims.mockResolvedValue({ authrim_permissions: ['*'] });
+    await exchange();
+    expect(accessTokenClaims().authrim_permissions).toEqual(['*']);
+  });
+
   it('does not evaluate policy permissions while policy embedding is off', async () => {
     await exchange();
     expect(mocks.evaluatePermissionEmbeddingForScope).not.toHaveBeenCalled();
@@ -92,7 +125,8 @@ describe('access token permissions', () => {
       expect.anything(),
       'user-001',
       'default',
-      { cache: (env as unknown as { REBAC_CACHE?: unknown }).REBAC_CACHE, env }
+      // From the database, never the cache (a revoked grant must not come back).
+      { env }
     );
     expect(accessTokenClaims().authrim_resource_permissions).toEqual(['doc:1:read', 'doc:2:read']);
   });

@@ -334,6 +334,67 @@ describe('groups: create, list, get, update, delete', () => {
 });
 
 describe('group members', () => {
+  it('refuses a member for a group carrying a stored tier-1 role holding *, even to a super admin', async () => {
+    seedRole('role-wild', 1, ['*']);
+    const groupId = await createGroupVia('wildgroup');
+    // Written as an older version could (the grant path now refuses it).
+    metadataDb
+      .prepare(
+        `INSERT INTO group_role_assignments (id, tenant_id, group_id, role_id, created_at, updated_at)
+         VALUES ('gr-wild', 'tenant-a', ?, 'role-wild', 1, 1)`
+      )
+      .run(groupId);
+    currentAuth = superAdmin;
+    const response = await call('POST', `/api/admin/groups/${groupId}/members`, {
+      subject_id: 'user-1',
+    });
+    expect(response.status).toBe(403);
+    expect(accountDb.prepare('SELECT COUNT(*) AS n FROM group_memberships').get()).toEqual({
+      n: 0,
+    });
+  });
+
+  it('adds a member to a group whose under-tier wildcard grant has expired (it grants nothing)', async () => {
+    seedRole('role-wild-old', 1, ['*']);
+    const groupId = await createGroupVia('expiredwild');
+    metadataDb
+      .prepare(
+        `INSERT INTO group_role_assignments (id, tenant_id, group_id, role_id, expires_at,
+           created_at, updated_at)
+         VALUES ('gr-old', 'tenant-a', ?, 'role-wild-old', ?, 1, 1)`
+      )
+      .run(groupId, Math.floor(Date.now() / 1000) - 60);
+    currentAuth = superAdmin;
+    expect(
+      (await call('POST', `/api/admin/groups/${groupId}/members`, { subject_id: 'user-1' })).status
+    ).toBe(201);
+    // The expired grant gives the member nothing.
+    const effective = await call('GET', '/api/admin/users/user-1/effective-permissions');
+    expect(effective.status).toBe(200);
+    expect(JSON.stringify(effective.body)).not.toContain('role-wild-old');
+  });
+
+  it('lets a tier-3 admin remove a member from a group carrying a role below its wildcard tier', async () => {
+    seedRole('role-wild2', 1, ['*:*']);
+    const groupId = await createGroupVia('wildgroup2');
+    currentAuth = superAdmin;
+    expect(
+      (await call('POST', `/api/admin/groups/${groupId}/members`, { subject_id: 'user-1' })).status
+    ).toBe(201);
+    // The role is granted afterwards, as an older version could write it.
+    metadataDb
+      .prepare(
+        `INSERT INTO group_role_assignments (id, tenant_id, group_id, role_id, created_at, updated_at)
+         VALUES ('gr-wild2', 'tenant-a', ?, 'role-wild2', 1, 1)`
+      )
+      .run(groupId);
+    const removed = await call('DELETE', `/api/admin/groups/${groupId}/members/user-1`);
+    expect(removed.status).toBe(200);
+    expect(accountDb.prepare('SELECT lifecycle_state FROM group_memberships').all()).toEqual([
+      { lifecycle_state: 'revoked' },
+    ]);
+  });
+
   it('needs the standing for every service group that a membership reaches through member()', async () => {
     seedRole('role-strong', 2);
     const base = await createGroupVia('base');
@@ -463,6 +524,26 @@ describe('group members', () => {
 });
 
 describe('roles granted to a group', () => {
+  it.each([
+    ['*', 2],
+    ['*:*', 1],
+    ['docs:*', 1],
+  ])(
+    'refuses to grant a stored %s role whose grant tier (%i) is below its wildcard floor',
+    async (permission, tier) => {
+      seedRole('role-wild', tier, [permission]);
+      const groupId = await createGroupVia('wild');
+      const response = await call('POST', `/api/admin/groups/${groupId}/roles`, {
+        role_id: 'role-wild',
+      });
+      expect(response.status).toBe(409);
+      expect(response.body).toMatchObject({ error: 'role_grant_tier_below_wildcard' });
+      expect(metadataDb.prepare('SELECT COUNT(*) AS n FROM group_role_assignments').get()).toEqual({
+        n: 0,
+      });
+    }
+  );
+
   it('grants, lists and removes a role and bumps the tenant version', async () => {
     seedRole('role-a', 1);
     const groupId = await createGroupVia('team');

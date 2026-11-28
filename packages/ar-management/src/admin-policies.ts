@@ -12,6 +12,7 @@ import {
   generateId,
   getTenantIdFromContext,
   getLogger,
+  isValidPermissionName,
   policyConditionGroupIds,
   policyConditionRoleNames,
   readPolicyFlags,
@@ -281,6 +282,11 @@ function validatePolicyRuleBody(body: {
       (!Array.isArray(value) || value.some((entry) => typeof entry !== 'string'))
     ) {
       return `${field} must be an array of strings`;
+    }
+    // A rule matches the checked resource type and action by name (the permission grammar, see
+    // isValidPermissionName): a name a check can never carry would make a rule that never applies.
+    if (Array.isArray(value) && value.some((entry) => !isValidPermissionName(entry))) {
+      return `${field} entries must match [a-z][a-z0-9_]*`;
     }
   }
   if (body.conditions !== undefined) {

@@ -9,8 +9,45 @@ import { GRANT_TIERS } from '#lib/api/end-user-roles.js';
 /** The preset role names the API keeps for itself. */
 const PRESET_NAMES = ['admin', 'end_user'];
 export const ROLE_NAME_PATTERN = /^[a-zA-Z][a-zA-Z0-9_-]*$/;
-/** `resource:action`, lowercase, as the API takes a role's permissions. */
-export const ROLE_PERMISSION_PATTERN = /^[a-z]+:[a-z_]+$/;
+/**
+ * The permission grammar of the roles API (ar-lib-core permission-grammar.ts, mirrored here: the
+ * console does not import it): `resource:action`, `resource:<id>:action`, `resource:*`, `*:*` or
+ * `*`. `resource` and `action` are `[a-z][a-z0-9_]*`; an id has no whitespace, control character
+ * or `:`.
+ */
+const PERMISSION_NAME = /^[a-z][a-z0-9_]*$/;
+// eslint-disable-next-line no-control-regex
+const PERMISSION_ID = /^[^\s:\u0000-\u001f\u007f-\u009f]+$/;
+
+/** Whether the value is a permission a role may hold, as the roles API checks it. */
+export function isRolePermission(value: string): boolean {
+	if (value === '*' || value === '*:*') return true;
+	const parts = value.split(':');
+	if (parts.length === 2) {
+		const [resource, action] = parts;
+		return PERMISSION_NAME.test(resource) && (action === '*' || PERMISSION_NAME.test(action));
+	}
+	if (parts.length === 3) {
+		const [resource, id, action] = parts;
+		return PERMISSION_NAME.test(resource) && PERMISSION_ID.test(id) && PERMISSION_NAME.test(action);
+	}
+	return false;
+}
+
+/**
+ * The lowest grant tier a role with these permissions may have, as the roles API requires it:
+ * 3 with `*` or `*:*`, 2 with a `resource:*`, 1 otherwise.
+ */
+export function minimumGrantTier(permissions: readonly string[]): 1 | 2 | 3 {
+	let tier: 1 | 2 | 3 = 1;
+	for (const raw of permissions) {
+		const permission = raw.trim();
+		if (!isRolePermission(permission)) continue;
+		if (permission === '*' || permission === '*:*') return 3;
+		if (permission.endsWith(':*')) tier = 2;
+	}
+	return tier;
+}
 
 export type RoleNameProblem =
 	| 'eur.new.nameRequired'
@@ -29,7 +66,7 @@ export function roleNameProblem(name: string): RoleNameProblem | undefined {
 }
 
 export const permissionProblem = (permission: string): 'eur.new.permissionInvalid' | undefined =>
-	ROLE_PERMISSION_PATTERN.test(permission.trim()) ? undefined : 'eur.new.permissionInvalid';
+	isRolePermission(permission.trim()) ? undefined : 'eur.new.permissionInvalid';
 
 /** The tiers the admin may set: up to their ceiling, and the role's own (shown, kept). */
 export function tierChoices(ceiling: number, current?: number): number[] {

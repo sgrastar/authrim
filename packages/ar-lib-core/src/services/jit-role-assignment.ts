@@ -6,6 +6,7 @@ import type { DatabaseSource } from '../db';
 import { ensureDatabaseAdapter } from '../db';
 import { createLogger } from '../utils/logger';
 import { findTenantRole, type TenantRBACDatabases } from './tenant-rbac';
+import { ROLE_TIER_BELOW_WILDCARD, roleTierCoversWildcards } from '../utils/permission-grammar';
 
 const log = createLogger().module('JIT-ROLE-ASSIGNMENT');
 
@@ -38,8 +39,11 @@ export async function assignScopedRoleToUser(
   success: boolean;
   assignment_id?: string;
   error?: string;
-  /** `role_not_assignable`: the role exists but may not be assigned (refused, not failed). */
-  code?: 'role_not_assignable';
+  /**
+   * The role exists but may not be given (refused, not failed): `role_not_assignable`, or
+   * `role_grant_tier_below_wildcard` (its grant tier is below what its wildcards need).
+   */
+  code?: 'role_not_assignable' | 'role_grant_tier_below_wildcard';
 }> {
   const adapter = getAdapter(dbs.account);
   const assignmentId = `ra_${crypto.randomUUID().replace(/-/g, '')}`;
@@ -62,6 +66,15 @@ export async function assignScopedRoleToUser(
     if (roleCheck.is_assignable !== 1 && roleCheck.is_assignable !== true) {
       log.warn('JIT role not assignable; skipped', { tenantId, roleId });
       return { success: false, error: 'Role not assignable', code: 'role_not_assignable' };
+    }
+    // A role below the tier its wildcards need is not given (roleTierCoversWildcards).
+    if (!roleTierCoversWildcards(roleCheck)) {
+      log.warn('JIT role below its wildcard grant tier; skipped', { tenantId, roleId });
+      return {
+        success: false,
+        error: 'Role grant tier below its wildcards',
+        code: ROLE_TIER_BELOW_WILDCARD,
+      };
     }
 
     // Check if already assigned

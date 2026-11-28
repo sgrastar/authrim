@@ -28,7 +28,13 @@ import {
 	scopeTargetProblem,
 	suggestKey
 } from './group-model';
-import { permissionProblem, roleChanges, roleNameProblem, tierChoices } from './role-model';
+import {
+	minimumGrantTier,
+	permissionProblem,
+	roleChanges,
+	roleNameProblem,
+	tierChoices
+} from './role-model';
 import { groupSearch, userSearch } from './user-picker';
 
 const group = (id: string, parent: string | null = null): EndUserGroup => ({
@@ -334,7 +340,38 @@ describe('roles', () => {
 		expect(permissionProblem('documents:read')).toBeUndefined();
 		expect(permissionProblem('documents:read_all')).toBeUndefined();
 		expect(permissionProblem('Documents:read')).toBe('eur.new.permissionInvalid');
-		expect(permissionProblem('documents:42:read')).toBe('eur.new.permissionInvalid');
+		for (const permission of [
+			'documents:42:read',
+			'documents:DOC-42.v2:read',
+			'documents:*',
+			'*:*',
+			'*',
+			' documents:read '
+		]) {
+			expect(permissionProblem(permission)).toBeUndefined();
+		}
+		for (const permission of [
+			'my-docs:read',
+			'2docs:read',
+			'documents:Read',
+			'documents::read',
+			'documents:doc 1:read',
+			'documents:doc\u00001:read',
+			'documents:doc_1:*',
+			'*:read',
+			'a:b:c:d',
+			'documents'
+		]) {
+			expect(permissionProblem(permission)).toBe('eur.new.permissionInvalid');
+		}
+	});
+
+	it('knows the grant tier floor of wildcards, as the API does', () => {
+		expect(minimumGrantTier(['documents:read', 'documents:doc_1:read'])).toBe(1);
+		expect(minimumGrantTier(['documents:*'])).toBe(2);
+		expect(minimumGrantTier(['documents:*', ' * '])).toBe(3);
+		expect(minimumGrantTier(['*:*'])).toBe(3);
+		expect(minimumGrantTier(['*:read'])).toBe(1);
 	});
 
 	it('offers tiers up to the ceiling, and the role’s own', () => {

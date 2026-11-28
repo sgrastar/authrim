@@ -9,7 +9,11 @@
  * All endpoints require admin authentication via adminAuthMiddleware()
  */
 
-import { mayManageEndUserRole } from './role-delegation';
+import {
+  mayManageEndUserRole,
+  ROLE_TIER_BELOW_WILDCARD,
+  roleTierCoversWildcards,
+} from './role-delegation';
 import { bumpTenantReBACVersion } from './rebac-version';
 export { canGrantRole } from './role-delegation';
 import { Context } from 'hono';
@@ -49,6 +53,8 @@ import {
   MergedPageTooDeepError,
   DEFAULT_ROLES,
   isReservedAdminRoleName,
+  isValidPermission,
+  minimumGrantTierForPermissions,
 } from '@authrim/ar-lib-core';
 import {
   accountStoreHolding,
@@ -77,6 +83,32 @@ export function toMilliseconds(timestamp: number | null | undefined): number | n
   return timestamp;
 }
 
+/** Unix seconds above this are milliseconds (the year 2286 in seconds). */
+const MAX_UNIX_SECONDS = 10_000_000_000;
+
+/**
+ * An optional time of the Admin API's role assignments and group memberships, in Unix seconds:
+ * null when absent, the reason as a string when it is not an integer in seconds.
+ */
+export function optionalSeconds(value: unknown, field: string): number | null | string {
+  if (value === undefined || value === null) return null;
+  if (
+    typeof value !== 'number' ||
+    !Number.isSafeInteger(value) ||
+    value < 0 ||
+    value > MAX_UNIX_SECONDS
+  )
+    return `${field} must be an integer in Unix seconds (0 to ${MAX_UNIX_SECONDS}); milliseconds are not accepted`;
+  return value;
+}
+
+/** A stored role-assignment expiry (Unix seconds; PostgreSQL BIGINT is a string), or null. */
+export function expirySeconds(value: unknown): number | null {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = typeof value === 'number' ? value : Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
 /**
  * Get admin auth context from request
  */
@@ -91,6 +123,42 @@ function getAdminAuthFromContext(c: Context<{ Bindings: Env }>): AdminAuthContex
 /** A role's delegation tier: an integer from 1 to 3. */
 function isValidGrantTier(value: unknown): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 3;
+}
+
+/**
+ * 400 when a role's permissions need a higher grant tier than the one it would have: `*` / `*:*`
+ * need tier 3, a `resource:*` tier 2 (minimumGrantTierForPermissions). Null when the tier holds.
+ */
+function wildcardTierRefusal(
+  c: Context<{ Bindings: Env }>,
+  permissions: readonly unknown[],
+  grantTier: number
+): Response | null {
+  const required = minimumGrantTierForPermissions(permissions);
+  if (grantTier >= required) return null;
+  return c.json(
+    {
+      error: 'wildcard_requires_grant_tier',
+      error_description:
+        required === 3
+          ? 'A role holding * or *:* must have grant_tier 3'
+          : 'A role holding a resource:* permission must have grant_tier 2 or 3',
+      required_grant_tier: required,
+    },
+    400
+  );
+}
+
+/** 409: the role's stored grant tier is below what its wildcards need (fix the role first). */
+export function roleTierBelowWildcard(c: Context<{ Bindings: Env }>) {
+  return c.json(
+    {
+      error: ROLE_TIER_BELOW_WILDCARD,
+      error_description:
+        'The role holds a wildcard permission its grant_tier does not allow (* and *:* need 3, resource:* needs 2): raise the tier or change the permissions before assigning it',
+    },
+    409
+  );
 }
 
 function insufficientAdminPermissions(c: Context<{ Bindings: Env }>) {
@@ -444,7 +512,7 @@ export async function adminUserRolesListHandler(c: Context<{ Bindings: Env }>) {
       scope: assignment.scope_type,
       scope_target: assignment.scope_target,
       assigned_by: assignment.assigned_by,
-      expires_at: assignment.expires_at ? toMilliseconds(assignment.expires_at) : null,
+      expires_at: expirySeconds(assignment.expires_at),
       created_at: toMilliseconds(assignment.created_at),
     }));
 
@@ -483,10 +551,10 @@ export async function adminUserRoleAssignHandler(c: AdminContext) {
       role_name?: string;
       scope?: string;
       scope_target?: string;
-      expires_at?: number;
+      expires_at?: unknown;
     }>();
 
-    const { role_id, role_name, scope, scope_target, expires_at } = body;
+    const { role_id, role_name, scope, scope_target } = body;
 
     if (!role_id && !role_name) {
       return c.json(
@@ -494,6 +562,18 @@ export async function adminUserRoleAssignHandler(c: AdminContext) {
           error: 'invalid_request',
           error_description: 'Either role_id or role_name is required',
         },
+        400
+      );
+    }
+
+    // Unix seconds, as for group memberships and group role assignments.
+    const expiresAtSeconds = optionalSeconds(body.expires_at, 'expires_at');
+    if (typeof expiresAtSeconds === 'string') {
+      return c.json({ error: 'invalid_request', error_description: expiresAtSeconds }, 400);
+    }
+    if (expiresAtSeconds !== null && expiresAtSeconds <= Math.floor(Date.now() / 1000)) {
+      return c.json(
+        { error: 'invalid_request', error_description: 'expires_at must be in the future' },
         400
       );
     }
@@ -542,6 +622,10 @@ export async function adminUserRoleAssignHandler(c: AdminContext) {
     if (!mayManageEndUserRole(adminAuth, role)) {
       return insufficientAdminPermissions(c as unknown as Context<{ Bindings: Env }>);
     }
+    // A stored role below the tier its wildcards need is not handed out (roleTierCoversWildcards).
+    if (!roleTierCoversWildcards(role)) {
+      return roleTierBelowWildcard(c as unknown as Context<{ Bindings: Env }>);
+    }
 
     const assignmentId = crypto.randomUUID();
     const now = Math.floor(Date.now() / 1000);
@@ -587,9 +671,6 @@ export async function adminUserRoleAssignHandler(c: AdminContext) {
       );
     }
 
-    // Convert expires_at from milliseconds to seconds if provided
-    const expiresAtSeconds = expires_at ? Math.floor(expires_at / 1000) : null;
-
     await coreAdapter.execute(
       `INSERT INTO role_assignments (id, tenant_id, subject_id, role_id, scope_type, scope_target, assigned_by, expires_at, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -620,7 +701,7 @@ export async function adminUserRoleAssignHandler(c: AdminContext) {
           scope: assignmentScope,
           scope_target: assignmentScopeTarget,
           assigned_by: adminAuth?.userId || 'system',
-          expires_at: expires_at || null,
+          expires_at: expiresAtSeconds,
           created_at: toMilliseconds(now),
         },
       },
@@ -1194,7 +1275,7 @@ export async function adminUserEffectivePermissionsHandler(c: Context<{ Bindings
           source_id: role.id,
           source_name: role.name,
           granted_at: assignment.created_at,
-          expires_at: assignment.expires_at,
+          expires_at: expirySeconds(assignment.expires_at),
         });
       }
     }
@@ -1223,7 +1304,7 @@ export async function adminUserEffectivePermissionsHandler(c: Context<{ Bindings
         scope: assignment.scope_type,
         scope_target: assignment.scope_target,
         granted_at: toMilliseconds(assignment.created_at),
-        expires_at: toMilliseconds(assignment.expires_at),
+        expires_at: expirySeconds(assignment.expires_at),
         via:
           assignment.via.kind === 'group'
             ? {
@@ -1302,7 +1383,7 @@ export async function adminRoleAssignmentsListHandler(c: Context<{ Bindings: Env
         scope: a.scope_type,
         scope_target: a.scope_target,
         assigned_by: a.assigned_by,
-        expires_at: a.expires_at ? toMilliseconds(a.expires_at) : null,
+        expires_at: expirySeconds(a.expires_at),
         assigned_at: toMilliseconds(a.created_at),
       };
     });
@@ -1398,7 +1479,7 @@ export async function adminRoleGroupAssignmentsListHandler(c: Context<{ Bindings
         scope: row.scope_type,
         scope_target: row.scope_target,
         assigned_by: row.assigned_by,
-        expires_at: row.expires_at ? toMilliseconds(row.expires_at) : null,
+        expires_at: expirySeconds(row.expires_at),
         assigned_at: toMilliseconds(row.created_at),
       })),
       pagination: {
@@ -1498,9 +1579,8 @@ export async function adminRoleCreateHandler(c: Context<{ Bindings: Env }>) {
       });
     }
 
-    // Validate permission format
-    const validPermissionPattern = /^[a-z]+:[a-z_]+$/;
-    const invalidPermissions = body.permissions.filter((p) => !validPermissionPattern.test(p));
+    // Validate permission format (the grammar of the Check API: see isValidPermission)
+    const invalidPermissions = body.permissions.filter((p) => !isValidPermission(p));
     if (invalidPermissions.length > 0) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
         variables: {
@@ -1519,6 +1599,9 @@ export async function adminRoleCreateHandler(c: Context<{ Bindings: Env }>) {
         variables: { field: 'grant_tier', reason: 'grant_tier must be an integer from 1 to 3' },
       });
     }
+    // A wildcard needs a tier only the administrators who may hand it out can grant.
+    const tierRefusal = wildcardTierRefusal(c, body.permissions, grantTier);
+    if (tierRefusal) return tierRefusal;
     if (!mayManageEndUserRole(adminAuth, { grant_tier: grantTier })) {
       return insufficientAdminPermissions(c);
     }
@@ -1671,9 +1754,8 @@ export async function adminRoleUpdateHandler(c: Context<{ Bindings: Env }>) {
         });
       }
 
-      // Validate permission format
-      const validPermissionPattern = /^[a-z]+:[a-z_]+$/;
-      const invalidPermissions = body.permissions.filter((p) => !validPermissionPattern.test(p));
+      // Validate permission format (the grammar of the Check API: see isValidPermission)
+      const invalidPermissions = body.permissions.filter((p) => !isValidPermission(p));
       if (invalidPermissions.length > 0) {
         return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
           variables: {
@@ -1683,6 +1765,17 @@ export async function adminRoleUpdateHandler(c: Context<{ Bindings: Env }>) {
         });
       }
     }
+
+    // The role as it would be: a wildcard needs its tier (set or kept), so neither adding one nor
+    // lowering the tier of a role that holds one can leave it below.
+    const resultingPermissions: unknown[] =
+      body.permissions ?? rolePermissions({ permissions_json: existingRole.permissions_json });
+    const tierRefusal = wildcardTierRefusal(
+      c,
+      resultingPermissions,
+      body.grant_tier ?? Number(existingRole.grant_tier)
+    );
+    if (tierRefusal) return tierRefusal;
 
     const nowTs = Date.now();
     const updates: string[] = ['updated_at = ?'];
@@ -1705,11 +1798,13 @@ export async function adminRoleUpdateHandler(c: Context<{ Bindings: Env }>) {
 
     // Add WHERE clause bindings: only the role as it was checked (its grant tier decides who may
     // change it), so a tier changed since by another administrator is not overwritten.
-    bindings.push(tenantId, roleId, existingRole.grant_tier);
+    // ... and its permissions as read: the change was checked against them (a wildcard added since
+    // must not end up below its tier; two permission edits must not overwrite each other).
+    bindings.push(tenantId, roleId, existingRole.grant_tier, existingRole.permissions_json);
 
     const updated = await adapter.execute(
       `UPDATE roles SET ${updates.join(', ')}
-        WHERE tenant_id = ? AND id = ? AND grant_tier = ?`,
+        WHERE tenant_id = ? AND id = ? AND grant_tier = ? AND permissions_json = ?`,
       bindings
     );
     if (!updated.rowsAffected) {
@@ -1721,8 +1816,9 @@ export async function adminRoleUpdateHandler(c: Context<{ Bindings: Env }>) {
         409
       );
     }
-    // Every subject holding the role (directly or through a group) carries its permissions.
-    if (body.permissions !== undefined && c.env.REBAC_CACHE)
+    // Every subject holding the role (directly or through a group) carries its permissions; its
+    // grant tier decides whether a wildcard role counts at all when read (raising it repairs one).
+    if ((body.permissions !== undefined || body.grant_tier !== undefined) && c.env.REBAC_CACHE)
       await bumpTenantRBACCacheVersion(c.env.REBAC_CACHE, tenantId);
 
     // Write audit log
