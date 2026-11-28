@@ -190,6 +190,69 @@ it('treats a resource permission granted to a group or its ancestor as authoriza
   }
 });
 
+it('treats a ReBAC group userset on a group or its ancestor as authorization the group carries', async () => {
+  const { db, adapter } = openCoreStore('test');
+  try {
+    const tenant = 'test';
+    const root = await createGroup(adapter, tenant, { groupKey: 'root', displayName: 'Root' });
+    const child = await createGroup(adapter, tenant, {
+      groupKey: 'child',
+      displayName: 'Child',
+      parentGroupId: root,
+    });
+    const other = await createGroup(adapter, tenant, { groupKey: 'other', displayName: 'Other' });
+    const settingsOnly = {
+      maxGrantTier: 3,
+      permissions: ['admin:settings:write'],
+    } as AdminAuthContext;
+    const roleWriter = { maxGrantTier: 1, permissions: ['admin:roles:write'] } as AdminAuthContext;
+    const stores = { metadata: adapter, account: adapter };
+    const userset = (id: string, expiresAt: number | null) =>
+      db
+        .prepare(
+          `INSERT INTO relationships (id, tenant_id, relationship_type, from_type, from_id,
+             from_relation, to_type, to_id, permission_level, expires_at, is_bidirectional,
+             created_at, updated_at)
+           VALUES (?, 'test', 'viewer', 'group', ?, 'member', 'document', ?, 'full', ?, 0, 0, 0)`
+        )
+        .run(id, root, id, expiresAt);
+    userset('expired', Math.floor(Date.now() / 1000) - 60);
+    expect(await canManageGroupMembership(adapter, tenant, settingsOnly, child)).toBe(true);
+    // A legacy group row (no `member`, from before migration 020) is inert: it carries nothing.
+    db.prepare(
+      `INSERT INTO relationships (id, tenant_id, relationship_type, from_type, from_id,
+         from_relation, to_type, to_id, permission_level, expires_at, is_bidirectional,
+         created_at, updated_at)
+       VALUES ('legacy', 'test', 'viewer', 'group', ?, NULL, 'document', 'legacy', 'full', NULL,
+         0, 0, 0)`
+    ).run(root);
+    expect(await canManageGroupMembership(adapter, tenant, settingsOnly, child)).toBe(true);
+    expect([...(await groupsCarryingRoles(adapter, tenant, [child, root]))]).toEqual([]);
+    userset('live', null);
+    // Membership add on the userset-only group (or below it) needs the role-write permission.
+    await expect(
+      adminUpsertGroupMembership(settingsOnly, stores, tenant, 'subject', {
+        groupId: child,
+        source: 'manual',
+      })
+    ).rejects.toThrow('role_delegation_denied');
+    await adminUpsertGroupMembership(roleWriter, stores, tenant, 'subject', {
+      groupId: child,
+      source: 'manual',
+    });
+    // So does moving a group under it, or moving it.
+    await expect(adminReparentGroup(adapter, tenant, settingsOnly, other, root)).rejects.toThrow(
+      'role_delegation_denied'
+    );
+    await expect(adminReparentGroup(adapter, tenant, settingsOnly, child, null)).rejects.toThrow(
+      'role_delegation_denied'
+    );
+    await adminReparentGroup(adapter, tenant, roleWriter, other, root);
+  } finally {
+    db.close();
+  }
+});
+
 it('treats a group named only by an enabled policy rule as carrying authorization', async () => {
   const { db, adapter } = openCoreStore('test');
   try {

@@ -23,8 +23,43 @@ import {
   ruleOnRelationshipTupleSource,
   relationshipSourceTypes,
   isUniqueConstraintError,
+  relationDefinitionErrors,
+  subjectGroupsResolver,
+  guardGroupUsersetWrite,
+  parseObjectString,
+  externalSubjectId,
 } from '@authrim/ar-lib-core';
 import { recordAdminOperationAudit } from './admin-operation-audit';
+import { subjectAccountOf } from './admin-access-check';
+import { bumpTenantReBACVersion } from './rebac-version';
+
+/** Bumps the tenant's ReBAC version after a definition or tuple write (rebac-version.ts). */
+function bumpReBACVersion(c: AdminContext, tenantId: string): Promise<void> {
+  return bumpTenantReBACVersion(asBaseContext(c), tenantId);
+}
+
+/**
+ * A stored definition as the API returns it: the expression, and `unusable: true` when the
+ * relation parser rejects it (checks on its relation then deny; see rebac-service.ts). One that
+ * is not even JSON is returned as `definition: null`.
+ */
+function storedDefinition(definitionJson: string): { definition: unknown; unusable: boolean } {
+  let definition: unknown = null;
+  try {
+    definition = JSON.parse(definitionJson);
+  } catch {
+    return { definition: null, unusable: true };
+  }
+  return { definition, unusable: relationDefinitionErrors(definitionJson).length > 0 };
+}
+
+/** The errors of a definition a request sent (it must be an expression object). */
+function requestDefinitionErrors(definition: unknown): string[] {
+  if (!definition || typeof definition !== 'object' || Array.isArray(definition)) {
+    return ['definition must be a relation expression object'];
+  }
+  return relationDefinitionErrors(definition);
+}
 
 /**
  * Hono context type with admin auth variable
@@ -128,7 +163,7 @@ export async function adminRelationDefinitionsListHandler(c: AdminContext) {
         tenant_id: d.tenant_id,
         object_type: d.object_type,
         relation_name: d.relation_name,
-        definition: JSON.parse(d.definition_json),
+        ...storedDefinition(d.definition_json),
         description: d.description,
         priority: d.priority,
         is_active: d.is_active === 1,
@@ -182,7 +217,7 @@ export async function adminRelationDefinitionGetHandler(c: AdminContext) {
         tenant_id: d.tenant_id,
         object_type: d.object_type,
         relation_name: d.relation_name,
-        definition: JSON.parse(d.definition_json),
+        ...storedDefinition(d.definition_json),
         description: d.description,
         priority: d.priority,
         is_active: d.is_active === 1,
@@ -219,6 +254,10 @@ export async function adminRelationDefinitionCreateHandler(c: AdminContext) {
         variables: { field: 'object_type, relation_name, definition' },
       });
     }
+    // An expression the relation parser rejects is never stored (it would deny every check).
+    if (requestDefinitionErrors(body.definition).length > 0) {
+      return createErrorResponse(c, AR_ERROR_CODES.POLICY_REBAC_DEFINITION_INVALID);
+    }
 
     // Check for duplicate
     const existing = await adapter.query<{ id: string }>(
@@ -253,6 +292,7 @@ export async function adminRelationDefinitionCreateHandler(c: AdminContext) {
     );
 
     // Audit log
+    await bumpReBACVersion(c, tenantId);
     await recordAdminOperationAudit(asBaseContext(c), {
       action: 'create',
       resourceType: 'relation_definition',
@@ -271,6 +311,7 @@ export async function adminRelationDefinitionCreateHandler(c: AdminContext) {
           object_type: body.object_type,
           relation_name: body.relation_name,
           definition: body.definition,
+          unusable: false,
           description: body.description ?? null,
           priority: body.priority ?? 0,
           is_active: body.is_active !== false,
@@ -301,6 +342,11 @@ export async function adminRelationDefinitionUpdateHandler(c: AdminContext) {
       priority?: number;
       is_active?: boolean;
     }>();
+
+    // An expression the relation parser rejects is never stored (it would deny every check).
+    if (body.definition !== undefined && requestDefinitionErrors(body.definition).length > 0) {
+      return createErrorResponse(c, AR_ERROR_CODES.POLICY_REBAC_DEFINITION_INVALID);
+    }
 
     // Check if exists and belongs to the current tenant
     const existing = await adapter.query<{ tenant_id: string }>(
@@ -340,6 +386,7 @@ export async function adminRelationDefinitionUpdateHandler(c: AdminContext) {
     );
 
     // Audit log
+    await bumpReBACVersion(c, tenantId);
     await recordAdminOperationAudit(asBaseContext(c), {
       action: 'update',
       resourceType: 'relation_definition',
@@ -382,6 +429,7 @@ export async function adminRelationDefinitionDeleteHandler(c: AdminContext) {
     ]);
 
     // Audit log
+    await bumpReBACVersion(c, tenantId);
     await recordAdminOperationAudit(asBaseContext(c), {
       action: 'delete',
       resourceType: 'relation_definition',
@@ -460,6 +508,7 @@ export async function adminRelationshipTuplesListHandler(c: AdminContext) {
       relationship_type: string;
       from_type: string;
       from_id: string;
+      from_relation: string | null;
       to_type: string;
       to_id: string;
       permission_level: string;
@@ -483,10 +532,15 @@ export async function adminRelationshipTuplesListHandler(c: AdminContext) {
         relationship_type: t.relationship_type,
         from_type: t.from_type,
         from_id: t.from_id,
+        from_relation: t.from_relation ?? null,
+        // A group row from before migration 020 (no `member`): listed, grants nothing until it
+        // is written again through the guarded APIs.
+        inactive_legacy: t.from_type === 'group' && t.from_relation !== 'member',
         to_type: t.to_type,
         to_id: t.to_id,
         permission_level: t.permission_level,
-        expires_at: t.expires_at ? t.expires_at * 1000 : null,
+        expires_at:
+          t.expires_at === null || t.expires_at === undefined ? null : t.expires_at * 1000,
         is_bidirectional: t.is_bidirectional === 1,
         metadata: t.metadata_json ? JSON.parse(t.metadata_json) : null,
         created_at: t.created_at * 1000,
@@ -511,8 +565,9 @@ export async function adminRelationshipTuplesListHandler(c: AdminContext) {
  *
  * Only the tuple types of ar-lib-core's rebac/tuple-type-rules.ts are accepted, as on
  * `/api/rebac/write`: a direct subject (`from_type` `subject`, the default, or `user`, stored as
- * `subject`), a group userset (`group`; stored, not evaluated until usersets are), or an object
- * edge declared as the source of a `tuple_to_userset`. Others are refused with 400
+ * `subject`), a group userset (`group`, stored with `from_relation = 'member'`: every effective
+ * member of the group; `from_relation` may be sent only as `member` and only with a group), or
+ * an object edge declared as the source of a `tuple_to_userset`. Others are refused with 400
  * (POLICY_REBAC_TUPLE_TYPE_NOT_ALLOWED). A tuple that already exists (same relation, source and
  * target, after that normalisation) is refused with 409.
  */
@@ -524,6 +579,7 @@ export async function adminRelationshipTupleCreateHandler(c: AdminContext) {
       relationship_type: string;
       from_type?: string;
       from_id: string;
+      from_relation?: unknown;
       to_type: string;
       to_id: string;
       permission_level?: string;
@@ -537,12 +593,20 @@ export async function adminRelationshipTupleCreateHandler(c: AdminContext) {
         variables: { field: 'relationship_type, from_id, to_type, to_id' },
       });
     }
+    // expires_at: integer milliseconds (stored as whole seconds), or absent / null.
+    if (
+      body.expires_at !== undefined &&
+      body.expires_at !== null &&
+      !Number.isSafeInteger(body.expires_at)
+    ) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+    }
 
     const source = await ruleOnRelationshipTupleSource(adapter, {
       tenantId,
       fromType: body.from_type ?? 'subject',
       relationshipType: body.relationship_type,
-      fromRelation: (body as { from_relation?: unknown }).from_relation,
+      fromRelation: body.from_relation,
     });
     if (!source.allowed) {
       return createErrorResponse(c, AR_ERROR_CODES.POLICY_REBAC_TUPLE_TYPE_NOT_ALLOWED);
@@ -572,30 +636,78 @@ export async function adminRelationshipTupleCreateHandler(c: AdminContext) {
     const now = Math.floor(Date.now() / 1000);
     const id = generateId();
 
-    // A concurrent create of the same tuple loses on idx_relationships_unique (D1): 409, as the
-    // check above. PostgreSQL has no such unique index yet (recorded follow-up), so two concurrent
-    // creates there can both succeed.
+    const columns = `id, tenant_id, relationship_type, from_type, from_id, from_relation, to_type,
+      to_id, permission_level, expires_at, is_bidirectional, metadata_json, created_at, updated_at`;
+    const values = [
+      id,
+      tenantId,
+      body.relationship_type,
+      fromType,
+      body.from_id,
+      source.fromRelation,
+      body.to_type,
+      body.to_id,
+      body.permission_level ?? 'full',
+      // Any integer is an expiry (0: already expired); null / absent is none.
+      body.expires_at === undefined || body.expires_at === null
+        ? null
+        : Math.floor(body.expires_at / 1000),
+      0, // is_bidirectional
+      body.metadata ? JSON.stringify(body.metadata) : null,
+      now,
+      now,
+    ];
+
+    // A concurrent create of the same tuple loses on idx_relationships_unique (D1 and, since
+    // migration 020, PostgreSQL): 409, as the check above.
     try {
-      await adapter.execute(
-        `INSERT INTO relationships
-         (id, tenant_id, relationship_type, from_type, from_id, to_type, to_id, permission_level, expires_at, is_bidirectional, metadata_json, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          id,
+      if (source.kind === 'group_userset') {
+        // A group userset gives the group's members the relation, as a role on the group does:
+        // not on a group with a service group below it that an attribute people write themselves
+        // decides. The check and the insert are one transaction under the catalog lock, and the
+        // insert holds only while the catalog revision the check read does (D1).
+        const outcome = await guardGroupUsersetWrite(
+          adapter,
           tenantId,
-          body.relationship_type,
-          fromType,
           body.from_id,
-          body.to_type,
-          body.to_id,
-          body.permission_level ?? 'full',
-          body.expires_at ? Math.floor(body.expires_at / 1000) : null,
-          0, // is_bidirectional
-          body.metadata ? JSON.stringify(body.metadata) : null,
-          now,
-          now,
-        ]
-      );
+          async (_reader, fence) => ({
+            statements: [
+              {
+                sql: `INSERT INTO relationships (${columns})
+               SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS BIGINT), CAST(? AS BOOLEAN), ?,
+                 CAST(? AS BIGINT), CAST(? AS BIGINT) WHERE ${fence.sql}`,
+                params: [...values, ...fence.params],
+              },
+            ],
+            result: true,
+          })
+        );
+        if (outcome.kind === 'group_self_writable_attribute') {
+          return c.json(
+            {
+              error: 'group_self_writable_attribute',
+              error_description:
+                'A service group below this group is decided by an attribute users can set themselves: it cannot carry relations',
+            },
+            400
+          );
+        }
+        if (outcome.kind === 'group_version_conflict') {
+          return c.json(
+            {
+              error: 'group_version_conflict',
+              error_description:
+                'The service-group rules changed while the tuple was checked: retry',
+            },
+            409
+          );
+        }
+      } else {
+        await adapter.execute(
+          `INSERT INTO relationships (${columns}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          values
+        );
+      }
     } catch (error) {
       if (isUniqueConstraintError(error)) {
         return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
@@ -604,6 +716,7 @@ export async function adminRelationshipTupleCreateHandler(c: AdminContext) {
     }
 
     // Audit log
+    await bumpReBACVersion(c, tenantId);
     await recordAdminOperationAudit(asBaseContext(c), {
       action: 'create',
       resourceType: 'relationship_tuple',
@@ -623,6 +736,8 @@ export async function adminRelationshipTupleCreateHandler(c: AdminContext) {
           relationship_type: body.relationship_type,
           from_type: fromType,
           from_id: body.from_id,
+          from_relation: source.fromRelation,
+          inactive_legacy: false,
           to_type: body.to_type,
           to_id: body.to_id,
           permission_level: body.permission_level ?? 'full',
@@ -652,21 +767,81 @@ export async function adminRelationshipTupleDeleteHandler(c: AdminContext) {
     const id = c.req.param('id')!;
 
     // Check if exists
-    const existing = await adapter.query<{ tenant_id: string }>(
-      'SELECT tenant_id FROM relationships WHERE id = ? AND tenant_id = ?',
-      [id, tenantId]
-    );
+    const readRow = async () =>
+      (
+        await adapter.query<{
+          tenant_id: string;
+          from_type?: string;
+          from_id?: string;
+          from_relation?: string | null;
+        }>(
+          'SELECT tenant_id, from_type, from_id, from_relation FROM relationships WHERE id = ? AND tenant_id = ?',
+          [id, tenantId]
+        )
+      )[0];
+    const conflict = () =>
+      c.json(
+        {
+          error: 'group_version_conflict',
+          error_description:
+            'The service-group rules or the authorization changed while the tuple was checked: retry',
+        },
+        409
+      );
 
-    if (existing.length === 0) {
+    let row = await readRow();
+    if (!row) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
-    await adapter.execute('DELETE FROM relationships WHERE id = ? AND tenant_id = ?', [
-      id,
-      tenantId,
-    ]);
+    // A group userset goes through the guarded write; a legacy (inert) group row or another
+    // tuple is deleted directly, a legacy one only while it is still inert (a row that became
+    // `member` meanwhile is read again and routed to the guarded write).
+    for (let attempt = 0; ; attempt++) {
+      if (row.from_type === 'group' && row.from_relation === 'member' && row.from_id) {
+        // Taking a userset away raises the tenant authorization version, fenced as a write (a
+        // service-group rule save checked meanwhile then conflicts, and the other way round).
+        const outcome = await guardGroupUsersetWrite(
+          adapter,
+          tenantId,
+          row.from_id,
+          async (_reader, fence) => ({
+            statements: [
+              {
+                sql: `DELETE FROM relationships WHERE id = ? AND tenant_id = ? AND ${fence.sql}`,
+                params: [id, tenantId, ...fence.params],
+              },
+            ],
+            result: true,
+          }),
+          { refuseSelfWritable: false }
+        );
+        if (outcome.kind !== 'written') return conflict();
+        break;
+      }
+      if (row.from_type !== 'group') {
+        await adapter.execute('DELETE FROM relationships WHERE id = ? AND tenant_id = ?', [
+          id,
+          tenantId,
+        ]);
+        break;
+      }
+      const deleted = await adapter.execute(
+        `DELETE FROM relationships
+          WHERE id = ? AND tenant_id = ? AND from_type = 'group' AND from_relation IS NULL`,
+        [id, tenantId]
+      );
+      if ((deleted.rowsAffected ?? 0) > 0) break;
+      const current = await readRow();
+      if (!current) {
+        return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+      }
+      if (attempt >= 1) return conflict();
+      row = current;
+    }
 
     // Audit log
+    await bumpReBACVersion(c, tenantId);
     await recordAdminOperationAudit(asBaseContext(c), {
       action: 'delete',
       resourceType: 'relationship_tuple',
@@ -703,7 +878,8 @@ export async function adminRelationshipCheckHandler(c: AdminContext) {
     };
     const tenantId = getTenantIdFromContext(asBaseContext(c));
     const body = await c.req.json<{
-      user_id: string;
+      subject_id?: string;
+      user_id?: string;
       relation: string;
       object: string;
       object_type?: string;
@@ -715,28 +891,54 @@ export async function adminRelationshipCheckHandler(c: AdminContext) {
       }>;
     }>();
 
-    // Validate required fields
-    if (!body.user_id || !body.relation || !body.object) {
+    // `subject_id` is the stored id, taken verbatim (the console's picker value); the legacy
+    // `user_id` keeps its meaning: one leading `user:` is taken away, as on /api/rebac/check.
+    const subjectId =
+      body.subject_id !== undefined
+        ? body.subject_id
+        : typeof body.user_id === 'string'
+          ? externalSubjectId(body.user_id)
+          : undefined;
+    if (!subjectId || typeof subjectId !== 'string' || !body.relation || !body.object) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
-        variables: { field: 'user_id, relation, object' },
+        variables: { field: 'subject_id, relation, object' },
       });
     }
+    const target = body.object_type
+      ? { type: body.object_type, id: body.object }
+      : parseObjectString(body.object);
 
     // Import ReBACService dynamically to avoid circular dependencies
     const { ReBACService } = await import('@authrim/ar-lib-core/rebac/rebac-service');
 
-    const rebacService = new ReBACService(storageAdapter);
-    const result = await rebacService.check({
-      tenant_id: tenantId,
-      user_id: body.user_id,
+    // Group usersets: the subject's groups from its account (as the Check API reads them).
+    const rebacService = new ReBACService(storageAdapter, {
+      subject_groups: subjectGroupsResolver(dbAdapter, (tenant, subject) =>
+        subjectAccountOf(c.env, tenant, subject)
+      ),
+    });
+    const result = await rebacService.checkResolved({
+      tenantId,
+      subjectId,
       relation: body.relation,
-      object: body.object,
-      object_type: body.object_type,
-      context: body.contextual_tuples
-        ? {
-            contextual_tuples: body.contextual_tuples,
-          }
-        : undefined,
+      objectType: target.type,
+      objectId: target.id,
+      ...(body.contextual_tuples && {
+        contextualTuples: body.contextual_tuples
+          // Named in the same form as the subject (verbatim with subject_id, one `user:` taken
+          // away with user_id).
+          .filter(
+            (tuple) =>
+              (body.subject_id !== undefined ? tuple.user_id : externalSubjectId(tuple.user_id)) ===
+              subjectId
+          )
+          .map((tuple) => {
+            const object = tuple.object_type
+              ? { type: tuple.object_type, id: tuple.object }
+              : parseObjectString(tuple.object);
+            return { relation: tuple.relation, objectType: object.type, objectId: object.id };
+          }),
+      }),
     });
 
     return c.json({

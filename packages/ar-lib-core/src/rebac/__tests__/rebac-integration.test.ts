@@ -121,52 +121,55 @@ function createMockAdapter(
           return Promise.resolve([]);
         }
 
-        // List objects query
-        if (sql.includes('SELECT DISTINCT target_id as object_id')) {
-          const tenantId = params[0] as string;
-          const userId = params[1] as string;
-          const objectType = params[6] as string;
-          const relation = params[7] as string;
-
-          const matches = relationships.filter(
-            (r) =>
-              r.from_type === 'subject' &&
-              r.from_id === userId &&
-              r.to_type === objectType &&
-              r.relationship_type === relation &&
-              (r.expires_at === null || r.expires_at === undefined || r.expires_at > now)
-          );
-
-          return Promise.resolve(matches.map((m) => ({ object_id: m.to_id })));
-        }
-
-        // List users query
-        if (sql.includes('SELECT DISTINCT source_id as user_id')) {
-          const tenantId = params[0] as string;
-          const objectType = params[1] as string;
-          const objectId = params[2] as string;
-          const relation = params[3] as string;
-
-          const matches = relationships.filter(
-            (r) =>
-              r.from_type === 'subject' &&
-              r.to_type === objectType &&
-              r.to_id === objectId &&
-              r.relationship_type === relation &&
-              (r.expires_at === null || r.expires_at === undefined || r.expires_at > now)
-          );
-
-          return Promise.resolve(matches.map((m) => ({ user_id: m.from_id })));
-        }
-
         return Promise.resolve([]);
       }
 
-      // Handle direct relationship check
+      // List objects query (direct subject tuples)
+      // [tenantId, userId, objectType, relation, now, limit, offset]
+      if (sql.includes('SELECT DISTINCT to_id AS object_id')) {
+        const userId = params[1] as string;
+        const objectType = params[2] as string;
+        const relation = params[3] as string;
+        const matches = relationships.filter(
+          (r) =>
+            r.from_type === 'subject' &&
+            r.from_id === userId &&
+            r.to_type === objectType &&
+            r.relationship_type === relation &&
+            (r.expires_at === null || r.expires_at === undefined || r.expires_at > now)
+        );
+        return Promise.resolve(matches.map((m) => ({ object_id: m.to_id })));
+      }
+
+      // List users query (direct subject tuples)
+      // [tenantId, objectType, objectId, relation, now, limit, offset]
+      if (sql.includes('SELECT DISTINCT from_id AS user_id')) {
+        const objectType = params[1] as string;
+        const objectId = params[2] as string;
+        const relation = params[3] as string;
+        const matches = relationships.filter(
+          (r) =>
+            r.from_type === 'subject' &&
+            r.to_type === objectType &&
+            r.to_id === objectId &&
+            r.relationship_type === relation &&
+            (r.expires_at === null || r.expires_at === undefined || r.expires_at > now)
+        );
+        return Promise.resolve(matches.map((m) => ({ user_id: m.from_id })));
+      }
+
+      // Group userset lookups: these fixtures hold no group tuples
+      if (sql.includes("from_type = 'group'")) {
+        return Promise.resolve([]);
+      }
+
       // Two formats:
       // 1. ReBACService.checkDirectRelationship: from_type = 'subject' hardcoded (6 params)
       // 2. RelationParser.evaluateDirectRelation: from_type = ? parameter (7 params)
-      if (sql.includes('SELECT id FROM relationships')) {
+      if (
+        sql.includes('SELECT id FROM relationships') ||
+        sql.includes('SELECT id, expires_at FROM relationships')
+      ) {
         let fromType: string;
         let fromId: string;
         let toType: string;
@@ -208,7 +211,7 @@ function createMockAdapter(
       }
 
       // Handle TupleToUserset queries (find related objects)
-      if (sql.includes('SELECT to_type, to_id FROM relationships')) {
+      if (sql.includes('SELECT to_type, to_id')) {
         const tenantId = params[0] as string;
         const fromType = params[1] as string;
         const fromId = params[2] as string;

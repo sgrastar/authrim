@@ -8,11 +8,9 @@
  *
  * 1. **A direct subject**: `from_type = 'subject'` (`'user'` is accepted as the same thing and
  *    stored as `'subject'`, the type the relationship check matches; see rebac-service.ts).
- * 2. **A group userset**: `from_type = 'group'`, "the members of the group". It is stored but NOT
- *    evaluated yet: the userset semantics (`from_relation = 'member'`, resolved against
- *    `group_memberships`) come with the ReBAC userset change. Until then every evaluation query
- *    (direct lookups, the recursive traversals, the closure) leaves `from_type = 'group'` rows out,
- *    so such a tuple grants nothing.
+ * 2. **A group userset**: `from_type = 'group'` with `from_relation = 'member'` (written when the
+ *    request leaves it out), "every effective member of the group": the check matches it against
+ *    the subject's groups (userset.ts). Lists and the closure do not expand it.
  * 3. **An object-to-object edge** declared by a relation definition: an active definition of
  *    `object_type = from_type` contains a `tuple_to_userset` whose `tupleset.relation` is the
  *    tuple's `relationship_type` (for example `document#parent` → `folder`).
@@ -23,12 +21,20 @@
 
 import type { RelationExpression } from './types';
 import { RelationParser } from './relation-parser';
+import { usableDefinitionExpression } from './definitions';
+import { MAX_DEFINITION_DEPTH, USERSET_MEMBER_RELATION } from './userset';
 
 /** The kind of source a tuple has (see the module comment). */
 export type RelationshipTupleSourceKind = 'subject' | 'group_userset' | 'object_edge';
 
 export type RelationshipTupleSourceRuling =
-  | { allowed: true; kind: RelationshipTupleSourceKind; fromType: string }
+  | {
+      allowed: true;
+      kind: RelationshipTupleSourceKind;
+      fromType: string;
+      /** What to store as `from_relation`: `'member'` for a group userset, otherwise null. */
+      fromRelation: string | null;
+    }
   | {
       allowed: false;
       reason: 'missing_type' | 'undeclared_object_edge' | 'unsupported_from_relation';
@@ -48,6 +54,8 @@ export const REBAC_GROUP_FROM_TYPE = 'group';
  * The stored `from_type` values a tuple's source matches when it is looked up (delete, uniqueness,
  * listing): a direct subject also matches the rows older writes stored as `user`; any other type
  * only itself. Always two values, for `from_type IN (?, ?)`. New rows are stored as `subject`.
+ * Migration 020 rewrote the stored `user` rows as `subject`; the dual match stays for one more
+ * release (a deployment that writes `user` between its schema migration and its code update).
  */
 export function relationshipSourceTypes(fromType: string): [string, string] {
   return fromType === REBAC_SUBJECT_FROM_TYPE
@@ -61,7 +69,7 @@ export function declaresTuplesetRelation(
   relation: string,
   depth = 0
 ): boolean {
-  if (!expression || typeof expression !== 'object' || depth > 32) return false;
+  if (!expression || typeof expression !== 'object' || depth > MAX_DEFINITION_DEPTH) return false;
   switch (expression.type) {
     case 'tuple_to_userset':
       return expression.tupleset?.relation === relation;
@@ -92,9 +100,9 @@ export async function ruleOnRelationshipTupleSource(
     fromType: string | undefined | null;
     relationshipType: string;
     /**
-     * The source's relation as the request sent it (`from_relation`). There is no column for it
-     * until ReBAC usersets: a group tuple is the `member` userset (absent or `'member'`), and no
-     * other source has one. Anything else is refused rather than stored as something else.
+     * The source's relation as the request sent it (`from_relation`): a group tuple is the
+     * `member` userset (absent or `'member'`), and no other source has one. Anything else is
+     * refused rather than stored as something else.
      */
     fromRelation?: unknown;
   }
@@ -109,30 +117,42 @@ export async function ruleOnRelationshipTupleSource(
   }
 
   if (fromType === REBAC_SUBJECT_FROM_TYPE || fromType === 'user') {
-    return { allowed: true, kind: 'subject', fromType: REBAC_SUBJECT_FROM_TYPE };
+    return {
+      allowed: true,
+      kind: 'subject',
+      fromType: REBAC_SUBJECT_FROM_TYPE,
+      fromRelation: null,
+    };
   }
   if (fromType === REBAC_GROUP_FROM_TYPE) {
-    return { allowed: true, kind: 'group_userset', fromType: REBAC_GROUP_FROM_TYPE };
+    return {
+      allowed: true,
+      kind: 'group_userset',
+      fromType: REBAC_GROUP_FROM_TYPE,
+      fromRelation: USERSET_MEMBER_RELATION,
+    };
   }
 
-  const rows = await store.query<{ definition_json: string }>(
-    `SELECT definition_json FROM relation_definitions
-      WHERE tenant_id = ? AND object_type = ? AND is_active = 1`,
+  // The definitions checks use (the active one of each relation of the type: the highest
+  // priority row; the table holds one per relation), read in one query and judged as the loader
+  // judges them: one that cannot be used declares nothing (the tuple is refused, never a server
+  // error).
+  const rows = await store.query<{ relation_name: string; definition_json: string }>(
+    `SELECT relation_name, definition_json FROM relation_definitions
+      WHERE tenant_id = ? AND object_type = ? AND is_active = 1
+      ORDER BY relation_name, priority DESC`,
     [input.tenantId, fromType]
   );
   const parser = new RelationParser();
+  const seen = new Set<string>();
   for (const row of rows) {
-    // A definition the relation parser rejects declares nothing (the tuple is refused, never a
-    // server error).
-    let definition: RelationExpression;
-    try {
-      definition = parser.parse(row.definition_json);
-      if (parser.validate(definition).length > 0) continue;
-    } catch {
-      continue;
+    if (typeof row.relation_name === 'string') {
+      if (seen.has(row.relation_name)) continue;
+      seen.add(row.relation_name);
     }
-    if (declaresTuplesetRelation(definition, input.relationshipType)) {
-      return { allowed: true, kind: 'object_edge', fromType };
+    const expression = usableDefinitionExpression(parser, row.definition_json);
+    if (expression && declaresTuplesetRelation(expression, input.relationshipType)) {
+      return { allowed: true, kind: 'object_edge', fromType, fromRelation: null };
     }
   }
   return { allowed: false, reason: 'undeclared_object_edge' };

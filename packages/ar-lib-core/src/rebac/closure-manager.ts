@@ -2,14 +2,18 @@
  * Closure Manager Implementation
  *
  * Manages the relationship_closure table for efficient listObjects/listUsers queries.
- * The closure table stores pre-computed transitive relationships.
+ *
+ * The closure holds the direct subject tuples only (depth 1): the relationship check follows no
+ * path that no relation definition declares, and the declared ones (`tuple_to_userset`) are not
+ * expanded here, so a longer path in the closure would list what the check denies. Group usersets
+ * are not expanded either (memberships are read from group_memberships at check time).
  *
  * When to use:
  * - listObjects(user, relation, objectType): "Which documents can user X view?"
  * - listUsers(object, relation): "Who can edit document Y?"
  *
  * When NOT to use:
- * - check(): Uses recursive CTE + KV cache instead (more flexible)
+ * - check(): evaluates tuples, usersets and definitions instead (rebac-service.ts)
  *
  * Update strategy:
  * - On relationship create: Add closure entries for new paths
@@ -61,7 +65,8 @@ export class ClosureManager implements IClosureManager {
   }
 
   /**
-   * Get all objects a user has access to
+   * Get all objects a user has access to: closure rows with a live, unexpired direct tuple behind
+   * them (a row left from before a recompute, or an expired tuple, lists nothing)
    */
   async getObjectsForUser(
     tenantId: string,
@@ -81,9 +86,19 @@ export class ClosureManager implements IClosureManager {
          AND ancestor_id = ?
          AND descendant_type = ?
          AND relation = ?
+         AND EXISTS (
+           SELECT 1 FROM relationships r
+            WHERE r.tenant_id = relationship_closure.tenant_id
+              AND r.from_type = 'subject'
+              AND r.from_id = relationship_closure.ancestor_id
+              AND r.to_type = relationship_closure.descendant_type
+              AND r.to_id = relationship_closure.descendant_id
+              AND r.relationship_type = relationship_closure.relation
+              AND (r.expires_at IS NULL OR r.expires_at > ?)
+         )
        ORDER BY descendant_id
        LIMIT ? OFFSET ?`,
-      [tenantId, userId, objectType, relation, limit + 1, offset]
+      [tenantId, userId, objectType, relation, Math.floor(Date.now() / 1000), limit + 1, offset]
     );
 
     const objectIds = results.slice(0, limit).map((r) => r.descendant_id);
@@ -116,9 +131,19 @@ export class ClosureManager implements IClosureManager {
          AND descendant_type = ?
          AND descendant_id = ?
          AND relation = ?
+         AND EXISTS (
+           SELECT 1 FROM relationships r
+            WHERE r.tenant_id = relationship_closure.tenant_id
+              AND r.from_type = 'subject'
+              AND r.from_id = relationship_closure.ancestor_id
+              AND r.to_type = relationship_closure.descendant_type
+              AND r.to_id = relationship_closure.descendant_id
+              AND r.relationship_type = relationship_closure.relation
+              AND (r.expires_at IS NULL OR r.expires_at > ?)
+         )
        ORDER BY ancestor_id
        LIMIT ? OFFSET ?`,
-      [tenantId, objectType, objectId, relation, limit + 1, offset]
+      [tenantId, objectType, objectId, relation, Math.floor(Date.now() / 1000), limit + 1, offset]
     );
 
     const userIds = results.slice(0, limit).map((r) => r.ancestor_id);
@@ -215,8 +240,7 @@ export class ClosureManager implements IClosureManager {
   ): Promise<void> {
     const now = Math.floor(Date.now() / 1000);
 
-    // Find all users who can reach this object through relationships
-    // Using a recursive CTE to traverse the relationship graph backwards
+    // The direct subject tuples to this object (see the module comment)
     const results = await this.adapter.query<{
       user_id: string;
       relation: string;
@@ -224,63 +248,20 @@ export class ClosureManager implements IClosureManager {
       path: string;
       permission: string | null;
     }>(
-      `WITH RECURSIVE reachable AS (
-        -- Base case: Direct relationships to this object
-        SELECT
-          r.from_type as source_type,
-          r.from_id as source_id,
-          r.relationship_type as relation,
-          r.permission_level as permission,
-          1 as depth,
-          r.id as path
-        FROM relationships r
-        WHERE r.tenant_id = ?
-          AND r.from_type <> 'group' -- group usersets are not evaluated yet
-          AND r.to_type = ?
-          AND r.to_id = ?
-          AND (r.expires_at IS NULL OR r.expires_at > ?)
-
-        UNION ALL
-
-        -- Recursive case: Follow relationships backwards
-        SELECT
-          r.from_type as source_type,
-          r.from_id as source_id,
-          rch.relation as relation,
-          CASE
-            WHEN r.permission_level = 'read_only' OR rch.permission = 'read_only' THEN 'read_only'
-            WHEN r.permission_level = 'limited' OR rch.permission = 'limited' THEN 'limited'
-            ELSE 'full'
-          END as permission,
-          rch.depth + 1 as depth,
-          rch.path || ',' || r.id as path
-        FROM relationships r
-        INNER JOIN reachable rch
-          ON r.to_type = rch.source_type
-          AND r.to_id = rch.source_id
-        WHERE r.tenant_id = ?
-          AND r.from_type <> 'group' -- group usersets are not evaluated yet
-          AND rch.depth < ?
-          AND (r.expires_at IS NULL OR r.expires_at > ?)
-      )
-      SELECT DISTINCT
-        source_id as user_id,
-        relation,
-        MIN(depth) as depth,
-        path,
-        permission
-      FROM reachable
-      WHERE source_type = 'subject'
-      GROUP BY source_id, relation`,
-      [
-        tenantId,
-        objectType,
-        objectId,
-        now, // Base case
-        tenantId,
-        this.maxDepth,
-        now, // Recursive case
-      ]
+      `SELECT
+        r.from_id as user_id,
+        r.relationship_type as relation,
+        1 as depth,
+        MIN(r.id) as path,
+        MIN(r.permission_level) as permission
+      FROM relationships r
+      WHERE r.tenant_id = ?
+        AND r.from_type = 'subject'
+        AND r.to_type = ?
+        AND r.to_id = ?
+        AND (r.expires_at IS NULL OR r.expires_at > ?)
+      GROUP BY r.from_id, r.relationship_type`,
+      [tenantId, objectType, objectId, now]
     );
 
     // Insert closure entries
@@ -317,8 +298,7 @@ export class ClosureManager implements IClosureManager {
   private async computeAndStoreClosureForUser(tenantId: string, userId: string): Promise<void> {
     const now = Math.floor(Date.now() / 1000);
 
-    // Find all objects this user can reach through relationships
-    // Using a recursive CTE to traverse the relationship graph forward
+    // The user's direct tuples (see the module comment)
     const results = await this.adapter.query<{
       object_type: string;
       object_id: string;
@@ -327,62 +307,20 @@ export class ClosureManager implements IClosureManager {
       path: string;
       permission: string | null;
     }>(
-      `WITH RECURSIVE reachable AS (
-        -- Base case: Direct relationships from this user
-        SELECT
-          r.to_type as target_type,
-          r.to_id as target_id,
-          r.relationship_type as relation,
-          r.permission_level as permission,
-          1 as depth,
-          r.id as path
-        FROM relationships r
-        WHERE r.tenant_id = ?
-          AND r.from_type <> 'group' -- group usersets are not evaluated yet
-          AND r.from_type = 'subject'
-          AND r.from_id = ?
-          AND (r.expires_at IS NULL OR r.expires_at > ?)
-
-        UNION ALL
-
-        -- Recursive case: Follow relationships forward
-        SELECT
-          r.to_type as target_type,
-          r.to_id as target_id,
-          rch.relation as relation,
-          CASE
-            WHEN r.permission_level = 'read_only' OR rch.permission = 'read_only' THEN 'read_only'
-            WHEN r.permission_level = 'limited' OR rch.permission = 'limited' THEN 'limited'
-            ELSE 'full'
-          END as permission,
-          rch.depth + 1 as depth,
-          rch.path || ',' || r.id as path
-        FROM relationships r
-        INNER JOIN reachable rch
-          ON r.from_type = rch.target_type
-          AND r.from_id = rch.target_id
-        WHERE r.tenant_id = ?
-          AND r.from_type <> 'group' -- group usersets are not evaluated yet
-          AND rch.depth < ?
-          AND (r.expires_at IS NULL OR r.expires_at > ?)
-      )
-      SELECT DISTINCT
-        target_type as object_type,
-        target_id as object_id,
-        relation,
-        MIN(depth) as depth,
-        path,
-        permission
-      FROM reachable
-      GROUP BY target_type, target_id, relation`,
-      [
-        tenantId,
-        userId,
-        now, // Base case
-        tenantId,
-        this.maxDepth,
-        now, // Recursive case
-      ]
+      `SELECT
+        r.to_type as object_type,
+        r.to_id as object_id,
+        r.relationship_type as relation,
+        1 as depth,
+        MIN(r.id) as path,
+        MIN(r.permission_level) as permission
+      FROM relationships r
+      WHERE r.tenant_id = ?
+        AND r.from_type = 'subject'
+        AND r.from_id = ?
+        AND (r.expires_at IS NULL OR r.expires_at > ?)
+      GROUP BY r.to_type, r.to_id, r.relationship_type`,
+      [tenantId, userId, now]
     );
 
     // Insert closure entries

@@ -93,8 +93,11 @@ export async function adminRemoveGroupRole(
 
 /**
  * Whether the admin may change who is a member of the group. A group carries authorization when
- * it or an ancestor has an unexpired role grant or an active, unexpired resource permission
- * granted to it (`subject_type = 'group'`), or is named by a group condition of an enabled policy
+ * it or an ancestor has an unexpired role grant, an active, unexpired resource permission
+ * granted to it (`subject_type = 'group'`) or an unexpired ReBAC group tuple
+ * (`relationships.from_type = 'group'` with `from_relation = 'member'`, as role-guard's
+ * groupsCarryingRoles counts it; a legacy row without it is inert), or is named by a group
+ * condition of an enabled policy
  * rule (role-guard's groupReferencedByPolicyRules): a member gets that authorization (or, for
  * `not_in_any_group`, a non-member does), so changing the membership, adding or removing, needs
  * what granting it directly needs (the role-write permission, which the resource permissions and
@@ -166,8 +169,13 @@ async function canManageOneGroupMembership(
     SELECT DISTINCT 'resource_permission' AS kind, NULL AS grant_tier FROM ancestors a
       JOIN resource_permissions p
         ON p.subject_type='group' AND p.subject_id=a.id AND p.tenant_id=?
-      WHERE p.is_active=1 AND (p.expires_at IS NULL OR p.expires_at>?)`,
-    [tenant, groupId, tenant, tenant, now, tenant, now]
+      WHERE p.is_active=1 AND (p.expires_at IS NULL OR p.expires_at>?)
+    UNION
+    SELECT DISTINCT 'relationship' AS kind, NULL AS grant_tier FROM ancestors a
+      JOIN relationships t
+        ON t.from_type='group' AND t.from_relation='member' AND t.from_id=a.id AND t.tenant_id=?
+      WHERE t.expires_at IS NULL OR t.expires_at>?`,
+    [tenant, groupId, tenant, tenant, now, tenant, now, tenant, now]
   );
   // A policy rule carries no grant tier: the role-write permission, which editing it needs, is
   // what changing who it matches needs.
@@ -177,10 +185,12 @@ async function canManageOneGroupMembership(
   // permission as a direct grant is required, on top of the grant ceiling of every role.
   if (!auth || !hasAdminPermission(auth.permissions ?? [], ADMIN_PERMISSIONS.ROLES_WRITE))
     return false;
-  // A resource permission carries no grant tier: the permission above is all it needs.
+  // A resource permission or a ReBAC group userset carries no grant tier: the permission above
+  // is all it needs.
   return grants.every(
     (grant) =>
       grant.kind === 'resource_permission' ||
+      grant.kind === 'relationship' ||
       mayManageEndUserRole(auth, { grant_tier: Number(grant.grant_tier) })
   );
 }

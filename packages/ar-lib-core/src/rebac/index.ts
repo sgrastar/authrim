@@ -58,6 +58,11 @@ export type {
   ParsedObject,
   // Config
   ReBACConfig,
+  ReBACCheckOptions,
+  ResolvedCheckRequest,
+  // Group usersets
+  SubjectGroupState,
+  SubjectGroupsResolver,
 } from './types';
 
 // Constants
@@ -79,13 +84,36 @@ export type {
   RelationEvaluationContext,
   RelationshipWithEvidence,
   IRelationshipStoreExtended,
+  SubjectGroupsLookup,
+  MembershipTrace,
+  EvaluationResult,
+  ActiveDefinition,
 } from './interfaces';
 
+// Group usersets
+export {
+  USERSET_GROUP_FROM_TYPE,
+  USERSET_MEMBER_RELATION,
+  expressionContainsExclusion,
+  expressionContainsTupleToUserset,
+} from './userset';
+export { loadActiveDefinition } from './definitions';
+
 // Service implementations
-export { ReBACService, createReBACService } from './rebac-service';
+export {
+  ReBACService,
+  createReBACService,
+  externalSubjectId,
+  externalSubjectRef,
+} from './rebac-service';
 
 // Cache manager
-export { ReBACCacheManager, RequestScopedCache } from './cache-manager';
+export {
+  ReBACCacheManager,
+  RequestScopedCache,
+  getReBACTenantVersion,
+  bumpReBACTenantVersion,
+} from './cache-manager';
 
 // Closure manager
 export { ClosureManager, createClosureManager } from './closure-manager';
@@ -96,6 +124,7 @@ export {
   createEvaluationContext,
   parseObjectString,
   buildObjectString,
+  relationDefinitionErrors,
 } from './relation-parser';
 
 // Tuple type rules (which tuples may be written)

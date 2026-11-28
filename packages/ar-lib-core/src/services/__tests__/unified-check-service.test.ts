@@ -373,8 +373,8 @@ describe('UnifiedCheckService', () => {
         }),
       };
       const rebacService = {
-        check: vi.fn(async (request: { context?: { contextual_tuples?: unknown[] } }) => ({
-          allowed: Boolean(request.context?.contextual_tuples?.length),
+        checkResolved: vi.fn(async (request: { contextualTuples?: unknown[] }) => ({
+          allowed: Boolean(request.contextualTuples?.length),
         })),
       };
       const cacheService = createUnifiedCheckService({
@@ -406,7 +406,7 @@ describe('UnifiedCheckService', () => {
       expect(allowed.allowed).toBe(true);
       expect(allowed.cache_ttl).toBe(0);
       expect(denied.allowed).toBe(false);
-      expect(rebacService.check).toHaveBeenCalledTimes(2);
+      expect(rebacService.checkResolved).toHaveBeenCalledTimes(2);
       expect(cache.get).not.toHaveBeenCalled();
       expect(cache.put).not.toHaveBeenCalled();
     });

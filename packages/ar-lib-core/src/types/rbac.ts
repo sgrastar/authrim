@@ -111,11 +111,11 @@ export interface RoleAssignmentRow extends Omit<RoleAssignment, 'expires_at' | '
 export type RelationshipType = 'parent_child' | 'guardian' | 'delegate' | 'manager' | 'reseller_of';
 
 /**
- * Entity type in a relationship
+ * Entity type in a subject relationship
  * - subject: User
- * - org: Organization (for future use)
+ * (ReBAC tuples use the same table with a group or an object type: see rebac/tuple-type-rules.ts.)
  */
-export type RelationshipEntityType = 'subject' | 'org';
+export type RelationshipEntityType = 'subject';
 
 /**
  * Permission level in a relationship
@@ -127,7 +127,7 @@ export type PermissionLevel = 'full' | 'limited' | 'read_only';
 
 /**
  * Relationship entity
- * Represents relationships between subjects (and organizations in the future).
+ * Represents relationships between subjects.
  */
 export interface Relationship {
   /** Unique relationship ID */

@@ -83,6 +83,7 @@ function coreDatabase(): SQLiteDatabase {
     '017_service_group_scim_membership_inputs.sql',
     '018_remove_organizations.sql',
     '019_dynamic_publication_unknown_groups.sql',
+    '020_relationship_userset_relation.sql',
   ]) {
     db.exec(renderSqliteMigration(readFileSync(`${directory}/${file}`, 'utf8')));
   }
@@ -114,6 +115,9 @@ function sqliteAdapter(db: SQLiteDatabase): DatabaseAdapter {
   } as unknown as DatabaseAdapter;
 }
 
+/** REBAC_CACHE: where the tenant's ReBAC version is kept. */
+const versions = { get: vi.fn(async () => null), put: vi.fn(async () => undefined) };
+
 function context(input: {
   params?: Record<string, string>;
   query?: Record<string, string>;
@@ -126,7 +130,7 @@ function context(input: {
       query: vi.fn((name: string) => input.query?.[name]),
       json: vi.fn(async () => input.body ?? {}),
     },
-    env: { DB: {} },
+    env: { DB: {}, REBAC_CACHE: versions },
     json: vi.fn((body: unknown, status?: number) => Response.json(body, { status: status ?? 200 })),
     get: vi.fn((key: string) => store.get(key)),
     set: vi.fn((key: string, value: unknown) => store.set(key, value)),
@@ -319,6 +323,26 @@ describe('admin user relationships on the core schema', () => {
       );
       expect([list.status, create.status, remove.status]).toEqual([status, status, status]);
     }
+  });
+
+  it('bumps the tenant ReBAC version on create and delete', async () => {
+    versions.put.mockClear();
+    const created = await adminUserRelationshipCreateHandler(
+      context({
+        params: { id: 'parent-1' },
+        body: { related_subject_id: 'child-1', relationship_type: 'guardian' },
+      })
+    );
+    expect(created.status).toBe(201);
+    const { relationship } = await json<{ relationship: Relationship }>(created);
+    const removed = await adminUserRelationshipDeleteHandler(
+      context({ params: { id: 'parent-1', relationshipId: relationship.id } })
+    );
+    expect(removed.status).toBe(200);
+    expect(versions.put.mock.calls.map((call) => (call as unknown[])[0])).toEqual([
+      'rebac:v2:tenant-version:tenant-a',
+      'rebac:v2:tenant-version:tenant-a',
+    ]);
   });
 
   it('refuses the same relationship twice', async () => {

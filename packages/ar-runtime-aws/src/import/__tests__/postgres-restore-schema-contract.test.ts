@@ -149,7 +149,7 @@ describe.each(['core', 'pii'] as const)(
         receipt,
         source.map((spec) => spec.datasetId)
       );
-      expect(receipt.projectionVersion).toBe(mode === 'all' || mode === 'selected' ? 2 : undefined);
+      expect(receipt.projectionVersion).toBe(mode === 'all' || mode === 'selected' ? 3 : undefined);
     });
 
     it.each(

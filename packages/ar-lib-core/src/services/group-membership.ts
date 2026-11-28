@@ -8,6 +8,7 @@ import {
 } from './dynamic-groups/publication';
 import { changedServiceGroups } from './dynamic-groups/plan-diff';
 import type { GroupPlan } from './dynamic-groups/model';
+import type { SubjectGroupsResolver } from '../rebac/types';
 
 const MAX_GROUP_DEPTH = 16;
 
@@ -279,6 +280,30 @@ export async function resolveSubjectGroups(
     ...resolved,
     unknownGroupIds,
     uncertain: unknownGroupIds.size > 0,
+  };
+}
+
+/**
+ * The ReBAC resolver of a subject's groups (group usersets, rebac/userset.ts): resolveSubjectGroups
+ * on the subject's account, under the id its rows are stored with. It throws when the account or
+ * its memberships cannot be read (a userset is then undecided and grants nothing).
+ */
+export function subjectGroupsResolver(
+  metadata: DatabaseSource,
+  subjectAccount: (
+    tenantId: string,
+    subjectId: string
+  ) => Promise<{ db: DatabaseSource; subjectId: string }>
+): SubjectGroupsResolver {
+  return async (tenantId, subjectId) => {
+    const account = await subjectAccount(tenantId, subjectId);
+    const { effectiveGroupIds, unknownGroupIds } = await resolveSubjectGroups(
+      { metadata, account: account.db },
+      tenantId,
+      account.subjectId,
+      Math.floor(Date.now() / 1000)
+    );
+    return { effectiveGroupIds, unknownGroupIds };
   };
 }
 

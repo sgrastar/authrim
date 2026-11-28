@@ -771,6 +771,25 @@ describe('end-user group authorization across two databases', () => {
       [...(await groupsCarryingRoles(meta.adapter, tenant, [parent, child, unrelated]))].sort()
     ).toEqual([child, parent].sort());
 
+    // A ReBAC group userset carries authorization too (on the group or an ancestor; unexpired).
+    const userset = (id: string, groupId: string, expiresAt: number | null) =>
+      meta.db
+        .prepare(
+          `INSERT INTO relationships (id, tenant_id, relationship_type, from_type, from_id,
+             from_relation, to_type, to_id, permission_level, expires_at, is_bidirectional,
+             created_at, updated_at)
+           VALUES (?, 'tenant-a', 'viewer', 'group', ?, 'member', 'document', ?, 'full', ?, 0, 1, 1)`
+        )
+        .run(id, groupId, id, expiresAt);
+    const other = await create('other');
+    const otherChild = await create('other-child', other);
+    userset('expired', other, now - 1);
+    expect([...(await groupsCarryingRoles(meta.adapter, tenant, [other, otherChild]))]).toEqual([]);
+    userset('live', other, null);
+    expect(
+      [...(await groupsCarryingRoles(meta.adapter, tenant, [other, otherChild]))].sort()
+    ).toEqual([other, otherChild].sort());
+
     expect(
       policyConditionGroupIds([
         { type: 'in_group', params: { group_id: 'a' } },

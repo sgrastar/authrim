@@ -63,6 +63,14 @@ import {
   resolvePlatformSettingsWithSources,
   ruleOnRelationshipTupleSource,
   relationshipSourceTypes,
+  subjectGroupsResolver,
+  externalSubjectRef,
+  resolveAccountCoreDataContext,
+  bumpReBACTenantVersion,
+  guardGroupUsersetWrite,
+  type GroupUsersetWriteOutcome,
+  hasAdminPermission,
+  type DatabaseAdapter,
   // Walks `cause` (D1OperationError keeps the database's error there).
   isUniqueConstraintError,
   redactingAccessLogPrinter,
@@ -519,7 +527,25 @@ policyRoutes.post('/is-admin', async (c) => {
 function getReBACService(c: Context<{ Bindings: Env }>): ReBACService | null {
   try {
     const coreAdapter = getPolicyCoreAdapter(c);
-    return createPolicyReBACService(coreAdapter, c.env.REBAC_CACHE_KV);
+    // Group usersets: the subject's groups from its account database, under the router's
+    // canonical id (as the Check API reads its roles and memberships).
+    const subjectGroups = subjectGroupsResolver(coreAdapter, async (tenantId, subjectId) => {
+      const account = await resolveAccountCoreDataContext(c.env, {
+        tenantId,
+        accountId: subjectId,
+      });
+      return { db: account.coreDb, subjectId: account.legacyUserId };
+    });
+    // Cached results are keyed by the tenant's ReBAC version, kept in REBAC_CACHE (bumped by
+    // every tuple and definition write here and in the Admin API).
+    // Results live in REBAC_CACHE as well (the binding setup provides; REBAC_CACHE_KV, when
+    // bound, overrides it), under their own `rebac:check:v3:` keys.
+    return createPolicyReBACService(
+      coreAdapter,
+      c.env.REBAC_CACHE_KV ?? c.env.REBAC_CACHE,
+      subjectGroups,
+      c.env.REBAC_CACHE
+    );
   } catch {
     return null;
   }
@@ -540,6 +566,53 @@ function getPermissionChangeNotifier(c: Context<{ Bindings: Env }>): PermissionC
 }
 
 /**
+ * Bumps the tenant's ReBAC version after a tuple write or delete (cached check results of the
+ * tenant are then retired). A failure is logged: the cached results then live out their TTL.
+ */
+async function bumpReBACVersion(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  log: { warn(message: string, context?: Record<string, unknown>): void }
+): Promise<void> {
+  const kv = c.env.REBAC_CACHE;
+  if (!kv) return;
+  try {
+    await bumpReBACTenantVersion(kv, tenantId);
+  } catch (error) {
+    log.warn('ReBAC version bump failed', { error: String(error) });
+  }
+}
+
+/** A guarded userset write whose fence no longer held (retry). */
+const GROUP_VERSION_CONFLICT_BODY = {
+  error: 'group_version_conflict',
+  error_description:
+    'The service-group rules or the authorization changed while the tuple was checked: retry',
+};
+
+/**
+ * A group userset tuple gives the group's members a relation, as a role grant to the group
+ * does: writing or deleting one needs the role-grant permission (admin:roles:write). Null when
+ * the caller has it. (A write is also refused on a group a self-writable service group decides:
+ * guardGroupUsersetWrite.)
+ */
+function refuseGroupUserset(c: Context<{ Bindings: Env }>): Response | null {
+  const auth = (c as unknown as { get(key: string): unknown }).get('adminAuth') as
+    | { permissions?: string[] }
+    | undefined;
+  if (!hasAdminPermission(auth?.permissions ?? [], ADMIN_PERMISSIONS.ROLES_WRITE)) {
+    return c.json(
+      {
+        error: 'access_denied',
+        error_description: 'A group userset tuple needs the role-grant permission',
+      },
+      403
+    );
+  }
+  return null;
+}
+
+/**
  * ReBAC health check
  * GET /api/rebac/health
  */
@@ -552,7 +625,7 @@ rebacRoutes.get('/health', async (c) => {
       'policy-health'
     )
   );
-  const hasCache = !!c.env.REBAC_CACHE_KV;
+  const hasCache = !!(c.env.REBAC_CACHE_KV ?? c.env.REBAC_CACHE);
 
   return c.json({
     status: rebacEnabled && hasDatabase ? 'ok' : 'limited',
@@ -565,6 +638,48 @@ rebacRoutes.get('/health', async (c) => {
   });
 });
 
+/** At most this many contextual tuples per check (as the Check API allows). */
+const MAX_CONTEXTUAL_TUPLES = 100;
+
+/**
+ * A check's `context` as /api/rebac/check and /api/rebac/batch-check take it: its
+ * `contextual_tuples` (each `user_id`, `relation`, `object`, optional `object_type`, strings; at
+ * most 100), seen by the definition's direct lookups. `{}` without tuples; null when malformed.
+ */
+function rebacCheckContext(context: unknown): Pick<CheckRequest, 'context'> | null {
+  if (context === undefined || context === null) return {};
+  if (typeof context !== 'object' || Array.isArray(context)) return null;
+  const tuples = (context as { contextual_tuples?: unknown }).contextual_tuples;
+  if (tuples === undefined) return {};
+  if (!Array.isArray(tuples) || tuples.length > MAX_CONTEXTUAL_TUPLES) return null;
+  const valid = tuples.every((tuple: unknown) => {
+    const t = tuple as Record<string, unknown> | null;
+    return (
+      !!t &&
+      typeof t === 'object' &&
+      typeof t.user_id === 'string' &&
+      !!t.user_id &&
+      typeof t.relation === 'string' &&
+      !!t.relation &&
+      typeof t.object === 'string' &&
+      !!t.object &&
+      (t.object_type === undefined || typeof t.object_type === 'string')
+    );
+  });
+  if (!valid) return null;
+  if (tuples.length === 0) return {};
+  return {
+    context: {
+      contextual_tuples: (tuples as Array<Record<string, string | undefined>>).map((tuple) => ({
+        user_id: tuple.user_id as string,
+        relation: tuple.relation as string,
+        object: tuple.object as string,
+        ...(tuple.object_type !== undefined && { object_type: tuple.object_type }),
+      })),
+    },
+  };
+}
+
 /**
  * Check relationship (ReBAC)
  * POST /api/rebac/check
@@ -574,7 +689,8 @@ rebacRoutes.get('/health', async (c) => {
  *   "tenant_id": "tenant_123",
  *   "user_id": "user:user_123",
  *   "relation": "viewer",
- *   "object": "document:doc_456"
+ *   "object": "document:doc_456",
+ *   "context": { "contextual_tuples": [...] }   // optional, as on /batch-check
  * }
  */
 rebacRoutes.post('/check', async (c) => {
@@ -597,9 +713,14 @@ rebacRoutes.post('/check', async (c) => {
       relation: string;
       object: string;
       object_type?: string;
+      context?: unknown;
     }>();
 
     if (!body.user_id || !body.relation || !body.object) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+    }
+    const context = rebacCheckContext(body.context);
+    if (!context) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
@@ -620,6 +741,8 @@ rebacRoutes.post('/check', async (c) => {
       relation: body.relation,
       object: body.object,
       object_type: body.object_type,
+      // A check with contextual tuples neither reads nor writes the shared result cache.
+      ...context,
     };
 
     const result = await rebacService.check(request);
@@ -681,9 +804,17 @@ rebacRoutes.post('/batch-check', async (c) => {
       if (!(await resolvePolicyFlags(c.env, tenantId)).rebac) {
         return createErrorResponse(c, AR_ERROR_CODES.POLICY_FEATURE_DISABLED);
       }
+      const context = rebacCheckContext(check.context);
+      if (!context) {
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+      }
       checks.push({
-        ...check,
         tenant_id: tenantId,
+        user_id: check.user_id,
+        relation: check.relation,
+        object: check.object,
+        object_type: check.object_type,
+        ...context,
       });
     }
 
@@ -814,7 +945,8 @@ rebacRoutes.post('/list-users', async (c) => {
     };
 
     const result = await rebacService.listUsers(request);
-    return c.json(result);
+    // Ids as this API takes them back: `user:` + the stored id (a check strips one `user:`).
+    return c.json({ ...result, user_ids: result.user_ids.map(externalSubjectRef) });
   } catch (error) {
     log.error('ReBAC list users error', { error: String(error) }, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
@@ -828,7 +960,9 @@ rebacRoutes.post('/list-users', async (c) => {
  * Only the tuple types of rebac/tuple-type-rules.ts are accepted (a direct subject, a group
  * userset, or an object edge declared as a tuple_to_userset source); others are refused with 400
  * (POLICY_REBAC_TUPLE_TYPE_NOT_ALLOWED). A direct subject is stored with `from_type = 'subject'`
- * (the type the relationship check matches), whether sent as `subject` or `user`.
+ * (the type the relationship check matches), whether sent as `subject` or `user`. A group userset
+ * (`subject_type: "group"`) is stored with `from_relation = 'member'`; `from_relation` may be sent
+ * only as `"member"` and only with a group.
  *
  * Request body:
  * {
@@ -838,6 +972,7 @@ rebacRoutes.post('/list-users', async (c) => {
  *   "relation": "viewer",
  *   "subject_type": "user",
  *   "subject_id": "user_123",
+ *   "from_relation": "member",  // optional, group usersets only
  *   "expires_at": 1735689600  // optional, Unix timestamp
  * }
  */
@@ -860,6 +995,7 @@ rebacRoutes.post(
         relation: string;
         subject_type: string;
         subject_id: string;
+        from_relation?: unknown;
         expires_at?: number;
       }>();
 
@@ -869,6 +1005,14 @@ rebacRoutes.post(
         !body.relation ||
         !body.subject_type ||
         !body.subject_id
+      ) {
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+      }
+      // expires_at: integer UNIX seconds (or absent / null for no expiry).
+      if (
+        body.expires_at !== undefined &&
+        body.expires_at !== null &&
+        !Number.isSafeInteger(body.expires_at)
       ) {
         return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
       }
@@ -893,85 +1037,156 @@ rebacRoutes.post(
         tenantId,
         fromType: body.subject_type,
         relationshipType: body.relation,
-        fromRelation: (body as { from_relation?: unknown }).from_relation,
+        fromRelation: body.from_relation,
       });
       if (!source.allowed) {
         return createErrorResponse(c, AR_ERROR_CODES.POLICY_REBAC_TUPLE_TYPE_NOT_ALLOWED);
       }
+      if (source.kind === 'group_userset') {
+        const refused = refuseGroupUserset(c);
+        if (refused) return refused;
+      }
       const fromType = source.fromType;
       // A direct subject also matches a row an older write stored as `user`.
       const sourceTypes = relationshipSourceTypes(fromType);
-      const existing = await coreAdapter.queryOne<{ id: string }>(
-        `SELECT id FROM relationships
+      const findTuple = (db: Pick<DatabaseAdapter, 'queryOne'>) =>
+        db.queryOne<{ id: string }>(
+          `SELECT id FROM relationships
        WHERE tenant_id = ? AND from_type IN (?, ?) AND from_id = ? AND to_type = ? AND to_id = ? AND relationship_type = ?`,
-        [tenantId, ...sourceTypes, body.subject_id, body.object_type, body.object_id, body.relation]
-      );
-
-      let id = existing?.id ?? crypto.randomUUID();
-
-      if (existing) {
-        await coreAdapter.execute(
-          `UPDATE relationships
-         SET expires_at = ?, updated_at = ?
-         WHERE id = ? AND tenant_id = ?`,
-          [body.expires_at ?? null, now, existing.id, tenantId]
+          [
+            tenantId,
+            ...sourceTypes,
+            body.subject_id,
+            body.object_type,
+            body.object_id,
+            body.relation,
+          ]
         );
-      } else {
-        try {
-          await coreAdapter.execute(
-            `INSERT INTO relationships (
-            id, tenant_id, relationship_type, from_type, from_id,
+
+      /**
+       * The statements creating the tuple or refreshing the existing one, which is also
+       * normalised to the stored source shape (an older `user` row becomes `subject`; a group
+       * row gets `from_relation = 'member'`). With a fence (group usersets,
+       * guardGroupUsersetWrite), the statement holds only while what the check read does.
+       */
+      const refreshStatement = (rowId: string, fence?: { sql: string; params: unknown[] }) => ({
+        sql: `UPDATE relationships
+         SET expires_at = ?, updated_at = ?, from_type = ?, from_relation = ?
+         WHERE id = ? AND tenant_id = ?${fence ? ` AND ${fence.sql}` : ''}`,
+        params: [
+          body.expires_at ?? null,
+          now,
+          fromType,
+          source.fromRelation,
+          rowId,
+          tenantId,
+          ...(fence?.params ?? []),
+        ],
+      });
+      const columns = `id, tenant_id, relationship_type, from_type, from_id, from_relation,
             to_type, to_id, permission_level, expires_at, is_bidirectional,
-            created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [
-              id,
-              tenantId,
-              body.relation,
-              fromType,
-              body.subject_id,
-              body.object_type,
-              body.object_id,
-              'full', // default permission level
-              body.expires_at ?? null,
-              0, // not bidirectional
-              now,
-              now,
-            ]
+            created_at, updated_at`;
+      const insertStatement = (rowId: string, fence?: { sql: string; params: unknown[] }) => ({
+        sql: fence
+          ? // Written only while what the check read holds.
+            `INSERT INTO relationships (${columns})
+                SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS BIGINT), CAST(? AS BOOLEAN),
+                  CAST(? AS BIGINT), CAST(? AS BIGINT) WHERE ${fence.sql}`
+          : `INSERT INTO relationships (${columns})
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        params: [
+          rowId,
+          tenantId,
+          body.relation,
+          fromType,
+          body.subject_id,
+          source.fromRelation,
+          body.object_type,
+          body.object_id,
+          'full', // default permission level
+          body.expires_at ?? null,
+          0, // not bidirectional
+          now,
+          now,
+          ...(fence?.params ?? []),
+        ],
+      });
+
+      let id: string;
+      if (source.kind === 'group_userset') {
+        let outcome: GroupUsersetWriteOutcome<string>;
+        try {
+          outcome = await guardGroupUsersetWrite(
+            coreAdapter,
+            tenantId,
+            body.subject_id,
+            async (reader, fence) => {
+              const existing = await findTuple(reader);
+              const rowId = existing?.id ?? crypto.randomUUID();
+              return {
+                statements: [
+                  existing ? refreshStatement(rowId, fence) : insertStatement(rowId, fence),
+                ],
+                result: rowId,
+              };
+            }
           );
         } catch (error) {
-          if (!isUniqueConstraintError(error)) {
-            throw error;
+          // A concurrent create of the same tuple: answered as a conflict (retry) rather than
+          // resolved inside the guarded write.
+          if (isUniqueConstraintError(error)) {
+            return c.json(
+              {
+                error: 'conflict',
+                error_description: 'The tuple was written concurrently: retry',
+              },
+              409
+            );
           }
-
-          const raced = await coreAdapter.queryOne<{ id: string }>(
-            `SELECT id FROM relationships
-           WHERE tenant_id = ? AND from_type IN (?, ?) AND from_id = ? AND to_type = ? AND to_id = ? AND relationship_type = ?`,
-            [
-              tenantId,
-              ...sourceTypes,
-              body.subject_id,
-              body.object_type,
-              body.object_id,
-              body.relation,
-            ]
+          throw error;
+        }
+        if (outcome.kind === 'group_self_writable_attribute') {
+          return c.json(
+            {
+              error: 'group_self_writable_attribute',
+              error_description:
+                'A service group below this group is decided by an attribute users can set themselves: it cannot carry relations',
+            },
+            400
           );
-
-          if (!raced) {
-            throw new Error('Failed to resolve raced relationship tuple');
+        }
+        if (outcome.kind === 'group_version_conflict') {
+          return c.json(GROUP_VERSION_CONFLICT_BODY, 409);
+        }
+        id = outcome.result;
+      } else {
+        const existing = await findTuple(coreAdapter);
+        if (existing) {
+          const refresh = refreshStatement(existing.id);
+          await coreAdapter.execute(refresh.sql, refresh.params);
+          id = existing.id;
+        } else {
+          id = crypto.randomUUID();
+          try {
+            const insert = insertStatement(id);
+            await coreAdapter.execute(insert.sql, insert.params);
+          } catch (error) {
+            if (!isUniqueConstraintError(error)) {
+              throw error;
+            }
+            const raced = await findTuple(coreAdapter);
+            if (!raced) {
+              throw new Error('Failed to resolve raced relationship tuple');
+            }
+            const refresh = refreshStatement(raced.id);
+            await coreAdapter.execute(refresh.sql, refresh.params);
+            id = raced.id;
           }
-
-          id = raced.id;
-          await coreAdapter.execute(
-            `UPDATE relationships
-           SET expires_at = ?, updated_at = ?
-           WHERE id = ? AND tenant_id = ?`,
-            [body.expires_at ?? null, now, raced.id, tenantId]
-          );
         }
       }
 
-      // Invalidate cache for the affected object
+      // Retire the tenant's cached results, and invalidate the affected object
+      await bumpReBACVersion(c, tenantId, log);
       const rebacService = getReBACService(c);
       if (rebacService) {
         await rebacService.invalidateCache(
@@ -1006,6 +1221,7 @@ rebacRoutes.post(
           relation: body.relation,
           subject_type: fromType,
           subject_id: body.subject_id,
+          from_relation: source.fromRelation,
           expires_at: body.expires_at,
           created_at: now,
         },
@@ -1022,7 +1238,8 @@ rebacRoutes.post(
  * DELETE /api/rebac/tuples
  *
  * The same tuple type rules as /api/rebac/write: the tuple is matched with the stored source type
- * (`user` matches the `subject` rows), and a type the rules refuse is refused here too (400).
+ * (`user` matches the `subject` rows), and a type the rules refuse is refused here too (400),
+ * `from_relation` included (only `"member"`, only with a group).
  *
  * Request body:
  * {
@@ -1053,6 +1270,7 @@ rebacRoutes.delete(
         relation: string;
         subject_type: string;
         subject_id: string;
+        from_relation?: unknown;
       }>();
 
       if (
@@ -1086,30 +1304,66 @@ rebacRoutes.delete(
         tenantId,
         fromType: body.subject_type,
         relationshipType: body.relation,
-        fromRelation: (body as { from_relation?: unknown }).from_relation,
+        fromRelation: body.from_relation,
       });
       if (!source.allowed) {
         return createErrorResponse(c, AR_ERROR_CODES.POLICY_REBAC_TUPLE_TYPE_NOT_ALLOWED);
       }
-      const result = await coreAdapter.execute(
-        `DELETE FROM relationships
+      // Taking a userset away changes what the group's members hold: the role-grant permission.
+      if (source.kind === 'group_userset') {
+        const refused = refuseGroupUserset(c);
+        if (refused) return refused;
+      }
+      const deleteSql = `DELETE FROM relationships
        WHERE tenant_id = ?
          AND from_type IN (?, ?)
          AND from_id = ?
          AND to_type = ?
          AND to_id = ?
-         AND relationship_type = ?`,
-        [
+         AND relationship_type = ?`;
+      const deleteParams = [
+        tenantId,
+        ...relationshipSourceTypes(source.fromType),
+        body.subject_id,
+        body.object_type,
+        body.object_id,
+        body.relation,
+      ];
+      let rowsAffected: number;
+      if (source.kind === 'group_userset') {
+        // Taking a userset away raises the tenant authorization version too, fenced as a write
+        // (a service-group rule save checked meanwhile then conflicts, and the other way round).
+        const outcome = await guardGroupUsersetWrite(
+          coreAdapter,
           tenantId,
-          ...relationshipSourceTypes(source.fromType),
           body.subject_id,
-          body.object_type,
-          body.object_id,
-          body.relation,
-        ]
-      );
+          async (reader, fence) => {
+            const present = await reader.queryOne<{ id: string }>(
+              `SELECT id FROM relationships ${deleteSql.slice(deleteSql.indexOf('WHERE'))}`,
+              deleteParams
+            );
+            return present
+              ? {
+                  statements: [
+                    {
+                      sql: `${deleteSql} AND ${fence.sql}`,
+                      params: [...deleteParams, ...fence.params],
+                    },
+                  ],
+                  result: 1,
+                }
+              : { statements: [], result: 0 };
+          },
+          { refuseSelfWritable: false }
+        );
+        if (outcome.kind !== 'written') return c.json(GROUP_VERSION_CONFLICT_BODY, 409);
+        rowsAffected = outcome.result;
+      } else {
+        rowsAffected = (await coreAdapter.execute(deleteSql, deleteParams)).rowsAffected ?? 0;
+      }
 
-      // Invalidate cache for the affected object
+      // Retire the tenant's cached results, and invalidate the affected object
+      await bumpReBACVersion(c, tenantId, log);
       const rebacService = getReBACService(c);
       if (rebacService) {
         await rebacService.invalidateCache(
@@ -1121,7 +1375,7 @@ rebacRoutes.delete(
       }
 
       // Phase 8.3: Publish permission change event (only if something was deleted)
-      const deleted = (result.rowsAffected ?? 0) > 0;
+      const deleted = rowsAffected > 0;
       if (deleted) {
         try {
           const notifier = getPermissionChangeNotifier(c);
@@ -1212,6 +1466,8 @@ rebacRoutes.post(
       } else {
         return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
       }
+      // A KV cache cannot delete by pattern: the version bump retires the tenant's results.
+      await bumpReBACVersion(c, tenantId, log);
 
       return c.json({ success: true });
     } catch (error) {

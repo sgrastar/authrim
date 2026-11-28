@@ -112,6 +112,10 @@ const CORE_SCHEMA = [
     resolve(REPO_ROOT, 'migrations/core/d1'),
     '019_dynamic_publication_unknown_groups.sql'
   ),
+  readRenderedMigrationSql(
+    resolve(REPO_ROOT, 'migrations/core/d1'),
+    '020_relationship_userset_relation.sql'
+  ),
 ];
 
 type SqlValue = string | number | null;

@@ -726,9 +726,13 @@ export {
   // Service
   ReBACService,
   createReBACService,
+  externalSubjectId,
+  externalSubjectRef,
   // Cache manager
   ReBACCacheManager,
   RequestScopedCache,
+  getReBACTenantVersion,
+  bumpReBACTenantVersion,
   // Closure manager
   ClosureManager,
   createClosureManager,
@@ -748,6 +752,10 @@ export {
   declaresTuplesetRelation,
   REBAC_SUBJECT_FROM_TYPE,
   REBAC_GROUP_FROM_TYPE,
+  // Group usersets
+  USERSET_MEMBER_RELATION,
+  expressionContainsExclusion,
+  relationDefinitionErrors,
 } from './rebac';
 
 export type {
@@ -776,6 +784,10 @@ export type {
   ParsedObject,
   // Config
   ReBACConfig,
+  ReBACCheckOptions,
+  ResolvedCheckRequest,
+  SubjectGroupState,
+  SubjectGroupsResolver,
   // Interfaces
   IReBACService,
   IRelationDefinitionStore,

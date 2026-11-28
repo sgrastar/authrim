@@ -4,6 +4,8 @@ const mocks = vi.hoisted(() => ({
   adapter: { query: vi.fn(), execute: vi.fn() },
   audit: vi.fn(),
   check: vi.fn(),
+  guard: vi.fn(),
+  kv: { get: vi.fn(), put: vi.fn() },
 }));
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
@@ -13,6 +15,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     getTenantIdFromContext: vi.fn(() => 'tenant-a'),
     createAuthContextFromHono: vi.fn(() => ({ coreAdapter: mocks.adapter })),
     generateId: vi.fn(() => 'generated-id'),
+    guardGroupUsersetWrite: mocks.guard,
     createAuditLogFromContext: mocks.audit,
     createErrorResponse: vi.fn((c, code, options) =>
       c.json(
@@ -29,9 +32,10 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   };
 });
 
-vi.mock('@authrim/ar-lib-core/rebac/rebac-service', () => ({
+vi.mock('@authrim/ar-lib-core/rebac/rebac-service', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@authrim/ar-lib-core/rebac/rebac-service')>()),
   ReBACService: vi.fn(function () {
-    return { check: mocks.check };
+    return { check: mocks.check, checkResolved: mocks.check };
   }),
 }));
 
@@ -53,6 +57,7 @@ vi.mock('../admin-operation-audit', () => import('./helpers/legacy-admin-audit-s
 
 function context(options: { query?: Record<string, string>; id?: string; body?: unknown } = {}) {
   return {
+    env: { REBAC_CACHE: mocks.kv },
     req: {
       query: vi.fn((name: string) => options.query?.[name]),
       param: vi.fn(() => options.id ?? 'item-1'),
@@ -68,7 +73,7 @@ function definition(overrides: Record<string, unknown> = {}) {
     tenant_id: 'tenant-a',
     object_type: 'document',
     relation_name: 'viewer',
-    definition_json: '{"union":["owner"]}',
+    definition_json: '{"type":"direct","relation":"owner"}',
     description: null,
     priority: 10,
     is_active: 1,
@@ -97,6 +102,8 @@ function tuple(overrides: Record<string, unknown> = {}) {
   };
 }
 
+const VALID = { type: 'direct', relation: 'owner' };
+
 describe('admin ReBAC APIs', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -106,6 +113,213 @@ describe('admin ReBAC APIs', () => {
     mocks.adapter.execute.mockResolvedValue({ success: true, rowsAffected: 1 });
     mocks.audit.mockResolvedValue(undefined);
     mocks.check.mockResolvedValue({ allowed: true, resolved_via: 'direct', path: ['tuple-1'] });
+    // The guarded write: no refusal, the write runs with a fence that holds.
+    mocks.guard.mockImplementation(
+      async (
+        _db: unknown,
+        _tenant: string,
+        _group: string,
+        prepare: (
+          reader: unknown,
+          fence: { sql: string; params: unknown[] }
+        ) => Promise<{ statements: Array<{ sql: string; params: unknown[] }>; result: unknown }>
+      ) => {
+        const prepared = await prepare(mocks.adapter, { sql: 'FENCE', params: ['fence-param'] });
+        let rows: number | undefined;
+        for (const statement of prepared.statements) {
+          const executed = (await mocks.adapter.execute(statement.sql, statement.params)) as {
+            rowsAffected?: number;
+          };
+          rows ??= executed.rowsAffected;
+        }
+        return prepared.statements.length && rows === 0
+          ? { kind: 'group_version_conflict' }
+          : { kind: 'written', result: prepared.result };
+      }
+    );
+    mocks.kv.put.mockResolvedValue(undefined);
+  });
+
+  const groupTuple = {
+    relationship_type: 'viewer',
+    from_type: 'group',
+    from_id: 'group-1',
+    to_type: 'document',
+    to_id: 'doc-1',
+  };
+
+  it('refuses a group userset on a group a self-writable service group decides', async () => {
+    mocks.guard.mockResolvedValueOnce({ kind: 'group_self_writable_attribute' });
+    const response = await adminRelationshipTupleCreateHandler(context({ body: groupTuple }));
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'group_self_writable_attribute',
+    });
+    expect(mocks.guard).toHaveBeenCalledWith(
+      mocks.adapter,
+      'tenant-a',
+      'group-1',
+      expect.any(Function)
+    );
+    expect(mocks.adapter.execute).not.toHaveBeenCalled();
+    // A direct subject tuple is not a userset: no such check.
+    mocks.guard.mockClear();
+    await adminRelationshipTupleCreateHandler(
+      context({
+        body: { relationship_type: 'viewer', from_id: 'user-1', to_type: 'document', to_id: 'd' },
+      })
+    );
+    expect(mocks.guard).not.toHaveBeenCalled();
+  });
+
+  it('writes a group userset under the catalog fence, 409 when it does not hold', async () => {
+    const created = await adminRelationshipTupleCreateHandler(context({ body: groupTuple }));
+    expect(created.status).toBe(201);
+    const [sql, params] = mocks.adapter.execute.mock.calls[0] as [string, unknown[]];
+    expect(sql).toContain('INSERT INTO relationships');
+    expect(sql).toContain('WHERE FENCE');
+    expect(params.at(-1)).toBe('fence-param');
+    expect(params.slice(3, 6)).toEqual(['group', 'group-1', 'member']);
+
+    mocks.adapter.execute.mockResolvedValueOnce({ success: true, rowsAffected: 0 });
+    const conflict = await adminRelationshipTupleCreateHandler(context({ body: groupTuple }));
+    expect(conflict.status).toBe(409);
+    await expect(conflict.json()).resolves.toMatchObject({ error: 'group_version_conflict' });
+  });
+
+  it('refuses an expires_at that is not an integer (milliseconds)', async () => {
+    const response = await adminRelationshipTupleCreateHandler(
+      context({
+        body: {
+          relationship_type: 'viewer',
+          from_id: 'user-1',
+          to_type: 'document',
+          to_id: 'd',
+          expires_at: 1.5,
+        },
+      })
+    );
+    expect(response.status).toBe(400);
+    expect(mocks.adapter.execute).not.toHaveBeenCalled();
+  });
+
+  it('deletes a group userset through the guarded write', async () => {
+    mocks.adapter.query.mockResolvedValueOnce([
+      { tenant_id: 'tenant-a', from_type: 'group', from_id: 'group-1', from_relation: 'member' },
+    ]);
+    const removed = await adminRelationshipTupleDeleteHandler(context());
+    expect(removed.status).toBe(200);
+    expect(mocks.guard).toHaveBeenCalledWith(
+      mocks.adapter,
+      'tenant-a',
+      'group-1',
+      expect.any(Function),
+      { refuseSelfWritable: false }
+    );
+    expect(String(mocks.adapter.execute.mock.calls[0]?.[0])).toContain('AND FENCE');
+    mocks.adapter.query.mockResolvedValueOnce([
+      { tenant_id: 'tenant-a', from_type: 'group', from_id: 'group-1', from_relation: 'member' },
+    ]);
+    mocks.guard.mockResolvedValueOnce({ kind: 'group_version_conflict' });
+    expect((await adminRelationshipTupleDeleteHandler(context())).status).toBe(409);
+    // A legacy (inert) group row is deleted directly.
+    mocks.guard.mockClear();
+    mocks.adapter.query.mockResolvedValueOnce([
+      { tenant_id: 'tenant-a', from_type: 'group', from_id: 'group-1', from_relation: null },
+    ]);
+    expect((await adminRelationshipTupleDeleteHandler(context())).status).toBe(200);
+    expect(mocks.guard).not.toHaveBeenCalled();
+  });
+
+  it('stores an expires_at of 0 as an expiry (already expired), absent or null as none', async () => {
+    for (const [expires_at, stored] of [
+      [0, 0],
+      [1_800_000_000_999, 1_800_000_000],
+      [null, null],
+      [undefined, null],
+    ] as const) {
+      mocks.adapter.execute.mockClear();
+      const response = await adminRelationshipTupleCreateHandler(
+        context({
+          body: {
+            relationship_type: 'viewer',
+            from_id: 'user-1',
+            to_type: 'document',
+            to_id: 'd',
+            ...(expires_at !== undefined && { expires_at }),
+          },
+        })
+      );
+      expect(response.status).toBe(201);
+      const params = mocks.adapter.execute.mock.calls[0]?.[1] as unknown[];
+      expect(params[9]).toBe(stored);
+    }
+    mocks.adapter.query
+      .mockResolvedValueOnce([{ count: 1 }])
+      .mockResolvedValueOnce([tuple({ expires_at: 0 })]);
+    const listed = await (
+      await adminRelationshipTuplesListHandler(context())
+    ).json<{
+      tuples: Array<Record<string, unknown>>;
+    }>();
+    expect(listed.tuples[0]?.expires_at).toBe(0);
+  });
+
+  it('deletes a legacy group row only while it is still inert', async () => {
+    const legacy = { tenant_id: 'tenant-a', from_type: 'group', from_id: 'g', from_relation: null };
+    const member = { ...legacy, from_relation: 'member' };
+    // Still inert: deleted directly, with the inert condition in the statement.
+    mocks.adapter.query.mockResolvedValueOnce([legacy]);
+    expect((await adminRelationshipTupleDeleteHandler(context())).status).toBe(200);
+    expect(String(mocks.adapter.execute.mock.calls[0]?.[0])).toContain('from_relation IS NULL');
+    expect(mocks.guard).not.toHaveBeenCalled();
+    // Became `member` meanwhile: the direct delete changes nothing, the row is read again and
+    // deleted through the guarded write.
+    mocks.adapter.execute.mockClear();
+    mocks.adapter.query.mockResolvedValueOnce([legacy]).mockResolvedValueOnce([member]);
+    mocks.adapter.execute.mockResolvedValueOnce({ success: true, rowsAffected: 0 });
+    expect((await adminRelationshipTupleDeleteHandler(context())).status).toBe(200);
+    expect(mocks.guard).toHaveBeenCalledTimes(1);
+    expect(String(mocks.adapter.execute.mock.calls[1]?.[0])).toContain('AND FENCE');
+    // Gone meanwhile: 404.
+    mocks.adapter.query.mockResolvedValueOnce([legacy]).mockResolvedValueOnce([]);
+    mocks.adapter.execute.mockResolvedValueOnce({ success: true, rowsAffected: 0 });
+    expect((await adminRelationshipTupleDeleteHandler(context())).status).toBe(404);
+  });
+
+  it('marks legacy group rows (no member relation) inactive in the list', async () => {
+    mocks.adapter.query
+      .mockResolvedValueOnce([{ count: 2 }])
+      .mockResolvedValueOnce([
+        tuple({ from_type: 'group', from_id: 'g', from_relation: null }),
+        tuple({ from_type: 'group', from_id: 'g2', from_relation: 'member' }),
+      ]);
+    const body = await (
+      await adminRelationshipTuplesListHandler(context())
+    ).json<{
+      tuples: Array<Record<string, unknown>>;
+    }>();
+    expect(body.tuples.map((t) => t.inactive_legacy)).toEqual([true, false]);
+  });
+
+  it('bumps the tenant ReBAC version on every definition and tuple write', async () => {
+    await adminRelationshipTupleCreateHandler(
+      context({
+        body: { relationship_type: 'viewer', from_id: 'user-1', to_type: 'document', to_id: 'd' },
+      })
+    );
+    mocks.adapter.query.mockResolvedValueOnce([{ tenant_id: 'tenant-a' }]);
+    await adminRelationshipTupleDeleteHandler(context());
+    await adminRelationDefinitionCreateHandler(
+      context({ body: { object_type: 'document', relation_name: 'viewer', definition: VALID } })
+    );
+    mocks.adapter.query.mockResolvedValueOnce([{ tenant_id: 'tenant-a' }]);
+    await adminRelationDefinitionUpdateHandler(context({ body: { definition: VALID } }));
+    mocks.adapter.query.mockResolvedValueOnce([{ tenant_id: 'tenant-a' }]);
+    await adminRelationDefinitionDeleteHandler(context());
+    expect(mocks.kv.put).toHaveBeenCalledTimes(5);
+    for (const [key] of mocks.kv.put.mock.calls)
+      expect(key).toBe('rebac:v2:tenant-version:tenant-a');
   });
 
   it.each([
@@ -124,7 +338,8 @@ describe('admin ReBAC APIs', () => {
       pagination: unknown;
     };
     expect(body.definitions[0]).toMatchObject({
-      definition: { union: ['owner'] },
+      definition: { type: 'direct', relation: 'owner' },
+      unusable: false,
       is_active: true,
       created_at: 100_000,
     });
@@ -136,7 +351,7 @@ describe('admin ReBAC APIs', () => {
     }
   });
 
-  it('defaults missing definition counts and rejects corrupt stored definitions', async () => {
+  it('defaults missing definition counts and reports unusable stored definitions', async () => {
     mocks.adapter.query.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
     await expect(
       (await adminRelationDefinitionsListHandler(context())).json()
@@ -144,9 +359,56 @@ describe('admin ReBAC APIs', () => {
       pagination: { total: 0 },
     });
     mocks.adapter.query
-      .mockResolvedValueOnce([{ count: 1 }])
-      .mockResolvedValueOnce([definition({ definition_json: '{' })]);
-    expect((await adminRelationDefinitionsListHandler(context())).status).toBe(500);
+      .mockResolvedValueOnce([{ count: 3 }])
+      .mockResolvedValueOnce([
+        definition({ definition_json: '{' }),
+        definition({ definition_json: '{"union":["owner"]}' }),
+        definition({ definition_json: '{"type":"union","children":[]}' }),
+      ]);
+    const response = await adminRelationDefinitionsListHandler(context());
+    expect(response.status).toBe(200);
+    const body = await response.json<{ definitions: Array<Record<string, unknown>> }>();
+    expect(body.definitions.map(({ definition, unusable }) => ({ definition, unusable }))).toEqual([
+      { definition: null, unusable: true },
+      { definition: { union: ['owner'] }, unusable: true },
+      { definition: { type: 'union', children: [] }, unusable: true },
+    ]);
+  });
+
+  it('reports an unusable stored definition on get', async () => {
+    mocks.adapter.query.mockResolvedValueOnce([definition({ definition_json: '{"type":"x"}' })]);
+    const response = await adminRelationDefinitionGetHandler(context());
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      definition: { definition: { type: 'x' }, unusable: true },
+    });
+  });
+
+  it.each([
+    [{ union: ['owner'] }],
+    [{ type: 'wildcard' }],
+    [{ type: 'direct' }],
+    [{ type: 'union', children: [] }],
+    [{ type: 'exclusion', base: { type: 'direct', relation: 'viewer' } }],
+    ['{"type":"direct","relation":"viewer"}'],
+    [[{ type: 'direct', relation: 'viewer' }]],
+  ])('refuses an invalid definition on create and update with 400 %#', async (invalid) => {
+    const create = await adminRelationDefinitionCreateHandler(
+      context({ body: { object_type: 'document', relation_name: 'viewer', definition: invalid } })
+    );
+    expect(create.status).toBe(400);
+    await expect(create.json()).resolves.toMatchObject({
+      error: 'AR050011',
+    });
+    const update = await adminRelationDefinitionUpdateHandler(
+      context({ body: { definition: invalid } })
+    );
+    expect(update.status).toBe(400);
+    await expect(update.json()).resolves.toMatchObject({
+      error: 'AR050011',
+    });
+    expect(mocks.adapter.query).not.toHaveBeenCalled();
+    expect(mocks.adapter.execute).not.toHaveBeenCalled();
   });
 
   it.each([[[]], [[definition()]]])('gets definition result %#', async (rows) => {
@@ -173,7 +435,7 @@ describe('admin ReBAC APIs', () => {
     expect(
       (
         await adminRelationDefinitionCreateHandler(
-          context({ body: { object_type: 'document', relation_name: 'viewer', definition: {} } })
+          context({ body: { object_type: 'document', relation_name: 'viewer', definition: VALID } })
         )
       ).status
     ).toBe(409);
@@ -187,7 +449,7 @@ describe('admin ReBAC APIs', () => {
           body: {
             object_type: 'document',
             relation_name: 'viewer',
-            definition: { union: ['owner'] },
+            definition: VALID,
             description: 'Can view',
             priority: 0,
             is_active,
@@ -214,7 +476,7 @@ describe('admin ReBAC APIs', () => {
     expect(
       (
         await adminRelationDefinitionCreateHandler(
-          context({ body: { object_type: 'document', relation_name: 'viewer', definition: {} } })
+          context({ body: { object_type: 'document', relation_name: 'viewer', definition: VALID } })
         )
       ).status
     ).toBe(500);
@@ -226,10 +488,10 @@ describe('admin ReBAC APIs', () => {
 
   it('updates all mutable definition fields including false and zero', async () => {
     mocks.adapter.query.mockResolvedValueOnce([{ tenant_id: 'tenant-a' }]);
-    const body = { definition: {}, description: '', priority: 0, is_active: false };
+    const body = { definition: VALID, description: '', priority: 0, is_active: false };
     expect((await adminRelationDefinitionUpdateHandler(context({ body }))).status).toBe(200);
     expect(mocks.adapter.execute.mock.calls[0][1]).toEqual(
-      expect.arrayContaining(['{}', '', 0, 0, 'item-1', 'tenant-a'])
+      expect.arrayContaining([JSON.stringify(VALID), '', 0, 0, 'item-1', 'tenant-a'])
     );
     expect(mocks.audit).toHaveBeenCalledWith(
       expect.anything(),
@@ -285,7 +547,12 @@ describe('admin ReBAC APIs', () => {
         is_bidirectional: true,
         metadata: { source: 'manual' },
       }),
-      expect.objectContaining({ expires_at: null, is_bidirectional: false, metadata: null }),
+      expect.objectContaining({
+        expires_at: null,
+        is_bidirectional: false,
+        metadata: null,
+        from_relation: null,
+      }),
     ]);
     expect(body.pagination).toMatchObject({ page: 2, total_pages: 2 });
   });
@@ -328,9 +595,18 @@ describe('admin ReBAC APIs', () => {
     await expect(response.json()).resolves.toMatchObject({
       tuple: {
         from_type: explicit ? 'group' : 'subject',
+        from_relation: explicit ? 'member' : null,
         permission_level: explicit ? 'write' : 'full',
       },
     });
+    // A group userset is stored with from_relation = 'member'; any other source with NULL.
+    const insert = mocks.adapter.execute.mock.calls.find(([sql]) =>
+      String(sql).includes('INSERT INTO relationships')
+    );
+    expect(insert?.[0]).toContain('from_relation');
+    expect((insert?.[1] as unknown[]).slice(3, 6)).toEqual(
+      explicit ? ['group', 'group-1', 'member'] : ['subject', 'user-1', null]
+    );
     expect(mocks.audit).toHaveBeenCalled();
   });
 
@@ -382,8 +658,9 @@ describe('admin ReBAC APIs', () => {
     });
 
     it('accepts an object edge a definition declares as a tuple_to_userset source', async () => {
+      // The type's active definitions in one query, then the duplicate lookup.
       mocks.adapter.query
-        .mockResolvedValueOnce([{ definition_json: parentDefinition }])
+        .mockResolvedValueOnce([{ relation_name: 'viewer', definition_json: parentDefinition }])
         .mockResolvedValueOnce([]);
       const response = await adminRelationshipTupleCreateHandler(context({ body: edge }));
       expect(response.status).toBe(201);
@@ -490,12 +767,50 @@ describe('admin ReBAC APIs', () => {
       resolved_via: 'direct',
       path: ['tuple-1'],
     });
-    expect(mocks.check).toHaveBeenCalledWith(
-      expect.objectContaining({
-        tenant_id: 'tenant-a',
-        context: withContext ? { contextual_tuples } : undefined,
-      })
-    );
+    expect(mocks.check).toHaveBeenCalledWith({
+      tenantId: 'tenant-a',
+      subjectId: 'user-1',
+      relation: 'viewer',
+      objectType: 'document',
+      objectId: 'doc-1',
+      ...(withContext && {
+        contextualTuples: [{ relation: 'viewer', objectType: 'document', objectId: 'doc-1' }],
+      }),
+    });
+    // Group usersets: the service reads the subject's groups from its account.
+    const { ReBACService } = await import('@authrim/ar-lib-core/rebac/rebac-service');
+    const config = vi.mocked(ReBACService).mock.lastCall?.[1];
+    expect(typeof config?.subject_groups).toBe('function');
+  });
+
+  it('keeps user_id as before: one leading user: is taken away', async () => {
+    for (const [given, stored] of [
+      ['user:alice', 'alice'],
+      ['user:user:alice', 'user:alice'],
+      ['alice', 'alice'],
+    ]) {
+      mocks.check.mockClear();
+      await adminRelationshipCheckHandler(
+        context({ body: { user_id: given, relation: 'viewer', object: 'document:d' } })
+      );
+      expect(mocks.check.mock.calls[0]?.[0]).toMatchObject({ subjectId: stored });
+    }
+  });
+
+  it('takes subject_id verbatim (a stored id may start with user:)', async () => {
+    for (const subject of ['user:alice', 'alice']) {
+      mocks.check.mockClear();
+      await adminRelationshipCheckHandler(
+        context({ body: { subject_id: subject, relation: 'viewer', object: 'document:d' } })
+      );
+      expect(mocks.check).toHaveBeenCalledWith({
+        tenantId: 'tenant-a',
+        subjectId: subject,
+        relation: 'viewer',
+        objectType: 'document',
+        objectId: 'd',
+      });
+    }
   });
 
   it('handles permission check failures', async () => {

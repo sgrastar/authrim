@@ -75,9 +75,12 @@ describe.each(routes)('POST %s', (path, validBody, errorMessage) => {
     expect(probe.flagCalls).toEqual([]);
   });
 
-  it('builds the service from the core adapter and the cache KV', async () => {
+  it('builds the service from the core adapter, the cache KV and the subject groups', async () => {
     await post(path, validBody, makeEnv({ REBAC_CACHE_KV: KV }));
-    expect(probe.serviceFactoryArgs).toEqual([[probe.adapter, KV]]);
+    // The third argument resolves the subject's groups for group usersets.
+    expect(probe.serviceFactoryArgs).toEqual([
+      [probe.adapter, KV, expect.any(Function), undefined],
+    ]);
   });
 
   it('fails closed when ReBAC is disabled for the trimmed tenant', async () => {
@@ -220,10 +223,47 @@ describe('POST /api/rebac/batch-check', () => {
     expect(probe.flagCalls).toEqual([['t1'], ['t2']]);
     expect(probe.service.batchCheck.mock.calls[0]?.[0]).toStrictEqual({
       checks: [
-        { ...checkBody, tenant_id: 't1' },
+        { ...checkBody, tenant_id: 't1', object_type: undefined },
         { ...checkBody, tenant_id: 't2', object_type: 'doc' },
       ],
     });
+  });
+});
+
+describe('contextual tuples on /api/rebac/check and /api/rebac/batch-check', () => {
+  const context = {
+    contextual_tuples: [{ user_id: 'user:1', relation: 'blocked', object: 'doc:1' }],
+  };
+
+  it('are forwarded the same way by both endpoints', async () => {
+    await post('/api/rebac/check', { ...checkBody, context });
+    expect(probe.service.check.mock.calls[0]?.[0]).toMatchObject({ context });
+    await post('/api/rebac/batch-check', { checks: [{ ...checkBody, context }] });
+    expect(probe.service.batchCheck.mock.calls[0]?.[0]).toMatchObject({
+      checks: [{ context }],
+    });
+  });
+
+  it.each([
+    ['not an array', { contextual_tuples: 'x' }],
+    ['a tuple without a relation', { contextual_tuples: [{ user_id: 'u', object: 'doc:1' }] }],
+    [
+      'more than 100 tuples',
+      {
+        contextual_tuples: Array.from({ length: 101 }, () => ({
+          user_id: 'u',
+          relation: 'r',
+          object: 'doc:1',
+        })),
+      },
+    ],
+  ])('are refused with 400 when %s, on both endpoints', async (_label, bad) => {
+    expect((await post('/api/rebac/check', { ...checkBody, context: bad })).status).toBe(400);
+    expect(
+      (await post('/api/rebac/batch-check', { checks: [{ ...checkBody, context: bad }] })).status
+    ).toBe(400);
+    expect(probe.service.check).not.toHaveBeenCalled();
+    expect(probe.service.batchCheck).not.toHaveBeenCalled();
   });
 });
 
@@ -262,7 +302,7 @@ describe('POST /api/rebac/list-users', () => {
     [1000, 1000],
     [5000, 1000],
   ])('limits %s to %s', async (limit, expected) => {
-    probe.service.listUsers.mockResolvedValue({ users: ['user:1'] });
+    probe.service.listUsers.mockResolvedValue({ user_ids: ['1', 'user:2'] });
     const result = await post(route, {
       ...listUsersBody,
       object_type: 'doc',
@@ -270,7 +310,8 @@ describe('POST /api/rebac/list-users', () => {
       cursor: 'next',
     });
     expect(result.status).toBe(200);
-    expect(result.json).toEqual({ users: ['user:1'] });
+    // As this API takes ids back: `user:` + the stored id (a check strips one `user:`).
+    expect(result.json).toEqual({ user_ids: ['user:1', 'user:user:2'] });
     expect(probe.service.listUsers.mock.calls[0]?.[0]).toStrictEqual({
       tenant_id: 't1',
       object: 'doc:1',

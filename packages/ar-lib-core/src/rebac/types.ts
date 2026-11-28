@@ -83,7 +83,49 @@ export type CheckResolutionMethod =
   | 'computed' // Computed via relation definition (union, tuple-to-userset)
   | 'cache' // Resolved from KV cache
   | 'closure' // Resolved from closure table (listObjects/listUsers only)
-  | 'context'; // Resolved from contextual tuples in request
+  | 'context' // Resolved from contextual tuples in request
+  // Denied because a group userset could not be decided: the subject's membership of a group
+  // with a userset tuple on the path is unknown (see SubjectGroupsResolver). Never cached.
+  | 'unknown_membership';
+
+/**
+ * A subject's groups, as the evaluation of group usersets reads them (resolveSubjectGroups):
+ * the effective groups (direct memberships and their active ancestors) and the groups whose
+ * membership is not known (neither member nor known non-member).
+ */
+export interface SubjectGroupState {
+  effectiveGroupIds: Iterable<string>;
+  unknownGroupIds: Iterable<string>;
+}
+
+/**
+ * Resolves a subject's groups for group usersets (`(group:G)#member` tuples). It may throw when
+ * the memberships cannot be read: a userset on the path is then undecided (`unknown_membership`).
+ */
+export type SubjectGroupsResolver = (
+  tenantId: string,
+  subjectId: string
+) => Promise<SubjectGroupState>;
+
+/**
+ * A check of an already resolved subject (taken verbatim: a persistent id may contain `:`) and
+ * a typed object (ReBACService.checkResolved). `contextualTuples` are request-specific tuples of
+ * that subject; a check with them is never cached.
+ */
+export interface ResolvedCheckRequest {
+  tenantId: string;
+  subjectId: string;
+  relation: string;
+  objectType: string;
+  objectId: string;
+  contextualTuples?: ReadonlyArray<{ relation: string; objectType: string; objectId: string }>;
+}
+
+/** Options of one check beyond its request. */
+export interface ReBACCheckOptions {
+  /** Overrides the service's resolver of the subject's groups for this check. */
+  subjectGroups?: SubjectGroupsResolver;
+}
 
 /**
  * Batch check request
@@ -317,6 +359,17 @@ export interface ListObjectsResponse {
   object_ids: string[];
   /** Pagination cursor for next page */
   next_cursor?: string;
+  /**
+   * The list leaves group usersets out (it cannot enumerate them): true when the tenant has a
+   * group userset tuple for the relation on the object type, so objects the subject reaches only
+   * through a group's membership are missing from `object_ids`.
+   */
+  userset_subjects_omitted: boolean;
+  /**
+   * The list does not enumerate computed relations either: true when an active definition of
+   * the object type contains a `tuple_to_userset` (what holds through it is missing).
+   */
+  computed_relations_omitted: boolean;
 }
 
 /**
@@ -341,6 +394,17 @@ export interface ListUsersResponse {
   user_ids: string[];
   /** Pagination cursor for next page */
   next_cursor?: string;
+  /**
+   * The list leaves group usersets out (it cannot enumerate them): true when the object has a
+   * group userset tuple for the relation, so subjects that hold it only as a group's members are
+   * missing from `user_ids`.
+   */
+  userset_subjects_omitted: boolean;
+  /**
+   * The list does not enumerate computed relations either: true when an active definition of
+   * the object type contains a `tuple_to_userset` (what holds through it is missing).
+   */
+  computed_relations_omitted: boolean;
 }
 
 // =============================================================================
@@ -394,6 +458,17 @@ export interface ReBACConfig {
   enable_closure_table?: boolean;
   /** Batch size for closure table updates */
   closure_batch_size?: number;
+  /**
+   * Resolves a subject's groups for group usersets. Without it, a check that meets a group
+   * userset cannot decide it (`unknown_membership`).
+   */
+  subject_groups?: SubjectGroupsResolver;
+  /**
+   * Where the tenant's ReBAC version is kept (getReBACTenantVersion; every tuple and definition
+   * write bumps it). Cached results are keyed by it. Without it, a shared `cache_namespace` is
+   * not used.
+   */
+  version_namespace?: KVNamespace;
 }
 
 // =============================================================================
@@ -407,7 +482,7 @@ export const DEFAULT_CACHE_TTL = 60;
 export const DEFAULT_MAX_DEPTH = 5;
 
 /** Cache key prefix for ReBAC */
-export const REBAC_CACHE_PREFIX = 'rebac:check:';
+export const REBAC_CACHE_PREFIX = 'rebac:check:v3:';
 
 /** Closure table batch size */
 export const DEFAULT_CLOSURE_BATCH_SIZE = 100;

@@ -67,6 +67,47 @@ describe('who may do what', () => {
 	it('gives the super administrator the highest ceiling', () => {
 		expect(authzAccess(persona('platform').access).grantCeiling).toBe(3);
 	});
+
+	it('reads relationships with the roles’ read, changes and checks with write, deletes with delete', () => {
+		expect(authzAccess(persona('tenant').access)).toMatchObject({
+			rebacRead: true,
+			rebacWrite: true,
+			rebacDelete: true
+		});
+		expect(authzAccess(persona('viewer').access)).toMatchObject({
+			rebacRead: true,
+			rebacWrite: false,
+			rebacDelete: false
+		});
+		// Without the roles’ read nothing is open, whatever else is held.
+		const onlyWrite = authzAccess({
+			platform: false,
+			roles: [],
+			permissions: ['admin:roles:write', 'admin:roles:delete']
+		});
+		expect(onlyWrite).toMatchObject({ rebacRead: false, rebacWrite: false, rebacDelete: false });
+		// Custom role with the permissions but not the tenant administrator role: read-only.
+		const custom = authzAccess({
+			platform: false,
+			roles: ['custom_role'],
+			permissions: ['admin:roles:read', 'admin:roles:write', 'admin:roles:delete']
+		});
+		expect(custom).toMatchObject({ rebacRead: true, rebacWrite: false, rebacDelete: false });
+		// The role without the permission is no better.
+		const roleOnly = authzAccess({
+			platform: false,
+			roles: ['ar_tenant_admin'],
+			permissions: ['admin:roles:read']
+		});
+		expect(roleOnly).toMatchObject({ rebacRead: true, rebacWrite: false, rebacDelete: false });
+		const both = authzAccess({
+			platform: false,
+			roles: ['ar_tenant_admin'],
+			permissions: ['admin:roles:read', 'admin:roles:write']
+		});
+		expect(both).toMatchObject({ rebacWrite: true, rebacDelete: false });
+		expect(authzAccess(persona('platform').access).rebacWrite).toBe(true);
+	});
 });
 
 describe('groups', () => {
@@ -447,6 +488,14 @@ describe('finding a user', () => {
 		]);
 		await expect(search('a@example.com', new AbortController().signal)).resolves.toEqual([]);
 		await expect(search('', new AbortController().signal)).resolves.toEqual([]);
+	});
+
+	it('offers an ID with colons whole, as typed', async () => {
+		const list = vi.fn(async () => ({ users: [], next: null, total: 0 }));
+		const search = userSearch({ list } as never, options);
+		await expect(search('team:alice', new AbortController().signal)).resolves.toEqual([
+			expect.objectContaining({ value: 'team:alice', label: 'team:alice' })
+		]);
 	});
 
 	it('leaves out users already in', async () => {

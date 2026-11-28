@@ -40,7 +40,10 @@ function createMockAdapter(
   return {
     query: vi.fn().mockImplementation((sql: string, params: unknown[]) => {
       // Parse params based on SQL pattern
-      if (sql.includes('SELECT id FROM relationships')) {
+      if (
+        sql.includes('SELECT id FROM relationships') ||
+        sql.includes('SELECT id, expires_at FROM relationships')
+      ) {
         // DirectRelation query
         const [tenantId, fromType, fromId, toType, toId, relType] = params as string[];
         const matches = relationships.filter(
@@ -53,7 +56,7 @@ function createMockAdapter(
         );
         return Promise.resolve(matches.map((r) => ({ id: r.id })));
       }
-      if (sql.includes('SELECT to_type, to_id FROM relationships')) {
+      if (sql.includes('SELECT to_type, to_id')) {
         // TupleToUserset query - find related objects
         const tenantId = params[0] as string;
         const fromType = params[1] as string;
@@ -298,7 +301,7 @@ describe('ReBAC Depth Limit Tests', () => {
   });
 
   describe('Cycle Detection via Visited Set', () => {
-    it('should return false when visiting the same node twice', async () => {
+    it('should leave a relation already on the current path undecided (a cycle)', async () => {
       const adapter = createMockAdapter([
         {
           id: 'rel_1',
@@ -309,14 +312,7 @@ describe('ReBAC Depth Limit Tests', () => {
           relationship_type: 'viewer',
         },
       ]);
-      const expression: DirectRelation = {
-        type: 'direct',
-        relation: 'viewer',
-      };
-
-      // Pre-populate visited set with the same visit key
-      // Format: {user_type}:{user_id}:{expr_type}:{relation}:{object_type}:{object_id}
-      const visitKey = 'subject:user_123:direct:viewer:document:doc_456';
+      // The path holds relations as {object_type}:{object_id}#{relation}
       const ctx: RelationEvaluationContext = {
         tenant_id: 'tenant_1',
         user_id: 'user_123',
@@ -325,15 +321,13 @@ describe('ReBAC Depth Limit Tests', () => {
         object_id: 'doc_456',
         depth: 0,
         max_depth: 5,
-        visited: new Set([visitKey]),
+        visited: new Set(['document:doc_456#viewer']),
       };
 
-      const result = await parser.evaluate(expression, ctx, adapter);
-
-      // Should return false because node was already visited
-      expect(result).toBe(false);
+      expect(await parser.evaluateRelation('document', 'doc_456', 'viewer', ctx, adapter)).toBe(
+        'unknown'
+      );
     });
-
     it('should allow evaluation of unvisited nodes', async () => {
       const adapter = createMockAdapter([
         {
@@ -368,7 +362,7 @@ describe('ReBAC Depth Limit Tests', () => {
       expect(result).toBe(true);
     });
 
-    it('should add visited node to set after evaluation', async () => {
+    it('should not record a direct leaf (a sibling branch may evaluate it again)', async () => {
       const adapter = createMockAdapter([
         {
           id: 'rel_1',
@@ -386,27 +380,16 @@ describe('ReBAC Depth Limit Tests', () => {
 
       const ctx = createEvaluationContext('tenant_1', 'user_123', 'document', 'doc_456');
 
+      expect(await parser.evaluate(expression, ctx, adapter)).toBe(true);
+      expect(await parser.evaluate(expression, ctx, adapter)).toBe(true);
       expect(ctx.visited.size).toBe(0);
-
-      await parser.evaluate(expression, ctx, adapter);
-
-      // Visited set should now contain the visit key
-      // Format: {user_type}:{user_id}:{expr_type}:{relation}:{object_type}:{object_id}
-      expect(ctx.visited.size).toBe(1);
-      expect(ctx.visited.has('subject:user_123:direct:viewer:document:doc_456')).toBe(true);
     });
-
-    it('should use correct visit key format', async () => {
+    it('should keep a relation on its own branch path only', async () => {
       const adapter = createMockAdapter([]);
-      const expression: DirectRelation = {
-        type: 'direct',
-        relation: 'editor',
-      };
-
       const ctx: RelationEvaluationContext = {
         tenant_id: 'my_tenant',
         user_id: 'alice',
-        user_type: 'group',
+        user_type: 'subject',
         object_type: 'folder',
         object_id: 'shared_docs',
         depth: 0,
@@ -414,13 +397,12 @@ describe('ReBAC Depth Limit Tests', () => {
         visited: new Set(),
       };
 
-      await parser.evaluate(expression, ctx, adapter);
-
-      // Visit key format: {user_type}:{user_id}:{expr_type}:{relation}:{object_type}:{object_id}
-      const expectedKey = 'group:alice:direct:editor:folder:shared_docs';
-      expect(ctx.visited.has(expectedKey)).toBe(true);
+      expect(await parser.evaluateRelation('folder', 'shared_docs', 'editor', ctx, adapter)).toBe(
+        'deny'
+      );
+      // The caller's path is not changed by the branch.
+      expect(ctx.visited.size).toBe(0);
     });
-
     it('should differentiate visit keys by expression type', async () => {
       const adapter = createMockAdapter([
         {
@@ -835,7 +817,7 @@ describe('ReBAC Depth Limit Tests', () => {
 
   describe('Security: Preventing Infinite Loops', () => {
     it('should prevent self-referential cycles', async () => {
-      // Scenario: document references itself as parent
+      // Scenario: document references itself as parent, and viewer inherits from the parent
       const adapter = createMockAdapter([
         {
           id: 'rel_self',
@@ -847,22 +829,34 @@ describe('ReBAC Depth Limit Tests', () => {
         },
       ]);
 
-      const expression: DirectRelation = {
-        type: 'direct',
-        relation: 'parent',
-      };
+      const ctx = createEvaluationContext('tenant_1', 'user_1', 'document', 'doc_123', 5, {
+        definitions: async () => ({
+          state: 'usable',
+          exclusive: false,
+          computed: true,
+          definition: {
+            id: 'def',
+            tenant_id: 'tenant_1',
+            object_type: 'document',
+            relation_name: 'viewer',
+            definition: {
+              type: 'tuple_to_userset',
+              tupleset: { relation: 'parent' },
+              computed_userset: { relation: 'viewer' },
+            },
+            priority: 0,
+            is_active: true,
+            created_at: 0,
+            updated_at: 0,
+          },
+        }),
+      });
 
-      const ctx = createEvaluationContext('tenant_1', 'doc_123', 'document', 'doc_123');
-      ctx.user_type = 'document'; // Treating document as the "user" side
-
-      // First evaluation should succeed
-      const result1 = await parser.evaluate(expression, ctx, adapter);
-
-      // If we try to evaluate again with same context, visited set prevents it
-      const result2 = await parser.evaluate(expression, ctx, adapter);
-      expect(result2).toBe(false); // Cycle detected
+      // The parent is the document itself: the cycle ends undecided (never an allow).
+      expect(await parser.evaluateRelation('document', 'doc_123', 'viewer', ctx, adapter)).toBe(
+        'unknown'
+      );
     });
-
     it('should log warning when max_depth is exceeded', async () => {
       const adapter = createMockAdapter([]);
       const expression: DirectRelation = {

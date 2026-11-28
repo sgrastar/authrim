@@ -83,6 +83,21 @@ describe('the policies and attributes items of Access', () => {
 		expect(policies?.details).toBe(true);
 	});
 
+	it('opens relationships with the roles’ read permission, as the rebac API asks', () => {
+		const relationships = access?.children.find((child) => child.id === 'relationships');
+		expect(relationships?.requires).toEqual({ permission: 'admin:roles:read' });
+		expect(relationships?.platform).toBe('tenant');
+		expect(relationships && navItemLevel(relationships, only('admin:roles:read'), 'tenant')).toBe(
+			'view'
+		);
+		expect(relationships && navItemLevel(relationships, only('admin:groups:read'), 'tenant')).toBe(
+			'none'
+		);
+		expect(relationships && navItemLevel(relationships, tenant, 'tenant')).not.toBe('none');
+		// …/relationships/definitions/<id> belongs to the item.
+		expect(relationships?.details).toBe(true);
+	});
+
 	it('no longer list an attributes item: its switch is on Settings → Authorization', () => {
 		expect(access?.children.some((child) => child.id === 'attributes')).toBe(false);
 	});

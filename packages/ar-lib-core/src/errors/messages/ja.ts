@@ -178,6 +178,9 @@ export const errorMessagesJa: ErrorMessages = {
   'policy.rebac_tuple_type_not_allowed.title': '受け付けない関係タプルの種類です',
   'policy.rebac_tuple_type_not_allowed.detail':
     '関係タプルの元は、主体、グループ、または tuple_to_userset の元として定義されたオブジェクト種別と関係のいずれかである必要があります。',
+  'policy.rebac_definition_invalid.title': '関係定義が正しくありません',
+  'policy.rebac_definition_invalid.detail':
+    '関係定義の式が正しくありません。各ノードには既知の type（direct、union、tuple_to_userset、intersection、exclusion）と、その type に必要な項目が要ります。',
 
   // ============================================
   // Admin API (ADMIN)

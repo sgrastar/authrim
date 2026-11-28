@@ -45,7 +45,9 @@ import type {
 } from '../types/check-api';
 import type { CheckAuditService, PermissionCheckAuditEntry } from './check-audit-service';
 import { generateAuditId } from './check-audit-service';
-import type { ReBACService, CheckRequest as ReBACCheckRequest } from '../rebac';
+import type { ReBACService, SubjectGroupsResolver } from '../rebac';
+import { parseObjectString } from '../rebac/relation-parser';
+import { externalSubjectId } from '../rebac/rebac-service';
 import { hasIdLevelPermission } from '../utils/resource-permissions';
 import { NO_RESOURCE_CONTEXT_RESOLVER } from './resource-context-resolver';
 import { createLogger } from '../utils/logger';
@@ -329,6 +331,8 @@ interface CheckContext {
   subjectUnknownGroupIds?: string[];
   /** The verified attributes were wanted but could not be read */
   attributesUnavailable?: boolean;
+  /** The relationship check was left undecided by a group membership (`unknown_membership`) */
+  rebacUndecided?: boolean;
 }
 
 /**
@@ -698,12 +702,18 @@ export class UnifiedCheckService {
 
     // The subject under the account router's canonical id, for every lookup and comparison
     // below (attributes, roles, memberships, relationships, the resource owner). One that does not
-    // resolve keeps the request's id; its roles then cannot be read (the role check fails).
+    // resolve is denied here: no stage may evaluate the request's raw id (a contextual tuple or a
+    // resource owner naming it would otherwise grant).
     if (this.subjectAccount) {
       try {
         context.subjectId = (await this.subjectRBACDatabases(context)).subjectId;
       } catch {
-        // Resolved again (and refused) by the role check.
+        return {
+          allowed: false,
+          resolvedVia: [],
+          reason: 'no_matching_permission',
+          debug: { matched_rules: [] },
+        };
       }
     }
 
@@ -764,10 +774,17 @@ export class UnifiedCheckService {
       };
     }
 
-    // 3a. Self contract: a direct tuple from the bound subject, for the relation the resolver
-    // named (only when the tenant enables ReBAC; no usersets, no computed relations)
-    if (context.contract === 'self' && context.selfRelation && context.policy.rebac === true) {
-      if (await this.hasDirectSubjectTuple(context, context.selfRelation)) {
+    // 3a. Self contract: the relationship check of the bound subject, for the relation and object
+    // the resolver named (only when the tenant enables ReBAC): direct tuples, group usersets,
+    // relation definitions and exclusion apply as on the server contract
+    if (
+      context.contract === 'self' &&
+      context.selfRelation &&
+      this.rebacService &&
+      context.policy.rebac === true
+    ) {
+      const selfResult = await this.checkSelfRelation(context, context.selfRelation);
+      if (selfResult.allowed) {
         const { relation, object_type, object_id } = context.selfRelation;
         matchedRules.push(`rebac:${relation}@${object_type}:${object_id}`);
         return {
@@ -808,11 +825,11 @@ export class UnifiedCheckService {
       }
     }
 
-    // No match - deny
+    // No match - deny (a relationship a group membership left undecided says so)
     return {
       allowed: false,
       resolvedVia: [],
-      reason: 'no_matching_permission',
+      reason: context.rebacUndecided ? 'unknown_membership' : 'no_matching_permission',
       debug: { matched_rules: [] },
     };
   }
@@ -954,42 +971,51 @@ export class UnifiedCheckService {
   }
 
   /**
-   * Whether a direct, unexpired tuple from the subject (`from_type = 'subject'`) to the object with
-   * the relation exists (the self contract's relationship check). Errors grant nothing.
+   * The subject's groups as the role check read them, for group usersets: when they could not be
+   * read, it throws (a userset on the path is then undecided and grants nothing).
    */
-  private async hasDirectSubjectTuple(
+  private subjectGroupsOf(context: CheckContext): SubjectGroupsResolver {
+    return async () => {
+      if (!context.subjectGroupIds) throw new Error('subject_groups_unread');
+      return {
+        effectiveGroupIds: context.subjectGroupIds,
+        unknownGroupIds: context.subjectUnknownGroupIds ?? [],
+      };
+    };
+  }
+
+  /**
+   * The self contract's relationship check: ReBACService.checkResolved for the bound subject (its
+   * resolved id, taken verbatim) and the relation and object the resolver named. Errors grant
+   * nothing.
+   */
+  private async checkSelfRelation(
     context: CheckContext,
     target: { relation: string; object_type: string; object_id: string }
-  ): Promise<boolean> {
+  ): Promise<{ allowed: boolean }> {
+    if (!this.rebacService) return { allowed: false };
     try {
-      const row = await this.db.queryOne<{ id: string }>(
-        `SELECT id FROM relationships
-          WHERE tenant_id = ?
-            AND from_type = 'subject'
-            AND from_id = ?
-            AND to_type = ?
-            AND to_id = ?
-            AND relationship_type = ?
-            AND (expires_at IS NULL OR expires_at > ?)
-          LIMIT 1`,
-        [
-          context.tenantId,
-          context.subjectId,
-          target.object_type,
-          target.object_id,
-          target.relation,
-          Math.floor(Date.now() / 1000),
-        ]
+      const result = await this.rebacService.checkResolved(
+        {
+          tenantId: context.tenantId,
+          subjectId: context.subjectId,
+          relation: target.relation,
+          objectType: target.object_type,
+          objectId: target.object_id,
+        },
+        { subjectGroups: this.subjectGroupsOf(context) }
       );
-      return row !== null && row !== undefined;
+      if (result.resolved_via === 'unknown_membership') context.rebacUndecided = true;
+      return { allowed: result.allowed };
     } catch (error) {
       log.error('Self-contract relationship check error', {}, error as Error);
-      return false;
+      return { allowed: false };
     }
   }
 
   /**
-   * Check ReBAC relationship permission
+   * Check ReBAC relationship permission (server contract): the subject is the check's resolved
+   * subject (verbatim); the request's object and contextual tuples are typed strings.
    */
   private async checkReBACPermission(
     context: CheckContext
@@ -999,25 +1025,31 @@ export class UnifiedCheckService {
     }
 
     try {
-      const checkRequest: ReBACCheckRequest = {
-        tenant_id: context.tenantId,
-        user_id: context.subjectId,
-        relation: context.rebacParams.relation,
-        object: context.rebacParams.object,
-      };
+      const object = parseObjectString(context.rebacParams.object);
+      // A contextual tuple is the subject's when its subject, read as the API boundary reads one
+      // (a single leading `user:` taken away), is the resolved stored id: never both a stored id
+      // and `user:` + it.
+      const contextualTuples = context.rebacParams.contextual_tuples?.length
+        ? context.rebacParams.contextual_tuples
+            .filter((tuple) => externalSubjectId(tuple.user_id) === context.subjectId)
+            .map((tuple) => {
+              const target = parseObjectString(tuple.object);
+              return { relation: tuple.relation, objectType: target.type, objectId: target.id };
+            })
+        : undefined;
 
-      // Pass contextual tuples if provided
-      if (context.rebacParams.contextual_tuples?.length) {
-        checkRequest.context = {
-          contextual_tuples: context.rebacParams.contextual_tuples.map((t) => ({
-            user_id: t.user_id,
-            relation: t.relation,
-            object: t.object,
-          })),
-        };
-      }
-
-      const result = await this.rebacService.check(checkRequest);
+      const result = await this.rebacService.checkResolved(
+        {
+          tenantId: context.tenantId,
+          subjectId: context.subjectId,
+          relation: context.rebacParams.relation,
+          objectType: object.type,
+          objectId: object.id,
+          ...(contextualTuples && { contextualTuples }),
+        },
+        { subjectGroups: this.subjectGroupsOf(context) }
+      );
+      if (result.resolved_via === 'unknown_membership') context.rebacUndecided = true;
 
       return {
         allowed: result.allowed,

@@ -10,6 +10,7 @@
  */
 
 import { mayManageEndUserRole } from './role-delegation';
+import { bumpTenantReBACVersion } from './rebac-version';
 export { canGrantRole } from './role-delegation';
 import { Context } from 'hono';
 import type { Env, AdminAuthContext } from '@authrim/ar-lib-core';
@@ -1034,6 +1035,8 @@ export async function adminUserRelationshipCreateHandler(c: Context<{ Bindings: 
         409
       );
     }
+    // Relationship tuples share the ReBAC version: the policy service's cached results go.
+    await bumpTenantReBACVersion(c, tenantId);
 
     return c.json(
       {
@@ -1102,6 +1105,7 @@ export async function adminUserRelationshipDeleteHandler(c: Context<{ Bindings: 
       relationshipId,
       tenantId,
     ]);
+    await bumpTenantReBACVersion(c, tenantId);
 
     return c.json({
       success: true,

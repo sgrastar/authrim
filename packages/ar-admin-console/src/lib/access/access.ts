@@ -347,8 +347,8 @@ export function tenantsAccess(access: AdminAccess): TenantsAccess {
 }
 
 /**
- * What the admin can do on the end-user authorization pages (Users → Groups, Access → Roles and
- * Policies, Access check), as the Admin API checks it. A change to a group that carries roles also takes
+ * What the admin can do on the end-user authorization pages (Users → Groups, Access → Roles,
+ * Policies and Relationships, Access check), as the Admin API checks it. A change to a group that carries roles also takes
  * the roles' write permission and a grant ceiling that covers each of its roles (the API checks
  * that per group): the console shows the ceiling, the API decides.
  */
@@ -376,6 +376,15 @@ export interface AuthzAccess {
 	 * policy routes gate with the roles' write permission, besides `admin:policy:simulate`.
 	 */
 	policiesSimulate: boolean;
+	/** See relationships: definitions, tuples (`admin:roles:read`, as the API's read routes ask). */
+	rebacRead: boolean;
+	/**
+	 * Create and change definitions, add tuples and run the relationship check: all POST or PUT,
+	 * which the routes gate with the roles' write permission and the tenant administrator role.
+	 */
+	rebacWrite: boolean;
+	/** Delete definitions and tuples (`admin:roles:delete` and the tenant administrator role). */
+	rebacDelete: boolean;
 	/**
 	 * The highest role grant tier the admin may create, change, give or take away (0: none): the
 	 * session's `max_grant_tier`, else the highest `maxGrantTier` of their admin roles.
@@ -387,6 +396,11 @@ export function authzAccess(access: AdminAccess): AuthzAccess {
 	const groupsRead = hasPermission(access, 'admin:groups:read');
 	const rolesRead = hasPermission(access, 'admin:roles:read');
 	const usersRead = hasPermission(access, 'admin:users:read');
+	// The ReBAC API takes every non-GET from a tenant administrator only (by role name), besides
+	// the permissions: a custom role with the permissions alone sees relationships read-only.
+	const tenantAdmin = access.roles.some((role) =>
+		(ADMIN_ROLE_GROUPS.tenantAdmin as readonly string[]).includes(role)
+	);
 	return {
 		groupsRead,
 		groupsWrite: groupsRead && hasPermission(access, 'admin:groups:write'),
@@ -401,6 +415,9 @@ export function authzAccess(access: AdminAccess): AuthzAccess {
 			rolesRead &&
 			hasPermission(access, 'admin:roles:write') &&
 			hasPermission(access, 'admin:policy:simulate'),
+		rebacRead: rolesRead,
+		rebacWrite: rolesRead && tenantAdmin && hasPermission(access, 'admin:roles:write'),
+		rebacDelete: rolesRead && tenantAdmin && hasPermission(access, 'admin:roles:delete'),
 		grantCeiling: access.maxGrantTier ?? adminMaxGrantTier(access.roles)
 	};
 }

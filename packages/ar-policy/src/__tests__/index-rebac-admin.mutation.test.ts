@@ -23,9 +23,13 @@ import app from '../index';
 const NOW_MS = 1_700_000_123_456;
 const NOW_S = 1_700_000_123;
 const KV = { marker: 'kv' };
+/** REBAC_CACHE: where the tenant's ReBAC version is kept. */
+const VERSIONS = { marker: 'versions' };
 const HUB = { marker: 'hub' };
 
 const ADMIN = { 'X-Test-Admin': 'alice', 'X-Test-Admin-Tenant': 't1' };
+/** An administrator who may also grant roles (group usersets need it). */
+const ROLE_ADMIN = { ...ADMIN, 'X-Test-Perms': 'roles' };
 
 function makeEnv(overrides: Record<string, unknown> = {}) {
   return {
@@ -33,6 +37,7 @@ function makeEnv(overrides: Record<string, unknown> = {}) {
     ENABLE_REBAC: 'true',
     RATE_LIMITER: createRateLimiterStub(),
     REBAC_CACHE_KV: KV,
+    REBAC_CACHE: VERSIONS,
     PERMISSION_CHANGE_HUB: HUB,
     ...overrides,
   };
@@ -228,6 +233,7 @@ describe('POST /api/rebac/write', () => {
       'viewer',
       'subject',
       'u1',
+      null,
       'document',
       'doc1',
       'full',
@@ -247,6 +253,7 @@ describe('POST /api/rebac/write', () => {
         relation: 'viewer',
         subject_type: 'subject',
         subject_id: 'u1',
+        from_relation: null,
         expires_at: 1_800_000_000,
         created_at: NOW_S,
       },
@@ -254,7 +261,9 @@ describe('POST /api/rebac/write', () => {
 
     expect(probe.service.invalidateCache).toHaveBeenCalledTimes(1);
     expect(probe.service.invalidateCache).toHaveBeenCalledWith('t1', 'document', 'doc1', 'viewer');
-    expect(probe.serviceFactoryArgs).toEqual([[probe.adapter, KV]]);
+    expect(probe.serviceFactoryArgs).toEqual([[probe.adapter, KV, expect.any(Function), VERSIONS]]);
+    // The tenant's ReBAC version is bumped (cached results retired) on every write.
+    expect(probe.versionBumps).toEqual(['t1']);
 
     expect(probe.notifierOptions).toEqual([
       {
@@ -281,7 +290,7 @@ describe('POST /api/rebac/write', () => {
     const result = await call('POST', '/api/rebac/write', tupleBody);
     expect(result.status).toBe(200);
     const params = must(probe.adapter.execute.mock.calls[0])[1] as unknown[];
-    expect(params[8]).toBeNull();
+    expect(params[9]).toBeNull();
     expect(result.json.tuple).not.toHaveProperty('expires_at');
   });
 
@@ -295,14 +304,22 @@ describe('POST /api/rebac/write', () => {
     expect(probe.adapter.execute).toHaveBeenCalledTimes(1);
     const update = must(probe.adapter.execute.mock.calls[0]);
     expect(update[0]).toContain('UPDATE relationships');
-    expect(update[1]).toEqual([1_800_000_000, NOW_S, 'existing-1', 't1']);
+    // The row is normalised to the stored source shape as well.
+    expect(update[1]).toEqual([1_800_000_000, NOW_S, 'subject', null, 'existing-1', 't1']);
     expect((result.json.tuple as { id: string }).id).toBe('existing-1');
   });
 
   it('clears the expiry of an existing tuple when none is given', async () => {
     probe.adapter.queryOne.mockResolvedValue({ id: 'existing-1' });
     await call('POST', '/api/rebac/write', tupleBody);
-    expect(must(probe.adapter.execute.mock.calls[0])[1]).toEqual([null, NOW_S, 'existing-1', 't1']);
+    expect(must(probe.adapter.execute.mock.calls[0])[1]).toEqual([
+      null,
+      NOW_S,
+      'subject',
+      null,
+      'existing-1',
+      't1',
+    ]);
   });
 
   it('resolves a unique-constraint race to the winning tuple', async () => {
@@ -318,7 +335,7 @@ describe('POST /api/rebac/write', () => {
     expect(relookup[1]).toEqual(['t1', 'subject', 'user', 'u1', 'document', 'doc1', 'viewer']);
     const update = must(probe.adapter.execute.mock.calls[1]);
     expect(update[0]).toContain('UPDATE relationships');
-    expect(update[1]).toEqual([5, NOW_S, 'raced-1', 't1']);
+    expect(update[1]).toEqual([5, NOW_S, 'subject', null, 'raced-1', 't1']);
     expect((result.json.tuple as { id: string }).id).toBe('raced-1');
   });
 
@@ -342,7 +359,14 @@ describe('POST /api/rebac/write', () => {
       .mockRejectedValueOnce(new Error('UNIQUE constraint failed'))
       .mockResolvedValueOnce({ rowsAffected: 1 });
     await call('POST', '/api/rebac/write', tupleBody);
-    expect(must(probe.adapter.execute.mock.calls[1])[1]).toEqual([null, NOW_S, 'raced-1', 't1']);
+    expect(must(probe.adapter.execute.mock.calls[1])[1]).toEqual([
+      null,
+      NOW_S,
+      'subject',
+      null,
+      'raced-1',
+      't1',
+    ]);
   });
 
   it('fails when the raced tuple cannot be found again', async () => {
@@ -415,14 +439,16 @@ describe('ReBAC tuple type rules on /api/rebac/write and DELETE /api/rebac/tuple
       ['DELETE', '/api/rebac/tuples'],
     ] as const) {
       const group = { ...tupleBody, subject_type: 'group', subject_id: 'grp1' };
-      expect((await call(method, path, { ...group, from_relation: 'member' })).status).toBe(200);
+      expect(
+        (await call(method, path, { ...group, from_relation: 'member' }, ROLE_ADMIN)).status
+      ).toBe(200);
       for (const body of [
         { ...group, from_relation: 'owner' },
         { ...group, from_relation: 7 },
         { ...tupleBody, from_relation: 'member' },
       ]) {
         probe.adapter.execute.mockClear();
-        const result = await call(method, path, body);
+        const result = await call(method, path, body, ROLE_ADMIN);
         expect(result.status).toBe(400);
         expect(result.text).toContain('AR050010');
         expect(probe.adapter.execute).not.toHaveBeenCalled();
@@ -430,15 +456,138 @@ describe('ReBAC tuple type rules on /api/rebac/write and DELETE /api/rebac/tuple
     }
   });
 
-  it('stores a group userset as group (not evaluated until usersets are)', async () => {
-    const result = await call('POST', '/api/rebac/write', {
-      ...tupleBody,
-      subject_type: 'group',
-      subject_id: 'grp1',
-    });
+  it('needs the role-grant permission for a group userset, on write and delete', async () => {
+    for (const [method, path] of [
+      ['POST', '/api/rebac/write'],
+      ['DELETE', '/api/rebac/tuples'],
+    ] as const) {
+      probe.adapter.execute.mockClear();
+      const result = await call(method, path, {
+        ...tupleBody,
+        subject_type: 'group',
+        subject_id: 'grp1',
+      });
+      expect(result.status).toBe(403);
+      expect(probe.adapter.execute).not.toHaveBeenCalled();
+    }
+    // A direct subject tuple needs no more than the ReBAC write permission.
+    expect((await call('POST', '/api/rebac/write', tupleBody)).status).toBe(200);
+  });
+
+  it('refuses a group userset on a group a self-writable service group decides', async () => {
+    probe.groupGuard.mockResolvedValueOnce({ kind: 'group_self_writable_attribute' });
+    const result = await call(
+      'POST',
+      '/api/rebac/write',
+      { ...tupleBody, subject_type: 'group', subject_id: 'grp1' },
+      ROLE_ADMIN
+    );
+    expect(result.status).toBe(400);
+    expect(result.json.error).toBe('group_self_writable_attribute');
+    expect(probe.groupGuard).toHaveBeenCalledWith(
+      probe.adapter,
+      't1',
+      'grp1',
+      expect.any(Function)
+    );
+    expect(probe.adapter.execute).not.toHaveBeenCalled();
+    // Taking one away is not refused for that reason.
+    const removed = await call(
+      'DELETE',
+      '/api/rebac/tuples',
+      { ...tupleBody, subject_type: 'group', subject_id: 'grp1' },
+      ROLE_ADMIN
+    );
+    expect(removed.status).toBe(200);
+  });
+
+  it('normalises a legacy group row (no from_relation) found on write', async () => {
+    probe.adapter.queryOne.mockResolvedValue({ id: 'legacy-group' });
+    const result = await call(
+      'POST',
+      '/api/rebac/write',
+      { ...tupleBody, subject_type: 'group', subject_id: 'grp1' },
+      ROLE_ADMIN
+    );
     expect(result.status).toBe(200);
-    const params = must(probe.adapter.execute.mock.calls[0])[1] as unknown[];
-    expect(params.slice(2, 5)).toEqual(['viewer', 'group', 'grp1']);
+    const update = must(probe.adapter.execute.mock.calls[0]);
+    expect(update[0]).toContain('from_type = ?, from_relation = ?');
+    // Under the catalog fence of the guarded write.
+    expect(update[0]).toContain('AND FENCE');
+    expect(update[1]).toEqual([
+      null,
+      NOW_S,
+      'group',
+      'member',
+      'legacy-group',
+      't1',
+      'fence-param',
+    ]);
+  });
+
+  it('refuses an expires_at that is not integer seconds', async () => {
+    for (const expires_at of [1.5, '1800000000', 1e300]) {
+      const result = await call('POST', '/api/rebac/write', { ...tupleBody, expires_at });
+      expect(result.status).toBe(400);
+    }
+    expect(probe.adapter.execute).not.toHaveBeenCalled();
+    expect(
+      (await call('POST', '/api/rebac/write', { ...tupleBody, expires_at: null })).status
+    ).toBe(200);
+  });
+
+  it('deletes a group userset through the guarded write (409 when its fence fails)', async () => {
+    const group = { ...tupleBody, subject_type: 'group', subject_id: 'grp1' };
+    probe.adapter.queryOne.mockResolvedValue({ id: 'u1' });
+    const removed = await call('DELETE', '/api/rebac/tuples', group, ROLE_ADMIN);
+    expect(removed.status).toBe(200);
+    expect(removed.json.deleted).toBe(true);
+    const [sql, params] = must(probe.adapter.execute.mock.calls[0]) as [string, unknown[]];
+    expect(sql).toContain('DELETE FROM relationships');
+    expect(sql).toContain('AND FENCE');
+    expect(params.at(-1)).toBe('fence-param');
+    expect(probe.groupGuard.mock.calls[0]?.[4]).toEqual({ refuseSelfWritable: false });
+    probe.groupGuard.mockResolvedValueOnce({ kind: 'group_version_conflict' });
+    const conflict = await call('DELETE', '/api/rebac/tuples', group, ROLE_ADMIN);
+    expect(conflict.status).toBe(409);
+    expect(conflict.json.error).toBe('group_version_conflict');
+  });
+
+  it('answers 409 when the catalog fence of a group userset write does not hold', async () => {
+    probe.adapter.execute.mockResolvedValue({ rowsAffected: 0 });
+    const result = await call(
+      'POST',
+      '/api/rebac/write',
+      { ...tupleBody, subject_type: 'group', subject_id: 'grp1' },
+      ROLE_ADMIN
+    );
+    expect(result.status).toBe(409);
+    expect(result.json.error).toBe('group_version_conflict');
+    const [sql, params] = must(probe.adapter.execute.mock.calls[0]) as [string, unknown[]];
+    expect(sql).toContain('WHERE FENCE');
+    expect(params.at(-1)).toBe('fence-param');
+    expect(probe.versionBumps).toEqual([]);
+  });
+
+  it('stores a group userset as group with from_relation member, sent or not', async () => {
+    for (const extra of [{}, { from_relation: 'member' }]) {
+      probe.adapter.execute.mockClear();
+      const result = await call(
+        'POST',
+        '/api/rebac/write',
+        {
+          ...tupleBody,
+          subject_type: 'group',
+          subject_id: 'grp1',
+          ...extra,
+        },
+        ROLE_ADMIN
+      );
+      expect(result.status).toBe(200);
+      const params = must(probe.adapter.execute.mock.calls[0])[1] as unknown[];
+      expect(params.slice(2, 6)).toEqual(['viewer', 'group', 'grp1', 'member']);
+      expect(result.json.tuple).toMatchObject({ subject_type: 'group', from_relation: 'member' });
+    }
   });
 
   it('accepts an object edge declared as the source of a tuple_to_userset', async () => {
@@ -457,7 +606,7 @@ describe('ReBAC tuple type rules on /api/rebac/write and DELETE /api/rebac/tuple
       'document',
     ]);
     const params = must(probe.adapter.execute.mock.calls[0])[1] as unknown[];
-    expect(params.slice(2, 7)).toEqual(['parent', 'document', 'doc1', 'folder', 'f1']);
+    expect(params.slice(2, 8)).toEqual(['parent', 'document', 'doc1', null, 'folder', 'f1']);
   });
 
   it.each([

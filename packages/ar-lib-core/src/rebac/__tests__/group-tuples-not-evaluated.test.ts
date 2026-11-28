@@ -1,6 +1,8 @@
 /**
- * Group userset tuples (`from_type = 'group'`) are stored but not evaluated until ReBAC usersets
- * are: saving one changes no check or list result (real SQL on the D1 schema).
+ * A group row is a userset only as `from_relation = 'member'` (what every write stores, and what
+ * migration 020 gave the older rows): a group row without it grants nothing, and a subject's
+ * membership written as a tuple is not a group membership (real SQL on the D1 schema). Usersets
+ * themselves: group-usersets.test.ts.
  */
 
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -83,11 +85,21 @@ describe('group userset tuples', () => {
     };
   }
 
-  it('saving a group tuple changes no check or list result', async () => {
+  it('a group row without the member relation changes no check or list result', async () => {
     const before = await results();
     tuple(db, 't-group', ['group', 'grp-1'], 'viewer', ['document', 'doc-1']);
     expect(await results()).toEqual(before);
     expect(before).toEqual({ check: false, objects: [], users: [] });
+    // Not a userset either, so the lists leave none out.
+    expect(
+      (
+        await service.listUsers({
+          tenant_id: TENANT,
+          relation: 'viewer',
+          object: 'document:doc-1',
+        })
+      ).userset_subjects_omitted
+    ).toBe(false);
   });
 
   it('a direct subject tuple still grants', async () => {

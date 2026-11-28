@@ -518,6 +518,45 @@ describe('dynamic membership publication', () => {
     ).toEqual({ unknown_groups_json: JSON.stringify(['R']) });
   });
 
+  it('leaves out a self-writable group while a ReBAC group userset names it', async () => {
+    meta.db.exec(`INSERT INTO custom_claim_schemas(id, tenant_id, field_key, display_label,
+      field_type, is_active, operation_status, schema_version, show_on_registration, created_at,
+      updated_at) VALUES ('${TENANT}:team', '${TENANT}', 'team', 'Team', 'string', 1, 'active', 1,
+      1, 1, 1)`);
+    const fields = {
+      ...BUILTIN_GROUP_FIELDS,
+      'custom.team': { type: 'string' as const, schemaId: `${TENANT}:team`, schemaVersion: 1 },
+    };
+    const teamGroup = group('T', {
+      condition: { op: 'attribute', field: 'custom.team', compare: 'eq', value: 'x' },
+    });
+    await store.save([...groups, teamGroup], fields, 1, 'actor');
+    const decided = { A: { member: true, dynamic: true }, T: { member: true, dynamic: true } };
+    commit(1, decided, 2);
+    expect((await publishDynamicMemberships(store, reader, account.adapter)).groupIds).toEqual([
+      'A',
+      'T',
+    ]);
+    // A legacy group row (no `member`) on T is inert: T keeps publishing.
+    meta.db.exec(`INSERT INTO relationships(id, tenant_id, relationship_type, from_type, from_id,
+      from_relation, to_type, to_id, permission_level, is_bidirectional, created_at, updated_at)
+      VALUES ('legacy', '${TENANT}', 'viewer', 'group', 'T', NULL, 'document', 'legacy', 'full', 0,
+      1, 1)`);
+    commit(2, decided, 2);
+    expect((await publishDynamicMemberships(store, reader, account.adapter)).groupIds).toEqual([
+      'A',
+      'T',
+    ]);
+    // A userset tuple on T: its members hold a relation, so T carries authorization.
+    meta.db.exec(`INSERT INTO relationships(id, tenant_id, relationship_type, from_type, from_id,
+      from_relation, to_type, to_id, permission_level, is_bidirectional, created_at, updated_at)
+      VALUES ('u', '${TENANT}', 'viewer', 'group', 'T', 'member', 'document', 'd', 'full', 0, 1, 1)`);
+    commit(3, decided, 2);
+    expect((await publishDynamicMemberships(store, reader, account.adapter)).groupIds).toEqual([
+      'A',
+    ]);
+  });
+
   it('records the groups evaluated as unknown with the publication', async () => {
     commit(1, { A: { member: true, dynamic: true }, B: { member: 'unknown', dynamic: 'unknown' } });
     const result = await publishDynamicMemberships(store, reader, account.adapter);
