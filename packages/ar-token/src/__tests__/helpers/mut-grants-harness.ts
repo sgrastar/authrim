@@ -109,6 +109,8 @@ const mocks = vi.hoisted(() => {
     isPolicyEmbeddingEnabled: vi.fn(),
     evaluatePermissionEmbeddingForScope: vi.fn(),
     getEmbeddingLimits: vi.fn(),
+    isIdLevelPermissionsEnabled: vi.fn(),
+    evaluateIdLevelPermissions: vi.fn(),
     findCanonicalRuntimeAccount: vi.fn(),
     findCanonicalRuntimeUserProjection: vi.fn(),
     resolveAccountDataContextFromHono: vi.fn(),
@@ -215,11 +217,16 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     resolveAccountDataContextFromHono: mocks.resolveAccountDataContextFromHono,
     getAccessTokenRBACClaims: mocks.getAccessTokenRBACClaims,
     getIDTokenRBACClaims: mocks.getIDTokenRBACClaims,
-    isPolicyEmbeddingEnabled: mocks.isPolicyEmbeddingEnabled,
+    // Without an implementation (mockReset), the real reader runs: settings failures are real.
+    isPolicyEmbeddingEnabled: passthrough(
+      'isPolicyEmbeddingEnabled',
+      mocks.isPolicyEmbeddingEnabled
+    ),
     evaluatePermissionEmbeddingForScope: mocks.evaluatePermissionEmbeddingForScope,
     getEmbeddingLimits: mocks.getEmbeddingLimits,
     isCustomClaimsEnabled: async () => false,
-    isIdLevelPermissionsEnabled: async () => false,
+    isIdLevelPermissionsEnabled: mocks.isIdLevelPermissionsEnabled,
+    evaluateIdLevelPermissions: mocks.evaluateIdLevelPermissions,
     publishEvent: mocks.publishEvent,
   };
 });
@@ -311,7 +318,12 @@ export function resetHarness(): MockEnv {
     permissions: [],
     scopedPermissions: [],
   });
-  mocks.getEmbeddingLimits.mockResolvedValue({ max_embedded_permissions: 50 });
+  mocks.getEmbeddingLimits.mockResolvedValue({
+    max_embedded_permissions: 50,
+    max_resource_permissions: 100,
+  });
+  mocks.isIdLevelPermissionsEnabled.mockResolvedValue(false);
+  mocks.evaluateIdLevelPermissions.mockResolvedValue([]);
   mocks.findCanonicalRuntimeAccount.mockImplementation(async (userId: string) =>
     canonicalAccount(userId)
   );

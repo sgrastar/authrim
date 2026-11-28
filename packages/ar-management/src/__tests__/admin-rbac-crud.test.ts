@@ -45,6 +45,7 @@ function context(
     id?: string;
     body?: unknown;
     auth?: Record<string, unknown>;
+    env?: Record<string, unknown>;
   } = {}
 ) {
   return {
@@ -54,7 +55,7 @@ function context(
       param: vi.fn(() => options.id ?? 'resource-1'),
       json: vi.fn().mockResolvedValue(options.body ?? {}),
     },
-    env: {},
+    env: options.env ?? {},
     json: vi.fn((value: unknown, status = 200) => Response.json(value, { status })),
   } as never;
 }
@@ -133,8 +134,67 @@ describe('admin RBAC role CRUD', () => {
     [{ name: 'admin', permissions: ['audit:read'] }, 400],
     [{ name: 'auditor', permissions: [] }, 400],
     [{ name: 'auditor', permissions: ['bad'] }, 400],
+    [{ name: 'auditor', permissions: ['Documents:read'] }, 400],
+    [{ name: 'auditor', permissions: ['my-docs:read'] }, 400],
+    [{ name: 'auditor', permissions: ['documents:doc 42:read'] }, 400],
+    [{ name: 'auditor', permissions: ['documents::read'] }, 400],
+    [{ name: 'auditor', permissions: ['documents:doc_42:*'] }, 400],
+    [{ name: 'auditor', permissions: ['a:b:c:d'] }, 400],
+    [{ name: 'auditor', permissions: ['*:read'] }, 400],
+    [{ name: 'auditor', permissions: [42] }, 400],
   ])('validates custom role create %#', async (body, status) => {
     expect((await adminRoleCreateHandler(context({ body, auth: adminAuth }))).status).toBe(status);
+  });
+
+  it.each([
+    ['documents:read', 1],
+    ['documents:doc_42:read', 1],
+    ['documents:DOC-42.v2:read', 1],
+    ['documents:*', 2],
+    ['*:*', 3],
+    ['*', 3],
+  ])('accepts the permission %s on a new role of grant tier %i', async (permission, tier) => {
+    const response = await adminRoleCreateHandler(
+      context({
+        body: { name: 'auditor', permissions: [permission], grant_tier: tier },
+        auth: adminAuth,
+      })
+    );
+    expect(response.status).toBe(201);
+    expect(mocks.adapter.execute.mock.calls[0][1]).toContain(JSON.stringify([permission]));
+  });
+
+  it.each([
+    [['documents:*'], undefined, 2],
+    [['documents:*'], 1, 2],
+    [['audit:read', '*'], 2, 3],
+    [['*:*'], 1, 3],
+  ])(
+    'refuses a wildcard %j below its grant tier (asked %s, needs %i)',
+    async (permissions, grantTier, required) => {
+      const response = await adminRoleCreateHandler(
+        context({
+          body: { name: 'auditor', permissions, grant_tier: grantTier },
+          auth: adminAuth,
+        })
+      );
+      expect(response.status).toBe(400);
+      await expect(response.json()).resolves.toMatchObject({
+        error: 'wildcard_requires_grant_tier',
+        required_grant_tier: required,
+      });
+      expect(mocks.adapter.execute).not.toHaveBeenCalled();
+    }
+  );
+
+  it('lets only a tier-3 caller create a * role, and a tier-2 caller a resource:* role', async () => {
+    const tier2 = { userId: 'admin-1', maxGrantTier: 2, permissions: ['admin:roles:write'] };
+    const create = (permissions: string[], grant_tier: number) =>
+      adminRoleCreateHandler(
+        context({ body: { name: 'auditor', permissions, grant_tier }, auth: tier2 })
+      );
+    expect((await create(['*'], 3)).status).toBe(403);
+    expect((await create(['documents:*'], 2)).status).toBe(201);
   });
 
   it('requires a grant tier to create a role, whatever the hierarchy level', async () => {
@@ -236,13 +296,14 @@ describe('admin RBAC role CRUD', () => {
     }
   );
 
-  it.each([[{ permissions: [] }], [{ permissions: ['bad'] }]])(
-    'validates role update permissions %#',
-    async (body) => {
-      mocks.adapter.queryOne.mockResolvedValueOnce(role());
-      expect((await adminRoleUpdateHandler(context({ body, auth: adminAuth }))).status).toBe(400);
-    }
-  );
+  it.each([
+    [{ permissions: [] }],
+    [{ permissions: ['bad'] }],
+    [{ permissions: ['documents:doc:42:read'] }],
+  ])('validates role update permissions %#', async (body) => {
+    mocks.adapter.queryOne.mockResolvedValueOnce(role());
+    expect((await adminRoleUpdateHandler(context({ body, auth: adminAuth }))).status).toBe(400);
+  });
 
   it('updates the description and permissions of a role', async () => {
     mocks.adapter.queryOne.mockResolvedValueOnce(role());
@@ -258,6 +319,109 @@ describe('admin RBAC role CRUD', () => {
     );
     expect(mocks.adapter.execute.mock.calls[0][1]).toEqual(
       expect.arrayContaining([null, '["audit:write"]', 'tenant-a', 'resource-1'])
+    );
+  });
+
+  it('updates a role to an ID-qualified permission and a resource wildcard', async () => {
+    mocks.adapter.queryOne.mockResolvedValueOnce(role({ grant_tier: 2 }));
+    const permissions = ['documents:doc_42:read', 'reports:*'];
+    const response = await adminRoleUpdateHandler(
+      context({ body: { permissions }, auth: adminAuth })
+    );
+    expect(response.status).toBe(200);
+    expect(mocks.adapter.execute.mock.calls[0][1]).toContain(JSON.stringify(permissions));
+  });
+
+  it('refuses a wildcard on a role below its tier, unless the same update raises the tier', async () => {
+    mocks.adapter.queryOne.mockResolvedValueOnce(role());
+    const refused = await adminRoleUpdateHandler(
+      context({ body: { permissions: ['reports:*'] }, auth: adminAuth })
+    );
+    expect(refused.status).toBe(400);
+    await expect(refused.json()).resolves.toMatchObject({
+      error: 'wildcard_requires_grant_tier',
+      required_grant_tier: 2,
+    });
+    expect(mocks.adapter.execute).not.toHaveBeenCalled();
+
+    mocks.adapter.queryOne.mockResolvedValueOnce(role());
+    const raised = await adminRoleUpdateHandler(
+      context({ body: { permissions: ['*'], grant_tier: 3 }, auth: adminAuth })
+    );
+    expect(raised.status).toBe(200);
+  });
+
+  it.each([
+    ['["reports:*"]', 2, 1, 2],
+    ['["*"]', 3, 2, 3],
+    ['["audit:read","*:*"]', 3, 1, 3],
+  ])(
+    'refuses lowering the grant tier of a role holding %s (tier %i to %i)',
+    async (permissionsJson, from, to, required) => {
+      mocks.adapter.queryOne.mockResolvedValueOnce(
+        role({ permissions_json: permissionsJson, grant_tier: from })
+      );
+      const response = await adminRoleUpdateHandler(
+        context({ body: { grant_tier: to }, auth: adminAuth })
+      );
+      expect(response.status).toBe(400);
+      await expect(response.json()).resolves.toMatchObject({
+        error: 'wildcard_requires_grant_tier',
+        required_grant_tier: required,
+      });
+      expect(mocks.adapter.execute).not.toHaveBeenCalled();
+    }
+  );
+
+  it('changes only the tier of the role whose permissions were checked', async () => {
+    mocks.adapter.queryOne.mockResolvedValueOnce(
+      role({ permissions_json: '["reports:*"]', grant_tier: 3 })
+    );
+    const response = await adminRoleUpdateHandler(
+      context({ body: { grant_tier: 2 }, auth: adminAuth })
+    );
+    expect(response.status).toBe(200);
+    const [sql, params] = mocks.adapter.execute.mock.calls[0] as unknown as [string, unknown[]];
+    expect(String(sql)).toMatch(/AND grant_tier = \? AND permissions_json = \?/);
+    expect(params).toEqual(expect.arrayContaining([3, '["reports:*"]']));
+  });
+
+  it('lets only the first of two concurrent permission edits through (409 for the other)', async () => {
+    // Both edits read the role as stored; the UPDATE applies only to the role as it was read.
+    const stored = { grant_tier: 2, permissions_json: '["audit:read"]' };
+    mocks.adapter.queryOne.mockResolvedValue(role(stored));
+    mocks.adapter.execute.mockImplementation(async (sql: string, params: unknown[]) => {
+      if (!String(sql).startsWith('UPDATE roles')) return { success: true, rowsAffected: 1 };
+      const [tier, permissionsJson] = params.slice(-2);
+      if (tier !== stored.grant_tier || permissionsJson !== stored.permissions_json) {
+        return { success: true, rowsAffected: 0 };
+      }
+      stored.permissions_json = String(params[1]);
+      return { success: true, rowsAffected: 1 };
+    });
+    const [first, second] = await Promise.all([
+      adminRoleUpdateHandler(context({ body: { permissions: ['audit:write'] }, auth: adminAuth })),
+      adminRoleUpdateHandler(context({ body: { permissions: ['reports:*'] }, auth: adminAuth })),
+    ]);
+    expect([first.status, second.status]).toEqual([200, 409]);
+    await expect(second.json()).resolves.toMatchObject({ error: 'role_version_conflict' });
+    expect(stored.permissions_json).toBe('["audit:write"]');
+    const [sql] = mocks.adapter.execute.mock.calls[0] as unknown as [string];
+    expect(String(sql)).toMatch(/AND grant_tier = \? AND permissions_json = \?/);
+  });
+
+  it('drops cached claims when only the grant tier changes (repairing a wildcard role)', async () => {
+    const cache = { get: vi.fn(async () => null), put: vi.fn(async () => undefined) };
+    mocks.adapter.queryOne.mockResolvedValueOnce(
+      role({ permissions_json: '["*"]', grant_tier: 1 })
+    );
+    const response = await adminRoleUpdateHandler(
+      context({ body: { grant_tier: 3 }, auth: adminAuth, env: { REBAC_CACHE: cache } })
+    );
+    expect(response.status).toBe(200);
+    expect(cache.put).toHaveBeenCalledWith(
+      expect.stringContaining('tenant-version:tenant-a'),
+      expect.any(String)
     );
   });
 
@@ -359,12 +523,13 @@ describe('admin RBAC role CRUD', () => {
     expect(update.status).toBe(409);
     await expect(update.json()).resolves.toMatchObject({ error: 'role_version_conflict' });
     expect(String(mocks.adapter.execute.mock.calls[0][0])).toMatch(
-      /WHERE tenant_id = \? AND id = \? AND grant_tier = \?/
+      /WHERE tenant_id = \? AND id = \? AND grant_tier = \? AND permissions_json = \?/
     );
-    expect((mocks.adapter.execute.mock.calls[0][1] as unknown[]).slice(-3)).toEqual([
+    expect((mocks.adapter.execute.mock.calls[0][1] as unknown[]).slice(-4)).toEqual([
       'tenant-a',
       'resource-1',
       2,
+      '["audit:read"]',
     ]);
     expect(mocks.audit).not.toHaveBeenCalled();
 

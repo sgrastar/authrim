@@ -89,7 +89,7 @@ describe('requests', () => {
 		expect(JSON.parse(String(calls()[0][1].body))).toEqual({ grant_tier: 1 });
 	});
 
-	it('gives a user a role with `scope` and milliseconds, as that route takes them', async () => {
+	it('gives a user a role with `scope` and the end in Unix seconds, as that route takes them', async () => {
 		const calls = stub({ success: true });
 		await httpEndUserRoles('acme').assignToUser('u', {
 			role_id: 'r',
@@ -102,7 +102,7 @@ describe('requests', () => {
 			role_id: 'r',
 			scope: 'resource',
 			scope_target: 'resource:documents:42',
-			expires_at: 1_900_000_000_000
+			expires_at: 1_900_000_000
 		});
 	});
 
@@ -132,7 +132,7 @@ describe('the groups a role is given to', () => {
 					scope: 'group',
 					scope_target: 'group:other',
 					assigned_by: 'adm',
-					expires_at: 1_900_000_000_000,
+					expires_at: 1_900_000_000,
 					assigned_at: 1_700_000_000_000
 				},
 				{ assignment_id: 'g2', group_id: 'gone', group_key: null, scope: 'tenant' }

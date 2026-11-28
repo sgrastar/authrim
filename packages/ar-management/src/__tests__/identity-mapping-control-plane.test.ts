@@ -4286,9 +4286,11 @@ describe('IdentityMappingControlPlaneRepository provisioning assignment operatio
         },
         null,
       ],
-      // The group definition, then the membership the INSERT ... RETURNING made.
+      // The group definition, the roles it carries (none below their wildcard tier), then the
+      // membership the INSERT ... RETURNING made.
       queryRowSets: [
         [{ id: 'group-1', parent_group_id: null, lifecycle_state: 'active' }],
+        [],
         [{ id: 'membership-1', updated_at: 1 }],
       ],
     });
@@ -4426,6 +4428,37 @@ describe('IdentityMappingControlPlaneRepository provisioning assignment operatio
     expect(adapter.executes).toHaveLength(0);
   });
 
+  it('answers 409 (not 500) when the shared writer refuses a rule membership for an under-tier role', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [
+        {
+          id: 'assignment-rule-1',
+          target_type: 'group',
+          target_id: 'group-1',
+          condition_json: JSON.stringify({ eventTypes: ['jit'] }),
+          priority: 10,
+        },
+        null,
+      ],
+      // The group definition, then a role it carries: tier 1 holding `*` (below its tier).
+      queryRowSets: [
+        [{ id: 'group-1', parent_group_id: null, lifecycle_state: 'active' }],
+        [{ grant_tier: 1, permissions_json: '["*"]' }],
+      ],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.evaluateProvisioningAssignmentRule('tenant_a', 'assignment-rule-1', {
+        eventType: 'jit',
+        subjectId: 'subject-1',
+      })
+    ).rejects.toMatchObject({ status: 409, code: 'role_grant_tier_below_wildcard' });
+    expect(adapter.queries.map((item) => item.sql)).not.toContainEqual(
+      expect.stringContaining('INSERT INTO group_memberships')
+    );
+  });
+
   it('creates domain group rules that can match later source contexts by domain hash', async () => {
     const adapter = createAdapter({
       queryOneRows: [
@@ -4442,9 +4475,11 @@ describe('IdentityMappingControlPlaneRepository provisioning assignment operatio
         },
         null,
       ],
-      // The group definition, then the membership the INSERT ... RETURNING made.
+      // The group definition, the roles it carries (none below their wildcard tier), then the
+      // membership the INSERT ... RETURNING made.
       queryRowSets: [
         [{ id: 'group-1', parent_group_id: null, lifecycle_state: 'active' }],
+        [],
         [{ id: 'membership-1', updated_at: 1 }],
       ],
     });

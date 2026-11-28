@@ -336,7 +336,7 @@ describe('RBAC admin views under routed account storage', () => {
       scope: 'group',
       scope_target: 'group:grp-root',
       assigned_by: 'admin-1',
-      expires_at: (NOW + 3600) * 1000,
+      expires_at: NOW + 3600,
     });
     expect(all.body.group_assignments[2]).toMatchObject({ group_key: null });
     const second = await page('role-a', '2', '2');

@@ -16,7 +16,7 @@
  */
 
 import type { DatabaseAdapter, PreparedStatement } from '../db/adapter';
-import { isValidPermissionId } from './unified-check-service';
+import { isValidPermissionId } from '../utils/permission-grammar';
 import type {
   ResolvedResourceContext,
   ResourceContextLookup,
@@ -52,8 +52,9 @@ export function isCheckResourceName(value: unknown): value is string {
 }
 
 /**
- * A resource id: the permission parser's id rule (`isValidPermissionId`, `[a-zA-Z0-9_-]+`), so
- * every registered resource is one a check can name, and at most 256 characters.
+ * A resource id: the permission grammar's id rule (`isValidPermissionId`: no whitespace, `:` or
+ * control characters), so every registered resource is one a check can name, and at most 256
+ * characters.
  */
 export function isCheckResourceId(value: unknown): value is string {
   return isValidPermissionId(value) && value.length <= CHECK_RESOURCE_ID_MAX_LENGTH;

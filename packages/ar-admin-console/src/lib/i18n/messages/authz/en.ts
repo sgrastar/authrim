@@ -261,9 +261,11 @@ export const enAuthz: Record<keyof typeof jaAuthz, string> = {
 	'eur.new.tierInfo':
 		'Who may give, take away and change this role: an administrator handles roles up to their own tier.',
 	'eur.new.permissions': 'Permissions',
-	'eur.new.permissionsHint': '“resource:action” in lowercase, like “documents:read”.',
+	'eur.new.permissionsHint':
+		'“resource:action” in lowercase, like “documents:read”; “resource:id:action” for one resource; “resource:*”, “*:*” or “*” for every action. A role with “*” or “*:*” needs tier 3, one with “resource:*” tier 2 or 3.',
 	'eur.new.permissionsNone': 'Enter at least one permission.',
-	'eur.new.permissionInvalid': 'Enter “resource:action” in lowercase (the action may have _).',
+	'eur.new.permissionInvalid':
+		'Enter “resource:action”, “resource:id:action”, “resource:*”, “*:*” or “*” (names in lowercase, digits and _; the id without spaces or “:”).',
 	'eur.new.addPermission': 'Add permission',
 	'eur.toast.created': '{name} created',
 	'eur.toast.deleted': '{name} deleted',
@@ -419,7 +421,7 @@ export const enAuthz: Record<keyof typeof jaAuthz, string> = {
 	// Settings → Authorization → Check API keys
 	'az.keys.title': 'Check API keys',
 	'az.keys.desc':
-		'Keys a service’s backend uses to ask the Check API about any of this tenant’s users. A key is made where the app’s backend is set up (its secret is shown once); here it can be revoked.',
+		'Keys a service’s backend uses to ask the Check API about any of this tenant’s users. Create one here (its secret is shown once) and revoke it when it is no longer needed.',
 	'az.keys.col.key': 'Key',
 	'az.keys.col.operations': 'Operations',
 	'az.keys.col.state': 'State',
@@ -434,6 +436,37 @@ export const enAuthz: Record<keyof typeof jaAuthz, string> = {
 	'az.keys.revoke.body':
 		'Backends using this key can no longer call the Check API, at once. This cannot be undone.',
 	'az.keys.toast.revoked': '{name} revoked',
+	'az.keys.new.open': 'Create key',
+	'az.keys.new.title': 'Create a Check API key',
+	'az.keys.new.desc':
+		'The key belongs to tenant {tenant}. Its secret is shown once, after it is created.',
+	'az.keys.new.submit': 'Create key',
+	'az.keys.new.name': 'Name',
+	'az.keys.new.client': 'Client ID',
+	'az.keys.new.clientHint': 'The client (the app’s backend) this key belongs to.',
+	'az.keys.new.operations': 'Operations it may use',
+	'az.keys.new.ends': 'Ends (optional)',
+	'az.keys.new.endsHint': 'Left empty, the key does not end.',
+	'az.keys.new.endsInvalid': 'The key’s end is not a date and time. Enter it again.',
+	'az.keys.new.endsPast': 'The key’s end must be in the future.',
+	'az.keys.op.subscribe': 'Subscribe',
+	'az.keys.op.subscribe.desc': 'Follow changes to permission answers.',
+	'az.keys.secret.copied': 'Copied. The secret is no longer kept on this page.',
+	'az.keys.listDenied': 'You may create keys here, but not list the existing ones.',
+	'az.keys.new.nameRequired': 'Enter a name.',
+	'az.keys.new.clientRequired': 'Enter the client ID.',
+	'az.keys.new.operationsRequired': 'Choose at least one operation.',
+	'az.keys.new.capabilityOff':
+		'The platform has turned machine credentials off, so creating keys is paused for now. Existing keys can still be revoked.',
+	'az.keys.op.check': 'Check',
+	'az.keys.op.check.desc': 'Ask whether one user may do one thing.',
+	'az.keys.op.batch': 'Batch',
+	'az.keys.op.batch.desc': 'Ask about several permissions in one request.',
+	'az.keys.secret.title': '{name} was created. Copy its secret now.',
+	'az.keys.secret.warning':
+		'This secret is shown only once. It will not be shown again after you close this panel; if it is lost, revoke the key and create a new one.',
+	'az.keys.secret.label': 'API key (secret)',
+	'az.keys.secret.done': 'I have saved it',
 	'az.picker.groupTypedId': 'Use this group ID',
 	'az.picker.groupSearchRefused': 'Group search was refused; the ID is used as typed',
 	'az.picker.searchRefused': 'You may not search users: used as a user ID',
@@ -450,9 +483,9 @@ export const enAuthz: Record<keyof typeof jaAuthz, string> = {
 	'grp.rule.savedExpiryPending':
 		'Saved. Some account stores were not reached: some former memberships are still pending expiry.',
 	'az.keys.expired': 'Expired',
-	'set.k.feature.enable_id_level_permissions': 'Per-resource permissions',
+	'set.k.feature.enable_id_level_permissions': 'Per-resource permissions in access tokens',
 	'set.k.feature.enable_id_level_permissions.desc':
-		'Also decide by permissions given for one resource (per resource ID).',
+		'Puts each user’s per-resource permissions (given for one resource ID) into the access token’s authrim_resource_permissions claim when a code is exchanged. It does not change the Check API, which always evaluates per-resource permissions.',
 
 	// Access → Policies
 	'pol.page.desc':

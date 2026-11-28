@@ -432,6 +432,49 @@ edit an end-user role is decided by the role's `grant_tier` alone: an administra
 role whose tier is at most its own ceiling, the highest of its admin roles' (`ar_super_admin` 3,
 `ar_tenant_admin` 2, `ar_support` / `ar_viewer` and custom admin roles 1).
 
+The permissions of an end-user role follow the grammar under [Permission Formats](#permission-formats):
+a role can hold an ID-qualified permission (`documents:doc_42:read`) or a wildcard (`documents:*`,
+`*:*`, `*`) as well as `resource:action`.
+
+A wildcard grants more than any list of permissions, so it sets a floor on the role's
+`grant_tier`: a role holding `*` or `*:*` must have tier 3, one holding a `resource:*` at least
+tier 2. Creating or updating a role below that floor (adding a wildcard, or lowering the tier of a
+role that holds one) is refused with 400 `wildcard_requires_grant_tier` (the body names the
+`required_grant_tier`). The caller's ceiling still applies on top, so only `ar_super_admin`
+(ceiling 3) can create or edit a `*` role, and `ar_tenant_admin` (ceiling 2) a `resource:*` one. A
+stored role below its floor (written before the rule) is not given by any path until its tier is
+raised or the wildcard removed: a direct grant to a user or a group, an invitation and a JIT
+(role assignment) rule answer 409 `role_grant_tier_below_wildcard` when they are made; redeeming
+an invitation and running a JIT rule skip the role; adding a member to a group that carries it is
+refused (403) as a delegation the administrator may not make.
+
+Every end-user role and group time of the Admin API is in Unix seconds: `expires_at` of a direct
+role assignment (`POST /api/admin/users/{id}/roles`, which refuses milliseconds with 400, and the
+lists under `/api/admin/users/{id}/roles`, `/api/admin/roles/{id}/assignments`,
+`/api/admin/roles/{id}/group-assignments` and `/api/admin/users/{id}/effective-permissions`), of a
+group role assignment and of a group membership (`starts_at` / `expires_at`). The creation times
+of those lists (`created_at`, `assigned_at`, the effective view's `roles[].granted_at`) stay in
+milliseconds; the effective view's `permissions[].granted_at` is in seconds.
+
+`feature.enable_id_level_permissions` controls only whether access tokens carry the subject's
+ID-level grants (`authrim_resource_permissions`, at most `limits.max_resource_permissions`); the
+Check API evaluates them either way. The claim lists the rows of `resource_permissions` (ID-level
+grants to the user, its roles and its groups, `POST /api/admin/resource-permissions`) only: an
+ID-qualified permission a role holds (`documents:doc_42:read` in the role's permissions) is not
+in it, and is answered by the Check API. Four grants write the claim, each reading the grants from
+the database (never the cache) when it issues the access token: the authorization code exchange,
+the refresh token grant, the device code grant and the CIBA grant. No other grant does: the first
+access token of a Native SSO exchange (and of token exchange, JWT bearer and client credentials)
+does not carry it. Left out of the claim: rows with a `condition` (conditions are not evaluated;
+see Upgrading under Permission Formats) and rows whose `actions_json` is not a flat array in the
+permission grammar.
+
+While `feature.enable_policy_embedding` is on, `authrim_permissions` and
+`authrim_scoped_permissions` are the permissions computed for the requested scope only, and are
+left out when nothing matches; a role's own permissions from the RBAC claims never stand in. When
+the setting cannot be read it counts as on with nothing computed (fail closed): the two claims
+are left out, `authrim_roles` and `authrim_groups` stay.
+
 ### Type Definitions
 
 #### PolicySubject
@@ -1348,6 +1391,32 @@ The Unified Check Service evaluates permissions in this order (first match wins)
 
 ### Permission Formats
 
+One grammar is used everywhere a permission string appears: the permissions of an end-user
+role (`POST/PATCH /api/admin/roles`), ID-level grants (`POST /api/admin/resource-permissions`),
+the `resource_types` / `actions` of policy rules, and the `permission` of a check.
+
+| Form                   | Example                 | Held by a role                                             | Checked          |
+| ---------------------- | ----------------------- | ---------------------------------------------------------- | ---------------- |
+| `resource:action`      | `documents:read`        | yes                                                        | yes (type level) |
+| `resource:<id>:action` | `documents:doc_42:read` | yes                                                        | yes (ID level)   |
+| `resource:*`           | `documents:*`           | yes: every action on the type and on each of its resources | no               |
+| `*:*` or `*`           | `*`                     | yes: everything                                            | no               |
+
+- `resource` and `action` are `[a-z][a-z0-9_]*` (lower case, digits and `_`, starting with a
+  letter). Upper case, `-` and other characters are refused with 400.
+- An id is any non-empty string without whitespace, control characters (NUL included) and `:`.
+  `:` is the separator, so a resource whose id contains a colon cannot be named in a permission
+  (use another identifier for it, for example an encoded one). In the object form of a check,
+  an `id` that is present must be one: `""` or `null` is refused with 400, not read as "no id".
+- `*` and `*:*` mean the same, in the Check API and in permission embedding alike. `*:action`
+  is not a form and matches nothing.
+- A check names one concrete action: the wildcard forms are only for what a role holds, and a
+  check with one is refused with 400. `resource:<id>:*` is not a form (an ID-level grant takes
+  `*` in its `actions` instead).
+- A role permission `documents:doc_42:read` grants the check `documents:doc_42:read` only (not
+  `documents:read`, not another id); `documents:*` grants `documents:read` and
+  `documents:doc_42:read`.
+
 ```typescript
 // String formats
 "documents:read"           // Type-level
@@ -1360,6 +1429,85 @@ The Unified Check Service evaluates permissions in this order (first match wins)
   action: "read"
 }
 ```
+
+#### Upgrading
+
+Stored permission strings are not migrated. An entry written before this grammar that does not
+fit it (upper case, `-`, a name starting with `_` or a digit, `*:action`, an empty part, more
+colons) is kept as stored but grants nothing: a role permission outside the grammar covers no
+check, and a check with such a name is refused. The console marks those role permissions
+invalid. ID-level rows are read the same way: a row whose `actions_json` is not a flat array of
+`*` or action names (a nested array, a string, other values) grants nothing in the Check API and
+is left out of `authrim_resource_permissions`.
+
+Conditions on ID-level rows (`condition`) are not evaluated yet. A row with a condition is never
+embedded in `authrim_resource_permissions` (it is not an unconditional grant), and the Check API
+does not grant from it either: an unevaluated condition is not met.
+
+To list the entries before upgrading:
+
+```sql
+-- PostgreSQL: role permissions outside the grammar
+SELECT r.tenant_id, r.id, r.name, p.permission
+  FROM roles r, jsonb_array_elements_text(r.permissions_json::jsonb) AS p(permission)
+ WHERE p.permission !~ '^(\*|\*:\*|[a-z][a-z0-9_]*:(\*|[a-z][a-z0-9_]*)|[a-z][a-z0-9_]*:[^[:space:][:cntrl:]:]+:[a-z][a-z0-9_]*)$';
+
+-- PostgreSQL: ID-level grants and policy rules outside the grammar (a non-array is listed too)
+SELECT tenant_id, id, resource_type, resource_id, actions_json, condition_json
+  FROM resource_permissions
+ WHERE resource_type !~ '^[a-z][a-z0-9_]*$'
+    OR resource_id !~ '^[^[:space:][:cntrl:]:]+$'
+    OR jsonb_typeof(actions_json::jsonb) <> 'array'
+    OR EXISTS (SELECT 1 FROM jsonb_array_elements(
+                 CASE WHEN jsonb_typeof(actions_json::jsonb) = 'array'
+                      THEN actions_json::jsonb ELSE '[]'::jsonb END) a(action)
+                WHERE jsonb_typeof(a.action) <> 'string'
+                   OR a.action #>> '{}' !~ '^(\*|[a-z][a-z0-9_]*)$')
+    OR condition_json IS NOT NULL;
+SELECT tenant_id, id, name, resource_types, actions
+  FROM policy_rules
+ WHERE EXISTS (SELECT 1 FROM jsonb_array_elements_text(COALESCE(resource_types, '[]')::jsonb) t(v)
+                WHERE t.v !~ '^[a-z][a-z0-9_]*$')
+    OR EXISTS (SELECT 1 FROM jsonb_array_elements_text(COALESCE(actions, '[]')::jsonb) a(v)
+                WHERE a.v !~ '^[a-z][a-z0-9_]*$');
+```
+
+On D1 (SQLite has no regular expressions) this lists every role permission outside the grammar,
+`documents:_read` and `*:read` included. It checks ids against ASCII only: whitespace and
+control characters outside ASCII (U+00A0, U+3000 and the other Unicode spaces, the C1 controls
+U+0080 to U+009F) are not detected by the D1 query (the PostgreSQL `[:space:]` class depends on
+the database locale too), so review ids with non-ASCII characters by hand:
+
+```sql
+-- D1 (SQLite): role permissions outside the grammar
+WITH p AS (
+  SELECT r.tenant_id, r.id, r.name, j.value AS v, j.type AS t, instr(j.value, ':') AS c1
+    FROM roles r, json_each(r.permissions_json) j
+), q AS (
+  SELECT *, substr(v, 1, c1 - 1) AS res, substr(v, c1 + 1) AS rest, instr(substr(v, c1 + 1), ':') AS c2
+    FROM p
+), u AS (
+  SELECT *,
+         CASE WHEN c2 = 0 THEN rest ELSE substr(rest, c2 + 1) END AS act,
+         CASE WHEN c2 = 0 THEN NULL ELSE substr(rest, 1, c2 - 1) END AS rid
+    FROM q
+)
+SELECT tenant_id, id, name, v AS permission
+  FROM u
+ WHERE NOT (
+   t = 'text' AND (
+     v IN ('*', '*:*')
+     OR (c1 > 0
+         AND res GLOB '[a-z]*' AND res NOT GLOB '*[^a-z0-9_]*'
+         AND ((c2 = 0 AND (act = '*' OR (act GLOB '[a-z]*' AND act NOT GLOB '*[^a-z0-9_]*')))
+              OR (c2 > 0 AND rid <> ''
+                  AND rid NOT GLOB ('*[' || char(1) || '-' || char(32) || char(127) || ']*')
+                  AND act GLOB '[a-z]*' AND act NOT GLOB '*[^a-z0-9_]*')))
+   )
+ );
+```
+
+A value that is not valid JSON makes these queries fail: fix those rows first.
 
 ### Check API Request
 

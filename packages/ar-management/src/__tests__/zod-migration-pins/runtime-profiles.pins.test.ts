@@ -403,7 +403,9 @@ describe('zod pins: runtime profile residency body (PUT /runtime-profiles/reside
     expect(await putResidency(body)).toEqual(REJECTED);
   });
 
-  it('accepts empty allowedRegions array and every enum member', async () => {
+  // Twelve sequential PUTs through the real handler: on a loaded CI runner they exceed the
+  // 5 s default, so this one case gets more time (it times out, it does not fail).
+  it('accepts empty allowedRegions array and every enum member', { timeout: 30_000 }, async () => {
     expect((await putResidency({ ...valid, allowedRegions: [] })).status).toBe(201);
     for (const locationHint of ['auto', 'wnam', 'enam', 'weur', 'eeur', 'apac', 'oc']) {
       expect((await putResidency({ ...valid, locationHint })).status).toBe(201);

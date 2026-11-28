@@ -70,8 +70,6 @@ async function expectInvalid(body: unknown): Promise<void> {
   expect(fns.batchCheck).not.toHaveBeenCalled();
 }
 
-const anyString: unknown = expect.any(String);
-
 beforeEach(resetMocks);
 
 describe('POST /batch gates', () => {
@@ -188,10 +186,8 @@ describe('POST /batch request validation', () => {
   });
 
   it('rejects an unparsable permission without leaking the parser error', async () => {
+    // Refused by the shared shape check (parseCheckPermissionInput) before the parser runs.
     await expectInvalid({ checks: [{ ...CHECK, permission: 'x' }] });
-    expect(logger.debug).toHaveBeenCalledWith('Batch permission parse error', {
-      error: anyString,
-    });
   });
 
   it('accepts checks without rebac and with valid rebac', async () => {

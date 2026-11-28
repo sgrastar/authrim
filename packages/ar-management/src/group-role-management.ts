@@ -19,7 +19,11 @@ import {
   type TransactionContext,
 } from '@authrim/ar-lib-core';
 import type { KVNamespace } from '@cloudflare/workers-types';
-import { mayManageEndUserRole } from './role-delegation';
+import {
+  mayManageEndUserRole,
+  ROLE_TIER_BELOW_WILDCARD,
+  roleTierCoversWildcards,
+} from './role-delegation';
 
 type Admin = AdminAuthContext | null;
 
@@ -59,6 +63,7 @@ export async function adminAssignGroupRole(
 ) {
   const role = await requireDelegableRole(metadata, tenant, auth, grant.roleId);
   if (!isRoleAssignable(role)) throw new Error('role_not_assignable');
+  if (!roleTierCoversWildcards(role)) throw new Error(ROLE_TIER_BELOW_WILDCARD);
   if (
     await groupRoleGrantConflictsWithDenyRules(
       ensureDatabaseAdapter(metadata),
@@ -91,6 +96,9 @@ export async function adminRemoveGroupRole(
   await removeGroupRole(metadata, tenant, key, cache);
 }
 
+/** What a membership change does to the roles members get (see canManageGroupMembership). */
+export type MembershipChange = 'add' | 'remove';
+
 /**
  * Whether the admin may change who is a member of the group. A group carries authorization when
  * it or an ancestor has an unexpired role grant, an active, unexpired resource permission
@@ -104,12 +112,19 @@ export async function adminRemoveGroupRole(
  * policy rule APIs also require, and the grant ceiling of every role).
  *
  * Include dormant groups: restoring their active state could expose an already delegated role.
+ *
+ * `change` says what the change does to the roles members get: `add` (adding a member, moving a
+ * group under a parent, reactivating it) also refuses a role whose stored grant tier is below what
+ * its wildcards need (roleTierCoversWildcards); `remove` (taking a member out, revoking,
+ * deactivating or deleting a group, leaving a parent) never does, so such a role can always be
+ * taken away. Default `add` (fail closed).
  */
 export async function canManageGroupMembership(
   metadata: Pick<TransactionContext, 'query'>,
   tenant: string,
   auth: Admin,
-  groupId: string
+  groupId: string,
+  change: MembershipChange = 'add'
 ) {
   // A member of this group is, through member(<group>) conditions, also a member of every
   // service group whose rule references it, transitively (as a service-group save checks it):
@@ -117,7 +132,7 @@ export async function canManageGroupMembership(
   const groups = await groupsReachedByMembership(metadata, tenant, groupId);
   if (!groups) return false;
   for (const id of groups) {
-    if (!(await canManageOneGroupMembership(metadata, tenant, auth, id))) return false;
+    if (!(await canManageOneGroupMembership(metadata, tenant, auth, id, change))) return false;
   }
   return true;
 }
@@ -150,28 +165,30 @@ async function canManageOneGroupMembership(
   metadata: Pick<TransactionContext, 'query'>,
   tenant: string,
   auth: Admin,
-  groupId: string
+  groupId: string,
+  change: MembershipChange
 ) {
   const now = Math.floor(Date.now() / 1000);
   const grants = await metadata.query<{
     kind: string;
     grant_tier: number | null;
+    permissions_json: string | null;
   }>(
     `WITH RECURSIVE ancestors(id, parent_group_id) AS (
       SELECT id, parent_group_id FROM "groups" WHERE tenant_id=? AND id=?
       UNION SELECT g.id, g.parent_group_id FROM "groups" g JOIN ancestors a ON g.id=a.parent_group_id
       WHERE g.tenant_id=?
-    ) SELECT DISTINCT 'role' AS kind, r.grant_tier AS grant_tier FROM ancestors a
+    ) SELECT DISTINCT 'role' AS kind, r.grant_tier AS grant_tier, r.permissions_json AS permissions_json FROM ancestors a
       JOIN group_role_assignments g ON g.group_id=a.id AND g.tenant_id=?
       JOIN roles r ON r.id=g.role_id AND r.tenant_id=g.tenant_id
       WHERE g.expires_at IS NULL OR g.expires_at>?
     UNION
-    SELECT DISTINCT 'resource_permission' AS kind, NULL AS grant_tier FROM ancestors a
+    SELECT DISTINCT 'resource_permission' AS kind, NULL AS grant_tier, NULL AS permissions_json FROM ancestors a
       JOIN resource_permissions p
         ON p.subject_type='group' AND p.subject_id=a.id AND p.tenant_id=?
       WHERE p.is_active=1 AND (p.expires_at IS NULL OR p.expires_at>?)
     UNION
-    SELECT DISTINCT 'relationship' AS kind, NULL AS grant_tier FROM ancestors a
+    SELECT DISTINCT 'relationship' AS kind, NULL AS grant_tier, NULL AS permissions_json FROM ancestors a
       JOIN relationships t
         ON t.from_type='group' AND t.from_relation='member' AND t.from_id=a.id AND t.tenant_id=?
       WHERE t.expires_at IS NULL OR t.expires_at>?`,
@@ -187,11 +204,17 @@ async function canManageOneGroupMembership(
     return false;
   // A resource permission or a ReBAC group userset carries no grant tier: the permission above
   // is all it needs.
+  // A role below the tier its wildcards need is not given by a membership either.
   return grants.every(
     (grant) =>
       grant.kind === 'resource_permission' ||
       grant.kind === 'relationship' ||
-      mayManageEndUserRole(auth, { grant_tier: Number(grant.grant_tier) })
+      (mayManageEndUserRole(auth, { grant_tier: Number(grant.grant_tier) }) &&
+        (change === 'remove' ||
+          roleTierCoversWildcards({
+            grant_tier: grant.grant_tier,
+            permissions_json: grant.permissions_json,
+          })))
   );
 }
 
@@ -222,9 +245,10 @@ export async function assertMayReparentGroup(
   parentGroupId: string | null
 ) {
   const db = ensureDatabaseAdapter(metadata);
+  // The group leaves its old ancestors (their roles are taken away) and gains the new parent's.
   if (
-    !(await canManageGroupMembership(db, tenant, auth, id)) ||
-    (parentGroupId && !(await canManageGroupMembership(db, tenant, auth, parentGroupId)))
+    !(await canManageGroupMembership(db, tenant, auth, id, 'remove')) ||
+    (parentGroupId && !(await canManageGroupMembership(db, tenant, auth, parentGroupId, 'add')))
   )
     throw new Error('role_delegation_denied');
 }

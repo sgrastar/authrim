@@ -436,8 +436,8 @@ async function readBody(response: Response): Promise<Row> {
 	return body as Row;
 }
 
-/** Milliseconds to the Unix seconds the groups API takes. */
-const seconds = (value: number | null | undefined) =>
+/** Milliseconds to the Unix seconds the groups and role-assignment APIs take. */
+export const seconds = (value: number | null | undefined) =>
 	value === null || value === undefined ? null : Math.floor(value / 1000);
 
 export function httpEndUserGroups(tenantId: string): EndUserGroupsClient {

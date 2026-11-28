@@ -47,6 +47,15 @@ describe('changedServiceGroups', () => {
     expect([...changedServiceGroups(before, after)]).toEqual([]);
   });
 
+  it('treats the same condition with reordered keys as no change', () => {
+    const before = plan([group('A', team('x'))], { 'custom.dept': { type: 'string' } });
+    const reordered = { value: 'x', compare: 'eq', field: 'custom.team', op: 'attribute' };
+    const after = plan([group('A', reordered as Expression)], {
+      'custom.dept': { type: 'string' },
+    });
+    expect([...changedServiceGroups(before, after)]).toEqual([]);
+  });
+
   it('marks a group whose condition, state or SCIM role changed', () => {
     const before = plan([
       group('A', team('x')),

@@ -479,7 +479,6 @@ export const AUTHORIZATION: SettingsPageDef = {
 			title: 'set.section.authzEngines',
 			description: 'set.section.authzEngines.desc',
 			settings: [
-				{ key: 'feature.enable_id_level_permissions', depth: 'primary' },
 				{ key: 'feature.enable_abac', depth: 'primary' },
 				{ key: 'feature.enable_rebac', depth: 'primary' },
 				{ key: 'feature.enable_verified_attributes', depth: 'advanced' }
@@ -510,7 +509,9 @@ export const AUTHORIZATION: SettingsPageDef = {
 			description: 'set.section.rbacClaims.desc',
 			settings: [
 				{ key: 'tokens.rbac_id_token_claims', depth: 'primary' },
-				{ key: 'tokens.rbac_access_token_claims', depth: 'primary' }
+				{ key: 'tokens.rbac_access_token_claims', depth: 'primary' },
+				// Only what the access token carries: the Check API always evaluates them.
+				{ key: 'feature.enable_id_level_permissions', depth: 'primary' }
 			]
 		}
 	]

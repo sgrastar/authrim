@@ -12,7 +12,13 @@
 import { API_BASE_URL, adminFetch } from './admin-request';
 import { errorFromResponse } from './api-error';
 import { stepUpHeaders, withStepUp } from './admin-step-up';
-import { msOrNull, ROLE_SCOPE_TYPES, type Paged, type RoleScopeType } from './end-user-groups';
+import {
+	msOrNull,
+	ROLE_SCOPE_TYPES,
+	seconds,
+	type Paged,
+	type RoleScopeType
+} from './end-user-groups';
 
 export const GRANT_TIERS = [1, 2, 3] as const;
 export type GrantTier = (typeof GRANT_TIERS)[number];
@@ -356,12 +362,14 @@ export function httpEndUserRoles(tenantId: string): EndUserRolesClient {
 			});
 		},
 		async assignToUser(userId, input) {
-			// This route takes `scope` and milliseconds (the group routes take `scope_type` and seconds).
+			// This route takes `scope` (the group routes take `scope_type`); times are Unix seconds, as
+			// for the group routes.
+			const expiresAt = seconds(input.expires_at);
 			await write(`${userUrl(userId)}/roles`, 'POST', {
 				role_id: input.role_id,
 				scope: input.scope_type,
 				...(input.scope_target.trim() ? { scope_target: input.scope_target.trim() } : {}),
-				...(input.expires_at !== null ? { expires_at: input.expires_at } : {})
+				...(expiresAt !== null ? { expires_at: expiresAt } : {})
 			});
 		},
 		async removeFromUser(userId, assignmentId) {

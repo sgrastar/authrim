@@ -49,6 +49,13 @@ import type { ReBACService, SubjectGroupsResolver } from '../rebac';
 import { parseObjectString } from '../rebac/relation-parser';
 import { externalSubjectId } from '../rebac/rebac-service';
 import { hasIdLevelPermission } from '../utils/resource-permissions';
+import {
+  grantedPermissionCovers,
+  isValidPermissionId,
+  isValidPermissionName,
+  parseConcretePermission,
+  type ConcretePermission,
+} from '../utils/permission-grammar';
 import { NO_RESOURCE_CONTEXT_RESOLVER } from './resource-context-resolver';
 import { createLogger } from '../utils/logger';
 import {
@@ -62,57 +69,14 @@ import {
 const log = createLogger().module('UNIFIED-CHECK-SERVICE');
 
 // =============================================================================
-// Constants
-// =============================================================================
-
-/**
- * URL-safe pattern for permission string components
- * Allows: a-z, A-Z, 0-9, underscore, hyphen
- */
-const URL_SAFE_PATTERN = /^[a-zA-Z0-9_-]+$/;
-
-// =============================================================================
 // Permission Parser
 // =============================================================================
 
 /**
- * Whether a value is a permission id the parser accepts (`doc_1` in `documents:doc_1:read`):
- * the rule every component of a permission follows (URL-safe, `[a-zA-Z0-9_-]+`). Anything that
- * stores ids to be checked later (the self-contract resource registry) uses it, so an id it
- * accepts is one a check can name.
- */
-export function isValidPermissionId(value: unknown): value is string {
-  return typeof value === 'string' && URL_SAFE_PATTERN.test(value);
-}
-
-/**
- * Validation result
- */
-interface ValidationResult {
-  valid: boolean;
-  error?: string;
-}
-
-/**
- * Validate permission string component (resource, id, or action)
- */
-function validateComponent(value: string, componentName: string): ValidationResult {
-  if (!value || value.length === 0) {
-    return { valid: false, error: `${componentName} cannot be empty` };
-  }
-
-  if (!URL_SAFE_PATTERN.test(value)) {
-    return {
-      valid: false,
-      error: `${componentName} must be URL-safe (a-zA-Z0-9_-), got: ${value}`,
-    };
-  }
-
-  return { valid: true };
-}
-
-/**
- * Parse permission input into structured format
+ * Parse a checked permission (string or object) into structured format: one concrete action, in
+ * the grammar of utils/permission-grammar.ts (`resource:action` or `resource:<id>:action`;
+ * resource and action `[a-z][a-z0-9_]*`, id without whitespace or `:`). The wildcard forms a
+ * role may hold (`resource:*`, `*:*`, `*`) are not a check.
  *
  * @param input - Permission string or object
  * @returns Parsed permission with type information
@@ -122,41 +86,22 @@ export function parsePermission(input: PermissionInput): ParsedPermission {
   // Handle structured permission object
   if (typeof input === 'object' && input !== null) {
     const { resource, id, action } = input;
-
-    // Validate resource
-    const resourceValidation = validateComponent(resource, 'resource');
-    if (!resourceValidation.valid) {
-      throw new Error(resourceValidation.error);
+    if (!isValidPermissionName(resource)) {
+      throw new Error(`resource must match [a-z][a-z0-9_]*, got: ${String(resource)}`);
     }
-
-    // Validate action
-    const actionValidation = validateComponent(action, 'action');
-    if (!actionValidation.valid) {
-      throw new Error(actionValidation.error);
+    if (!isValidPermissionName(action)) {
+      throw new Error(`action must match [a-z][a-z0-9_]*, got: ${String(action)}`);
     }
-
-    // Validate id if provided
-    if (id !== undefined && id !== null && id !== '') {
-      const idValidation = validateComponent(id, 'id');
-      if (!idValidation.valid) {
-        throw new Error(idValidation.error);
+    // An id that is present must be one: `""` or `null` is invalid, not "no id".
+    if (id !== undefined) {
+      if (!isValidPermissionId(id)) {
+        throw new Error(
+          `id must be non-empty without whitespace, control characters or ':', got: ${String(id)}`
+        );
       }
-
-      return {
-        type: 'id_level',
-        resource,
-        id,
-        action,
-        original: input,
-      };
+      return { type: 'id_level', resource, id, action, original: input };
     }
-
-    return {
-      type: 'type_level',
-      resource,
-      action,
-      original: input,
-    };
+    return { type: 'type_level', resource, action, original: input };
   }
 
   // Handle permission string
@@ -164,61 +109,21 @@ export function parsePermission(input: PermissionInput): ParsedPermission {
     throw new Error(`Invalid permission input type: ${typeof input}`);
   }
 
-  const parts = input.split(':');
-
-  if (parts.length === 2) {
-    // Type-level: resource:action
-    const [resource, action] = parts;
-
-    const resourceValidation = validateComponent(resource, 'resource');
-    if (!resourceValidation.valid) {
-      throw new Error(resourceValidation.error);
-    }
-
-    const actionValidation = validateComponent(action, 'action');
-    if (!actionValidation.valid) {
-      throw new Error(actionValidation.error);
-    }
-
-    return {
-      type: 'type_level',
-      resource,
-      action,
-      original: input,
-    };
+  const parsed = parseConcretePermission(input);
+  if (!parsed) {
+    throw new Error(
+      `Invalid permission format: expected "resource:action" or "resource:id:action", got "${input}"`
+    );
   }
-
-  if (parts.length === 3) {
-    // ID-level: resource:id:action
-    const [resource, id, action] = parts;
-
-    const resourceValidation = validateComponent(resource, 'resource');
-    if (!resourceValidation.valid) {
-      throw new Error(resourceValidation.error);
-    }
-
-    const idValidation = validateComponent(id, 'id');
-    if (!idValidation.valid) {
-      throw new Error(idValidation.error);
-    }
-
-    const actionValidation = validateComponent(action, 'action');
-    if (!actionValidation.valid) {
-      throw new Error(actionValidation.error);
-    }
-
-    return {
-      type: 'id_level',
-      resource,
-      id,
-      action,
-      original: input,
-    };
-  }
-
-  throw new Error(
-    `Invalid permission format: expected "resource:action" or "resource:id:action", got "${input}"`
-  );
+  return parsed.kind === 'id_level'
+    ? {
+        type: 'id_level',
+        resource: parsed.resource,
+        id: parsed.id,
+        action: parsed.action,
+        original: input,
+      }
+    : { type: 'type_level', resource: parsed.resource, action: parsed.action, original: input };
 }
 
 /**
@@ -952,10 +857,19 @@ export class UnifiedCheckService {
       // The known ones below still grant.
       context.subjectRoles = rolesComplete ? known : undefined;
 
-      const permissionToCheck =
-        context.parsed.type === 'type_level'
-          ? `${context.parsed.resource}:${context.parsed.action}`
-          : formatPermission(context.parsed);
+      const permissionToCheck: ConcretePermission =
+        context.parsed.type === 'id_level' && context.parsed.id
+          ? {
+              kind: 'id_level',
+              resource: context.parsed.resource,
+              id: context.parsed.id,
+              action: context.parsed.action,
+            }
+          : {
+              kind: 'type_level',
+              resource: context.parsed.resource,
+              action: context.parsed.action,
+            };
 
       // A direct assignment that grants is reported before one through a group.
       let groupMatch: { roleName: string; viaGroup: string } | undefined;
@@ -971,12 +885,9 @@ export class UnifiedCheckService {
         }
         const permissions = role.permissions;
 
-        // Check for exact match or wildcard
+        // The same string, `resource:*`, `*:*` or `*` (grantedPermissionCovers)
         if (
-          permissions.includes(permissionToCheck) ||
-          permissions.includes(`${context.parsed.resource}:*`) ||
-          permissions.includes('*:*') ||
-          permissions.includes('*')
+          permissions.some((permission) => grantedPermissionCovers(permission, permissionToCheck))
         ) {
           if (!role.viaGroup) return { allowed: true, roleName: role.name };
           groupMatch ??= { roleName: role.name, viaGroup: role.viaGroup };

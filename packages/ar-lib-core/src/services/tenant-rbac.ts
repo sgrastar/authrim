@@ -17,6 +17,30 @@ import { listGroupRoleAssignments } from './group-role-assignments';
 import { resolveSubjectGroups, rbacIdBatches } from './group-membership';
 import type { DatabaseSource } from '../db';
 import { ensureDatabaseAdapter } from '../db';
+import { roleTierCoversWildcards } from '../utils/permission-grammar';
+import { createLogger } from '../utils/logger';
+
+/** Roles already reported as below their wildcard tier (once per role and isolate; bounded). */
+const reportedUnderTierRoles = new Set<string>();
+
+/**
+ * Whether a role may count at all when it is read: a role whose stored grant tier is below what its
+ * wildcards need (roleTierCoversWildcards) grants nothing, however it was assigned. The write
+ * paths refuse such grants; this covers rows written another way (an older version, a dynamic
+ * group's publication, a direct database change).
+ */
+function roleCountsWhenRead(tenantId: string, role: TenantRoleDefinition): boolean {
+  if (roleTierCoversWildcards(role)) return true;
+  const key = `${tenantId}:${role.id}`;
+  if (!reportedUnderTierRoles.has(key)) {
+    if (reportedUnderTierRoles.size >= 1000) reportedUnderTierRoles.clear();
+    reportedUnderTierRoles.add(key);
+    createLogger()
+      .module('TENANT-RBAC')
+      .warn('Role below its wildcard grant tier ignored', { tenantId, roleId: role.id });
+  }
+  return false;
+}
 
 export interface TenantRBACDatabases {
   /** Role and group definitions and group role assignments. */
@@ -192,7 +216,8 @@ async function resolveEffectiveAssignmentsAndGroups(
 
 /**
  * The subject's unexpired role assignments with the roles they name, sorted by role name.
- * Assignments of a role the tenant no longer has are left out.
+ * Assignments of a role the tenant no longer has, or of one below its wildcard grant tier
+ * (roleCountsWhenRead), are left out.
  */
 export async function resolveSubjectRoles(
   dbs: TenantRBACDatabases,
@@ -233,7 +258,7 @@ export async function resolveSubjectRolesAndGroups(
     roles: assignments
       .flatMap((assignment) => {
         const role = roles.get(assignment.role_id);
-        return role ? [{ assignment, role }] : [];
+        return role && roleCountsWhenRead(tenantId, role) ? [{ assignment, role }] : [];
       })
       .sort((left, right) => compareText(left.role.name, right.role.name)),
     effectiveGroupIds: [...effectiveGroupIds],

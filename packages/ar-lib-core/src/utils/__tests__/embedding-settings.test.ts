@@ -51,9 +51,10 @@ describe('token embedding settings at runtime', () => {
     await expect(isPolicyEmbeddingEnabled(env, 'other')).resolves.toBe(true);
   });
 
-  it('turns embedding off and keeps the default limits when the settings cannot be read', async () => {
+  it('refuses to read unreadable embedding settings as off, and keeps the default limits', async () => {
     const env = { SETTINGS: kv({ 'settings:tenant:acme:feature-flags': 'not json' }) };
-    await expect(isPolicyEmbeddingEnabled(env, 'acme')).resolves.toBe(false);
+    // Unreadable is not "off": the caller fails closed (embeds nothing, keeps no role permissions).
+    await expect(isPolicyEmbeddingEnabled(env, 'acme')).rejects.toThrow();
     const broken = { SETTINGS: kv({ 'settings:tenant:acme:limits': 'not json' }) };
     await expect(getEmbeddingLimits(broken, 'acme')).resolves.toEqual({
       max_embedded_permissions: 50,

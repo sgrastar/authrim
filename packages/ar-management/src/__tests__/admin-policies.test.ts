@@ -584,6 +584,14 @@ describe('admin policies APIs', () => {
       'params must be an object',
     ],
     [{ name: 'Rule', effect: 'allow', actions: [1] }, 'actions must be an array of strings'],
+    [
+      { name: 'Rule', effect: 'allow', actions: ['Read'] },
+      'actions entries must match [a-z][a-z0-9_]*',
+    ],
+    [
+      { name: 'Rule', effect: 'deny', resource_types: ['my-docs'] },
+      'resource_types entries must match [a-z][a-z0-9_]*',
+    ],
     [{ name: 'Rule', effect: 'deny', priority: 'high' }, 'priority must be an integer'],
     [{ name: 'Rule', effect: 'allow', conditions: null }, 'conditions must be an array'],
     [

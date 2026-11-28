@@ -8,6 +8,7 @@ vi.mock('../routes/settings/tenant-resolver', () => ({
 }));
 
 import {
+  checkResourcePermission,
   createResourcePermission,
   deleteResourcePermission,
 } from '../routes/settings/resource-permissions';
@@ -78,6 +79,45 @@ describe('resource permission cache', () => {
     ).resolves.toEqual([]);
   });
 
+  it('reads a revoked grant as gone for a token even when the cache could not be invalidated', async () => {
+    const rows = [
+      {
+        id: 'rp-1',
+        tenant_id: 'tenant-a',
+        subject_type: 'user',
+        subject_id: 'user-1',
+        resource_type: 'documents',
+        resource_id: 'doc-1',
+        actions_json: '["read"]',
+        condition_json: null,
+        is_active: 1,
+        expires_at: null,
+      },
+    ];
+    const db = database(rows);
+    store.adapter = db;
+    const cache = kv();
+    const dbs = { metadata: db, account: db };
+    // The cache is populated, then every write to it (the generation bump, the delete) fails.
+    await evaluateIdLevelPermissions(dbs, 'user-1', 'tenant-a', { cache: cache as never });
+    cache.put.mockRejectedValue(new Error('kv down'));
+    cache.delete.mockRejectedValue(new Error('kv down'));
+
+    const response = await deleteResourcePermission({
+      req: { param: () => 'rp-1' },
+      env: { REBAC_CACHE: cache },
+      get: () => undefined,
+      json: (body: unknown, status = 200) => Response.json(body, { status }),
+    } as never);
+    expect(response.status).toBe(200);
+
+    // The token path (ar-token embeddedResourcePermissions) passes no cache: it reads the
+    // database, so the revoked grant is gone whatever the cache still holds.
+    cache.get.mockClear();
+    await expect(evaluateIdLevelPermissions(dbs, 'user-1', 'tenant-a', {})).resolves.toEqual([]);
+    expect(cache.get).not.toHaveBeenCalled();
+  });
+
   it('grants a permission to a group of the tenant only, checked like a role grant to a group', async () => {
     const execute = vi.fn(async () => ({ success: true, rowsAffected: 1 }));
     const known = new Set(['grp-1']);
@@ -118,5 +158,86 @@ describe('resource permission cache', () => {
       expect.stringContaining('INSERT INTO resource_permissions'),
       expect.arrayContaining(['group', 'grp-1'])
     );
+  });
+
+  it.each([
+    [{ resource_type: 'My-Docs' }, 'resource_type must match'],
+    [{ resource_id: 'doc:1' }, 'resource_id must not contain whitespace'],
+    [{ resource_id: 'doc 1' }, 'resource_id must not contain whitespace'],
+    [{ resource_id: 'doc\u00001' }, 'resource_id must not contain whitespace'],
+    [{ resource_id: 'doc\u007f1' }, 'resource_id must not contain whitespace'],
+    [{ subject_id: 42 }, 'subject_id is required and must be a string'],
+    [{ resource_type: ['documents'] }, 'resource_type is required and must be a string'],
+    [{ resource_id: { id: 'doc_1' } }, 'resource_id is required and must be a string'],
+    [{ subject_type: 1 }, 'subject_type must be'],
+    [{ condition: false }, 'condition must be a JSON object'],
+    [{ condition: null }, 'condition must be a JSON object'],
+    [{ condition: 'ip=10/8' }, 'condition must be a JSON object'],
+    [{ condition: [{ ip: '10/8' }] }, 'condition must be a JSON object'],
+    [{ condition: 1 }, 'condition must be a JSON object'],
+    [{ actions: ['Read'] }, 'each action must match'],
+    [{ actions: ['read', 7] }, 'each action must match'],
+  ])('refuses an ID-level grant outside the permission grammar %#', async (change, message) => {
+    const execute = vi.fn();
+    store.adapter = { query: vi.fn(), queryOne: vi.fn(), execute, getType: () => 'mock' };
+    const response = await createResourcePermission({
+      req: {
+        json: async () => ({
+          subject_type: 'user',
+          subject_id: 'user-1',
+          resource_type: 'documents',
+          resource_id: 'doc_42',
+          actions: ['read', '*'],
+          ...change,
+        }),
+      },
+      env: {},
+      get: () => undefined,
+      json: (body: unknown, status = 200) => Response.json(body, { status }),
+    } as never);
+    expect(response.status).toBe(400);
+    const body = await response.json<{ error_description: string }>();
+    expect(body.error_description).toContain(message);
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('refuses a non-object body with 400', async () => {
+    store.adapter = { query: vi.fn(), queryOne: vi.fn(), execute: vi.fn(), getType: () => 'mock' };
+    const response = await createResourcePermission({
+      req: { json: async () => ['documents'] },
+      env: {},
+      get: () => undefined,
+      json: (body: unknown, status = 200) => Response.json(body, { status }),
+    } as never);
+    expect(response.status).toBe(400);
+  });
+
+  it.each([
+    { resource_type: 'My-Docs' },
+    { resource_id: 'doc:1' },
+    { resource_id: 'doc\u00001' },
+    { action: '*' },
+    { action: 'Read' },
+    { resource_type: 7 },
+    { subject_id: '' },
+  ])('refuses a check outside the permission grammar %j', async (change) => {
+    const query = vi.fn();
+    store.adapter = { query, queryOne: query, execute: vi.fn(), getType: () => 'mock' };
+    const response = await checkResourcePermission({
+      req: {
+        json: async () => ({
+          subject_id: 'user-1',
+          resource_type: 'documents',
+          resource_id: 'doc_1',
+          action: 'read',
+          ...change,
+        }),
+      },
+      env: {},
+      get: () => undefined,
+      json: (body: unknown, status = 200) => Response.json(body, { status }),
+    } as never);
+    expect(response.status).toBe(400);
+    expect(query).not.toHaveBeenCalled();
   });
 });

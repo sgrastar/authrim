@@ -84,7 +84,8 @@ function grantsDatabases(
       description: null,
       permissions_json: row.permissions_json,
       role_type: 'custom',
-      grant_tier: 1,
+      // The tier a role's wildcards need (a lower one is ignored when read).
+      grant_tier: 3,
       is_assignable: 1,
       is_system: 0,
     })),
@@ -238,19 +239,45 @@ describe('isPolicyEmbeddingEnabled', () => {
     expect(result).toBe(true);
   });
 
-  it('is off when the settings cannot be read, even if env enables it', async () => {
+  it('throws when the settings cannot be read (unreadable is not off; callers fail closed)', async () => {
     (mockSettings.get as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('KV error'));
 
-    const result = await isPolicyEmbeddingEnabled({
-      SETTINGS: mockSettings as KVNamespace,
-      ENABLE_POLICY_EMBEDDING: 'true',
-    });
-
-    expect(result).toBe(false);
+    await expect(
+      isPolicyEmbeddingEnabled({
+        SETTINGS: mockSettings as KVNamespace,
+        ENABLE_POLICY_EMBEDDING: 'true',
+      })
+    ).rejects.toThrow();
   });
 });
 
 describe('evaluatePermissionEmbeddingForScope', () => {
+  it.each(['*', '*:*'])(
+    'matches %s like the Check API: every concrete scope, no wildcard scope',
+    async (held) => {
+      const dbs = grantsDatabases([
+        { permissions_json: JSON.stringify([held]), scope_type: 'global', scope_target: '' },
+      ]);
+      const embedding = await evaluatePermissionEmbeddingForScope(
+        dbs,
+        'user_123',
+        'openid documents:read documents:doc_1:read *:read *:* Bad-Name:read',
+        { tenantId: 'tenant-a' }
+      );
+      expect(embedding.permissions).toEqual(['documents:read', 'documents:doc_1:read']);
+    }
+  );
+
+  it('no longer matches a *:action grant (not in the permission grammar)', async () => {
+    const dbs = grantsDatabases([
+      { permissions_json: JSON.stringify(['*:read']), scope_type: 'global', scope_target: '' },
+    ]);
+    const embedding = await evaluatePermissionEmbeddingForScope(dbs, 'user_123', 'documents:read', {
+      tenantId: 'tenant-a',
+    });
+    expect(embedding.permissions).toEqual([]);
+  });
+
   it('keeps resource-scoped permissions out of tenant-wide authrim_permissions', async () => {
     const dbs = grantsDatabases([
       {

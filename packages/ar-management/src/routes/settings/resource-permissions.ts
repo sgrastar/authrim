@@ -23,6 +23,9 @@ import {
   type ResourcePermissionSubjectType,
   hasIdLevelPermission,
   invalidateIdPermissionCache,
+  isValidPermissionId,
+  isValidPermissionName,
+  parseConcretePermission,
   resolveAccountCoreDataContext,
   subtreeHasSelfWritableDynamicGroup,
   lockGroupCatalog,
@@ -58,29 +61,61 @@ function rowToPermission(row: ResourcePermissionRow): ResourcePermission {
   };
 }
 
-function validatePermissionInput(input: ResourcePermissionInput): string[] {
+/** A non-empty string after trimming (a JSON value of another type is not one). */
+function nonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function validatePermissionInput(input: unknown): string[] {
+  if (typeof input !== 'object' || input === null || Array.isArray(input)) {
+    return ['the body must be a JSON object'];
+  }
+  const body = input as Record<string, unknown>;
   const errors: string[] = [];
 
-  if (!input.subject_type) {
+  if (body.subject_type === undefined || body.subject_type === null || body.subject_type === '') {
     errors.push('subject_type is required');
-  } else if (!['user', 'role', 'group'].includes(input.subject_type)) {
+  } else if (
+    typeof body.subject_type !== 'string' ||
+    !['user', 'role', 'group'].includes(body.subject_type)
+  ) {
     errors.push('subject_type must be "user", "role", or "group"');
   }
 
-  if (!input.subject_id || input.subject_id.trim().length === 0) {
-    errors.push('subject_id is required');
+  if (!nonEmptyString(body.subject_id)) {
+    errors.push('subject_id is required and must be a string');
   }
 
-  if (!input.resource_type || input.resource_type.trim().length === 0) {
-    errors.push('resource_type is required');
+  // The permission grammar (see isValidPermission): the grant is `resource_type:resource_id:action`
+  // for each action, so each part must be one a check can name.
+  if (!nonEmptyString(body.resource_type)) {
+    errors.push('resource_type is required and must be a string');
+  } else if (!isValidPermissionName(body.resource_type)) {
+    errors.push('resource_type must match [a-z][a-z0-9_]*');
   }
 
-  if (!input.resource_id || input.resource_id.trim().length === 0) {
-    errors.push('resource_id is required');
+  if (!nonEmptyString(body.resource_id)) {
+    errors.push('resource_id is required and must be a string');
+  } else if (!isValidPermissionId(body.resource_id)) {
+    errors.push("resource_id must not contain whitespace, control characters or ':'");
   }
 
-  if (!input.actions || !Array.isArray(input.actions) || input.actions.length === 0) {
+  if (!Array.isArray(body.actions) || body.actions.length === 0) {
     errors.push('actions is required and must be a non-empty array');
+  } else if (
+    body.actions.some((action: unknown) => action !== '*' && !isValidPermissionName(action))
+  ) {
+    errors.push("each action must match [a-z][a-z0-9_]* or be '*'");
+  }
+
+  // Absent, or a plain object: any other JSON value (null, false, a string, an array, a number)
+  // is refused rather than stored as a condition nobody can read.
+  if (
+    'condition' in body &&
+    body.condition !== undefined &&
+    (typeof body.condition !== 'object' || body.condition === null || Array.isArray(body.condition))
+  ) {
+    errors.push('condition must be a JSON object when present');
   }
 
   return errors;
@@ -99,7 +134,7 @@ export async function createResourcePermission(c: Context) {
   const body = await c.req.json<ResourcePermissionInput>();
   const tenantId = resolveSettingsTenantId(c);
 
-  // Validate input
+  // Validate input (the body is a JSON value: type-guarded before it is read)
   const errors = validatePermissionInput(body);
   if (errors.length > 0) {
     return c.json(
@@ -495,6 +530,29 @@ export async function checkResourcePermission(c: Context) {
   }>();
   const tenantId = resolveSettingsTenantId(c);
   const coreAdapter = resolveSettingsCoreAdapter(c);
+
+  // The check a grant answers is `resource_type:resource_id:action`, in the permission grammar.
+  const raw = body as unknown;
+  const fields =
+    typeof raw === 'object' && raw !== null && !Array.isArray(raw)
+      ? (raw as Record<string, unknown>)
+      : {};
+  if (
+    !nonEmptyString(fields.subject_id) ||
+    typeof fields.resource_type !== 'string' ||
+    typeof fields.resource_id !== 'string' ||
+    typeof fields.action !== 'string' ||
+    !parseConcretePermission(`${fields.resource_type}:${fields.resource_id}:${fields.action}`)
+  ) {
+    return c.json(
+      {
+        error: 'invalid_request',
+        error_description:
+          'subject_id, resource_type, resource_id and action are required, in the permission grammar',
+      },
+      400
+    );
+  }
 
   try {
     // Grants are in the tenant metadata database; the subject's roles, in its account database.

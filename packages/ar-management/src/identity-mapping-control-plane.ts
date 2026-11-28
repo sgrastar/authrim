@@ -1,4 +1,4 @@
-import { canManageGroupMembership } from './group-role-management';
+import { canManageGroupMembership, type MembershipChange } from './group-role-management';
 import { SCIM_SOURCE_REF } from './scim-groups';
 import { accountStoreHolding } from './rbac-account-stores';
 import { isInactiveAccountRouteError } from './account-route-errors';
@@ -78,6 +78,8 @@ import {
   createLogger,
   resolveAccountDataContext,
   writeGroupMembership,
+  RoleTierBelowWildcardError,
+  ROLE_TIER_BELOW_WILDCARD,
   SAML_FEDERATION_MAX_ENTITY_ID_LENGTH,
   SAML_FEDERATION_MAX_EXCLUDED_ENTITY_IDS,
   type MembershipSource,
@@ -6684,7 +6686,7 @@ export class IdentityMappingControlPlaneRepository {
     );
     const parentChanged = (current?.parent_group_id ?? null) !== (input.parentGroupId ?? null);
     if (parentChanged) {
-      if (current) await this.requireGroupDelegation(tenantId, current.id, executor);
+      if (current) await this.requireGroupDelegation(tenantId, current.id, executor, 'remove');
       if (input.parentGroupId)
         await this.requireGroupDelegation(tenantId, input.parentGroupId, executor);
     }
@@ -6740,9 +6742,10 @@ export class IdentityMappingControlPlaneRepository {
   private async requireGroupDelegation(
     tenantId: string,
     groupId: string,
-    executor: Pick<TransactionContext, 'query'> = this.requireCore()
+    executor: Pick<TransactionContext, 'query'> = this.requireCore(),
+    change: MembershipChange = 'add'
   ) {
-    if (!(await canManageGroupMembership(executor, tenantId, this.adminAuth, groupId)))
+    if (!(await canManageGroupMembership(executor, tenantId, this.adminAuth, groupId, change)))
       throw forbidden('role delegation denied');
   }
 
@@ -6895,6 +6898,8 @@ export class IdentityMappingControlPlaneRepository {
     } catch (error) {
       if (error instanceof Error && error.message === 'group_not_found')
         throw notFound('group not found');
+      // The shared writer refused: the group hands out a role below its wildcard tier.
+      if (isRoleTierBelowWildcardError(error)) throw roleTierBelowWildcard();
       throw error;
     }
     // From here the row this request wrote is revocable: a failure of anything after the upsert
@@ -9108,7 +9113,12 @@ export class IdentityMappingControlPlaneRepository {
       // An admin revoking by hand needs the delegation the membership's group requires. The row
       // itself is revoked once the decision has committed (revokeDecidedMembership).
       if (this.adminAuth)
-        await this.requireGroupDelegation(tenantId, membershipTarget.membership.group_id);
+        await this.requireGroupDelegation(
+          tenantId,
+          membershipTarget.membership.group_id,
+          undefined,
+          'remove'
+        );
       return;
     }
     await executor.execute(
@@ -10942,6 +10952,8 @@ async function readJsonBody(c: AdminContext): Promise<unknown> {
 }
 
 export function controlPlaneErrorResponse(c: AdminContext, error: unknown): Response {
+  // A refusal of the shared membership writer that reached here unmapped is still a 409.
+  if (isRoleTierBelowWildcardError(error)) error = roleTierBelowWildcard();
   if (error instanceof IdentityMappingControlPlaneError) {
     return c.json(
       {
@@ -12440,6 +12452,23 @@ export function forbidden(message: string): IdentityMappingControlPlaneError {
 
 export function conflict(message: string): IdentityMappingControlPlaneError {
   return new IdentityMappingControlPlaneError(message, 409, 'conflict');
+}
+
+/** The shared membership writer's refusal (RoleTierBelowWildcardError), however it is thrown. */
+function isRoleTierBelowWildcardError(error: unknown): boolean {
+  return (
+    error instanceof RoleTierBelowWildcardError ||
+    (error instanceof Error && error.message === ROLE_TIER_BELOW_WILDCARD)
+  );
+}
+
+/** 409, as the groups API answers it: the group hands out a role below its wildcard tier. */
+function roleTierBelowWildcard(): IdentityMappingControlPlaneError {
+  return new IdentityMappingControlPlaneError(
+    'The group (or a group above it) carries a role whose grant_tier is below what its wildcard permissions need: no member can be added',
+    409,
+    ROLE_TIER_BELOW_WILDCARD
+  );
 }
 
 /** Refuses the change when the reference check found a reason to (see the reference guard). */

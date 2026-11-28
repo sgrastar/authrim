@@ -81,6 +81,21 @@ describe('JIT role assignments in the real schema', () => {
     expect(db.prepare('SELECT COUNT(*) AS n FROM role_assignments').get()).toEqual({ n: 0 });
   });
 
+  it('skips a tier-1 role holding * (below its wildcard grant tier)', async () => {
+    db.exec(`UPDATE roles SET permissions_json = '["*"]', grant_tier = 1 WHERE id = 'role-1'`);
+    const result = await assignScopedRoleToUser(
+      singleDatabaseRBAC(adapter),
+      'user-1',
+      'role-1',
+      'global',
+      '',
+      'tenant-a'
+    );
+
+    expect(result).toMatchObject({ success: false, code: 'role_grant_tier_below_wildcard' });
+    expect(db.prepare('SELECT COUNT(*) AS n FROM role_assignments').get()).toEqual({ n: 0 });
+  });
+
   it("gives nothing from another tenant's role", async () => {
     const result = await assignScopedRoleToUser(
       singleDatabaseRBAC(adapter),

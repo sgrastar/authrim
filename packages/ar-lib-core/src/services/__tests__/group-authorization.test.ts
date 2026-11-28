@@ -557,6 +557,45 @@ describe('end-user group authorization across two databases', () => {
     await expect(state(user)).resolves.toEqual({ ids: [], unknown: [] });
   });
 
+  it('ignores a role below its wildcard tier reached through a published dynamic membership', async () => {
+    clearChangedServiceGroupsCache();
+    const { A } = await dynamicGroups(['A'], 3);
+    // A tier-1 role holding `*`, granted to the dynamic group as an older version could write it;
+    // the publication activates the membership through its own SQL, not the membership writer.
+    meta.db.exec(`INSERT INTO roles (id,tenant_id,name,permissions_json,grant_tier,created_at)
+      VALUES ('wild','tenant-a','Wild','["*"]',1,1),('wild3','tenant-a','Wild3','["*"]',3,1)`);
+    await assignGroupRole(meta.adapter, tenant, { groupId: A, roleId: 'wild' });
+    dynamicRow(user, A, '0000000000000001:3');
+    record(user, '0000000000000001:3');
+    await expect(state(user)).resolves.toEqual({ ids: [A], unknown: [] });
+
+    const { roles } = await resolveSubjectRolesAndGroups(stores(), tenant, user, now);
+    expect(roles.map(({ role }) => role.id)).toEqual([]);
+    const claims = await getAccessTokenRBACClaims(stores(), user, {
+      tenantId: tenant,
+      claimsConfig: 'roles,permissions',
+    });
+    expect(claims.authrim_roles).toBeUndefined();
+    expect(claims.authrim_permissions).toBeUndefined();
+    const check = createUnifiedCheckService({
+      db: meta.adapter,
+      subjectAccountDb: async () => account.adapter,
+    });
+    expect(
+      (await check.check({ tenant_id: tenant, subject_id: user, permission: 'reports:read' }))
+        .allowed
+    ).toBe(false);
+
+    // The same wildcard at the tier it needs counts.
+    await assignGroupRole(meta.adapter, tenant, { groupId: A, roleId: 'wild3' });
+    const after = await resolveSubjectRolesAndGroups(stores(), tenant, user, now);
+    expect(after.roles.map(({ role }) => role.id)).toEqual(['wild3']);
+    expect(
+      (await check.check({ tenant_id: tenant, subject_id: user, permission: 'reports:read' }))
+        .allowed
+    ).toBe(true);
+  });
+
   it('names only the roles granted in force through service groups to deny-rule checks', async () => {
     const { A } = await dynamicGroups(['A'], 3);
     meta.db.exec(`INSERT INTO roles (id,tenant_id,name,permissions_json,created_at)

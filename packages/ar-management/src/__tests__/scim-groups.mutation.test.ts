@@ -306,6 +306,34 @@ describeScimTestHarness('SCIM Groups routes (mutation coverage)', (harness) => {
       expect(harness.groups.get('group-001').name).toBe('Administrators');
     });
 
+    it('refuses (409) adding members to a group carrying a role below its wildcard tier', async () => {
+      const db = harness.canonicalGroups.db;
+      db.prepare(
+        `INSERT INTO roles (id, tenant_id, name, permissions_json, grant_tier, created_at)
+         VALUES ('role-wild', 'default', 'wild', '["*"]', 1, 1)`
+      ).run();
+      db.prepare(
+        `INSERT INTO group_role_assignments (id, tenant_id, group_id, role_id, created_at, updated_at)
+         VALUES ('gr-wild', 'default', 'group-001', 'role-wild', 1, 1)`
+      ).run();
+      harness.canonicalGroups.seedMembership({ groupId: 'group-001', subjectId: 'user-001' });
+      const res = await json(
+        'PUT',
+        '/scim/v2/Groups/group-001',
+        valid({ members: [{ value: 'user-001' }, { value: 'user-002' }] })
+      );
+      const body = await expectError(res, 409);
+      expect(String(body.detail)).toContain('role_grant_tier_below_wildcard');
+      // Nothing written: the name and the members are as they were.
+      expect(harness.groups.get('group-001').name).toBe('Administrators');
+      expect(memberRows('group-001')).toEqual([['user-001', 'scim', TOKEN_REF, 'active']]);
+
+      // Removing a member from it is not refused.
+      const removed = await json('PUT', '/scim/v2/Groups/group-001', valid({ members: [] }));
+      expect(removed.status).toBe(200);
+      expect(memberRows('group-001')).toEqual([['user-001', 'scim', TOKEN_REF, 'revoked']]);
+    });
+
     it('replaces name and members and returns the ETag', async () => {
       harness.canonicalGroups.seedMembership({ groupId: 'group-001', subjectId: 'user-001' });
       const res = await json(

@@ -276,6 +276,20 @@ describe('POST /api/admin/access-check', () => {
     ['no subject', { permission: 'a:b' }],
     ['no permission', { subject_id: 'u' }],
     ['a malformed permission', { subject_id: 'u', permission: 'a:b:c:d' }],
+    [
+      'an empty id in the object form',
+      { subject_id: 'u', permission: { resource: 'documents', id: '', action: 'read' } },
+    ],
+    [
+      'a null id in the object form',
+      { subject_id: 'u', permission: { resource: 'documents', id: null, action: 'read' } },
+    ],
+    [
+      'an unknown key in the object form',
+      { subject_id: 'u', permission: { resource: 'documents', action: 'read', extra: 1 } },
+    ],
+    ['a wildcard', { subject_id: 'u', permission: 'documents:*' }],
+    ['a NUL in the id', { subject_id: 'u', permission: 'documents:doc\u00001:read' }],
     ['a non-object resource_context', { subject_id: 'u', permission: 'a:b', resource_context: 1 }],
     ['a rebac without object', { subject_id: 'u', permission: 'a:b', rebac: { relation: 'v' } }],
     ['a non-object body', ['u']],

@@ -46,14 +46,17 @@ import { recordAdminOperationAudit } from './admin-operation-audit';
 import {
   createAdaptersFromContext,
   listPage,
+  optionalSeconds,
   pageTooDeep,
   rbacDatabasesFromContext,
   resolveSubjectAccount,
+  roleTierBelowWildcard,
   runtimeUserExists,
   subjectAccountForRevocation,
   subjectContacts,
   toMilliseconds,
 } from './admin-rbac';
+import { roleTierCoversWildcards } from './role-delegation';
 import {
   adminRemoveGroupRole,
   adminUpsertGroupMembership,
@@ -112,6 +115,15 @@ function knownGroupError(c: GroupContext, error: unknown) {
       return notFound(c);
     case 'role_not_assignable':
       return invalid(c, 'The role cannot be assigned');
+    // The shared membership writer (RoleTierBelowWildcardError): the group hands out a role whose
+    // stored grant tier is below what its wildcards need.
+    case 'role_grant_tier_below_wildcard':
+      return failure(
+        c,
+        409,
+        'role_grant_tier_below_wildcard',
+        'The group (or a group above it) carries a role whose grant_tier is below what its wildcard permissions need: no member can be added'
+      );
     case 'invalid_group_parent':
     case 'group_not_found_or_invalid_parent':
       return invalid(c, 'parent_group_id must name an existing group that does not form a loop');
@@ -221,21 +233,6 @@ async function parentChain(metadata: Reader, tenantId: string, group: GroupRow) 
     parentId = parent.parent_group_id;
   }
   return chain;
-}
-
-/** Unix seconds above this are milliseconds (the year 2286 in seconds). */
-const MAX_UNIX_SECONDS = 10_000_000_000;
-
-function optionalSeconds(value: unknown, field: string): number | null | string {
-  if (value === undefined || value === null) return null;
-  if (
-    typeof value !== 'number' ||
-    !Number.isSafeInteger(value) ||
-    value < 0 ||
-    value > MAX_UNIX_SECONDS
-  )
-    return `${field} must be an integer in Unix seconds (0 to ${MAX_UNIX_SECONDS}); milliseconds are not accepted`;
-  return value;
 }
 
 /** A number column as read: PostgreSQL returns BIGINT as a string. Null when absent or unsafe. */
@@ -529,7 +526,8 @@ export async function adminGroupGetHandler(c: GroupContext) {
       // What member add and remove ask of this caller: the write permission (their route gate)
       // and the delegation guard.
       hasAdminPermission(adminAuthOf(c)?.permissions ?? [], ADMIN_PERMISSIONS.GROUPS_WRITE)
-        ? canManageGroupMembership(stores.metadata, tenantId, adminAuthOf(c), groupId)
+        ? // Removal is always possible within the standing; an add may still be refused (409/403).
+          canManageGroupMembership(stores.metadata, tenantId, adminAuthOf(c), groupId, 'remove')
         : false,
     ]);
     return c.json({
@@ -644,12 +642,23 @@ export async function adminGroupUpdateHandler(c: GroupContext) {
         throw new Error('group_self_writable_attribute');
 
       // Every delegation check runs before anything is written.
-      if (lifecycleChanged && !(await canManageGroupMembership(tx, tenantId, auth, groupId)))
+      // Reactivating hands the group's roles out again (add); deactivating takes them away.
+      if (
+        lifecycleChanged &&
+        !(await canManageGroupMembership(
+          tx,
+          tenantId,
+          auth,
+          groupId,
+          body.lifecycle_state === 'active' ? 'add' : 'remove'
+        ))
+      )
         return { kind: 'forbidden' as const };
+      // Moving: the old ancestors' roles are taken away, the new parent's are handed out.
       if (
         parentChanged &&
-        (!(await canManageGroupMembership(tx, tenantId, auth, groupId)) ||
-          (newParent && !(await canManageGroupMembership(tx, tenantId, auth, newParent))))
+        (!(await canManageGroupMembership(tx, tenantId, auth, groupId, 'remove')) ||
+          (newParent && !(await canManageGroupMembership(tx, tenantId, auth, newParent, 'add'))))
       )
         return { kind: 'forbidden' as const };
       // Reactivating or moving a group the operator is part of could hand roles to themselves.
@@ -805,7 +814,7 @@ export async function adminGroupDeleteHandler(c: GroupContext) {
         [tenantId, `group:${groupId}`]
       );
       if (Number(scopedGrants?.count ?? 0) > 0) return 'scoped' as const;
-      if (!(await canManageGroupMembership(tx, tenantId, auth, groupId)))
+      if (!(await canManageGroupMembership(tx, tenantId, auth, groupId, 'remove')))
         return 'forbidden' as const;
       // The group goes inactive first (effective roles stop at an inactive group), then the
       // tenant version is bumped; only after a successful bump are the memberships, the grants
@@ -1064,7 +1073,8 @@ export async function adminGroupMemberRemoveHandler(c: GroupContext) {
     const account = await subjectAccountForRevocation(c, tenantId, subjectId);
     if (!account) return notFound(c);
     if (auth?.userId === subjectId) return forbidden(c);
-    if (!(await canManageGroupMembership(metadata, tenantId, auth, groupId))) return forbidden(c);
+    if (!(await canManageGroupMembership(metadata, tenantId, auth, groupId, 'remove')))
+      return forbidden(c);
 
     const rows = await account.query<{ assignment_source: string; source_ref: string }>(
       `SELECT assignment_source, source_ref FROM group_memberships
@@ -1225,10 +1235,11 @@ export async function adminGroupRoleAssignHandler(c: GroupContext) {
         name: string;
         grant_tier: number;
         is_assignable: number | boolean | null;
-      }>('SELECT id, name, grant_tier, is_assignable FROM roles WHERE tenant_id = ? AND id = ?', [
-        tenantId,
-        body.role_id,
-      ]);
+        permissions_json: string;
+      }>(
+        'SELECT id, name, grant_tier, is_assignable, permissions_json FROM roles WHERE tenant_id = ? AND id = ?',
+        [tenantId, body.role_id]
+      );
       if (!role) return { kind: 'not_found' as const };
       // An operator cannot grant roles to a group they are part of (or sit under or above).
       if (await touchesGroup(tx, tenantId, operatorDirect, group))
@@ -1236,6 +1247,8 @@ export async function adminGroupRoleAssignHandler(c: GroupContext) {
       assertDelegableRole(auth, role);
       // 0 in SQLite/D1, false in PostgreSQL
       if (!isRoleAssignable(role)) return { kind: 'not_assignable' as const };
+      // A stored role below the tier its wildcards need is not handed out (roleTierCoversWildcards).
+      if (!roleTierCoversWildcards(role)) return { kind: 'tier_below_wildcard' as const };
       // A deny rule naming the role would rely on a service group's "not a member".
       if (await groupRoleGrantConflictsWithDenyRules(tx, tenantId, groupId, role.name))
         return { kind: 'deny_rule_conflict' as const };
@@ -1254,6 +1267,7 @@ export async function adminGroupRoleAssignHandler(c: GroupContext) {
     if (outcome.kind === 'invalid_scope')
       return invalid(c, 'scope_target names a group the tenant does not have');
     if (outcome.kind === 'not_assignable') return invalid(c, 'The role cannot be assigned');
+    if (outcome.kind === 'tier_below_wildcard') return roleTierBelowWildcard(c);
     if (outcome.kind === 'deny_rule_conflict')
       return c.json(
         {

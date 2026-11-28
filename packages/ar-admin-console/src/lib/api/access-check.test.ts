@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { accessCheckBody, accessCheckResultFrom, httpAccessCheck } from './access-check';
-import { httpCheckApiKeys } from './check-api-keys';
+import { checkApiKeyBody, createdCheckApiKeyFrom, httpCheckApiKeys } from './check-api-keys';
 import { MalformedResponseError } from './end-user-groups';
 import { createFakeAuthz } from './fake/end-user-authz-fake';
 
@@ -227,5 +227,128 @@ describe('Check API keys', () => {
 		const [url, init] = fetchMock.mock.calls[1] as unknown as [string, RequestInit];
 		expect(url).toBe('/api/admin/check-api-keys/k');
 		expect(init.method).toBe('DELETE');
+	});
+
+	it('creates a key: the end in seconds, the secret from the response', async () => {
+		const fetchMock = vi.fn(async () =>
+			json(
+				{
+					id: 'k2',
+					api_key: 'chk_live_secret',
+					key_prefix: 'chk_live_ab',
+					name: 'Docs',
+					client_id: 'docs-backend',
+					allowed_operations: ['check', 'batch'],
+					rate_limit_tier: 'moderate',
+					expires_at: 1770007200,
+					created_at: 1760000000
+				},
+				201
+			)
+		);
+		vi.stubGlobal('fetch', fetchMock);
+		const created = await httpCheckApiKeys('acme').create({
+			name: ' Docs ',
+			client_id: 'docs-backend',
+			allowed_operations: ['check', 'batch'],
+			expires_at: 1770007200_000
+		});
+		const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+		expect(url).toBe('/api/admin/check-api-keys');
+		expect(init.method).toBe('POST');
+		expect(JSON.parse(init.body as string)).toEqual({
+			name: 'Docs',
+			client_id: 'docs-backend',
+			allowed_operations: ['check', 'batch'],
+			expires_at: 1770007200
+		});
+		expect(created.api_key).toBe('chk_live_secret');
+		expect(created.key).toMatchObject({
+			id: 'k2',
+			is_active: true,
+			expires_at: 1770007200_000,
+			key_prefix: 'chk_live_ab'
+		});
+	});
+
+	it('leaves the end out when there is none, and refuses an answer without the secret', async () => {
+		expect(
+			checkApiKeyBody({
+				name: 'a',
+				client_id: 'b',
+				allowed_operations: ['check'],
+				expires_at: null
+			})
+		).toEqual({ name: 'a', client_id: 'b', allowed_operations: ['check'] });
+		expect(createdCheckApiKeyFrom({ id: 'k' }).api_key).toBe('');
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async () => json({ id: 'k' }, 201))
+		);
+		await expect(
+			httpCheckApiKeys('acme').create({
+				name: 'a',
+				client_id: 'b',
+				allowed_operations: ['check'],
+				expires_at: null
+			})
+		).rejects.toBeInstanceOf(MalformedResponseError);
+	});
+
+	it('passes the API’s refusal on, with its code', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async () => json({ error: 'capability_disabled', error_description: 'off' }, 403))
+		);
+		await expect(
+			httpCheckApiKeys('acme').create({
+				name: 'a',
+				client_id: 'b',
+				allowed_operations: ['check'],
+				expires_at: null
+			})
+		).rejects.toMatchObject({ status: 403, code: 'capability_disabled' });
+	});
+
+	it('the fake makes a key that is listed first, and refuses an empty name', async () => {
+		const { checkApiKeys } = createFakeAuthz();
+		const made = await checkApiKeys.create({
+			name: 'New',
+			client_id: 'c',
+			allowed_operations: ['check'],
+			expires_at: null
+		});
+		expect(made.api_key).toMatch(/^chk_live_/);
+		expect((await checkApiKeys.list()).items[0]).toMatchObject({ name: 'New', is_active: true });
+		await expect(
+			checkApiKeys.create({
+				name: ' ',
+				client_id: 'c',
+				allowed_operations: ['check'],
+				expires_at: null
+			})
+		).rejects.toMatchObject({ status: 400 });
+	});
+
+	it('the fake refuses an unknown operation and a past end, and can answer capability_disabled', async () => {
+		const { checkApiKeys } = createFakeAuthz();
+		const input = { name: 'n', client_id: 'c', allowed_operations: ['check'], expires_at: null };
+		await expect(
+			checkApiKeys.create({ ...input, allowed_operations: ['write'] })
+		).rejects.toMatchObject({ status: 400 });
+		await expect(checkApiKeys.create({ ...input, allowed_operations: [''] })).rejects.toMatchObject(
+			{ status: 400 }
+		);
+		await expect(checkApiKeys.create({ ...input, expires_at: 1000 })).rejects.toMatchObject({
+			status: 400
+		});
+		await expect(
+			checkApiKeys.create({ ...input, allowed_operations: ['check', 'batch', 'subscribe'] })
+		).resolves.toBeTruthy();
+		await expect(
+			createFakeAuthz({ failOn: { 'keys.create': 'capability_disabled' } }).checkApiKeys.create(
+				input
+			)
+		).rejects.toMatchObject({ status: 403, code: 'capability_disabled' });
 	});
 });

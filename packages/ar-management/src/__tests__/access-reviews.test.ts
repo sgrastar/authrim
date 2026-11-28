@@ -364,6 +364,40 @@ describe('access reviews', () => {
     ).toBe(400);
   });
 
+  it('revokes a membership of a group carrying a role below its wildcard tier', async () => {
+    // A tier-1 role holding `*` (written before the rule) granted to the group: a member may not be
+    // added, but taking one away is never refused.
+    reviews.db
+      .prepare(
+        `INSERT INTO roles (id, tenant_id, name, permissions_json, grant_tier, created_at, updated_at)
+         VALUES ('role-wild', 'tenant-a', 'wild', '["*"]', 1, 0, 0)`
+      )
+      .run();
+    reviews.db
+      .prepare(
+        `INSERT INTO group_role_assignments (id, tenant_id, group_id, role_id, created_at, updated_at)
+         VALUES ('gr-wild', 'tenant-a', 'grp-1', 'role-wild', 0, 0)`
+      )
+      .run();
+    db.db
+      .prepare(
+        `INSERT INTO group_memberships (id, tenant_id, group_id, subject_id, assignment_source,
+           source_ref, created_at, updated_at)
+         VALUES ('gm-w', 'tenant-a', 'grp-1', 'user-1', 'manual', '', 0, 0)`
+      )
+      .run();
+    const created = await createAccessReview(
+      context({ body: { name: 'Group one', scope: 'group', scope_value: 'grp-1' } })
+    );
+    const reviewId = String((await created.json<{ review_id: string }>()).review_id);
+    await decide(reviewId, [String(items(reviews)[0].id)], 'revoked');
+    const completed = await completeAccessReview(context({ params: { id: reviewId } }));
+    expect(await completed.json()).toMatchObject({ completed: true, applied: 1, failed: 0 });
+    expect(
+      db.db.prepare("SELECT lifecycle_state FROM group_memberships WHERE id = 'gm-w'").get()
+    ).toEqual({ lifecycle_state: 'revoked' });
+  });
+
   it('reviews only the group memberships in effect now', async () => {
     const now = Math.floor(Date.now() / 1000);
     const join = (
