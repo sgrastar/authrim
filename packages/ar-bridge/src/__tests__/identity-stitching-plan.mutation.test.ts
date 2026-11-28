@@ -498,6 +498,20 @@ describe('applying the plan', () => {
     );
   });
 
+  it('skips (refuses) a group the shared writer refuses for a role below its wildcard tier', async () => {
+    m.join.mockRejectedValueOnce(new Error('role_grant_tier_below_wildcard'));
+    const result = await run(
+      plan({
+        groupJoins: [
+          { groupId: 'g1', ruleId: 'r1' },
+          { groupId: 'g2', ruleId: 'r2' },
+        ],
+      })
+    );
+    expect(result.groups_joined).toEqual(['g2']);
+    expect(m.join).toHaveBeenCalledTimes(2);
+  });
+
   it('joins the planned groups as rule-owned memberships in the metadata and account databases', async () => {
     m.join.mockRejectedValueOnce(new Error('group_not_found'));
     const result = await run(

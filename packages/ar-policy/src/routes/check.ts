@@ -24,6 +24,7 @@ import type { KVNamespace, ExecutionContext, Queue } from '@cloudflare/workers-t
 import type { Env as SharedEnv } from '@authrim/ar-lib-core';
 import {
   parsePermission,
+  parseCheckPermissionInput,
   createErrorResponse,
   AR_ERROR_CODES,
   createLogger,
@@ -164,23 +165,13 @@ function isTenantIdShape(value: unknown): boolean {
   return value === undefined || typeof value === 'string';
 }
 
-/** The keys a structured permission may have. */
-const PERMISSION_OBJECT_KEYS: ReadonlySet<string> = new Set(['resource', 'id', 'action']);
-
 /**
- * Whether a permission has a valid shape before it is parsed: a non-empty string, or an object
- * with only `resource`, `action` (non-empty strings) and an optional non-empty string `id`.
+ * Whether a permission is a valid check (parseCheckPermissionInput, shared with the Admin access
+ * check): a concrete permission string, or `{ resource, id?, action }` with no other key, where an
+ * `id` that is present (`""` and `null` included) must be a valid id.
  */
 function isWellFormedPermission(permission: unknown): boolean {
-  if (typeof permission === 'string') return permission.length > 0;
-  if (!isPlainObject(permission)) return false;
-  if (Object.keys(permission).some((key) => !PERMISSION_OBJECT_KEYS.has(key))) return false;
-  if (typeof permission.resource !== 'string' || !permission.resource) return false;
-  if (typeof permission.action !== 'string' || !permission.action) return false;
-  if (permission.id !== undefined && (typeof permission.id !== 'string' || !permission.id)) {
-    return false;
-  }
-  return true;
+  return parseCheckPermissionInput(permission) !== null;
 }
 
 /** The keys of a batch request. */

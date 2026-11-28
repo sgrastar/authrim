@@ -302,6 +302,43 @@ describe('tenant invitation security behavior', () => {
     expect(mocks.execute).not.toHaveBeenCalled();
   });
 
+  it('refuses a tier-1 role holding * (below its wildcard grant tier) with 409', async () => {
+    mocks.queryOne.mockImplementation(async (sql: string) => {
+      if (sql.includes('FROM tenants')) return { id: 'tenant-a', name: 'Tenant A' };
+      if (sql.includes('FROM roles'))
+        return { id: 'role-a', grant_tier: 1, permissions_json: '["*"]' };
+      return null;
+    });
+    const response = await app(3).request('/tenants/tenant-a/invitations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ role_id: 'role-a' }),
+    });
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'role_grant_tier_below_wildcard',
+    });
+    expect(mocks.execute).not.toHaveBeenCalled();
+  });
+
+  it('refuses a group carrying a tier-1 role holding *, whatever the inviter ceiling', async () => {
+    mocks.query.mockImplementation(async (sql: string) =>
+      String(sql).includes('group_role_assignments')
+        ? [{ kind: 'role', grant_tier: 1, permissions_json: '["*"]' }]
+        : []
+    );
+    const response = await app(3, {
+      permissions: ['admin:roles:write'],
+      maxGrantTier: 3,
+    }).request('/tenants/tenant-a/invitations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ group_id: 'group-a' }),
+    });
+    expect(response.status).toBe(403);
+    expect(mocks.execute).not.toHaveBeenCalled();
+  });
+
   it('refuses a group carrying roles the inviter may not delegate', async () => {
     // The roles the group (or an ancestor) carries.
     mocks.query.mockResolvedValue([{ grant_tier: 1 }]);

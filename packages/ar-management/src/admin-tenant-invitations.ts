@@ -23,7 +23,11 @@ import { z } from './zod';
 import { ensureSupportedTenantId } from './single-tenant-guard';
 import { getCanonicalTenantBaseUrl } from './request-issuer';
 import { getAdminAuth, requireTenantResourceAccess } from './admin-tenant-access';
-import { mayManageEndUserRole } from './role-delegation';
+import {
+  mayManageEndUserRole,
+  ROLE_TIER_BELOW_WILDCARD,
+  roleTierCoversWildcards,
+} from './role-delegation';
 import { canManageGroupMembership } from './group-role-management';
 import { refuseWhileCapabilityOff } from './capability-authorization';
 import {
@@ -160,12 +164,23 @@ export async function createTenantInvitationHandler(c: Context<{ Bindings: Env }
       const role = await adapter.queryOne<{
         id: string;
         grant_tier: number;
-      }>('SELECT id, grant_tier FROM roles WHERE id = ? AND tenant_id = ? AND is_assignable = 1', [
-        role_id,
-        tenantId,
-      ]);
+        permissions_json: string;
+      }>(
+        'SELECT id, grant_tier, permissions_json FROM roles WHERE id = ? AND tenant_id = ? AND is_assignable = 1',
+        [role_id, tenantId]
+      );
       if (!role) {
         return c.json({ error: 'invalid_request', message: 'role_id is not assignable' }, 400);
+      }
+      // A role below the tier its wildcards need is not given by an invitation either (409).
+      if (!roleTierCoversWildcards(role)) {
+        return c.json(
+          {
+            error: ROLE_TIER_BELOW_WILDCARD,
+            error_description: 'The role holds a wildcard its grant_tier does not allow',
+          },
+          409
+        );
       }
       // Redeeming the invitation assigns the role, so the inviter needs the same standing as when
       // assigning it to a user: the role's grant tier within their ceiling, and only roles below

@@ -473,6 +473,163 @@ describe('admin-rbac schema alignment', () => {
     if (status === 400) expect(coreAdapter.execute).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['milliseconds', () => Date.now() + 3_600_000, 400],
+    ['a past time', () => Math.floor(Date.now() / 1000) - 60, 400],
+    ['a fraction', () => Math.floor(Date.now() / 1000) + 60.5, 400],
+    ['a string', () => String(Math.floor(Date.now() / 1000) + 60), 400],
+    ['seconds', () => Math.floor(Date.now() / 1000) + 3600, 201],
+  ])('takes expires_at of a direct grant in Unix seconds (%s)', async (_, value, status) => {
+    const expiresAt = value();
+    const coreAdapter = createMockAdapter({
+      queryOne: (sql) =>
+        sql.includes('FROM roles WHERE tenant_id = ? AND id = ?')
+          ? { id: 'role-lower', grant_tier: 1, name: 'lower', is_assignable: 1 }
+          : null,
+    });
+    mocked.createAuthContextFromHono.mockReturnValue({ coreAdapter });
+    mocked.hasPIIDatabase.mockReturnValue(true);
+    mocked.createPIIContextFromHono.mockReturnValue({ defaultPiiAdapter: createMockAdapter() });
+    const c = createMockContext({
+      params: { id: 'user-1' },
+      body: { role_id: 'role-lower', expires_at: expiresAt },
+    });
+    (c as { set: (key: string, value: unknown) => void }).set('adminAuth', {
+      userId: 'admin-1',
+      authMethod: 'session',
+      roles: ['admin'],
+      permissions: ['admin:roles:write'],
+      maxGrantTier: 2,
+    });
+    const res = await adminUserRoleAssignHandler(c);
+    expect(res.status).toBe(status);
+    if (status === 400) {
+      expect(coreAdapter.execute).not.toHaveBeenCalled();
+      return;
+    }
+    // Stored and answered as sent: seconds.
+    expect(coreAdapter.execute).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO role_assignments'),
+      expect.arrayContaining([expiresAt])
+    );
+    const body = (await res.json()) as { assignment: { expires_at: number } };
+    expect(body.assignment.expires_at).toBe(expiresAt);
+  });
+
+  it('lists direct role assignments with expires_at in Unix seconds', async () => {
+    const coreAdapter = createMockAdapter({
+      query: (sql) => {
+        if (sql.includes('FROM role_assignments')) {
+          return [
+            {
+              id: 'ra-1',
+              role_id: 'role-admin',
+              scope_type: 'global',
+              scope_target: '',
+              expires_at: '1900000000',
+              assigned_by: null,
+              created_at: 1700000000,
+            },
+          ];
+        }
+        if (sql.includes('FROM roles')) {
+          return [{ id: 'role-admin', name: 'admin', permissions_json: '["users:manage"]' }];
+        }
+        return [];
+      },
+    });
+    mocked.hasPIIDatabase.mockReturnValue(true);
+    mocked.createAuthContextFromHono.mockReturnValue({ coreAdapter });
+    mocked.createAccountAuthContextFromHono.mockReturnValue({ coreAdapter });
+    mocked.createPIIContextFromHono.mockReturnValue({ defaultPiiAdapter: createMockAdapter() });
+    const res = await adminUserRolesListHandler(createMockContext({ params: { id: 'user-1' } }));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      roles: Array<{ expires_at: number | null; created_at: number }>;
+    };
+    expect(body.roles[0]).toMatchObject({ expires_at: 1900000000, created_at: 1700000000000 });
+  });
+
+  it.each([
+    ['["*"]', 2, 409],
+    ['["*:*"]', 1, 409],
+    ['["docs:*"]', 1, 409],
+    ['["docs:*"]', 2, 201],
+    ['["*"]', 3, 201],
+  ])(
+    'checks a stored %s role of grant tier %i against its wildcard floor at assignment',
+    async (permissionsJson, tier, status) => {
+      const coreAdapter = createMockAdapter({
+        queryOne: (sql) =>
+          sql.includes('FROM roles WHERE tenant_id = ? AND id = ?')
+            ? {
+                id: 'role-wild',
+                grant_tier: tier,
+                name: 'wild',
+                is_assignable: 1,
+                permissions_json: permissionsJson,
+              }
+            : null,
+      });
+      mocked.createAuthContextFromHono.mockReturnValue({ coreAdapter });
+      mocked.hasPIIDatabase.mockReturnValue(true);
+      mocked.createPIIContextFromHono.mockReturnValue({ defaultPiiAdapter: createMockAdapter() });
+      const c = createMockContext({ params: { id: 'user-1' }, body: { role_id: 'role-wild' } });
+      (c as { set: (key: string, value: unknown) => void }).set('adminAuth', {
+        userId: 'admin-1',
+        authMethod: 'session',
+        roles: ['admin'],
+        permissions: ['admin:roles:write'],
+        maxGrantTier: 3,
+      });
+      const res = await adminUserRoleAssignHandler(c);
+      expect(res.status).toBe(status);
+      if (status === 409) {
+        await expect(res.json()).resolves.toMatchObject({
+          error: 'role_grant_tier_below_wildcard',
+        });
+        expect(coreAdapter.execute).not.toHaveBeenCalled();
+      }
+    }
+  );
+
+  it('lists effective permissions with expires_at in Unix seconds', async () => {
+    const coreAdapter = createMockAdapter({
+      query: (sql) => {
+        if (sql.includes('FROM role_assignments')) {
+          return [
+            {
+              id: 'ra-1',
+              role_id: 'role-admin',
+              scope_type: 'global',
+              scope_target: '',
+              expires_at: 1900000000,
+              assigned_by: null,
+              created_at: 1700000000,
+            },
+          ];
+        }
+        if (sql.includes('FROM roles')) {
+          return [{ id: 'role-admin', name: 'admin', permissions_json: '["users:manage"]' }];
+        }
+        return [];
+      },
+    });
+    mocked.createAuthContextFromHono.mockReturnValue({ coreAdapter });
+    mocked.hasPIIDatabase.mockReturnValue(true);
+    mocked.createPIIContextFromHono.mockReturnValue({ defaultPiiAdapter: createMockAdapter() });
+    const res = await adminUserEffectivePermissionsHandler(
+      createMockContext({ params: { id: 'user-1' } })
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      permissions: Array<{ expires_at: number | null }>;
+      roles: Array<{ expires_at: number | null; granted_at: number }>;
+    };
+    expect(body.permissions[0].expires_at).toBe(1900000000);
+    expect(body.roles[0]).toMatchObject({ expires_at: 1900000000, granted_at: 1700000000000 });
+  });
+
   it('rejects creating a role without a grant tier ceiling', async () => {
     const coreAdapter = createMockAdapter();
     mocked.createAuthContextFromHono.mockReturnValue({ coreAdapter });

@@ -932,7 +932,13 @@ async function applyRevocation(
     // Taking a member out of a group that carries roles takes those roles away: the same
     // delegation check as the groups API.
     if (
-      !(await canManageGroupMembership(metadata, context.tenantId, admin, item.permission_value))
+      !(await canManageGroupMembership(
+        metadata,
+        context.tenantId,
+        admin,
+        item.permission_value,
+        'remove'
+      ))
     ) {
       return { status: 'failed', error: 'insufficient_role_hierarchy' };
     }

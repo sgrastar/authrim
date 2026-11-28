@@ -28,11 +28,13 @@ function createMockD1(rolePermissions: Map<string, string[]> = new Map()): D1Dat
         bind: vi.fn().mockReturnThis(),
         all: vi.fn().mockImplementation(() => {
           // Return roles based on configured permissions
-          const results: Array<{ name: string; permissions_json: string }> = [];
+          const results: Array<{ name: string; permissions_json: string; grant_tier: number }> = [];
           for (const [roleName, perms] of rolePermissions) {
             results.push({
               name: roleName,
               permissions_json: JSON.stringify(perms),
+              // The tier a role's wildcards need (a lower one is ignored when read).
+              grant_tier: 3,
             });
           }
           return Promise.resolve({ results });

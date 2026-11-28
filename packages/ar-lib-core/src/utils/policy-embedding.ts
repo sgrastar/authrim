@@ -23,6 +23,7 @@ import type { ScopeType } from '../types/rbac';
 import type { Env } from '../types/env';
 import { cachedRoleData } from './rbac-cache';
 import { createLogger } from './logger';
+import { grantedPermissionCovers, parseConcretePermission } from './permission-grammar';
 import {
   resolveEffectiveSettingsWithSources,
   resolvePlatformSettingsWithSources,
@@ -102,7 +103,8 @@ export interface PolicyEmbeddingOptions {
  * Role-permission mapping cache key prefix
  */
 // v4: organisations removed (no organisation-scoped grants).
-const PERMISSION_CACHE_PREFIX = 'policy:perms:v5:';
+// v6: computed with the permission grammar's matcher and without roles below their wildcard tier.
+const PERMISSION_CACHE_PREFIX = 'policy:perms:v6:';
 
 /**
  * Parse scope string into resource:action pairs
@@ -192,17 +194,14 @@ async function getUserPermissionGrantsFromRoles(
   return grants;
 }
 
+/**
+ * Whether a role's permission covers a requested scope, by the Check API's matcher
+ * (grantedPermissionCovers): `*` and `*:*` alike, `resource:*`, or the same permission. A scope
+ * that is not one concrete permission (a wildcard, another shape) is matched by nothing.
+ */
 function permissionMatches(grantPermission: string, action: ScopeAction): boolean {
-  if (grantPermission === action.original) {
-    return true;
-  }
-  if (grantPermission === `${action.resource}:*`) {
-    return true;
-  }
-  if (grantPermission === `*:${action.action}`) {
-    return true;
-  }
-  return grantPermission === '*:*';
+  const checked = parseConcretePermission(action.original);
+  return checked ? grantedPermissionCovers(grantPermission, checked) : false;
 }
 
 /** A grant of a global assignment, or of a tenant one in its own tenant (roleAssignmentHolds). */
@@ -351,20 +350,18 @@ export async function invalidatePermissionCache(
  * Whether policy embedding is on for a tenant: `feature.enable_policy_embedding` as the Settings
  * API resolves it (tenant, else platform, else the older `policy:flags:ENABLE_POLICY_EMBEDDING`,
  * else the ENABLE_POLICY_EMBEDDING environment variable, else off). Without a tenant, the
- * platform's value. Off when the settings cannot be read (tokens then carry no embedded policy).
+ * platform's value. Throws when the settings cannot be read: an unreadable setting is not "off"
+ * (the token then carries the roles' unfiltered permissions), so callers fail closed and treat it
+ * as on with nothing embedded.
  */
 export async function isPolicyEmbeddingEnabled(
   env: EffectiveSettingsEnv,
   tenantId?: string
 ): Promise<boolean> {
-  try {
-    const { values } = tenantId
-      ? await resolveEffectiveSettingsWithSources(env, 'feature-flags', {
-          tenantId,
-        })
-      : await resolvePlatformSettingsWithSources(env, 'feature-flags', {});
-    return values['feature.enable_policy_embedding'] === true;
-  } catch {
-    return false;
-  }
+  const { values } = tenantId
+    ? await resolveEffectiveSettingsWithSources(env, 'feature-flags', {
+        tenantId,
+      })
+    : await resolvePlatformSettingsWithSources(env, 'feature-flags', {});
+  return values['feature.enable_policy_embedding'] === true;
 }

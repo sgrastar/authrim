@@ -26,6 +26,7 @@ import {
   subjectGroupsResolver,
   getTenantIdFromContext,
   parsePermission,
+  parseCheckPermissionInput,
   readPolicyFlags,
   resolveAccountCoreDataContext,
   resolveSubjectRolesAndGroups,
@@ -200,6 +201,10 @@ export async function adminAccessCheckHandler(c: AdminContext) {
     return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
       variables: { field: 'permission' },
     });
+  }
+  // The same validation as the public Check API (parseCheckPermissionInput), then the parser.
+  if (!parseCheckPermissionInput(body.permission)) {
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
   }
   const permission = body.permission as CheckApiRequest['permission'];
   try {

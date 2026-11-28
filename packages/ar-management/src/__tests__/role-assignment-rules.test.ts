@@ -113,6 +113,7 @@ describe('role assignment rules settings API', () => {
             { id: 'role-new', grant_tier: 1, is_assignable: 1 },
             { id: 'role-admin', grant_tier: 3, is_assignable: 1 },
             { id: 'role-fixed', grant_tier: 1, is_assignable: 0 },
+            { id: 'role-wild', grant_tier: 1, is_assignable: 1, permissions_json: '["*"]' },
           ].filter((role) => params.includes(role.id))
         : []
     );
@@ -249,6 +250,21 @@ describe('role assignment rules settings API', () => {
         context({ body: validInput, adminAuth: { ...adminAuth, permissions: [] } })
       );
       expect(response.status).toBe(403);
+      expect(mocks.adapter.execute).not.toHaveBeenCalled();
+    });
+
+    it('refuses a rule granting a tier-1 role holding * (below its wildcard grant tier)', async () => {
+      const adminAuth = { maxGrantTier: 3, permissions: ['admin:roles:write'] };
+      for (const body of [
+        { ...validInput, role_id: 'role-wild' },
+        { ...validInput, actions: [{ type: 'assign_role', role_id: 'role-wild' }] },
+      ]) {
+        const response = await createRoleAssignmentRule(context({ body, adminAuth }));
+        expect(response.status).toBe(409);
+        await expect(response.json()).resolves.toMatchObject({
+          error: 'role_grant_tier_below_wildcard',
+        });
+      }
       expect(mocks.adapter.execute).not.toHaveBeenCalled();
     });
 

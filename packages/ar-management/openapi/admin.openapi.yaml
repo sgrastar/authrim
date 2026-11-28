@@ -5202,7 +5202,11 @@ paths:
                   type: string
                   description: The user to check, in the administrator's tenant.
                 permission:
-                  description: 'resource:action, resource:id:action, or { resource, id?, action }.'
+                  description: >-
+                    resource:action, resource:id:action, or { resource, id?, action }: one concrete
+                    action in the permission grammar (resource and action `[a-z][a-z0-9_]*`, id
+                    without whitespace or `:`; see `EndUserPermission`). The wildcard forms a role
+                    may hold (`resource:*`, `*:*`, `*`) are not a check and are refused with 400.
                   oneOf:
                     - type: string
                     - type: object
@@ -8618,7 +8622,7 @@ paths:
       operationId: postApiAdminGroupsByIdRoles
       summary: Grant a role to a group
       description: >-
-        Grants a role to every member of the group (and of its child groups). Needs `admin:roles:write` and a grant ceiling that covers the role (403 otherwise). expires_at is Unix seconds. Refused (409 dynamic_group_negative_condition) when an enabled deny policy rule names the role and a service group decides membership of the group (it is one, or one is below it): the deny would rely on a possibly stale "not a member".
+        Grants a role to every member of the group (and of its child groups). Needs `admin:roles:write` and a grant ceiling that covers the role (403 otherwise). expires_at is Unix seconds. Refused (409 dynamic_group_negative_condition) when an enabled deny policy rule names the role and a service group decides membership of the group (it is one, or one is below it): the deny would rely on a possibly stale "not a member". A role whose stored grant_tier is below what its wildcards need (`*` / `*:*`: 3, `resource:*`: 2) is refused with 409 role_grant_tier_below_wildcard.
       responses:
         '201':
           description: Grant a role to a group
@@ -8638,7 +8642,8 @@ paths:
           $ref: '#/components/responses/Error'
           description: >-
             dynamic_group_negative_condition: an enabled deny rule names the role and a service
-            group decides membership of the group.
+            group decides membership of the group. role_grant_tier_below_wildcard: the role's
+            stored grant_tier is below what its wildcard permissions need.
         '500':
           $ref: '#/components/responses/Error'
       parameters:
@@ -22751,7 +22756,8 @@ paths:
       summary: Create a resource permission.
       description: >-
         Grant ID-level actions on a resource to a user, role, or group subject. Duplicate
-        subject/resource grants return conflict.
+        subject/resource grants return conflict. `resource_type`, `resource_id` and each action
+        follow the permission grammar (see `EndUserPermission`); other values are 400.
       responses:
         '201':
           $ref: '#/components/responses/AdminResourcePermission'
@@ -23137,7 +23143,12 @@ paths:
       summary: Create role
       description: >-
         Creates a custom tenant role (grant tier 1) after validating the name, the permission
-        strings and the caller's grant tier.
+        strings (see `EndUserPermission`: `resource:action`, `resource:<id>:action`, `resource:*`,
+        `*:*` or `*`; 400 otherwise) and the caller's grant tier. A role holding `*` or `*:*` must
+        have `grant_tier` 3 and one holding a `resource:*` at least 2: otherwise 400
+        `wildcard_requires_grant_tier` (with `required_grant_tier`), before the caller's ceiling is
+        checked (403 when the caller may not grant that tier), so only a tier-3 administrator
+        (`ar_super_admin`) creates `*` roles and a tier-2 one (`ar_tenant_admin`) `resource:*` roles.
       responses:
         '201':
           $ref: '#/components/responses/AdminRoleCreate'
@@ -23223,7 +23234,11 @@ paths:
       summary: Update role
       description: >-
         Updates mutable fields of a custom tenant role. System roles and roles above the caller's
-        grant tier cannot be modified.
+        grant tier cannot be modified. Permission strings follow `EndUserPermission` (400
+        otherwise). The role as it would be must keep the tier its wildcards need (`*` / `*:*`: 3,
+        `resource:*`: 2): adding a wildcard without that tier, or lowering the tier of a role that
+        holds one, is 400 `wildcard_requires_grant_tier`. A tier change alone applies only while
+        the role's permissions are as read (409 `role_version_conflict` otherwise).
       responses:
         '200':
           $ref: '#/components/responses/AdminRoleUpdate'
@@ -25908,6 +25923,16 @@ paths:
       description: >-
         Creates an invitation token for tenant-specific signup routing and optionally sends an email
         through the configured email notifier.
+        Redeeming it assigns `role_id` (the inviter needs the standing to assign that role: 403
+        otherwise) and adds the account to `group_id` (membership source `invitation`; the inviter needs the
+        standing to add a member to that group and to each service group whose membership evaluation
+        it takes part in: 403
+        otherwise; an inactive or unknown group is 400).
+        The request needs an `Idempotency-Key` header (8 to 128 characters; 400 otherwise); a key
+        reused with a different body answers 409. A `role_id` whose stored `grant_tier` is below
+        what its wildcards need (`*` / `*:*`: 3, `resource:*`: 2) answers 409
+        `role_grant_tier_below_wildcard`, and a `group_id` whose group (or an ancestor) carries such
+        a role 403.
         While the platform has the `admin_sent_email` capability off, a request that would send e-mail answers 403 `capability_disabled` before anything is written or sent (see `CapabilityDisabled`), and 503 `temporarily_unavailable` when the switch cannot be read; callers with global platform authority are exempt.
       responses:
         '503':
@@ -25920,12 +25945,21 @@ paths:
           $ref: '#/components/responses/Error'
         '403':
           $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
       parameters:
         - name: id
           in: path
           required: true
           schema:
             type: string
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: >-
+            Required. A retry with the same key and body answers the first result; the same key
+            with a different body answers 409, and one still in progress 409 as well.
+          schema: { type: string, minLength: 8, maxLength: 128 }
       requestBody:
         $ref: '#/components/requestBodies/TenantInvitationCreate'
       security:
@@ -28334,7 +28368,10 @@ paths:
       summary: Assign role to user
       description: >-
         Assigns a role by ID or name to the user. Self-assignment and roles above the caller's grant
-        tier are rejected.
+        tier are rejected. `expires_at` is in Unix seconds, as for group memberships and group role
+        assignments (milliseconds are refused with 400); responses give it in seconds too. A role
+        whose stored `grant_tier` is below what its wildcards need (`*` / `*:*`: 3, `resource:*`:
+        2) is not assigned: 409 `role_grant_tier_below_wildcard`.
       responses:
         '201':
           $ref: '#/components/responses/UserRoleAssign'
@@ -28343,6 +28380,8 @@ paths:
         '401':
           $ref: '#/components/responses/Error'
         '403':
+          $ref: '#/components/responses/Error'
+        '409':
           $ref: '#/components/responses/Error'
       parameters:
         - name: id
@@ -38820,7 +38859,16 @@ paths:
       tags: [Service Groups]
       summary: List service groups, field catalog, dependencies and reconciliation progress
       description: >-
-        Service-user membership only; this operation does not grant authorization or emit token claims.
+        Dynamic (service) group rules. A group's published members are group_memberships rows
+        (assignment_source dynamic) and count like any other membership: they take part in RBAC
+        through the group's role assignments, in authrim_groups claims, and in ABAC and ReBAC
+        positive conditions (in_group, in_any_group, in_all_groups, same_group, group usersets).
+        A dynamic group, or a group with a dynamic descendant, cannot be used in negative
+        conditions (not_in_any_group) or deny rules: a policy rule that would is refused with 400
+        dynamic_group_negative_condition, and so is (409) a role grant to such a group that an
+        enabled deny rule names. A
+        membership that is not current (pending, failed or stale) is unknown, and an unknown
+        membership never grants and never satisfies a condition: checks that depend on it deny.
         Tenant scope is required. Reads require admin:users:read; mutations and previews require
         admin:users:write. Rule changes use ifMatch optimistic concurrency; a stale version returns 409.
         Missing or disabled group references, cycles and invalid typed comparisons are rejected.
@@ -38873,7 +38921,16 @@ paths:
       tags: [Service Groups]
       summary: Create a service group
       description: >-
-        Service-user membership only; this operation does not grant authorization or emit token claims.
+        Dynamic (service) group rules. A group's published members are group_memberships rows
+        (assignment_source dynamic) and count like any other membership: they take part in RBAC
+        through the group's role assignments, in authrim_groups claims, and in ABAC and ReBAC
+        positive conditions (in_group, in_any_group, in_all_groups, same_group, group usersets).
+        A dynamic group, or a group with a dynamic descendant, cannot be used in negative
+        conditions (not_in_any_group) or deny rules: a policy rule that would is refused with 400
+        dynamic_group_negative_condition, and so is (409) a role grant to such a group that an
+        enabled deny rule names. A
+        membership that is not current (pending, failed or stale) is unknown, and an unknown
+        membership never grants and never satisfies a condition: checks that depend on it deny.
         Tenant scope is required. Reads require admin:users:read; mutations and previews require
         admin:users:write. Rule changes use ifMatch optimistic concurrency; a stale version returns 409.
         Missing or disabled group references, cycles and invalid typed comparisons are rejected.
@@ -38933,7 +38990,16 @@ paths:
       tags: [Service Groups]
       summary: Replace a service group and validate the complete dependency graph
       description: >-
-        Service-user membership only; this operation does not grant authorization or emit token claims.
+        Dynamic (service) group rules. A group's published members are group_memberships rows
+        (assignment_source dynamic) and count like any other membership: they take part in RBAC
+        through the group's role assignments, in authrim_groups claims, and in ABAC and ReBAC
+        positive conditions (in_group, in_any_group, in_all_groups, same_group, group usersets).
+        A dynamic group, or a group with a dynamic descendant, cannot be used in negative
+        conditions (not_in_any_group) or deny rules: a policy rule that would is refused with 400
+        dynamic_group_negative_condition, and so is (409) a role grant to such a group that an
+        enabled deny rule names. A
+        membership that is not current (pending, failed or stale) is unknown, and an unknown
+        membership never grants and never satisfies a condition: checks that depend on it deny.
         Tenant scope is required. Reads require admin:users:read; mutations and previews require
         admin:users:write. Rule changes use ifMatch optimistic concurrency; a stale version returns 409.
         Missing or disabled group references, cycles and invalid typed comparisons are rejected.
@@ -38996,7 +39062,16 @@ paths:
       tags: [Service Groups]
       summary: Delete an unreferenced service group
       description: >-
-        Service-user membership only; this operation does not grant authorization or emit token claims.
+        Dynamic (service) group rules. A group's published members are group_memberships rows
+        (assignment_source dynamic) and count like any other membership: they take part in RBAC
+        through the group's role assignments, in authrim_groups claims, and in ABAC and ReBAC
+        positive conditions (in_group, in_any_group, in_all_groups, same_group, group usersets).
+        A dynamic group, or a group with a dynamic descendant, cannot be used in negative
+        conditions (not_in_any_group) or deny rules: a policy rule that would is refused with 400
+        dynamic_group_negative_condition, and so is (409) a role grant to such a group that an
+        enabled deny rule names. A
+        membership that is not current (pending, failed or stale) is unknown, and an unknown
+        membership never grants and never satisfies a condition: checks that depend on it deny.
         Tenant scope is required. Reads require admin:users:read; mutations and previews require
         admin:users:write. Rule changes use ifMatch optimistic concurrency; a stale version returns 409.
         Missing or disabled group references, cycles and invalid typed comparisons are rejected.
@@ -39060,7 +39135,16 @@ paths:
       tags: [Service Groups]
       summary: Validate a draft group and optionally preview membership for one user
       description: >-
-        Service-user membership only; this operation does not grant authorization or emit token claims.
+        Dynamic (service) group rules. A group's published members are group_memberships rows
+        (assignment_source dynamic) and count like any other membership: they take part in RBAC
+        through the group's role assignments, in authrim_groups claims, and in ABAC and ReBAC
+        positive conditions (in_group, in_any_group, in_all_groups, same_group, group usersets).
+        A dynamic group, or a group with a dynamic descendant, cannot be used in negative
+        conditions (not_in_any_group) or deny rules: a policy rule that would is refused with 400
+        dynamic_group_negative_condition, and so is (409) a role grant to such a group that an
+        enabled deny rule names. A
+        membership that is not current (pending, failed or stale) is unknown, and an unknown
+        membership never grants and never satisfies a condition: checks that depend on it deny.
         Tenant scope is required. Reads require admin:users:read; mutations and previews require
         admin:users:write. Rule changes use ifMatch optimistic concurrency; a stale version returns 409.
         Missing or disabled group references, cycles and invalid typed comparisons are rejected.
@@ -39120,7 +39204,16 @@ paths:
       tags: [Service Groups]
       summary: Request a durable restart of tenant membership reconciliation
       description: >-
-        Service-user membership only; this operation does not grant authorization or emit token claims.
+        Dynamic (service) group rules. A group's published members are group_memberships rows
+        (assignment_source dynamic) and count like any other membership: they take part in RBAC
+        through the group's role assignments, in authrim_groups claims, and in ABAC and ReBAC
+        positive conditions (in_group, in_any_group, in_all_groups, same_group, group usersets).
+        A dynamic group, or a group with a dynamic descendant, cannot be used in negative
+        conditions (not_in_any_group) or deny rules: a policy rule that would is refused with 400
+        dynamic_group_negative_condition, and so is (409) a role grant to such a group that an
+        enabled deny rule names. A
+        membership that is not current (pending, failed or stale) is unknown, and an unknown
+        membership never grants and never satisfies a condition: checks that depend on it deny.
         Tenant scope is required. Reads require admin:users:read; mutations and previews require
         admin:users:write. Rule changes use ifMatch optimistic concurrency; a stale version returns 409.
         Missing or disabled group references, cycles and invalid typed comparisons are rejected.
@@ -39180,7 +39273,16 @@ paths:
       tags: [Service Groups]
       summary: Read committed service memberships with versions and freshness
       description: >-
-        Service-user membership only; this operation does not grant authorization or emit token claims.
+        Dynamic (service) group rules. A group's published members are group_memberships rows
+        (assignment_source dynamic) and count like any other membership: they take part in RBAC
+        through the group's role assignments, in authrim_groups claims, and in ABAC and ReBAC
+        positive conditions (in_group, in_any_group, in_all_groups, same_group, group usersets).
+        A dynamic group, or a group with a dynamic descendant, cannot be used in negative
+        conditions (not_in_any_group) or deny rules: a policy rule that would is refused with 400
+        dynamic_group_negative_condition, and so is (409) a role grant to such a group that an
+        enabled deny rule names. A
+        membership that is not current (pending, failed or stale) is unknown, and an unknown
+        membership never grants and never satisfies a condition: checks that depend on it deny.
         Tenant scope is required. Reads require admin:users:read; mutations and previews require
         admin:users:write. Rule changes use ifMatch optimistic concurrency; a stale version returns 409.
         Missing or disabled group references, cycles and invalid typed comparisons are rejected.
@@ -39242,7 +39344,8 @@ paths:
         Accepts only the specified failed write boundaries for this tenant and user, records an audit
         entry, and recalculates current membership. This does not roll back or repeat the original write.
         Active writing boundaries cannot be cleared. Partial recovery can be retried by fetching the
-        remaining unsettledWrites from the subject snapshot. No authorization is granted.
+        remaining unsettledWrites from the subject snapshot. The recalculated memberships are published
+        like any other and take part in authorization as described for /api/admin/service-groups.
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -39309,7 +39412,16 @@ paths:
       tags: [Service Groups]
       summary: Recalculate and atomically publish one user membership snapshot
       description: >-
-        Service-user membership only; this operation does not grant authorization or emit token claims.
+        Dynamic (service) group rules. A group's published members are group_memberships rows
+        (assignment_source dynamic) and count like any other membership: they take part in RBAC
+        through the group's role assignments, in authrim_groups claims, and in ABAC and ReBAC
+        positive conditions (in_group, in_any_group, in_all_groups, same_group, group usersets).
+        A dynamic group, or a group with a dynamic descendant, cannot be used in negative
+        conditions (not_in_any_group) or deny rules: a policy rule that would is refused with 400
+        dynamic_group_negative_condition, and so is (409) a role grant to such a group that an
+        enabled deny rule names. A
+        membership that is not current (pending, failed or stale) is unknown, and an unknown
+        membership never grants and never satisfies a condition: checks that depend on it deny.
         Tenant scope is required. Reads require admin:users:read; mutations and previews require
         admin:users:write. Rule changes use ifMatch optimistic concurrency; a stale version returns 409.
         Missing or disabled group references, cycles and invalid typed comparisons are rejected.
@@ -39367,7 +39479,16 @@ paths:
       tags: [Service Groups]
       summary: List committed members with freshness and membership sources
       description: >-
-        Service-user membership only; this operation does not grant authorization or emit token claims.
+        Dynamic (service) group rules. A group's published members are group_memberships rows
+        (assignment_source dynamic) and count like any other membership: they take part in RBAC
+        through the group's role assignments, in authrim_groups claims, and in ABAC and ReBAC
+        positive conditions (in_group, in_any_group, in_all_groups, same_group, group usersets).
+        A dynamic group, or a group with a dynamic descendant, cannot be used in negative
+        conditions (not_in_any_group) or deny rules: a policy rule that would is refused with 400
+        dynamic_group_negative_condition, and so is (409) a role grant to such a group that an
+        enabled deny rule names. A
+        membership that is not current (pending, failed or stale) is unknown, and an unknown
+        membership never grants and never satisfies a condition: checks that depend on it deny.
         Tenant scope is required. Reads require admin:users:read; mutations and previews require
         admin:users:write. Rule changes use ifMatch optimistic concurrency; a stale version returns 409.
         Missing or disabled group references, cycles and invalid typed comparisons are rejected.
@@ -73946,12 +74067,20 @@ components:
             - deny
         resource_types:
           type: array
+          description: >-
+            Resource types the rule applies to (all when empty), as the Check API names them
+            (`[a-z][a-z0-9_]*`, see `EndUserPermission`); other names are refused with 400.
           items:
             type: string
+            pattern: '^[a-z][a-z0-9_]*$'
         actions:
           type: array
+          description: >-
+            Actions the rule applies to (all when empty), as the Check API names them
+            (`[a-z][a-z0-9_]*`); other names are refused with 400.
           items:
             type: string
+            pattern: '^[a-z][a-z0-9_]*$'
         conditions:
           type: array
           items:
@@ -73990,12 +74119,20 @@ components:
             - deny
         resource_types:
           type: array
+          description: >-
+            Resource types the rule applies to (all when empty), as the Check API names them
+            (`[a-z][a-z0-9_]*`, see `EndUserPermission`); other names are refused with 400.
           items:
             type: string
+            pattern: '^[a-z][a-z0-9_]*$'
         actions:
           type: array
+          description: >-
+            Actions the rule applies to (all when empty), as the Check API names them
+            (`[a-z][a-z0-9_]*`); other names are refused with 400.
           items:
             type: string
+            pattern: '^[a-z][a-z0-9_]*$'
         conditions:
           type: array
           items:
@@ -74667,15 +74804,28 @@ components:
           type: string
         resource_type:
           type: string
+          pattern: '^[a-z][a-z0-9_]*$'
+          description: Resource type, in the permission grammar (see `EndUserPermission`).
         resource_id:
           type: string
+          pattern: '^[^\s:\u0000-\u001f\u007f-\u009f]+$'
+          description: >-
+            Resource id: non-empty, without whitespace, control characters and `:` (the grant is checked as
+            `resource_type:resource_id:action`).
         actions:
           type: array
+          minItems: 1
           items:
             type: string
+            pattern: '^(\*|[a-z][a-z0-9_]*)$'
+          description: Actions (`[a-z][a-z0-9_]*`), or `*` for every action on the resource.
         condition:
           type: object
           additionalProperties: true
+          description: >-
+            Stored, but not evaluated yet: a grant with a condition is never embedded in
+            `authrim_resource_permissions` and the Check API does not grant from it (an
+            unevaluated condition is not met).
         expires_at:
           type: integer
           format: int64
@@ -75066,6 +75216,18 @@ components:
       properties:
         role:
           $ref: '#/components/schemas/AdminRole'
+    EndUserPermission:
+      type: string
+      pattern: '^(\*|\*:\*|[a-z][a-z0-9_]*:\*|[a-z][a-z0-9_]*:[a-z][a-z0-9_]*|[a-z][a-z0-9_]*:[^\s:\u0000-\u001f\u007f-\u009f]+:[a-z][a-z0-9_]*)$'
+      description: >-
+        A permission an end-user role holds, in the grammar the Check API evaluates:
+        `resource:action` (type level, e.g. `documents:read`), `resource:<id>:action` (one
+        resource, e.g. `documents:doc_42:read`), `resource:*` (every action on the type and on each
+        of its resources), or `*:*` / `*` (everything). `resource` and `action` are
+        `[a-z][a-z0-9_]*`; an id is any non-empty string without whitespace, control characters
+        (NUL included) and `:`, so an
+        id that contains a colon cannot be named in a permission. Other shapes are refused with 400.
+        A role holding `*` or `*:*` needs `grant_tier` 3, one holding a `resource:*` at least 2.
     AdminRoleCreateRequest:
       type: object
       additionalProperties: false
@@ -75087,8 +75249,9 @@ components:
           type: string
         permissions:
           type: array
+          minItems: 1
           items:
-            type: string
+            $ref: '#/components/schemas/EndUserPermission'
         grant_tier:
           type: integer
           minimum: 1
@@ -75147,8 +75310,9 @@ components:
             - 'null'
         permissions:
           type: array
+          minItems: 1
           items:
-            type: string
+            $ref: '#/components/schemas/EndUserPermission'
         grant_tier:
           type: integer
           minimum: 1
@@ -75285,7 +75449,7 @@ components:
                 type:
                   - integer
                   - 'null'
-                description: Milliseconds since the epoch.
+                description: End of the group role grant in Unix seconds; null for none.
               assigned_at:
                 type: integer
                 format: int64
@@ -75365,9 +75529,11 @@ components:
                 type:
                   - integer
                   - 'null'
+                description: End of the assignment in Unix seconds; null for none.
               assigned_at:
                 type: integer
                 format: int64
+                description: Milliseconds since the epoch.
         pagination:
           type: object
           additionalProperties: false
@@ -78126,6 +78292,22 @@ components:
           type:
             - string
             - 'null'
+        group_id:
+          type:
+            - string
+            - 'null'
+          minLength: 1
+          maxLength: 63
+          description: >-
+            An active group of the tenant (`lifecycle_state` `active`) the account joins
+            (membership source `invitation`) when the invitation is redeemed. The membership
+            grants what the group and its ancestors carry (group role assignments, group resource
+            permissions, ReBAC group usersets) and takes part in the membership evaluation of the
+            service groups whose rules reference this group. Creating the invitation therefore needs
+            the same standing as adding that member directly: for the group and each service group
+            whose membership can depend on it that carries grants or is referenced by a policy rule,
+            the `admin:roles:write` permission and a grant ceiling that covers each role's
+            `grant_tier`; otherwise 403. An unknown, archived or other tenant's group is 400.
         max_uses:
           type: integer
           minimum: -1
@@ -78160,6 +78342,11 @@ components:
           type:
             - string
             - 'null'
+        group_id:
+          type:
+            - string
+            - 'null'
+          description: The group the account joins on redemption, or null.
         max_uses:
           type: integer
         use_count:
@@ -78201,6 +78388,11 @@ components:
         expires_at:
           type: integer
           format: int64
+        group_id:
+          type:
+            - string
+            - 'null'
+          description: The group the account joins on redemption, or null.
         email_sent:
           type: boolean
       additionalProperties: false
@@ -79680,8 +79872,12 @@ components:
           type: string
         granted_at:
           type: integer
+          description: Unix seconds.
         expires_at:
-          type: integer
+          type:
+            - integer
+            - 'null'
+          description: End of the role assignment in Unix seconds; null for none.
     GroupMembership:
       type: object
       required:
@@ -80166,6 +80362,9 @@ components:
               type: integer
         roles:
           type: array
+          description: >-
+            The user's role assignments (direct and through groups); `granted_at` in milliseconds
+            since the epoch, `expires_at` in Unix seconds (null for none).
           items:
             type: object
             additionalProperties: true
@@ -80362,9 +80561,13 @@ components:
         assigned_by:
           type: string
         expires_at:
-          type: integer
+          type:
+            - integer
+            - 'null'
+          description: End of the assignment in Unix seconds; null for none.
         created_at:
           type: integer
+          description: Milliseconds since the epoch.
     UserRolesResponse:
       type: object
       additionalProperties: false
@@ -80410,7 +80613,15 @@ components:
         scope_target:
           type: string
         expires_at:
-          type: integer
+          type:
+            - integer
+            - 'null'
+          minimum: 0
+          maximum: 10000000000
+          description: >-
+            End of the assignment in Unix seconds (as for group memberships and group role
+            assignments), in the future; null or absent for none. Milliseconds, fractions and past
+            times are refused with 400.
       example:
         role_id: role_ar_support
         scope: global

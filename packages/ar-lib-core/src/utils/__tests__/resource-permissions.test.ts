@@ -298,6 +298,22 @@ describe('Resource Permissions Utilities', () => {
       expect(result).toEqual(['documents:doc_123:read', 'documents:doc_123:write']);
     });
 
+    it('embeds neither rows with an unusable actions_json nor conditional rows', async () => {
+      const dbs = createMockDatabases({
+        resource_permissions: [
+          permissionRow('perm_nested', 'documents', 'doc_1', '[["read"]]'),
+          permissionRow('perm_string', 'documents', 'doc_2', '"read"'),
+          permissionRow('perm_bad_name', 'Documents', 'doc_3', '["read"]'),
+          { ...permissionRow('perm_cond', 'documents', 'doc_4', '["read"]'), condition_json: '{}' },
+          permissionRow('perm_ok', 'documents', 'doc_5', '["read"]'),
+        ],
+      });
+
+      const result = await evaluateIdLevelPermissions(dbs, 'user_123', 'default');
+
+      expect(result).toEqual(['documents:doc_5:read']);
+    });
+
     it('should use cache when available', async () => {
       mockKV.get.mockImplementation(async (key: string) =>
         key.includes('-version:')
@@ -332,7 +348,7 @@ describe('Resource Permissions Utilities', () => {
       // The write is fire-and-forget: it lands after the validity boundary has been read.
       await vi.waitFor(() =>
         expect(mockKV.put).toHaveBeenCalledWith(
-          'policy:idperms:v5:default:user_123',
+          'policy:idperms:v6:default:user_123',
           expect.stringContaining('"claims":["documents:doc_123:read"]'),
           { expirationTtl: 300 }
         )
@@ -424,6 +440,33 @@ describe('Resource Permissions Utilities', () => {
       );
 
       expect(result).toBe(false);
+    });
+
+    it.each([
+      '[["read"]]',
+      '"read"',
+      '"readwrite"',
+      '{"read":true}',
+      '["read", ["write"]]',
+      '["Read"]',
+      'not json',
+    ])(
+      'grants nothing from a row whose actions_json is %s (not a flat array in the grammar)',
+      async (actionsJson) => {
+        const dbs = createMockDatabases({ resource_permissions: [{ actions_json: actionsJson }] });
+        await expect(
+          hasIdLevelPermission(dbs, 'user_123', 'documents', 'doc_456', 'read', 'default')
+        ).resolves.toBe(false);
+      }
+    );
+
+    it('grants nothing from a row with a condition (conditions are not evaluated)', async () => {
+      const dbs = createMockDatabases({
+        resource_permissions: [{ actions_json: '["read"]', condition_json: '{"ip":"10.0.0.0/8"}' }],
+      });
+      await expect(
+        hasIdLevelPermission(dbs, 'user_123', 'documents', 'doc_456', 'read', 'default')
+      ).resolves.toBe(false);
     });
 
     it('should return true when permission includes wildcard action', async () => {
@@ -571,7 +614,7 @@ describe('Resource Permissions Utilities', () => {
     it('should delete cache entry', async () => {
       await invalidateIdPermissionCache(mockKV as unknown as KVNamespace, 'user_123', 'default');
 
-      expect(mockKV.delete).toHaveBeenCalledWith('policy:idperms:v5:default:user_123');
+      expect(mockKV.delete).toHaveBeenCalledWith('policy:idperms:v6:default:user_123');
     });
   });
 

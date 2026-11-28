@@ -265,9 +265,11 @@ export const deAuthz: Record<keyof typeof jaAuthz, string> = {
 	'eur.new.tierInfo':
 		'Who may give, take away and change this role: an administrator handles roles up to their own tier.',
 	'eur.new.permissions': 'Permissions',
-	'eur.new.permissionsHint': '“resource:action” in lowercase, like “documents:read”.',
+	'eur.new.permissionsHint':
+		'“resource:action” in lowercase, like “documents:read”; “resource:id:action” for one resource; “resource:*”, “*:*” or “*” for every action. A role with “*” or “*:*” needs tier 3, one with “resource:*” tier 2 or 3.',
 	'eur.new.permissionsNone': 'Enter at least one permission.',
-	'eur.new.permissionInvalid': 'Enter “resource:action” in lowercase (the action may have _).',
+	'eur.new.permissionInvalid':
+		'Enter “resource:action”, “resource:id:action”, “resource:*”, “*:*” or “*” (names in lowercase, digits and _; the id without spaces or “:”).',
 	'eur.new.addPermission': 'Add permission',
 	'eur.toast.created': '{name} created',
 	'eur.toast.deleted': '{name} deleted',

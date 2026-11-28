@@ -1,5 +1,11 @@
 import type { Context } from 'hono';
-import { rbacIdBatches, type DatabaseAdapter, type Env } from '@authrim/ar-lib-core';
+import {
+  rbacIdBatches,
+  ROLE_TIER_BELOW_WILDCARD,
+  roleTierCoversWildcards,
+  type DatabaseAdapter,
+  type Env,
+} from '@authrim/ar-lib-core';
 import { getAdminAuth } from '../../admin-tenant-access';
 import {
   assertDelegableRole,
@@ -31,6 +37,7 @@ export async function refuseUndelegableRoles(
       id: string;
       grant_tier: number;
       is_assignable: number | boolean | null;
+      permissions_json: string;
     }
   >();
   for (const batch of rbacIdBatches(ids)) {
@@ -38,8 +45,9 @@ export async function refuseUndelegableRoles(
       id: string;
       grant_tier: number;
       is_assignable: number | boolean | null;
+      permissions_json: string;
     }>(
-      `SELECT id, grant_tier, is_assignable FROM roles
+      `SELECT id, grant_tier, is_assignable, permissions_json FROM roles
         WHERE tenant_id = ? AND id IN (${batch.map(() => '?').join(', ')})`,
       [tenantId, ...batch]
     );
@@ -57,6 +65,15 @@ export async function refuseUndelegableRoles(
       return c.json(
         { error: 'role_not_assignable', error_description: `Role ${roleId} cannot be assigned` },
         403
+      );
+    // A role below the tier its wildcards need is not given later either (409).
+    if (!roleTierCoversWildcards(role))
+      return c.json(
+        {
+          error: ROLE_TIER_BELOW_WILDCARD,
+          error_description: `Role ${roleId} holds a wildcard its grant_tier does not allow`,
+        },
+        409
       );
     try {
       assertDelegableRole(auth, role);

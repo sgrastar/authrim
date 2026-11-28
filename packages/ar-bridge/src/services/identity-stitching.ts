@@ -1172,6 +1172,7 @@ async function applyTenantD1JITPlan(
     account: account.coreDb,
   };
   const groupsJoined: string[] = [];
+  let refusedGroups = 0;
   for (const join of input.plan.groupJoins) {
     try {
       // A membership the rule owns (assignment_source 'rule'); the user's claims are invalidated.
@@ -1184,12 +1185,26 @@ async function applyTenantD1JITPlan(
       );
       groupsJoined.push(join.groupId);
     } catch (error) {
+      // A group carrying a role below its wildcard tier is not joined (refused, not failed).
+      if (error instanceof Error && error.message === 'role_grant_tier_below_wildcard') {
+        refusedGroups += 1;
+        continue;
+      }
       // A group deleted since the rule was saved is not joined; the sign-up goes on.
       if (!(error instanceof Error && error.message === 'group_not_found')) throw error;
       createLogger()
         .module('IDENTITY-STITCHING')
         .warn('JIT rule group not found; not joined', { tenantId: input.tenantId });
     }
+  }
+
+  if (refusedGroups > 0) {
+    createLogger()
+      .module('IDENTITY-STITCHING')
+      .warn('JIT rule groups refused: they carry a role below its wildcard grant tier', {
+        tenantId: input.tenantId,
+        refusedGroups,
+      });
   }
 
   const rolesAssigned: JITProvisioningResult['roles_assigned'] = [];
@@ -1206,7 +1221,11 @@ async function applyTenantD1JITPlan(
       role.scopeTarget,
       input.tenantId
     );
-    if (assigned.code === 'role_not_assignable') refusedRoles += 1;
+    if (
+      assigned.code === 'role_not_assignable' ||
+      assigned.code === 'role_grant_tier_below_wildcard'
+    )
+      refusedRoles += 1;
     if (assigned.success) {
       rolesAssigned.push({
         role_id: role.roleId,

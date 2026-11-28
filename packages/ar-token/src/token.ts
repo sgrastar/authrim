@@ -891,6 +891,78 @@ function tokenRBACDatabases(
   };
 }
 
+/**
+ * The embedded permissions of a user's access token. While policy embedding applies, the claim is
+ * the computed list only: an empty (or failed) evaluation removes the `authrim_permissions` the
+ * RBAC claims put there (a role's own `*`, say) rather than leaving it in place.
+ */
+function applyEmbeddedPermissions(
+  claims: {
+    authrim_permissions?: string[];
+    authrim_scoped_permissions?: unknown;
+    [key: string]: unknown;
+  },
+  applies: boolean,
+  permissions: string[],
+  scopedPermissions: AccessTokenScopedPermission[]
+): void {
+  if (applies) {
+    if (permissions.length > 0) claims.authrim_permissions = permissions;
+    else delete claims.authrim_permissions;
+    if (scopedPermissions.length > 0) claims.authrim_scoped_permissions = scopedPermissions;
+    else delete claims.authrim_scoped_permissions;
+    return;
+  }
+  if (permissions.length > 0) claims.authrim_permissions = permissions;
+  if (scopedPermissions.length > 0) claims.authrim_scoped_permissions = scopedPermissions;
+}
+
+/**
+ * The ID-level resource permissions a user's access token carries (`authrim_resource_permissions`)
+ * when `feature.enable_id_level_permissions` is on: at most `limits.max_resource_permissions` of
+ * them. Every grant that issues a user's access token (code, refresh, device, CIBA) reads them the
+ * same way, from the database (no cache), so a refreshed token carries the grants as they are now.
+ * None when the feature is off or they cannot be read (they are optional claims; the Check API is
+ * the decision).
+ */
+async function embeddedResourcePermissions(
+  c: Context<{ Bindings: Env }>,
+  authCtx: { tenantId: string; coreAdapter: DatabaseAdapter },
+  subject: string,
+  grant: string,
+  enabled?: boolean
+): Promise<string[]> {
+  const log = getLogger(c).module('TOKEN');
+  try {
+    const tenantId = authCtx.tenantId;
+    if (!(enabled ?? (await isIdLevelPermissionsEnabled(c.env, tenantId)))) return [];
+    const limits = await getEmbeddingLimits(c.env, tenantId);
+    // Read from the database, never the cache: a grant revoked while the cache generation could
+    // not be bumped must not come back in a new token (one query per issued token).
+    const permissions = await evaluateIdLevelPermissions(
+      tokenRBACDatabases(c, authCtx),
+      subject,
+      tenantId,
+      { env: c.env }
+    );
+    // Apply limits to prevent token bloat
+    if (permissions.length > limits.max_resource_permissions) {
+      log.warn('ID-level permissions truncated', {
+        original: permissions.length,
+        truncated: limits.max_resource_permissions,
+        grant,
+        action: 'TOKEN_BLOAT',
+      });
+      return permissions.slice(0, limits.max_resource_permissions);
+    }
+    return permissions;
+  } catch (error) {
+    // Log but don't fail - ID-level permissions are optional
+    log.error('Failed to evaluate ID-level permissions', { grant }, error as Error);
+    return [];
+  }
+}
+
 async function resolveTrustedSubjectAccountRoute(
   c: Context<{ Bindings: Env }>,
   subject: string
@@ -2890,7 +2962,8 @@ async function handleAuthorizationCodeGrant(
     'token_optional_features',
     () =>
       Promise.all([
-        isPolicyEmbeddingEnabled(c.env, getTenantIdFromContext(c)),
+        // Unreadable is null, not off: the claim is then the (empty) computed list (fail closed).
+        isPolicyEmbeddingEnabled(c.env, getTenantIdFromContext(c)).catch(() => null),
         isIdLevelPermissionsEnabled(c.env, getTenantIdFromContext(c)),
         isCustomClaimsEnabled(c.env, getTenantIdFromContext(c)),
         isNativeSSOEnabled(c.env),
@@ -3163,32 +3236,13 @@ async function handleAuthorizationCodeGrant(
   }
 
   // Phase 8.2: ID-level Resource Permissions
-  let idLevelPermissions: string[] = [];
-  try {
-    if (idLevelPermissionsEnabled) {
-      const limits = await getEmbeddingLimits(c.env, getTenantIdFromContext(c));
-      const allIdPerms = await evaluateIdLevelPermissions(
-        tokenRBACDatabases(c, authCtx),
-        authCodeData.sub,
-        tenantId,
-        { cache: c.env.REBAC_CACHE, env: c.env }
-      );
-      // Apply limits to prevent token bloat
-      if (allIdPerms.length > limits.max_resource_permissions) {
-        log.warn('ID-level permissions truncated', {
-          original: allIdPerms.length,
-          truncated: limits.max_resource_permissions,
-          action: 'TOKEN_BLOAT',
-        });
-        idLevelPermissions = allIdPerms.slice(0, limits.max_resource_permissions);
-      } else {
-        idLevelPermissions = allIdPerms;
-      }
-    }
-  } catch (idLevelError) {
-    // Log but don't fail - ID-level permissions are optional
-    log.error('Failed to evaluate ID-level permissions', {}, idLevelError as Error);
-  }
+  const idLevelPermissions = await embeddedResourcePermissions(
+    c,
+    authCtx,
+    authCodeData.sub,
+    'authorization_code',
+    idLevelPermissionsEnabled
+  );
 
   // The sub the app receives in every token of this grant (an access token needs no openid scope
   // for it), derived before the access token is signed: the ID token below needs its at_hash.
@@ -3295,12 +3349,12 @@ async function handleAuthorizationCodeGrant(
   };
 
   // Phase 2 Policy Embedding: Add evaluated permissions
-  if (policyEmbeddingPermissions.length > 0) {
-    accessTokenClaims.authrim_permissions = policyEmbeddingPermissions;
-  }
-  if (policyEmbeddingScopedPermissions.length > 0) {
-    accessTokenClaims.authrim_scoped_permissions = policyEmbeddingScopedPermissions;
-  }
+  applyEmbeddedPermissions(
+    accessTokenClaims,
+    policyEmbeddingEnabled !== false,
+    policyEmbeddingPermissions,
+    policyEmbeddingScopedPermissions
+  );
 
   // Phase 8.2: Add ID-level resource permissions
   if (idLevelPermissions.length > 0) {
@@ -4670,8 +4724,11 @@ async function handleRefreshTokenGrant(
   // Phase 2 Policy Embedding: Evaluate permissions from scope if enabled
   let policyEmbeddingPermissions: string[] = [];
   let policyEmbeddingScopedPermissions: AccessTokenScopedPermission[] = [];
+  // Fail closed: until the flag reads off, the claim is the computed list only.
+  let policyEmbeddingApplies = true;
   try {
     const policyEmbeddingEnabled = await isPolicyEmbeddingEnabled(c.env, getTenantIdFromContext(c));
+    policyEmbeddingApplies = policyEmbeddingEnabled;
     if (policyEmbeddingEnabled && grantedScope) {
       const policyEmbedding = await evaluatePermissionEmbeddingForScope(
         tokenRBACDatabases(c, authCtx),
@@ -4692,6 +4749,14 @@ async function handleRefreshTokenGrant(
     // Log but don't fail - policy embedding is optional
     log.error('Failed to evaluate policy permissions for refresh token', {}, policyError as Error);
   }
+
+  // Phase 8.2: ID-level Resource Permissions, read again as at the code exchange
+  const idLevelPermissions = await embeddedResourcePermissions(
+    c,
+    authCtx,
+    refreshTokenData.sub,
+    'refresh_token'
+  );
 
   // Revalidate guest authorization on refresh independently of public claim classification.
   try {
@@ -4820,6 +4885,7 @@ async function handleRefreshTokenGrant(
       cnf?: { jkt: string } | { 'x5t#S256': string };
       authrim_permissions?: string[];
       authrim_scoped_permissions?: AccessTokenScopedPermission[];
+      authrim_resource_permissions?: string[];
       [key: string]: unknown;
     } = {
       iss: getRequestIssuer(c),
@@ -4842,11 +4908,14 @@ async function handleRefreshTokenGrant(
     };
 
     // Phase 2 Policy Embedding: Add evaluated permissions
-    if (policyEmbeddingPermissions.length > 0) {
-      accessTokenClaims.authrim_permissions = policyEmbeddingPermissions;
-    }
-    if (policyEmbeddingScopedPermissions.length > 0) {
-      accessTokenClaims.authrim_scoped_permissions = policyEmbeddingScopedPermissions;
+    applyEmbeddedPermissions(
+      accessTokenClaims,
+      policyEmbeddingApplies,
+      policyEmbeddingPermissions,
+      policyEmbeddingScopedPermissions
+    );
+    if (idLevelPermissions.length > 0) {
+      accessTokenClaims.authrim_resource_permissions = idLevelPermissions;
     }
 
     // Add DPoP confirmation (cnf) claim if DPoP is used
@@ -5951,8 +6020,11 @@ async function handleDeviceCodeGrant(
   // Phase 2 Policy Embedding: Evaluate permissions from scope if enabled
   let policyEmbeddingPermissions: string[] = [];
   let policyEmbeddingScopedPermissions: AccessTokenScopedPermission[] = [];
+  // Fail closed: until the flag reads off, the claim is the computed list only.
+  let policyEmbeddingApplies = true;
   try {
     const policyEmbeddingEnabled = await isPolicyEmbeddingEnabled(c.env, getTenantIdFromContext(c));
+    policyEmbeddingApplies = policyEmbeddingEnabled;
     if (policyEmbeddingEnabled && metadata.scope && metadata.sub) {
       const policyEmbedding = await evaluatePermissionEmbeddingForScope(
         tokenRBACDatabases(c, authCtx),
@@ -5973,6 +6045,11 @@ async function handleDeviceCodeGrant(
     // Log but don't fail - policy embedding is optional
     log.error('Failed to evaluate policy permissions for device flow', {}, policyError as Error);
   }
+
+  // Phase 8.2: ID-level Resource Permissions, as at the code exchange
+  const idLevelPermissions = metadata.sub
+    ? await embeddedResourcePermissions(c, authCtx, metadata.sub, 'device_code')
+    : [];
 
   // The information release the device grant carries (it does not go through the consent screen).
   let deviceReleaseApproval: string[] | null;
@@ -6071,6 +6148,7 @@ async function handleDeviceCodeGrant(
     client_id: string;
     authrim_permissions?: string[];
     authrim_scoped_permissions?: AccessTokenScopedPermission[];
+    authrim_resource_permissions?: string[];
     [key: string]: unknown;
   } = {
     iss: getRequestIssuer(c),
@@ -6108,11 +6186,14 @@ async function handleDeviceCodeGrant(
   Object.assign(accessTokenClaims, accessTokenSubject.claims);
 
   // Phase 2 Policy Embedding: Add evaluated permissions
-  if (policyEmbeddingPermissions.length > 0) {
-    accessTokenClaims.authrim_permissions = policyEmbeddingPermissions;
-  }
-  if (policyEmbeddingScopedPermissions.length > 0) {
-    accessTokenClaims.authrim_scoped_permissions = policyEmbeddingScopedPermissions;
+  applyEmbeddedPermissions(
+    accessTokenClaims,
+    policyEmbeddingApplies,
+    policyEmbeddingPermissions,
+    policyEmbeddingScopedPermissions
+  );
+  if (idLevelPermissions.length > 0) {
+    accessTokenClaims.authrim_resource_permissions = idLevelPermissions;
   }
 
   let accessToken: string;
@@ -6716,8 +6797,11 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
   // Phase 2 Policy Embedding: Evaluate permissions from scope if enabled
   let policyEmbeddingPermissions: string[] = [];
   let policyEmbeddingScopedPermissions: AccessTokenScopedPermission[] = [];
+  // Fail closed: until the flag reads off, the claim is the computed list only.
+  let policyEmbeddingApplies = true;
   try {
     const policyEmbeddingEnabled = await isPolicyEmbeddingEnabled(c.env, getTenantIdFromContext(c));
+    policyEmbeddingApplies = policyEmbeddingEnabled;
     if (policyEmbeddingEnabled && metadata.scope && metadata.sub) {
       const policyEmbedding = await evaluatePermissionEmbeddingForScope(
         tokenRBACDatabases(c, authCtx),
@@ -6738,6 +6822,11 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     // Log but don't fail - policy embedding is optional
     log.error('Failed to evaluate policy permissions for CIBA flow', {}, policyError as Error);
   }
+
+  // Phase 8.2: ID-level Resource Permissions, as at the code exchange
+  const idLevelPermissions = metadata.sub
+    ? await embeddedResourcePermissions(c, authCtx, metadata.sub, 'ciba')
+    : [];
 
   // The sub the app receives in every token of this grant (no openid scope needed).
   const issuedSubject = await deriveIssuedSubject(
@@ -6760,6 +6849,7 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     cnf?: { jkt: string } | { 'x5t#S256': string };
     authrim_permissions?: string[];
     authrim_scoped_permissions?: AccessTokenScopedPermission[];
+    authrim_resource_permissions?: string[];
     [key: string]: unknown;
   } = {
     iss: getRequestIssuer(c),
@@ -6794,11 +6884,14 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
   Object.assign(accessTokenClaims, accessTokenSubject.claims);
 
   // Phase 2 Policy Embedding: Add evaluated permissions
-  if (policyEmbeddingPermissions.length > 0) {
-    accessTokenClaims.authrim_permissions = policyEmbeddingPermissions;
-  }
-  if (policyEmbeddingScopedPermissions.length > 0) {
-    accessTokenClaims.authrim_scoped_permissions = policyEmbeddingScopedPermissions;
+  applyEmbeddedPermissions(
+    accessTokenClaims,
+    policyEmbeddingApplies,
+    policyEmbeddingPermissions,
+    policyEmbeddingScopedPermissions
+  );
+  if (idLevelPermissions.length > 0) {
+    accessTokenClaims.authrim_resource_permissions = idLevelPermissions;
   }
 
   // Generate region-aware JTI for token revocation sharding

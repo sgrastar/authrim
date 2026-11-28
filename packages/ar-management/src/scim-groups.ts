@@ -39,6 +39,7 @@ import {
   revokeGroupMembership,
   updateGroup,
   upsertGroupMembership,
+  groupCarriesUnderTierWildcardRole,
   type DatabaseAdapter,
 } from '@authrim/ar-lib-core';
 import type { InternalGroup, ScimPatchOp, ScimUser } from '@authrim/ar-lib-scim';
@@ -189,6 +190,27 @@ export async function listOwnedScimMembers(
 ): Promise<ScimGroupMember[]> {
   return (await listScimMembersOfGroups(stores, tenantId, [groupId])).get(groupId) ?? [];
 }
+
+/**
+ * Whether the members a SCIM write adds would be refused: the group, or a group above it, carries
+ * a role whose stored grant tier is below what its wildcards need (the shared membership writer
+ * refuses each such add). Checked before anything is written; removals are never refused.
+ */
+export async function scimMemberAddRefused(
+  stores: ScimGroupStores,
+  tenantId: string,
+  groupId: string,
+  current: ScimGroupMember[],
+  next: ScimGroupMember[]
+): Promise<boolean> {
+  const currentIds = new Set(current.map((member) => member.subjectId));
+  if (!next.some((member) => !currentIds.has(member.subjectId))) return false;
+  return groupCarriesUnderTierWildcardRole(stores.metadata, tenantId, groupId);
+}
+
+/** The SCIM error detail of a refused member add. */
+export const SCIM_MEMBER_TIER_REFUSAL =
+  'role_grant_tier_below_wildcard: the group (or a group above it) carries a role whose grant_tier is below what its wildcard permissions need; members cannot be added';
 
 /**
  * Makes the SCIM rows of the group exactly `next`: adds a row for each new member and revokes

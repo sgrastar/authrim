@@ -64,6 +64,35 @@ describe('device code grant: issuance', () => {
     });
   }
 
+  it('drops the RBAC claim permissions when embedding is on and nothing matches', async () => {
+    mocks.getAccessTokenRBACClaims.mockResolvedValue({ authrim_permissions: ['*'] });
+    mocks.isPolicyEmbeddingEnabled.mockResolvedValue(true);
+    expect((await redeem()).status).toBe(200);
+    expect(mocks.createAccessToken.mock.calls[0][0]).not.toHaveProperty('authrim_permissions');
+  });
+
+  it('embeds the ID-level resource permissions within the cap while the feature is on', async () => {
+    mocks.isIdLevelPermissionsEnabled.mockResolvedValue(true);
+    mocks.getEmbeddingLimits.mockResolvedValue({
+      max_embedded_permissions: 50,
+      max_resource_permissions: 1,
+    });
+    mocks.evaluateIdLevelPermissions.mockResolvedValue([
+      'documents:doc_1:read',
+      'documents:doc_2:read',
+    ]);
+    expect((await redeem()).status).toBe(200);
+    expect(mocks.evaluateIdLevelPermissions).toHaveBeenCalledWith(
+      expect.anything(),
+      'user-123',
+      'default',
+      expect.anything()
+    );
+    expect(mocks.createAccessToken.mock.calls[0][0].authrim_resource_permissions).toEqual([
+      'documents:doc_1:read',
+    ]);
+  });
+
   it('issues DPoP-bound tokens with RBAC claims, embedded permissions and a recorded family', async () => {
     mocks.extractDPoPProof.mockReturnValue('dpop-proof');
     mocks.getAccessTokenRBACClaims.mockResolvedValue({ authrim_roles: ['viewer'] });

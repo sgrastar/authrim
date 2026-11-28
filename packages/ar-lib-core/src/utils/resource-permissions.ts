@@ -29,6 +29,8 @@
 
 import type { KVNamespace } from '@cloudflare/workers-types';
 import { ensureDatabaseAdapter } from '../db';
+import { createLogger } from './logger';
+import { isValidPermissionName, parseConcretePermission } from './permission-grammar';
 import type { Env } from '../types/env';
 import {
   bumpTenantRBACCacheVersion,
@@ -170,16 +172,62 @@ export function formatIdLevelPermission(resource: string, id: string, action: st
  */
 // v2: a role's grants only for resources its assignment covers. Entries computed before are not
 // read (they expire on their own). v4: grants to the subject's groups count; organisations removed.
-const ID_PERMISSION_CACHE_PREFIX = 'policy:idperms:v5:';
+// v6: without conditional rows, unusable actions_json or roles below their wildcard tier.
+const ID_PERMISSION_CACHE_PREFIX = 'policy:idperms:v6:';
 
 /**
  * Convert database row to ResourcePermission object
  */
+const log = createLogger().module('RESOURCE-PERMISSIONS');
+
+/** Rows already reported as unusable (once per row and isolate; bounded). */
+const reportedUnusableRows = new Set<string>();
+
+function reportUnusableRow(id: string | undefined, reason: string): void {
+  const key = `${id ?? '?'}:${reason}`;
+  if (reportedUnusableRows.has(key)) return;
+  if (reportedUnusableRows.size >= 1000) reportedUnusableRows.clear();
+  reportedUnusableRows.add(key);
+  log.warn('ID-level permission row ignored', { rowId: id, reason });
+}
+
+/**
+ * The actions of an ID-level row: a flat array of `*` or action names (the permission grammar),
+ * or null when `actions_json` is anything else (a nested array, a string, other values). Such a
+ * row grants nothing, in the Check API and in tokens alike; no value is ever stringified.
+ */
+export function parseIdLevelActions(actionsJson: unknown): string[] | null {
+  if (typeof actionsJson !== 'string') return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(actionsJson);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(parsed)) return null;
+  const actions: unknown[] = parsed;
+  return actions.every(
+    (action): action is string =>
+      typeof action === 'string' && (action === '*' || isValidPermissionName(action))
+  )
+    ? actions
+    : null;
+}
+
 function rowToResourcePermission(row: ResourcePermissionRow): ResourcePermission {
+  let condition: Record<string, unknown> | undefined;
+  if (row.condition_json) {
+    try {
+      condition = JSON.parse(row.condition_json) as Record<string, unknown>;
+    } catch {
+      // Unreadable: still a condition (the row is conditional, never unconditional).
+      condition = { unreadable: true };
+    }
+  }
   return {
     ...row,
-    actions: JSON.parse(row.actions_json) as string[],
-    condition: row.condition_json ? JSON.parse(row.condition_json) : undefined,
+    actions: parseIdLevelActions(row.actions_json) ?? [],
+    condition,
     is_active: row.is_active === 1,
     expires_at: row.expires_at ?? undefined,
   };
@@ -339,11 +387,24 @@ export async function evaluateIdLevelPermissions(
     { cache: options.cache, env: options.env, cacheTTL: options.cacheTTL ?? 300 },
     async () => {
       const permissions = await getUserIdLevelPermissions(dbs, subjectId, normalizedTenantId);
-      return permissions.flatMap((perm) =>
-        perm.actions.map((action) =>
-          formatIdLevelPermission(perm.resource_type, perm.resource_id, action)
-        )
-      );
+      return permissions.flatMap((perm) => {
+        // A conditional grant is not an unconditional claim: it is never embedded.
+        if (perm.condition !== undefined) return [];
+        // Empty when actions_json is not a flat array in the grammar (rowToResourcePermission).
+        if (perm.actions.length === 0) {
+          reportUnusableRow(perm.id, 'actions_json');
+          return [];
+        }
+        return perm.actions.flatMap((action) => {
+          const permission = formatIdLevelPermission(perm.resource_type, perm.resource_id, action);
+          // `*` stays as the stored grant says; other entries must be a checkable permission.
+          if (action !== '*' && !parseConcretePermission(permission)) {
+            reportUnusableRow(perm.id, 'permission');
+            return [];
+          }
+          return [permission];
+        });
+      });
     }
   );
 }
@@ -372,15 +433,17 @@ export async function hasIdLevelPermission(
   const normalizedTenantId = requireTenantId(tenantId, 'ID-level permission check');
   const now = Math.floor(Date.now() / 1000);
   const adapter = ensureDatabaseAdapter(dbs.metadata, 'resource-permissions');
-  const fullResult: { actions_json: string }[] = [];
+  const fullResult: { id?: string; actions_json: string; condition_json?: string | null }[] = [];
   const grants = await subjectGrants(dbs, subjectId, normalizedTenantId, now, options);
   for (const grantedTo of grants.clauses) {
     const rows = await adapter.query<{
+      id?: string;
       actions_json: string;
+      condition_json?: string | null;
       subject_type: string;
       subject_id: string;
     }>(
-      `SELECT actions_json, subject_type, subject_id
+      `SELECT id, actions_json, condition_json, subject_type, subject_id
            FROM resource_permissions
            WHERE tenant_id = ?
              AND resource_type = ?
@@ -397,15 +460,21 @@ export async function hasIdLevelPermission(
     );
   }
 
-  // Check if the action is in the actions_json
+  // Check if the action is in the actions_json: a flat array in the grammar only (another shape,
+  // such as a nested array or a string, grants nothing). A row with a condition grants nothing
+  // here: conditions are not evaluated, and an unevaluated condition is not met (fail closed).
   for (const row of fullResult) {
-    try {
-      const actions = JSON.parse(row.actions_json) as string[];
-      if (actions.includes(action) || actions.includes('*')) {
-        return true;
-      }
-    } catch {
-      // Skip invalid JSON
+    if (row.condition_json) {
+      reportUnusableRow(row.id, 'condition_not_evaluated');
+      continue;
+    }
+    const actions = parseIdLevelActions(row.actions_json);
+    if (!actions) {
+      reportUnusableRow(row.id, 'actions_json');
+      continue;
+    }
+    if (actions.includes(action) || actions.includes('*')) {
+      return true;
     }
   }
 

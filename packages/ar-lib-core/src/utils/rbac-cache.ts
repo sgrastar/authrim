@@ -23,7 +23,9 @@ const DEFAULT_RBAC_CACHE_TTL = 600; // 10 minutes in seconds (default)
 // v2: roles named by the tenant metadata database, tenant-wide permissions from tenant-wide
 // assignments only. Entries computed before are not read (they expire on their own).
 // v4: organisations removed (no authrim_org_* claims, no organisation fields in the composite entry).
-const RBAC_CACHE_PREFIX = 'rbac:v5:';
+// v6: roles below their wildcard grant tier are ignored when read; an entry computed before could
+// still name one, so none is read.
+const RBAC_CACHE_PREFIX = 'rbac:v6:';
 const DEFAULT_RBAC_CACHE_VERSION = 1; // Increment when CompositeRBACCache structure changes
 
 // In-memory cache for TTL value (avoid repeated KV reads)

@@ -89,7 +89,7 @@ describe('invitation-auth-core', () => {
   it('reuses an existing tenant-scoped role assignment', async () => {
     const adapter = createMockAdapter();
     vi.mocked(adapter.queryOne)
-      .mockResolvedValueOnce({ id: 'role-1' })
+      .mockResolvedValueOnce({ id: 'role-1', grant_tier: 1, permissions_json: '[]' })
       .mockResolvedValueOnce({ id: 'assignment-1' });
 
     const result = await assignTenantRoleToUser(
@@ -109,7 +109,9 @@ describe('invitation-auth-core', () => {
 
   it('applies the tenant role via a portable insert', async () => {
     const adapter = createMockAdapter();
-    vi.mocked(adapter.queryOne).mockResolvedValueOnce({ id: 'role-1' }).mockResolvedValueOnce(null);
+    vi.mocked(adapter.queryOne)
+      .mockResolvedValueOnce({ id: 'role-1', grant_tier: 1, permissions_json: '[]' })
+      .mockResolvedValueOnce(null);
     vi.mocked(adapter.execute).mockResolvedValueOnce({ success: true, rowsAffected: 1 });
 
     const result = await applyInvitationAssignments(

@@ -53,6 +53,8 @@ import {
   DefaultIALUnavailableError,
   ScimMaxIALUnavailableError,
   resolveTenantPolicyInitialAssurance,
+  RoleTierBelowWildcardError,
+  ROLE_TIER_BELOW_WILDCARD,
 } from '@authrim/ar-lib-core';
 import { logScimAudit } from '@authrim/ar-lib-scim';
 import { canonicalProjectionToScimInternalUser } from './identity-canonical-runtime';
@@ -98,6 +100,8 @@ import {
   scimGroupListSql,
   scimGroupNameTaken,
   setOwnedScimMembers,
+  scimMemberAddRefused,
+  SCIM_MEMBER_TIER_REFUSAL,
   updateScimGroup,
   type ScimGroupMember,
   type ScimGroupStores,
@@ -1121,6 +1125,28 @@ function duplicateGroupNameBulkResponse(method: string): ScimBulkOperationRespon
       status: '409',
       detail: 'Group with this name already exists',
       scimType: 'uniqueness',
+    },
+  };
+}
+
+/** The shared membership writer's refusal (RoleTierBelowWildcardError), however it is thrown. */
+function isRoleTierBelowWildcardError(error: unknown): boolean {
+  return (
+    error instanceof RoleTierBelowWildcardError ||
+    (error instanceof Error && error.message === ROLE_TIER_BELOW_WILDCARD)
+  );
+}
+
+/** A bulk operation adding members to a group that carries a role below its wildcard tier. */
+function memberTierRefusalBulkResponse(method: string, bulkId?: string): ScimBulkOperationResponse {
+  return {
+    method: method as ScimBulkMethod,
+    bulkId,
+    status: '409',
+    response: {
+      schemas: [SCIM_SCHEMAS.ERROR],
+      status: '409',
+      detail: SCIM_MEMBER_TIER_REFUSAL,
     },
   };
 }
@@ -3474,6 +3500,8 @@ app.post('/Groups', async (c) => {
 
     return c.json(responseGroup, 201);
   } catch (error) {
+    // The shared membership writer refused a member add (a race past the pre-check).
+    if (isRoleTierBelowWildcardError(error)) return scimError(c, 409, SCIM_MEMBER_TIER_REFUSAL);
     const log = getLogger(c).module('SCIM');
     log.error('SCIM create group error', { action: 'create_group' }, error as Error);
     return scimError(c, 500, 'Internal server error');
@@ -3545,6 +3573,9 @@ app.put('/Groups/:id', async (c) => {
       return scimError(c, 400, 'Group member does not exist in this tenant', 'invalidValue');
     }
 
+    if (await scimMemberAddRefused(stores, tenantId, groupId, current, requested.members)) {
+      return scimError(c, 409, SCIM_MEMBER_TIER_REFUSAL);
+    }
     await updateScimGroup(stores, tenantId, existingGroup, {
       displayName: internalGroup.name!,
       externalId: internalGroup.external_id ?? null,
@@ -3577,6 +3608,8 @@ app.put('/Groups/:id', async (c) => {
 
     return c.json(responseGroup);
   } catch (error) {
+    // The shared membership writer refused a member add (a race past the pre-check).
+    if (isRoleTierBelowWildcardError(error)) return scimError(c, 409, SCIM_MEMBER_TIER_REFUSAL);
     const log = getLogger(c).module('SCIM');
     log.error('SCIM replace group error', { action: 'replace_group' }, error as Error);
     return scimError(c, 500, 'Internal server error');
@@ -3662,6 +3695,9 @@ app.patch('/Groups/:id', async (c) => {
     }
 
     // Update group
+    if (await scimMemberAddRefused(stores, tenantId, groupId, current, requested.members)) {
+      return scimError(c, 409, SCIM_MEMBER_TIER_REFUSAL);
+    }
     await updateScimGroup(stores, tenantId, existingGroup, {
       displayName: internalGroup.name!,
       externalId: internalGroup.external_id ?? null,
@@ -3696,6 +3732,8 @@ app.patch('/Groups/:id', async (c) => {
 
     return c.json(responseGroup);
   } catch (error) {
+    // The shared membership writer refused a member add (a race past the pre-check).
+    if (isRoleTierBelowWildcardError(error)) return scimError(c, 409, SCIM_MEMBER_TIER_REFUSAL);
     const log = getLogger(c).module('SCIM');
     log.error('SCIM patch group error', { action: 'patch_group' }, error as Error);
     return scimError(c, 500, 'Internal server error');
@@ -4118,6 +4156,7 @@ async function processOperation(
       { action: 'bulk_operation', method, path },
       error as Error
     );
+    if (isRoleTierBelowWildcardError(error)) return memberTierRefusalBulkResponse(method, bulkId);
     if (error instanceof ScimIalCeilingError || error instanceof ScimMaxIALUnavailableError) {
       const refused = error instanceof ScimIalCeilingError;
       const status = refused ? '400' : '503';
@@ -5107,6 +5146,11 @@ async function processGroupOperation(
         return invalidGroupMemberBulkResponse('PUT');
       }
 
+      if (
+        await scimMemberAddRefused(stores, tenantId, existingGroup.id, current, requested.members)
+      ) {
+        return memberTierRefusalBulkResponse('PUT');
+      }
       await updateScimGroup(stores, tenantId, existingGroup, {
         displayName: internalGroup.name!,
         externalId: internalGroup.external_id ?? null,
@@ -5244,6 +5288,11 @@ async function processGroupOperation(
         return invalidGroupMemberBulkResponse('PATCH');
       }
 
+      if (
+        await scimMemberAddRefused(stores, tenantId, existingGroup.id, current, requested.members)
+      ) {
+        return memberTierRefusalBulkResponse('PATCH');
+      }
       await updateScimGroup(stores, tenantId, existingGroup, {
         displayName: internalGroup.name!,
         externalId: internalGroup.external_id ?? null,

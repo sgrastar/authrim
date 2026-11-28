@@ -53,7 +53,15 @@ function createTenantAwareD1(
         const permissions =
           roleTenant === tenantId ? roleAssignments.get(tenantId)?.get(subjectId) : undefined;
         return permissions
-          ? [{ id: roleId, name: 'user_role', permissions_json: JSON.stringify(permissions) }]
+          ? [
+              {
+                id: roleId,
+                name: 'user_role',
+                permissions_json: JSON.stringify(permissions),
+                // The tier a role's wildcards need (a lower one is ignored when read).
+                grant_tier: 3,
+              },
+            ]
           : [];
       });
     }

@@ -1308,6 +1308,11 @@ components:
         subject_type:
           type: string
         permission:
+          description: >-
+            One concrete action: `resource:action`, `resource:<id>:action`, or { resource, id?,
+            action }. `resource` and `action` are `[a-z][a-z0-9_]*`; an id is any non-empty string
+            without whitespace and without `:`. The wildcard forms a role may hold (`resource:*`,
+            `*:*`, `*`) are not a check and are refused with 400.
           oneOf:
             - type: string
             - type: object

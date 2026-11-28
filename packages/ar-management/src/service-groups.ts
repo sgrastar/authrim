@@ -20,10 +20,11 @@ import {
   type GroupInputReader,
   type SavedGroupInputReader,
   type DynamicGroupStore,
+  stableStringify,
 } from '@authrim/ar-lib-core';
 import { serviceGroupRuntime } from './dynamic-groups-runtime';
 import { tenantRBACStores } from './rbac-account-stores';
-import { canManageGroupMembership } from './group-role-management';
+import { canManageGroupMembership, type MembershipChange } from './group-role-management';
 type Ctx = Context<{
   Bindings: Env;
   Variables: { adminAuth: { userId?: string; adminUserId?: string } };
@@ -89,15 +90,16 @@ async function assertMayAffectGroups(
   db: Parameters<typeof canManageGroupMembership>[0],
   tenantId: string,
   auth: AdminAuthContext | null,
-  groupIds: Iterable<string>
+  groupIds: Iterable<string>,
+  change: MembershipChange
 ) {
   for (const id of new Set(groupIds))
-    if (!(await canManageGroupMembership(db, tenantId, auth, id)))
+    if (!(await canManageGroupMembership(db, tenantId, auth, id, change)))
       throw new Error('role_delegation_denied');
 }
 const ruleChanged = (before: ServiceGroup | undefined, after: ServiceGroup) =>
   !before ||
-  JSON.stringify(before.condition) !== JSON.stringify(after.condition) ||
+  stableStringify(before.condition) !== stableStringify(after.condition) ||
   before.enabled !== after.enabled ||
   (before.scimRoleId ?? null) !== (after.scimRoleId ?? null);
 /**
@@ -205,9 +207,13 @@ export async function serviceGroupWrite(c: Ctx) {
     const deleting = c.req.method === 'DELETE';
     let groups = [...(catalog?.plan.groups ?? [])];
     let seeds: string[] = [];
+    // Deleting or only disabling a rule takes memberships away ('remove': never refused for a
+    // role below its wildcard tier); any other rule change may hand them out ('add').
+    let change: MembershipChange = 'add';
     if (deleting) {
       groups = groups.filter((g) => g.id !== id);
       seeds = [id!];
+      change = 'remove';
     } else {
       const group = {
         id: existing?.id ?? crypto.randomUUID(),
@@ -232,6 +238,13 @@ export async function serviceGroupWrite(c: Ctx) {
       groups = [...groups.filter((g) => g.id !== group.id), group];
       // A rename alone changes no membership.
       if (ruleChanged(existing, group)) seeds = [group.id];
+      const onlyDisabled =
+        existing !== undefined &&
+        existing.enabled !== false &&
+        group.enabled === false &&
+        stableStringify(existing.condition) === stableStringify(group.condition) &&
+        (existing.scimRoleId ?? null) === (group.scimRoleId ?? null);
+      if (onlyDisabled) change = 'remove';
     }
     if (typeof input.ifMatch !== 'number') throw new Error('group_version_invalid');
     const next = compileGroups(store.tenantId, groups, fields);
@@ -245,7 +258,7 @@ export async function serviceGroupWrite(c: Ctx) {
     // after the group catalog lock that grants and reparents also take; on D1 they narrow the
     // window to the write only.
     const check = async (db: Parameters<typeof groupsCarryingRoles>[0]) => {
-      await assertMayAffectGroups(db, store.tenantId, adminAuthOf(c), affected);
+      await assertMayAffectGroups(db, store.tenantId, adminAuthOf(c), affected, change);
       // A field the person writes themselves must not decide a role grant.
       if (
         (

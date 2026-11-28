@@ -8,6 +8,7 @@
  * changed.
  */
 import type { Expression, GroupPlan, ServiceGroup } from './model';
+import { stableStringify } from '../../utils/stable-json';
 
 function fieldsOf(expression: Expression | null, into = new Set<string>()): Set<string> {
   if (!expression) return into;
@@ -47,10 +48,14 @@ function membersOf(expression: Expression | null, into = new Set<string>()): Set
   return into;
 }
 
-/** A stable text of what decides the group's membership under the plan. */
+/**
+ * A stable text of what decides the group's membership under the plan: key order does not count
+ * (stableStringify, as the service-groups API decides a rule change), so a reordered condition
+ * keeps the published memberships.
+ */
 function ruleSignature(plan: GroupPlan, group: ServiceGroup): string {
   const fields = [...fieldsOf(group.condition)].sort();
-  return JSON.stringify({
+  return stableStringify({
     enabled: group.enabled,
     condition: group.condition,
     scimRoleId: group.scimRoleId ?? null,

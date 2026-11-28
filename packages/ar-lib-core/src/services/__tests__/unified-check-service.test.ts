@@ -65,6 +65,8 @@ function mockSubjectRoles(
           id: `role_${index}`,
           name,
           permissions_json,
+          // The tier a role's wildcards need (a lower one is ignored when read).
+          grant_tier: 3,
         })),
       };
     }
@@ -101,14 +103,31 @@ describe('Permission Parser', () => {
       expect(result.original).toBe('documents:doc_123:read');
     });
 
-    it('should accept URL-safe characters in components', () => {
-      const result = parsePermission('my-resource:item_123-abc:read_write');
+    it('should accept any id without whitespace or colon', () => {
+      const result = parsePermission('my_resource2:Item-123.abc@x:read_write');
 
       expect(result.type).toBe('id_level');
-      expect(result.resource).toBe('my-resource');
-      expect(result.id).toBe('item_123-abc');
+      expect(result.resource).toBe('my_resource2');
+      expect(result.id).toBe('Item-123.abc@x');
       expect(result.action).toBe('read_write');
     });
+
+    it.each([
+      'my-resource:read',
+      'Documents:read',
+      'documents:Read',
+      '2docs:read',
+      'docs:read-all',
+    ])('should reject the resource or action name in %s', (permission) => {
+      expect(() => parsePermission(permission)).toThrow(/Invalid permission format/);
+    });
+
+    it.each(['documents:*', '*:*', '*', 'documents:doc_1:*'])(
+      'should reject the wildcard %s as a checked permission',
+      (permission) => {
+        expect(() => parsePermission(permission)).toThrow(/Invalid permission format/);
+      }
+    );
 
     it('should reject permission with too few colons', () => {
       expect(() => parsePermission('documents')).toThrow(/Invalid permission format/);
@@ -119,19 +138,20 @@ describe('Permission Parser', () => {
     });
 
     it('should reject empty resource', () => {
-      expect(() => parsePermission(':read')).toThrow(/resource cannot be empty/);
+      expect(() => parsePermission(':read')).toThrow(/Invalid permission format/);
     });
 
     it('should reject empty action', () => {
-      expect(() => parsePermission('documents:')).toThrow(/action cannot be empty/);
+      expect(() => parsePermission('documents:')).toThrow(/Invalid permission format/);
     });
 
     it('should reject empty ID in ID-level permission', () => {
-      expect(() => parsePermission('documents::read')).toThrow(/id cannot be empty/);
+      expect(() => parsePermission('documents::read')).toThrow(/Invalid permission format/);
     });
 
-    it('should reject non-URL-safe characters in resource', () => {
-      expect(() => parsePermission('docu ments:read')).toThrow(/must be URL-safe/);
+    it('should reject whitespace in resource or id', () => {
+      expect(() => parsePermission('docu ments:read')).toThrow(/Invalid permission format/);
+      expect(() => parsePermission('documents:doc 1:read')).toThrow(/Invalid permission format/);
     });
 
     it('should parse ambiguous colon as ID-level permission', () => {
@@ -170,16 +190,14 @@ describe('Permission Parser', () => {
       expect(result.action).toBe('read');
     });
 
-    it('should treat empty id as type-level', () => {
-      const result = parsePermission({
-        resource: 'documents',
-        id: '',
-        action: 'read',
-      });
-
-      expect(result.type).toBe('type_level');
-      expect(result.id).toBeUndefined();
-    });
+    it.each(['', null, 'doc\u00001', 'doc\u00071'])(
+      'should reject the id %j in the object form (not "no id")',
+      (id) => {
+        expect(() =>
+          parsePermission({ resource: 'documents', id: id as string, action: 'read' })
+        ).toThrow(/id must be non-empty/);
+      }
+    );
 
     it('should reject empty resource in object', () => {
       expect(() =>
@@ -187,7 +205,7 @@ describe('Permission Parser', () => {
           resource: '',
           action: 'read',
         })
-      ).toThrow(/resource cannot be empty/);
+      ).toThrow(/resource must match/);
     });
 
     it('should reject empty action in object', () => {
@@ -196,16 +214,23 @@ describe('Permission Parser', () => {
           resource: 'documents',
           action: '',
         })
-      ).toThrow(/action cannot be empty/);
+      ).toThrow(/action must match/);
     });
 
-    it('should reject non-URL-safe resource in object', () => {
+    it('should reject an invalid resource or id in object', () => {
       expect(() =>
         parsePermission({
           resource: 'docu ments',
           action: 'read',
         })
-      ).toThrow(/must be URL-safe/);
+      ).toThrow(/resource must match/);
+      expect(() =>
+        parsePermission({
+          resource: 'documents',
+          id: 'doc:1',
+          action: 'read',
+        })
+      ).toThrow(/id must be non-empty/);
     });
   });
 
@@ -452,6 +477,57 @@ describe('UnifiedCheckService', () => {
 
       expect(result.allowed).toBe(true);
       expect(result.resolved_via).toContain('role');
+    });
+
+    it('grants an ID-qualified role permission for that resource only', async () => {
+      mockSubjectRoles([
+        { name: 'doc42_reader', permissions_json: JSON.stringify(['documents:doc_42:read']) },
+      ]);
+      const check = (permission: string) =>
+        service.check({ subject_id: 'user_123', permission, tenant_id: 'default' });
+
+      const allowed = await check('documents:doc_42:read');
+      expect(allowed.allowed).toBe(true);
+      expect(allowed.resolved_via).toContain('role');
+      expect((await check('documents:doc_43:read')).allowed).toBe(false);
+      expect((await check('documents:read')).allowed).toBe(false);
+      expect((await check('documents:doc_42:write')).allowed).toBe(false);
+    });
+
+    it('denies an ID-qualified permission of a resource-scoped role for another resource', async () => {
+      const check = (permission: string) =>
+        service.check({ subject_id: 'user_123', permission, tenant_id: 'default' });
+      mockSubjectRoles([
+        {
+          name: 'doc_reader',
+          permissions_json: JSON.stringify(['documents:doc_2:read']),
+          scope_type: 'resource',
+          scope_target: 'resource:documents:doc_1',
+        },
+      ]);
+      // The permission names doc_2, the assignment doc_1: neither resource is granted.
+      expect((await check('documents:doc_2:read')).allowed).toBe(false);
+      expect((await check('documents:doc_1:read')).allowed).toBe(false);
+
+      mockSubjectRoles([
+        {
+          name: 'doc_reader',
+          permissions_json: JSON.stringify(['documents:doc_1:read']),
+          scope_type: 'resource',
+          scope_target: 'resource:documents:doc_1',
+        },
+      ]);
+      expect((await check('documents:doc_1:read')).allowed).toBe(true);
+    });
+
+    it('grants every action and resource of a type through a resource wildcard', async () => {
+      mockSubjectRoles([{ name: 'docs_admin', permissions_json: JSON.stringify(['documents:*']) }]);
+      const check = (permission: string) =>
+        service.check({ subject_id: 'user_123', permission, tenant_id: 'default' });
+
+      expect((await check('documents:read')).allowed).toBe(true);
+      expect((await check('documents:doc_42:read')).allowed).toBe(true);
+      expect((await check('reports:read')).allowed).toBe(false);
     });
 
     it('should allow when role has global wildcard', async () => {

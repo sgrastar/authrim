@@ -1,6 +1,7 @@
 import type { KVNamespace } from '@cloudflare/workers-types';
 import { ensureDatabaseAdapter, type DatabaseSource, type PreparedStatement } from '../db';
 import { invalidateSubjectRBACCache } from '../utils/rbac-cache';
+import { ROLE_TIER_BELOW_WILDCARD, roleTierCoversWildcards } from '../utils/permission-grammar';
 import type { TenantRBACDatabases } from './tenant-rbac';
 import {
   markDynamicMembershipsStale,
@@ -319,6 +320,58 @@ interface MembershipTimes {
   staleAfter?: number | null;
 }
 
+/** The shared membership writer's refusal: the group hands out a role below its wildcard tier. */
+export class RoleTierBelowWildcardError extends Error {
+  readonly code = ROLE_TIER_BELOW_WILDCARD;
+  constructor() {
+    super(ROLE_TIER_BELOW_WILDCARD);
+    this.name = 'RoleTierBelowWildcardError';
+  }
+}
+
+/**
+ * Whether the group, or a group above it, has an unexpired grant of a role whose stored grant
+ * tier is below what its wildcards need (roleTierCoversWildcards): a membership would hand that
+ * role out, so no path adds one. The same rule as the admin delegation check (unexpired grants
+ * only); an expired grant gives nothing, and the read-time check in tenant-rbac ignores such a
+ * role however it is reached. Removing a membership is never refused.
+ */
+export async function groupCarriesUnderTierWildcardRole(
+  metadata: DatabaseSource,
+  tenantId: string,
+  groupId: string,
+  nowSeconds: number = Math.floor(Date.now() / 1000)
+): Promise<boolean> {
+  const roles = await ensureDatabaseAdapter(metadata).query<{
+    grant_tier: number | string | null;
+    permissions_json: string | null;
+  }>(
+    `WITH RECURSIVE ancestors(id, parent_group_id, depth) AS (
+       SELECT id, parent_group_id, 0 FROM "groups" WHERE tenant_id = ? AND id = ?
+       UNION SELECT g.id, g.parent_group_id, a.depth + 1 FROM "groups" g
+         JOIN ancestors a ON g.id = a.parent_group_id
+        WHERE g.tenant_id = ? AND a.depth < ${MAX_GROUP_DEPTH}
+     ) SELECT DISTINCT r.grant_tier AS grant_tier, r.permissions_json AS permissions_json
+         FROM ancestors a
+         JOIN group_role_assignments ga ON ga.group_id = a.id AND ga.tenant_id = ?
+         JOIN roles r ON r.id = ga.role_id AND r.tenant_id = ga.tenant_id
+        WHERE ga.expires_at IS NULL OR ga.expires_at > ?`,
+    [tenantId, groupId, tenantId, tenantId, nowSeconds]
+  );
+  return roles.some((role) => !roleTierCoversWildcards(role));
+}
+
+/** Throws RoleTierBelowWildcardError when a membership of the group would hand one out. */
+export async function assertGroupMembershipMayBeAdded(
+  metadata: DatabaseSource,
+  tenantId: string,
+  groupId: string
+): Promise<void> {
+  if (await groupCarriesUnderTierWildcardRole(metadata, tenantId, groupId)) {
+    throw new RoleTierBelowWildcardError();
+  }
+}
+
 async function requireGroups(metadata: DatabaseSource, tenantId: string, groupIds: string[]) {
   if ((await loadGroups(metadata, tenantId, groupIds)).size !== new Set(groupIds).size)
     throw new Error('group_not_found');
@@ -361,6 +414,8 @@ export async function upsertGroupMembership(
   cache?: KVNamespace
 ) {
   await requireGroups(dbs.metadata, tenantId, [input.groupId]);
+  // Every path that adds a membership (admin, SCIM, invitations, JIT rules) writes through here.
+  await assertGroupMembershipMayBeAdded(dbs.metadata, tenantId, input.groupId);
   const { sql, params } = membershipStatement(tenantId, subjectId, input);
   await ensureDatabaseAdapter(dbs.account).execute(sql, params);
   if (cache) await invalidateSubjectRBACCache(cache, tenantId, subjectId);
@@ -382,6 +437,7 @@ export async function writeGroupMembership(
   input: MembershipKey & MembershipTimes
 ): Promise<{ id: string; updatedAt: number; changed: boolean }> {
   await requireGroups(dbs.metadata, tenantId, [input.groupId]);
+  await assertGroupMembershipMayBeAdded(dbs.metadata, tenantId, input.groupId);
   const account = ensureDatabaseAdapter(dbs.account);
   const now = Math.floor(Date.now() / 1000);
   const sourceRef = input.sourceRef ?? '';
