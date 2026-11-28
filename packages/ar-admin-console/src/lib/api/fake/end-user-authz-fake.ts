@@ -187,6 +187,10 @@ const grant = (
 
 function failure(spec: 403 | 404 | 500 | string): ApiError {
 	if (typeof spec === 'number') return new ApiError(spec, '', `Fake failure ${spec}`);
+	if (spec === 'capability_disabled')
+		return new ApiError(403, 'capability_disabled', 'capability_disabled', {
+			error: 'capability_disabled'
+		});
 	return conflict(spec, spec);
 }
 
@@ -868,6 +872,32 @@ export function createFakeAuthz(options: FakeAuthzOptions = {}): FakeAuthz {
 	};
 
 	const checkApiKeys: CheckApiKeysClient = {
+		create: (input) =>
+			call('keys.create', () => {
+				if (!input.name.trim() || !input.client_id.trim()) {
+					throw invalid('name and client_id are required');
+				}
+				const unknown = input.allowed_operations.find(
+					(operation) => !['check', 'batch', 'subscribe'].includes(operation)
+				);
+				if (unknown !== undefined) throw invalid(`Invalid operation: ${unknown}`);
+				if (input.expires_at !== null && input.expires_at < Date.now())
+					throw invalid('expires_at must be in the future');
+				const id = `chk_${next++}`;
+				const key: CheckApiKey = {
+					id,
+					name: input.name.trim(),
+					client_id: input.client_id.trim(),
+					key_prefix: `chk_live_${id.slice(4)}`,
+					allowed_operations: [...input.allowed_operations],
+					rate_limit_tier: 'moderate',
+					is_active: true,
+					expires_at: input.expires_at,
+					created_at: NOW
+				};
+				keys.unshift(key);
+				return { key: structuredClone(key), api_key: `chk_live_${id.slice(4)}_demo_secret_value` };
+			}),
 		list: (at = 1, limit = 20) =>
 			call('keys.list', () => ({
 				items: structuredClone(keys.slice((at - 1) * limit, at * limit)),

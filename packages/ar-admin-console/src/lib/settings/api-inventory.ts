@@ -169,7 +169,7 @@ export const API_GROUPS: readonly ApiGroup[] = [
 		kind: 'records',
 		page: 'settings/authorization',
 		paths: [`${A}/check-api-keys`],
-		note: 'Listed and revoked on Settings → Authorization; made where an app’s backend is set up.'
+		note: 'Created, listed and revoked on Settings → Authorization.'
 	},
 	{
 		id: 'access-check',

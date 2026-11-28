@@ -335,10 +335,10 @@ export const TENANT_AREAS: readonly NavArea[] = [
 				id: 'authorization',
 				label: 'nav.set.authorization',
 				platform: 'tenant',
-				// The settings of these categories, or the Check API keys (their read permission).
+				// The settings of these categories, or the Check API keys (their read or write permission).
 				requires: {
 					settings: ['feature-flags', 'check', 'groups', 'tokens'],
-					permission: 'admin:security:read'
+					anyPermission: ['admin:security:read', 'admin:security:write']
 				}
 			},
 			{
