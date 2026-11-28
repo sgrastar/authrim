@@ -13,7 +13,8 @@
 	/**
 	 * Settings → Authorization: the settings of the end-user authorization (`AUTHORIZATION`:
 	 * ABAC and ReBAC, the Check API, dynamic group freshness, RBAC claims in tokens), and the
-	 * Check API keys from their own API, for admins who may read them.
+	 * Check API keys from their own API, for admins who may read them (and make or revoke them
+	 * with `admin:security:write`; new keys also need the platform's machine credentials on).
 	 */
 	interface Props {
 		client: SettingsClient;
@@ -25,6 +26,10 @@
 
 	let { client, keys, tenantId, access }: Props = $props();
 	const who = $derived(access ?? adminAccess.current);
+	const canWrite = $derived(hasPermission(who, 'admin:security:write'));
+	const canList = $derived(hasPermission(who, 'admin:security:read'));
+	// The platform's `machine_credentials` switch stops new keys, not revoking (the API exempts it).
+	const capabilityOff = $derived(isCapabilityDisabled(who, 'machine_credentials'));
 </script>
 
 <Page>
@@ -36,12 +41,15 @@
 		{access}
 		framed={false}
 	/>
-	{#if hasPermission(who, 'admin:security:read')}
-		<!-- Revoking is a machine-credential change: refused while the platform has them off. -->
+	{#if canList || canWrite}
+		<!-- Listing needs read; making a key needs write and the capability; revoking only write. -->
 		<CheckApiKeysCard
 			client={keys}
-			canRevoke={hasPermission(who, 'admin:security:write') &&
-				!isCapabilityDisabled(who, 'machine_credentials')}
+			{tenantId}
+			{canList}
+			canRevoke={canWrite}
+			canCreate={canWrite && !capabilityOff}
+			capabilityOff={canWrite && capabilityOff}
 		/>
 	{/if}
 </Page>

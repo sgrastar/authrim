@@ -1,13 +1,14 @@
 /**
  * Check API keys (`/api/admin/check-api-keys`): the `chk_` keys a service's backend uses to ask
- * the Check API about any of the tenant's users. Read with `admin:security:read`; revoked with
- * `admin:security:write` (the platform can turn machine credentials off for tenants). A key's
- * secret is shown once, when it is made; this list has its prefix only.
+ * the Check API about any of the tenant's users. Read with `admin:security:read`; made and revoked
+ * with `admin:security:write` (the platform can turn machine credentials off for tenants, which
+ * stops new keys only: revoking needs no capability). A key's
+ * secret is returned once, when it is made; this list has its prefix only.
  */
 import { API_BASE_URL, adminFetch } from './admin-request';
 import { errorFromResponse } from './api-error';
 import { stepUpHeaders, withStepUp } from './admin-step-up';
-import { msOrNull } from './end-user-groups';
+import { MalformedResponseError, msOrNull } from './end-user-groups';
 
 export interface CheckApiKey {
 	id: string;
@@ -28,7 +29,25 @@ export interface CheckApiKeysPage {
 	total: number;
 }
 
+/** What a new key is made from. The tenant is the one the client was made for. */
+export interface CheckApiKeyInput {
+	name: string;
+	/** The client (the app's backend) the key belongs to. */
+	client_id: string;
+	/** Any of `check`, `batch`, `subscribe`. */
+	allowed_operations: string[];
+	/** When it stops working, in milliseconds; null for no end. */
+	expires_at: number | null;
+}
+
+/** A made key, with the secret the API returns this once. */
+export interface CreatedCheckApiKey {
+	key: CheckApiKey;
+	api_key: string;
+}
+
 export interface CheckApiKeysClient {
+	create(input: CheckApiKeyInput): Promise<CreatedCheckApiKey>;
 	/** One page (1-based) of the tenant's keys. */
 	list(page?: number, limit?: number, signal?: AbortSignal): Promise<CheckApiKeysPage>;
 	revoke(keyId: string): Promise<void>;
@@ -56,9 +75,43 @@ export function checkApiKeyFromRow(value: unknown): CheckApiKey {
 	};
 }
 
+/** The create request: the API takes the end in epoch seconds. */
+export function checkApiKeyBody(input: CheckApiKeyInput): Record<string, unknown> {
+	return {
+		name: input.name.trim(),
+		client_id: input.client_id.trim(),
+		allowed_operations: input.allowed_operations,
+		...(input.expires_at === null ? {} : { expires_at: Math.floor(input.expires_at / 1000) })
+	};
+}
+
+/** The create response: the key as a list row would show it, and the secret. */
+export function createdCheckApiKeyFrom(value: unknown): CreatedCheckApiKey {
+	const row = record(value);
+	return {
+		key: checkApiKeyFromRow({ ...row, is_active: true }),
+		api_key: text(row.api_key)
+	};
+}
+
 export function httpCheckApiKeys(tenantId: string): CheckApiKeysClient {
 	const base = `${API_BASE_URL}/api/admin/check-api-keys`;
 	return {
+		async create(input) {
+			return withStepUp(async (receipt) => {
+				const response = await adminFetch(base, {
+					method: 'POST',
+					tenantId,
+					headers: stepUpHeaders(receipt),
+					includeJsonContentType: true,
+					body: JSON.stringify(checkApiKeyBody(input))
+				});
+				if (!response.ok) throw await errorFromResponse(response);
+				const created = createdCheckApiKeyFrom(await response.json().catch(() => ({})));
+				if (!created.api_key) throw new MalformedResponseError('check-api-keys');
+				return created;
+			});
+		},
 		async list(page = 1, limit = 20, signal) {
 			const response = await adminFetch(`${base}?page=${page}&limit=${limit}`, {
 				signal,

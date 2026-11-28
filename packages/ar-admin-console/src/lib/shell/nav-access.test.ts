@@ -65,6 +65,24 @@ describe('navigation items any of several permissions opens', () => {
 	});
 });
 
+describe('the Settings → Authorization item', () => {
+	const settings = TENANT_AREAS.find((area) => area.id === 'settings');
+	const authorization = settings?.children.find((child) => child.id === 'authorization');
+	const only = (permission: string): AdminAccess => ({
+		platform: false,
+		roles: [],
+		permissions: [permission]
+	});
+
+	it('opens for the Check API keys with the read or the write permission alone', () => {
+		expect(authorization).toBeDefined();
+		if (!authorization) return;
+		expect(navItemLevel(authorization, only('admin:security:read'), 'tenant')).toBe('view');
+		expect(navItemLevel(authorization, only('admin:security:write'), 'tenant')).toBe('view');
+		expect(navItemLevel(authorization, only('admin:users:read'), 'tenant')).toBe('none');
+	});
+});
+
 describe('the policies and attributes items of Access', () => {
 	const access = TENANT_AREAS.find((area) => area.id === 'access');
 	const policies = access?.children.find((child) => child.id === 'policies');
