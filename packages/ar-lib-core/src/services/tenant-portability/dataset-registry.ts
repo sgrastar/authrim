@@ -40,7 +40,7 @@ const TABLE_GROUPS: Partial<
   core: {
     delivery_state: 'internal_notification_delivery_attempts internal_notification_events',
     settings: `
-      application_launchers branding_settings check_api_keys
+      application_launchers branding_settings check_api_keys check_resource_types check_resources
       client_trust_policies
       consent_statement_localizations consent_statement_versions consent_statements credential_configurations
       custom_claim_schemas directory_auth_retention_policies directory_auth_tenant_policies directory_connector_instances

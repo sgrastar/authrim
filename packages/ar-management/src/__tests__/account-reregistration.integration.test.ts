@@ -173,6 +173,7 @@ function openCore(): { database: SQLiteDatabase; adapter: DatabaseAdapter } {
     '018_remove_organizations.sql',
     '019_dynamic_publication_unknown_groups.sql',
     '020_relationship_userset_relation.sql',
+    '021_check_resource_registry.sql',
   ])
     db.exec(
       renderPortableMigrationSql(

@@ -49,6 +49,8 @@ export const PHASE3_SQLITE_TABLE_GROUPS: readonly Phase3TableGroup[] = [
     family: 'core',
     module: 'authorization',
     tables: [
+      'check_resource_types',
+      'check_resources',
       'custom_claim_schemas',
       'field_usage_bindings',
       'group_role_assignments',

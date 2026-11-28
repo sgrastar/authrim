@@ -234,6 +234,7 @@ export * from './services/identity-mapping-output-graph';
 export * from './services/server-flow-execution';
 export * from './services/active-access-token-protected-resource';
 export * from './services/resource-context-resolver';
+export * from './services/check-resource-registry';
 export * from './services/lookup-directory';
 export * from './services/directory-auth';
 export * from './services/directory-connector-fleet';

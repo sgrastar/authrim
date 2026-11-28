@@ -42,6 +42,12 @@ function createHarness(permissions: string[], roles: string[] = []) {
   app.post('/api/admin/identity-mapping/history/history-1/restore', (c) => c.json({ ok: true }));
   app.get('/api/admin/investigations/subjects/subject-1/status', (c) => c.json({ ok: true }));
   app.get('/api/admin/email-deliveries', (c) => c.json({ ok: true }));
+  app.get('/api/admin/check-resource-types', (c) => c.json({ ok: true }));
+  app.get('/api/admin/check-resource-types/documents', (c) => c.json({ ok: true }));
+  app.put('/api/admin/check-resource-types/documents', (c) => c.json({ ok: true }));
+  app.delete('/api/admin/check-resource-types/documents', (c) => c.json({ ok: true }));
+  app.get('/api/admin/check-resources', (c) => c.json({ ok: true }));
+  app.post('/api/admin/check-resources', (c) => c.json({ ok: true }));
   app.get('/api/admin/users/user-1/email-deliveries', (c) => c.json({ ok: true }));
   app.get('/api/admin/users/user-1/support-context', (c) => c.json({ ok: true }));
   app.put('/api/admin/users/user-1/support-context', (c) => c.json({ ok: true }));
@@ -497,6 +503,26 @@ describe('declared admin route access', () => {
     });
 
     expect(response.status).toBe(200);
+  });
+
+  it('keeps the check resource registry on the end-user role permissions', async () => {
+    const reader = createHarness([ADMIN_PERMISSIONS.ROLES_READ]);
+    const writer = createHarness([ADMIN_PERMISSIONS.ROLES_WRITE]);
+    const deleter = createHarness([ADMIN_PERMISSIONS.ROLES_DELETE]);
+    const types = '/api/admin/check-resource-types';
+
+    for (const path of [types, `${types}/documents`, '/api/admin/check-resources']) {
+      expect((await reader.request(path)).status).toBe(200);
+      expect((await writer.request(path)).status).toBe(403);
+    }
+    expect((await reader.request(`${types}/documents`, { method: 'PUT' })).status).toBe(403);
+    expect((await writer.request(`${types}/documents`, { method: 'PUT' })).status).toBe(200);
+    expect((await writer.request(`${types}/documents`, { method: 'DELETE' })).status).toBe(403);
+    expect((await deleter.request(`${types}/documents`, { method: 'DELETE' })).status).toBe(200);
+    // Registered resources are read only on the Admin API: no write is declared.
+    expect((await writer.request('/api/admin/check-resources', { method: 'POST' })).status).toBe(
+      403
+    );
   });
 
   it('keeps email delivery diagnostics separate from ordinary user read access', async () => {

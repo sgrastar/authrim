@@ -5,11 +5,11 @@
  * resource's owner, group and attributes are not taken from the request (the caller could claim
  * to own anything): a resolver registered for the resource type looks them up server-side.
  *
- * The registry is in memory. By default it holds nothing, so a self-contract check sees no
- * resource context at all: no ownership grant, no group-scoped role match, no resource attribute
- * for the tenant's rules. Tenants (or the owners of a tenant's API keys) are to register resolvers
- * through `register()`; how they are configured and persisted is not decided yet (a resolver
- * backed by a tenant's own resource registry, or by a callback the API key owner declares).
+ * The registry here is in memory: a resolver registered for a tenant's resource type overrides the
+ * stored registry (check-resource-registry.ts, `StoredResourceContextResolver`), which is what the
+ * policy service resolves with by default. An empty registry resolves nothing, so a self-contract
+ * check sees no resource context at all: no group-scoped role match, no resource attribute for the
+ * tenant's rules, no relation.
  */
 
 import type {

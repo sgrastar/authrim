@@ -76,6 +76,16 @@ const URL_SAFE_PATTERN = /^[a-zA-Z0-9_-]+$/;
 // =============================================================================
 
 /**
+ * Whether a value is a permission id the parser accepts (`doc_1` in `documents:doc_1:read`):
+ * the rule every component of a permission follows (URL-safe, `[a-zA-Z0-9_-]+`). Anything that
+ * stores ids to be checked later (the self-contract resource registry) uses it, so an id it
+ * accepts is one a check can name.
+ */
+export function isValidPermissionId(value: unknown): value is string {
+  return typeof value === 'string' && URL_SAFE_PATTERN.test(value);
+}
+
+/**
  * Validation result
  */
 interface ValidationResult {
@@ -331,6 +341,11 @@ interface CheckContext {
   subjectUnknownGroupIds?: string[];
   /** The verified attributes were wanted but could not be read */
   attributesUnavailable?: boolean;
+  /**
+   * A self-contract check whose resource could not be resolved (the resolver failed): the
+   * tenant's rules grant nothing, as a deny on resource material could not apply.
+   */
+  resourceUnavailable?: boolean;
   /** The relationship check was left undecided by a group membership (`unknown_membership`) */
   rebacUndecided?: boolean;
 }
@@ -485,6 +500,7 @@ export class UnifiedCheckService {
         resourceContext: contract === 'self' ? resolved?.context : request.resource_context,
         rebacParams: contract === 'self' ? undefined : request.rebac,
         selfRelation: resolved?.relation,
+        ...(resolved?.unavailable && { resourceUnavailable: true }),
         startTime,
         policy: await this.policyFor(tenantId),
       };
@@ -533,6 +549,8 @@ export class UnifiedCheckService {
     | {
         context?: CheckApiRequest['resource_context'];
         relation?: { relation: string; object_type: string; object_id: string };
+        /** The resolver failed: the tenant's rules then grant nothing. */
+        unavailable?: boolean;
       }
     | undefined
   > {
@@ -576,12 +594,14 @@ export class UnifiedCheckService {
         relation,
       };
     } catch (error) {
+      // Fail closed: without the resource, a tenant rule that denies on its owner, group or
+      // attributes would not match and a later rule could grant, so the rules grant nothing.
       log.warn('Resource context resolver failed; checking without a resource context', {
         tenantId,
         resourceType: parsed.resource,
         error: error instanceof Error ? error.message : 'unknown',
       });
-      return undefined;
+      return { unavailable: true };
     }
   }
 
@@ -1090,6 +1110,7 @@ export class UnifiedCheckService {
         evaluator &&
         (context.subjectRoles === undefined ||
           context.attributesUnavailable ||
+          context.resourceUnavailable ||
           (evaluator.usesSubjectGroups === true && context.subjectGroupIds === undefined))
       ) {
         log.warn('Tenant rules not evaluated: roles, groups or attributes could not be read', {

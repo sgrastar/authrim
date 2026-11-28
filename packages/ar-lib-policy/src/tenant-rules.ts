@@ -289,6 +289,14 @@ function rolesForTarget(roles: readonly SubjectRole[], context: PolicyContext): 
   );
 }
 
+function hasOwnAttribute(attributes: Record<string, unknown> | undefined, name: unknown): boolean {
+  return (
+    attributes !== undefined &&
+    typeof name === 'string' &&
+    Object.prototype.hasOwnProperty.call(attributes, name)
+  );
+}
+
 /** Whether a deny needs a target the request does not give (so it could never apply). */
 function denyNeedsMissingTarget(rule: TenantPolicyRule, context: PolicyContext): string | null {
   if (rule.effect !== 'deny') return null;
@@ -301,6 +309,15 @@ function denyNeedsMissingTarget(rule: TenantPolicyRule, context: PolicyContext):
     }
     if (condition.type === 'same_group' && !context.resource.groupIds?.length) {
       return "the resource's groups";
+    }
+    // A deny on a resource attribute the resource does not carry could never apply (the
+    // attributes may not have been registered, or could not be read): fail closed.
+    if (
+      (condition.type === 'resource_attribute_equals' ||
+        condition.type === 'resource_attribute_in') &&
+      !hasOwnAttribute(context.resource.attributes, condition.params.attribute)
+    ) {
+      return `the resource attribute ${String(condition.params.attribute)}`;
     }
     if (ROLE_CONDITION_TYPES.has(condition.type)) {
       const scope = condition.params.scope;

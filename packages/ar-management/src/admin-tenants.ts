@@ -193,6 +193,8 @@ export const TENANT_TABLES_TO_DELETE = [
   'policy_rules',
   'policy_rules_version',
   'policy_simulations',
+  'check_resources',
+  'check_resource_types',
   'relation_definitions',
   'relationship_closure',
   'relationships',

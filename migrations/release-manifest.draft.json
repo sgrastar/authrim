@@ -91,6 +91,10 @@
             {
               "path": "020_relationship_userset_relation.sql",
               "checksum": "ded5ab64b3def4fa4927cf72e53bf52b43dd67273fae13fb49b2f919ab7f494c"
+            },
+            {
+              "path": "021_check_resource_registry.sql",
+              "checksum": "67f7c5177ff12f49f9744f303570ee52fb3a2ecbc95a0b8827918c7d05f5bb0e"
             }
           ]
         },
@@ -342,6 +346,10 @@
             {
               "path": "020_relationship_userset_relation.sql",
               "checksum": "41e24409284c3b62245821a977e8b5e300e5e36fd4cf4a317b629dbbfe835c05"
+            },
+            {
+              "path": "021_check_resource_registry.sql",
+              "checksum": "95858bdad9bc35262915fa68f5b850e756b85e375065a1d089a16b14aeb362a8"
             }
           ]
         },
@@ -458,6 +466,10 @@
         {
           "path": "020_relationship_userset_relation.sql",
           "checksum": "ded5ab64b3def4fa4927cf72e53bf52b43dd67273fae13fb49b2f919ab7f494c"
+        },
+        {
+          "path": "021_check_resource_registry.sql",
+          "checksum": "67f7c5177ff12f49f9744f303570ee52fb3a2ecbc95a0b8827918c7d05f5bb0e"
         }
       ]
     },
@@ -735,6 +747,10 @@
         {
           "path": "020_relationship_userset_relation.sql",
           "checksum": "41e24409284c3b62245821a977e8b5e300e5e36fd4cf4a317b629dbbfe835c05"
+        },
+        {
+          "path": "021_check_resource_registry.sql",
+          "checksum": "95858bdad9bc35262915fa68f5b850e756b85e375065a1d089a16b14aeb362a8"
         }
       ]
     },

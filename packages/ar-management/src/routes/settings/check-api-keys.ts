@@ -182,7 +182,8 @@ export async function createCheckApiKey(c: Context) {
     }
 
     // Validate allowed_operations if provided
-    const validOperations: CheckApiOperation[] = ['check', 'batch', 'subscribe'];
+    // `resources` (the resource registry of self-contract checks) is never given by default.
+    const validOperations: CheckApiOperation[] = ['check', 'batch', 'subscribe', 'resources'];
     const allowedOperations = body.allowed_operations ?? ['check'];
     for (const op of allowedOperations) {
       if (!validOperations.includes(op)) {

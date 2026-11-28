@@ -249,6 +249,8 @@ describe('the condition type sets', () => {
       'numeric_gte',
       'numeric_lt',
       'numeric_lte',
+      'resource_attribute_equals',
+      'resource_attribute_in',
       'same_group',
       'time_in_range',
       'valid_during',

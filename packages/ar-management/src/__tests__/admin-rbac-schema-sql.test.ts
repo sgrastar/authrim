@@ -84,6 +84,7 @@ function coreDatabase(): SQLiteDatabase {
     '018_remove_organizations.sql',
     '019_dynamic_publication_unknown_groups.sql',
     '020_relationship_userset_relation.sql',
+    '021_check_resource_registry.sql',
   ]) {
     db.exec(renderSqliteMigration(readFileSync(`${directory}/${file}`, 'utf8')));
   }
