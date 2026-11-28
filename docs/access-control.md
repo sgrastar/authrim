@@ -677,6 +677,25 @@ interface PolicySubjectWithAttributes extends PolicySubject {
 | `attribute_exists` | Attribute exists (any value)     | `{ name, checkExpiry? }`           |
 | `attribute_in`     | Attribute value in allowed list  | `{ name, values[], checkExpiry? }` |
 
+### Resource Attribute Conditions
+
+These read the resource's own attributes (`resource.attributes`): in the server contract the
+request's `resource_context.attributes`, in the self contract what the application server
+registered ([Self Contract: the Resource Registry](#self-contract-the-resource-registry)).
+
+| Condition                   | Description                             | Parameters                |
+| --------------------------- | --------------------------------------- | ------------------------- |
+| `resource_attribute_equals` | Resource attribute equals the value     | `{ attribute, value }`    |
+| `resource_attribute_in`     | Resource attribute is one of the values | `{ attribute, values[] }` |
+
+A value is a string, a finite number or a boolean. Values of the same type compare by value. A
+rule value that is a string (what the Admin console's forms save) also matches a boolean or
+finite-number attribute written the same way: `"true"` matches `true`, `"3"` matches `3`
+(`String(attribute) === value`; each element of `values` likewise). A rule value that is a number
+or boolean never matches a string attribute (`3` does not match `"3"`). A resource without the
+attribute, or with an object, array or `null` there, meets neither. In a deny rule,
+a resource without the attribute makes the rules grant nothing for the request (fail closed).
+
 ### Group Conditions
 
 Group conditions read the subject's **effective groups**: its direct memberships and their
@@ -729,7 +748,10 @@ example a role given to group G): the role would grant it before the rules are e
 `is_resource_owner` (and the server contract's owner shortcut) compares the subject with
 `resource_context.owner_id`. In the server contract that value is the caller's claim, not
 something Authrim reads: the server must pass the owner it read from the resource itself, never a
-value taken from the end user's request. The self contract does not accept `resource_context`.
+value taken from the end user's request. The self contract does not accept `resource_context`: its
+owner comes from the resource registry (see
+[Self Contract: the Resource Registry](#self-contract-the-resource-registry)), and the owner
+shortcut does not apply there.
 
 ### Time-Based Conditions (Phase 4+)
 
@@ -1571,6 +1593,146 @@ interface BatchCheckResponse {
 }
 ```
 
+### Self Contract: the Resource Registry
+
+An end-user access token (the self contract) may ask only about its own subject, with a
+`permission` (`documents:doc_1:read`). It cannot pass `resource_context` or `rebac`: a user could
+claim to own anything. What the check knows about the resource comes from the tenant's resource
+registry instead (core migration 021, both D1 and PostgreSQL):
+
+| Table                  | Kept by                                                 | Holds                                                               |
+| ---------------------- | ------------------------------------------------------- | ------------------------------------------------------------------- |
+| `check_resource_types` | Tenant administrators (Admin API)                       | Per resource type, `relations_json`: an action mapped to a relation |
+| `check_resources`      | The tenant's application server (Check API, `chk_` key) | Per resource, `owner_id`, `group_id`, `attributes_json`             |
+
+**Registering a type** (Admin API, `admin:roles:read` to read; `admin:roles:write` /
+`admin:roles:delete` and a tenant administrator role to change). Every change is recorded in the
+Admin audit log as `permission.check_resource_type.created` / `.updated` / `.deleted`, with the map
+it replaces and the map it writes, **before** the change is written: when the record cannot be
+written the request fails (500) and nothing changes. The write is then conditional on the type's
+row as it was read (its `row_token`, a random id a re-created row does not share, and its
+`revision`): one that lost a race with another write answers 409 `check_resource_type_conflict`,
+changes nothing, and is followed by a best-effort `permission.check_resource_type.aborted` record
+(`reason: conflict`). When the write reports nothing changed but the row already is what this
+request wrote (a retried write that had landed), it is a success. A write that fails is answered
+with 500 after a best-effort `aborted` record (`reason: error`), unless the row turns out to hold
+the change. So an audit record may exist for a write that was aborted, but no write exists without
+its record.
+
+```http
+PUT /api/admin/check-resource-types/documents
+{ "relations": { "read": "viewer", "write": "editor" } }
+```
+
+`GET /api/admin/check-resource-types` (cursor paging) and `GET` / `DELETE
+/api/admin/check-resource-types/{type}` read and remove them. Removing a type leaves its registered
+resources; their checks then name no relation.
+
+**Registering facts** (Check API, a `chk_` key whose `allowed_operations` include `resources`; the
+operation is never in a key's default set, and access tokens and the policy service secret are
+refused with 403). The key is used at its own tenant's host: a request whose host resolves to
+another tenant (or to none) is refused with 403 and writes nothing, even where tenants share a
+database:
+
+```http
+PUT /api/check/resources/documents/doc_1
+Authorization: Bearer chk_...
+{ "owner_id": "user_123", "group_id": "grp_sales", "attributes": { "classification": "internal" } }
+```
+
+A PUT replaces the resource whole (an omitted field is cleared). `DELETE
+/api/check/resources/{type}/{id}` removes it (idempotent: `deleted: false` when nothing was
+registered), and `POST /api/check/resources/batch` with `{ "items": [{ "resource_type",
+"resource_id", "owner_id"?, "group_id"?, "attributes"? }] }` registers 1 to 100 resources in one
+atomic write: one invalid item, or the same resource twice, refuses the whole request, and a
+failure on any item writes none. The resource type, action and relation names are
+`[a-z][a-z0-9_]*` (at most 64 characters). A resource id follows the permission grammar's id rule
+(no whitespace, `:` or control characters; at most 256 characters; `.` and `..` refused), so every
+registered resource is one a check can name;
+an owner or group id is 1 to 256 characters without whitespace or `:`. `attributes` is a JSON
+object of at most 8 KiB (UTF-8). Anything else is a 400. A request body is read up to 16 KiB
+(batch: 1 MiB), counted in bytes; a larger one (or a larger declared `Content-Length`) is 413.
+`GET /api/admin/check-resources?resource_type=&resource_id=&limit=&cursor=` (`admin:roles:read`)
+shows what was registered, for debugging.
+
+`owner_id` and `group_id` are the server's claim, exactly like `resource_context.owner_id` in the
+server contract: Authrim does not check that they exist, so the server must register the values it
+holds for the resource itself, never ones taken from an end user's request. The owner is compared
+with the check's subject as the self contract binds it: the end user's account id (the token's
+`sub` for a public subject; for a pairwise or persistent `sub`, the account its sealed reference
+opens, which the application does not know, so an ownership rule cannot match such users).
+
+**What the resolver returns** (`StoredResourceContextResolver`, the policy service's default; an
+in-memory resolver registered for a tenant's type overrides it, for tests):
+
+- Neither the type's settings nor the resource registered: nothing. The check runs without a
+  resource context, so nothing grants on resource material.
+- The resource registered: its owner, group and attributes as stored. The group lets a role
+  assigned at that group's scope match; the owner and the attributes are material for the
+  tenant's rules (`is_resource_owner`, `same_group`, `resource_attribute_equals`,
+  `resource_attribute_in`).
+- An id-level permission whose action the type maps to a relation (`read` → `viewer`): a ReBAC
+  question, asked only while the tenant's `feature.enable_rebac` is on, of the end user and that
+  relation on `documents:doc_1` (the object type is the resource type, the object id the resource
+  id). The ReBAC service decides it as for any check: direct tuples, group usersets, the tenant's
+  relation definitions (computed relations, declared tuple-to-userset paths, exclusion). A
+  membership it cannot confirm denies (`reason: unknown_membership`) and is never cached.
+- A type-level permission (`documents:read`) has no resource: nothing is resolved for it.
+
+**The owner never grants by itself in the self contract.** The server contract's owner shortcut
+(`owner_id` equal to `subject_id` allows) does not apply: an end user registered as a resource's
+owner is allowed only what a tenant rule (or a role, or a relationship) grants, per action.
+
+A tenant's rules on registered resources, for example: owners may read their documents, anyone
+may read internal ones, and nobody gets a secret one through these rules:
+
+```json
+[
+  {
+    "name": "No secret documents",
+    "effect": "deny",
+    "priority": 100,
+    "resource_types": ["documents"],
+    "conditions": [
+      {
+        "type": "resource_attribute_in",
+        "params": { "attribute": "classification", "values": ["secret"] }
+      }
+    ]
+  },
+  {
+    "name": "Internal documents are readable",
+    "effect": "allow",
+    "priority": 10,
+    "resource_types": ["documents"],
+    "actions": ["read"],
+    "conditions": [
+      {
+        "type": "resource_attribute_equals",
+        "params": { "attribute": "classification", "value": "internal" }
+      }
+    ]
+  },
+  {
+    "name": "Owners may read",
+    "effect": "allow",
+    "priority": 10,
+    "resource_types": ["documents"],
+    "actions": ["read"],
+    "conditions": [{ "type": "is_resource_owner", "params": {} }]
+  }
+]
+```
+
+A deny rule on a resource attribute the resource does not carry grants nothing for the request
+(it could not apply, and a later allow would get past it): register the attribute on every
+resource such a rule covers.
+
+A read failure, or a stored attribute value that is not a JSON object, makes the resolver fail;
+the check then runs without a resource context and the tenant's rules grant nothing (fail
+closed: a deny on resource material could not apply). Roles and relationships are still
+evaluated as for a resource with no context.
+
 ---
 
 ## Feature Flags
@@ -1732,6 +1894,35 @@ CREATE TABLE resource_permissions (
   UNIQUE(tenant_id, subject_type, subject_id, resource_type, resource_id)
 );
 ```
+
+### Check Resource Registry (Self Contract)
+
+```sql
+CREATE TABLE check_resource_types (
+  tenant_id TEXT NOT NULL,
+  resource_type TEXT NOT NULL,
+  relations_json TEXT NOT NULL DEFAULT '{}',  -- {"<action>": "<relation>"}
+  row_token TEXT NOT NULL,                    -- random id given at insert (a re-created row gets another)
+  revision INTEGER NOT NULL DEFAULT 0,        -- write count; Admin API writes are conditional on it and row_token
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (tenant_id, resource_type)
+);
+
+CREATE TABLE check_resources (
+  tenant_id TEXT NOT NULL,
+  resource_type TEXT NOT NULL,
+  resource_id TEXT NOT NULL,
+  owner_id TEXT,         -- the server's claim, not checked for existence
+  group_id TEXT,         -- the server's claim, not checked for existence
+  attributes_json TEXT,  -- a JSON object, at most 8 KiB
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (tenant_id, resource_type, resource_id)
+);
+```
+
+Both are tenant settings in a tenant backup (restored with the settings) and are purged with the
+tenant.
 
 ### Relation Definitions (ReBAC)
 

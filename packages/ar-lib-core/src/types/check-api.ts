@@ -165,8 +165,9 @@ export interface ResolvedResourceContext {
   attributes?: Record<string, unknown>;
   /**
    * The relationship that would grant this permission on this resource, for a tenant that turns
-   * ReBAC on: only a direct tuple from the bound subject (`from_type = 'subject'`) to the object
-   * with this relation grants it (no usersets, no computed relations).
+   * ReBAC on: the ReBAC service decides it for the bound subject as for any check, with the
+   * tenant's relation definitions (computed relations, declared tuple-to-userset paths,
+   * exclusion) and group usersets; a membership it cannot confirm denies, uncached.
    */
   rebac?: { relation: string; object_type: string; object_id: string };
 }
@@ -389,9 +390,10 @@ export type WSServerMessage =
 // =============================================================================
 
 /**
- * Allowed operations for API key
+ * Allowed operations for API key. `resources` registers resources for self-contract checks
+ * (/api/check/resources); it is never in the default set.
  */
-export type CheckApiOperation = 'check' | 'batch' | 'subscribe';
+export type CheckApiOperation = 'check' | 'batch' | 'subscribe' | 'resources';
 
 /**
  * Rate limit tier

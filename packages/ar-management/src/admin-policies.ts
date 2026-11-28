@@ -1152,6 +1152,30 @@ export async function adminConditionTypesHandler(c: Context<{ Bindings: Env }>) 
         { name: 'values', type: 'string[]', required: true, label: 'Allowed Values' },
       ],
     },
+    // Resource attribute conditions (the resource's attributes: the server contract's
+    // resource_context.attributes, the self contract's resource registry)
+    {
+      type: 'resource_attribute_equals',
+      category: 'resource',
+      label: 'Resource Attribute Equals',
+      description:
+        'A resource attribute equals a value. Values of the same type compare by value; a text value (what this form saves) also matches a number or true/false attribute written the same way ("3" matches 3, "true" matches true), while a number or boolean rule value never matches a text attribute. Not met when the resource has no such attribute, or it is an object or list',
+      params: [
+        { name: 'attribute', type: 'string', required: true, label: 'Resource Attribute' },
+        { name: 'value', type: 'string', required: true, label: 'Expected Value' },
+      ],
+    },
+    {
+      type: 'resource_attribute_in',
+      category: 'resource',
+      label: 'Resource Attribute In List',
+      description:
+        'A resource attribute is one of the values, each compared as in Resource Attribute Equals (a text value also matches a number or true/false attribute written the same way). Not met when the resource has no such attribute, or it is an object or list',
+      params: [
+        { name: 'attribute', type: 'string', required: true, label: 'Resource Attribute' },
+        { name: 'values', type: 'string[]', required: true, label: 'Allowed Values' },
+      ],
+    },
     // Time-based conditions
     {
       type: 'time_in_range',
@@ -1213,6 +1237,7 @@ export async function adminConditionTypesHandler(c: Context<{ Bindings: Env }>) 
     { id: 'ownership', label: 'Ownership', icon: 'shield' },
     { id: 'group', label: 'Group conditions', icon: 'users' },
     { id: 'abac', label: 'Attribute-Based (ABAC)', icon: 'tag' },
+    { id: 'resource', label: 'Resource attributes', icon: 'file' },
     { id: 'time', label: 'Time-Based', icon: 'clock' },
     { id: 'numeric', label: 'Numeric', icon: 'hash' },
   ];

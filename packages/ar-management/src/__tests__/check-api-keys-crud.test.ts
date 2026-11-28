@@ -143,6 +143,24 @@ describe('check API key CRUD', () => {
       expect.arrayContaining(['tenant-a', 'client-1', 'Primary'])
     );
   });
+  it('accepts the resources operation only when asked for (never in the default set)', async () => {
+    const asked = await createCheckApiKey(
+      context({
+        tenantId: 'tenant-a',
+        body: { client_id: 'client-1', name: 'Registry', allowed_operations: ['resources'] },
+      })
+    );
+    expect(asked.status).toBe(201);
+    expect((await asked.json<{ allowed_operations: string[] }>()).allowed_operations).toEqual([
+      'resources',
+    ]);
+    const defaulted = await createCheckApiKey(
+      context({ tenantId: 'tenant-a', body: { client_id: 'client-1', name: 'Default' } })
+    );
+    expect((await defaulted.json<{ allowed_operations: string[] }>()).allowed_operations).toEqual([
+      'check',
+    ]);
+  });
   it('handles create persistence failure without exposing details', async () => {
     mocks.adapter.execute.mockRejectedValueOnce(new Error('secret detail'));
     const r = await createCheckApiKey(context({ body: { client_id: 'c', name: 'Key' } }));

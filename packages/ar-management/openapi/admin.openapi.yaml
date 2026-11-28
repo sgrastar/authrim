@@ -9302,6 +9302,234 @@ paths:
             type: string
           description: 'Stored avatar object filename, including the image extension.'
       security: []
+  /api/admin/check-resource-types:
+    get:
+      tags:
+        - Admin Access Control
+      operationId: getApiAdminCheckResourceTypes
+      summary: List the resource types of self-contract checks.
+      description: >-
+        Lists the tenant's check resource types (each with its action-to-relation map) in
+        resource type order, a page at a time. Needs admin:roles:read.
+      responses:
+        '200':
+          $ref: '#/components/responses/AdminCheckResourceTypeList'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+          description: 'Items per page, 1 to 200 (default 50); anything else is refused with 400.'
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+          description: The next_cursor of the previous page (opaque).
+  '/api/admin/check-resource-types/{type}':
+    get:
+      tags:
+        - Admin Access Control
+      operationId: getApiAdminCheckResourceTypesByType
+      summary: Get a resource type of self-contract checks.
+      description: Returns one check resource type of the tenant. Needs admin:roles:read.
+      responses:
+        '200':
+          $ref: '#/components/responses/AdminCheckResourceType'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      parameters:
+        - name: type
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[a-z][a-z0-9_]*$'
+            maxLength: 64
+          description: The resource type ([a-z][a-z0-9_]*, at most 64 characters).
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+    put:
+      tags:
+        - Admin Access Control
+      operationId: putApiAdminCheckResourceTypesByType
+      summary: Set the action-to-relation map of a resource type.
+      description: >-
+        Creates or replaces (whole) the settings of a resource type for self-contract Check API
+        requests: relations maps an action to the ReBAC relation that grants it on a resource of
+        the type ({"read":"viewer"}). A self-contract check of an id-level permission whose
+        action is mapped asks the ReBAC service, while the tenant's feature.enable_rebac is on,
+        whether the end user has that relation on the object (object type = the resource type,
+        the object id = the resource id), decided as for any check: direct tuples, group usersets
+        and the tenant's relation definitions (computed relations, declared tuple-to-userset
+        paths, exclusion); a membership it cannot confirm denies, uncached. Actions and relations are [a-z][a-z0-9_]* (at most 64
+        characters, at most 64 actions); anything else, or a key other than relations, is
+        refused with 400. Needs admin:roles:write and a tenant administrator role. The change is
+        recorded in the Admin audit log first (permission.check_resource_type.created or
+        .updated, with the map it replaces and the map it writes; fail closed: when it cannot be
+        recorded, the request fails with 500 and nothing is written), then written conditionally
+        on the row as read (its row token and revision): 409 check_resource_type_conflict when
+        another write came in between (nothing written; a best-effort
+        permission.check_resource_type.aborted record with reason conflict follows). A write
+        that reports no change while the row already holds this request's change (a retried
+        write) succeeds; a write that fails answers 500 after a best-effort aborted record with
+        reason error. An audit record may therefore exist for an aborted write, never a write without
+        one. created_at and updated_at are milliseconds.
+      requestBody:
+        $ref: '#/components/requestBodies/AdminCheckResourceTypePut'
+      responses:
+        '200':
+          $ref: '#/components/responses/AdminCheckResourceType'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      parameters:
+        - name: type
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[a-z][a-z0-9_]*$'
+            maxLength: 64
+          description: The resource type ([a-z][a-z0-9_]*, at most 64 characters).
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+    delete:
+      tags:
+        - Admin Access Control
+      operationId: deleteApiAdminCheckResourceTypesByType
+      summary: Remove the settings of a resource type.
+      description: >-
+        Removes a resource type's settings (its action-to-relation map); the resources the
+        application servers registered for the type stay, and their checks then name no
+        relation. Needs admin:roles:delete and a tenant administrator role. The deletion is
+        recorded in the Admin audit log first (permission.check_resource_type.deleted; fail
+        closed: when it cannot be recorded, the request fails with 500 and nothing is deleted),
+        then made conditionally on the row as read (its row token and revision): 409
+        check_resource_type_conflict when the type changed (or was deleted and created again)
+        since, with a best-effort permission.check_resource_type.aborted record (reason
+        conflict). When the row is already gone (a retried deletion that had landed) it is a
+        success; a deletion that fails answers 500 after a best-effort aborted record (reason
+        error).
+      responses:
+        '200':
+          $ref: '#/components/responses/AdminCheckResourceTypeDelete'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      parameters:
+        - name: type
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[a-z][a-z0-9_]*$'
+            maxLength: 64
+          description: The resource type ([a-z][a-z0-9_]*, at most 64 characters).
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+  /api/admin/check-resources:
+    get:
+      tags:
+        - Admin Access Control
+      operationId: getApiAdminCheckResources
+      summary: Read the resources registered for self-contract checks.
+      description: >-
+        Lists what the tenant's application servers registered through /api/check/resources
+        (owner, group, attributes), in (resource type, resource id) order, a page at a time, for
+        debugging self-contract checks. Read only: resources are written through the Check API
+        with a chk_ key allowed the resources operation. owner_id and group_id are the server's
+        claim and are not checked for existence. A stored attribute value that is not a JSON
+        object is answered as attributes null with attributes_invalid true. Needs
+        admin:roles:read.
+      responses:
+        '200':
+          $ref: '#/components/responses/AdminCheckResourceList'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+      parameters:
+        - name: resource_type
+          in: query
+          required: false
+          schema:
+            type: string
+            pattern: '^[a-z][a-z0-9_]*$'
+            maxLength: 64
+          description: Only this resource type.
+        - name: resource_id
+          in: query
+          required: false
+          schema:
+            type: string
+            pattern: '^[^\s:\u0000-\u001f\u007f-\u009f]+$'
+            maxLength: 256
+          description: Only this resource id.
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+          description: 'Items per page, 1 to 200 (default 50); anything else is refused with 400.'
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+          description: The next_cursor of the previous page (opaque).
   /api/admin/check-api-keys:
     get:
       tags:
@@ -43927,6 +44155,16 @@ components:
             description: Users who can view documents.
             priority: 10
             is_active: true
+    AdminCheckResourceTypePut:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AdminCheckResourceTypePutRequest'
+          example:
+            relations:
+              read: viewer
+              write: editor
     AdminRebacDefinitionUpdate:
       required: true
       description: JSON request body.
@@ -51958,6 +52196,38 @@ components:
                 condition_results:
                   roles: true
             total_policies_evaluated: 1
+    AdminCheckResourceType:
+      description: A check resource type (times in milliseconds).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AdminCheckResourceType'
+          example:
+            resource_type: documents
+            relations:
+              read: viewer
+            created_at: 1795000000000
+            updated_at: 1795000000000
+    AdminCheckResourceTypeList:
+      description: A page of check resource types.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AdminCheckResourceTypeList'
+    AdminCheckResourceTypeDelete:
+      description: The resource type's settings were removed.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AdminSuccessResponse'
+          example:
+            success: true
+    AdminCheckResourceList:
+      description: A page of registered check resources.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AdminCheckResourceList'
     AdminRebacDefinitionDelete:
       description: Successful JSON response.
       content:
@@ -62602,12 +62872,118 @@ components:
             $ref: '#/components/schemas/UserAttributeVerification'
         pagination:
           $ref: '#/components/schemas/AdminPagePagination'
+    AdminCheckResourceTypePutRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - relations
+      properties:
+        relations:
+          type: object
+          maxProperties: 64
+          propertyNames:
+            pattern: '^[a-z][a-z0-9_]*$'
+            maxLength: 64
+          additionalProperties:
+            type: string
+            pattern: '^[a-z][a-z0-9_]*$'
+            maxLength: 64
+          description: An action mapped to the ReBAC relation that grants it.
+    AdminCheckResourceType:
+      type: object
+      additionalProperties: false
+      required:
+        - resource_type
+        - relations
+        - created_at
+        - updated_at
+      properties:
+        resource_type:
+          type: string
+        relations:
+          type: object
+          additionalProperties:
+            type: string
+        created_at:
+          type: integer
+          format: int64
+        updated_at:
+          type: integer
+          format: int64
+    AdminCheckResourceTypeList:
+      type: object
+      additionalProperties: false
+      required:
+        - resource_types
+        - next_cursor
+      properties:
+        resource_types:
+          type: array
+          items:
+            $ref: '#/components/schemas/AdminCheckResourceType'
+        next_cursor:
+          type:
+            - string
+            - 'null'
+    AdminCheckResource:
+      type: object
+      additionalProperties: false
+      required:
+        - resource_type
+        - resource_id
+        - owner_id
+        - group_id
+        - attributes
+        - updated_at
+      properties:
+        resource_type:
+          type: string
+        resource_id:
+          type: string
+        owner_id:
+          type:
+            - string
+            - 'null'
+        group_id:
+          type:
+            - string
+            - 'null'
+        attributes:
+          type:
+            - object
+            - 'null'
+          additionalProperties: true
+        attributes_invalid:
+          type: boolean
+          description: Present (true) when the stored attribute value is not a JSON object.
+        updated_at:
+          type: integer
+          format: int64
+    AdminCheckResourceList:
+      type: object
+      additionalProperties: false
+      required:
+        - resources
+        - next_cursor
+      properties:
+        resources:
+          type: array
+          items:
+            $ref: '#/components/schemas/AdminCheckResource'
+        next_cursor:
+          type:
+            - string
+            - 'null'
     CheckApiOperation:
       type: string
+      description: >-
+        What a Check API key may do. resources (register resources for self-contract checks,
+        /api/check/resources) is never in the default set (check).
       enum:
         - check
         - batch
         - subscribe
+        - resources
     CheckApiRateLimitTier:
       type: string
       enum:

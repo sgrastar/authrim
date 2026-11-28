@@ -240,6 +240,10 @@ export type ConditionType =
   | 'attribute_equals' // Subject has attribute with specific value
   | 'attribute_exists' // Subject has attribute (any value)
   | 'attribute_in' // Subject attribute value is in a list
+  // Resource attribute conditions (the resource's attributes: the server contract's
+  // resource_context.attributes, the self contract's resource registry)
+  | 'resource_attribute_equals' // Resource attribute equals a value
+  | 'resource_attribute_in' // Resource attribute value is in a list
   // Time-based conditions (Phase 4)
   | 'time_in_range' // Current time is within a specific hour range
   | 'day_of_week' // Current day matches allowed days (0=Sun, 6=Sat)

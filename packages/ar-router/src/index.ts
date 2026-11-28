@@ -1678,6 +1678,8 @@ app.all('/api/protected/customer-profiles/*', async (c) => {
  *   key, self contract with an end-user access token; ar-policy decides which)
  * - GET /api/check/subscribe: permission-change WebSocket (server credentials, in the
  *   Authorization header; `?token=` is refused here)
+ * - PUT / DELETE /api/check/resources/:type/:id, POST /api/check/resources/batch: the resource
+ *   registry self-contract checks resolve from (a chk_ API key allowed `resources`)
  *
  * Bearer-authenticated, never cookie-authenticated: excluded from the router's CSRF check, and the
  * token is accepted only in the Authorization header (no access_token query or form field). The
@@ -1708,6 +1710,10 @@ async function forwardToPolicyService(c: Context<{ Bindings: Env }>): Promise<Re
 app.post('/api/check', (c) => forwardToPolicyService(c));
 app.post('/api/check/batch', (c) => forwardToPolicyService(c));
 app.get('/api/check/subscribe', (c) => forwardToPolicyService(c));
+// The resource registry of self-contract checks (a chk_ API key with the `resources` operation)
+app.put('/api/check/resources/:type/:id', (c) => forwardToPolicyService(c));
+app.delete('/api/check/resources/:type/:id', (c) => forwardToPolicyService(c));
+app.post('/api/check/resources/batch', (c) => forwardToPolicyService(c));
 
 /**
  * Direct Authentication API v1 - Route to OP_AUTH worker

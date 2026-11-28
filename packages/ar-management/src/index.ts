@@ -737,6 +737,13 @@ import {
 } from './admin-tenant-invitations';
 import { requireSupportedTenantParam } from './single-tenant-guard';
 import { requireTenantAdminForChanges } from './admin-role-gates';
+import {
+  adminCheckResourceTypesListHandler,
+  adminCheckResourceTypeGetHandler,
+  adminCheckResourceTypePutHandler,
+  adminCheckResourceTypeDeleteHandler,
+  adminCheckResourcesListHandler,
+} from './admin-check-resources';
 import { adminTenantPolicyMiddleware } from './admin-tenant-policy';
 import { userConsentsListHandler, userConsentRevokeHandler } from './user-consents';
 import { getAuthenticationMethodsHandler } from './authentication-methods';
@@ -2551,6 +2558,18 @@ app.get('/api/admin/users/:id/effective-permissions', adminUserEffectivePermissi
 // higher (the handlers keep every read and write inside the caller's tenant).
 app.use('/api/admin/rebac', requireTenantAdminForChanges());
 app.use('/api/admin/rebac/*', requireTenantAdminForChanges());
+
+// The resource registry of self-contract Check API requests: resource types (an action's
+// relation) are kept here; registered resources are read only (application servers write them
+// through /api/check/resources). Reads need the declared read permission; changes also need
+// ar_tenant_admin or higher.
+app.use('/api/admin/check-resource-types', requireTenantAdminForChanges());
+app.use('/api/admin/check-resource-types/*', requireTenantAdminForChanges());
+app.get('/api/admin/check-resource-types', adminCheckResourceTypesListHandler);
+app.get('/api/admin/check-resource-types/:type', adminCheckResourceTypeGetHandler);
+app.put('/api/admin/check-resource-types/:type', adminCheckResourceTypePutHandler);
+app.delete('/api/admin/check-resource-types/:type', adminCheckResourceTypeDeleteHandler);
+app.get('/api/admin/check-resources', adminCheckResourcesListHandler);
 
 // Relation definitions management
 app.get('/api/admin/rebac/relation-definitions', adminRelationDefinitionsListHandler);

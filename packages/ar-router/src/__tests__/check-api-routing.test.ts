@@ -1,6 +1,6 @@
 /**
  * Router: the public Check API routes (POST /api/check, POST /api/check/batch,
- * GET /api/check/subscribe) forward to POLICY_SERVICE.
+ * GET /api/check/subscribe, the /api/check/resources registry) forward to POLICY_SERVICE.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -74,6 +74,51 @@ describe('Router: Check API', () => {
       expect(env.OP_MANAGEMENT.fetch).not.toHaveBeenCalled();
     }
   );
+
+  it.each([
+    ['PUT', '/api/check/resources/documents/doc_1'],
+    ['DELETE', '/api/check/resources/documents/doc_1'],
+    ['POST', '/api/check/resources/batch'],
+  ])('forwards %s %s (the resource registry) to POLICY_SERVICE', async (method, path) => {
+    const body = method === 'DELETE' ? undefined : JSON.stringify({ owner_id: 'user-1' });
+    const res = await app.fetch(
+      new Request(`https://tenant-a.example.com${path}`, {
+        method,
+        headers: {
+          Authorization: 'Bearer chk_key',
+          'Content-Type': 'application/json',
+          // A server call: the router's CSRF check does not refuse a cross-site Origin.
+          Origin: 'https://other-site.test',
+        },
+        ...(body !== undefined && { body }),
+      }),
+      env
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      worker: 'POLICY_SERVICE',
+      path,
+      method,
+      authorization: 'Bearer chk_key',
+      forwardedHost: 'tenant-a.example.com',
+      ...(body !== undefined && { body }),
+    });
+    expect(env.POLICY_SERVICE.fetch).toHaveBeenCalledOnce();
+  });
+
+  it('refuses a token in the query string on the resource registry', async () => {
+    const res = await app.fetch(
+      new Request(
+        'https://tenant-a.example.com/api/check/resources/documents/doc_1?token=chk_key',
+        {
+          method: 'DELETE',
+        }
+      ),
+      env
+    );
+    expect(res.status).toBe(400);
+    expect(env.POLICY_SERVICE.fetch).not.toHaveBeenCalled();
+  });
 
   it('forwards GET /api/check/subscribe with its Authorization header to POLICY_SERVICE', async () => {
     const res = await app.fetch(

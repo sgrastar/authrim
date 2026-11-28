@@ -166,6 +166,10 @@ const timeZone: ParamCheck = (v) => {
 const days: ParamCheck = (v) => Array.isArray(v) && v.length > 0 && v.every(integerIn(0, 6));
 
 const ROLE_PARAMS = { scope: optional(scope), scopeTarget: optional(text) };
+/** A value a resource attribute is compared with: a string, a finite number or a boolean. */
+const scalar: ParamCheck = (v) =>
+  typeof v === 'string' || typeof v === 'boolean' || (typeof v === 'number' && Number.isFinite(v));
+const scalars: ParamCheck = (v) => Array.isArray(v) && v.length > 0 && v.every(scalar);
 const NUMERIC_PARAMS = { name: text, value: number };
 
 /**
@@ -192,6 +196,8 @@ const CONDITION_PARAMS: Record<ConditionType, Record<string, ParamCheck>> = {
   },
   attribute_exists: { name: text, checkExpiry: optional(flag) },
   attribute_in: { name: text, values: texts, checkExpiry: optional(flag) },
+  resource_attribute_equals: { attribute: text, value: scalar },
+  resource_attribute_in: { attribute: text, values: scalars },
   time_in_range: {
     startHour: integerIn(0, 23),
     endHour: integerIn(0, 24),
@@ -254,6 +260,8 @@ export const CHECK_API_CONDITION_TYPES: ReadonlySet<string> = new Set<ConditionT
   'attribute_equals',
   'attribute_exists',
   'attribute_in',
+  'resource_attribute_equals',
+  'resource_attribute_in',
   'time_in_range',
   'day_of_week',
   'valid_during',
@@ -351,6 +359,33 @@ function knownGroups(context: PolicyContext, named: readonly string[]): string[]
   if (unknown?.length && named.some((id) => unknown.includes(id) && !groups.includes(id)))
     return null;
   return groups;
+}
+
+/**
+ * A resource attribute as a scalar (string, finite number or boolean), or undefined when the
+ * resource has no such own attribute or it is of another kind.
+ */
+function resourceAttribute(
+  context: PolicyContext,
+  name: string
+): string | number | boolean | undefined {
+  const attributes = context.resource.attributes;
+  if (!attributes || !Object.prototype.hasOwnProperty.call(attributes, name)) return undefined;
+  const value = attributes[name];
+  if (typeof value === 'string' || typeof value === 'boolean') return value;
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+/**
+ * Whether a resource attribute matches a rule value: equal when of the same type; a string rule
+ * value also matches a boolean or number attribute that reads the same (String(attribute)).
+ * A number or boolean rule value never matches a string attribute.
+ */
+function resourceValueMatches(attribute: string | number | boolean, expected: unknown): boolean {
+  if (typeof attribute === typeof expected) return attribute === expected;
+  return typeof expected === 'string' && typeof attribute !== 'string'
+    ? String(attribute) === expected
+    : false;
 }
 
 /**
@@ -568,6 +603,31 @@ const conditionEvaluators: Record<ConditionType, ConditionEvaluator> = {
       if (checkExpiry && attr.expiresAt && attr.expiresAt <= now) return false;
       return true;
     });
+  },
+
+  // ==========================================================================
+  // Resource attribute conditions: the resource's own attributes (`resource.attributes`; the
+  // server contract's resource_context.attributes, the self contract's resource registry).
+  // A resource without the attribute meets neither; an object, array or null attribute meets
+  // neither. Values of the same type compare by value. A rule value that is a string (what the
+  // Admin console's forms save) also matches a boolean or finite-number attribute written the
+  // same way (`"true"` matches true, `"3"` matches 3: String(attribute) === value); a rule value
+  // that is a number or boolean never matches a string attribute (`3` does not match `"3"`).
+  // ==========================================================================
+
+  /** Resource attribute equals a value. Params: attribute, value (string, number or boolean) */
+  resource_attribute_equals: (params, context) => {
+    const value = resourceAttribute(context, params.attribute as string);
+    return value !== undefined && resourceValueMatches(value, params.value);
+  },
+
+  /** Resource attribute value is one of the values. Params: attribute, values */
+  resource_attribute_in: (params, context) => {
+    const value = resourceAttribute(context, params.attribute as string);
+    return (
+      value !== undefined &&
+      (params.values as unknown[]).some((expected) => resourceValueMatches(value, expected))
+    );
   },
 
   // ==========================================================================

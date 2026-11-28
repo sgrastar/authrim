@@ -28,6 +28,7 @@ export function openCoreStore(tenantId = 'tenant-a'): {
     '018_remove_organizations.sql',
     '019_dynamic_publication_unknown_groups.sql',
     '020_relationship_userset_relation.sql',
+    '021_check_resource_registry.sql',
   ]) {
     db.exec(
       renderPortableMigrationSql(readFileSync(new URL(file, CORE_MIGRATIONS), 'utf8'), 'sqlite')

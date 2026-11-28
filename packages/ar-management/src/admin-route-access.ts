@@ -2568,6 +2568,27 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     ADMIN_PERMISSIONS.ADMIN_AUDIT_READ,
     'Agent-safe Admin audit search'
   ),
+  // The resource registry of self-contract checks: changes also need a tenant administrator
+  // role (requireTenantAdminForChanges in index.ts); registered resources are read only here.
+  ...byMethod(
+    '/api/admin/check-resource-types',
+    ADMIN_PERMISSIONS.ROLES_READ,
+    ADMIN_PERMISSIONS.ROLES_WRITE,
+    ADMIN_PERMISSIONS.ROLES_DELETE,
+    'check resource types'
+  ),
+  ...byMethod(
+    '/api/admin/check-resource-types/*',
+    ADMIN_PERMISSIONS.ROLES_READ,
+    ADMIN_PERMISSIONS.ROLES_WRITE,
+    ADMIN_PERMISSIONS.ROLES_DELETE,
+    'check resource types'
+  ),
+  readOnly(
+    '/api/admin/check-resources',
+    ADMIN_PERMISSIONS.ROLES_READ,
+    'registered check resources'
+  ),
   ...byMethod(
     '/api/admin/rebac',
     ADMIN_PERMISSIONS.ROLES_READ,

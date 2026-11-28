@@ -88,6 +88,7 @@ import {
   type KVNamespace,
 } from '@authrim/ar-lib-policy';
 import { checkRoutes } from './routes/check';
+import { checkResourceRoutes } from './routes/check-resources';
 import { subscribeRoutes } from './routes/subscribe';
 import { createPolicyReBACService, getPolicyCoreAdapter } from './rebac-storage-adapter';
 
@@ -1490,6 +1491,10 @@ app.route('/api/rebac', rebacRoutes);
 
 // Mount Check API routes at /api/check/* (Phase 8.3)
 app.route('/api/check', checkRoutes);
+
+// The resource registry of self-contract checks (/api/check/resources*, chk_ keys with the
+// `resources` operation)
+app.route('/api/check', checkResourceRoutes);
 
 // Mount WebSocket Subscribe routes at /api/check/* (Phase 8.3)
 // These routes are under /api/check to share the same base path

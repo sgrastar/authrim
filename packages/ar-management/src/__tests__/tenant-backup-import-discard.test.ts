@@ -83,6 +83,7 @@ export function freshDatabase(family: Family) {
           '018_remove_organizations.sql',
           '019_dynamic_publication_unknown_groups.sql',
           '020_relationship_userset_relation.sql',
+          '021_check_resource_registry.sql',
         ]
       : []),
     ...(family === 'pii'

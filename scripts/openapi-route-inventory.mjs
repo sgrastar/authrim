@@ -129,6 +129,12 @@ const packageSpecs = [
         },
       },
       {
+        file: 'packages/ar-policy/src/routes/check-resources.ts',
+        receiverPrefixes: {
+          checkResourceRoutes: '/api/check',
+        },
+      },
+      {
         file: 'packages/ar-policy/src/routes/subscribe.ts',
         receiverPrefixes: {
           subscribeRoutes: '/api/check',

@@ -249,7 +249,8 @@ paths:
         an object with only resource, action and an optional id), plus subject_id equal to the
         token's own sub, subject_type user and tenant_id when they name the token's tenant. resource_context, rebac or any other field is refused with
         400 (AR050009, POLICY_CHECK_CONTRACT_VIOLATION); the resource's owner, group and attributes
-        are resolved server-side (none by default, so they grant nothing). A rebac check is
+        are resolved server-side, from what the tenant registered (/api/check/resources and
+        the Admin API's check-resource-types; nothing registered grants nothing). A rebac check is
         evaluated only while the tenant's feature.enable_rebac is on. The Check API itself is off
         until the platform's feature.enable_check_api is on (403).
         Permission-check auditing is enabled by default when the Check API is enabled.
@@ -290,7 +291,8 @@ paths:
         an object with only resource, action and an optional id), plus subject_id equal to the
         token's own sub, subject_type user and tenant_id when they name the token's tenant. resource_context, rebac or any other field is refused with
         400 (AR050009, POLICY_CHECK_CONTRACT_VIOLATION); the resource's owner, group and attributes
-        are resolved server-side (none by default, so they grant nothing). A rebac check is
+        are resolved server-side, from what the tenant registered (/api/check/resources and
+        the Admin API's check-resource-types; nothing registered grants nothing). A rebac check is
         evaluated only while the tenant's feature.enable_rebac is on. The Check API itself is off
         until the platform's feature.enable_check_api is on (403).
         The contract applies to every check of the batch: one check that breaks it refuses the
@@ -310,6 +312,107 @@ paths:
           $ref: '#/components/responses/CheckApiError'
         '403':
           $ref: '#/components/responses/CheckApiError'
+        '503':
+          $ref: '#/components/responses/TemporarilyUnavailable'
+      security:
+        - bearerAuth: []
+  /api/check/resources/{resource_type}/{resource_id}:
+    parameters:
+      - $ref: '#/components/parameters/CheckResourceType'
+      - $ref: '#/components/parameters/CheckResourceId'
+    put:
+      tags:
+        - Check
+      operationId: putApiCheckResource
+      summary: Register a resource for self-contract checks.
+      description: >-
+        Registers (or replaces whole: an omitted field is cleared) what the application server
+        knows about one resource of the key's tenant: its owner, its group and its attributes.
+        Self-contract checks (end-user access tokens) on this resource resolve their resource
+        context from it; the server contract keeps taking resource_context from its requests.
+        Only a chk_ API key whose allowed_operations include resources may call it (never in a
+        key's default set), at its own tenant's host: a request whose host resolves to another
+        tenant than the key's (or to none) is refused with 403 and writes nothing. End-user access
+        tokens, the policy service secret and other keys are refused with 403. owner_id and group_id are the server's claim: Authrim does not check
+        that they exist, exactly like resource_context.owner_id in the server contract, so the
+        server must send the owner it read from the resource itself. In the self contract the
+        owner never grants by itself: it is material for the tenant's attribute-based rules. The
+        resource type is [a-z][a-z0-9_]* (at most 64 characters); the resource id follows the
+        permission grammar's id rule (no whitespace, control characters or `:`; at most 256 characters; `.` and `..` refused); owner_id and group_id
+        are 1 to 256 characters without whitespace or ':'; attributes are a JSON object of at most
+        8 KiB (UTF-8); anything else is refused with 400. The body is read up to 16 KiB (in bytes;
+        a larger body or declared Content-Length is refused with 413). Off until the platform's feature.enable_check_api is on (403).
+        Counted on the key's Check API rate limit.
+      requestBody:
+        $ref: '#/components/requestBodies/CheckResourcePut'
+      responses:
+        '200':
+          $ref: '#/components/responses/CheckResource'
+        '400':
+          $ref: '#/components/responses/CheckApiError'
+        '401':
+          $ref: '#/components/responses/CheckApiError'
+        '403':
+          $ref: '#/components/responses/CheckApiError'
+        '413':
+          $ref: '#/components/responses/CheckApiError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/TemporarilyUnavailable'
+      security:
+        - bearerAuth: []
+    delete:
+      tags:
+        - Check
+      operationId: deleteApiCheckResource
+      summary: Remove a registered resource.
+      description: >-
+        Removes what was registered about one resource of the key's tenant (idempotent: deleted
+        is false when nothing was registered). The same credential rules as the PUT apply. The
+        resource type's settings (its action-to-relation map, Admin API check-resource-types)
+        are not touched.
+      responses:
+        '200':
+          $ref: '#/components/responses/CheckResourceDeleted'
+        '400':
+          $ref: '#/components/responses/CheckApiError'
+        '401':
+          $ref: '#/components/responses/CheckApiError'
+        '403':
+          $ref: '#/components/responses/CheckApiError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/TemporarilyUnavailable'
+      security:
+        - bearerAuth: []
+  /api/check/resources/batch:
+    post:
+      tags:
+        - Check
+      operationId: postApiCheckResourcesBatch
+      summary: Register up to 100 resources for self-contract checks.
+      description: >-
+        Registers 1 to 100 resources of the key's tenant, each replaced whole as by the PUT, in
+        one atomic write: one invalid item, or the same resource twice, refuses the whole request
+        with 400 and writes nothing, as does a failure on any item. The same credential and
+        validation rules as the PUT apply; the body is read up to 1 MiB (413 past it).
+      requestBody:
+        $ref: '#/components/requestBodies/CheckResourceBatch'
+      responses:
+        '200':
+          $ref: '#/components/responses/CheckResourceBatch'
+        '400':
+          $ref: '#/components/responses/CheckApiError'
+        '401':
+          $ref: '#/components/responses/CheckApiError'
+        '403':
+          $ref: '#/components/responses/CheckApiError'
+        '413':
+          $ref: '#/components/responses/CheckApiError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
         '503':
           $ref: '#/components/responses/TemporarilyUnavailable'
       security:
@@ -406,6 +509,29 @@ components:
       type: http
       scheme: bearer
   parameters:
+    CheckResourceType:
+      name: resource_type
+      in: path
+      required: true
+      description: The resource type ([a-z][a-z0-9_]*, at most 64 characters).
+      schema:
+        type: string
+        pattern: '^[a-z][a-z0-9_]*$'
+        maxLength: 64
+    CheckResourceId:
+      name: resource_id
+      in: path
+      required: true
+      description: >-
+        The resource id: the permission grammar's id rule (no whitespace, control characters or `:`; 1 to 256 characters; `.` and `..` refused),
+        so every registered resource is one a check can name.
+      schema:
+        type: string
+        pattern: '^[^\s:\u0000-\u001f\u007f-\u009f]+$'
+        minLength: 1
+        maxLength: 256
+        not:
+          enum: ['.', '..']
     Name:
       name: name
       in: path
@@ -559,6 +685,31 @@ components:
               - subject_id: user_123
                 permission: documents:doc_123:read
                 tenant_id: tenant_123
+    CheckResourcePut:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/CheckResourceFacts'
+          example:
+            owner_id: user_123
+            group_id: grp_sales
+            attributes:
+              classification: internal
+    CheckResourceBatch:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/CheckResourceBatchRequest'
+          example:
+            items:
+              - resource_type: documents
+                resource_id: doc_123
+                owner_id: user_123
+              - resource_type: documents
+                resource_id: doc_456
+                group_id: grp_sales
     RebacTuple:
       required: true
       content:
@@ -598,6 +749,24 @@ components:
             error: rate_limit_exceeded
             error_description: Too many requests. Please try again later.
             retry_after: 30
+    CheckResource:
+      description: The resource as registered (updated_at in milliseconds).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/CheckResource'
+    CheckResourceDeleted:
+      description: Whether a registered resource was removed.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/CheckResourceDeleteResponse'
+    CheckResourceBatch:
+      description: The resources as registered, in request order.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/CheckResourceBatchResponse'
     CheckApiError:
       description: >-
         The Check API refused the request: 400 for a malformed request or one its contract does
@@ -1297,6 +1466,137 @@ components:
           type: boolean
           enum:
             - true
+    CheckResourceFacts:
+      type: object
+      additionalProperties: false
+      description: >-
+        What the application server registers about a resource; an omitted or null field is
+        none. owner_id and group_id are not checked for existence.
+      properties:
+        owner_id:
+          type:
+            - string
+            - 'null'
+          pattern: '^[^\s:]+$'
+          maxLength: 256
+        group_id:
+          type:
+            - string
+            - 'null'
+          pattern: '^[^\s:]+$'
+          maxLength: 256
+        attributes:
+          type:
+            - object
+            - 'null'
+          additionalProperties: true
+          description: A JSON object of at most 8 KiB (UTF-8).
+    CheckResourceBatchItem:
+      type: object
+      additionalProperties: false
+      required:
+        - resource_type
+        - resource_id
+      properties:
+        resource_type:
+          type: string
+          pattern: '^[a-z][a-z0-9_]*$'
+          maxLength: 64
+        resource_id:
+          type: string
+          pattern: '^[^\s:\u0000-\u001f\u007f-\u009f]+$'
+          minLength: 1
+          maxLength: 256
+          not:
+            enum: ['.', '..']
+        owner_id:
+          type:
+            - string
+            - 'null'
+          pattern: '^[^\s:]+$'
+          maxLength: 256
+        group_id:
+          type:
+            - string
+            - 'null'
+          pattern: '^[^\s:]+$'
+          maxLength: 256
+        attributes:
+          type:
+            - object
+            - 'null'
+          additionalProperties: true
+    CheckResourceBatchRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/CheckResourceBatchItem'
+    CheckResource:
+      type: object
+      additionalProperties: false
+      required:
+        - resource_type
+        - resource_id
+        - owner_id
+        - group_id
+        - attributes
+        - updated_at
+      properties:
+        resource_type:
+          type: string
+        resource_id:
+          type: string
+        owner_id:
+          type:
+            - string
+            - 'null'
+        group_id:
+          type:
+            - string
+            - 'null'
+        attributes:
+          type:
+            - object
+            - 'null'
+          additionalProperties: true
+        updated_at:
+          type: integer
+          format: int64
+          description: Milliseconds since the epoch.
+    CheckResourceDeleteResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - resource_type
+        - resource_id
+        - deleted
+      properties:
+        resource_type:
+          type: string
+        resource_id:
+          type: string
+        deleted:
+          type: boolean
+    CheckResourceBatchResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - count
+        - items
+      properties:
+        count:
+          type: integer
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/CheckResource'
     CheckApiRequest:
       type: object
       required:

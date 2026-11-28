@@ -16,7 +16,8 @@
  *   `permission` (plus `subject_id` / `subject_type: 'user'` / `tenant_id` when they name the token's
  *   own subject and tenant); `resource_context`, `rebac` and anything else are refused with 400
  *   (POLICY_CHECK_CONTRACT_VIOLATION), single and batch alike. The resource's owner, group and
- *   attributes are resolved server-side (resource-context-resolvers.ts; none by default).
+ *   attributes are resolved server-side, from the tenant's resource registry
+ *   (resource-context-resolvers.ts; resources are registered through check-resources.ts).
  */
 
 import { Hono, type Context } from 'hono';
@@ -58,7 +59,7 @@ import {
 import { createCheckAccessTokenVerifier } from '../middleware/check-access-token';
 import { getBatchSizeLimit, isCheckApiEnabled } from './check-settings';
 import { checkAuthenticationFailure } from './check-auth-response';
-import { checkResourceContextResolvers } from '../resource-context-resolvers';
+import { createCheckResourceContextResolver } from '../resource-context-resolvers';
 import {
   checkRateLimit,
   addRateLimitHeaders,
@@ -73,7 +74,7 @@ import { resolveTenantPolicy } from '../tenant-policy';
 // Types
 // =============================================================================
 
-interface Env extends SharedEnv {
+export interface CheckRoutesEnv extends SharedEnv {
   /** Internal API secret for service-to-service auth */
   POLICY_API_SECRET: string;
   /** KV namespace for ReBAC caching */
@@ -102,12 +103,14 @@ interface Env extends SharedEnv {
   CHECK_AUDIT_QUEUE?: Queue;
 }
 
+type Env = CheckRoutesEnv;
+
 // =============================================================================
 // Helpers
 // =============================================================================
 
 /** The authentication context of a Check API request (access tokens: check-access-token.ts). */
-function checkAuthContext(c: Context<{ Bindings: Env }>): CheckAuthContext {
+export function checkAuthContext(c: Context<{ Bindings: Env }>): CheckAuthContext {
   return {
     db: getPolicyCoreAdapter(c),
     cache: c.env.CHECK_CACHE_KV,
@@ -178,7 +181,7 @@ function isWellFormedPermission(permission: unknown): boolean {
 const BATCH_ENVELOPE_KEYS: ReadonlySet<string> = new Set(['checks', 'stop_on_deny']);
 
 /** The rate limit, or a 503 when the atomic limiter is unavailable (fail closed). */
-async function checkRateLimitOrUnavailable(
+export async function checkRateLimitOrUnavailable(
   auth: Parameters<typeof checkRateLimit>[0],
   ctx: RateLimitContext
 ): Promise<RateLimitResult | Response> {
@@ -273,7 +276,7 @@ async function getCheckService(
     attributeRepository: new UserVerifiedAttributeRepository(coreAdapter),
     tenantPolicy: (tenantId) => resolveTenantPolicy(env, coreAdapter, tenantId),
     // Self-contract checks: the resource's owner, group and attributes, server-side.
-    resourceContextResolver: checkResourceContextResolvers,
+    resourceContextResolver: createCheckResourceContextResolver(coreAdapter),
   });
 
   return { checkService, auditService };
