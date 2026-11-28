@@ -215,7 +215,7 @@ describe('PUT /api/check/resources/:type/:id', () => {
     ['a type with a hyphen', '/api/check/resources/doc-s/doc_1', {}],
     ['an id with a colon', '/api/check/resources/documents/a%3Ab', {}],
     ['an id with a space', '/api/check/resources/documents/a%20b', {}],
-    ['an id the permission parser refuses', '/api/check/resources/documents/DOC-1.v2', {}],
+    ['an id with a control character', '/api/check/resources/documents/a%7Fb', {}],
     ['an unknown field', '/api/check/resources/documents/doc_1', { owner: 'u' }],
     ['an owner that is not a string', '/api/check/resources/documents/doc_1', { owner_id: 1 }],
     ['attributes that are an array', '/api/check/resources/documents/doc_1', { attributes: [] }],
@@ -381,19 +381,11 @@ describe('request body limits', () => {
 });
 
 describe('ids a check can name', () => {
-  it.each(['doc_1', 'DOC-1_v2', 'a'.repeat(256)])(
+  it.each(['doc_1', 'DOC-1_v2', 'DOC-1.v2', 'a~b', 'caf%C3%A9', 'a'.repeat(256)])(
     'accepts %s, which the permission parser also accepts',
     async (id) => {
       expect((await call('PUT', `/api/check/resources/documents/${id}`, {})).status).toBe(200);
       expect(() => parsePermission(`documents:${id}:read`)).not.toThrow();
-    }
-  );
-
-  it.each(['DOC-1.v2', 'a~b', 'caf%C3%A9'])(
-    'refuses %s, which the parser refuses too',
-    async (id) => {
-      expect((await call('PUT', `/api/check/resources/documents/${id}`, {})).status).toBe(400);
-      expect(() => parsePermission(`documents:${decodeURIComponent(id)}:read`)).toThrow();
     }
   );
 });

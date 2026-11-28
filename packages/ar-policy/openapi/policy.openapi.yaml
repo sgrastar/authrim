@@ -338,7 +338,7 @@ paths:
         server must send the owner it read from the resource itself. In the self contract the
         owner never grants by itself: it is material for the tenant's attribute-based rules. The
         resource type is [a-z][a-z0-9_]* (at most 64 characters); the resource id follows the
-        permission grammar's id rule (no whitespace, control characters or `:`; at most 256 characters); owner_id and group_id
+        permission grammar's id rule (no whitespace, control characters or `:`; at most 256 characters; `.` and `..` refused); owner_id and group_id
         are 1 to 256 characters without whitespace or ':'; attributes are a JSON object of at most
         8 KiB (UTF-8); anything else is refused with 400. The body is read up to 16 KiB (in bytes;
         a larger body or declared Content-Length is refused with 413). Off until the platform's feature.enable_check_api is on (403).
@@ -523,7 +523,7 @@ components:
       in: path
       required: true
       description: >-
-        The resource id: the permission grammar's id rule (no whitespace, control characters or `:`; 1 to 256 characters),
+        The resource id: the permission grammar's id rule (no whitespace, control characters or `:`; 1 to 256 characters; `.` and `..` refused),
         so every registered resource is one a check can name.
       schema:
         type: string

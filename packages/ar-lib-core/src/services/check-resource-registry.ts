@@ -51,13 +51,26 @@ export function isCheckResourceName(value: unknown): value is string {
   );
 }
 
+/** Characters (code points, as OpenAPI's maxLength counts), not UTF-16 units. */
+function codePointLength(value: string): number {
+  let n = 0;
+  for (const _ of value) n++;
+  return n;
+}
+
 /**
  * A resource id: the permission grammar's id rule (`isValidPermissionId`: no whitespace, `:` or
  * control characters), so every registered resource is one a check can name, and at most 256
- * characters.
+ * characters. `.` and `..` are refused: the grammar allows them, but as the last path segment of
+ * PUT / DELETE the URL layer normalises them away, so a registered one could never be addressed.
  */
 export function isCheckResourceId(value: unknown): value is string {
-  return isValidPermissionId(value) && value.length <= CHECK_RESOURCE_ID_MAX_LENGTH;
+  return (
+    isValidPermissionId(value) &&
+    value !== '.' &&
+    value !== '..' &&
+    codePointLength(value) <= CHECK_RESOURCE_ID_MAX_LENGTH
+  );
 }
 
 /** An owner or group id: non-empty, at most 256 characters, no whitespace, `:` or control. */
@@ -65,7 +78,7 @@ export function isCheckSubjectRefId(value: unknown): value is string {
   return (
     typeof value === 'string' &&
     value.length > 0 &&
-    value.length <= CHECK_RESOURCE_ID_MAX_LENGTH &&
+    codePointLength(value) <= CHECK_RESOURCE_ID_MAX_LENGTH &&
     !ID_FORBIDDEN.test(value)
   );
 }

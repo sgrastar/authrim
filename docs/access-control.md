@@ -1646,8 +1646,9 @@ registered), and `POST /api/check/resources/batch` with `{ "items": [{ "resource
 "resource_id", "owner_id"?, "group_id"?, "attributes"? }] }` registers 1 to 100 resources in one
 atomic write: one invalid item, or the same resource twice, refuses the whole request, and a
 failure on any item writes none. The resource type, action and relation names are
-`[a-z][a-z0-9_]*` (at most 64 characters). A resource id follows the permission parser's id rule
-(`[a-zA-Z0-9_-]+`, at most 256 characters), so every registered resource is one a check can name;
+`[a-z][a-z0-9_]*` (at most 64 characters). A resource id follows the permission grammar's id rule
+(no whitespace, `:` or control characters; at most 256 characters; `.` and `..` refused), so every
+registered resource is one a check can name;
 an owner or group id is 1 to 256 characters without whitespace or `:`. `attributes` is a JSON
 object of at most 8 KiB (UTF-8). Anything else is a 400. A request body is read up to 16 KiB
 (batch: 1 MiB), counted in bytes; a larger one (or a larger declared `Content-Length`) is 413.

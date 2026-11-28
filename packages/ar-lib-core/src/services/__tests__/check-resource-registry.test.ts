@@ -51,6 +51,11 @@ describe('registry grammar', () => {
     ['DOC-1_v2', true],
     ['x'.repeat(256), true],
     ['x'.repeat(257), false],
+    ['\u{20bb7}'.repeat(256), true],
+    ['\u{20bb7}'.repeat(257), false],
+    ['.', false],
+    ['..', false],
+    ['.hidden', true],
     ['DOC-1.v2', true],
     ['', false],
     ['has space', false],
@@ -61,7 +66,8 @@ describe('registry grammar', () => {
     [1, false],
   ])('resource id %s -> %s (the permission parser agrees)', (value, valid) => {
     expect(isCheckResourceId(value)).toBe(valid);
-    if (typeof value === 'string' && value.length <= 256) {
+    // `.` and `..` are the one place the registry is stricter than the parser (URL path segments).
+    if (typeof value === 'string' && value.length <= 256 && value !== '.' && value !== '..') {
       const parses = (() => {
         try {
           parsePermission({ resource: 'documents', id: value, action: 'read' });
