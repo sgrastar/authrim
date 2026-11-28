@@ -1,11 +1,8 @@
 /**
  * Relationship Store Implementation
  *
- * Manages subject-subject (and future org-org) relationships in D1.
- * Part of RBAC Phase 1 implementation.
- *
- * Phase 1 focuses on subject-subject relationships (parent_child, guardian, delegate, manager).
- * The from_type/to_type fields are prepared for future org-org relationships (reseller_of).
+ * Manages subject-subject relationships in D1 (parent_child, guardian, delegate, manager).
+ * Part of RBAC Phase 1 implementation. ReBAC tuples share the table (rebac/tuple-type-rules.ts).
  */
 
 import type { IStorageAdapter } from '../interfaces';

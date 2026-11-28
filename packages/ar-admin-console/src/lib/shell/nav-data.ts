@@ -87,7 +87,12 @@ export const TENANT_AREAS: readonly NavArea[] = [
 			},
 			{
 				id: 'relationships',
-				label: 'nav.access.relationships'
+				label: 'nav.access.relationships',
+				platform: 'tenant',
+				// As the API: reading `admin:roles:read`, changing `admin:roles:write`.
+				requires: { permission: 'admin:roles:read' },
+				// …/relationships/definitions/<id> and …/definitions/new: a definition's page.
+				details: true
 			},
 			{
 				id: 'policies',

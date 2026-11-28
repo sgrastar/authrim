@@ -137,6 +137,19 @@ paths:
       tags:
         - ReBAC
       summary: Check a relationship-based authorization decision.
+      description: >-
+        A relation with an active definition is decided by the definition alone (tuples count only
+        through its direct leaves; tuple_to_userset evaluates the computed relation on the related
+        object through that object's own definition). A relation without one holds through direct
+        tuples from the subject and group usersets ((group:G)#member, when the subject is an
+        effective member of G: its groups and their ancestors); no undeclared traversal. Contextual
+        tuples are seen by the same direct lookups (an exclusion applies to them too). A stored
+        definition the parser rejects, a cycle, or the depth limit denies. A group userset whose
+        membership is unknown denies with resolved_via unknown_membership; inside an exclusion's
+        subtract, a non-membership of a group a service group decides is unknown too. Cached
+        results are keyed by the tenant's ReBAC version (bumped by every tuple and definition
+        write); undecided answers, answers that read group memberships or contextual tuples, and
+        answers relying on a tuple that expires within the cache TTL are not cached.
       requestBody:
         $ref: '#/components/requestBodies/RebacCheck'
       responses:
@@ -161,6 +174,11 @@ paths:
       tags:
         - ReBAC
       summary: List objects reachable by a subject and relation.
+      description: >-
+        Lists, among the objects the subject has a live direct tuple to with the relation, those
+        the check allows. Group usersets and computed relations (tuple_to_userset) are not
+        enumerated: userset_subjects_omitted and computed_relations_omitted say when objects may
+        be missing for those reasons.
       requestBody:
         $ref: '#/components/requestBodies/RebacListObjects'
       responses:
@@ -173,6 +191,11 @@ paths:
       tags:
         - ReBAC
       summary: List users reachable by an object and relation.
+      description: >-
+        Lists, among the subjects with a live direct tuple to the object with the relation, those
+        the check allows. Group usersets and computed relations (tuple_to_userset) are not
+        enumerated: userset_subjects_omitted and computed_relations_omitted say when subjects may
+        be missing for those reasons.
       requestBody:
         $ref: '#/components/requestBodies/RebacListUsers'
       responses:
@@ -331,7 +354,9 @@ paths:
       description: >-
         Deletes the specified relationship tuple and invalidates related authorization cache entries.
         The tuple is matched by the same source type rules as /api/rebac/write (user matches the
-        stored subject rows); a source type the rules refuse is refused with 400 (AR050010). Counted on the Admin API write limit (`rate_limit.admin_write` per `rate_limit.admin_write_window_seconds`), per authenticated principal, in the tenant-less scope shared with the other non-tenant-scoped Admin API writes; over the limit the answer is 429 with `Retry-After`, and 503 when the counter is unavailable.
+        stored subject rows); a source type the rules refuse, or a from_relation other than member
+        with a group (or any from_relation with another source), is refused with 400 (AR050010).
+        A group userset also needs the role-grant permission (admin:roles:write; 403 without). Counted on the Admin API write limit (`rate_limit.admin_write` per `rate_limit.admin_write_window_seconds`), per authenticated principal, in the tenant-less scope shared with the other non-tenant-scoped Admin API writes; over the limit the answer is 429 with `Retry-After`, and 503 when the counter is unavailable.
       responses:
         '200':
           $ref: '#/components/responses/RebacDelete'
@@ -352,10 +377,18 @@ paths:
       description: >-
         Creates or updates a relationship tuple used by relationship-based authorization checks
         and invalidates related cache entries. Accepted sources (subject_type): a direct subject
-        (subject, or user, stored as subject), a group userset (group; stored, not evaluated until
-        usersets are), or an object type whose relation is declared in an active relation
+        (subject, or user, stored as subject), a group userset (group, stored with from_relation
+        member: every effective member of the group; from_relation may be sent only as member and
+        only with a group), or an object type whose relation is declared in an active relation
         definition as the tupleset of a tuple_to_userset. Any other is refused with 400 (AR050010,
-        POLICY_REBAC_TUPLE_TYPE_NOT_ALLOWED). Counted on the Admin API write limit (`rate_limit.admin_write` per `rate_limit.admin_write_window_seconds`), per authenticated principal, in the tenant-less scope shared with the other non-tenant-scoped Admin API writes; over the limit the answer is 429 with `Retry-After`, and 503 when the counter is unavailable.
+        POLICY_REBAC_TUPLE_TYPE_NOT_ALLOWED). A group userset also needs the role-grant permission
+        (admin:roles:write; 403 without) and is refused with 400 group_self_writable_attribute on a
+        group with a service group below it that an attribute people write themselves decides (the
+        check and the write are one transaction, the write conditional on the service-group catalog
+        revision read: 409 group_version_conflict when it changed; 409 conflict for a concurrent
+        write of the same tuple: retry). An
+        existing row of an older shape (a user source, a group row without from_relation) is
+        normalised by the write. Counted on the Admin API write limit (`rate_limit.admin_write` per `rate_limit.admin_write_window_seconds`), per authenticated principal, in the tenant-less scope shared with the other non-tenant-scoped Admin API writes; over the limit the answer is 429 with `Retry-After`, and 503 when the counter is unavailable.
       responses:
         '200':
           $ref: '#/components/responses/RebacWrite'
@@ -718,9 +751,11 @@ components:
           schema:
             $ref: '#/components/schemas/RebacListObjectsResponse'
           example:
-            objects:
-              - document:doc_123
-            next_cursor: cursor_123
+            object_ids:
+              - doc_123
+            next_cursor: '100'
+            userset_subjects_omitted: false
+            computed_relations_omitted: true
     RebacListUsers:
       description: Successful JSON response.
       content:
@@ -728,9 +763,11 @@ components:
           schema:
             $ref: '#/components/schemas/RebacListUsersResponse'
           example:
-            users:
+            user_ids:
               - user:user_123
-            next_cursor: cursor_123
+            next_cursor: '100'
+            userset_subjects_omitted: true
+            computed_relations_omitted: false
     Success:
       description: Successful JSON response.
       content:
@@ -1052,12 +1089,40 @@ components:
           type: string
         user_id:
           type: string
+          description: >-
+            The subject: its stored id, optionally with a single leading user: (taken away; the
+            rest is kept verbatim, so team:alice is team:alice).
         relation:
           type: string
         object:
           type: string
         object_type:
           type: string
+        context:
+          type: object
+          description: >-
+            Request-specific tuples, seen by the definition's direct lookups (an exclusion
+            applies to them); a check with them neither reads nor writes the result cache.
+            Validated the same way on /check and /batch-check (400 when malformed).
+          properties:
+            contextual_tuples:
+              type: array
+              maxItems: 100
+              items:
+                type: object
+                required:
+                  - user_id
+                  - relation
+                  - object
+                properties:
+                  user_id:
+                    type: string
+                  relation:
+                    type: string
+                  object:
+                    type: string
+                  object_type:
+                    type: string
     RebacCheckResponse:
       type: object
       required:
@@ -1066,6 +1131,27 @@ components:
       properties:
         allowed:
           type: boolean
+        resolved_via:
+          type: string
+          description: >-
+            How the answer was reached. direct: the relation has no definition (a direct tuple, or
+            a group userset: path names it as group:<id>#member; or a deny); computed: the relation
+            definition (also a deny under an unusable definition, a cycle or the depth limit);
+            context: allowed only through contextual tuples; cache: the result cache;
+            unknown_membership: denied because a group userset on the path could not be decided;
+            never cached. path lists what allowed (tuple ids, group:<id>#member,
+            contextual_tuple).
+          enum:
+            - direct
+            - computed
+            - cache
+            - closure
+            - context
+            - unknown_membership
+        path:
+          type: array
+          items:
+            type: string
         cached:
           type: boolean
         reason:
@@ -1112,15 +1198,29 @@ components:
     RebacListObjectsResponse:
       type: object
       required:
-        - objects
+        - object_ids
+        - userset_subjects_omitted
+        - computed_relations_omitted
       additionalProperties: true
       properties:
-        objects:
+        object_ids:
           type: array
           items:
             type: string
         next_cursor:
           type: string
+        userset_subjects_omitted:
+          type: boolean
+          description: >-
+            True when the tenant has a group userset tuple for the relation on the object type: the
+            list does not enumerate usersets, so objects reached only through a group's membership
+            are missing.
+        computed_relations_omitted:
+          type: boolean
+          description: >-
+            True when an active relation definition of the object type contains a
+            tuple_to_userset: the list does not enumerate computed relations, so objects reached
+            only through a declared edge (a folder's viewers on its documents) are missing.
     RebacListUsersRequest:
       type: object
       required:
@@ -1143,15 +1243,32 @@ components:
     RebacListUsersResponse:
       type: object
       required:
-        - users
+        - user_ids
+        - userset_subjects_omitted
+        - computed_relations_omitted
       additionalProperties: true
       properties:
-        users:
+        user_ids:
           type: array
+          description: >-
+            The subjects in this API's external form, user: + the stored id (a stored user:alice is
+            user:user:alice), which a check takes back to the stored id.
           items:
             type: string
         next_cursor:
           type: string
+        userset_subjects_omitted:
+          type: boolean
+          description: >-
+            True when the object has a group userset tuple for the relation: the list does not
+            enumerate usersets, so subjects that hold the relation only as a group's members are
+            missing.
+        computed_relations_omitted:
+          type: boolean
+          description: >-
+            True when an active relation definition of the object's type contains a
+            tuple_to_userset: subjects that hold the relation only through a declared edge are
+            missing.
     RebacInvalidateRequest:
       type: object
       required:
@@ -1274,8 +1391,16 @@ components:
           type: string
         subject_id:
           type: string
+        from_relation:
+          type: string
+          enum:
+            - member
+          description: >-
+            The userset relation of the source: only member, only with subject_type group (a group
+            tuple is stored with member whether it is sent or not).
         expires_at:
           type: integer
+          description: Integer UNIX seconds; anything else is refused with 400.
     RebacWriteResponse:
       type: object
       required:

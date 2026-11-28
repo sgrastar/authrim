@@ -3,22 +3,31 @@
  *
  * Main service for Relationship-Based Access Control.
  * Implements Zanzibar-lite check() API with:
- * - Recursive CTE for transitive relationship resolution
- * - KV caching with configurable TTL
+ * - Direct tuples, contextual tuples and group usersets (userset.ts)
+ * - Relation DSL evaluation (union, tuple-to-userset, intersection, exclusion), three-valued
+ * - KV caching with configurable TTL, keyed by a per-tenant ReBAC version
  * - Request-scoped deduplication
- * - Relation DSL evaluation (union, tuple-to-userset)
  *
- * Phase 3 constraints:
- * - Allow only (no Deny effect)
- * - MVP DSL (union, tuple-to-userset only)
- * - No RelationGraphDO (uses recursive CTE instead)
+ * A relation with an active definition is decided by the definition alone (tuples count only
+ * through its `direct` leaves, and `tuple_to_userset` evaluates the computed relation on the
+ * related object through that object's own definition). A relation without one holds through
+ * direct tuples and group usersets only: no other traversal of the relationship graph grants
+ * anything. An unusable stored definition, a cycle or the depth limit leaves a check undecided
+ * (denied, never cached).
+ *
+ * Lists (listObjects / listUsers) take their candidates from direct subject tuples and keep only
+ * those the check allows: group usersets (`userset_subjects_omitted`) and computed relations
+ * (`computed_relations_omitted`) are not enumerated.
  */
 
 import type {
+  ActiveDefinition,
   IReBACService,
   IReBACCacheManager,
   IClosureManager,
   IRelationParser,
+  MembershipTrace,
+  EvaluationResult,
 } from './interfaces';
 import type {
   CheckRequest,
@@ -30,13 +39,70 @@ import type {
   ListUsersRequest,
   ListUsersResponse,
   ReBACConfig,
-  RelationDefinition,
-  ContextualTuple,
+  ReBACCheckOptions,
+  RelationExpression,
+  ResolvedCheckRequest,
+  SubjectGroupsResolver,
 } from './types';
 import type { IStorageAdapter } from '../storage/interfaces';
-import { ReBACCacheManager, RequestScopedCache } from './cache-manager';
+import { ReBACCacheManager, getReBACTenantVersion } from './cache-manager';
 import { RelationParser, createEvaluationContext, parseObjectString } from './relation-parser';
 import { DEFAULT_CACHE_TTL, DEFAULT_MAX_DEPTH } from './types';
+import {
+  createMembershipTrace,
+  expressionContainsTupleToUserset,
+  memoizeServiceDecidedGroups,
+  MAX_DEFINITION_DEPTH,
+  memoizeSubjectGroups,
+  USERSET_GROUP_FROM_TYPE,
+  USERSET_MEMBER_RELATION,
+} from './userset';
+import { memoizeDefinitions } from './definitions';
+
+/**
+ * A subject id as `/api/rebac/*` callers write it: `user:<id>` or `<id>`. Only a single leading
+ * `user:` is taken away; the rest is the stored id verbatim (`team:alice` stays `team:alice`,
+ * `user:team:alice` is `team:alice`), so an id a list returns checks the same subject.
+ */
+export function externalSubjectId(userId: string): string {
+  return userId.startsWith('user:') ? userId.slice('user:'.length) : userId;
+}
+
+/**
+ * A stored subject id as `/api/rebac/*` returns it: `user:` + the stored id, so that the single
+ * prefix externalSubjectId takes away gives the stored id back (`alice` → `user:alice`,
+ * `user:alice` → `user:user:alice`).
+ */
+export function externalSubjectRef(storedId: string): string {
+  return `user:${storedId}`;
+}
+
+/**
+ * The relations a definition's `direct` leaves name (outside tuple_to_userset): their direct
+ * tuples are list candidates as well (`viewer = direct(editor)` lists editors).
+ */
+function directLeafRelations(expression: RelationExpression, depth = 0): Set<string> {
+  const relations = new Set<string>();
+  if (depth > MAX_DEFINITION_DEPTH) return relations;
+  switch (expression.type) {
+    case 'direct':
+      relations.add(expression.relation);
+      break;
+    case 'union':
+    case 'intersection':
+      for (const child of expression.children)
+        for (const relation of directLeafRelations(child, depth + 1)) relations.add(relation);
+      break;
+    case 'exclusion':
+      // A subtract only takes away: its relations are no candidates.
+      for (const relation of directLeafRelations(expression.base, depth + 1))
+        relations.add(relation);
+      break;
+    default:
+      break;
+  }
+  return relations;
+}
 
 /**
  * ReBACService - Main ReBAC service implementation
@@ -46,7 +112,9 @@ export class ReBACService implements IReBACService {
   private cacheManager: IReBACCacheManager;
   private relationParser: IRelationParser;
   private closureManager: IClosureManager | null;
-  private config: Required<ReBACConfig>;
+  private config: Required<Omit<ReBACConfig, 'subject_groups' | 'version_namespace'>>;
+  private subjectGroups?: SubjectGroupsResolver;
+  private versionNamespace?: KVNamespace;
 
   constructor(
     adapter: IStorageAdapter,
@@ -63,6 +131,8 @@ export class ReBACService implements IReBACService {
       enable_closure_table: config?.enable_closure_table ?? true,
       closure_batch_size: config?.closure_batch_size ?? 100,
     };
+    this.subjectGroups = config?.subject_groups;
+    this.versionNamespace = config?.version_namespace;
 
     this.cacheManager =
       cacheManager ??
@@ -72,150 +142,135 @@ export class ReBACService implements IReBACService {
   }
 
   /**
-   * Check if a user has a specific relation to an object
+   * Check if a user has a specific relation to an object (the `/api/rebac/*` boundary: the user
+   * and the object may be typed strings, parsed here).
    */
-  async check(request: CheckRequest): Promise<CheckResponse> {
-    // Parse object string
+  async check(request: CheckRequest, options?: ReBACCheckOptions): Promise<CheckResponse> {
     const { type: objectType, id: objectId } = request.object_type
       ? { type: request.object_type, id: request.object }
       : parseObjectString(request.object);
-
-    // Parse user string (may contain type prefix)
-    const userId = request.user_id.includes(':') ? request.user_id.split(':')[1] : request.user_id;
-
-    // Layer 0: Check contextual tuples first (request-specific, not cached)
-    if (request.context?.contextual_tuples?.length) {
-      const contextualResult = this.checkContextualTuples(
-        request.context.contextual_tuples,
-        userId,
-        request.relation,
+    const subjectId = externalSubjectId(request.user_id);
+    const contextualTuples = (request.context?.contextual_tuples ?? [])
+      .filter((tuple) => externalSubjectId(tuple.user_id) === subjectId)
+      .map((tuple) => {
+        const object = tuple.object_type
+          ? { type: tuple.object_type, id: tuple.object }
+          : parseObjectString(tuple.object);
+        return { relation: tuple.relation, objectType: object.type, objectId: object.id };
+      });
+    return this.checkResolved(
+      {
+        tenantId: request.tenant_id,
+        subjectId,
+        relation: request.relation,
         objectType,
-        objectId
-      );
-      if (contextualResult.allowed) {
-        return contextualResult;
+        objectId,
+        ...(request.context?.contextual_tuples?.length ? { contextualTuples } : {}),
+      },
+      options
+    );
+  }
+
+  /**
+   * A check of an already resolved subject (taken verbatim: it may contain `:`) and a typed
+   * object. Request-specific (contextual) tuples are seen by every `direct` lookup under the same
+   * definitions; such a check neither reads nor writes the shared cache.
+   */
+  async checkResolved(
+    request: ResolvedCheckRequest,
+    options?: ReBACCheckOptions
+  ): Promise<CheckResponse> {
+    const contextual = request.contextualTuples !== undefined;
+    const scope = contextual ? null : await this.cacheScope(request.tenantId);
+
+    if (scope !== null) {
+      // A cache that cannot be read is a miss: the check is evaluated from the database.
+      let cached: CheckResponse | null = null;
+      try {
+        cached = await this.cacheManager.get(
+          scope,
+          request.subjectId,
+          request.relation,
+          request.objectType,
+          request.objectId
+        );
+      } catch {
+        cached = null;
+      }
+      if (cached) return cached;
+    }
+
+    const { result, cacheable, ttl } = await this.computeCheck(
+      request,
+      options?.subjectGroups ?? this.subjectGroups
+    );
+
+    if (scope !== null && cacheable) {
+      // A cache that cannot be written does not change the answer.
+      try {
+        await this.cacheManager.set(
+          scope,
+          request.subjectId,
+          request.relation,
+          request.objectType,
+          request.objectId,
+          result,
+          ttl
+        );
+      } catch {
+        // Not cached.
       }
     }
-
-    // Layer 1: Check KV cache
-    const cachedResult = await this.cacheManager.get(
-      request.tenant_id,
-      userId,
-      request.relation,
-      objectType,
-      objectId
-    );
-
-    if (cachedResult) {
-      return cachedResult;
-    }
-
-    // Layer 2: Compute using recursive CTE + relation definitions
-    const result = await this.computeCheck(
-      request.tenant_id,
-      userId,
-      request.relation,
-      objectType,
-      objectId
-    );
-
-    // Cache the result
-    await this.cacheManager.set(
-      request.tenant_id,
-      userId,
-      request.relation,
-      objectType,
-      objectId,
-      result,
-      this.config.cache_ttl
-    );
-
     return result;
   }
 
   /**
-   * Check contextual tuples for a direct match
-   * Contextual tuples are temporary relationships provided in the request
+   * The tenant part of the cache key, with the tenant's ReBAC version (bumped by every tuple and
+   * definition write), or null when results must not be cached: the version cannot be read, or
+   * a shared cache is configured without a version store.
    */
-  private checkContextualTuples(
-    tuples: ContextualTuple[],
-    userId: string,
-    relation: string,
-    objectType: string,
-    objectId: string
-  ): CheckResponse {
-    for (const tuple of tuples) {
-      // Parse tuple user ID
-      const tupleUserId = tuple.user_id.includes(':') ? tuple.user_id.split(':')[1] : tuple.user_id;
-
-      // Parse tuple object
-      const { type: tupleObjType, id: tupleObjId } = tuple.object_type
-        ? { type: tuple.object_type, id: tuple.object }
-        : parseObjectString(tuple.object);
-
-      // Check for match
-      if (
-        tupleUserId === userId &&
-        tuple.relation === relation &&
-        tupleObjType === objectType &&
-        tupleObjId === objectId
-      ) {
-        return {
-          allowed: true,
-          resolved_via: 'context',
-          path: ['contextual_tuple'],
-        };
-      }
+  private async cacheScope(tenantId: string): Promise<string | null> {
+    if (!this.versionNamespace) {
+      // A per-instance cache (no KV) lives one request; a shared one needs the version.
+      return this.config.cache_namespace ? null : JSON.stringify([tenantId, '0']);
     }
-
-    return {
-      allowed: false,
-      resolved_via: 'context',
-    };
+    try {
+      return JSON.stringify([
+        tenantId,
+        await getReBACTenantVersion(this.versionNamespace, tenantId),
+      ]);
+    } catch {
+      return null;
+    }
   }
 
   /**
    * Batch check multiple authorization requests
    */
   async batchCheck(request: BatchCheckRequest): Promise<BatchCheckResponse> {
-    // Use request-scoped cache for deduplication
-    const requestCache = new RequestScopedCache();
+    // Identical checks of the batch share one evaluation (in flight or done), so duplicates
+    // neither repeat the work nor race on the cache. Checks with contextual tuples are not
+    // shared: they differ by their tuples.
+    const inFlight = new Map<string, Promise<CheckResponse>>();
 
     const results = await Promise.all(
-      request.checks.map(async (checkRequest) => {
+      request.checks.map((checkRequest) => {
+        if (checkRequest.context?.contextual_tuples?.length) return this.check(checkRequest);
         const { type: objectType, id: objectId } = checkRequest.object_type
           ? { type: checkRequest.object_type, id: checkRequest.object }
           : parseObjectString(checkRequest.object);
-
-        const userId = checkRequest.user_id.includes(':')
-          ? checkRequest.user_id.split(':')[1]
-          : checkRequest.user_id;
-
-        // Check request-scoped cache first
-        const requestCached = requestCache.get(
+        const key = JSON.stringify([
           checkRequest.tenant_id,
-          userId,
-          checkRequest.relation,
-          objectType,
-          objectId
-        );
-        if (requestCached) {
-          return requestCached;
-        }
-
-        // Perform the check
-        const result = await this.check(checkRequest);
-
-        // Add to request-scoped cache
-        requestCache.set(
-          checkRequest.tenant_id,
-          userId,
+          externalSubjectId(checkRequest.user_id),
           checkRequest.relation,
           objectType,
           objectId,
-          result
-        );
-
+        ]);
+        let result = inFlight.get(key);
+        if (!result) {
+          result = this.check(checkRequest);
+          inFlight.set(key, result);
+        }
         return result;
       })
     );
@@ -227,36 +282,81 @@ export class ReBACService implements IReBACService {
    * List all objects a user has a specific relation to
    */
   async listObjects(request: ListObjectsRequest): Promise<ListObjectsResponse> {
-    // If closure manager is available, use it
-    if (this.closureManager) {
+    const userId = externalSubjectId(request.user_id);
+
+    const definitions = new Map<string, Promise<ActiveDefinition>>();
+    const relations = await this.candidateRelations(
+      request.tenant_id,
+      request.object_type,
+      request.relation,
+      definitions
+    );
+
+    // Candidates: the subject's live direct tuples of those relations (the closure holds no more
+    // than those, and is used for the requested relation alone)
+    let page: { ids: string[]; nextCursor?: string };
+    if (this.closureManager && relations.length === 1 && relations[0] === request.relation) {
       const result = await this.closureManager.getObjectsForUser(
         request.tenant_id,
-        request.user_id,
+        userId,
         request.relation,
         request.object_type,
         { limit: request.limit, cursor: request.cursor }
       );
-      return {
-        object_ids: result.objectIds,
-        next_cursor: result.nextCursor,
-      };
+      page = { ids: result.objectIds, nextCursor: result.nextCursor };
+    } else {
+      page = await this.listDirectObjects(request, userId, relations);
     }
 
-    // Fallback: Use recursive CTE (less efficient for large datasets)
-    return this.listObjectsViaCTE(request);
+    const objectIds = await this.keepAllowed(page.ids, (objectId) =>
+      this.computeCheck(
+        {
+          tenantId: request.tenant_id,
+          subjectId: userId,
+          relation: request.relation,
+          objectType: request.object_type,
+          objectId,
+        },
+        this.subjectGroups,
+        definitions
+      )
+    );
+
+    return {
+      object_ids: objectIds,
+      next_cursor: page.nextCursor,
+      userset_subjects_omitted: await this.hasGroupUsersets(
+        request.tenant_id,
+        request.object_type,
+        relations
+      ),
+      computed_relations_omitted: await this.hasComputedRelations(
+        request.tenant_id,
+        request.object_type
+      ),
+    };
   }
 
   /**
    * List all users who have a specific relation to an object
    */
   async listUsers(request: ListUsersRequest): Promise<ListUsersResponse> {
-    // Parse object
     const { type: objectType, id: objectId } = request.object_type
       ? { type: request.object_type, id: request.object }
       : parseObjectString(request.object);
 
-    // If closure manager is available, use it
-    if (this.closureManager) {
+    const definitions = new Map<string, Promise<ActiveDefinition>>();
+    const relations = await this.candidateRelations(
+      request.tenant_id,
+      objectType,
+      request.relation,
+      definitions
+    );
+
+    // Candidates: the live direct subject tuples on the object of those relations (the closure
+    // holds no more than those, and is used for the requested relation alone)
+    let page: { ids: string[]; nextCursor?: string };
+    if (this.closureManager && relations.length === 1 && relations[0] === request.relation) {
       const result = await this.closureManager.getUsersForObject(
         request.tenant_id,
         objectType,
@@ -264,24 +364,48 @@ export class ReBACService implements IReBACService {
         request.relation,
         { limit: request.limit, cursor: request.cursor }
       );
-      return {
-        user_ids: result.userIds,
-        next_cursor: result.nextCursor,
-      };
+      page = { ids: result.userIds, nextCursor: result.nextCursor };
+    } else {
+      page = await this.listDirectUsers(
+        request.tenant_id,
+        objectType,
+        objectId,
+        relations,
+        request.limit,
+        request.cursor
+      );
     }
 
-    // Fallback: Use recursive CTE
-    return this.listUsersViaCTE(
-      request.tenant_id,
-      objectType,
-      objectId,
-      request.relation,
-      request.limit
+    const userIds = await this.keepAllowed(page.ids, (userId) =>
+      this.computeCheck(
+        {
+          tenantId: request.tenant_id,
+          subjectId: userId,
+          relation: request.relation,
+          objectType,
+          objectId,
+        },
+        this.subjectGroups,
+        definitions
+      )
     );
+
+    return {
+      user_ids: userIds,
+      next_cursor: page.nextCursor,
+      userset_subjects_omitted: await this.hasGroupUsersets(
+        request.tenant_id,
+        objectType,
+        relations,
+        objectId
+      ),
+      computed_relations_omitted: await this.hasComputedRelations(request.tenant_id, objectType),
+    };
   }
 
   /**
-   * Invalidate cache for a specific object
+   * Invalidate cache for a specific object (under the tenant's current ReBAC version; a write
+   * also bumps the version, which retires every entry of the tenant)
    */
   async invalidateCache(
     tenantId: string,
@@ -289,7 +413,8 @@ export class ReBACService implements IReBACService {
     objectId: string,
     _relation?: string
   ): Promise<void> {
-    await this.cacheManager.invalidateObject(tenantId, objectType, objectId);
+    const scope = await this.cacheScope(tenantId);
+    if (scope !== null) await this.cacheManager.invalidateObject(scope, objectType, objectId);
 
     // Also update closure table if enabled
     if (this.closureManager) {
@@ -301,7 +426,8 @@ export class ReBACService implements IReBACService {
    * Invalidate all cache entries for a user
    */
   async invalidateUserCache(tenantId: string, userId: string): Promise<void> {
-    await this.cacheManager.invalidateUser(tenantId, userId);
+    const scope = await this.cacheScope(tenantId);
+    if (scope !== null) await this.cacheManager.invalidateUser(scope, userId);
 
     // Also update closure table if enabled
     if (this.closureManager) {
@@ -314,362 +440,247 @@ export class ReBACService implements IReBACService {
   // ==========================================================================
 
   /**
-   * Compute check result using recursive CTE and relation definitions
+   * Compute a check: the relation on the object, as RelationParser.evaluateRelation evaluates it
+   * (its definition, or direct tuples and group usersets without one). An undecided answer is a
+   * deny that is never cached (`unknown_membership` when a group userset left it undecided).
+   * A result is cacheable only when it read no memberships, depends on no request-specific tuple,
+   * and no tuple it relied on expires within the cache TTL.
    */
   private async computeCheck(
-    tenantId: string,
-    userId: string,
-    relation: string,
-    objectType: string,
-    objectId: string
-  ): Promise<CheckResponse> {
-    // Step 1: Check for direct relationship
-    const directCheck = await this.checkDirectRelationship(
-      tenantId,
-      userId,
-      relation,
-      objectType,
-      objectId
+    request: ResolvedCheckRequest,
+    subjectGroups: SubjectGroupsResolver | undefined,
+    definitionMemo?: Map<string, Promise<ActiveDefinition>>
+  ): Promise<{ result: CheckResponse; cacheable: boolean; ttl: number }> {
+    const trace: MembershipTrace = createMembershipTrace();
+    const definitions = memoizeDefinitions(
+      this.adapter,
+      this.relationParser,
+      request.tenantId,
+      definitionMemo
+    );
+    const context = createEvaluationContext(
+      request.tenantId,
+      request.subjectId,
+      request.objectType,
+      request.objectId,
+      this.config.max_depth,
+      {
+        subject_groups: memoizeSubjectGroups(subjectGroups, request.tenantId, request.subjectId),
+        membership: trace,
+        definitions,
+        service_decided_groups: memoizeServiceDecidedGroups(this.adapter, request.tenantId),
+        ...(request.contextualTuples && {
+          contextual: request.contextualTuples.map((tuple) => ({
+            relation: tuple.relation,
+            object_type: tuple.objectType,
+            object_id: tuple.objectId,
+          })),
+        }),
+      }
+    );
+    const definition = await definitions(request.objectType, request.relation);
+    const outcome: EvaluationResult = await this.relationParser.evaluateRelation(
+      request.objectType,
+      request.objectId,
+      request.relation,
+      context,
+      this.adapter
     );
 
-    if (directCheck.allowed) {
-      return directCheck;
-    }
+    const ttl = this.config.cache_ttl;
+    const now = Math.floor(Date.now() / 1000);
+    const cacheable =
+      outcome !== 'unknown' &&
+      !trace.consulted &&
+      !trace.indeterminate &&
+      request.contextualTuples === undefined &&
+      (trace.minExpiresAt === null || trace.minExpiresAt > now + ttl);
+    const computed = definition.state !== 'none';
 
-    // Step 2: Get relation definition for this object type and relation
-    const definition = await this.getRelationDefinition(tenantId, objectType, relation);
-
-    if (definition) {
-      // Evaluate the relation expression
-      const context = createEvaluationContext(
-        tenantId,
-        userId,
-        objectType,
-        objectId,
-        this.config.max_depth
-      );
-
-      const allowed = await this.relationParser.evaluate(
-        definition.definition,
-        context,
-        this.adapter
-      );
-
+    if (outcome === 'allow') {
+      const viaContext =
+        trace.grants.length > 0 &&
+        trace.grants.every((grant) => grant.endsWith('@contextual_tuple'));
       return {
-        allowed,
-        resolved_via: 'computed',
-        path: allowed ? Array.from(context.visited) : undefined,
+        result: {
+          allowed: true,
+          resolved_via: viaContext ? 'context' : computed ? 'computed' : 'direct',
+          path: trace.grants.map((grant) => grant.slice(grant.lastIndexOf('@') + 1)),
+        },
+        cacheable,
+        ttl,
       };
     }
-
-    // Step 3: Use recursive CTE for transitive relationships
-    const transitiveCheck = await this.checkTransitiveRelationship(
-      tenantId,
-      userId,
-      relation,
-      objectType,
-      objectId
-    );
-
-    return transitiveCheck;
+    return {
+      result: {
+        allowed: false,
+        resolved_via:
+          outcome === 'unknown' && trace.unknown
+            ? 'unknown_membership'
+            : computed
+              ? 'computed'
+              : 'direct',
+      },
+      cacheable,
+      ttl,
+    };
   }
 
   /**
-   * Check for a direct relationship tuple
+   * The relations whose direct tuples are list candidates: the requested one without a
+   * definition; with one, the relations its `direct` leaves name (none under an unusable one).
    */
-  private async checkDirectRelationship(
+  private async candidateRelations(
     tenantId: string,
-    userId: string,
-    relation: string,
     objectType: string,
-    objectId: string
-  ): Promise<CheckResponse> {
-    const now = Math.floor(Date.now() / 1000);
+    relation: string,
+    memo: Map<string, Promise<ActiveDefinition>>
+  ): Promise<string[]> {
+    const definition = await memoizeDefinitions(
+      this.adapter,
+      this.relationParser,
+      tenantId,
+      memo
+    )(objectType, relation);
+    if (definition.state === 'none') return [relation];
+    if (definition.state === 'unusable') return [];
+    return [...directLeafRelations(definition.definition.definition)].sort();
+  }
 
-    const results = await this.adapter.query<{ id: string }>(
+  /** The list candidates the check allows (each checked: a list never returns a deny). */
+  private async keepAllowed(
+    candidates: string[],
+    check: (candidate: string) => Promise<{ result: CheckResponse }>
+  ): Promise<string[]> {
+    const kept: string[] = [];
+    for (const candidate of candidates) {
+      if ((await check(candidate)).result.allowed) kept.push(candidate);
+    }
+    return kept;
+  }
+
+  /**
+   * Whether the tenant has an unexpired group userset tuple (`from_relation = 'member'`) for one
+   * of the relations the list takes candidates from (candidateRelations) on the object type (on
+   * the one object, when given).
+   */
+  private async hasGroupUsersets(
+    tenantId: string,
+    objectType: string,
+    relations: string[],
+    objectId?: string
+  ): Promise<boolean> {
+    if (relations.length === 0) return false;
+    const rows = await this.adapter.query<{ id: string }>(
       `SELECT id FROM relationships
+       WHERE tenant_id = ?
+         AND from_type = '${USERSET_GROUP_FROM_TYPE}'
+         AND from_relation = '${USERSET_MEMBER_RELATION}'
+         AND to_type = ?
+         ${objectId === undefined ? '' : 'AND to_id = ?'}
+         AND relationship_type IN (${relations.map(() => '?').join(', ')})
+         AND (expires_at IS NULL OR expires_at > ?)
+       LIMIT 1`,
+      [
+        tenantId,
+        objectType,
+        ...(objectId === undefined ? [] : [objectId]),
+        ...relations,
+        Math.floor(Date.now() / 1000),
+      ]
+    );
+    return rows.length > 0;
+  }
+
+  /**
+   * Whether an active definition of the object type contains a `tuple_to_userset` (relations
+   * the lists do not enumerate). A definition that cannot be parsed counts as one.
+   */
+  private async hasComputedRelations(tenantId: string, objectType: string): Promise<boolean> {
+    const rows = await this.adapter.query<{ definition_json: string }>(
+      `SELECT definition_json FROM relation_definitions
+        WHERE tenant_id = ? AND object_type = ? AND is_active = 1`,
+      [tenantId, objectType]
+    );
+    return rows.some((row) => {
+      try {
+        return expressionContainsTupleToUserset(this.relationParser.parse(row.definition_json));
+      } catch {
+        return true;
+      }
+    });
+  }
+
+  /**
+   * The objects of a type the subject has a live, unexpired direct tuple to with the relation
+   * (when no closure manager is configured).
+   */
+  private async listDirectObjects(
+    request: ListObjectsRequest,
+    userId: string,
+    relations: string[]
+  ): Promise<{ ids: string[]; nextCursor?: string }> {
+    if (relations.length === 0) return { ids: [] };
+    const now = Math.floor(Date.now() / 1000);
+    const limit = request.limit ?? 100;
+    const offset = request.cursor ? parseInt(request.cursor, 10) : 0;
+
+    const results = await this.adapter.query<{ object_id: string }>(
+      `SELECT DISTINCT to_id AS object_id
+       FROM relationships
        WHERE tenant_id = ?
          AND from_type = 'subject'
          AND from_id = ?
          AND to_type = ?
-         AND to_id = ?
-         AND relationship_type = ?
+         AND relationship_type IN (${relations.map(() => '?').join(', ')})
          AND (expires_at IS NULL OR expires_at > ?)
-       LIMIT 1`,
-      [tenantId, userId, objectType, objectId, relation, now]
+       ORDER BY to_id
+       LIMIT ? OFFSET ?`,
+      [request.tenant_id, userId, request.object_type, ...relations, now, limit + 1, offset]
     );
 
-    return {
-      allowed: results.length > 0,
-      resolved_via: 'direct',
-    };
-  }
-
-  /**
-   * Check for transitive relationships using recursive CTE
-   */
-  private async checkTransitiveRelationship(
-    tenantId: string,
-    userId: string,
-    relation: string,
-    objectType: string,
-    objectId: string
-  ): Promise<CheckResponse> {
-    const now = Math.floor(Date.now() / 1000);
-    const maxDepth = this.config.max_depth;
-
-    // Recursive CTE to find transitive relationships
-    // Starting from the user, traverse relationships to find the target object
-    const results = await this.adapter.query<{
-      target_type: string;
-      target_id: string;
-      depth: number;
-      path: string;
-    }>(
-      `WITH RECURSIVE reachable AS (
-        -- Base case: Direct relationships from the user
-        SELECT
-          r.to_type as target_type,
-          r.to_id as target_id,
-          r.relationship_type as relation,
-          1 as depth,
-          r.id as path
-        FROM relationships r
-        WHERE r.tenant_id = ?
-          AND r.from_type <> 'group' -- group usersets are not evaluated yet
-          AND r.from_type = 'subject'
-          AND r.from_id = ?
-          AND (r.expires_at IS NULL OR r.expires_at > ?)
-
-        UNION ALL
-
-        -- Recursive case: Follow relationships from reached objects
-        SELECT
-          r.to_type as target_type,
-          r.to_id as target_id,
-          r.relationship_type as relation,
-          rch.depth + 1 as depth,
-          rch.path || ',' || r.id as path
-        FROM relationships r
-        INNER JOIN reachable rch
-          ON r.from_type = rch.target_type
-          AND r.from_id = rch.target_id
-        WHERE r.tenant_id = ?
-          AND r.from_type <> 'group' -- group usersets are not evaluated yet
-          AND rch.depth < ?
-          AND (r.expires_at IS NULL OR r.expires_at > ?)
-      )
-      SELECT target_type, target_id, depth, path
-      FROM reachable
-      WHERE target_type = ?
-        AND target_id = ?
-        AND relation = ?
-      LIMIT 1`,
-      [
-        tenantId,
-        userId,
-        now, // Base case params
-        tenantId,
-        maxDepth,
-        now, // Recursive case params
-        objectType,
-        objectId,
-        relation, // Filter params
-      ]
-    );
-
-    if (results.length > 0) {
-      return {
-        allowed: true,
-        resolved_via: 'computed',
-        path: results[0].path.split(','),
-      };
-    }
-
-    return {
-      allowed: false,
-      resolved_via: 'computed',
-    };
-  }
-
-  /**
-   * Get relation definition from database
-   */
-  private async getRelationDefinition(
-    tenantId: string,
-    objectType: string,
-    relationName: string
-  ): Promise<RelationDefinition | null> {
-    const results = await this.adapter.query<{
-      id: string;
-      tenant_id: string;
-      object_type: string;
-      relation_name: string;
-      definition_json: string;
-      description: string | null;
-      priority: number;
-      is_active: number;
-      created_at: number;
-      updated_at: number;
-    }>(
-      `SELECT * FROM relation_definitions
-       WHERE tenant_id = ?
-         AND object_type = ?
-         AND relation_name = ?
-         AND is_active = 1
-       ORDER BY priority DESC
-       LIMIT 1`,
-      [tenantId, objectType, relationName]
-    );
-
-    if (results.length === 0) {
-      return null;
-    }
-
-    const row = results[0];
-    return {
-      id: row.id,
-      tenant_id: row.tenant_id,
-      object_type: row.object_type,
-      relation_name: row.relation_name,
-      definition: this.relationParser.parse(row.definition_json),
-      description: row.description ?? undefined,
-      priority: row.priority,
-      is_active: row.is_active === 1,
-      created_at: row.created_at,
-      updated_at: row.updated_at,
-    };
-  }
-
-  /**
-   * List objects via recursive CTE (fallback when closure manager is not available)
-   */
-  private async listObjectsViaCTE(request: ListObjectsRequest): Promise<ListObjectsResponse> {
-    const now = Math.floor(Date.now() / 1000);
-    const maxDepth = this.config.max_depth;
-    const limit = request.limit ?? 100;
-    const offset = request.cursor ? parseInt(request.cursor, 10) : 0;
-
-    const userId = request.user_id.includes(':') ? request.user_id.split(':')[1] : request.user_id;
-
-    // Use recursive CTE to find all objects the user has access to
-    const results = await this.adapter.query<{ object_id: string }>(
-      `WITH RECURSIVE reachable AS (
-        -- Base case: Direct relationships from the user
-        SELECT
-          r.to_type as target_type,
-          r.to_id as target_id,
-          r.relationship_type as relation,
-          1 as depth
-        FROM relationships r
-        WHERE r.tenant_id = ?
-          AND r.from_type <> 'group' -- group usersets are not evaluated yet
-          AND r.from_type = 'subject'
-          AND r.from_id = ?
-          AND (r.expires_at IS NULL OR r.expires_at > ?)
-
-        UNION ALL
-
-        -- Recursive case: Follow relationships
-        SELECT
-          r.to_type as target_type,
-          r.to_id as target_id,
-          r.relationship_type as relation,
-          rch.depth + 1 as depth
-        FROM relationships r
-        INNER JOIN reachable rch
-          ON r.from_type = rch.target_type
-          AND r.from_id = rch.target_id
-        WHERE r.tenant_id = ?
-          AND r.from_type <> 'group' -- group usersets are not evaluated yet
-          AND rch.depth < ?
-          AND (r.expires_at IS NULL OR r.expires_at > ?)
-      )
-      SELECT DISTINCT target_id as object_id
-      FROM reachable
-      WHERE target_type = ?
-        AND relation = ?
-      LIMIT ? OFFSET ?`,
-      [
-        request.tenant_id,
-        userId,
-        now,
-        request.tenant_id,
-        maxDepth,
-        now,
-        request.object_type,
-        request.relation,
-        limit + 1,
-        offset, // Fetch one extra to check for more
-      ]
-    );
-
-    const objectIds = results.slice(0, limit).map((r) => r.object_id);
     const hasMore = results.length > limit;
-
     return {
-      object_ids: objectIds,
-      next_cursor: hasMore ? String(offset + limit) : undefined,
+      ids: results.slice(0, limit).map((r) => r.object_id),
+      nextCursor: hasMore ? String(offset + limit) : undefined,
     };
   }
 
   /**
-   * List users via recursive CTE (fallback when closure manager is not available)
+   * The subjects with a live, unexpired direct tuple to the object with the relation (when no
+   * closure manager is configured).
    */
-  private async listUsersViaCTE(
+  private async listDirectUsers(
     tenantId: string,
     objectType: string,
     objectId: string,
-    relation: string,
-    limit?: number
-  ): Promise<ListUsersResponse> {
+    relations: string[],
+    limit?: number,
+    cursor?: string
+  ): Promise<{ ids: string[]; nextCursor?: string }> {
+    if (relations.length === 0) return { ids: [] };
     const now = Math.floor(Date.now() / 1000);
-    const maxDepth = this.config.max_depth;
     const queryLimit = limit ?? 100;
+    const offset = cursor ? parseInt(cursor, 10) : 0;
 
-    // Reverse traversal: from object, find all users who can reach it
     const results = await this.adapter.query<{ user_id: string }>(
-      `WITH RECURSIVE reachable AS (
-        -- Base case: Direct relationships to the object
-        SELECT
-          r.from_type as source_type,
-          r.from_id as source_id,
-          r.relationship_type as relation,
-          1 as depth
-        FROM relationships r
-        WHERE r.tenant_id = ?
-          AND r.from_type <> 'group' -- group usersets are not evaluated yet
-          AND r.to_type = ?
-          AND r.to_id = ?
-          AND r.relationship_type = ?
-          AND (r.expires_at IS NULL OR r.expires_at > ?)
-
-        UNION ALL
-
-        -- Recursive case: Follow relationships backwards
-        SELECT
-          r.from_type as source_type,
-          r.from_id as source_id,
-          r.relationship_type as relation,
-          rch.depth + 1 as depth
-        FROM relationships r
-        INNER JOIN reachable rch
-          ON r.to_type = rch.source_type
-          AND r.to_id = rch.source_id
-        WHERE r.tenant_id = ?
-          AND r.from_type <> 'group' -- group usersets are not evaluated yet
-          AND rch.depth < ?
-          AND (r.expires_at IS NULL OR r.expires_at > ?)
-      )
-      SELECT DISTINCT source_id as user_id
-      FROM reachable
-      WHERE source_type = 'subject'
-      LIMIT ?`,
-      [tenantId, objectType, objectId, relation, now, tenantId, maxDepth, now, queryLimit]
+      `SELECT DISTINCT from_id AS user_id
+       FROM relationships
+       WHERE tenant_id = ?
+         AND from_type = 'subject'
+         AND to_type = ?
+         AND to_id = ?
+         AND relationship_type IN (${relations.map(() => '?').join(', ')})
+         AND (expires_at IS NULL OR expires_at > ?)
+       ORDER BY from_id
+       LIMIT ? OFFSET ?`,
+      [tenantId, objectType, objectId, ...relations, now, queryLimit + 1, offset]
     );
 
+    const hasMore = results.length > queryLimit;
     return {
-      user_ids: results.map((r) => r.user_id),
+      ids: results.slice(0, queryLimit).map((r) => r.user_id),
+      nextCursor: hasMore ? String(offset + queryLimit) : undefined,
     };
   }
 }

@@ -48,8 +48,12 @@ export interface PostgresFamilyRestoreReceipt {
   bundleId: string;
   snapshotId: string;
   inventoryDigestSha256: string;
-  /** Absent on the original 18-table contract. Version 2 preserves exact native JSONB text. */
-  projectionVersion?: 2;
+  /**
+   * Absent on the original 18-table contract. Version 2 preserves exact native JSONB text.
+   * Version 3 adds `relationships.from_relation` (migration 020); a version 2 receipt is verified
+   * against the columns it was written with.
+   */
+  projectionVersion?: 2 | 3;
   tables: PostgresRestoreTableReceipt[];
   digestSha256: string;
 }
@@ -112,7 +116,19 @@ const STATEMENT_CONSENT_SOURCE_AUTHORITY_DATASETS: ReadonlySet<string> = new Set
   'core.statement_consent_admissions',
 ]);
 
-function projectionContracts(ids: ReadonlySet<string>, family: Family) {
+/** The extended projection a receipt is written with (3: `relationships.from_relation`). */
+const CURRENT_PROJECTION_VERSION = 3 as const;
+
+/** A contract as a projection version had it (version 2: relationships without from_relation). */
+function contractAt(
+  spec: PostgresRestoreTableContract,
+  version: 2 | 3
+): PostgresRestoreTableContract {
+  if (version === 3 || spec.datasetId !== 'core.relationships') return spec;
+  return { ...spec, columns: spec.columns.filter((column) => column !== 'from_relation') };
+}
+
+function projectionContracts(ids: ReadonlySet<string>, family: Family, version: 2 | 3 = 3) {
   return [
     ...POSTGRES_RESTORE_TABLE_CONTRACTS.filter((spec) => spec.family === family),
     ...POSTGRES_RESTORE_EXTENSION_CONTRACTS.filter(
@@ -120,8 +136,89 @@ function projectionContracts(ids: ReadonlySet<string>, family: Family) {
         spec.family === family &&
         ids.has(spec.datasetId) &&
         !STATEMENT_CONSENT_SOURCE_AUTHORITY_DATASETS.has(spec.datasetId)
-    ),
+    ).map((spec) => contractAt(spec, version)),
   ];
+}
+
+/**
+ * The `relationships` rows of a backup as migration 020 leaves a live database:
+ * - a row from before 020 (no `from_relation` column) gets `from_relation` NULL, and a `user`
+ *   source becomes `subject`; a legacy group row therefore stays inert (the relationship check
+ *   matches a group tuple only with `member`) until it is written again through the guarded APIs.
+ *   A row in the current shape (the column present, NULL or not) is restored as it is;
+ * - rows that then share the tuple key (tenant, relation, source, target, from_relation) are
+ *   reduced to one: the row stored as `subject` (else the first), with the longest validity among
+ *   them (no expiry when any has none, else the latest expires_at).
+ */
+/**
+ * A relationship row's `expires_at` in integer seconds: only an explicit null tag is "no expiry";
+ * an integer is taken as it is; a finite real (D1 may hold one an older write accepted) is
+ * rounded down; anything else refuses the restore.
+ */
+function relationshipExpiry(value: unknown): bigint | null {
+  if (!Array.isArray(value) || value.length !== 2) return invalid();
+  const [tag, raw] = value as [unknown, unknown];
+  if (tag === 'null' && raw === null) return null;
+  if (tag === 'integer' && typeof raw === 'string' && INTEGER.test(raw)) return BigInt(raw);
+  if (tag === 'real' && typeof raw === 'string' && raw.trim() !== '') {
+    const number = Number(raw);
+    if (Number.isFinite(number) && Math.abs(number) < 2 ** 53) return BigInt(Math.floor(number));
+  }
+  return invalid();
+}
+
+function currentRelationshipRows(rowJsons: readonly string[]): string[] {
+  const kept = new Map<
+    string,
+    { row: PortableSqliteRow; legacyUser: boolean; expiry: bigint | null }
+  >();
+  const order: string[] = [];
+  for (const rowJson of rowJsons) {
+    let row: PortableSqliteRow;
+    try {
+      row = JSON.parse(rowJson) as PortableSqliteRow;
+    } catch {
+      return invalid();
+    }
+    if (!row || typeof row !== 'object' || Array.isArray(row)) invalid();
+    let legacyUser = false;
+    if (!('from_relation' in row)) {
+      legacyUser = row.from_type?.[0] === 'text' && row.from_type[1] === 'user';
+      row = {
+        ...row,
+        ...(legacyUser ? { from_type: ['text', 'subject'] } : {}),
+        from_relation: ['null', null],
+      };
+    }
+    const part = (column: string) => row[column]?.[1] ?? null;
+    const key = JSON.stringify(
+      ['tenant_id', 'relationship_type', 'from_type', 'from_id', 'to_type', 'to_id']
+        .map(part)
+        .concat([part('from_relation') ?? ''])
+    );
+    const expiry = relationshipExpiry(row.expires_at);
+    const prior = kept.get(key);
+    if (!prior) {
+      kept.set(key, { row, legacyUser, expiry });
+      order.push(key);
+      continue;
+    }
+    const merged =
+      prior.expiry === null || expiry === null
+        ? null
+        : prior.expiry > expiry
+          ? prior.expiry
+          : expiry;
+    const survivor = prior.legacyUser && !legacyUser ? { row, legacyUser } : prior;
+    kept.set(key, { ...survivor, expiry: merged });
+  }
+  return order.map((key) => {
+    const { row, expiry } = kept.get(key)!;
+    return JSON.stringify({
+      ...row,
+      expires_at: expiry === null ? ['null', null] : ['integer', expiry.toString()],
+    });
+  });
 }
 
 /** Validate authenticated dataset descriptors/counts without opening or creating a database. */
@@ -578,12 +675,18 @@ export async function restoreVerifiedPostgresFamily(
         const next = await source.readNextRow(cursor);
         if (!next || next.nextCursor === cursor) invalid();
         cursor = next.nextCursor;
-        if (spec.table === 'groups') {
+        if (spec.table === 'groups' || spec.datasetId === 'core.relationships') {
           recordSourceRow(next.rowJson);
           hierarchyRows.push(next.rowJson);
         } else await insertRow(next.rowJson, false);
       }
       if (source && (await source.readNextRow(cursor)) !== null) invalid();
+      if (spec.datasetId === 'core.relationships') {
+        // In the shape migration 020 leaves (see currentRelationshipRows).
+        const rows = currentRelationshipRows(hierarchyRows);
+        hierarchyRows.length = 0;
+        for (const row of rows) await insertRow(row, false, true);
+      }
       if (hierarchyRows.length)
         for (const role of parentFirstRows(hierarchyRows, spec, tenantId))
           await insertRow(role, false, true);
@@ -691,7 +794,7 @@ export async function restoreVerifiedPostgresFamily(
       return receipt;
     });
     const body = {
-      ...(extended ? { projectionVersion: 2 as const } : {}),
+      ...(extended ? { projectionVersion: CURRENT_PROJECTION_VERSION } : {}),
       status: 'committed_staging' as const,
       family,
       targetId,
@@ -798,12 +901,24 @@ export async function verifyPostgresFamilyStagingRows(
     )
   )
     invalid();
-  const extended = receipt.projectionVersion === 2;
+  const extended = receipt.projectionVersion === 2 || receipt.projectionVersion === 3;
   if (receipt.projectionVersion !== undefined && !extended) invalid();
+  const version = receipt.projectionVersion === 2 ? 2 : 3;
   const specs = extended
-    ? projectionContracts(new Set(receipt.tables.map((table) => table.datasetId)), receipt.family)
+    ? projectionContracts(
+        new Set(receipt.tables.map((table) => table.datasetId)),
+        receipt.family,
+        version
+      )
     : POSTGRES_RESTORE_TABLE_CONTRACTS.filter((spec) => spec.family === receipt.family);
-  if (extended && !specs.some((spec) => POSTGRES_RESTORE_EXTENSION_CONTRACTS.includes(spec)))
+  if (
+    extended &&
+    !specs.some((spec) =>
+      POSTGRES_RESTORE_EXTENSION_CONTRACTS.some(
+        (extension) => extension.datasetId === spec.datasetId
+      )
+    )
+  )
     invalid();
   if (
     receipt.tables.length !== specs.length ||
@@ -855,6 +970,24 @@ export async function verifyPostgresFamilyStagingRows(
         observed.set(key, returnedRow(row, spec, extended));
       }
       if (rowsDigest(observed) !== tableReceipt.targetSha256) invalid();
+      if (version === 2 && spec.datasetId === 'core.relationships') {
+        // A version 2 receipt does not cover from_relation: on a database with the column
+        // (migration 020), a group row must still be the inert legacy shape (NULL). A `member`
+        // there means the group's grants changed after the receipt.
+        const column = await client.query(
+          `SELECT 1 FROM information_schema.columns
+            WHERE table_schema = current_schema() AND table_name = 'relationships'
+              AND column_name = 'from_relation' LIMIT 1`
+        );
+        if (column.rowCount) {
+          const changed = await client.query(
+            `SELECT 1 FROM relationships WHERE tenant_id=$1 AND from_type='group'
+               AND from_relation IS NOT NULL LIMIT 1`,
+            [receipt.tenantId]
+          );
+          if (changed.rowCount !== 0) invalid();
+        }
+      }
     }
     await client.query('COMMIT');
     return receipt;

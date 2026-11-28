@@ -74,7 +74,8 @@ describe('createPolicyReBACService', () => {
       put: vi.fn(async () => undefined),
       delete: vi.fn(async () => undefined),
     };
-    const service = createPolicyReBACService(adapter, kv);
+    const versions = { get: vi.fn(async () => 'v7'), put: vi.fn(async () => undefined) };
+    const service = createPolicyReBACService(adapter, kv, undefined, versions);
 
     const result = await service.check({
       tenant_id: 'tenant-1',
@@ -85,11 +86,33 @@ describe('createPolicyReBACService', () => {
 
     expect(result.allowed).toBe(false);
     expect(kv.put).toHaveBeenCalled();
+    // Keyed by the tenant's ReBAC version.
+    // A fixed-length digest of the key's components (tenant and version included).
+    expect(String((kv.put.mock.calls[0] as unknown[])[0])).toMatch(/^rebac:check:v3:[0-9a-f]{64}$/);
+    expect(versions.get).toHaveBeenCalledWith('rebac:v2:tenant-version:tenant-1');
     const ttls = kv.put.mock.calls.map((call) => {
       const options = (call as unknown[])[2] as { expirationTtl: number };
       return options.expirationTtl;
     });
     expect(ttls).toContain(60);
+  });
+
+  it('does not use a shared cache namespace without the version store', async () => {
+    const { adapter } = fakeDatabase({ query: vi.fn(async () => []) });
+    const kv = {
+      get: vi.fn(async () => null),
+      put: vi.fn(async () => undefined),
+      delete: vi.fn(async () => undefined),
+    };
+    const service = createPolicyReBACService(adapter, kv);
+    await service.check({
+      tenant_id: 'tenant-1',
+      user_id: 'user-1',
+      relation: 'viewer',
+      object: 'document:doc-1',
+    });
+    expect(kv.get).not.toHaveBeenCalled();
+    expect(kv.put).not.toHaveBeenCalled();
   });
 
   it('works without a cache namespace', async () => {

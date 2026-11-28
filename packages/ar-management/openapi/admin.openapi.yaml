@@ -22339,7 +22339,12 @@ paths:
       summary: Check a ReBAC relationship.
       description: >-
         Simulate a ReBAC permission check for a user, relation, and object, with optional contextual
-        tuples for debugging and testing.
+        tuples for debugging and testing. subject_id is the subject's stored id, taken verbatim;
+        the legacy user_id keeps its meaning (one leading user: is taken away, as on
+        /api/rebac/check). Contextual tuples count when their user_id names the subject in the
+        same form. Group usersets are matched against the subject's
+        effective groups (read from its account); a userset whose membership is unknown denies
+        with resolved_via unknown_membership.
       responses:
         '200':
           $ref: '#/components/responses/AdminRebacCheck'
@@ -22440,7 +22445,9 @@ paths:
       summary: Create a ReBAC relation definition.
       description: >-
         Create a relation definition for an object type and relation name. Duplicate relation names
-        within the same object type return conflict.
+        within the same object type return conflict. A definition the relation parser rejects (an
+        unknown expression type, or a node without the fields of its type) is refused with 400
+        (AR050011, POLICY_REBAC_DEFINITION_INVALID).
       responses:
         '201':
           $ref: '#/components/responses/AdminRebacDefinition'
@@ -22521,10 +22528,13 @@ paths:
       summary: Update a ReBAC relation definition.
       description: >-
         Update the definition JSON, description, priority, or active state for one relation
-        definition and return a success object.
+        definition and return a success object. A definition the relation parser rejects is refused
+        with 400 (AR050011, POLICY_REBAC_DEFINITION_INVALID).
       responses:
         '200':
           $ref: '#/components/responses/AdminRebacDefinitionDelete'
+        '400':
+          $ref: '#/components/responses/Error'
         '401':
           $ref: '#/components/responses/Error'
         '403':
@@ -22621,7 +22631,16 @@ paths:
       description: >-
         Create a relationship tuple for the current tenant. from_type defaults to subject,
         permission_level defaults to full, and expires_at is stored in seconds after accepting
-        milliseconds.
+        milliseconds. Accepted sources: a direct subject (subject, or user, stored as subject), a
+        group userset (group, stored with from_relation member: every effective member of the
+        group; from_relation may be sent only as member and only with a group), or an object type
+        whose relation an active definition declares as the tupleset of a tuple_to_userset. Others
+        are refused with 400 (AR050010); an existing tuple with 409. A group userset on a group
+        with a service group below it that an attribute people write themselves decides is
+        refused with 400 group_self_writable_attribute (checked with the insert in one
+        transaction; 409 group_version_conflict when the service-group rules changed in between:
+        retry). Every tuple and definition write bumps the tenant's ReBAC version, which retires the
+        policy service's cached check results.
       responses:
         '201':
           $ref: '#/components/responses/AdminRebacTuple'
@@ -22630,6 +22649,8 @@ paths:
         '401':
           $ref: '#/components/responses/Error'
         '403':
+          $ref: '#/components/responses/Error'
+        '409':
           $ref: '#/components/responses/Error'
         '500':
           $ref: '#/components/responses/Error'
@@ -43776,9 +43797,12 @@ components:
             object_type: document
             relation_name: viewer
             definition:
-              union:
-                - owner
-                - editor
+              type: union
+              children:
+                - type: direct
+                  relation: viewer
+                - type: direct
+                  relation: editor
             description: Users who can view documents.
             priority: 10
             is_active: true
@@ -43791,10 +43815,13 @@ components:
             $ref: '#/components/schemas/AdminRebacDefinitionUpdateRequest'
           example:
             definition:
-              union:
-                - owner
-                - editor
-                - auditor
+              type: exclusion
+              base:
+                type: direct
+                relation: viewer
+              subtract:
+                type: direct
+                relation: blocked
             priority: 20
             is_active: true
     AdminRebacTupleCreate:
@@ -74167,6 +74194,7 @@ components:
         - object_type
         - relation_name
         - definition
+        - unusable
         - description
         - priority
         - is_active
@@ -74182,8 +74210,16 @@ components:
         relation_name:
           type: string
         definition:
-          type: object
+          type:
+            - object
+            - 'null'
           additionalProperties: true
+          description: The stored expression; null when it is not JSON.
+        unusable:
+          type: boolean
+          description: >-
+            True when the relation parser rejects the stored expression: every check on the
+            relation then denies (no fallback to direct tuples) until the definition is fixed.
         description:
           type:
             - string
@@ -74204,9 +74240,16 @@ components:
         object_type: document
         relation_name: viewer
         definition:
-          union:
-            - owner
-            - editor
+          type: union
+          children:
+            - type: direct
+              relation: viewer
+            - type: tuple_to_userset
+              tupleset:
+                relation: parent
+              computed_userset:
+                relation: viewer
+        unusable: false
         description: Users who can view documents.
         priority: 10
         is_active: true
@@ -74263,6 +74306,9 @@ components:
         definition:
           type: object
           additionalProperties: true
+          description: >-
+            A relation expression: direct (relation), union / intersection (children), exclusion
+            (base, subtract) or tuple_to_userset (tupleset.relation, computed_userset.relation).
         description:
           type: string
         priority:
@@ -74294,6 +74340,8 @@ components:
         - relationship_type
         - from_type
         - from_id
+        - from_relation
+        - inactive_legacy
         - to_type
         - to_id
         - permission_level
@@ -74313,6 +74361,19 @@ components:
           type: string
         from_id:
           type: string
+        from_relation:
+          type:
+            - string
+            - 'null'
+          description: >-
+            member for a group userset (from_type group: every effective member of the group),
+            null for every other source.
+        inactive_legacy:
+          type: boolean
+          description: >-
+            True for a group row written before migration 020 (no member relation): listed, but
+            it grants nothing until written again through the guarded APIs (delete and create
+            here, or /api/rebac/write).
         to_type:
           type: string
         to_id:
@@ -74388,6 +74449,11 @@ components:
           default: subject
         from_id:
           type: string
+        from_relation:
+          type: string
+          enum:
+            - member
+          description: Only with from_type group; a group tuple is stored with member either way.
         to_type:
           type: string
           default: resource
@@ -74397,8 +74463,13 @@ components:
           type: string
           default: full
         expires_at:
-          type: integer
+          type:
+            - integer
+            - 'null'
           format: int64
+          description: >-
+            Integer milliseconds (stored as whole seconds; 0 is already expired); null or absent
+            for no expiry; anything else is 400.
         metadata:
           type: object
           additionalProperties: true
@@ -74412,12 +74483,22 @@ components:
       type: object
       additionalProperties: false
       required:
-        - user_id
         - relation
         - object
+      anyOf:
+        - required:
+            - subject_id
+        - required:
+            - user_id
       properties:
+        subject_id:
+          type: string
+          description: The subject's stored id, taken verbatim (preferred over user_id).
         user_id:
           type: string
+          description: >-
+            Legacy: the subject as /api/rebac/check takes it (one leading user: is taken away);
+            used when subject_id is absent.
         relation:
           type: string
         object:
@@ -74457,11 +74538,25 @@ components:
           type: boolean
         resolved_via:
           type: string
+          description: >-
+            direct: the relation has no definition (a direct tuple, or a group userset: path
+            names it as group:<id>#member; or a deny); computed: the relation definition, which
+            alone decides when there is one (also a deny under an unusable definition, a cycle or
+            the depth limit); context: allowed only through contextual tuples (which the
+            definition's direct leaves see, exclusion included); cache: the result cache;
+            unknown_membership: denied because a group userset on the path could not be decided
+            (never cached).
+          enum:
+            - direct
+            - computed
+            - cache
+            - closure
+            - context
+            - unknown_membership
         path:
           type: array
           items:
-            type: object
-            additionalProperties: true
+            type: string
     AdminRebacObjectTypesResponse:
       type: object
       additionalProperties: false

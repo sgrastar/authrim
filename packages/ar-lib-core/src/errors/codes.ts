@@ -175,6 +175,8 @@ export const AR_ERROR_CODES = {
   POLICY_CHECK_CONTRACT_VIOLATION: 'AR050009',
   /** A ReBAC tuple whose source type the tuple type rules do not accept (rebac/tuple-type-rules.ts). */
   POLICY_REBAC_TUPLE_TYPE_NOT_ALLOWED: 'AR050010',
+  /** A ReBAC relation definition the relation parser rejects (rebac/relation-parser.ts). */
+  POLICY_REBAC_DEFINITION_INVALID: 'AR050011',
 
   // ============================================
   // ADMIN (AR060001 ~ AR069999)
@@ -853,6 +855,16 @@ export const ERROR_DEFINITIONS: Record<ARErrorCode, ErrorCodeDefinition> = {
     typeSlug: 'policy/rebac-tuple-type-not-allowed',
     titleKey: 'policy.rebac_tuple_type_not_allowed.title',
     detailKey: 'policy.rebac_tuple_type_not_allowed.detail',
+    meta: { retryable: false, user_action: 'update_client', severity: 'warn' },
+    securityLevel: 'public',
+  },
+  [AR_ERROR_CODES.POLICY_REBAC_DEFINITION_INVALID]: {
+    code: 'AR050011',
+    rfcError: RFC_ERROR_CODES.INVALID_REQUEST,
+    status: 400,
+    typeSlug: 'policy/rebac-definition-invalid',
+    titleKey: 'policy.rebac_definition_invalid.title',
+    detailKey: 'policy.rebac_definition_invalid.detail',
     meta: { retryable: false, user_action: 'update_client', severity: 'warn' },
     securityLevel: 'public',
   },

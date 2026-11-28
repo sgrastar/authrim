@@ -178,6 +178,9 @@ export const errorMessagesEn: ErrorMessages = {
   'policy.rebac_tuple_type_not_allowed.title': 'Relationship Tuple Type Not Allowed',
   'policy.rebac_tuple_type_not_allowed.detail':
     'A relationship tuple must come from a subject, a group, or an object type and relation declared as the source of a tuple_to_userset.',
+  'policy.rebac_definition_invalid.title': 'Invalid Relation Definition',
+  'policy.rebac_definition_invalid.detail':
+    'The relation definition is not a valid expression: every node needs a known type (direct, union, tuple_to_userset, intersection, exclusion) and the fields of that type.',
 
   // ============================================
   // ADMIN

@@ -74,6 +74,7 @@ function freshDatabase(family: 'core' | 'pii' | 'admin') {
           '017_service_group_scim_membership_inputs.sql',
           '018_remove_organizations.sql',
           '019_dynamic_publication_unknown_groups.sql',
+          '020_relationship_userset_relation.sql',
         ]
       : []),
     ...(family === 'pii'

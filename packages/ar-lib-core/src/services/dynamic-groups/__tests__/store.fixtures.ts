@@ -49,6 +49,8 @@ export interface FakeState {
   batchRows: number;
   calls: Call[];
   lastToken: string | null;
+  /** The tenant authorization version (policy_rules_version), null for no row */
+  authorizationVersion?: number | null;
 }
 
 export function makeDb(over: Partial<FakeState> = {}) {
@@ -68,6 +70,8 @@ export function makeDb(over: Partial<FakeState> = {}) {
     queryOne: vi.fn(async (sql: string, params?: unknown[], options?: unknown) => {
       state.calls.push({ kind: 'queryOne', sql, params, options });
       if (sql.startsWith('SELECT revision, plan_json')) return state.catalogRow;
+      if (sql.startsWith('SELECT version FROM policy_rules_version'))
+        return state.authorizationVersion == null ? null : { version: state.authorizationVersion };
       if (sql.startsWith('SELECT write_token')) {
         if (state.writeToken === 'echo') return { write_token: state.lastToken };
         return state.writeToken === null ? null : { write_token: state.writeToken };

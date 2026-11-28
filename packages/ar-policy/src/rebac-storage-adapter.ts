@@ -7,6 +7,7 @@ import {
   type IStorageAdapter,
   type ReBACConfig,
   type ReBACService,
+  type SubjectGroupsResolver,
 } from '@authrim/ar-lib-core';
 
 export function getPolicyCoreAdapter<TBindings extends SharedEnv>(
@@ -45,11 +46,18 @@ export function createReBACStorageAdapter(adapter: DatabaseAdapter): IStorageAda
   };
 }
 
-export function createPolicyReBACService(adapter: DatabaseAdapter, cache?: unknown): ReBACService {
+export function createPolicyReBACService(
+  adapter: DatabaseAdapter,
+  cache?: unknown,
+  subjectGroups?: SubjectGroupsResolver,
+  versions?: unknown
+): ReBACService {
   const config: ReBACConfig = {
     cache_namespace: cache as ReBACConfig['cache_namespace'],
     cache_ttl: 60,
     max_depth: 5,
+    ...(subjectGroups && { subject_groups: subjectGroups }),
+    ...(versions ? { version_namespace: versions as ReBACConfig['version_namespace'] } : {}),
   };
 
   return createReBACService(createReBACStorageAdapter(adapter), config);

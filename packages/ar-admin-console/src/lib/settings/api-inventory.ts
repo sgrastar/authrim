@@ -199,7 +199,8 @@ export const API_GROUPS: readonly ApiGroup[] = [
 		name: 'Relationships (definitions and tuples)',
 		kind: 'records',
 		page: 'access/relationships',
-		paths: [`${A}/rebac`]
+		paths: [`${A}/rebac`],
+		note: 'Tuples, definitions (builder with a JSON fallback; unusable stored ones are marked) and a check, under /api/admin/rebac. Reading takes admin:roles:read; creating, changing and checking admin:roles:write; deleting admin:roles:delete. Relationships count while feature.enable_rebac is on (Settings → Authorization). Members-of-group subjects are shown as the group, not expanded.'
 	},
 	{
 		id: 'policy-rules',

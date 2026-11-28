@@ -1,5 +1,10 @@
 import type { DatabaseAdapter, TransactionContext } from '../../db';
 import { lockGroupCatalog } from '../group-catalog';
+import {
+  authorizationVersionFence,
+  raiseAuthorizationVersion,
+  readAuthorizationVersion,
+} from './role-guard';
 import { compileGroups, evaluateGroupInputDelta } from './engine';
 import { canonicalDynamicGroupStatements } from './canonical';
 import type { Evaluation, EvaluationInput, Field, GroupPlan, ServiceGroup, Scalar } from './model';
@@ -130,7 +135,8 @@ export class DynamicGroupStore {
       [this.tenantId],
       primary
     );
-    if (!row) return null;
+    // An empty first row (revision 0, `{}`) a save that lost a race left: no catalog yet.
+    if (!row || (Number(row.revision) === 0 && row.plan_json === '{}')) return null;
     const plan = JSON.parse(row.plan_json) as GroupPlan;
     if (plan.tenantId !== this.tenantId) throw new Error('group_tenant_mismatch');
     return { revision: Number(row.revision), plan };
@@ -170,14 +176,33 @@ export class DynamicGroupStore {
           params: [this.tenantId, ...removed, this.tenantId, ...removed.map((id) => `group:${id}`)],
         }
       : { sql: '', params: [] };
-    const statements = [
+    // The tenant authorization version (role-guard's readAuthorizationVersion) the checks read:
+    // the catalog write holds only while it is unchanged, and raises it (last statement), so a
+    // ReBAC group userset written while these checks ran makes this save conflict, and the other
+    // way round (each side's fence fails when the other committed first).
+    const tokenFence = {
+      sql: 'EXISTS (SELECT 1 FROM service_group_catalog WHERE tenant_id = ? AND write_token = ?)',
+      params: [this.tenantId, token],
+    };
+    const statementsAt = (version: number | null) => [
+      // The empty first row the update below fills: only while the version still holds, so a
+      // save that loses the race leaves nothing behind.
       {
-        sql: `INSERT INTO service_group_catalog(tenant_id, revision, plan_json, updated_at, write_token) VALUES (?, 0, '{}', ?, '') ON CONFLICT(tenant_id) DO NOTHING`,
-        params: [this.tenantId, now],
+        sql: `INSERT INTO service_group_catalog(tenant_id, revision, plan_json, updated_at, write_token) SELECT ?, 0, '{}', CAST(? AS BIGINT), '' WHERE ${authorizationVersionFence(this.tenantId, version).sql} ON CONFLICT(tenant_id) DO NOTHING`,
+        params: [this.tenantId, now, ...authorizationVersionFence(this.tenantId, version).params],
       },
       {
-        sql: `UPDATE service_group_catalog SET revision = ?, plan_json = ?, updated_at = ?, write_token = ? WHERE tenant_id = ? AND revision = ?${removalGuard.sql}`,
-        params: [expected + 1, json, now, token, this.tenantId, expected, ...removalGuard.params],
+        sql: `UPDATE service_group_catalog SET revision = ?, plan_json = ?, updated_at = ?, write_token = ? WHERE tenant_id = ? AND revision = ?${removalGuard.sql} AND ${authorizationVersionFence(this.tenantId, version).sql}`,
+        params: [
+          expected + 1,
+          json,
+          now,
+          token,
+          this.tenantId,
+          expected,
+          ...removalGuard.params,
+          ...authorizationVersionFence(this.tenantId, version).params,
+        ],
       },
       {
         sql: `INSERT INTO service_group_revisions(tenant_id, revision, plan_json, actor_id, created_at) SELECT tenant_id, revision, plan_json, ?, ? FROM service_group_catalog WHERE tenant_id = ? AND write_token = ?`,
@@ -190,25 +215,27 @@ export class DynamicGroupStore {
         plan.groups,
         removed,
         expected + 1,
-        {
-          sql: 'EXISTS (SELECT 1 FROM service_group_catalog WHERE tenant_id = ? AND write_token = ?)',
-          params: [this.tenantId, token],
-        },
+        tokenFence,
         now
       ),
+      raiseAuthorizationVersion(this.tenantId, tokenFence),
     ];
     if (this.db.getType() === 'postgres') {
       // One transaction under the tenant's group catalog lock (the one reparenting and grants
       // take): the caller's checks read the state the write is made in.
       await this.db.transaction(async (tx) => {
         await lockGroupCatalog(tx, this.tenantId, 'postgres');
+        const version = await readAuthorizationVersion(tx, this.tenantId);
         await check?.(tx);
-        for (const statement of statements) await tx.execute(statement.sql, statement.params);
+        for (const statement of statementsAt(version))
+          await tx.execute(statement.sql, statement.params);
       });
     } else {
-      // D1 takes no lock: the checks narrow the window to the write, they do not close it.
+      // D1 takes no lock: the version is read before the checks, and the batch holds only while
+      // it is unchanged (see statementsAt).
+      const version = await readAuthorizationVersion(this.db, this.tenantId);
       await check?.(this.db);
-      await this.db.batch(statements);
+      await this.db.batch(statementsAt(version));
     }
     const current = await this.db.queryOne<{ write_token: string }>(
       'SELECT write_token FROM service_group_catalog WHERE tenant_id = ?',

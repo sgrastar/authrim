@@ -4,10 +4,9 @@
  * This module defines the service interfaces for ReBAC operations.
  * Based on Zanzibar-lite design with the following characteristics:
  *
- * - check(): Uses recursive CTE + KV cache (NOT closure table)
- * - listObjects/listUsers: Uses closure table for pre-computed results
- * - Phase 3: Allow only (no Deny effect)
- * - Phase 3: MVP DSL (union, tuple-to-userset)
+ * - check(): direct tuples, group usersets and relation definitions + KV cache
+ * - listObjects/listUsers: direct subject tuples only (no usersets, no computed relations)
+ * - Relation DSL: direct, union, tuple-to-userset, intersection, exclusion
  */
 
 import type {
@@ -21,6 +20,7 @@ import type {
   ListUsersResponse,
   RelationDefinition,
   ReBACConfig,
+  ReBACCheckOptions,
   RelationExpression,
 } from './types';
 import type { IStorageAdapter } from '../storage/interfaces';
@@ -44,8 +44,8 @@ export interface IReBACService {
    *
    * Resolution order:
    * 1. Request-scoped cache (same request dedup)
-   * 2. KV cache (TTL: 60s)
-   * 3. Recursive CTE computation
+   * 2. KV cache (TTL: 60s; results that depend on group memberships are not cached)
+   * 3. Direct tuple / group userset, then the relation definition (see rebac-service.ts)
    *
    * @param request - Check request containing user, relation, and object
    * @returns Check response with allowed status and resolution metadata
@@ -61,7 +61,7 @@ export interface IReBACService {
    * // { allowed: true, resolved_via: 'computed' }
    * ```
    */
-  check(request: CheckRequest): Promise<CheckResponse>;
+  check(request: CheckRequest, options?: ReBACCheckOptions): Promise<CheckResponse>;
 
   /**
    * Check multiple authorization requests in a single call
@@ -76,7 +76,7 @@ export interface IReBACService {
   /**
    * List all objects a user has a specific relation to
    *
-   * Uses closure table for efficient lookups.
+   * Direct subject tuples only (see rebac-service.ts).
    *
    * @param request - List objects request
    * @returns List of object IDs the user has access to
@@ -89,7 +89,7 @@ export interface IReBACService {
    *   relation: 'viewer',
    *   object_type: 'document',
    * });
-   * // { object_ids: ['doc_1', 'doc_2', 'doc_3'] }
+   * // { object_ids: ['doc_1', 'doc_2', 'doc_3'], userset_subjects_omitted: false }
    * ```
    */
   listObjects(request: ListObjectsRequest): Promise<ListObjectsResponse>;
@@ -97,7 +97,7 @@ export interface IReBACService {
   /**
    * List all users who have a specific relation to an object
    *
-   * Uses closure table for efficient lookups.
+   * Direct subject tuples only (see rebac-service.ts).
    *
    * @param request - List users request
    * @returns List of user IDs with the relation
@@ -350,6 +350,18 @@ export interface IRelationParser {
     context: RelationEvaluationContext,
     adapter: IStorageAdapter
   ): Promise<boolean>;
+
+  /**
+   * Evaluate a relation of an object as a check does (its active definition, or direct tuples
+   * and group usersets without one), in three values.
+   */
+  evaluateRelation(
+    objectType: string,
+    objectId: string,
+    relation: string,
+    context: RelationEvaluationContext,
+    adapter: IStorageAdapter
+  ): Promise<EvaluationResult>;
 }
 
 /**
@@ -365,9 +377,60 @@ export interface RelationEvaluationContext {
   depth: number;
   /** Maximum allowed depth */
   max_depth: number;
-  /** Request-scoped cache to avoid duplicate queries */
+  /**
+   * The relations on the current recursion path (`type:id#relation`): a relation met again on
+   * the same path is a cycle (undecided). Each branch has its own copy, so a sibling branch that
+   * evaluates the same relation is not mistaken for a cycle.
+   */
   visited: Set<string>;
+  /**
+   * The subject's groups for group usersets, read once per check (unset: no userset can be
+   * decided; see userset.ts).
+   */
+  subject_groups?: SubjectGroupsLookup;
+  /** What the check met (shared by every context of one check). */
+  membership?: MembershipTrace;
+  /**
+   * Set while evaluating under an odd number of exclusion `subtract`s: a "no" there turns into a
+   * "yes", so what cannot be trusted as a "no" (a dynamic group's non-membership) is undecided.
+   */
+  negative?: boolean;
+  /** Request-specific tuples of the subject, seen by every `direct` lookup of the check. */
+  contextual?: ReadonlyArray<{ relation: string; object_type: string; object_id: string }>;
+  /** The active definition of a relation (memoised per check; see definitions.ts). */
+  definitions?: (objectType: string, relation: string) => Promise<ActiveDefinition>;
+  /**
+   * The groups whose non-membership cannot be trusted (service-group owned, or above one):
+   * read once per check, only when a subtract needs it.
+   */
+  service_decided_groups?: () => Promise<Set<string>>;
 }
+
+/** The subject's effective and unknown groups, read once per check. */
+export type SubjectGroupsLookup = () => Promise<{ effective: Set<string>; unknown: Set<string> }>;
+
+/** A three-valued evaluation result: `unknown` grants nothing and is never cached. */
+export type EvaluationResult = 'allow' | 'deny' | 'unknown';
+
+/** What a check met. */
+export interface MembershipTrace {
+  /** A group userset was on the path (the subject's memberships were consulted). */
+  consulted: boolean;
+  /** A group userset on the path could not be decided. */
+  unknown: boolean;
+  /** A cycle, the depth limit, or an unusable definition left part of the check undecided. */
+  indeterminate: boolean;
+  /** The earliest `expires_at` (seconds) of the tuples the evaluation read and relied on. */
+  minExpiresAt: number | null;
+  /** The grants that allowed (for the response path). */
+  grants: string[];
+}
+
+/** A relation's active definition as a check uses it: none, usable, or stored unusable. */
+export type ActiveDefinition =
+  | { state: 'none' }
+  | { state: 'usable'; definition: RelationDefinition; exclusive: boolean; computed: boolean }
+  | { state: 'unusable' };
 
 // =============================================================================
 // Factory Interface

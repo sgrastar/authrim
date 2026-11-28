@@ -715,7 +715,7 @@ run(
         targetId,
         connectionString,
       });
-      expect(receipt.projectionVersion).toBe(2);
+      expect(receipt.projectionVersion).toBe(3);
       expectPostgresRestoreReceiptTables(
         receipt,
         source.backup.manifest.datasets.map((dataset) => dataset.id)

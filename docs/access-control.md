@@ -855,10 +855,131 @@ CREATE TABLE verified_attributes (
 
 ReBAC provides a **Zanzibar-lite** implementation for relationship-based access control with support for:
 
-- Direct relationships
-- Union (OR) expressions
-- Transitive relationships (tuple-to-userset)
-- Closure table for efficient list operations
+- Direct relationships (a tuple from the subject)
+- Group usersets (a tuple from a group's members)
+- Union (OR), intersection (AND) and exclusion (NOT) expressions
+- Inheritance through declared object edges (tuple-to-userset)
+
+A tuple is stored as `(from_type:from_id) -[relationship_type]-> (to_type:to_id)` and has one of
+three sources (anything else is refused with 400, `AR050010`):
+
+| Source         | `from_type`    | `from_relation` | Meaning                                                                                       |
+| -------------- | -------------- | --------------- | --------------------------------------------------------------------------------------------- |
+| Direct subject | `subject`      | null            | The subject holds the relation (`user` is accepted and stored as `subject`).                  |
+| Group userset  | `group`        | `member`        | Every effective member of the group holds the relation.                                       |
+| Object edge    | an object type | null            | An edge a `tuple_to_userset` of an active definition declares (`document#parent` → `folder`). |
+
+`from_relation` may be sent only as `member` and only with a group; a group tuple is stored with
+`member` whether it is sent or not.
+
+### Group Usersets
+
+A tuple `(group:G)#member -[viewer]-> (document:D)` grants `viewer` on `D` to every effective member
+of `G`: its direct members and the members of its descendant groups (a subject's effective groups
+include the ancestors of its groups). The check matches the tuple against the subject's groups as
+the RBAC check reads them (`resolveSubjectGroups`: manual, SCIM, rule, invitation and published
+dynamic memberships). Memberships are never copied into tuples or the closure table.
+
+A userset is decided only when the subject's membership of its group is known. When the group is
+among the subject's unknown groups (a dynamic membership not yet republished, an unreadable
+publication), or the memberships cannot be read, the userset grants nothing and a check it could
+have changed answers `allowed: false` with `resolved_via: 'unknown_membership'`. Such an answer is
+never cached; neither is any answer that depended on group memberships (memberships change without
+a tuple write).
+
+A userset can sit anywhere a direct tuple can: on the object itself, or on the object an edge leads
+to (a folder's group userset grants its documents' `viewer` through `tuple_to_userset`). Inside an
+exclusion's `subtract`, an undecided userset makes the whole exclusion undecided: the check denies
+with `unknown_membership` rather than allow a subject it cannot rule out. There, "not a member" of
+a group a service group decides (a service group, or a group above one) is undecided as well:
+dynamic memberships are eventually consistent, so a stale "not a member" must not take an
+exclusion away (the rule PR9 applies to policy rules).
+
+A group userset tuple is authorization the group carries, as a role grant is: writing one needs the
+role-grant permission (`admin:roles:write`), it is refused (400 `group_self_writable_attribute`) on
+a group with a service group below it that an attribute people write themselves decides (checked
+with the write in one transaction under the group catalog lock, and the write conditional on the
+catalog revision and the tenant authorization version read: 409 `group_version_conflict` when
+either changed in between), dynamic publication leaves such a self-writable group out while a userset names it or an
+ancestor, and changing who is in such a group (or moving one under it) needs the role-grant
+permission as for a group with a role grant.
+
+The tenant authorization version is the `policy_rules_version` counter: policy rule changes,
+group userset tuple creates and deletes (both APIs) and service-group rule saves each raise it in
+the batch of their write, fenced on the value their check read, so of two such writes whose checks
+ran concurrently on D1 the one that commits second changes nothing (409 `group_version_conflict`;
+on PostgreSQL they also serialise on the group catalog lock). The policy service reloads its rules
+when it changes.
+
+A tuple's `expires_at` is integer UNIX seconds (`/api/rebac/write`; the Admin API takes integer
+milliseconds): anything else is refused with 400. A definition may name at most 80 distinct
+relations in its `direct` leaves (the list queries bind them in one statement), and nest at most
+32 levels (one bound for validation, evaluation and list candidates): more is refused with 400
+`AR050011`, and a stored one is unusable (it denies, lists nothing and declares no object edge).
+An Admin API `expires_at` of 0 is an expiry (already expired); only null or absent is none.
+
+**Deployment note (migration 020).** Group tuples written before 020 have no `from_relation` and
+stay inert: they are listed (the Admin API marks them `inactive_legacy: true`) but grant nothing
+until written again through the guarded APIs (`/api/rebac/write`, or delete and create in the
+Admin API), which apply the checks above.
+
+### Declared Paths Only
+
+The check follows only the paths an active relation definition declares:
+
+- A relation **with** a definition is decided by it alone: tuples count only through its `direct`
+  leaves, and a `tuple_to_userset` evaluates the computed relation on the related object as a
+  relation of its own (through that object type's definition, its exclusion included, one hop
+  deeper on the same path).
+- A relation **without** a definition holds through direct tuples and group usersets only. No other
+  traversal of the relationship graph grants anything: a chain such as
+  `user -member-> team -viewer-> document` does not make the user a viewer unless a definition
+  declares that path.
+- A stored definition the relation parser rejects (unknown expression type, a node without the
+  fields of its type, invalid JSON) denies every check on its relation, with no fallback to direct
+  tuples. The Admin API refuses such a definition on create and update (400, `AR050011`) and
+  reports a stored one with `unusable: true`.
+- A cycle (a relation met again on the current recursion path) or the depth limit denies, never
+  cached. Cycle detection follows the path only: two sibling branches may read the same relation
+  (so `direct reader − direct reader` is empty).
+
+Evaluation is three-valued: `allow`, `deny`, or undecided. Undecided grants nothing (a union is
+decided by an allowing child; an intersection by a denying one; an exclusion whose subtract is
+undecided is undecided), and an undecided answer is never cached.
+
+### Exclusion Ordering
+
+No direct tuple allows ahead of a definition: a relation with one is decided by the definition
+alone, and its `direct` leaves read the tuples (stored and contextual ones alike). A direct
+`viewer` tuple therefore does not allow a subject the definition
+`viewer = direct viewer − direct blocked` excludes, and a contextual `viewer` tuple does not
+either.
+
+### Subject Ids
+
+The Check API passes the resolved subject id to the relationship check verbatim (a persistent id
+may contain `:`). `/api/rebac/*` takes away only a single leading `user:` (the documented form) and
+keeps the rest verbatim: `team:alice` stays `team:alice`, `user:team:alice` is `team:alice`. The
+ids it returns (`user_ids` of list-users) are in the same external form, `user:` + the stored id
+(`alice` → `user:alice`, a stored `user:alice` → `user:user:alice`), so an id a list returns checks
+the same subject. The Admin API check (`/api/admin/rebac/check`) takes `subject_id` verbatim (the
+stored id, as the console's picker gives it); its legacy `user_id` keeps the `/api/rebac` reading
+(one leading `user:` taken away). The Check API's server contract reads a contextual tuple's
+subject the same way and compares it with the resolved stored id only.
+
+### Result Cache
+
+Cached results (`/api/rebac/check`) live in `REBAC_CACHE` (the binding setup provides;
+`REBAC_CACHE_KV` overrides it when bound) under `rebac:check:v3:<sha-256>` keys, the digest of a
+JSON array of the components (ids may contain `:`, and any length fits KV's key limit), keyed by
+the tenant's ReBAC version, kept in `REBAC_CACHE`
+(`rebac:v2:tenant-version:<tenant>`) and bumped by every tuple and definition write and delete
+through the policy service and the Admin API (subject relationships included); a bump retires
+every cached result of the tenant. No shared cache is used without the version store. A cache
+that cannot be read or written is skipped (the check is evaluated from the database), and the
+identical checks of a batch share one evaluation. Not cached: undecided answers, answers that read
+group memberships or contextual tuples, and answers relying on a tuple that expires within the
+cache TTL.
 
 ### Check Request/Response
 
@@ -901,8 +1022,15 @@ interface CheckResponse {
   /** Whether the check is allowed */
   allowed: boolean;
 
-  /** How the result was resolved */
-  resolved_via?: 'direct' | 'computed' | 'cache' | 'closure' | 'context';
+  /**
+   * How the result was resolved. `direct`: the relation has no definition (a direct tuple, or a
+   * group userset: the path names it as `group:<id>#member`; or a deny); `computed`: the relation
+   * definition (also a deny under an unusable one, a cycle or the depth limit); `context`: allowed
+   * only through contextual tuples; `unknown_membership`: denied because a group userset on the
+   * path could not be decided (never cached). The Check API carries `unknown_membership` to its
+   * `reason` when nothing else grants.
+   */
+  resolved_via?: 'direct' | 'computed' | 'cache' | 'closure' | 'context' | 'unknown_membership';
 
   /** Path through relationships (for debugging) */
   path?: string[];
@@ -944,9 +1072,10 @@ const checkRequest: CheckRequest = {
 
 **Behavior:**
 
-1. Contextual tuples are checked **first** (before cache/DB)
-2. If a match is found, `resolved_via: 'context'` is returned
-3. Contextual tuples are NOT cached (request-scoped only)
+1. Contextual tuples are seen by the same `direct` lookups as stored tuples, under the relation's
+   definition (an exclusion's subtract sees them too: they cannot bypass a definition)
+2. An allow reached only through them is `resolved_via: 'context'`
+3. A check with contextual tuples neither reads nor writes the result cache
 4. Maximum 100 tuples per request (DoS protection)
 
 ### Relation DSL (Domain-Specific Language)
@@ -1020,7 +1149,7 @@ interface TupleToUsersetRelation {
 }
 ```
 
-#### IntersectionRelation (Phase 4+)
+#### IntersectionRelation
 
 AND of multiple expressions (all must match).
 
@@ -1031,9 +1160,10 @@ interface IntersectionRelation {
 }
 ```
 
-#### ExclusionRelation (Phase 4+)
+#### ExclusionRelation
 
-NOT expression (base minus excluded).
+NOT expression (base minus excluded). A relation whose definition contains one is decided by the
+definition alone (see [Exclusion Ordering](#exclusion-ordering)).
 
 ```typescript
 interface ExclusionRelation {
@@ -1089,14 +1219,24 @@ interface ReBACConfig {
 
   /** Batch size for closure table updates */
   closure_batch_size?: number;
+
+  /** Where the tenant's ReBAC version is kept (without it, no shared cache is used) */
+  version_namespace?: KVNamespace;
+
+  /** Resolves a subject's groups for group usersets (without it, usersets are undecided) */
+  subject_groups?: (
+    tenantId: string,
+    subjectId: string
+  ) => Promise<{ effectiveGroupIds: Iterable<string>; unknownGroupIds: Iterable<string> }>;
 }
 ```
 
 ### Resolution Order
 
 1. **Request-scoped cache** - Deduplication within single request
-2. **KV cache** - TTL-based cache (default: 60s)
-3. **Recursive CTE** - Database computation with cycle detection
+2. **KV cache** - TTL-based cache (default: 60s), keyed by the tenant's ReBAC version (see
+   [Result Cache](#result-cache))
+3. **The relation** - its definition when it has one, else direct tuples and group usersets
 
 ### Safety Features
 
@@ -1109,7 +1249,22 @@ interface ReBACConfig {
 
 ### List Operations
 
-For efficient listing of objects/users, ReBAC uses a pre-computed **closure table**:
+`listObjects` and `listUsers` take their candidates from **direct subject tuples** (live,
+unexpired rows of the requested relation, or, when it has a definition, of the relations the
+definition's `direct` leaves name outside a subtract: `viewer = direct(editor)` lists editors; the
+closure table, used for the requested relation alone, holds only direct tuples and a closure row
+counts only with a live direct tuple behind it) and keep each candidate the check allows, so a list
+never returns what the check denies (a stale or expired closure row included).
+They do not enumerate group usersets or computed relations, and say so:
+
+- `userset_subjects_omitted: true`: the tenant has a group userset tuple (`from_relation =
+'member'`) for the relation on the object type (list-objects) or on the object (list-users), so
+  objects or subjects reached only through a group's membership are missing;
+- `computed_relations_omitted: true`: an active definition of the object type contains a
+  `tuple_to_userset`, so what holds only through a declared edge (a folder's viewers on its
+  documents) is missing.
+
+Use the check for decisions; use the lists for display.
 
 ```typescript
 // List objects user can access
@@ -1148,9 +1303,9 @@ interface RelationshipTuple {
   object_type: string; // "document"
   object_id: string; // "doc_123"
   relation: string; // "viewer"
-  subject_type: string; // "user"
+  subject_type: string; // "subject" or "group"
   subject_id: string; // "user_456"
-  subject_relation?: string; // For userset subjects
+  subject_relation?: string; // "member" for a group userset (stored as from_relation)
 }
 ```
 

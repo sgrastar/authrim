@@ -252,20 +252,24 @@ describe('save', () => {
     const json = JSON.stringify(plan);
     const statements = raw.batch.mock.calls[0][0] as Array<{ sql: string; params: unknown[] }>;
     // One canonical `groups` upsert per catalog group, fenced by the same write token.
-    expect(statements).toHaveLength(3 + groups.length);
-    expect(statements.slice(3).map((s) => s.params[0])).toEqual(groups.map((g) => g.id));
-    for (const statement of statements.slice(3)) {
+    // ...and, last, the raise of the tenant authorization version, fenced by the token as well.
+    expect(statements).toHaveLength(4 + groups.length);
+    expect(statements.at(-1)?.sql).toContain('INSERT INTO policy_rules_version');
+    expect(statements.at(-1)?.params).toEqual([TENANT, TENANT, 'uuid-1']);
+    expect(statements.slice(3, -1).map((s) => s.params[0])).toEqual(groups.map((g) => g.id));
+    for (const statement of statements.slice(3, -1)) {
       expect(statement.sql).toContain(`INSERT INTO "groups"`);
       expect(statement.params.slice(-2)).toEqual([TENANT, 'uuid-1']);
     }
     expect(statements.slice(0, 3)).toEqual([
       {
-        sql: `INSERT INTO service_group_catalog(tenant_id, revision, plan_json, updated_at, write_token) VALUES (?, 0, '{}', ?, '') ON CONFLICT(tenant_id) DO NOTHING`,
-        params: [TENANT, NOW],
+        sql: `INSERT INTO service_group_catalog(tenant_id, revision, plan_json, updated_at, write_token) SELECT ?, 0, '{}', CAST(? AS BIGINT), '' WHERE NOT EXISTS (SELECT 1 FROM policy_rules_version WHERE tenant_id = ?) ON CONFLICT(tenant_id) DO NOTHING`,
+        params: [TENANT, NOW, TENANT],
       },
       {
-        sql: 'UPDATE service_group_catalog SET revision = ?, plan_json = ?, updated_at = ?, write_token = ? WHERE tenant_id = ? AND revision = ?',
-        params: [1, json, NOW, 'uuid-1', TENANT, 0],
+        // Fenced on the authorization version the checks read (none yet).
+        sql: 'UPDATE service_group_catalog SET revision = ?, plan_json = ?, updated_at = ?, write_token = ? WHERE tenant_id = ? AND revision = ? AND NOT EXISTS (SELECT 1 FROM policy_rules_version WHERE tenant_id = ?)',
+        params: [1, json, NOW, 'uuid-1', TENANT, 0, TENANT],
       },
       {
         sql: `INSERT INTO service_group_revisions(tenant_id, revision, plan_json, actor_id, created_at) SELECT tenant_id, revision, plan_json, ?, ? FROM service_group_catalog WHERE tenant_id = ? AND write_token = ?`,
@@ -289,7 +293,25 @@ describe('save', () => {
     );
     expect(result.revision).toBe(4);
     expect(raw.batch.mock.calls[0][0][1].params.slice(0, 1)).toEqual([4]);
-    expect(raw.batch.mock.calls[0][0][1].params.slice(4)).toEqual([TENANT, 3]);
+    expect(raw.batch.mock.calls[0][0][1].params.slice(4)).toEqual([TENANT, 3, TENANT]);
+  });
+
+  it('fences the catalog write on the authorization version read before the checks', async () => {
+    const order: string[] = [];
+    const { db, raw } = makeDb({ authorizationVersion: 7 });
+    await new DynamicGroupStore(db, TENANT).save(groups, BUILTIN_GROUP_FIELDS, 3, 'a', async () => {
+      order.push('check');
+    });
+    const reads = raw.queryOne.mock.calls.map(([sql]) => String(sql));
+    expect(
+      reads.findIndex((sql) => sql.startsWith('SELECT version FROM policy_rules_version'))
+    ).toBeGreaterThan(-1);
+    expect(order).toEqual(['check']);
+    const update = raw.batch.mock.calls[0][0][1] as { sql: string; params: unknown[] };
+    expect(update.sql).toContain(
+      'EXISTS (SELECT 1 FROM policy_rules_version WHERE tenant_id = ? AND version = ?)'
+    );
+    expect(update.params.slice(-2)).toEqual([TENANT, 7]);
   });
 
   it('detects a lost write when the stored write token is not ours or missing', async () => {

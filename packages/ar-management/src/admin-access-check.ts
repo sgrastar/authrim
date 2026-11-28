@@ -23,6 +23,7 @@ import {
   createLogger,
   createReBACService,
   createUnifiedCheckService,
+  subjectGroupsResolver,
   getTenantIdFromContext,
   parsePermission,
   readPolicyFlags,
@@ -224,7 +225,14 @@ export async function adminAccessCheckHandler(c: AdminContext) {
     const service = createUnifiedCheckService({
       db: coreAdapter,
       subjectAccount: (tenant, subject) => subjectAccountOf(c.env, tenant, subject),
-      rebacService: createReBACService(storageAdapterOf(coreAdapter), { max_depth: 5 }),
+      // Group usersets read the subject's groups as the role check read them (the check passes
+      // them per call); the service's own resolver reads them from the account otherwise.
+      rebacService: createReBACService(storageAdapterOf(coreAdapter), {
+        max_depth: 5,
+        subject_groups: subjectGroupsResolver(coreAdapter, (tenant, subject) =>
+          subjectAccountOf(c.env, tenant, subject)
+        ),
+      }),
       debugMode: true,
       attributeRepository: new UserVerifiedAttributeRepository(coreAdapter),
       tenantPolicy: (tenant) => tenantPolicyOf(c.env, coreAdapter, tenant),

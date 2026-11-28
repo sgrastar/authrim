@@ -2,7 +2,7 @@
  * ReBAC Cache Manager Implementation
  *
  * Manages KV caching for check() operations.
- * Cache key format: rebac:check:{tenant_id}:{user_id}:{relation}:{object_type}:{object_id}
+ * Cache key format: rebac:check:v3:["{tenant_id}@{version}","{user_id}","{relation}","{object_type}","{object_id}"]
  *
  * Cache strategy:
  * - TTL: 60 seconds (configurable)
@@ -14,8 +14,27 @@ import type { IReBACCacheManager } from './interfaces';
 import type { CheckResponse } from './types';
 import { REBAC_CACHE_PREFIX, DEFAULT_CACHE_TTL } from './types';
 
+/** The KV key of a tenant's ReBAC version. */
+function reBACTenantVersionKey(tenantId: string): string {
+  return `rebac:v2:tenant-version:${tenantId}`;
+}
+
 /**
- * Build cache key from components
+ * A tenant's ReBAC version: cached check results are keyed by it, so a bump retires every cached
+ * result of the tenant at once ('0' before the first bump).
+ */
+export async function getReBACTenantVersion(kv: KVNamespace, tenantId: string): Promise<string> {
+  return (await kv.get(reBACTenantVersionKey(tenantId))) ?? '0';
+}
+
+/** Bumps a tenant's ReBAC version: after every tuple and relation definition write or delete. */
+export async function bumpReBACTenantVersion(kv: KVNamespace, tenantId: string): Promise<void> {
+  await kv.put(reBACTenantVersionKey(tenantId), crypto.randomUUID());
+}
+
+/**
+ * Build cache key from components (the tenant part carries the tenant's ReBAC version). The
+ * components are a JSON array, so the key is injective: ids may contain `:`.
  */
 function buildCacheKey(
   tenantId: string,
@@ -24,21 +43,35 @@ function buildCacheKey(
   objectType: string,
   objectId: string
 ): string {
-  return `${REBAC_CACHE_PREFIX}${tenantId}:${userId}:${relation}:${objectType}:${objectId}`;
+  return `${REBAC_CACHE_PREFIX}${JSON.stringify([tenantId, userId, relation, objectType, objectId])}`;
+}
+
+/** The components of a key built by buildCacheKey, or null for another key. */
+function parseCacheKey(key: string): string[] | null {
+  if (!key.startsWith(REBAC_CACHE_PREFIX)) return null;
+  try {
+    const parts: unknown = JSON.parse(key.slice(REBAC_CACHE_PREFIX.length));
+    return Array.isArray(parts) && parts.length === 5 && parts.every((p) => typeof p === 'string')
+      ? parts
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The KV key of a secondary index (JSON components, injective as the cache keys). */
+function indexKey(kind: 'object' | 'user', parts: string[]): string {
+  return `rebac:index:v3:${kind}:${JSON.stringify(parts)}`;
 }
 
 /**
- * Build pattern for object invalidation
+ * The KV form of a key: a fixed-length SHA-256 digest of it (hex), so ids of any length stay
+ * within KV's key limit; the in-memory cache keeps the JSON key.
  */
-function buildObjectPattern(tenantId: string, objectType: string, objectId: string): string {
-  return `${REBAC_CACHE_PREFIX}${tenantId}:*:*:${objectType}:${objectId}`;
-}
-
-/**
- * Build pattern for user invalidation
- */
-function buildUserPattern(tenantId: string, userId: string): string {
-  return `${REBAC_CACHE_PREFIX}${tenantId}:${userId}:*:*:*`;
+async function kvKey(key: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(key));
+  const hex = [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0'));
+  return `${key.startsWith(REBAC_CACHE_PREFIX) ? REBAC_CACHE_PREFIX : 'rebac:index:v3:'}${hex.join('')}`;
 }
 
 /**
@@ -75,7 +108,7 @@ export class ReBACCacheManager implements IReBACCacheManager {
 
     if (this.kv) {
       // KV-based cache
-      const cached = await this.kv.get(key, 'json');
+      const cached = await this.kv.get(await kvKey(key), 'json');
       if (cached) {
         const data = cached as CachedData;
         return {
@@ -125,7 +158,7 @@ export class ReBACCacheManager implements IReBACCacheManager {
 
     if (this.kv) {
       // KV-based cache
-      await this.kv.put(key, JSON.stringify(data), {
+      await this.kv.put(await kvKey(key), JSON.stringify(data), {
         expirationTtl: ttl,
       });
     } else {
@@ -147,7 +180,7 @@ export class ReBACCacheManager implements IReBACCacheManager {
     const key = buildCacheKey(tenantId, userId, relation, objectType, objectId);
 
     if (this.kv) {
-      await this.kv.delete(key);
+      await this.kv.delete(await kvKey(key));
     } else {
       this.memoryCache.delete(key);
     }
@@ -182,40 +215,48 @@ export class ReBACCacheManager implements IReBACCacheManager {
     // 3. Or accept eventual consistency
   }
 
+  /** Drops the in-memory entries whose components match. */
+  private invalidateMemory(matches: (parts: string[]) => boolean): void {
+    for (const key of [...this.memoryCache.keys()]) {
+      const parts = parseCacheKey(key);
+      if (parts && matches(parts)) this.memoryCache.delete(key);
+    }
+  }
+
   async invalidateObject(tenantId: string, objectType: string, objectId: string): Promise<void> {
-    const pattern = buildObjectPattern(tenantId, objectType, objectId);
-    await this.invalidatePattern(pattern);
+    this.invalidateMemory(
+      ([tenant, , , type, id]) => tenant === tenantId && type === objectType && id === objectId
+    );
 
     // For KV environments, we need a different approach
     // This implementation stores object→key mappings for efficient invalidation
     if (this.kv) {
       // Get list of keys for this object from a secondary index
-      const indexKey = `rebac:index:object:${tenantId}:${objectType}:${objectId}`;
-      const keysJson = await this.kv.get(indexKey);
+      const objectIndexKey = await kvKey(indexKey('object', [tenantId, objectType, objectId]));
+      const keysJson = await this.kv.get(objectIndexKey);
 
       if (keysJson) {
         const keys = JSON.parse(keysJson) as string[];
         // Delete all cached entries
         await Promise.all(keys.map((key) => this.kv!.delete(key)));
         // Delete the index
-        await this.kv.delete(indexKey);
+        await this.kv.delete(objectIndexKey);
       }
     }
   }
 
   async invalidateUser(tenantId: string, userId: string): Promise<void> {
-    const pattern = buildUserPattern(tenantId, userId);
-    await this.invalidatePattern(pattern);
+    this.invalidateMemory(([tenant, user]) => tenant === tenantId && user === userId);
 
     // For KV environments, use secondary index
     if (this.kv) {
-      const indexKey = `rebac:index:user:${tenantId}:${userId}`;
-      const keysJson = await this.kv.get(indexKey);
+      const userIndexKey = await kvKey(indexKey('user', [tenantId, userId]));
+      const keysJson = await this.kv.get(userIndexKey);
 
       if (keysJson) {
         const keys = JSON.parse(keysJson) as string[];
         await Promise.all(keys.map((key) => this.kv!.delete(key)));
-        await this.kv.delete(indexKey);
+        await this.kv.delete(userIndexKey);
       }
     }
   }
@@ -234,7 +275,7 @@ export class ReBACCacheManager implements IReBACCacheManager {
     if (!this.kv) return;
 
     // Add to object index
-    const objectIndexKey = `rebac:index:object:${tenantId}:${objectType}:${objectId}`;
+    const objectIndexKey = await kvKey(indexKey('object', [tenantId, objectType, objectId]));
     const existingObjectKeys = await this.kv.get(objectIndexKey);
     const objectKeys: string[] = existingObjectKeys ? JSON.parse(existingObjectKeys) : [];
     if (!objectKeys.includes(key)) {
@@ -245,7 +286,7 @@ export class ReBACCacheManager implements IReBACCacheManager {
     }
 
     // Add to user index
-    const userIndexKey = `rebac:index:user:${tenantId}:${userId}`;
+    const userIndexKey = await kvKey(indexKey('user', [tenantId, userId]));
     const existingUserKeys = await this.kv.get(userIndexKey);
     const userKeys: string[] = existingUserKeys ? JSON.parse(existingUserKeys) : [];
     if (!userKeys.includes(key)) {
@@ -273,8 +314,8 @@ export class ReBACCacheManager implements IReBACCacheManager {
     // Set the cache entry
     await this.set(tenantId, userId, relation, objectType, objectId, result, ttl);
 
-    // Update indexes for efficient invalidation
-    await this.addToIndexes(key, tenantId, userId, objectType, objectId);
+    // Update indexes for efficient invalidation (they hold the KV keys)
+    await this.addToIndexes(await kvKey(key), tenantId, userId, objectType, objectId);
   }
 
   /**

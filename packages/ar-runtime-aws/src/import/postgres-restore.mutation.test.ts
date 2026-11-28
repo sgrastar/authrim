@@ -858,6 +858,8 @@ describe('verifyPostgresFamilyStagingRows', () => {
     ['row count mismatch', (r) => (r.tables[0].rowCount = 2)],
     ['unknown projection version', (r) => (r.projectionVersion = 1)],
     ['extended without extension tables', (r) => (r.projectionVersion = 2)],
+    ['extended (version 3) without extension tables', (r) => (r.projectionVersion = 3)],
+    ['an unknown later projection version', (r) => (r.projectionVersion = 4)],
   ])('rejects a receipt with a bad %s', async (_n, patch) => {
     const { fake } = await restoredPii();
     retarget(fake, patch);

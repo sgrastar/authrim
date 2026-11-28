@@ -86,7 +86,7 @@ describe('UnifiedCheckService contracts', () => {
     });
 
     it('refuses a request that carries rebac, without asking the ReBAC service', async () => {
-      const rebacService = { check: vi.fn(async () => ({ allowed: true })) };
+      const rebacService = { checkResolved: vi.fn(async () => ({ allowed: true })) };
       const service = createUnifiedCheckService({
         db: mockD1 as never,
         rebacService: rebacService as never,
@@ -97,7 +97,7 @@ describe('UnifiedCheckService contracts', () => {
         { contract: 'self' }
       );
       expect(result).toMatchObject({ allowed: false, reason: 'contract_violation' });
-      expect(rebacService.check).not.toHaveBeenCalled();
+      expect(rebacService.checkResolved).not.toHaveBeenCalled();
     });
 
     it('resolves nothing by default: no ownership grant without a resolver', async () => {
@@ -155,24 +155,12 @@ describe('UnifiedCheckService contracts', () => {
     });
 
     describe('relationship named by the resolver', () => {
-      function relationshipDb(hasTuple: boolean) {
-        const binds: unknown[][] = [];
-        const db = {
-          prepare: vi.fn((sql: string) => {
-            const statement = {
-              bind: (...params: unknown[]) => {
-                if (sql.includes('FROM relationships')) binds.push(params);
-                return statement;
-              },
-              all: async () => ({ results: [] }),
-              first: async () =>
-                sql.includes('FROM relationships') && hasTuple ? { id: 't1' } : null,
-              run: async () => ({ success: true, meta: { changes: 0 } }),
-            };
-            return statement;
-          }),
+      // The ReBAC service the self contract asks (usersets, definitions and exclusion are its
+      // own; see rebac/__tests__/self-contract-rebac.test.ts for them on real SQL).
+      function rebac(allowed: boolean) {
+        return {
+          checkResolved: vi.fn(async () => ({ allowed, resolved_via: 'direct' as const })),
         };
-        return { db, binds };
       }
       const resolver = {
         resolve: async () => ({
@@ -180,10 +168,11 @@ describe('UnifiedCheckService contracts', () => {
         }),
       };
 
-      it('grants through a direct subject tuple when the tenant enables ReBAC', async () => {
-        const { db, binds } = relationshipDb(true);
+      it('asks the ReBAC service for the bound subject when the tenant enables ReBAC', async () => {
+        const rebacService = rebac(true);
         const service = createUnifiedCheckService({
-          db: db as never,
+          db: mockD1 as never,
+          rebacService: rebacService as never,
           resourceContextResolver: resolver,
           tenantPolicy: async () => policy({ rebac: true }),
         });
@@ -191,35 +180,61 @@ describe('UnifiedCheckService contracts', () => {
           allowed: true,
           resolved_via: ['rebac'],
         });
-        expect(binds[0]?.slice(0, 5)).toEqual([
-          'tenant_a',
-          'user_1',
-          'document',
-          'doc_1',
-          'viewer',
-        ]);
-        const sql = (db.prepare.mock.calls as unknown as string[][])
-          .map((call) => call[0])
-          .find((text) => text.includes('FROM relationships'));
-        expect(sql).toContain("from_type = 'subject'");
+        const [request, options] = rebacService.checkResolved.mock.calls[0] as unknown as [
+          unknown,
+          { subjectGroups?: unknown },
+        ];
+        // The bound subject's resolved id, verbatim.
+        expect(request).toEqual({
+          tenantId: 'tenant_a',
+          subjectId: 'user_1',
+          relation: 'viewer',
+          objectType: 'document',
+          objectId: 'doc_1',
+        });
+        // The subject's groups as the role check read them, for group usersets.
+        expect(typeof options.subjectGroups).toBe('function');
       });
 
-      it('denies without the tuple, and while ReBAC is off', async () => {
-        const without = createUnifiedCheckService({
-          db: relationshipDb(false).db as never,
+      it('denies when the ReBAC service denies, while ReBAC is off, and without the service', async () => {
+        const denying = createUnifiedCheckService({
+          db: mockD1 as never,
+          rebacService: rebac(false) as never,
           resourceContextResolver: resolver,
           tenantPolicy: async () => policy({ rebac: true }),
         });
-        expect((await without.check(OWNER_REQUEST, { contract: 'self' })).allowed).toBe(false);
+        expect((await denying.check(OWNER_REQUEST, { contract: 'self' })).allowed).toBe(false);
 
-        const off = relationshipDb(true);
+        const off = rebac(true);
         const disabled = createUnifiedCheckService({
-          db: off.db as never,
+          db: mockD1 as never,
+          rebacService: off as never,
           resourceContextResolver: resolver,
           tenantPolicy: async () => policy(),
         });
         expect((await disabled.check(OWNER_REQUEST, { contract: 'self' })).allowed).toBe(false);
-        expect(off.binds).toEqual([]);
+        expect(off.checkResolved).not.toHaveBeenCalled();
+
+        const without = createUnifiedCheckService({
+          db: mockD1 as never,
+          resourceContextResolver: resolver,
+          tenantPolicy: async () => policy({ rebac: true }),
+        });
+        expect((await without.check(OWNER_REQUEST, { contract: 'self' })).allowed).toBe(false);
+      });
+
+      it('treats a failing ReBAC service as a deny', async () => {
+        const service = createUnifiedCheckService({
+          db: mockD1 as never,
+          rebacService: {
+            checkResolved: vi.fn(async () => {
+              throw new Error('database unavailable');
+            }),
+          } as never,
+          resourceContextResolver: resolver,
+          tenantPolicy: async () => policy({ rebac: true }),
+        });
+        expect((await service.check(OWNER_REQUEST, { contract: 'self' })).allowed).toBe(false);
       });
 
       it('lets the resolver name a relation per action (single and batch)', async () => {
@@ -230,7 +245,8 @@ describe('UnifiedCheckService contracts', () => {
               : null,
         };
         const service = createUnifiedCheckService({
-          db: relationshipDb(true).db as never,
+          db: mockD1 as never,
+          rebacService: rebac(true) as never,
           resourceContextResolver: perAction,
           tenantPolicy: async () => policy({ rebac: true }),
         });
@@ -245,13 +261,14 @@ describe('UnifiedCheckService contracts', () => {
       });
 
       it('evaluates no relationship with the default resolver', async () => {
-        const { db, binds } = relationshipDb(true);
+        const rebacService = rebac(true);
         const service = createUnifiedCheckService({
-          db: db as never,
+          db: mockD1 as never,
+          rebacService: rebacService as never,
           tenantPolicy: async () => policy({ rebac: true }),
         });
         expect((await service.check(OWNER_REQUEST, { contract: 'self' })).allowed).toBe(false);
-        expect(binds).toEqual([]);
+        expect(rebacService.checkResolved).not.toHaveBeenCalled();
       });
     });
 
@@ -301,17 +318,17 @@ describe('UnifiedCheckService contracts', () => {
     };
 
     it('does not evaluate rebac when ReBAC is off (default)', async () => {
-      const rebacService = { check: vi.fn(async () => ({ allowed: true })) };
+      const rebacService = { checkResolved: vi.fn(async () => ({ allowed: true })) };
       const service = createUnifiedCheckService({
         db: mockD1 as never,
         rebacService: rebacService as never,
       });
       expect((await service.check(rebacRequest)).allowed).toBe(false);
-      expect(rebacService.check).not.toHaveBeenCalled();
+      expect(rebacService.checkResolved).not.toHaveBeenCalled();
     });
 
     it('evaluates rebac when the tenant enables ReBAC', async () => {
-      const rebacService = { check: vi.fn(async () => ({ allowed: true })) };
+      const rebacService = { checkResolved: vi.fn(async () => ({ allowed: true })) };
       const service = createUnifiedCheckService({
         db: mockD1 as never,
         rebacService: rebacService as never,
@@ -319,11 +336,101 @@ describe('UnifiedCheckService contracts', () => {
       });
       const result = await service.check(rebacRequest);
       expect(result).toMatchObject({ allowed: true, resolved_via: ['rebac'] });
-      expect(rebacService.check).toHaveBeenCalledTimes(1);
+      expect(rebacService.checkResolved).toHaveBeenCalledTimes(1);
+    });
+
+    it('passes the resolved subject verbatim and parses only the typed object', async () => {
+      const rebacService = { checkResolved: vi.fn(async () => ({ allowed: true })) };
+      const service = createUnifiedCheckService({
+        db: mockD1 as never,
+        rebacService: rebacService as never,
+        tenantPolicy: async () => policy({ rebac: true }),
+      });
+      await service.check({ ...rebacRequest, subject_id: 'team:alice' });
+      expect(rebacService.checkResolved.mock.calls[0]?.[0]).toMatchObject({
+        subjectId: 'team:alice',
+        objectType: 'document',
+        objectId: 'doc_1',
+      });
+    });
+
+    it('reads a contextual tuple subject as the API boundary does, against the stored id only', async () => {
+      const rebacService = { checkResolved: vi.fn(async () => ({ allowed: false })) };
+      const service = createUnifiedCheckService({
+        db: mockD1 as never,
+        rebacService: rebacService as never,
+        tenantPolicy: async () => policy({ rebac: true }),
+      });
+      const tuple = (user_id: string) => ({
+        ...rebacRequest,
+        subject_id: 'user:alice',
+        rebac: {
+          relation: 'viewer',
+          object: 'document:doc_1',
+          contextual_tuples: [{ user_id, relation: 'viewer', object: 'document:doc_1' }],
+        },
+      });
+      // External `user:alice` is the stored `alice`: not the stored `user:alice`.
+      await service.check(tuple('user:alice'));
+      expect(rebacService.checkResolved.mock.calls[0]?.[0]).toMatchObject({
+        subjectId: 'user:alice',
+        contextualTuples: [],
+      });
+      // External `user:user:alice` is the stored `user:alice`.
+      await service.check(tuple('user:user:alice'));
+      expect(rebacService.checkResolved.mock.calls[1]?.[0]).toMatchObject({
+        contextualTuples: [{ relation: 'viewer', objectType: 'document', objectId: 'doc_1' }],
+      });
+    });
+
+    it('denies without evaluating ReBAC when the subject account cannot be resolved', async () => {
+      const rebacService = { checkResolved: vi.fn(async () => ({ allowed: true })) };
+      const service = createUnifiedCheckService({
+        db: mockD1 as never,
+        rebacService: rebacService as never,
+        tenantPolicy: async () => policy({ rebac: true }),
+        subjectAccount: async () => {
+          throw new Error('account not found');
+        },
+      });
+      const result = await service.check({
+        ...rebacRequest,
+        subject_id: 'raw-id',
+        rebac: {
+          relation: 'viewer',
+          object: 'document:doc_1',
+          contextual_tuples: [{ user_id: 'raw-id', relation: 'viewer', object: 'document:doc_1' }],
+        },
+      });
+      expect(result).toMatchObject({ allowed: false, reason: 'no_matching_permission' });
+      expect(rebacService.checkResolved).not.toHaveBeenCalled();
+    });
+
+    it('carries unknown_membership to the result, single and batch', async () => {
+      const rebacService = {
+        checkResolved: vi.fn(async () => ({
+          allowed: false,
+          resolved_via: 'unknown_membership' as const,
+        })),
+      };
+      const service = createUnifiedCheckService({
+        db: mockD1 as never,
+        rebacService: rebacService as never,
+        tenantPolicy: async () => policy({ rebac: true }),
+      });
+      expect(await service.check(rebacRequest)).toMatchObject({
+        allowed: false,
+        reason: 'unknown_membership',
+      });
+      const batch = await service.batchCheck({ checks: [rebacRequest, OWNER_REQUEST] });
+      expect(batch.results.map((result) => result.reason)).toEqual([
+        'unknown_membership',
+        'no_matching_permission',
+      ]);
     });
 
     it('follows the tenant, not the constructor default, when tenantPolicy is given', async () => {
-      const rebacService = { check: vi.fn(async () => ({ allowed: true })) };
+      const rebacService = { checkResolved: vi.fn(async () => ({ allowed: true })) };
       const service = createUnifiedCheckService({
         db: mockD1 as never,
         rebacService: rebacService as never,
@@ -331,11 +438,11 @@ describe('UnifiedCheckService contracts', () => {
         tenantPolicy: async () => policy(),
       });
       expect((await service.check(rebacRequest)).allowed).toBe(false);
-      expect(rebacService.check).not.toHaveBeenCalled();
+      expect(rebacService.checkResolved).not.toHaveBeenCalled();
     });
 
     it('is off when the tenant policy cannot be read', async () => {
-      const rebacService = { check: vi.fn(async () => ({ allowed: true })) };
+      const rebacService = { checkResolved: vi.fn(async () => ({ allowed: true })) };
       const service = createUnifiedCheckService({
         db: mockD1 as never,
         rebacService: rebacService as never,
@@ -344,7 +451,7 @@ describe('UnifiedCheckService contracts', () => {
         },
       });
       expect((await service.check(rebacRequest)).allowed).toBe(false);
-      expect(rebacService.check).not.toHaveBeenCalled();
+      expect(rebacService.checkResolved).not.toHaveBeenCalled();
     });
   });
 });

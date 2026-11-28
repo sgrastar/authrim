@@ -61,7 +61,40 @@ export const probe = {
   pluginCalls: 0,
   adapter: undefined as unknown as FakeAdapter,
   service: undefined as unknown as FakeRebacService,
+  /**
+   * guardGroupUsersetWrite: by default no refusal, the write runs on the fake adapter with a
+   * fence that holds (`FENCE`, param `fence-param`).
+   */
+  groupGuard: vi.fn(),
+  /** The tenants whose ReBAC version was bumped */
+  versionBumps: [] as string[],
   reset() {
+    this.groupGuard = vi.fn(
+      async (
+        _db: unknown,
+        _tenant: string,
+        _group: string,
+        prepare: (
+          reader: unknown,
+          fence: { sql: string; params: unknown[] }
+        ) => Promise<{ statements: Array<{ sql: string; params: unknown[] }>; result: unknown }>
+      ) => {
+        const prepared = await prepare(this.adapter, { sql: 'FENCE', params: ['fence-param'] });
+        let rows: number | undefined;
+        for (const statement of prepared.statements) {
+          const execute = this.adapter.execute as unknown as (
+            sql: string,
+            params: unknown[]
+          ) => Promise<{ rowsAffected?: number }>;
+          const executed = await execute(statement.sql, statement.params);
+          rows ??= executed.rowsAffected;
+        }
+        return prepared.statements.length && rows === 0
+          ? { kind: 'group_version_conflict' }
+          : { kind: 'written', result: prepared.result };
+      }
+    );
+    this.versionBumps = [];
     this.modules = [];
     this.logs = [];
     this.events = [];
@@ -91,7 +124,7 @@ export const probe = {
       check: vi.fn().mockResolvedValue({ allowed: true }),
       batchCheck: vi.fn().mockResolvedValue({ results: [] }),
       listObjects: vi.fn().mockResolvedValue({ objects: [] }),
-      listUsers: vi.fn().mockResolvedValue({ users: [] }),
+      listUsers: vi.fn().mockResolvedValue({ user_ids: [] }),
       invalidateCache: vi.fn().mockResolvedValue(undefined),
       invalidateUserCache: vi.fn().mockResolvedValue(undefined),
     };
@@ -126,12 +159,21 @@ export function buildCoreMock(actual: CoreModule): Record<string, unknown> {
           permissions:
             c.req.header('X-Test-Perms') === 'none'
               ? []
-              : [actual.ADMIN_PERMISSIONS.POLICY_REBAC_WRITE],
+              : c.req.header('X-Test-Perms') === 'roles'
+                ? [
+                    actual.ADMIN_PERMISSIONS.POLICY_REBAC_WRITE,
+                    actual.ADMIN_PERMISSIONS.ROLES_WRITE,
+                  ]
+                : [actual.ADMIN_PERMISSIONS.POLICY_REBAC_WRITE],
           hierarchyLevel: 0,
           mfaVerified: false,
         });
       }
       await next();
+    },
+    guardGroupUsersetWrite: (...args: unknown[]) => probe.groupGuard(...args) as unknown,
+    bumpReBACTenantVersion: async (_kv: unknown, tenantId: string) => {
+      probe.versionBumps.push(tenantId);
     },
     pluginContextMiddleware: () => async (_c: Context, next: Next) => {
       probe.pluginCalls += 1;

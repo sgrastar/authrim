@@ -3,8 +3,11 @@
  *
  * A dynamic group's membership feeds every group whose rule references it (`member`), directly
  * or through others: `dependentGroups` is that closure. A group "carries roles" (carries
- * authorization) when it, or one of its canonical ancestors, has an unexpired group role grant or
- * an active, unexpired resource permission granted to the group, or is named by a group condition
+ * authorization) when it, or one of its canonical ancestors, has an unexpired group role grant,
+ * an active, unexpired resource permission granted to the group, or an unexpired ReBAC group
+ * userset tuple (`relationships.from_type = 'group'` with `from_relation = 'member'`: its members
+ * hold a relation; a legacy row without it is inert), or is named by
+ * a group condition
  * (`in_group`, `in_any_group`, `in_all_groups`, `not_in_any_group`) of one of the tenant's enabled
  * policy rules (a rule disabled within the policy service's rule cache lifetime still counts), or
  * any group at all while such a rule uses `same_group` (which compares with the resource's groups
@@ -15,7 +18,8 @@
  * field; saving a rule that makes one of them carry roles is refused, and publication leaves them
  * out (no dynamic row, so no role).
  */
-import type { TransactionContext } from '../../db';
+import type { DatabaseAdapter, PreparedStatement, TransactionContext } from '../../db';
+import { lockGroupCatalog } from '../group-catalog';
 import { TENANT_POLICY_RULES_CACHE_TTL_MS } from '../../types/check-api';
 
 /** A database or a transaction on it (the checks run inside the caller's catalog lock). */
@@ -170,9 +174,11 @@ export async function fieldDecidesPolicyRuleGroup(
 }
 
 /**
- * The ids among `ids` that carry authorization: an unexpired role grant, or an active and
- * unexpired resource permission granted to the group (`subject_type = 'group'`), on the group or
- * an ancestor; or the group or an ancestor named by a group condition of an enabled policy rule.
+ * The ids among `ids` that carry authorization: an unexpired role grant, an active and unexpired
+ * resource permission granted to the group (`subject_type = 'group'`), or an unexpired ReBAC group
+ * userset tuple (`relationships`, `from_type = 'group'`, `from_relation = 'member'`; a legacy row
+ * without it grants nothing), on the group or an ancestor; or the
+ * group or an ancestor named by a group condition of an enabled policy rule.
  */
 export async function groupsCarryingRoles(
   db: GroupReader,
@@ -195,8 +201,13 @@ export async function groupsCarryingRoles(
         SELECT p.id FROM ancestors a JOIN resource_permissions p
           ON p.subject_type = 'group' AND p.subject_id = a.id AND p.tenant_id = ?
         WHERE p.is_active = 1 AND (p.expires_at IS NULL OR p.expires_at > ?)
+        UNION ALL
+        SELECT r.id FROM ancestors a JOIN relationships r
+          ON r.from_type = 'group' AND r.from_relation = 'member' AND r.from_id = a.id
+            AND r.tenant_id = ?
+        WHERE r.expires_at IS NULL OR r.expires_at > ?
         LIMIT 1`,
-      [tenantId, id, tenantId, tenantId, nowSeconds, tenantId, nowSeconds],
+      [tenantId, id, tenantId, tenantId, nowSeconds, tenantId, nowSeconds, tenantId, nowSeconds],
       primary
     );
     if (row) {
@@ -238,6 +249,154 @@ export async function subtreeHasSelfWritableDynamicGroup(
     primary
   );
   return subtree.some((node) => tainted.has(node.id));
+}
+
+/** A condition of a write that holds only while what its check read still holds. */
+export interface GroupCatalogFence {
+  sql: string;
+  params: unknown[];
+}
+
+/**
+ * The tenant authorization version, as a write's check reads it: the `policy_rules_version`
+ * counter (null before its first write). Policy rule changes, ReBAC group userset writes and
+ * service-group rule saves each raise it in the batch of their write, fenced on the value their
+ * check read (authorizationVersionFence): of two such writes whose checks ran concurrently, the
+ * one that commits second changes nothing (409 `group_version_conflict`). The policy service
+ * reloads its cached rules when it changes (an extra raise only costs a reload).
+ */
+export async function readAuthorizationVersion(
+  db: Pick<TransactionContext, 'queryOne'>,
+  tenantId: string
+): Promise<number | null> {
+  const row = await db.queryOne<{ version: number | string }>(
+    'SELECT version FROM policy_rules_version WHERE tenant_id = ?',
+    [tenantId],
+    primary
+  );
+  return row ? Number(row.version) : null;
+}
+
+/** The condition that the tenant authorization version is still the one read. */
+export function authorizationVersionFence(
+  tenantId: string,
+  version: number | null
+): GroupCatalogFence {
+  return version === null
+    ? {
+        sql: 'NOT EXISTS (SELECT 1 FROM policy_rules_version WHERE tenant_id = ?)',
+        params: [tenantId],
+      }
+    : {
+        sql: 'EXISTS (SELECT 1 FROM policy_rules_version WHERE tenant_id = ? AND version = ?)',
+        params: [tenantId, version],
+      };
+}
+
+/**
+ * The statement raising the tenant authorization version when `condition` holds (put it last in
+ * the batch of the write it belongs to).
+ */
+export function raiseAuthorizationVersion(
+  tenantId: string,
+  condition: GroupCatalogFence
+): PreparedStatement {
+  return {
+    sql: `INSERT INTO policy_rules_version (tenant_id, version) SELECT ?, 1 WHERE ${condition.sql}
+      ON CONFLICT (tenant_id) DO UPDATE SET version = policy_rules_version.version + 1`,
+    params: [tenantId, ...condition.params],
+  };
+}
+
+/** The outcome of a guarded ReBAC group userset write (guardGroupUsersetWrite). */
+export type GroupUsersetWriteOutcome<T> =
+  | { kind: 'written'; result: T }
+  | { kind: 'group_self_writable_attribute' }
+  | { kind: 'group_version_conflict' };
+
+/**
+ * Writes (creates, refreshes or deletes) a ReBAC group userset tuple on the group.
+ *
+ * A create or refresh (`refuseSelfWritable`) is refused when the group or one of its
+ * descendants is a service group decided by an attribute people write themselves (the userset
+ * would let them decide the relation, as a role on the group would):
+ * `group_self_writable_attribute`.
+ *
+ * `prepare` reads what it needs and returns the write's statements (none: nothing to write),
+ * each with `fence.sql` in its WHERE; the first one's row count says whether it applied. The
+ * fence holds while the service-group catalog revision and the tenant authorization version are
+ * the ones the check read. The statements and the raise of that version run together: one batch
+ * on D1, one transaction under the group catalog lock on PostgreSQL. A write whose fence no
+ * longer holds is `group_version_conflict` (retry).
+ */
+export async function guardGroupUsersetWrite<T>(
+  db: Pick<DatabaseAdapter, 'transaction' | 'getType' | 'batch' | 'queryOne' | 'query'>,
+  tenantId: string,
+  groupId: string,
+  prepare: (
+    reader: Pick<TransactionContext, 'query' | 'queryOne'>,
+    fence: GroupCatalogFence
+  ) => Promise<{ statements: PreparedStatement[]; result: T }>,
+  options: { refuseSelfWritable?: boolean } = {}
+): Promise<GroupUsersetWriteOutcome<T>> {
+  const checked = async (reader: Pick<TransactionContext, 'query' | 'queryOne'>) => {
+    const catalog = await reader.queryOne<{ revision: number | string }>(
+      'SELECT revision FROM service_group_catalog WHERE tenant_id = ?',
+      [tenantId],
+      primary
+    );
+    const version = await readAuthorizationVersion(reader, tenantId);
+    if (
+      options.refuseSelfWritable !== false &&
+      (await subtreeHasSelfWritableDynamicGroup(reader, tenantId, groupId))
+    )
+      return null;
+    const catalogFence: GroupCatalogFence = catalog
+      ? {
+          sql: 'EXISTS (SELECT 1 FROM service_group_catalog WHERE tenant_id = ? AND revision = ?)',
+          params: [tenantId, Number(catalog.revision)],
+        }
+      : {
+          sql: 'NOT EXISTS (SELECT 1 FROM service_group_catalog WHERE tenant_id = ?)',
+          params: [tenantId],
+        };
+    const versionFence = authorizationVersionFence(tenantId, version);
+    return {
+      sql: `${catalogFence.sql} AND ${versionFence.sql}`,
+      params: [...catalogFence.params, ...versionFence.params],
+    };
+  };
+  const finish = (
+    prepared: { statements: PreparedStatement[]; result: T },
+    rows: number | undefined
+  ): GroupUsersetWriteOutcome<T> =>
+    prepared.statements.length > 0 && rows === 0
+      ? { kind: 'group_version_conflict' }
+      : { kind: 'written', result: prepared.result };
+
+  if (db.getType() === 'postgres') {
+    return db.transaction(async (tx) => {
+      await lockGroupCatalog(tx, tenantId, 'postgres');
+      const fence = await checked(tx);
+      if (!fence) return { kind: 'group_self_writable_attribute' as const };
+      const prepared = await prepare(tx, fence);
+      if (prepared.statements.length === 0) return finish(prepared, undefined);
+      const results = [];
+      for (const statement of [...prepared.statements, raiseAuthorizationVersion(tenantId, fence)])
+        results.push(await tx.execute(statement.sql, statement.params));
+      return finish(prepared, results[0]?.rowsAffected);
+    });
+  }
+  // D1: no lock; the batch is one transaction, and the fence is what makes it conditional.
+  const fence = await checked(db);
+  if (!fence) return { kind: 'group_self_writable_attribute' };
+  const prepared = await prepare(db, fence);
+  if (prepared.statements.length === 0) return finish(prepared, undefined);
+  const results = await db.batch([
+    ...prepared.statements,
+    raiseAuthorizationVersion(tenantId, fence),
+  ]);
+  return finish(prepared, results[0]?.rowsAffected);
 }
 
 /**

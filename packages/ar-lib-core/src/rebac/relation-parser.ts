@@ -1,16 +1,17 @@
 /**
  * Relation Parser Implementation
  *
- * Parses and evaluates Zanzibar-style relation expressions.
- *
- * Phase 3 MVP supports:
- * - direct: Direct relation tuple match
+ * Parses and evaluates Zanzibar-style relation expressions:
+ * - direct: a direct tuple from the subject, or a group userset the subject is a member of
+ *   (userset.ts)
  * - union: OR of multiple expressions
- * - tuple_to_userset: Inherit from related object
+ * - tuple_to_userset: inherit from a related object (the only declared object-to-object path):
+ *   the computed relation is evaluated on the related object through its own definition
  *
- * Phase 4+ will add:
+ * Evaluation is three-valued (allow / deny / unknown). A cycle on the current recursion path, the
+ * depth limit, or an unusable definition is `unknown`, which grants nothing and is never cached.
  * - intersection: AND of multiple expressions
- * - exclusion: NOT expression
+ * - exclusion: base AND NOT subtract
  */
 
 import type {
@@ -21,10 +22,18 @@ import type {
   IntersectionRelation,
   ExclusionRelation,
 } from './types';
-import type { IRelationParser, RelationEvaluationContext } from './interfaces';
+import type { EvaluationResult, IRelationParser, RelationEvaluationContext } from './interfaces';
 import type { IStorageAdapter } from '../storage/interfaces';
 import { DEFAULT_MAX_DEPTH } from './types';
 import { createLogger } from '../utils/logger';
+import {
+  matchGroupUserset,
+  noteExpiry,
+  directRelationNames,
+  MAX_DEFINITION_DIRECT_RELATIONS,
+  MAX_DEFINITION_DEPTH,
+} from './userset';
+import { loadActiveDefinition } from './definitions';
 
 const log = createLogger().module('REBAC');
 
@@ -43,9 +52,16 @@ export class RelationParser implements IRelationParser {
   /**
    * Recursively parse an expression object
    */
-  private parseExpression(obj: unknown): RelationExpression {
+  private parseExpression(obj: unknown, depth = 0): RelationExpression {
     if (!obj || typeof obj !== 'object') {
       throw new Error('Invalid relation expression: must be an object');
+    }
+    // One bound for every walk of a definition (validation, evaluation, list candidates): a
+    // deeper one is refused when saved and unusable when stored.
+    if (depth > MAX_DEFINITION_DEPTH) {
+      throw new Error(
+        `Invalid relation expression: nested deeper than ${MAX_DEFINITION_DEPTH} levels`
+      );
     }
 
     const expr = obj as Record<string, unknown>;
@@ -59,13 +75,13 @@ export class RelationParser implements IRelationParser {
       case 'direct':
         return this.parseDirectRelation(expr);
       case 'union':
-        return this.parseUnionRelation(expr);
+        return this.parseUnionRelation(expr, depth);
       case 'tuple_to_userset':
         return this.parseTupleToUsersetRelation(expr);
       case 'intersection':
-        return this.parseIntersectionRelation(expr);
+        return this.parseIntersectionRelation(expr, depth);
       case 'exclusion':
-        return this.parseExclusionRelation(expr);
+        return this.parseExclusionRelation(expr, depth);
       default:
         throw new Error(`Unknown relation expression type: ${type}`);
     }
@@ -81,13 +97,13 @@ export class RelationParser implements IRelationParser {
     };
   }
 
-  private parseUnionRelation(obj: Record<string, unknown>): UnionRelation {
+  private parseUnionRelation(obj: Record<string, unknown>, depth: number): UnionRelation {
     if (!Array.isArray(obj.children)) {
       throw new Error('Union relation must have an array "children" field');
     }
     return {
       type: 'union',
-      children: obj.children.map((child) => this.parseExpression(child)),
+      children: obj.children.map((child) => this.parseExpression(child, depth + 1)),
     };
   }
 
@@ -109,17 +125,20 @@ export class RelationParser implements IRelationParser {
     };
   }
 
-  private parseIntersectionRelation(obj: Record<string, unknown>): IntersectionRelation {
+  private parseIntersectionRelation(
+    obj: Record<string, unknown>,
+    depth: number
+  ): IntersectionRelation {
     if (!Array.isArray(obj.children)) {
       throw new Error('Intersection relation must have an array "children" field');
     }
     return {
       type: 'intersection',
-      children: obj.children.map((child) => this.parseExpression(child)),
+      children: obj.children.map((child) => this.parseExpression(child, depth + 1)),
     };
   }
 
-  private parseExclusionRelation(obj: Record<string, unknown>): ExclusionRelation {
+  private parseExclusionRelation(obj: Record<string, unknown>, depth: number): ExclusionRelation {
     if (!obj.base) {
       throw new Error('Exclusion relation must have a "base" expression');
     }
@@ -128,8 +147,8 @@ export class RelationParser implements IRelationParser {
     }
     return {
       type: 'exclusion',
-      base: this.parseExpression(obj.base),
-      subtract: this.parseExpression(obj.subtract),
+      base: this.parseExpression(obj.base, depth + 1),
+      subtract: this.parseExpression(obj.subtract, depth + 1),
     };
   }
 
@@ -202,37 +221,76 @@ export class RelationParser implements IRelationParser {
   }
 
   /**
-   * Evaluate a relation expression
+   * Evaluate a relation expression: true only when it allows (an undecided result is false).
    */
   async evaluate(
     expression: RelationExpression,
     context: RelationEvaluationContext,
     adapter: IStorageAdapter
   ): Promise<boolean> {
-    // Check depth limit
+    return (await this.evaluateExpression(expression, context, adapter)) === 'allow';
+  }
+
+  /**
+   * Evaluate a relation (`object_type:object_id#relation`) as a check does: through its active
+   * definition when it has one (the definition alone decides; tuples count only through its
+   * `direct` leaves), through direct tuples and group usersets when it has none. An unusable
+   * definition, a cycle on the current path, or the depth limit leaves it undecided.
+   */
+  async evaluateRelation(
+    objectType: string,
+    objectId: string,
+    relation: string,
+    context: RelationEvaluationContext,
+    adapter: IStorageAdapter
+  ): Promise<EvaluationResult> {
+    const undecided = (): EvaluationResult => {
+      if (context.membership) context.membership.indeterminate = true;
+      return 'unknown';
+    };
+    if (context.depth > context.max_depth) {
+      log.warn(`Maximum depth (${context.max_depth}) exceeded`, {
+        objectType,
+        objectId,
+      });
+      return undecided();
+    }
+    const key = `${objectType}:${objectId}#${relation}`;
+    if (context.visited.has(key)) return undecided();
+    const path = new Set(context.visited);
+    path.add(key);
+    const next: RelationEvaluationContext = {
+      ...context,
+      object_type: objectType,
+      object_id: objectId,
+      visited: path,
+    };
+    const definition = context.definitions
+      ? await context.definitions(objectType, relation)
+      : await loadActiveDefinition(adapter, this, context.tenant_id, objectType, relation);
+    if (definition.state === 'unusable') return undecided();
+    if (definition.state === 'none') {
+      return this.evaluateDirectRelation({ type: 'direct', relation }, next, adapter);
+    }
+    return this.evaluateExpression(definition.definition.definition, next, adapter);
+  }
+
+  /**
+   * Evaluate an expression in three values (`unknown` grants nothing and is never cached).
+   */
+  async evaluateExpression(
+    expression: RelationExpression,
+    context: RelationEvaluationContext,
+    adapter: IStorageAdapter
+  ): Promise<EvaluationResult> {
     if (context.depth > context.max_depth) {
       log.warn(`Maximum depth (${context.max_depth}) exceeded`, {
         userId: context.user_id,
         objectType: context.object_type,
         objectId: context.object_id,
       });
-      return false;
-    }
-
-    // Check visited to prevent cycles in relationship traversal
-    // Only track visited for expressions that actually traverse relationships (direct, tuple_to_userset)
-    // Union/intersection/exclusion are expression combinators and should not be tracked
-    if (expression.type === 'direct' || expression.type === 'tuple_to_userset') {
-      const relationSuffix = expression.type === 'direct' ? `:${expression.relation}` : '';
-      const tuplesetSuffix =
-        expression.type === 'tuple_to_userset'
-          ? `:${expression.tupleset.relation}:${expression.computed_userset.relation}`
-          : '';
-      const visitKey = `${context.user_type}:${context.user_id}:${expression.type}${relationSuffix}${tuplesetSuffix}:${context.object_type}:${context.object_id}`;
-      if (context.visited.has(visitKey)) {
-        return false;
-      }
-      context.visited.add(visitKey);
+      if (context.membership) context.membership.indeterminate = true;
+      return 'unknown';
     }
 
     switch (expression.type) {
@@ -247,24 +305,43 @@ export class RelationParser implements IRelationParser {
       case 'exclusion':
         return this.evaluateExclusionRelation(expression, context, adapter);
       default:
-        return false;
+        if (context.membership) context.membership.indeterminate = true;
+        return 'unknown';
     }
   }
 
   /**
-   * Evaluate a direct relation - check for a direct tuple
+   * Evaluate a direct relation: a request-specific (contextual) tuple, a stored tuple from the
+   * subject, or a group userset the subject is a member of.
    */
   private async evaluateDirectRelation(
     expr: DirectRelation,
     context: RelationEvaluationContext,
     adapter: IStorageAdapter
-  ): Promise<boolean> {
-    // Check if there's a direct relationship tuple:
+  ): Promise<EvaluationResult> {
+    const grant = (how: string): EvaluationResult => {
+      if (!context.negative && context.membership)
+        context.membership.grants.push(
+          `${context.object_type}:${context.object_id}#${expr.relation}@${how}`
+        );
+      return 'allow';
+    };
+    if (
+      context.contextual?.some(
+        (tuple) =>
+          tuple.relation === expr.relation &&
+          tuple.object_type === context.object_type &&
+          tuple.object_id === context.object_id
+      )
+    ) {
+      return grant('contextual_tuple');
+    }
+
     // (object_type:object_id)#relation@(user_type:user_id)
-    const results = await adapter.query<{ id: string }>(
-      `SELECT id FROM relationships
+    const results = await adapter.query<{ id: string; expires_at: number | string | null }>(
+      `SELECT id, expires_at FROM relationships
        WHERE tenant_id = ?
-         AND from_type <> 'group' -- group usersets are not evaluated yet
+         AND from_type <> 'group' -- a group tuple is a userset, matched below
          AND from_type = ?
          AND from_id = ?
          AND to_type = ?
@@ -282,49 +359,61 @@ export class RelationParser implements IRelationParser {
         Math.floor(Date.now() / 1000),
       ]
     );
+    if (results.length > 0) {
+      noteExpiry(context.membership, results[0].expires_at);
+      return grant(results[0].id);
+    }
 
-    return results.length > 0;
+    const userset = await matchGroupUserset(
+      adapter,
+      context,
+      context.object_type,
+      context.object_id,
+      expr.relation
+    );
+    if (userset.result === 'allow') return grant(`group:${userset.groupId}#member`);
+    return userset.result;
   }
 
   /**
-   * Evaluate a union relation - any child must match
+   * Evaluate a union relation: allow when any child allows, else undecided when any child is.
    */
   private async evaluateUnionRelation(
     expr: UnionRelation,
     context: RelationEvaluationContext,
     adapter: IStorageAdapter
-  ): Promise<boolean> {
-    // Short-circuit: return true as soon as any child matches
+  ): Promise<EvaluationResult> {
+    let unknown = false;
     for (const child of expr.children) {
-      const result = await this.evaluate(child, context, adapter);
-      if (result) {
-        return true;
-      }
+      const result = await this.evaluateExpression(child, context, adapter);
+      if (result === 'allow') return 'allow';
+      if (result === 'unknown') unknown = true;
     }
-    return false;
+    return unknown ? 'unknown' : 'deny';
   }
 
   /**
    * Evaluate a tuple-to-userset relation
    *
    * Example: document#parent.viewer
-   * 1. Find the parent of the document (via tupleset relation)
-   * 2. Check if the user has viewer relation on the parent (computed_userset)
+   * 1. Find the parents of the document (the tupleset edges, from the document)
+   * 2. Evaluate `viewer` on each parent as a relation of its own: through the parent type's
+   *    active definition (its exclusion, or its being unusable, applies), one hop deeper on the
+   *    same path
    */
   private async evaluateTupleToUsersetRelation(
     expr: TupleToUsersetRelation,
     context: RelationEvaluationContext,
     adapter: IStorageAdapter
-  ): Promise<boolean> {
-    // Step 1: Find objects related to the current object via the tupleset relation
-    // For example, find all objects where: (current_object)#parent@(related_object)
+  ): Promise<EvaluationResult> {
     const relatedObjects = await adapter.query<{
       to_type: string;
       to_id: string;
+      expires_at: number | string | null;
     }>(
-      `SELECT to_type, to_id FROM relationships
+      `SELECT to_type, to_id, expires_at FROM relationships
        WHERE tenant_id = ?
-         AND from_type <> 'group' -- group usersets are not evaluated yet
+         AND from_type <> 'group' -- a group tuple is a userset, never an object edge
          AND from_type = ?
          AND from_id = ?
          AND relationship_type = ?
@@ -338,74 +427,84 @@ export class RelationParser implements IRelationParser {
       ]
     );
 
-    // Step 2: For each related object, check if user has the computed_userset relation
+    let unknown = false;
     for (const related of relatedObjects) {
-      // Create a new context for checking the related object
-      const newContext: RelationEvaluationContext = {
-        ...context,
-        object_type: related.to_type,
-        object_id: related.to_id,
-        depth: context.depth + 1,
-        // Keep the same visited set to prevent cycles
-      };
-
-      // Check if user has the computed relation on the related object
-      const directCheck: DirectRelation = {
-        type: 'direct',
-        relation: expr.computed_userset.relation,
-      };
-
-      const hasRelation = await this.evaluate(directCheck, newContext, adapter);
-      if (hasRelation) {
-        return true;
-      }
-
-      // Recursively check computed relations on the related object
-      // This handles nested hierarchies (e.g., folder → folder → folder → document)
-      const tupleResult = await this.evaluateTupleToUsersetRelation(expr, newContext, adapter);
-      if (tupleResult) {
-        return true;
-      }
+      // An edge that expires changes what it leads to (noted whatever the answer through it).
+      noteExpiry(context.membership, related.expires_at);
+      const result = await this.evaluateRelation(
+        related.to_type,
+        related.to_id,
+        expr.computed_userset.relation,
+        { ...context, depth: context.depth + 1 },
+        adapter
+      );
+      if (result === 'allow') return 'allow';
+      if (result === 'unknown') unknown = true;
     }
-
-    return false;
+    return unknown ? 'unknown' : 'deny';
   }
 
   /**
-   * Evaluate an intersection relation - all children must match
-   * Phase 4+ feature
+   * Evaluate an intersection relation: deny when any child denies, else undecided when any is.
    */
   private async evaluateIntersectionRelation(
     expr: IntersectionRelation,
     context: RelationEvaluationContext,
     adapter: IStorageAdapter
-  ): Promise<boolean> {
-    // All children must match
+  ): Promise<EvaluationResult> {
+    let unknown = false;
     for (const child of expr.children) {
-      const result = await this.evaluate(child, context, adapter);
-      if (!result) {
-        return false;
-      }
+      const result = await this.evaluateExpression(child, context, adapter);
+      if (result === 'deny') return 'deny';
+      if (result === 'unknown') unknown = true;
     }
-    return true;
+    return unknown ? 'unknown' : 'allow';
   }
 
   /**
-   * Evaluate an exclusion relation - base must match, subtract must not
-   * Phase 4+ feature
+   * Evaluate an exclusion relation: base allows and subtract denies. A subtract that cannot be
+   * decided leaves the exclusion undecided (it is evaluated with the polarity flipped, so a
+   * "not a member" it cannot trust is undecided; see userset.ts).
    */
   private async evaluateExclusionRelation(
     expr: ExclusionRelation,
     context: RelationEvaluationContext,
     adapter: IStorageAdapter
-  ): Promise<boolean> {
-    const baseResult = await this.evaluate(expr.base, context, adapter);
-    if (!baseResult) {
-      return false;
-    }
+  ): Promise<EvaluationResult> {
+    const base = await this.evaluateExpression(expr.base, context, adapter);
+    if (base === 'deny') return 'deny';
+    const subtract = await this.evaluateExpression(
+      expr.subtract,
+      { ...context, negative: !context.negative },
+      adapter
+    );
+    if (subtract === 'allow') return 'deny';
+    if (base === 'unknown' || subtract === 'unknown') return 'unknown';
+    return 'allow';
+  }
+}
 
-    const subtractResult = await this.evaluate(expr.subtract, context, adapter);
-    return !subtractResult;
+/**
+ * Why a relation definition (a stored `definition_json` string or a request's object) cannot be
+ * evaluated: the parser's and the validator's errors; empty when it can. A definition with errors
+ * is refused when saved, and a stored one denies every check on its relation.
+ */
+export function relationDefinitionErrors(input: unknown): string[] {
+  const parser = new RelationParser();
+  try {
+    if (typeof input !== 'string' && (!input || typeof input !== 'object')) {
+      return ['Invalid relation expression: must be an object'];
+    }
+    const expression = parser.parse(input);
+    const errors = parser.validate(expression);
+    if (directRelationNames(expression).size > MAX_DEFINITION_DIRECT_RELATIONS) {
+      errors.push(
+        `A definition may name at most ${MAX_DEFINITION_DIRECT_RELATIONS} distinct direct relations`
+      );
+    }
+    return errors;
+  } catch (error) {
+    return [error instanceof Error ? error.message : 'Invalid relation expression'];
   }
 }
 
@@ -417,7 +516,11 @@ export function createEvaluationContext(
   userId: string,
   objectType: string,
   objectId: string,
-  maxDepth: number = DEFAULT_MAX_DEPTH
+  maxDepth: number = DEFAULT_MAX_DEPTH,
+  usersets?: Pick<
+    RelationEvaluationContext,
+    'subject_groups' | 'membership' | 'contextual' | 'definitions' | 'service_decided_groups'
+  >
 ): RelationEvaluationContext {
   return {
     tenant_id: tenantId,
@@ -428,6 +531,13 @@ export function createEvaluationContext(
     depth: 0,
     max_depth: maxDepth,
     visited: new Set(),
+    ...(usersets?.subject_groups && { subject_groups: usersets.subject_groups }),
+    ...(usersets?.membership && { membership: usersets.membership }),
+    ...(usersets?.contextual && { contextual: usersets.contextual }),
+    ...(usersets?.definitions && { definitions: usersets.definitions }),
+    ...(usersets?.service_decided_groups && {
+      service_decided_groups: usersets.service_decided_groups,
+    }),
   };
 }
 

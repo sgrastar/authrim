@@ -87,6 +87,10 @@
             {
               "path": "019_dynamic_publication_unknown_groups.sql",
               "checksum": "a7c92dbfac01e6ce49afd5501a7769f040156aaac266f6a8c10b415478012cdc"
+            },
+            {
+              "path": "020_relationship_userset_relation.sql",
+              "checksum": "ded5ab64b3def4fa4927cf72e53bf52b43dd67273fae13fb49b2f919ab7f494c"
             }
           ]
         },
@@ -334,6 +338,10 @@
             {
               "path": "019_dynamic_publication_unknown_groups.sql",
               "checksum": "a7c92dbfac01e6ce49afd5501a7769f040156aaac266f6a8c10b415478012cdc"
+            },
+            {
+              "path": "020_relationship_userset_relation.sql",
+              "checksum": "41e24409284c3b62245821a977e8b5e300e5e36fd4cf4a317b629dbbfe835c05"
             }
           ]
         },
@@ -446,6 +454,10 @@
         {
           "path": "019_dynamic_publication_unknown_groups.sql",
           "checksum": "a7c92dbfac01e6ce49afd5501a7769f040156aaac266f6a8c10b415478012cdc"
+        },
+        {
+          "path": "020_relationship_userset_relation.sql",
+          "checksum": "ded5ab64b3def4fa4927cf72e53bf52b43dd67273fae13fb49b2f919ab7f494c"
         }
       ]
     },
@@ -719,6 +731,10 @@
         {
           "path": "019_dynamic_publication_unknown_groups.sql",
           "checksum": "a7c92dbfac01e6ce49afd5501a7769f040156aaac266f6a8c10b415478012cdc"
+        },
+        {
+          "path": "020_relationship_userset_relation.sql",
+          "checksum": "41e24409284c3b62245821a977e8b5e300e5e36fd4cf4a317b629dbbfe835c05"
         }
       ]
     },

@@ -32,18 +32,19 @@ describe('ClosureManager tenant and graph boundaries', () => {
       'user-1',
       'document',
       'viewer',
+      expect.any(Number),
       3,
       4,
     ]);
   });
 
-  it('recomputes by deleting stale entries before inserting tenant-scoped paths', async () => {
+  it('recomputes by deleting stale entries before inserting the direct subject tuples', async () => {
     const adapter = adapterWithRows([
       {
         user_id: 'user-1',
         relation: 'viewer',
-        depth: 2,
-        path: 'rel-1,rel-2',
+        depth: 1,
+        path: 'rel-1',
         permission: 'read_only',
       },
     ]);
@@ -56,19 +57,20 @@ describe('ClosureManager tenant and graph boundaries', () => {
       expect.stringContaining('DELETE FROM relationship_closure'),
       ['tenant-a', 'document', 'doc-1']
     );
-    expect(adapter.query).toHaveBeenCalledWith(expect.stringContaining('WITH RECURSIVE'), [
+    expect(adapter.query).toHaveBeenCalledWith(expect.stringContaining("r.from_type = 'subject'"), [
       'tenant-a',
       'document',
       'doc-1',
       expect.any(Number),
-      'tenant-a',
-      4,
-      expect.any(Number),
     ]);
+    expect(adapter.query).not.toHaveBeenCalledWith(
+      expect.stringContaining('WITH RECURSIVE'),
+      expect.anything()
+    );
     expect(adapter.execute).toHaveBeenNthCalledWith(
       2,
       expect.stringContaining('INSERT INTO relationship_closure'),
-      expect.arrayContaining(['tenant-a', 'user-1', 'document', 'doc-1', '["rel-1","rel-2"]'])
+      expect.arrayContaining(['tenant-a', 'user-1', 'document', 'doc-1', '["rel-1"]'])
     );
   });
 

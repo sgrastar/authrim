@@ -964,6 +964,7 @@ export const POSTGRES_RESTORE_EXTENSION_CONTRACTS: readonly PostgresRestoreTable
       'updated_at',
       'evidence_type',
       'evidence_ref',
+      'from_relation',
     ],
     sqliteIntegerColumns: ['expires_at', 'is_bidirectional', 'created_at', 'updated_at'],
     postgresBooleanColumns: ['is_bidirectional'],
