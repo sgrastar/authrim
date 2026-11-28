@@ -147,8 +147,7 @@
 		border-radius: var(--radius-control);
 		background: var(--bg-card);
 	}
-
-	.is-changed .builder__body {
+	:global(:root[data-change-highlight='on']) .is-changed .builder__body {
 		border-color: var(--changed-edge);
 		background: linear-gradient(var(--changed-bg), var(--changed-bg)), var(--bg-card);
 	}

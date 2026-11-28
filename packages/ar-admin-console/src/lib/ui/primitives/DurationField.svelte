@@ -269,8 +269,7 @@
 		transform: translateY(-50%);
 		--icon-size: var(--icon-xs);
 	}
-
-	.is-changed .duration__row {
+	:global(:root[data-change-highlight='on']) .is-changed .duration__row {
 		border-color: var(--changed-edge);
 		background: linear-gradient(var(--changed-bg), var(--changed-bg)), var(--bg-input);
 	}

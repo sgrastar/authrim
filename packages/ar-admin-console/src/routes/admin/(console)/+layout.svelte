@@ -12,6 +12,7 @@
 	import StepUpDialog from '#lib/shell/StepUpDialog.svelte';
 	import { noticeInbox } from '#lib/shell/notice-inbox.js';
 	import { isStandalonePath, resolveNavPath } from '#lib/shell/nav.js';
+	import { highlightPreference } from '#lib/ui/highlight/highlight-preference.svelte.js';
 	import { timePreference } from '#lib/ui/time/time-preference.svelte.js';
 	import type { ScopeOption } from '#lib/shell/ScopeSwitcher.svelte';
 	import { lifecycleTone } from '#lib/pages/tenants/tenant-model.js';
@@ -48,7 +49,10 @@
 			}
 			if (state === 'authenticated') {
 				const session = adminSession.current;
-				if (session?.user_id) timePreference.loadFor(session.user_id);
+				if (session?.user_id) {
+					timePreference.loadFor(session.user_id);
+					highlightPreference.loadFor(session.user_id);
+				}
 				await tenantScope.load(session?.tenant_id ?? null, adminSession.isPlatformAdmin);
 			}
 			if (!cancelled) ready = true;

@@ -220,7 +220,7 @@
 	}
 
 	/* Changed, not saved yet: the thumbnail gets the change colour. */
-	.is-changed .image-up__thumb {
+	:global(:root[data-change-highlight='on']) .is-changed .image-up__thumb {
 		border-color: var(--changed-edge);
 		box-shadow: 0 0 0 3px var(--changed-ring);
 	}

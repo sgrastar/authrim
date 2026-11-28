@@ -241,7 +241,7 @@
 	}
 
 	/* Changed, not saved yet: the inputs take the change colour. */
-	.is-changed input:not(.is-duplicate) {
+	:global(:root[data-change-highlight='on']) .is-changed input:not(.is-duplicate) {
 		border-color: var(--changed-edge);
 		background: linear-gradient(var(--changed-bg), var(--changed-bg)), var(--bg-input);
 	}

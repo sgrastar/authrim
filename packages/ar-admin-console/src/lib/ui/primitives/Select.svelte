@@ -174,7 +174,7 @@
 	}
 
 	/* Changed, not saved yet: the box takes the change colour. */
-	.is-changed select {
+	:global(:root[data-change-highlight='on']) .is-changed select {
 		border-color: var(--changed-edge);
 		background-image: linear-gradient(var(--changed-bg), var(--changed-bg));
 	}

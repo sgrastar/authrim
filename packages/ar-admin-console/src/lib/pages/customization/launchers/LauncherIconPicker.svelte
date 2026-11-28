@@ -86,8 +86,7 @@
 		border-color: var(--primary);
 		background: var(--bg-subtle);
 	}
-
-	.icon-picker__option--changed {
+	:global(:root[data-change-highlight='on']) .icon-picker__option--changed {
 		box-shadow: 0 0 0 2px var(--changed-ring);
 	}
 

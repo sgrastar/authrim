@@ -175,7 +175,7 @@
 	}
 
 	/* Changed, not saved yet: the box takes the change colour. */
-	.is-changed .field__input {
+	:global(:root[data-change-highlight='on']) .is-changed .field__input {
 		border-color: var(--changed-edge);
 		background: linear-gradient(var(--changed-bg), var(--changed-bg)), var(--bg-input);
 	}

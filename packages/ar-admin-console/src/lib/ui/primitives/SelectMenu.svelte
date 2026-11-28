@@ -542,7 +542,7 @@
 	}
 
 	/* Changed, not saved yet: the box takes the change colour. */
-	.is-changed .select-menu__button {
+	:global(:root[data-change-highlight='on']) .is-changed .select-menu__button {
 		border-color: var(--changed-edge);
 		background-image: linear-gradient(var(--changed-bg), var(--changed-bg));
 	}

@@ -247,8 +247,7 @@
 		min-width: 180px;
 		padding: 4px;
 	}
-
-	td.is-changed {
+	:global(:root[data-change-highlight='on']) td.is-changed {
 		background: var(--changed-bg);
 	}
 

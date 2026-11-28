@@ -642,7 +642,7 @@
 	}
 
 	/* New or changed since saving. */
-	.part.is-changed {
+	:global(:root[data-change-highlight='on']) .part.is-changed {
 		border-color: var(--changed-edge);
 		background: linear-gradient(var(--changed-bg), var(--changed-bg)), var(--bg-card);
 	}

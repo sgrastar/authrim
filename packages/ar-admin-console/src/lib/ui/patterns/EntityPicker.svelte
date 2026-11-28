@@ -360,8 +360,7 @@
 		border-color: var(--focus-ring);
 		outline: 2px solid color-mix(in srgb, var(--focus-ring) 35%, transparent);
 	}
-
-	.is-changed .picker__box {
+	:global(:root[data-change-highlight='on']) .is-changed .picker__box {
 		border-color: var(--changed-edge);
 		background: linear-gradient(var(--changed-bg), var(--changed-bg)), var(--bg-input);
 	}

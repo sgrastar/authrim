@@ -39,6 +39,18 @@ import { jaSamlLocal } from './saml-local/ja';
  * Values are plain text (never HTML). Placeholders use {name}.
  */
 export const ja = {
+	'highlight.title': '変更箇所のハイライト',
+	'highlight.description': '編集中の項目を色で強調します。未保存の通知はオフにしても表示されます。',
+	'highlight.color': 'ハイライト色',
+	'highlight.default': 'デフォルト（テーマの色）',
+	'highlight.blue': '青',
+	'highlight.cyan': 'シアン',
+	'highlight.green': '緑',
+	'highlight.purple': '紫',
+	'highlight.pink': 'ピンク',
+	'highlight.orange': 'オレンジ',
+	'highlight.custom': 'カスタム',
+	'highlight.customColor': 'カスタム色',
 	...jaSettings,
 	...jaCompliance,
 	...jaMappingConsole,

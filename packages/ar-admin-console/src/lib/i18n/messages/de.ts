@@ -36,6 +36,19 @@ import { deUsers } from './users/de';
 import { deSamlLocal } from './saml-local/de';
 
 export const de = {
+	'highlight.title': 'Änderungen hervorheben',
+	'highlight.description':
+		'Bearbeitete Felder farbig markieren. Hinweise auf ungespeicherte Änderungen bleiben sichtbar.',
+	'highlight.color': 'Farbe der Hervorhebung',
+	'highlight.default': 'Standard (Designfarbe)',
+	'highlight.blue': 'Blau',
+	'highlight.cyan': 'Türkis',
+	'highlight.green': 'Grün',
+	'highlight.purple': 'Violett',
+	'highlight.pink': 'Rosa',
+	'highlight.orange': 'Orange',
+	'highlight.custom': 'Benutzerdefiniert',
+	'highlight.customColor': 'Eigene Farbe',
 	...deSettings,
 	...deCompliance,
 	...deMappingConsole,

@@ -182,7 +182,7 @@
 	}
 
 	/* Changed cell: the cell itself takes the wash (not the option inside it again). */
-	.grid-choice__cell.is-changed {
+	:global(:root[data-change-highlight='on']) .grid-choice__cell.is-changed {
 		background: var(--changed-bg);
 	}
 

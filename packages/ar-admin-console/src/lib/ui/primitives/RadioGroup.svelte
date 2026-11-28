@@ -140,14 +140,13 @@
 	}
 
 	/* Changed, not saved yet: the new choice takes the change wash, its dot a ring. */
-	.is-changed .radio:has(input:checked) {
+	:global(:root[data-change-highlight='on']) .is-changed .radio:has(input:checked) {
 		margin: -5px -8px;
 		padding: 5px 8px;
 		border-radius: var(--radius-control);
 		background: var(--changed-bg);
 	}
-
-	.is-changed input:checked + .radio__dot {
+	:global(:root[data-change-highlight='on']) .is-changed input:checked + .radio__dot {
 		box-shadow: 0 0 0 3px var(--changed-ring);
 	}
 
