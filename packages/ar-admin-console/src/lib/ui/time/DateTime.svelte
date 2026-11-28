@@ -74,6 +74,7 @@
 		flex-wrap: wrap;
 		align-items: baseline;
 		gap: 0 8px;
+		font-family: var(--font-mono);
 		font-variant-numeric: tabular-nums;
 		/* Digits and zone labels keep their order in right-to-left pages. */
 		unicode-bidi: isolate;
@@ -91,7 +92,6 @@
 
 	.datetime__other {
 		color: var(--text-muted);
-		font-size: var(--fs-caption);
 	}
 
 	.datetime--invalid {

@@ -136,7 +136,7 @@
 	}
 
 	/* Changed, not saved yet: the control takes the change colour. */
-	.is-changed .segmented__track {
+	:global(:root[data-change-highlight='on']) .is-changed .segmented__track {
 		background: linear-gradient(var(--changed-bg), var(--changed-bg)), var(--bg-subtle);
 		box-shadow: 0 0 0 3px var(--changed-ring);
 	}

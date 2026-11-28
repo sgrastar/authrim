@@ -36,6 +36,19 @@ import { arUsers } from './users/ar';
 import { arSamlLocal } from './saml-local/ar';
 
 export const ar = {
+	'highlight.title': 'تمييز التغييرات',
+	'highlight.description':
+		'تمييز الحقول المعدلة بلون. تظل إشعارات التغييرات غير المحفوظة ظاهرة عند التعطيل.',
+	'highlight.color': 'لون التمييز',
+	'highlight.default': 'الافتراضي (لون المظهر)',
+	'highlight.blue': 'أزرق',
+	'highlight.cyan': 'سماوي',
+	'highlight.green': 'أخضر',
+	'highlight.purple': 'بنفسجي',
+	'highlight.pink': 'وردي',
+	'highlight.orange': 'برتقالي',
+	'highlight.custom': 'مخصص',
+	'highlight.customColor': 'لون مخصص',
 	...arSettings,
 	...arCompliance,
 	...arMappingConsole,

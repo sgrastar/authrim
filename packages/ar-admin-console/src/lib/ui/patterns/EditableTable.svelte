@@ -316,8 +316,8 @@
 	}
 
 	/* New rows and changed cells take the change colour. */
-	tr.is-new td,
-	td.is-changed {
+	:global(:root[data-change-highlight='on']) tr.is-new td,
+	:global(:root[data-change-highlight='on']) td.is-changed {
 		background: var(--changed-bg);
 	}
 

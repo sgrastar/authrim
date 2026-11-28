@@ -36,6 +36,19 @@ import { enUsers } from './users/en';
 import { enSamlLocal } from './saml-local/en';
 
 export const en = {
+	'highlight.title': 'Highlight changes',
+	'highlight.description':
+		'Highlight edited fields with color. Unsaved change notices remain visible when disabled.',
+	'highlight.color': 'Highlight color',
+	'highlight.default': 'Default (theme color)',
+	'highlight.blue': 'Blue',
+	'highlight.cyan': 'Cyan',
+	'highlight.green': 'Green',
+	'highlight.purple': 'Purple',
+	'highlight.pink': 'Pink',
+	'highlight.orange': 'Orange',
+	'highlight.custom': 'Custom',
+	'highlight.customColor': 'Custom color',
 	...enSettings,
 	...enCompliance,
 	...enMappingConsole,

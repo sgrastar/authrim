@@ -1197,8 +1197,7 @@
 	.mrow + .mrow {
 		border-top: 1px solid var(--border-subtle);
 	}
-
-	.mrow.is-changed {
+	:global(:root[data-change-highlight='on']) .mrow.is-changed {
 		background: var(--changed-bg);
 	}
 

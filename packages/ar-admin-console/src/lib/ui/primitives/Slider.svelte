@@ -236,11 +236,10 @@
 	}
 
 	/* Changed, not saved yet: the thumb gets a ring in the change colour. */
-	.is-changed input::-webkit-slider-thumb {
+	:global(:root[data-change-highlight='on']) .is-changed input::-webkit-slider-thumb {
 		box-shadow: 0 0 0 4px var(--changed-ring);
 	}
-
-	.is-changed input::-moz-range-thumb {
+	:global(:root[data-change-highlight='on']) .is-changed input::-moz-range-thumb {
 		box-shadow: 0 0 0 4px var(--changed-ring);
 	}
 

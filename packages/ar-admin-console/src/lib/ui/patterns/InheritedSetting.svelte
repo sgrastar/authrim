@@ -115,7 +115,7 @@
 	}
 
 	/* Changed, not saved yet: the line takes the change colour. */
-	.is-changed .inherit__state {
+	:global(:root[data-change-highlight='on']) .is-changed .inherit__state {
 		margin: -2px -6px;
 		padding: 2px 6px;
 		border-radius: var(--radius-xs);

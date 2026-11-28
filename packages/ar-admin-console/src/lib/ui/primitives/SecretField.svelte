@@ -244,8 +244,7 @@
 		font-size: var(--fs-body);
 		outline: none;
 	}
-
-	.is-changed .secret__box {
+	:global(:root[data-change-highlight='on']) .is-changed .secret__box {
 		border-color: var(--changed-edge);
 		background: linear-gradient(var(--changed-bg), var(--changed-bg)), var(--bg-input);
 	}

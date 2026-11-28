@@ -78,8 +78,7 @@
 		background: var(--info-bg);
 		color: var(--info);
 	}
-
-	.badge--changed {
+	:global(:root[data-change-highlight='on']) .badge--changed {
 		border-color: var(--changed-edge);
 		background: var(--changed-bg);
 		color: var(--text-primary);

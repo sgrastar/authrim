@@ -40,6 +40,7 @@
 	import { isThemeLook } from '#lib/ui/theme/theme-config.js';
 	import { theme } from '#lib/ui/theme/theme.svelte.js';
 	import DateTime from '#lib/ui/time/DateTime.svelte';
+	import HighlightSettings from '#lib/ui/highlight/HighlightSettings.svelte';
 	import { timePreference } from '#lib/ui/time/time-preference.svelte.js';
 	import { toast } from '#lib/ui/toast/toast.svelte.js';
 
@@ -249,6 +250,7 @@
 				onchange={(checked) => timePreference.setShowSecondary(checked)}
 			/>
 		</SettingRow>
+		<HighlightSettings />
 		{#snippet footer()}{t('me.storedLocally')}{/snippet}
 	</Card>
 

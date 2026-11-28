@@ -302,8 +302,7 @@
 		outline: 2px solid color-mix(in srgb, var(--focus-ring) 35%, transparent);
 		outline-offset: 0;
 	}
-
-	.is-changed .color__hex {
+	:global(:root[data-change-highlight='on']) .is-changed .color__hex {
 		border-color: var(--changed-edge);
 		background: linear-gradient(var(--changed-bg), var(--changed-bg)), var(--bg-input);
 	}

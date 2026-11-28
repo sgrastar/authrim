@@ -162,7 +162,7 @@
 	}
 
 	/* Same colour as the changes it saves. */
-	.is-shown .save-bar__card {
+	:global(:root[data-change-highlight='on']) .is-shown .save-bar__card {
 		border-color: var(--changed-edge);
 		background: linear-gradient(var(--changed-bg), var(--changed-bg)), var(--surface-bg);
 	}

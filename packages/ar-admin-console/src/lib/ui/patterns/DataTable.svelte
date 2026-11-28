@@ -380,7 +380,7 @@
 	}
 
 	/* A row with an unsaved change; the changed control inside it carries a ring. */
-	tbody tr.is-changed td {
+	:global(:root[data-change-highlight='on']) tbody tr.is-changed td {
 		background: var(--changed-bg);
 	}
 

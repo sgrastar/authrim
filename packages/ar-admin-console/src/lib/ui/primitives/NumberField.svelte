@@ -241,8 +241,7 @@
 		padding-inline: 8px;
 		font-size: var(--fs-label);
 	}
-
-	.is-changed .number__box {
+	:global(:root[data-change-highlight='on']) .is-changed .number__box {
 		border-color: var(--changed-edge);
 		background: linear-gradient(var(--changed-bg), var(--changed-bg)), var(--bg-input);
 	}

@@ -175,14 +175,13 @@
 	/* Changed, not saved yet: the whole option (box, label, description) takes the change
 	   wash — padding and an equal negative margin, so nothing moves — and the box a ring.
 	   With changeMark="box" (a table cell, a grid cell) only the ring; its container washes. */
-	.checkbox.is-changed.mark-option {
+	:global(:root[data-change-highlight='on']) .checkbox.is-changed.mark-option {
 		margin: -5px -8px;
 		padding: 5px 8px;
 		border-radius: var(--radius-control);
 		background: var(--changed-bg);
 	}
-
-	.is-changed .checkbox__box {
+	:global(:root[data-change-highlight='on']) .is-changed .checkbox__box {
 		box-shadow: 0 0 0 3px var(--changed-ring);
 	}
 

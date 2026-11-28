@@ -248,8 +248,7 @@
 		background: var(--bg-subtle);
 		cursor: progress;
 	}
-
-	.is-changed input:not(.has-error) {
+	:global(:root[data-change-highlight='on']) .is-changed input:not(.has-error) {
 		border-color: var(--changed-edge);
 		background: linear-gradient(var(--changed-bg), var(--changed-bg)), var(--bg-input);
 	}
