@@ -37,6 +37,16 @@ async function fixture() {
       'utf8'
     )
   );
+  // The delegation guard reads relationships.from_relation (ReBAC usersets, 020).
+  f.db.exec(
+    readFileSync(
+      new URL(
+        '../../../../migrations/core/d1/020_relationship_userset_relation.sql',
+        import.meta.url
+      ),
+      'utf8'
+    )
+  );
   f.db.exec(
     `INSERT INTO "groups"(id,tenant_id,group_key,display_name,lifecycle_state,created_at,updated_at)
      VALUES('group','tenant-a','group','Group','active',1,1)`
